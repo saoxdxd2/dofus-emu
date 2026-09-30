@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.dofusemu.launcher"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <!-- The game is a Cordova/HTML5 app, so it needs network and (for the
+         WebView renderer) no special permissions beyond this. Declared here so
+         the profile is self-consistent rather than relying on a stock grant. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:label="Dofus"
+        android:allowBackup="false"
+        android:hardwareAccelerated="true"
+        android:supportsRtl="true">
+
+        <!--
+          No INTERNET-permission in this package, no services, no receivers:
+          the whole APK is one activity whose only job is to hand off to the
+          game. Keeping it empty keeps its own footprint near zero.
+
+          CATEGORY_HOME + CATEGORY_DEFAULT is what replaces the stock
+          launcher. CATEGORY_LAUNCHER is intentionally omitted so the app does
+          not also appear as a normal launchable icon.
+
+          stateNotNeeded: relaunching must not restore a stale game task.
+          excludeFromRecents: keeps the empty launcher out of Recents.
+          theme translucent/no-display: the activity paints nothing, so
+          starting the game never flashes an empty window.
+        -->
+        <activity
+            android:name=".DofusLauncherActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:excludeFromRecents="true"
+            android:clearTaskOnLaunch="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

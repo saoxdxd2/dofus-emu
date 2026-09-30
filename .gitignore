@@ -1,0 +1,21 @@
+# Build outputs
+launcher/build/
+*.apk
+*.apks
+*.dex
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Logs produced by the setup scripts
+scripts/*.log
+scripts/gate4-memory.csv
+
+# AVD state: config is tracked, per-machine runtime state is not
+*.avd/
+*.ini.bak
+
+# Local tooling
+.idea/
+*.iml
+.vscode/
