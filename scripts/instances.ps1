@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Phase 0 - Dofus Touch instance runner and feasibility gate harness.
 
@@ -94,9 +94,12 @@ $emuArgs = @(
   # VT-x is present on this host, so "on" gives hardware acceleration.
   "-accel", "on"
 )
-# -writable-system gives a writable copy of /system for this session so
-# ro.config.low_ram can be written to /system/build.prop. Without it the guest
-# mounts /system read-only and the property write below fails.
+# -writable-system is opt-in and OFF by default. It makes the emulator log
+# "System image is writable" but the guest then HANGS at boot on this image
+# (adb stays offline with near-idle CPU) instead of finishing in ~47s.
+# Reproduced at 1536 MB and again at 1024 MB with 4.3 GB free RAM.
+# It does not help anyway: /system is read-only (system-as-root), so adb remount
+# still cannot write build.prop. See patch-system.ps1 for the details.
 if ($WritableSystem) { $emuArgs += '-writable-system' }
 if ($Headless) { $emuArgs += '-no-window' }
 
@@ -126,104 +129,80 @@ if (-not $NoWait) {
 if (-not $SkipProfile) {
   Write-Step 'Applying low-RAM profile and coherent device identity'
 
-  # --- ro.config.low_ram -------------------------------------------------
-  # IMPORTANT: properties in the ro.* namespace are read-only once the guest has
-  # booted; `setprop ro.config.low_ram true` fails with
-  # "failed to set property ... to ...: Access denied" (or silently no-ops).
-  # The value is read by zygote/ActivityManager at startup, so it must be
-  # present in /system/build.prop BEFORE boot completes to take effect.
-  #
-  # Requires the emulator to have been started with -writable-system, which
-  # provides a writable overlay of /system for this session.
-  $needsRemount = $true
-  Write-Step 'Remounting /system for build.prop edit (required for ro.* properties)'
+  # --- ro.config.low_ram: NOT reachable on this image -----------------------
+  # ro.* properties are read-only after boot, so `setprop ro.config.low_ram
+  # true` fails with "Access denied". Writing it needs a writable /system, but:
+  #   - /system is read-only here (system-as-root: "/" is ro ext4 dm-2)
+  #   - -writable-system makes the emulator report a writable image yet the
+  #     guest then hangs at boot
+  #   - `emulator -prop ro.config.low_ram=true` boots but the value is absent
+  #   - overlayfs over /system from adb root fails with "Invalid argument"
+  # So it needs an offline edit of system.img. See patch-system.ps1.
+  Write-Step 'Checking ro.config.low_ram'
   & $Adb -s $Serial root 2>&1 | Out-Null
   Start-Sleep -Seconds 3
-  $remount = & $Adb -s $Serial remount 2>&1
-  if ($remount -match 'remount succeeded|remounted') {
-    Write-Ok 'remount succeeded'
-    $needsRemount = $false
-  } else {
-    Write-Warn "remount output: $remount"
-    if (-not $WritableSystem) {
-      Write-Warn 'This usually means the AVD was started WITHOUT -writable-system.'
-      Write-Warn 'Relaunch with -WritableSystem to make ro.config.low_ram effective.'
-    }
+  $lr = (& $Adb -s $Serial shell 'getprop ro.config.low_ram' 2>$null) -replace "`r",''
+  if ($lr -match 'true') { Write-Ok 'ro.config.low_ram already active' }
+  else {
+    Write-Warn 'ro.config.low_ram is NOT set and cannot be set at runtime here.'
+    Write-Warn 'It requires an offline system.img edit (see patch-system.ps1).'
   }
 
-  if (-not $needsRemount) {
-    # Append to /system/build.prop. Check first so re-runs stay idempotent.
-    $existing = & $Adb -s $Serial shell 'grep -c "^ro.config.low_ram=" /system/build.prop 2>/dev/null' 2>$null
-    if ($existing -match '1') {
-      & $Adb -s $Serial shell 'sed -i "s/^ro.config.low_ram=.*/ro.config.low_ram=true/" /system/build.prop' 2>&1 | Out-Null
-      Write-Ok 'ro.config.low_ram updated to true in /system/build.prop'
-    } else {
-      & $Adb -s $Serial shell 'echo "ro.config.low_ram=true" >> /system/build.prop' 2>&1 | Out-Null
-      Write-Ok 'ro.config.low_ram=true appended to /system/build.prop'
-    }
-    # Verify it actually landed, rather than assuming the write worked.
-    $verify = (& $Adb -s $Serial shell 'grep "^ro.config.low_ram=" /system/build.prop' 2>$null) -replace "`r",''
-    if ($verify -match 'true') { Write-Ok "verified in build.prop: $verify" }
-    else { Write-Err "build.prop write did not verify. Line reads: '$verify'" }
-    Write-Warn 'ro.config.low_ram is read at zygote startup: reboot the guest for it to take effect.'
-  } else {
-    Write-Warn 'ro.config.low_ram NOT applied (see above). Phase 2 trimming depends on it.'
-  }
-
-  # --- dalvik.* ----------------------------------------------------------
-  # dalvik.vm.* is a regular read-write property (no ro. prefix), so setprop
-  # works at runtime. This is what actually bounds ART's heap growth.
+  # --- dalvik.vm.* : runtime-settable, the real saving ----------------------
   Write-Step 'Applying runtime Dalvik heap limits'
   & $Adb -s $Serial shell 'setprop dalvik.vm.heapgrowthlimit 192m' | Out-Null
-  & $Adb -s $Serial shell 'setprop dalvik.vm.heapstartupsize 32m'  | Out-Null
+  & $Adb -s $Serial shell 'setprop dalvik.vm.heapstartupsize 32m' | Out-Null
+  & $Adb -s $Serial shell 'setprop dalvik.vm.heapminfree 2m' | Out-Null
   $hg = (& $Adb -s $Serial shell 'getprop dalvik.vm.heapgrowthlimit' 2>$null) -replace "`r",''
   if ($hg -eq '192m') { Write-Ok "dalvik.vm.heapgrowthlimit = $hg" }
   else { Write-Warn "heapgrowthlimit read back as '$hg'" }
 
-  # Coherence check: report what the guest actually is, so the profile is
-  # validated against reality rather than assumed.
+  # --- identity coherence --------------------------------------------------
+  # Report what the guest actually is, so the profile is validated against
+  # reality rather than assumed. Deliberately NOT impersonating a retail OEM:
+  # see README "Out of scope".
   Write-Step 'Verifying device identity coherence'
   foreach ($p in @('ro.product.cpu.abi','ro.product.model','ro.build.type','ro.debuggable','ro.build.tags')) {
-    $v = (& $Adb -s $Serial shell "getprop $p" 2>$null) -replace "`r", ''
+    $v = (& $Adb -s $Serial shell "getprop $p" 2>$null) -replace "`r",''
+    if ([string]::IsNullOrWhiteSpace($v)) { $v = '<unset>' }
     Write-Host ("          {0,-22} = {1}" -f $p, $v)
   }
-  $rootCheck = & $Adb -s $Serial shell 'which su' 2>$null
-  if ($rootCheck -match 'su') { Write-Warn 'su binary present - should be absent for a clean profile' }
+  $su = (& $Adb -s $Serial shell 'which su' 2>$null)
+  if ($su -match 'su') { Write-Warn 'su binary present - profile should be root-free' }
   else { Write-Ok 'no su binary present' }
 }
 
 # ------------------------------------------------------------------- gates
 Write-Step 'GATE 1: WebView provider'
-$wv = & $Adb -s $Serial shell 'pm list packages | grep -i webview' 2>$null
-if ($wv -match 'webview') { Write-Ok "WebView packages: $wv" }
-else {
-  Write-Warn 'No WebView package found. AOSP ships only a stub; a real Chromium'
-  Write-Warn 'WebView must be sideloaded before the game can run (gate 1 FAIL).'
-}
+$wv = & $Adb -s $Serial shell pm list packages 2>$null
+$wvHit = $wv | Select-String -Pattern 'webview'
+if ($wvHit) { Write-Ok "WebView packages: $(($wvHit | ForEach-Object { $_.Line.Trim() }) -join ', ')" }
+else { Write-Warn 'No WebView package found (gate 1 FAIL).' }
 
-Write-Step 'GATE 2: WebGL2 probe (must report a HOST GPU, not software)'
-$glScript = 'var c=document.createElement("canvas");var g=c.getContext("webgl2");' +
-            'if(!g){console.log("WEBGL2=NULL");}' +
-            'else{var d=g.getExtension("WEBGL_debug_renderer_info");' +
-            'console.log("WEBGL2=OK");' +
-            'console.log("RENDERER="+(d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)));' +
-            'console.log("VENDOR="+(d?g.getParameter(d.UNMASKED_VENDOR_WEBGL):g.getParameter(g.VENDOR)));' +
-            'console.log("MAX_TEXTURE_SIZE="+g.getParameter(g.MAX_TEXTURE_SIZE));}'
-$glFile = Join-Path $env:TEMP 'webgl-probe.html'
-Set-Content -Path $glFile -Value "<html><body><script>$glScript</script></body></html>" -Encoding UTF8
-& $Adb -s $Serial push $glFile /sdcard/webgl-probe.html 2>&1 | Out-Null
-Write-Ok 'probe pushed to /sdcard/webgl-probe.html'
-Write-Host '          open it in the guest WebView and read console output.' -ForegroundColor DarkGray
-
-Write-Step 'GATE 3: memory high-water mark'
-$meminfo = & $Adb -s $Serial shell dumpsys meminfo 2>$null
-if ($meminfo) {
-  foreach ($pat in @('Total RAM','Used RAM','Free RAM','Lost RAM')) {
-    $l = $meminfo | Select-String -Pattern $pat | Select-Object -First 1
-    if ($l) { Write-Host "          $($l.Line.Trim())" }
+Write-Step 'GATE 2: GLES renderer in the guest (must be the host GPU)'
+$gl = & $Adb -s $Serial shell 'dumpsys SurfaceFlinger' 2>$null
+$glLine = $gl | Select-String -Pattern '^\s*GLES:' | Select-Object -First 1
+if ($glLine) {
+  Write-Host "          $($glLine.Line.Trim())"
+  if ($glLine.Line -match 'Intel|SwiftShader|llvmpipe') {
+    if ($glLine.Line -match 'SwiftShader|llvmpipe') {
+      Write-Warn '  software rasterizer in use - -gpu host is NOT working.'
+    } else {
+      Write-Ok '  hardware GPU confirmed (no SwiftShader/llvmpipe).'
+    }
   }
+} else { Write-Warn '  could not read GLES info' }
+
+Write-Step 'GATE 3: memory'
+$mem = & $Adb -s $Serial shell cat /proc/meminfo 2>$null
+foreach ($k in @('MemTotal','AnonPages','MemAvailable','SwapTotal')) {
+  $l = $mem | Select-String "^\s*$k\s*:" | Select-Object -First 1
+  if ($l) { Write-Host "          $($l.Line.Trim())" }
 }
 
 Write-Step "Instance ready. adb: $Adb -s $Serial shell"
 Write-Step "Profile: ${RamMb}MB guest / ${Cores} cores / gpu=$Gpu"
 if ($Headless) { Write-Host 'Headless: running in background.' -ForegroundColor DarkGray }
+
+
+

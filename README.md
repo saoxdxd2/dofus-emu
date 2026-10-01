@@ -26,14 +26,13 @@ accelerator is operational`.
 > the preferred provider. This is friendlier than predicted â€” but 74 predates
 > most modern WebGL2-era web games, so upgrading it is still worth doing.
 
-### Gate 4 memory (1536 MB guest, WebView shell loaded, no game)
+### Gate 4 memory (1536 MB guest, WebView shell loaded, game NOT installed)
 
 ```
-Total RAM:  2,040,544K   (guest sees ~2 GB at -memory 1536)
-Used RAM:   1,421,123K
-Free RAM:     624,518K
-MemAvailable: 691,348K
-SwapTotal:  1,530,404K   (emulator's built-in swapfile)
+MemTotal:   2,040,548K    (guest sees ~2 GB at -memory 1536)
+AnonPages:    899,572K    <- the number that must fit
+MemAvailable: 782,940K    <- mostly reclaimable page cache, NOT headroom
+SwapTotal:  1,530,404K    (emulator's built-in swapfile)
 ```
 
 Per-process PSS:
@@ -94,6 +93,55 @@ For a 4-instance farm (needs ~8 GB free RAM; see capacity note):
 
 HP 250 G8 Â· Windows 10 IoT LTSC 19044 Â· **i5-1035G1 (4C/8T)** Â· **8 GB RAM** Â·
 Intel UHD iGPU. Java 25 works with `sdkmanager` 12.0.
+
+---
+
+## Known limitations (verified, not assumed)
+
+### `ro.config.low_ram` cannot be set on this image
+
+This is the Android-Go-style flag from the original spec, and it is **not
+reachable at runtime here**. It is in the `ro.*` namespace, so `setprop` fails
+with *Access denied*, and every route into `/system/build.prop` was tried:
+
+| Approach | Result |
+|---|---|
+| `-writable-system` + `adb remount` | Emulator logs `System image is writable`, but the **guest then hangs at boot** — adb stays `device offline`, qemu CPU near-idle (288 s CPU over ~5 min). Reproduced at 1536 MB and again at 1024 MB with 4.3 GB free RAM, so not memory pressure. |
+| `emulator -prop ro.config.low_ram=true` | Boots normally, but `getprop ro.config.low_ram` is **empty** afterwards — the emulator does not inject arbitrary `ro.*` values into this image. |
+| `mount -t overlay` over `/system` from adb root | `mount: 'overlay'->'/mnt': Invalid argument` — the upper dir needs an SELinux label adb's context cannot set. |
+
+Root cause: this image is **system-as-root**. `/` is a read-only ext4 (`dm-2`)
+containing `/system`, `/product` and `/vendor`, so `build.prop` is not writable
+live.
+
+**Consequence:** a permanent `ro.config.low_ram` requires an **offline edit of
+`system.img`** (unpack → edit `build.prop` → repack). `patch-system.ps1`
+therefore applies only the runtime-settable `dalvik.vm.*` properties, which is
+where most of the saving actually is, and reports `ro.config.low_ram` as unset
+rather than pretending otherwise.
+
+### The 768 MB / 1.5 GB question is still open
+
+The earlier "1.5 GB floor" claim was **methodologically wrong** and has been
+withdrawn. It rested on `MemAvailable 691 MB`, but `MemAvailable` is largely
+*reclaimable page cache* — Linux fills spare RAM with cache, so it says nothing
+about headroom. The measurement was also taken on a completely untrimmed guest.
+
+`bench-memory.ps1` has been rewritten to fix this. It now auto-detects APKs
+from `apks\`, applies what trimming is actually possible, and reports:
+
+- **`AnonPages`** — anonymous memory, which genuinely has to fit
+- **page cache separately** — reclaimable, so it must not count as "used"
+- **the guest's real `MemTotal`** — not the requested `-memory`, because the
+  emulator reports more than asked (`-memory 1536` → `MemTotal 2,040,548K`)
+- **pressure events** (`lowmemorykiller`, `oom-kill`, game death) — the real
+  floor signal, rather than a RAM counter
+
+The floor is then the smallest tested level whose status is `OK`.
+
+Note the last real numbers, for reference (1536 MB, untrimmed, WebView shell,
+no game): `AnonPages 899,572 kB`, `MemAvailable 782,940 kB`, `SwapTotal
+1,530,404 kB`.
 
 ---
 
