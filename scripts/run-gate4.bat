@@ -1,11 +1,7 @@
 @echo off
-REM Detached wrapper so the Gate 4 benchmark cannot be killed by a tool timeout.
-REM
-REM NOTE: passing -Levels 768,1024,1536 via `-File` does NOT work. PowerShell's
-REM -File hands the token to the script as a single string, so [int[]] conversion
-REM fails with "Input string was not in a correct format". Start-Process
-REM -ArgumentList is no better - it splits on the comma. Using -Command with an
-REM explicit array expression works, because the values are parsed as real ints.
+REM Final Gate 4 comparison: 768 MB vs 1024 MB vs 1536 MB, full UI strip + zRAM.
+REM -Command with @(768,1024,1536) is required: `-File -Levels 768,1024` hands
+REM the token over as ONE string and [int[]] conversion fails.
 cd /d "%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "& '.\bench-memory.ps1' -Levels @(768,1024,1536) -SettleSec 60"
+  "& '.\bench-memory.ps1' -Levels @(768,1024,1536) -ZramMb 384 -SettleSec 90"

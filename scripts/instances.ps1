@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Phase 0 - Dofus Touch instance runner and feasibility gate harness.
 
@@ -32,7 +32,21 @@
 #>
 [CmdletBinding()]
 param(
-  [int]    $RamMb   = 1536,
+  # PRODUCTION MEMORY FLOOR: 1024 MB.
+  #
+  # Measured on this host (Android 10 x86_64, host GPU passthrough, full trim
+  # including SystemUI/Launcher3/IME removal):
+  #
+  #   768 MB  - game chain ~278 MB, MemAvailable 151 MB, but SwapFree only
+  #             20 MB of 564 MB, i.e. zRAM ~96% saturated. Survives idle, but
+  #             leaves no headroom for WebGL texture churn on a map transition
+  #             and invites kswapd stutter.
+  #   1024 MB - game chain ~278 MB plus the stripped OS fits in uncompressed
+  #             RAM; zRAM stays a safety net and stays idle in normal play.
+  #             This is the standardised production value.
+  #
+  # 1536 MB remains the safe fallback if a build regresses.
+  [int]    $RamMb   = 1024,
   [int]    $Cores   = 2,
   [int]    $Port    = 5554,
   [string] $AvdName = 'dofus',
@@ -57,7 +71,7 @@ if ($Count -gt 1) {
 
 $ErrorActionPreference = 'Stop'
 
-$SdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { 'C:\android-sdk' }
+$SdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path (Split-Path -Parent $PSScriptRoot) 'sdk' }
 $Emu     = Join-Path $SdkRoot 'emulator\emulator.exe'
 $Adb     = Join-Path $SdkRoot 'platform-tools\adb.exe'
 $Img     = Join-Path $SdkRoot 'system-images\android-29\default\x86_64\system.img'

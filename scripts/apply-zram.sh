@@ -49,17 +49,15 @@ if [ ! -e "$ZRAM_DEV" ]; then
     exit 0
 fi
 
-# Prefer lz4: best speed/compression balance for a low-RAM guest. Fall back
-# through the algorithms the kernel actually advertises.
-PREFERRED="lz4 lz4hc zstd deflate"
-CHOOSED=""
-for algo in $PREFERRED; do
-    if grep -qw "$algo" /sys/block/zram0/comp_algorithm 2>/dev/null; then
-        echo "$algo" > /sys/block/zram0/comp_algorithm 2>/dev/null && CHOOSED="$algo" && break
-    fi
-done
-[ -z "$CHOOSED" ] && CHOOSED=$(cat /sys/block/zram0/comp_algorithm 2>/dev/null | tr -d '[]' | cut -d' ' -f1)
-echo "[zram] compression algorithm: $CHOOSED"
+# Pick lz4 if the kernel supports it. NOTE: /sys/block/zram0/comp_algorithm
+# renders as e.g. "lzo [lz4] deflate zstd" where the BRACKETS mark the ACTIVE
+# algorithm. Do not grep the bare word - that matches whichever is merely listed.
+if grep -q '\[lz4\]' /sys/block/zram0/comp_algorithm 2>/dev/null; then
+  echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null
+elif grep -q '\[lzo\]' /sys/block/zram0/comp_algorithm 2>/dev/null; then
+  echo lzo > /sys/block/zram0/comp_algorithm 2>/dev/null
+fi
+echo "[zram] active algorithm: $(cat /sys/block/zram0/comp_algorithm 2>/dev/null)"
 
 # Recreate the device cleanly, then size it.
 echo 1 > /sys/block/zram0/reset 2>/dev/null
@@ -67,7 +65,16 @@ echo "$((ZRAM_SIZE_MB * 1024 * 1024))" > /sys/block/zram0/disksize
 echo "[zram] disksize set to ${ZRAM_SIZE_MB}MB"
 
 mkswap "$ZRAM_DEV" >/dev/null 2>&1 && echo "[zram] mkswap ok"
-swapon "$ZRAM_DEV" 2>/dev/null && echo "[zram] swapon ok" || echo "[zram] swapon FAILED"
+# swapon fails with EBUSY if zram0 is ALREADY attached, which is the NORMAL case
+# on this emulator image - it ships with a 1.5 GB zram0 already in /proc/swaps.
+# That is not a failure; treat "already in /proc/swaps" as success.
+if swapon "$ZRAM_DEV" 2>/dev/null; then
+  echo "[zram] swapon ok"
+elif grep -q zram0 /proc/swaps 2>/dev/null; then
+  echo "[zram] zram0 already active (swapon EBUSY is benign)"
+else
+  echo "[zram] swapon FAILED and zram0 is NOT attached"
+fi
 
 # Swappiness 70, not 100. At 100 the guest reclaims almost eagerly and spends
 # its time compressing/uncompressing instead of running. 70 keeps cold pages

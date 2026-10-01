@@ -92,6 +92,259 @@ For a 4-instance farm (needs ~8 GB free RAM; see capacity note):
 
 ---
 
+## Verified results (2026-10-01, this host)
+
+HP 250 G8 · i5-1035G1 · 8 GB · Intel UHD · API 29 x86_64 · `-gpu host`
+
+| | Value |
+|---|---|
+| Boot time | ~47 s (`Boot completed in 46849 ms`), WHPX acceleration |
+| GPU | `GLES: Google (Intel), Android Emulator OpenGL ES Translator (Intel(R) UHD Graphics), OpenGL ES 3.0 (4.5.0)` — hardware, no SwiftShader |
+| **Production floor** | **1024 MB** (locked into `instances.ps1` / `start-farm.ps1`) |
+| 768 MB | Viable only with the UI strip. `SwapFree` falls to ~20 MB of 564 MB (~96% saturated), so no headroom for texture churn. |
+| 1024 MB | Game + stripped OS fit in uncompressed RAM; zRAM stays a safety net. |
+
+Measured at 1024 MB, game running, full trim applied:
+
+```
+MemTotal      1,009,896 kB      MemAvailable   340,040 kB
+AnonPages       335,820 kB      SwapFree       416,936 kB / 757,416 kB
+```
+
+Game chain ≈ **278 MB** (Chromium sandbox ~146 MB + app ~92 MB + webview_zygote).
+
+### The single biggest win: stripping the UI layer
+
+Before this, a trimmed 768 MB guest still died at launch:
+
+```
+lowmemorykiller: Reclaimed 0kB, cache(142992kB) and free(202624kB)
+-reserved(68980kB) below min(221184kB) for oom_adj 900
+Process com.ankama.dofustouch (pid 4566) has died
+```
+
+Three processes were consuming **~135 MB of PSS that a fullscreen immersive
+WebGL game never draws**:
+
+| Process | PSS |
+|---|---|
+| `com.android.systemui` | 56,136 kB |
+| `com.android.launcher3` | 53,968 kB |
+| `com.android.inputmethod.latin` | 25,369 kB |
+
+After `pm disable-user` on all three plus `pkill systemui`, the game runs
+stably at 768 MB and comfortably at 1024 MB. **SurfaceFlinger is deliberately
+left running** (~21 MB): stopping it tears down the display transport adb rides
+on, and the guest drops "offline" for the rest of the trim sequence.
+
+---
+
+## Golden image: one trim, N instances
+
+Everything instance-scoped lives in `/data`, not in the read-only
+`system.img`, so it can be captured once:
+
+```
+pm disable-user  ->  /data/system/users/0/package-restrictions.xml
+settings put      ->  /data/system/users/0/settings_secure.xml
+device_config put ->  /data/system/users/0/device_config.xml
+appops set        ->  /data/system/users/0/appops.xml
+HOME selection    ->  /data/system/users/0/package-restrictions.xml
+installed APKs    ->  /data/app/*
+dexopt artifacts  ->  /data/dalvik-cache/*
+```
+
+```powershell
+# once
+.\scripts\make-golden-image.ps1 -RamMb 1024      # -> userdata-golden.img (~80 MB qcow2)
+```
+
+New instances copy that file over their `userdata-qemu.img.qcow2` before first
+boot. `cluster-manager.ps1 -Action Create` does this automatically.
+
+Two subtleties that are easy to get wrong:
+
+- **Capture the overlay, not the raw disk.** A running emulator writes to
+  `userdata-qemu.img.qcow2` and leaves `userdata-qemu.img` as an untouched
+  factory image. Copying the raw file yields a "golden image" that is silently
+  empty. `make-golden-image.ps1` flattens overlay + backing with
+  `qemu-img convert` instead.
+- **The output must be qcow2, not raw.** The emulator's bundled `qemu-img` has a
+  32-bit write path and fails with `Input/output error` at exactly byte
+  2147483648 (2 GiB) when emitting raw. The flattened image is therefore a
+  self-contained qcow2 of ~80 MB rather than a 6 GB raw disk.
+
+**What the golden image cannot capture** — kernel/init runtime state, gone on
+every reboot, so `scripts\boot-instance.ps1` re-applies it in a few seconds:
+
+1. zRAM + `vm.swappiness` / `vm.page-cluster` / `vm.vfs_cache_pressure`
+2. init service stops (statsd, traced, traced_probes, incidentd, rild,
+   cameraserver, drmserver)
+3. anything under `/sys`
+
+That split is the whole design: **the slow, fragile half is captured once;
+the fast, stable half runs per boot.** Verified — a cold boot from the golden
+image brought up Dofus Touch focused on `MainActivity` with 22 packages
+disabled and **zero trim commands**.
+
+---
+
+## Multi-instance farm
+
+```powershell
+# 1. provision (one AVD per instance, each seeded from the golden image)
+.\scripts\cluster-manager.ps1 -Action Create -Count 2 -RamMb 1024 -Cores 2
+
+# 2. launch + auto-arrange
+.\scripts\start-farm.ps1 -Count 2
+```
+
+Each instance gets its **own AVD** (`dofus-01`, `dofus-02`, ...), its own
+console/adb port pair and a stable MAC:
+
+| Instance | Console | adb serial | MAC |
+|---|---|---|---|
+| dofus-01 | 5554 | emulator-5554 | 52:54:00:00:00:01 |
+| dofus-02 | 5556 | emulator-5556 | 52:54:00:00:00:02 |
+| dofus-03 | 5558 | emulator-5558 | 52:54:00:00:00:03 |
+| dofus-04 | 5560 | emulator-5560 | 52:54:00:00:00:04 |
+
+Separate AVDs are mandatory — two emulators sharing one AVD share one
+`/data` and will corrupt each other.
+
+### Adaptive window layout
+
+`scripts\layout.ps1` places the windows with Win32 `MoveWindow`:
+
+| Count | Layout |
+|---|---|
+| 1 | single maximised window |
+| 2 | side by side |
+| 3 | two on top, one full-width below |
+| 4 | clean 2x2 quad |
+| 5+ | even grid, tiles fill the work area exactly |
+
+Geometry comes from the **host** at runtime (`Screen.WorkingArea`), so it adapts
+to any monitor instead of assuming a resolution. Re-apply at any time with the
+GUI's **Re-layout** button or `Set-FarmLayout`.
+
+> The emulator is launched minimised. Windows must be restored
+> (`SW_RESTORE`) before `MoveWindow`, otherwise the call succeeds but the window
+> stays parked at `-32000,-32000` and the farm looks like it never launched.
+
+### Which window to move
+
+The emulator exposes **two visible top-level windows**, and only one is the game:
+
+| Process | Class | What it is |
+|---|---|---|
+| `emulator.exe` | `ConsoleWindowClass` | the **log console** — hidden automatically |
+| `qemu-system-x86_64.exe` | `Qt...QWindowIcon` ("Android Emulator - …") | the **device** — this is what gets tiled |
+
+`Get-RenderWindow` walks the launcher process tree and picks the Qt window.
+Using `MainWindowHandle` instead returns the console, which is why an earlier
+version resized the log window and left the game untouched.
+
+### Everything is derived from the host
+
+No hardcoded machine constants. `start-farm.ps1` reads RAM and CPU from
+`Win32_ComputerSystem` and derives guest RAM, cores and a sustainable instance
+count:
+
+- **guest RAM**: 1024 MB on small hosts, 1536 MB on 16 GB, 2048 MB on 32 GB+
+- **cores**: `min(4, (hostCores - 2) / instances)`, leaving the host headroom
+- **count**: bounded by free RAM (after a 2.5–4 GB host reserve) and by CPU
+
+Override anything explicitly, or use `-Auto` to clamp to what the host can
+sustain. The same capacity logic drives the GUI's instance hint.
+
+### Verified
+
+Two instances (`dofus-01`, `dofus-02`) booted concurrently from the golden
+image and stayed stable: both with the game focused on `MainActivity`, 22
+packages disabled each, windows placed at `0,0 681x768` and `685,0 681x768`.
+
+---
+
+## CPU budget
+
+```powershell
+.\scripts\cpu-budget.ps1 -Serial emulator-5554 -Measure
+```
+
+### Verified ABI
+
+The game runs **natively on x86_64** — `oat/x86_64`, `primaryCpuAbi=null`, and
+no `libndk_translation` / houdini packages installed. There is no ARM→x86
+translation layer contributing overhead.
+
+### Frame cap
+
+`qemu.vsync = 30` (and `hw.lcd.vsync = 30`) is honoured. Confirmed in the guest:
+
+```
+dumpsys SurfaceFlinger -> VSYNC period: 33333333 ns   (= exactly 30 FPS)
+```
+
+Dofus Touch is turn-based isometric, so a 60 FPS loop redraws an unchanged
+scene. Note `debug.sf.fps` / `debug.choreographer.fps` are **debug properties
+and are ignored on a user build** — `cpu-budget.ps1` reports that rather than
+pretending the `setprop` did something.
+
+### Measured, on 1 vCPU
+
+| Config | Host CPU |
+|---|---|
+| 2 vCPUs (before) | **215%** |
+| 1 vCPU `-smp 1` + audio off + vsync 30 | **~115% of the qemu process** |
+
+Guest-side on 1 vCPU: `100%cpu 25%user 4%nice 61%sys 11%idle`, with the top
+consumer at ~3% (`zygote64`). The game itself is *not* CPU-bound.
+
+**Remaining bottleneck: kernel (`sys`) time is ~50-60% of the single vCPU.**
+That is the emulator's host/guest boundary — every frame crosses the virtio
+pipe and is translated by QEMU's TCG, and the glpipe/gfxstream translator
+calls back into the host. It is not JavaScript, not WebView raster and not an
+ARM translation layer. With WHPX the vCPU work is hardware-accelerated, but
+the I/O and GL translation paths still consume guest kernel time.
+
+`-cpu host` is **not usable** here: it prevents WHPX from attaching and the
+guest never comes up (no adb device). It is exposed as `-HostCpu` but defaults
+off for that reason.
+
+### What the budget script does
+
+1. verifies the ABI is native x86_64 (and flags a regression)
+2. stops the audio service
+3. ignores `RUN_IN_BACKGROUND` for `com.android.phone`
+4. reports the vsync cap (applies on next boot)
+5. writes `/data/local/tmp/webview-command-line` with
+   `--enable-gpu-rasterization --ignore-gpu-blocklist`
+6. confirms the host GLES renderer
+
+`--enable-zero-copy` is deliberately omitted: it only applies where a working
+dma-buf path exists and is ignored elsewhere, so including it would look
+configured while doing nothing.
+
+---
+
+## Bootstrap a clean clone
+
+```bat
+setup.bat
+```
+
+Downloads Google's `commandlinetools-win`, installs `platform-tools`,
+`emulator` and `system-images;android-29;default;x86_64` into `<repo>\sdk`
+(live progress + ETA), writes the SDK license hashes, builds the golden image
+and runs `verify-install.ps1`. Flags: `-SkipGolden`, `-SkipVerify`,
+`-ForceDownload`. Re-running is safe — each stage is skipped if satisfied.
+
+GUI alternative: `.\scripts\gui-manager.ps1` — instance table with live state,
+RAM tier picker, Create/Delete, Launch Farm, Stop All, Re-layout.
+
+---
+
 ## Locked architecture
 
 | Decision | Value | Why |

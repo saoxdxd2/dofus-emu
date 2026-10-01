@@ -19,7 +19,7 @@ REM Optional 1st argument overrides the SDK target directory:
 REM   download-artifacts.bat  [C:\some\sdk\path]
 setlocal
 if not "%~1"=="" set "SDK=%~1"
-if not defined SDK set SDK=C:\android-sdk
+if not defined SDK set SDK=%~dp0..\sdk
 set DL=%TEMP%\dl
 if not exist "%DL%" mkdir "%DL%"
 

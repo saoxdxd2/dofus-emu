@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Apply the low-RAM profile to a booted guest.
 
@@ -48,7 +48,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$SdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { 'C:\android-sdk' }
+$SdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path (Split-Path -Parent $PSScriptRoot) 'sdk' }
 $Adb     = Join-Path $SdkRoot 'platform-tools\adb.exe'
 
 function Write-Step($m) { Write-Host "[patch] $m" -ForegroundColor Cyan }
@@ -157,19 +157,16 @@ foreach ($s in $Serials) {
       ForEach-Object { Write-Host "    $_" }
   }
 
-  # --- 3. dalvik.vm.* (runtime-settable: where the real saving is) ---------
-  Write-Step '  applying dalvik.vm.* limits (settable at runtime)'
-  $dprops = [ordered]@{
-    'dalvik.vm.heapgrowthlimit' = "${HeapMb}m"
-    'dalvik.vm.heapstartupsize' = '32m'
-    'dalvik.vm.heapminfree'     = '2m'
-  }
-  foreach ($k in $dprops.Keys) {
-    & $Adb -s $s shell "setprop $k $($dprops[$k])" | Out-Null
-    $got = (& $Adb -s $s shell "getprop $k" 2>$null) -replace "`r",''
-    if ($got -eq $dprops[$k]) { Write-Ok "  $k = $got" }
-    else { Write-Warn "  $k read back as '$got'" }
-  }
+  # --- 3. dalvik.vm.* ------------------------------------------------------
+  # ART heap caps are DELIBERATELY NOT APPLIED. Setting
+  # dalvik.vm.heapgrowthlimit=192m caused Dofus Touch to crash on launch:
+  #   java.lang.OutOfMemoryError: Failed to allocate a 7193688 byte allocation
+  #   ... target footprint 16777216, growth limit 16777216
+  #   at org.apache.cordova.file.FileUtils$25.run
+  # The app does not declare android:largeHeap and Cordova's startup JSON parse
+  # needs more than the ~16 MB it was left with. dalvik.vm.heapsize already
+  # defaults to 512m here, so ART is left to manage its own heap.
+  Write-Ok '  ART heap left at image defaults (dalvik.vm.heapsize = 512m)'
 
   # --- 4. report -----------------------------------------------------------
   Write-Step '  current guest state:'

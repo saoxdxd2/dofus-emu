@@ -10,7 +10,7 @@ REM   zipalign, apksigner - align and sign with a debug key
 REM
 REM Output: launcher\build\DofusLauncher.apk
 setlocal enabledelayedexpansion
-set SDK=C:\android-sdk
+set SDK=%~dp0..\sdk
 set L=%~dp0..\launcher
 set OUT=%L%\build
 set TMP=%OUT%\tmp

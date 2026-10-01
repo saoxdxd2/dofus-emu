@@ -19,3 +19,9 @@ scripts/gate4-memory.csv
 .idea/
 *.iml
 .vscode/
+
+# SDK installed by install.ps1 / INSTALL.bat (~4.6 GB)
+sdk/
+
+# Golden userdata image (6 GB) from scripts/make-golden-image.ps1
+userdata*.img

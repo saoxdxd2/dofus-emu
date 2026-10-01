@@ -21,10 +21,17 @@
 #>
 [CmdletBinding()]
 param(
-  [string] $InstallDir = 'C:\android-sdk',
+  # Default to the in-repo SDK (or $env:ANDROID_SDK_ROOT), never a machine-
+  # specific absolute path, so a clone is portable.
+  [string] $InstallDir = '',
   [int]    $Count = 1,
   [int]    $RamMb = 1536
 )
+
+if (-not $InstallDir) {
+  $repo = Split-Path -Parent $PSScriptRoot
+  $InstallDir = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $repo 'sdk' }
+}
 
 $ErrorActionPreference = 'Continue'
 $fail = 0

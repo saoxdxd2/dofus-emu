@@ -1,7 +1,0 @@
-adb.exe : setprop: Need 2 arguments (see "setprop --help")
-At C:\Users\sao\Documents\dofus-emu\scripts\bench-memory.ps1:123 char:8
-+   $o = & $Adb -s $Serial @argsArr 2>&1
-+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (setprop: Need 2...etprop --help"):String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 

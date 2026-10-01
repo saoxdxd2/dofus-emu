@@ -37,7 +37,7 @@
 #>
 [CmdletBinding()]
 param(
-  [string] $InstallDir = 'C:\android-sdk',
+  [string] $InstallDir = '',
   [string] $AvdName    = 'dofus',
   [int]    $RamMb      = 1536,
   [int]    $Cores      = 2,
@@ -50,6 +50,9 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Default the SDK inside the repo so the project is fully portable and can be
+# copied to another machine without reinstalling anything.
+if (-not $InstallDir) { $InstallDir = Join-Path $RepoRoot 'sdk' }
 $Sdk      = $InstallDir
 
 function Write-Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
@@ -70,7 +73,7 @@ function Test-Admin {
 if (-not (Test-Admin)) {
   Write-Host "`nAdministrator privileges are required. Re-launching elevated..." -ForegroundColor Yellow
   $elev = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$($MyInvocation.MyCommand.Path)`"")
-  if ($InstallDir -ne 'C:\android-sdk') { $elev += @('-InstallDir', $InstallDir) }
+  if ($InstallDir) { $elev += @('-InstallDir', $InstallDir) }
   if ($AvdName    -ne 'dofus')        { $elev += @('-AvdName', $AvdName) }
   if ($RamMb      -ne 1536)           { $elev += @('-RamMb', $RamMb) }
   if ($Cores      -ne 2)              { $elev += @('-Cores', $Cores) }

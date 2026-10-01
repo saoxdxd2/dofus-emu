@@ -1,9 +1,12 @@
 @echo off
 REM Phase 0 - SDK bootstrap: platform-tools, emulator, API 29 x86_64 system image.
+REM NOTE: the SDK lives INSIDE the repo at <repo>\sdk so a clone is portable.
 setlocal
-set ANDROID_SDK_ROOT=C:\android-sdk
-set ANDROID_HOME=C:\android-sdk
-set PATH=%ANDROID_SDK_ROOT%\platform-tools;%PATH%
+set "REPO=%~dp0.."
+for %%I in ("%REPO%") do set "REPO=%%~fI"
+set "ANDROID_SDK_ROOT=%REPO%\sdk"
+set "ANDROID_HOME=%ANDROID_SDK_ROOT%"
+set "PATH=%ANDROID_SDK_ROOT%\platform-tools;%PATH%"
 
 REM Accept all SDK licenses.
 REM NOTE: piping "y" into sdkmanager does not work reliably here -- the prompt

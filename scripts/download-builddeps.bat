@@ -14,7 +14,7 @@ REM
 REM Unlike the emulator, both of these ship a package.xml, so no metadata needs
 REM synthesising.
 setlocal
-set SDK=C:\android-sdk
+set SDK=%~dp0..\sdk
 set DL=%TEMP%\dl2
 set BASE=https://dl.google.com/android/repository
 if not exist "%DL%" mkdir "%DL%"
