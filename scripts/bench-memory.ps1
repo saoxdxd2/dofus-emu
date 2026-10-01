@@ -70,19 +70,54 @@ function Write-Warn($m) { Write-Host "[warn]  $m" -ForegroundColor Yellow }
 function Write-Err($m)  { Write-Host "[FAIL]  $m" -ForegroundColor Red }
 
 # ------------------------------------------------------ APK auto-detection
+#
+# The game ships as an APKM bundle (.apkm), NOT a plain APK. An .apkm is a ZIP
+# container holding base.apk plus split_config.*.apk resource splits.
+# `adb install` cannot take it, and installing base.apk ALONE risks
+# Resources$NotFoundException at runtime when a density or string split is
+# missing. So we expand it and install base + all splits in ONE atomic
+# `install-multiple` transaction. The splits total ~1 MB and cost no active RAM.
+#
+# META-INF\ and info.json are APKMirror packaging metadata and are ignored.
 function Find-Apk($pattern, $label) {
   if (-not (Test-Path $ApkDir)) { return $null }
   $hit = Get-ChildItem $ApkDir -Filter $pattern -File -ErrorAction SilentlyContinue |
          Select-Object -First 1
   if ($hit) { Write-Ok "found $label : $($hit.Name) ($([math]::Round($hit.Length/1MB,1)) MB)"; return $hit.FullName }
-  Write-Warn "no $label in $ApkDir"
   return $null
 }
 
 Write-Step "APK auto-detection in $ApkDir"
-$GameApk   = Find-Apk 'dofustouch*.apk' 'game'
-$WebViewApk = Find-Apk 'webview*.apk'    'webview'
+
+$GameApk = Find-Apk 'dofustouch*.apk'            'game (apk)'
+if (-not $GameApk) { $GameApk = Find-Apk 'com.ankama.dofustouch*.apk' 'game (apk)' }
+if (-not $GameApk) { $GameApk = Find-Apk '*dofustouch*.apkm'            'game (apkm bundle)' }
+if (-not $GameApk) { Write-Warn 'no Dofus Touch APK/APKM in apks\ - OS-only measurement' }
+
+$WebViewApk  = Find-Apk 'webview*.apk'       'webview'
 $LauncherApk = Find-Apk 'DofusLauncher*.apk' 'launcher'
+if (-not $LauncherApk) {
+  $built = Join-Path $RepoRoot 'launcher\build\DofusLauncher.apk'
+  if (Test-Path $built) { $LauncherApk = $built; Write-Ok "launcher (prebuilt): $built" }
+}
+
+# Resolve the game into the list of APKs to install together.
+$GameApkList = @()
+if ($GameApk -and $GameApk -like '*.apkm') {
+  $ex = Join-Path $env:TEMP 'dofus_extracted'
+  if (Test-Path $ex) { Remove-Item $ex -Recurse -Force }
+  New-Item -ItemType Directory -Force -Path $ex | Out-Null
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  Write-Step '  expanding .apkm bundle'
+  [System.IO.Compression.ZipFile]::ExtractToDirectory($GameApk, $ex)
+  $apks = Get-ChildItem $ex -Filter '*.apk' -File -ErrorAction SilentlyContinue
+  $GameApkList = $apks.FullName
+  $hasBase = $apks | Where-Object { $_.Name -eq 'base.apk' }
+  if (-not $hasBase) { Write-Warn '  no base.apk inside bundle!' }
+  else { Write-Ok "  base.apk $([math]::Round($hasBase.Length/1MB,1)) MB + $($apks.Count-1) splits" }
+} elseif ($GameApk) {
+  $GameApkList = @($GameApk)
+}
 
 function Invoke-Adb($argsArr) {
   $o = & $Adb -s $Serial @argsArr 2>&1
@@ -160,12 +195,32 @@ foreach ($mb in $Levels) {
   # --- install APKs --------------------------------------------------------
   # -wipe-data resets userdata every level, so this MUST run each iteration or
   # the next level loses the game and monkey aborts with "No activities found".
-  if ($WebViewApk)   { Write-Step '  install webview';  Invoke-Adb @('install','-r','-g',$WebViewApk)   | Out-Null }
-  if ($GameApk)     { Write-Step '  install game';    Invoke-Adb @('install','-r','-g',$GameApk)     | Out-Null }
+  if ($WebViewApk)   { Write-Step '  install webview';  Invoke-Adb @('install','-r','-g',$WebViewApk) | Out-Null }
   if ($LauncherApk) { Write-Step '  install launcher'; Invoke-Adb @('install','-r','-g',$LauncherApk) | Out-Null }
+
+  if ($GameApkList.Count -gt 0) {
+    Write-Step "  installing game ($($GameApkList.Count) APKs, ONE atomic transaction)"
+    # base.apk + splits MUST go in together. install-multiple is atomic, so a
+    # partial split set fails cleanly rather than installing a broken app.
+    $ins = Invoke-Adb (@('install-multiple','-r','-g') + $GameApkList)
+    if ($ins -match 'Success') { Write-Ok '  game installed (base + all splits)' }
+    else { Write-Warn "  install-multiple: $ins" }
+    # Clean up the extraction directory once installed.
+    if ($GameApk -and $GameApk -like '*.apkm') {
+      $ex = Join-Path $env:TEMP 'dofus_extracted'
+      if (Test-Path $ex) { Remove-Item $ex -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+  } else {
+    Write-Warn '  no game APK to install'
+  }
 
   $haveGame = Invoke-Adb @('shell','pm','list','packages',$GamePkg)
   Write-Host "    game installed: $([bool]$haveGame)"
+  if ($haveGame) {
+    # Show the actual apk paths so a partial/odd install is visible.
+    $paths = Invoke-Adb @('shell','pm','path',$GamePkg)
+    Write-Host "    pm path -> $(($paths -replace "`r",'') -join ' ')"
+  }
 
 
   # --- apply the trims -----------------------------------------------------
@@ -210,12 +265,44 @@ foreach ($mb in $Levels) {
     if ($lr -match 'true') { Write-Host '      ro.config.low_ram active' }
     else { Write-Host '      ro.config.low_ram NOT set (unavailable on this image)' }
 
-    # e) Disable non-essential packages.
-    foreach ($pkg in @('com.android.printspooler','com.android.wallpaper.livepicker','com.android.dreams.basic')) {
+    # e) Telemetry / tracing daemons. All require adb root - `stop` answers
+    #    "must be root" otherwise. NOTE the service is `rild`, NOT `ril-daemon`
+    #    (that name returns nothing). Measured gain from this group alone was
+    #    ~180 MB on this image.
+    foreach ($svc in @('statsd','traced','traced_probes','incidentd','rild')) {
+      $chk = Invoke-Adb @('shell','service','check',$svc)
+      if ($chk -match 'found') { Invoke-Adb @('shell','stop',$svc) | Out-Null }
+    }
+
+    # f) Disable non-essential packages. Deliberately EXCLUDES
+    #    android.process.acore: it is the account manager with a framework
+    #    dependency, and disabling it risks focus-stealing crash dialogs.
+    foreach ($pkg in @('com.android.phone','com.android.providers.telephony',
+                       'com.android.cellbroadcastreceiver','com.android.dialer',
+                       'com.android.printspooler','com.android.wallpaper.livepicker',
+                       'com.android.dreams.basic')) {
       Invoke-Adb @('shell','pm','disable-user','--user','0',$pkg) | Out-Null
     }
 
-    # f) DofusLauncher as HOME so Launcher3 is not resident.
+    # g) Keyguard / logcat / VFS cache reclaim.
+    #    persist.sys.lockscreen.disable is deliberately NOT set: it is accepted
+    #    but is a no-op on Android 10. locksettings is the real mechanism.
+    Invoke-Adb @('shell','locksettings','set-disabled','true') | Out-Null
+    Invoke-Adb @('shell','logcat','-G','64K') | Out-Null
+    Invoke-Adb @('shell','echo 200 > /proc/sys/vm/vfs_cache_pressure') | Out-Null
+
+    # h) Lock the guest display to a standard 16:9 profile.
+    #    Dofus Touch draws on a fixed isometric map grid with CSS-pixel scaling.
+    #    Arbitrary/dynamic resolutions cause pillarboxing and shrink UI icons,
+    #    so we pin 1280x720 at tvdpi (213 dpi) rather than leaving it to the
+    #    device profile. Host-side QEMU window scaling is a separate concern.
+    Invoke-Adb @('shell','wm','size','1280x720') | Out-Null
+    Invoke-Adb @('shell','wm','density','213') | Out-Null
+    $sz = Invoke-Adb @('shell','wm','size')
+    $dn = Invoke-Adb @('shell','wm','density')
+    Write-Host "      display: $sz / $dn"
+
+    # i) DofusLauncher as HOME so Launcher3 is not resident.
     $apk = Join-Path $RepoRoot 'launcher\build\DofusLauncher.apk'
     if (-not $LauncherApk -and (Test-Path $apk)) { $LauncherApk = $apk }
     if ($LauncherApk) {
@@ -283,6 +370,19 @@ foreach ($mb in $Levels) {
   Write-Host '    top processes (PSS, KB):'
   foreach ($t in $top) { Write-Host ("        {0,-45} {1,8}" -f $t.Key, $t.Value) }
 
+  # Dofus Touch is a Cordova app: the real cost is the game process plus the
+  # Chromium renderer/GPU processes it spawns. Report them explicitly.
+  $gamePSS = 0
+  foreach ($k in @('com.ankama.dofustouch','webview','chrome','org.chromium')) {
+    foreach ($e in $pss.GetEnumerator()) {
+      if ($e.Key -like "*$k*") {
+        $gamePSS += $e.Value
+        Write-Host ("        GAME-CHAIN {0,-40} {1,8} KB" -f $e.Key, $e.Value)
+      }
+    }
+  }
+  Write-Host ("        GAME-CHAIN TOTAL {0,8} KB ({1} MB)" -f $gamePSS, [math]::Round($gamePSS/1024,1))
+
   $status = if (-not $stab.StillBooted) { 'CRASHED/REBOOTED' }
             elseif ($stab.LowMemKills -gt 0)  { "OK but $($stab.LowMemKills) low-mem kills" }
             elseif (-not $gameRunning -and -not $SkipGame -and $haveGame) { 'GAME DIED' }
@@ -293,7 +393,9 @@ foreach ($mb in $Levels) {
     GuestTotalMB = $mem.MemTotalMB
     AnonMB       = $mem.AnonMB
     CacheMB      = $mem.CacheMB
+    AvailMB      = $mem.AvailableMB
     HostWSMB     = [math]::Round($hostWS/1MB,0)
+    GamePSSMB    = [math]::Round($gamePSS/1024,1)
     GameRunning  = $gameRunning
     LowMemKills  = $stab.LowMemKills
     Status       = $status
