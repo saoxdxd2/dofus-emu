@@ -66,8 +66,9 @@ Double-click **`INSTALL.bat`** as Administrator. It installs everything,
 creates the AVDs, and reports whether a reboot is needed. Then:
 
 ```powershell
-.\scripts\instances.ps1                  # start one instance
 .\scripts\verify-install.ps1             # diagnose any machine (read-only)
+.\scripts\instances.ps1                  # start one instance
+.\scripts\instances.ps1 -Count 2         # multiple (delegates to start-farm.ps1)
 ```
 
 For a 4-instance farm (needs ~8 GB free RAM; see capacity note):
