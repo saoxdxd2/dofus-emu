@@ -68,33 +68,58 @@ Write-Stage 'Google command line tools'
 $cmdRoot = Join-Path $SdkRoot 'cmdline-tools\latest'
 $sdkman  = Join-Path $cmdRoot 'bin\sdkmanager.bat'
 
+function Invoke-DownloadWithProgress([string]$Url, [string]$OutputFile) {
+  $req = [System.Net.HttpWebRequest]::Create($Url)
+  $req.Method = "GET"
+  $req.UserAgent = "Mozilla/5.0"
+  $resp = $req.GetResponse()
+  $totalBytes = $resp.ContentLength
+  $stream = $resp.GetResponseStream()
+  $fileStream = [System.IO.File]::Create($OutputFile)
+  
+  $buffer = New-Object byte[] 65536
+  $totalRead = 0
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  
+  try {
+    while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+      $fileStream.Write($buffer, 0, $bytesRead)
+      $totalRead += $bytesRead
+      
+      $elapsedSec = $sw.Elapsed.TotalSeconds
+      if ($elapsedSec -gt 0.2) {
+        $speedBytesPerSec = $totalRead / $elapsedSec
+        $speedMB = $speedBytesPerSec / 1MB
+        $receivedMB = $totalRead / 1MB
+        $totalMB = $totalBytes / 1MB
+        $remainingBytes = [math]::Max(0, $totalBytes - $totalRead)
+        $etaSec = if ($speedBytesPerSec -gt 0) { [int]($remainingBytes / $speedBytesPerSec) } else { 0 }
+        $etaStr = [TimeSpan]::FromSeconds($etaSec).ToString("mm\:ss")
+        $pct = if ($totalBytes -gt 0) { [math]::Round(($totalRead / $totalBytes) * 100, 1) } else { 0 }
+        
+        Write-Host ("`r   Downloading: {0:N1} MB / {1:N1} MB ({2:N1}%) | {3:N2} MB/s | ETA: {4} " -f $receivedMB, $totalMB, $pct, $speedMB, $etaStr) -NoNewline -ForegroundColor Cyan
+      }
+    }
+    Write-Host ""
+  }
+  finally {
+    $fileStream.Dispose()
+    $stream.Dispose()
+    $resp.Dispose()
+  }
+}
+
 if ((Test-Path $sdkman) -and -not $ForceDownload) {
   Write-Ok "already present: $cmdRoot"
 } else {
   $url = 'https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip'
-  $zip = Join-Path $env:TEMP 'commandlinetools-win.zip'
   $dlDir = Join-Path $SdkRoot 'dl'
   New-Item -ItemType Directory -Force -Path $dlDir | Out-Null
   $zipOut = Join-Path $dlDir 'commandlinetools-win.zip'
 
   Step "downloading commandlinetools-win (~130 MB) -> $url"
   try {
-    # ShowLastActiveRecord renders a live progress bar with percentage + ETA.
-    $job = Start-Job -ScriptBlock {
-      param($u, $o)
-      $ProgressPreference = 'SilentlyContinue'
-      Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing
-    } -ArgumentList $url, $zipOut
-    while ($job.State -eq 'Running') {
-      if (Test-Path $zipOut) {
-        $mb = [math]::Round((Get-Item $zipOut).Length / 1MB, 1)
-        Write-Host ("`r   downloading... {0} MB" -f $mb) -NoNewline -ForegroundColor DarkGray
-      }
-      Start-Sleep -Milliseconds 500
-    }
-    Receive-Job $job -EA SilentlyContinue | Out-Null
-    Remove-Job $job -Force -EA SilentlyContinue
-    Write-Host ''
+    Invoke-DownloadWithProgress -Url $url -OutputFile $zipOut
   } catch {
     Write-Err "download failed: $($_.Exception.Message)"
     Write-Host '   Fall back to a browser: https://developer.android.com/studio#command-tools' -ForegroundColor Yellow
@@ -122,9 +147,6 @@ if ((Test-Path $sdkman) -and -not $ForceDownload) {
 
 # ============================================================== 3. licenses
 Write-Stage 'SDK licenses'
-# Piping "y" into sdkmanager does not satisfy its prompt on this host (it still
-# reports "license is not accepted"), so write the accepted-license hash files
-# directly. This is byte-for-byte what `sdkmanager --licenses` produces.
 $lic = Join-Path $SdkRoot 'licenses'
 New-Item -ItemType Directory -Force -Path $lic | Out-Null
 Set-Content -Path (Join-Path $lic 'android-sdk-license') -Encoding ASCII -Value @(
@@ -142,14 +164,12 @@ $packages = @('platform-tools', 'emulator', 'system-images;android-29;default;x8
 if (-not $need) {
   Write-Ok 'all required packages already installed'
 } else {
-  Step "sdkmanager --install $($packages -join ', ')"
+  Step "sdkmanager --install $($packages -join ', ') (silent)"
   $env:ANDROID_SDK_ROOT = $SdkRoot
   $env:ANDROID_HOME     = $SdkRoot
-  & $sdkman --sdk_root="$SdkRoot" --install @packages 2>&1 | ForEach-Object {
-    # sdkmanager writes progress with CR; keep only meaningful lines.
-    if ($_ -match '\S' -and $_ -notmatch '^\s*$') { Write-Host "   $_" -ForegroundColor DarkGray }
-  }
-  if ($LASTEXITCODE -ne 0) { Write-Err "sdkmanager exited $LASTEXITCODE"; exit 1 }
+  $p = Start-Process -FilePath $sdkman -ArgumentList (@("--sdk_root=$SdkRoot", "--install") + $packages) -NoNewWindow -PassThru -Wait
+  if ($p.ExitCode -ne 0) { Write-Err "sdkmanager exited $($p.ExitCode)"; exit 1 }
+  Write-Ok "SDK packages installed silently"
 }
 
 foreach ($p in @(@{n='platform-tools'; p=$adb}, @{n='emulator'; p=$emu}, @{n='system-image'; p=$img})) {
@@ -168,13 +188,16 @@ if ($SkipGolden) {
   if (-not (Test-Path (Join-Path $env:USERPROFILE '.android\avd\dofus.ini'))) {
     Step 'creating base AVD "dofus"'
     $avdman = Join-Path $cmdRoot 'bin\avdmanager.bat'
-    # `echo no |` suppresses the interactive "custom hardware profile" prompt.
-    cmd /c "echo no | `"$avdman`" create avd -n dofus -k `"system-images;android-29;default;x86_64`" -f" 2>&1 |
-      ForEach-Object { if ($_ -match '\S') { Write-Host "   $_" -ForegroundColor DarkGray } }
+    cmd /c "echo no | `"$avdman`" create avd -n dofus -k `"system-images;android-29;default;x86_64`" -f" 2>&1 | Out-Null
   }
-  Step 'running make-golden-image.ps1 (boots once, trims, installs the game, ~10 min)'
-  & (Join-Path $PSScriptRoot 'make-golden-image.ps1') -RamMb 1024 -Force
+  Step 'running initial build-golden-userdata.ps1 provisioning pass once (~10 min)'
+  $buildGolden = Join-Path $PSScriptRoot 'build-golden-userdata.ps1'
+  if (-not (Test-Path $buildGolden)) {
+    $buildGolden = Join-Path $PSScriptRoot 'make-golden-image.ps1'
+  }
+  & $buildGolden -RamMb 1024 -Force
   if ($LASTEXITCODE -ne 0) { Write-Err 'golden image build failed'; exit 1 }
+  Write-Ok 'golden userdata image built successfully'
 }
 
 # ============================================================== 6. verify

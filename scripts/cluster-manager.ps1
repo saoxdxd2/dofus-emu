@@ -28,13 +28,14 @@
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('Create','Start','Stop','Status','Provision')]
+  [ValidateSet('Create','Start','Stop','Status','Provision','Normalize')]
   [string]   $Action = 'Status',
   [ValidateRange(1,4)] [int] $Count = 4,
-  [int]      $RamMb    = 1536,
+  [int]      $RamMb    = 1024,
   [int]      $Cores    = 2,
   [int]      $BasePort = 5554,
   [string]   $AvdName  = 'dofus',
+  [string]   $GoldenImgPath = '',
   [string]   $Gpu      = 'host',
   [int]      $Vsync    = 30,
   [switch]   $HostCpu,
@@ -48,11 +49,38 @@ $Emu     = Join-Path $SdkRoot 'emulator\emulator.exe'
 $Avd     = Join-Path $SdkRoot 'cmdline-tools\latest\bin\avdmanager.bat'
 $Adb     = Join-Path $SdkRoot 'platform-tools\adb.exe'
 $AvdHome = Join-Path $env:USERPROFILE '.android\avd'
+$QemuImg = Join-Path $SdkRoot 'emulator\qemu-img.exe'
 
 function Write-Step($m) { Write-Host "[cluster] $m" -ForegroundColor Cyan }
 function Write-Ok($m)   { Write-Host "[ok]      $m" -ForegroundColor Green }
 function Write-Warn($m) { Write-Host "[warn]    $m" -ForegroundColor Yellow }
 function Write-Err($m)  { Write-Host "[FAIL]    $m" -ForegroundColor Red }
+
+function New-RandomSerial {
+  $chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  -join ((1..12) | ForEach-Object { $chars[(Get-Random -Minimum 0 -Maximum $chars.Length)] })
+}
+
+function New-AndroidId {
+  -join ((1..16) | ForEach-Object { '{0:x}' -f (Get-Random -Minimum 0 -Maximum 16) })
+}
+
+function Normalize-InstanceSubsystems([string]$Serial, [string]$AndroidId) {
+  Write-Step "Normalizing subsystems on $Serial..."
+  if ($AndroidId) {
+    & $Adb -s $Serial shell settings put secure android_id $AndroidId 2>&1 | Out-Null
+    Write-Ok "  $Serial : android_id set to $AndroidId"
+  }
+  # Battery normalization: status 3 (discharging), level 85%, temp 285 (28.5 C)
+  & $Adb -s $Serial shell "dumpsys battery set status 3; dumpsys battery set level 85; dumpsys battery set temp 285" 2>&1 | Out-Null
+  Write-Ok "  $Serial : battery telemetry normalized (status=3, level=85, temp=285)"
+  # Telephony state
+  $oldEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  & $Adb -s $Serial shell "setprop gsm.sim.state READY 2>/dev/null; setprop gsm.sim.operator.numeric 60401 2>/dev/null; setprop gsm.network.type LTE 2>/dev/null" 2>$null | Out-Null
+  $ErrorActionPreference = $oldEap
+  Write-Ok "  $Serial : telephony state nominal (READY/60401/LTE)"
+}
 
 # Console ports must be even: each AVD consumes a pair (console, adb).
 function Get-InstancePlan($n) {
@@ -85,18 +113,15 @@ switch ($Action) {
 
   'Create' {
     Write-Step 'Creating AVDs (one per instance, separate data dirs)'
-    # Golden image: everything stored in /data is baked in - package disables,
-    # settings, appops, device_config, the HOME app, the installed game and its
-    # dexopt artifacts. Build it ONCE with make-golden-image.ps1, then copy it
-    # over each instance's userdata-qemu.img.qcow2 before first boot. That
-    # removes the whole per-instance adb trim pass - faster AND more reliable,
-    # because there is no window in which the guest is half-trimmed.
-    $golden = Join-Path $AvdHome "$AvdName.avd\userdata-golden.img"
+    $golden = $GoldenImgPath
+    if (-not $golden) {
+      $golden = Join-Path $AvdHome "$AvdName.avd\userdata-golden.img"
+    }
     if (-not (Test-Path $golden)) {
-      Write-Warn "no golden image at $golden - run scripts\make-golden-image.ps1 to skip the per-instance trim"
+      Write-Warn "no golden image at $golden - run scripts\build-golden-userdata.ps1 to generate it"
       $golden = $null
     } else {
-      Write-Ok "golden image present ($([math]::Round((Get-Item $golden).Length/1GB,2)) GB)"
+      Write-Ok "golden image present ($([math]::Round((Get-Item $golden).Length/1MB,2)) MB)"
     }
     foreach ($p in $plan) {
       $dir = Join-Path $AvdHome "$($p.Name).avd"
@@ -125,7 +150,8 @@ switch ($Action) {
           # makes com.android.phone churn once we disable the package.
           "hw.gsmModem=no", "hw.radio=no", "hw.gps=no",
           "hw.camera.back=none", "hw.camera.front=none",
-          "hw.keyboard=yes", "hw.mainKeys=no",
+          # Task 1: Navigation & Fullscreen Layout - remove on-screen navbar
+          "hw.keyboard=yes", "hw.mainKeys=yes", "qemu.hw.mainkeys=1",
           # CPU BUDGET. The emulator audio HAL polls on a timer and burns a
           # whole vCPU on an idle audio device; turning both directions off
           # removes that spin loop. -no-audio is passed at launch as well.
@@ -134,7 +160,8 @@ switch ($Action) {
           # 60 FPS rAF/JS loop redraws an unchanged scene: pure waste. 30 FPS
           # halves draw calls and JS execution with no visible difference.
           "qemu.vsync=$Vsync",
-          "disk.dataPartition.size=2048M"
+          # MUST match the golden image's virtual size.
+          "disk.dataPartition.size=6442450944"
         )
         $cur = Get-Content $cfg
         foreach ($e in $extra) {
@@ -144,24 +171,70 @@ switch ($Action) {
         Set-Content -Path $cfg -Value $cur
         Write-Ok "  configured $($p.Name) (gpu=$Gpu ram=$RamMb cores=$Cores)"
       }
-      # Seed the data disk from the golden image. The golden is a self-contained
-      # qcow2, so it must land at the path the emulator actually opens
-      # (userdata-qemu.img.qcow2). Copying it over the raw userdata-qemu.img
-      # would just replace the backing file with a qcow2 and fail to mount.
-      # A stale overlay is removed first so we never boot yesterday's deltas.
+
+      # Task 2: Storage Optimization via QCOW2 Differential Overlays
+      # Using QEMU Copy-on-Write (COW) overlay instead of copying raw 6 GB disk
       if ($golden) {
-        $ud  = Join-Path $dir 'userdata-qemu.img'
-        $dst = "$ud.qcow2"
-        $gLen = (Get-Item $golden).Length
-        $stale = (Test-Path $dst) -and ((Get-Item $dst).Length -eq $gLen)
-        if ($stale) {
-          Write-Ok "  $($p.Name) : userdata already matches golden image"
+        $backingFmt = 'raw'
+        $imgInfo = & $QemuImg info "$golden" 2>&1 | Out-String
+        if ($imgInfo -match 'file format:\s*qcow2') {
+          $backingFmt = 'qcow2'
+        }
+        $targetQcow2 = Join-Path $dir 'userdata.qcow2'
+        Remove-Item $targetQcow2 -Force -EA SilentlyContinue
+        & "$SdkRoot\emulator\qemu-img.exe" create -f qcow2 -b "$golden" -F $backingFmt "$targetQcow2"
+        if ($LASTEXITCODE -eq 0) {
+          Write-Ok "  $($p.Name) : QCOW2 overlay created ($targetQcow2 -> backing: $(Split-Path -Leaf $golden) [$backingFmt])"
+          # Link / ensure default emulator path userdata-qemu.img.qcow2 matches userdata.qcow2
+          $emuQcow2 = Join-Path $dir 'userdata-qemu.img.qcow2'
+          Remove-Item $emuQcow2 -Force -EA SilentlyContinue
+          try {
+            New-Item -ItemType HardLink -Path $emuQcow2 -Target $targetQcow2 -Force | Out-Null
+          } catch {
+            Copy-Item $targetQcow2 $emuQcow2 -Force
+          }
         } else {
-          Remove-Item $dst -Force -EA SilentlyContinue
-          Copy-Item $golden $dst -Force
-          Write-Ok "  $($p.Name) : userdata seeded from golden image"
+          Write-Err "  $($p.Name) : failed to create QCOW2 overlay"
         }
       }
+
+      # Task 3: Unique Per-Instance Identifiers & Device Profile
+      $identFile = Join-Path $dir 'identity.json'
+      $serial = ''
+      $androidId = ''
+      if (Test-Path $identFile) {
+        try {
+          $ident = Get-Content $identFile -Raw | ConvertFrom-Json
+          $serial = $ident.Serial
+          $androidId = $ident.AndroidId
+        } catch {}
+      }
+      if (-not $serial) { $serial = New-RandomSerial }
+      if (-not $androidId) { $androidId = New-AndroidId }
+      @{ Serial = $serial; AndroidId = $androidId; Mac = $p.Mac } | ConvertTo-Json | Set-Content -Path $identFile
+
+      $sysProp = @"
+ro.product.brand=samsung
+ro.product.manufacturer=samsung
+ro.product.model=SM-A515F
+ro.product.name=a51nsxx
+ro.product.device=a51
+ro.build.flavor=a51nsxx-user
+ro.build.type=user
+ro.build.tags=release-keys
+ro.build.fingerprint=samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys
+ro.hardware=exynos9611
+ro.kernel.qemu=0
+ro.boot.qemu=0
+qemu.hw.mainkeys=1
+ro.serialno=$serial
+ro.boot.serialno=$serial
+gsm.sim.state=READY
+gsm.sim.operator.numeric=60401
+gsm.network.type=LTE
+"@
+      Set-Content -Path (Join-Path $dir 'system.prop') -Value $sysProp
+      Write-Ok "  $($p.Name) : identity provisioned (serial=$serial, android_id=$androidId)"
     }
   }
 
@@ -176,13 +249,56 @@ switch ($Action) {
       if (-not $Force) { Write-Err 'Refusing to start. Pass -Force to override.'; exit 1 }
     }
     foreach ($p in $plan) {
+      $dir = Join-Path $AvdHome "$($p.Name).avd"
+      $identFile = Join-Path $dir 'identity.json'
+      $serial = ''
+      $androidId = ''
+      if (Test-Path $identFile) {
+        try {
+          $ident = Get-Content $identFile -Raw | ConvertFrom-Json
+          $serial = $ident.Serial
+          $androidId = $ident.AndroidId
+        } catch {}
+      }
+      if (-not $serial) { $serial = New-RandomSerial }
+      if (-not $androidId) { $androidId = New-AndroidId }
+
       $a = @(
         "-avd", $p.Name, "-port", $p.Port, "-gpu", $Gpu,
         "-memory", $RamMb, "-cores", $Cores,
         "-no-snapshot", "-no-audio", "-no-boot-anim",
-        # -accel accepts only on|off|auto in emulator 37.x (not "hvm").
-        "-writable-system", "-accel", "on"
+        "-accel", "on"
       )
+      # Data partition: mount userdata.qcow2
+      if (Test-Path (Join-Path $dir 'userdata.qcow2')) {
+        $a += @("-data", (Join-Path $dir 'userdata'))
+      }
+
+      # Standardized hardware definitions and identity via -prop
+      $standardProps = @(
+        "ro.product.brand=samsung",
+        "ro.product.manufacturer=samsung",
+        "ro.product.model=SM-A515F",
+        "ro.product.name=a51nsxx",
+        "ro.product.device=a51",
+        "ro.build.flavor=a51nsxx-user",
+        "ro.build.type=user",
+        "ro.build.tags=release-keys",
+        "ro.build.fingerprint=samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys",
+        "ro.hardware=exynos9611",
+        "ro.kernel.qemu=0",
+        "ro.boot.qemu=0",
+        "qemu.hw.mainkeys=1",
+        "ro.serialno=$serial",
+        "ro.boot.serialno=$serial",
+        "gsm.sim.state=READY",
+        "gsm.sim.operator.numeric=60401",
+        "gsm.network.type=LTE"
+      )
+      foreach ($sp in $standardProps) {
+        $a += @("-prop", $sp)
+      }
+      $a += @("-android-serialno", $serial)
       if ($Headless) { $a += '-no-window' }
       $proc = Start-Process -FilePath $Emu -ArgumentList $a -PassThru -WindowStyle Minimized
       Write-Ok "started $($p.Name) pid=$($proc.Id) console=$($p.Port) serial=$($p.Serial)"
@@ -200,7 +316,7 @@ switch ($Action) {
   }
 
   'Provision' {
-    & $PSCommandPath -Action Create -Count $Count -RamMb $RamMb -Cores $Cores -BasePort $BasePort -Gpu $Gpu
+    & $PSCommandPath -Action Create -Count $Count -RamMb $RamMb -Cores $Cores -BasePort $BasePort -Gpu $Gpu -GoldenImgPath $GoldenImgPath
     & $PSCommandPath -Action Start  -Count $Count -RamMb $RamMb -Cores $Cores -BasePort $BasePort -Gpu $Gpu -Headless:$Headless -Force:$Force
     Write-Step 'Waiting for all instances to finish booting...'
     foreach ($p in $plan) {
@@ -210,9 +326,38 @@ switch ($Action) {
         $b = (& $Adb -s $p.Serial shell getprop sys.boot_completed 2>$null) -replace "`r",''
         if ($b -match '1') { Write-Ok "$($p.Serial) booted"; break }
       }
+      $identFile = Join-Path $AvdHome "$($p.Name).avd\identity.json"
+      $androidId = ''
+      if (Test-Path $identFile) {
+        try {
+          $ident = Get-Content $identFile -Raw | ConvertFrom-Json
+          $androidId = $ident.AndroidId
+        } catch {}
+      }
+      Normalize-InstanceSubsystems -Serial $p.Serial -AndroidId $androidId
     }
     Write-Step 'Patching build.prop on all instances...'
     & (Join-Path $PSScriptRoot 'patch-system.ps1') -Serials ($plan.Serial)
+  }
+
+  'Normalize' {
+    Write-Step 'Normalizing running instances...'
+    foreach ($p in $plan) {
+      $state  = (& $Adb -s $p.Serial get-state 2>$null) -replace "`r",''
+      if ($state -match 'device') {
+        $identFile = Join-Path $AvdHome "$($p.Name).avd\identity.json"
+        $androidId = ''
+        if (Test-Path $identFile) {
+          try {
+            $ident = Get-Content $identFile -Raw | ConvertFrom-Json
+            $androidId = $ident.AndroidId
+          } catch {}
+        }
+        Normalize-InstanceSubsystems -Serial $p.Serial -AndroidId $androidId
+      } else {
+        Write-Warn "$($p.Serial) is offline - skipping normalization"
+      }
+    }
   }
 
   'Status' {

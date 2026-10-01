@@ -146,43 +146,96 @@ foreach ($p in $plan) {
   # --- seed /data from the golden image -----------------------------------
   # The golden is a self-contained qcow2 and must land at the path the emulator
   # actually opens. A stale overlay would silently boot yesterday's state.
+  #
+  # The raw 6 GB backing file MUST exist first: on a fresh AVD the emulator
+  # discards a seeded overlay that has no backing file and reformats /data,
+  # which is the "first boot ignores the golden image" bug. Created sparse, so
+  # it consumes no disk until written.
   if (Test-Path $Golden) {
     if (-not (Test-Path $avdDir)) {
       Write-Warn "$($p.Name): AVD does not exist - run cluster-manager.ps1 -Action Create first."
       continue
     }
-    $dst = Join-Path $avdDir 'userdata-qemu.img.qcow2'
-    if ((Test-Path $dst) -and ((Get-Item $dst).Length -eq (Get-Item $Golden).Length)) {
-      Write-Ok "$($p.Name): userdata already seeded"
+    $targetQcow2 = Join-Path $avdDir 'userdata.qcow2'
+    $emuQcow2 = Join-Path $avdDir 'userdata-qemu.img.qcow2'
+    if (-not (Test-Path $targetQcow2)) {
+      $qemuImg = Join-Path $SdkRoot 'emulator\qemu-img.exe'
+      $backingFmt = 'raw'
+      $imgInfo = & $qemuImg info "$Golden" 2>&1 | Out-String
+      if ($imgInfo -match 'file format:\s*qcow2') { $backingFmt = 'qcow2' }
+      & $qemuImg create -f qcow2 -b "$Golden" -F $backingFmt "$targetQcow2"
+      Remove-Item $emuQcow2 -Force -EA SilentlyContinue
+      try {
+        New-Item -ItemType HardLink -Path $emuQcow2 -Target $targetQcow2 -Force | Out-Null
+      } catch {
+        Copy-Item $targetQcow2 $emuQcow2 -Force
+      }
+      Write-Ok "$($p.Name): QCOW2 differential overlay created"
     } else {
-      Remove-Item $dst -Force -EA SilentlyContinue
-      Copy-Item $Golden $dst -Force
-      Write-Ok "$($p.Name): userdata seeded from golden image"
+      Write-Ok "$($p.Name): QCOW2 overlay already present"
     }
   }
 
+  # --- identity -------------------------------------------------------------
+  $identFile = Join-Path $avdDir 'identity.json'
+  $instSerial = ''
+  $instAndroidId = ''
+  if (Test-Path $identFile) {
+    try {
+      $idJson = Get-Content $identFile -Raw | ConvertFrom-Json
+      $instSerial = $idJson.Serial
+      $instAndroidId = $idJson.AndroidId
+    } catch {}
+  }
+  if (-not $instSerial) {
+    $chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    $instSerial = -join ((1..12) | ForEach-Object { $chars[(Get-Random -Minimum 0 -Maximum $chars.Length)] })
+  }
+  if (-not $instAndroidId) {
+    $instAndroidId = -join ((1..16) | ForEach-Object { '{0:x}' -f (Get-Random -Minimum 0 -Maximum 16) })
+  }
+  if (Test-Path $avdDir) {
+    @{ Serial = $instSerial; AndroidId = $instAndroidId; Mac = $p.Mac } | ConvertTo-Json | Set-Content -Path $identFile
+  }
+
   # --- launch ---------------------------------------------------------------
-  Write-Step "Starting $($p.Name)  console=$($p.Port) adb=$($p.Adb) mac=$($p.Mac)"
+  Write-Step "Starting $($p.Name)  console=$($p.Port) adb=$($p.Adb) mac=$($p.Mac) serial=$instSerial"
   $a = @(
     "-avd", $p.Name,
     "-port", $p.Port,
     "-gpu", $Gpu,
     "-memory", $RamMb,
     "-cores", $Cores,
-    # -accel accepts only on|off|auto in emulator 37.x (not "hvm").
     "-no-snapshot", "-no-audio", "-no-boot-anim", "-no-metrics", "-accel", "on"
   )
-  # NOTE: -qemu must come LAST and everything emulator-level must precede it;
-  # flags after -qemu are handed to qemu-system-x86_64 directly. -smp/-cpu are
-  # QEMU flags, so they belong on the far side of -qemu.
-  $qemuArgs = @("-m", "${RamMb}M")
-  # Pin the vCPU count explicitly so the guest cannot drift from the budget.
-  $qemuArgs += @("-smp", "$Cores")
+  if (Test-Path (Join-Path $avdDir 'userdata.qcow2')) {
+    $a += @("-data", (Join-Path $avdDir 'userdata'))
+  }
+  $standardProps = @(
+    "ro.product.brand=samsung",
+    "ro.product.manufacturer=samsung",
+    "ro.product.model=SM-A515F",
+    "ro.product.name=a51nsxx",
+    "ro.product.device=a51",
+    "ro.build.flavor=a51nsxx-user",
+    "ro.build.type=user",
+    "ro.build.tags=release-keys",
+    "ro.build.fingerprint=samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys",
+    "ro.hardware=exynos9611",
+    "ro.kernel.qemu=0",
+    "ro.boot.qemu=0",
+    "qemu.hw.mainkeys=1",
+    "ro.serialno=$instSerial",
+    "ro.boot.serialno=$instSerial",
+    "gsm.sim.state=READY",
+    "gsm.sim.operator.numeric=60401",
+    "gsm.network.type=LTE"
+  )
+  foreach ($sp in $standardProps) {
+    $a += @("-prop", $sp)
+  }
+  $qemuArgs = @("-m", "${RamMb}M", "-smp", "$Cores")
   if ($HostCpu) {
-    # Expose the real host ISA (AVX2/SSE4.2/BMI2 on this class of CPU) so the
-    # guest JIT can emit those instructions instead of a baseline subset.
-    # Without it QEMU emulates a generic CPU and every vector op is a helper
-    # function call, which is expensive for the WebView's JS/V8 work.
     $qemuArgs += @("-cpu", "host")
   }
   $a += @("-qemu") + $qemuArgs

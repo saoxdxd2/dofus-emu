@@ -116,12 +116,12 @@ function Get-FarmLayout {
     Returns an array of placement rects (X, Y, W, H) for the given count.
     Pure geometry - no window handles - so it is trivially testable.
   #>
-  param([Parameter(Mandatory)][int]$Count)
+  param([Parameter(Mandatory)][int]$Count, [switch]$EdgeToEdge)
 
   if ($Count -lt 1) { throw "Count must be >= 1 (got $Count)" }
 
   $wa = Get-ScreenWorkArea
-  $gap = 4   # a few pixels of gutter so borders stay individually grabbable
+  $gap = if ($EdgeToEdge) { 0 } else { 4 }
 
   switch ($Count) {
     1 {
@@ -288,6 +288,7 @@ function Set-FarmLayout {
   param(
     [Parameter(Mandatory)][int[]]$Procs,
     [switch]$MaximizeSingle,
+    [switch]$EdgeToEdge,
     [int]$WindowTimeoutSec = 90
   )
 
@@ -296,7 +297,7 @@ function Set-FarmLayout {
     return
   }
 
-  $rects = Get-FarmLayout -Count $Procs.Count
+  $rects = Get-FarmLayout -Count $Procs.Count -EdgeToEdge:$EdgeToEdge
   $wa    = Get-ScreenWorkArea
   $W32   = $Script:W32
   Write-Host ("[layout] {0} instance(s) on {1}x{2} work area" -f $Procs.Count, $wa.W, $wa.H) -ForegroundColor Cyan

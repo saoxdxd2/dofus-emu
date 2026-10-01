@@ -9,10 +9,14 @@
 
   Three things are NOT in /data and are therefore re-applied on every boot:
 
-    1. zRAM and the vm.* sysctls   - kernel runtime state, gone on reboot
+  1. zRAM and the vm.* sysctls   - kernel runtime state, gone on reboot
     2. init service stops           - statsd/traced/rild/cameraserver/drmserver
-                                      are started by init before userdata is read
+                                       are started by init before userdata is read
     3. anything under /sys
+
+  The per-boot CPU budget (telephony background loop, audio, Chromium GPU
+  rasterization flags, native-ABI guard) is folded in here too, so one call
+  leaves an instance in its production state.
 
   This script is the whole per-boot cost: a handful of adb calls, a couple of
   seconds. Run it right after sys.boot_completed=1.
@@ -21,7 +25,8 @@
   adb serials. Defaults to every online emulator.
 
 .PARAMETER ZramMb
-  zRAM size. Default 384.
+  zRAM size. Default 512 - measured to be roughly saturated at 768 MB of guest
+  RAM and comfortable at 1024 MB.
 
 .PARAMETER Swappiness
   vm.swappiness. Default 85 - aggressive enough that cold pages land in zRAM
@@ -33,7 +38,7 @@
 [CmdletBinding()]
 param(
   [string[]] $Serials,
-  [int]      $ZramMb     = 384,
+  [int]      $ZramMb     = 512,
   [int]      $Swappiness = 85
 )
 
@@ -92,13 +97,48 @@ foreach ($s in $Serials) {
   else { Write-Warn "swappiness reads '$sw'" }
 
   # --- 3. init daemons ----------------------------------------------------
+  # traced / traced_probes are kernel-tracing daemons: they are pure overhead
+  # for a game workload and were measurably the largest source of guest `sys`
+  # time. rild restarts telephony in a loop once the radio is off.
   $stopped = 0
   foreach ($d in $DAEMONS) {
     if ((A @('shell','service','check',$d)) -match 'found') { A @('shell','stop',$d) | Out-Null; $stopped++ }
   }
   Write-Ok "$stopped/$($DAEMONS.Count) daemons stopped"
 
-  # --- 4. final state -----------------------------------------------------
+  # --- 4. CPU budget (merged from cpu-budget.ps1) -------------------------
+  # Silence the telephony background loop so ActivityManager does not keep
+  # waking the disabled com.android.phone package.
+  A @('shell','cmd','appops','set','com.android.phone','RUN_IN_BACKGROUND','ignore') | Out-Null
+
+  # Audio HAL: already disabled at launch, but stop the service too in case the
+  # instance was booted by hand.
+  A @('shell','service','call','audio','1') | Out-Null
+
+  # Chromium GPU rasterization. Without this the WebView can fall back to
+  # CPU Skia tile rendering, which would move the whole render loop into the
+  # guest vCPU. NOTE: the redirect must be a single adb argument - splitting it
+  # makes adb drop the redirection and the write silently fails.
+  # --enable-zero-copy is intentionally absent: it needs a working dma-buf path
+  # and is ignored here, so listing it would only look configured.
+  A @('shell',"echo '_ --enable-gpu-rasterization --ignore-gpu-blocklist' > /data/local/tmp/webview-command-line") | Out-Null
+  A @('shell','chmod','644','/data/local/tmp/webview-command-line') | Out-Null
+  $wcl = (A @('shell','cat','/data/local/tmp/webview-command-line'))
+  if ($wcl -match 'enable-gpu-rasterization') { Write-Ok 'webview GPU rasterization flags asserted' }
+  else { Write-Warn 'could not write /data/local/tmp/webview-command-line' }
+
+  # ABI guard: a regression to an ARM translation layer would reintroduce a
+  # large, silent CPU cost, so assert the native x86_64 oat dir every boot.
+  $oat = (A @('shell','ls /data/app/com.ankama.dofustouch*/oat/ 2>/dev/null')).Trim()
+  if ($oat -match 'x86_64') { Write-Ok "game ABI native x86_64 (oat: $oat)" }
+  # --- 5. subsystem normalization (battery & telephony) -------------------
+  A @('shell','dumpsys battery set status 3; dumpsys battery set level 85; dumpsys battery set temp 285') | Out-Null
+  Write-Ok 'battery telemetry normalized (status=3 level=85 temp=285)'
+
+  A @('shell','setprop gsm.sim.state READY; setprop gsm.sim.operator.numeric 60401; setprop gsm.network.type LTE') | Out-Null
+  Write-Ok 'telephony state nominal (READY/60401/LTE)'
+
+  # --- 6. final state -----------------------------------------------------
   $m = A @('shell','cat','/proc/meminfo')
   $tot = if ($m -match 'MemTotal:\s+(\d+)') { [math]::Round([int]$matches[1]/1024,0) } else { 0 }
   $av  = if ($m -match 'MemAvailable:\s+(\d+)') { [math]::Round([int]$matches[1]/1024,0) } else { 0 }

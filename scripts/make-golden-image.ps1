@@ -117,7 +117,8 @@ $want = [ordered]@{
   'hw.camera.back' = 'none'
   'hw.camera.front'= 'none'
   'hw.keyboard'    = 'yes'
-  'hw.mainKeys'    = 'no'
+  'hw.mainKeys'    = 'yes'
+  'qemu.hw.mainkeys' = '1'
 }
 $cur = Get-Content $cfg
 foreach ($k in $want.Keys) {
@@ -299,12 +300,25 @@ Write-Step '6/6  capture userdata -> golden'
 $qemuImg = Join-Path $SdkRoot 'emulator\qemu-img.exe'
 $ud      = Join-Path $AvdDir 'userdata-qemu.img'
 $ovl     = "$ud.qcow2"
+# The live overlay IS the whole userdata disk: it carries no backing file (the
+# 6 GB raw next to it is a zero-filled stub the emulator never reads), so
+# flattening it yields a self-contained image of the real ext4 volume. Copying
+# the raw file instead would capture 6 GB of zeroes - the guest then boots with
+# "Failed to prepare /data/system/users/0" and systemserver restart-loops.
 $src     = if (Test-Path $ovl) { $ovl } else { $ud }
 Remove-Item $golden -Force -EA SilentlyContinue
 & $qemuImg convert -O qcow2 $src $golden
 if ($LASTEXITCODE -ne 0) { Write-Err "qemu-img convert failed ($src -> $GoldenName)"; exit 1 }
+# Verify the flattened image actually matches the source disk. A byte probe
+# cannot do this: qcow2 stores data in 64K clusters, so offset 1080 of the FILE
+# is not offset 1080 of the DISK. qemu-img compare reads through the format.
+& $qemuImg compare $golden $src 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  Write-Err "flattened golden image does not match $src - refusing to publish it."
+  exit 1
+}
 $sz = [math]::Round((Get-Item $golden).Length/1MB,0)
-Write-Ok "wrote $GoldenName ($sz MB, flattened from $(Split-Path -Leaf $src))"
+Write-Ok "wrote $GoldenName ($sz MB, flattened from $(Split-Path -Leaf $src), content verified)"
 Write-Host @"
 
     Golden image: $golden

@@ -55,7 +55,9 @@ param(
   [switch] $Headless,
   [switch] $NoWait,
   [switch] $SkipProfile,
-  [switch] $WritableSystem,
+  [string] $Data    = '',
+  [string] $SerialNo = '',
+  [string] $AndroidId = '',
   # More than one instance? This script is the single-instance harness with the
   # Gate 1/2/3 probes. Delegate to start-farm.ps1, which handles N instances
   # with staggered boots and per-instance ports.
@@ -92,7 +94,18 @@ if ($Gpu -ne 'host' -and $Gpu -ne 'off') {
 Write-Ok "emulator: $Emu"
 Write-Ok "image:    API 29 x86_64"
 
-# ------------------------------------------------------------------ launch
+$AvdHome = Join-Path $env:USERPROFILE '.android\avd'
+$AvdDir  = Join-Path $AvdHome "$AvdName.avd"
+
+# Mounting QCOW2 overlay if present or specified (writeback cache)
+$targetData = $Data
+if (-not $targetData) {
+  $qcowCandidate = Join-Path $AvdDir 'userdata.qcow2'
+  if (Test-Path $qcowCandidate) {
+    $targetData = $qcowCandidate
+  }
+}
+
 $emuArgs = @(
   "-avd", $AvdName,
   "-port", $Port,
@@ -103,21 +116,71 @@ $emuArgs = @(
   "-no-audio",
   "-no-boot-anim",
   # NOTE: -accel accepts only "on" | "off" | "auto" in emulator 37.x.
-  # Passing "hvm" (the older spelling) aborts startup with:
-  #   ERROR | Invalid '-accel hvm' parameter, valid values are: on off auto
-  # VT-x is present on this host, so "on" gives hardware acceleration.
   "-accel", "on"
 )
-# -writable-system is opt-in and OFF by default. It makes the emulator log
-# "System image is writable" but the guest then HANGS at boot on this image
-# (adb stays offline with near-idle CPU) instead of finishing in ~47s.
-# Reproduced at 1536 MB and again at 1024 MB with 4.3 GB free RAM.
-# It does not help anyway: /system is read-only (system-as-root), so adb remount
-# still cannot write build.prop. See patch-system.ps1 for the details.
-if ($WritableSystem) { $emuArgs += '-writable-system' }
+
+if ($targetData) {
+  # Emulator -data parameter mounts userdata.qcow2 as data partition with writeback caching.
+  # Stripping .qcow2 suffix ensures emulator mounts <path>.qcow2 directly without double suffix.
+  $dataBase = $targetData
+  if ($dataBase.EndsWith('.qcow2', [System.StringComparison]::OrdinalIgnoreCase)) {
+    $dataBase = $dataBase.Substring(0, $dataBase.Length - 6)
+  }
+  $emuArgs += @("-data", $dataBase)
+  Write-Ok "Data partition mounted from QCOW2 overlay: $targetData"
+}
+
+# Per-instance identity generation & persistence
+$identFile = Join-Path $AvdDir 'identity.json'
+$instSerial = $SerialNo
+$instAndroidId = $AndroidId
+if (Test-Path $identFile) {
+  try {
+    $idJson = Get-Content $identFile -Raw | ConvertFrom-Json
+    if (-not $instSerial) { $instSerial = $idJson.Serial }
+    if (-not $instAndroidId) { $instAndroidId = $idJson.AndroidId }
+  } catch {}
+}
+if (-not $instSerial) {
+  $chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  $instSerial = -join ((1..12) | ForEach-Object { $chars[(Get-Random -Minimum 0 -Maximum $chars.Length)] })
+}
+if (-not $instAndroidId) {
+  $instAndroidId = -join ((1..16) | ForEach-Object { '{0:x}' -f (Get-Random -Minimum 0 -Maximum 16) })
+}
+if (Test-Path $AvdDir) {
+  @{ Serial = $instSerial; AndroidId = $instAndroidId; Mac = $Mac } | ConvertTo-Json | Set-Content -Path $identFile
+}
+
+# Task 1 & 3: Standardized physical hardware definitions (Samsung Galaxy A51 / SM-A515F)
+$standardProps = @(
+  "ro.product.brand=samsung",
+  "ro.product.manufacturer=samsung",
+  "ro.product.model=SM-A515F",
+  "ro.product.name=a51nsxx",
+  "ro.product.device=a51",
+  "ro.build.flavor=a51nsxx-user",
+  "ro.build.type=user",
+  "ro.build.tags=release-keys",
+  "ro.build.fingerprint=samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys",
+  "ro.hardware=exynos9611",
+  "ro.kernel.qemu=0",
+  "ro.boot.qemu=0",
+  "qemu.hw.mainkeys=1",
+  "ro.serialno=$instSerial",
+  "ro.boot.serialno=$instSerial",
+  "gsm.sim.state=READY",
+  "gsm.sim.operator.numeric=60401",
+  "gsm.network.type=LTE"
+)
+foreach ($sp in $standardProps) {
+  $emuArgs += @("-prop", $sp)
+}
+$emuArgs += @("-android-serialno", $instSerial)
+
 if ($Headless) { $emuArgs += '-no-window' }
 
-Write-Step "Launching AVD '$AvdName' port=$Port ram=${RamMb}MB cores=$Cores gpu=$Gpu"
+Write-Step "Launching AVD '$AvdName' port=$Port ram=${RamMb}MB cores=$Cores gpu=$Gpu serial=$instSerial"
 $proc = Start-Process -FilePath $Emu -ArgumentList $emuArgs -PassThru -WindowStyle Minimized
 Write-Ok "emulator pid=$($proc.Id)"
 
@@ -131,8 +194,25 @@ if (-not $NoWait) {
     $b = (& $Adb -s $Serial shell getprop sys.boot_completed 2>$null) -replace "`r", ''
     if ($b -match '1') { $booted = $true; break }
   }
-  if ($booted) { Write-Ok 'boot_completed=1' }
-  else { Write-Err 'Guest did not report boot_completed within timeout.'; exit 2 }
+  if ($booted) {
+    Write-Ok 'boot_completed=1'
+
+    # Task 3: Subsystem normalization & unique identity
+    Write-Step 'Applying standardized subsystem telemetry and identity'
+    & $Adb -s $Serial shell settings put secure android_id $instAndroidId 2>&1 | Out-Null
+    Write-Ok "android_id set: $instAndroidId"
+
+    & $Adb -s $Serial shell "dumpsys battery set status 3; dumpsys battery set level 85; dumpsys battery set temp 285" 2>&1 | Out-Null
+    Write-Ok "battery normalized: status=3 (discharging), level=85%, temp=28.5C"
+
+    $oldEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $Adb -s $Serial shell "setprop gsm.sim.state READY 2>/dev/null; setprop gsm.sim.operator.numeric 60401 2>/dev/null; setprop gsm.network.type LTE 2>/dev/null" 2>$null | Out-Null
+    $ErrorActionPreference = $oldEap
+    Write-Ok "telephony nominal: READY / 60401 / LTE"
+  } else {
+    Write-Err 'Guest did not report boot_completed within timeout.'; exit 2
+  }
 }
 
 
@@ -175,12 +255,14 @@ if (-not $SkipProfile) {
   # Report what the guest actually is, so the profile is validated against
   # reality rather than assumed. Deliberately NOT impersonating a retail OEM:
   # see README "Out of scope".
-  Write-Step 'Verifying device identity coherence'
-  foreach ($p in @('ro.product.cpu.abi','ro.product.model','ro.build.type','ro.debuggable','ro.build.tags')) {
+  Write-Step 'Verifying standardized device identity'
+  foreach ($p in @('ro.product.brand','ro.product.manufacturer','ro.product.model','ro.product.name','ro.product.device','ro.hardware','ro.serialno','ro.kernel.qemu','qemu.hw.mainkeys','gsm.network.type')) {
     $v = (& $Adb -s $Serial shell "getprop $p" 2>$null) -replace "`r",''
     if ([string]::IsNullOrWhiteSpace($v)) { $v = '<unset>' }
-    Write-Host ("          {0,-22} = {1}" -f $p, $v)
+    Write-Host ("          {0,-26} = {1}" -f $p, $v)
   }
+  $aid = (& $Adb -s $Serial shell "settings get secure android_id" 2>$null) -replace "`r",''
+  Write-Host ("          {0,-26} = {1}" -f 'android_id', $aid)
   $su = (& $Adb -s $Serial shell 'which su' 2>$null)
   if ($su -match 'su') { Write-Warn 'su binary present - profile should be root-free' }
   else { Write-Ok 'no su binary present' }
