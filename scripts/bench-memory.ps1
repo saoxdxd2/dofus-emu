@@ -169,40 +169,66 @@ foreach ($mb in $Levels) {
 
 
   # --- apply the trims -----------------------------------------------------
+  # CRITICAL: every level boots with -wipe-data, which resets userdata. That
+  # wipes `settings put` values, `pm disable-user` states, installed APKs AND
+  # the device_config overlay. So this block MUST re-apply everything on each
+  # iteration or later levels are measured untrimmed and the comparison is
+  # meaningless.
   if (-not $SkipTrim) {
-    # 1. dalvik.vm.* limits. These are NOT ro.* so setprop works at runtime.
-    #    This is the main runtime saving available on this image.
-    Write-Step '  applying dalvik.vm.* limits'
+    Write-Step '  applying runtime low-RAM configuration'
+
+    # adb root: needed for `settings put global` on some builds and for zram.
     Invoke-Adb @('root') | Out-Null
     Start-Sleep -Seconds 4
     Invoke-Adb @('wait-for-device') | Out-Null
+
+    # a) Cached-process cap. `cmd activity set-process-limit` does NOT exist on
+    #    API 29 (answers "Unknown command"), so use the device_config overlay,
+    #    which ActivityManager reads on Android 10, and verify it reads back.
+    Invoke-Adb @('shell','device_config','put','activity_manager','max_cached_processes','2') | Out-Null
+    $mc = Invoke-Adb @('shell','device_config','get','activity_manager','max_cached_processes')
+    if ($mc -match '2') { Write-Host '      max_cached_processes = 2 (verified)' }
+    else { Write-Warn "      max_cached_processes reads '$mc'" }
+
+    # b) Animations off.
+    foreach ($sc in @('window_animation_scale','transition_animation_scale','animator_duration_scale')) {
+      Invoke-Adb @('shell','settings','put','global',$sc,'0') | Out-Null
+    }
+
+    # c) dalvik.vm.* limits (runtime-settable: the main ART heap saving).
     foreach ($kv in @{'dalvik.vm.heapgrowthlimit'='192m';
                       'dalvik.vm.heapstartupsize'='32m';
                       'dalvik.vm.heapminfree'='2m'}) {
       Invoke-Adb @('shell','setprop',$kv.Key,$kv.Value) | Out-Null
-      $got = Invoke-Adb @('shell','getprop',$kv.Key)
-      if ($got -eq $kv.Value) { Write-Host "      $($kv.Key) = $got" }
-      else { Write-Warn "      $($kv.Key) read back as '$got'" }
+    }
+    $hg = Invoke-Adb @('shell','getprop','dalvik.vm.heapgrowthlimit')
+    Write-Host "      dalvik.vm.heapgrowthlimit = $hg"
+
+    # d) ro.config.low_ram is NOT reachable on this image (see patch-system.ps1
+    #    header). Report it rather than pretending.
+    $lr = Invoke-Adb @('shell','getprop','ro.config.low_ram')
+    if ($lr -match 'true') { Write-Host '      ro.config.low_ram active' }
+    else { Write-Host '      ro.config.low_ram NOT set (unavailable on this image)' }
+
+    # e) Disable non-essential packages.
+    foreach ($pkg in @('com.android.printspooler','com.android.wallpaper.livepicker','com.android.dreams.basic')) {
+      Invoke-Adb @('shell','pm','disable-user','--user','0',$pkg) | Out-Null
     }
 
-    # 2. ro.config.low_ram CANNOT be set here: it is ro.* (read-only after
-    #    boot) and /system is read-only (system-as-root). See patch-system.ps1
-    #    header for the three routes that were tried and why each fails.
-    $lr = Invoke-Adb @('shell','getprop','ro.config.low_ram')
-    if ($lr -match 'true') { Write-Ok '    ro.config.low_ram active' }
-    else { Write-Warn '    ro.config.low_ram NOT set (needs offline system.img edit)' }
-
-    # 3. DofusLauncher as HOME so Launcher3 is not resident.
+    # f) DofusLauncher as HOME so Launcher3 is not resident.
+    $apk = Join-Path $RepoRoot 'launcher\build\DofusLauncher.apk'
+    if (-not $LauncherApk -and (Test-Path $apk)) { $LauncherApk = $apk }
     if ($LauncherApk) {
       Invoke-Adb @('shell','cmd','package','set-home-activity','com.dofusemu.launcher/.DofusLauncherActivity') | Out-Null
       Invoke-Adb @('shell','pm','disable-user','--user','0','com.android.launcher3') | Out-Null
-      Write-Ok '    Launcher3 disabled (frees ~59 MB)'
+      $l3 = Invoke-Adb @('shell','pm','list','packages','-d','com.android.launcher3')
+      if ($l3 -match 'launcher3') { Write-Host '      Launcher3 disabled' }
+      else { Write-Warn '      Launcher3 still enabled' }
     }
 
-    # 4. zram (compressed swap) - genuine oversubscription.
+    # g) zram (compressed swap).
     $zsh = Join-Path $PSScriptRoot 'apply-zram.sh'
     if (Test-Path $zsh) {
-      Write-Step '  configure zram'
       Invoke-Adb @('push',$zsh,'/data/local/tmp/apply-zram.sh') | Out-Null
       (Invoke-Adb @('shell','sh','/data/local/tmp/apply-zram.sh')) -split "`n" |
         Where-Object { $_ -match 'algorithm|disksize|swapon|unavailable' } |

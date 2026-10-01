@@ -56,6 +56,19 @@ This supports the earlier estimate that **768 MB is not viable** and that the
 floor is ~1.5 GB; the game itself has not been loaded yet, so re-run
 `bench-memory.ps1` with the APK installed to set the production value.
 
+> **CORRECTION (supersedes the paragraph above).** The "768 MB is not viable /
+> floor is ~1.5 GB" claim was **wrong and is withdrawn.** It rested on reading
+> `MemAvailable 691 MB` as headroom, but `MemAvailable` is largely *reclaimable
+> page cache* — Linux fills spare RAM with cache, so a large value proves
+> nothing. The measurement also came from a completely untrimmed guest
+> (`ro.config.low_ram` unavailable, Launcher3 resident, zram off).
+>
+> The floor is **undetermined**. Run `bench-memory.ps1` with the game installed
+> to establish it; the harness now reports `AnonPages` (must fit), page cache
+> separately (reclaimable), the guest's real `MemTotal` (which exceeds
+> `-memory`; `-memory 1536` yields `MemTotal 2,040,548K`), and pressure events
+> (`lowmemorykiller` / `oom-kill` / game death) as the real signal.
+
 
 ---
 
@@ -119,6 +132,54 @@ live.
 therefore applies only the runtime-settable `dalvik.vm.*` properties, which is
 where most of the saving actually is, and reports `ro.config.low_ram` as unset
 rather than pretending otherwise.
+
+### Low-RAM is applied at runtime instead
+
+Since `ro.config.low_ram` is unavailable, the savings come from runtime
+configuration (`patch-system.ps1`, and per-level in `bench-memory.ps1`):
+
+| Setting | Command | Verified |
+|---|---|---|
+| Cached process cap | `device_config put activity_manager max_cached_processes 2` | reads back `2` |
+| Animations | `settings put global {window,transition,animator}_*_scale 0` | reads back `0` |
+| ART heap cap | `setprop dalvik.vm.heapgrowthlimit 192m` | reads back `192m` |
+| Bloat packages | `pm disable-user` on printspooler, wallpaper livepicker, dreams.basic | disabled |
+| Home app | `DofusLauncher` replaces Launcher3 | installed, HOME set |
+| zram | `apply-zram.sh` (lz4, swappiness 70) | `/dev/block/zram0` active in `/proc/swaps` |
+
+> `cmd activity set-process-limit` **does not exist** on API 29 — it answers
+> `Unknown command` (confirmed against `cmd activity help` on this image). The
+> supported Android 10 mechanism is the `device_config` overlay above.
+>
+> `device_config` is a **volatile** overlay: it survives a normal reboot but is
+> reset by a factory reset / `-wipe-data`. `bench-memory.ps1` therefore re-applies
+> the entire trim block on every level, since each level boots with `-wipe-data`.
+
+### `DofusLauncher` had a HOME restart loop (fixed)
+
+Worth recording because it *inverted* the low-RAM goal. The first working build
+replaced Launcher3 and memory went **up**. Cause: this activity is registered as
+HOME, and **when a HOME activity calls `finish()`, ActivityManager immediately
+starts the default HOME again — the same activity — forever.** Measured 576
+retries in 15 s, driving the process to ~130 MB RSS.
+
+Fix: on a **failed** launch, do not `finish()`; stay resident but inert, so HOME
+is already satisfied and nothing re-triggers. On a **successful** launch,
+`finish()` as before. Verified after the fix: **1 retry instead of 576.** This
+path is only reachable when the game APK is absent, so it degrades quietly
+instead of pegging the CPU.
+
+Baseline vs trimmed (1536 MB guest, no game installed):
+
+| | Used RAM | Notes |
+|---|---|---|
+| Untrimmed | 1,256,428K | `launcher3` resident at 55,686K |
+| Trimmed | 1,265,356K | Launcher3 gone, but launcher resident (no game yet) |
+
+These are **not** comparable as a saving yet: without the game installed the
+launcher stays resident by design (per the fix above). The real comparison
+requires `dofustouch.apk` installed, which is what Gate 4 is for.
+
 
 ### The 768 MB / 1.5 GB question is still open
 

@@ -65,8 +65,23 @@ if (-not $Serials) { Write-Warn 'no running emulator instances found.'; exit 1 }
 
 function Write-Err($m)  { Write-Host "[FAIL]  $m" -ForegroundColor Red }
 
+# Single entry point for guest commands. Takes the adb argument list and
+# returns the trimmed combined stdout/stderr as a string, so callers can both
+# run a command and read back its result without repeating the & $Adb dance.
+function Invoke-Adb($argsArr) {
+  # adb writes ordinary progress to stderr ("1 file pushed, ..."), which under
+  # ErrorActionPreference='Stop' would abort the whole script. Temporarily
+  # relax it and silence stderr so only real failures surface via $LASTEXITCODE.
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $o = & $Adb -s $script:CurrentSerial @argsArr 2>&1
+  $ErrorActionPreference = $old
+  return ($o | Out-String).Trim()
+}
+
 foreach ($s in $Serials) {
   Write-Step "=== $s ==="
+  $script:CurrentSerial = $s
   $boot = (& $Adb -s $s shell getprop sys.boot_completed 2>$null) -replace "`r",''
   if ($boot -notmatch '1') { Write-Warn "$s not booted yet"; continue }
 
@@ -78,21 +93,68 @@ foreach ($s in $Serials) {
   $who = (& $Adb -s $s shell id 2>$null) -replace "`r",''
   if ($who -match 'uid=0') { Write-Ok '  root acquired' } else { Write-Warn "  not root ($who)" }
 
-  # --- 2. ro.config.low_ram ------------------------------------------------
-  if ($AttemptRoFix) {
-    Write-Step '  attempting ro.config.low_ram via remount'
-    $rm = (& $Adb -s $s remount 2>&1 | Out-String)
-    $probe = & $Adb -s $s shell 'touch /system/build.prop.__wtest 2>/dev/null && rm -f /system/build.prop.__wtest && echo WRITABLE || echo READONLY' 2>$null
-    if ($probe -match 'WRITABLE') {
-      & $Adb -s $s shell 'echo "ro.config.low_ram=true" >> /system/build.prop' 2>&1 | Out-Null
-      Write-Ok '  wrote ro.config.low_ram (reboot to activate)'
-    } else {
-      Write-Warn "  /system READONLY ($probe) - cannot write build.prop"
-      Write-Warn ('  remount: ' + (($rm.Trim() -split "`n") | Select-Object -Last 1))
-    }
+  # --- 2. runtime low-RAM configuration ------------------------------------
+  # ro.config.low_ram cannot be set on this image (see the header), so we get
+  # the savings at runtime instead. All of these are idempotent and safe to
+  # re-apply; nothing here breaks the boot path.
+  Write-Step '  applying runtime low-RAM configuration'
+
+  # a) Cap cached background processes.
+  #    `cmd activity set-process-limit` DOES NOT EXIST on API 29 - it answers
+  #    "Unknown command: set-process-limit" (verified against `cmd activity
+  #    help` on this image). The supported mechanism on Android 10 is the
+  #    device_config overlay, which ActivityManager reads directly. So use that
+  #    as primary and verify the value reads back, rather than invoking a
+  #    build-specific Binder transaction that varies between AOSP forks.
+  $dc = Invoke-Adb @('shell','device_config','put','activity_manager','max_cached_processes','2')
+  $v = Invoke-Adb @('shell','device_config','get','activity_manager','max_cached_processes')
+  if ($v -match '2') { Write-Ok '    max_cached_processes = 2 (verified)' }
+  else { Write-Warn "    max_cached_processes put said '$dc', reads '$v'" }
+  # NOTE: device_config is a VOLATILE overlay. It survives a normal reboot but
+  # is reset by a factory reset / -wipe-data, so bench-memory.ps1 re-applies it
+  # for every level.
+
+  # b) Animations off. Not a direct RAM win, but it stops the compositor and
+  #    SurfaceFlinger from allocating transient buffers for window transitions.
+  foreach ($sc in @('window_animation_scale','transition_animation_scale','animator_duration_scale')) {
+    Invoke-Adb @('shell','settings','put','global',$sc,'0') | Out-Null
+  }
+  $av = Invoke-Adb @('shell','settings','get','global','window_animation_scale')
+  if ($av -match '0') { Write-Ok '    animation scales = 0 (verified)' }
+  else { Write-Warn "    window_animation_scale reads '$av'" }
+
+  # c) Disable non-essential system packages. Reversible with:
+  #    pm enable <pkg>. Note printspooler can break apps that print, so this is
+  #    deliberate rather than free.
+  foreach ($pkg in @('com.android.printspooler',
+                     'com.android.wallpaper.livepicker',
+                     'com.android.dreams.basic')) {
+    $r = Invoke-Adb @('shell','pm','disable-user','--user','0',$pkg)
+    if ($r -match 'disabled|Disabled|new state') { Write-Host "    disabled $pkg" }
+    else { Write-Warn "    disable $pkg -> $r" }
+  }
+
+  # d) DofusLauncher as HOME, then drop Launcher3 (measured ~59 MB PSS).
+  $apk = Join-Path (Split-Path -Parent $PSScriptRoot) 'launcher\build\DofusLauncher.apk'
+  if (Test-Path $apk) {
+    $ins = Invoke-Adb @('install','-r','-g',$apk)
+    if ($ins -match 'Success') {
+      Invoke-Adb @('shell','cmd','package','set-home-activity','com.dofusemu.launcher/.DofusLauncherActivity') | Out-Null
+      Invoke-Adb @('shell','pm','disable-user','--user','0','com.android.launcher3') | Out-Null
+      Write-Ok '    DofusLauncher installed as HOME; Launcher3 disabled'
+    } else { Write-Warn "    launcher install: $ins" }
   } else {
-    Write-Warn '  ro.config.low_ram SKIPPED (needs an offline system.img edit).'
-    Write-Warn '  See this script header and README "Known limitations".'
+    Write-Warn '    DofusLauncher.apk not built - run scripts\build-launcher.bat first'
+  }
+
+  # e) zram (compressed swap). Genuine oversubscription only; it does not make
+  #    zram0's backing store free memory.
+  $zsh = Join-Path $PSScriptRoot 'apply-zram.sh'
+  if (Test-Path $zsh) {
+    Invoke-Adb @('push',$zsh,'/data/local/tmp/apply-zram.sh') | Out-Null
+    $zr = Invoke-Adb @('shell','sh','/data/local/tmp/apply-zram.sh')
+    ($zr -split "`n") | Where-Object { $_ -match 'algorithm|disksize|swapon|unavailable' } |
+      ForEach-Object { Write-Host "    $_" }
   }
 
   # --- 3. dalvik.vm.* (runtime-settable: where the real saving is) ---------

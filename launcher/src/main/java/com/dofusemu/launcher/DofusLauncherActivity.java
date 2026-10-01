@@ -33,6 +33,13 @@ public class DofusLauncherActivity extends Activity {
     /** Fallback activity, used when the package resolves but the class differs. */
     private static final String GAME_ACTIVITY = "com.ankama.dofustouch.DofusTouchActivity";
 
+    /**
+     * Set once a launch attempt fails, so onNewIntent does not retry forever.
+     * See the comment there: retrying spun the process up to ~160 MB RSS when
+     * the game was absent, defeating the low-RAM goal.
+     */
+    private boolean failedLaunch = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -45,14 +52,31 @@ public class DofusLauncherActivity extends Activity {
 
         if (launchGame(pkg, GAME_ACTIVITY)) {
             Log.i(TAG, "launched game package=" + pkg);
+            // Do not linger in the recents/foreground task stack.
+            finish();
+            overridePendingTransition(0, 0);
         } else {
+            // CRITICAL: do NOT finish() here.
+            //
+            // This activity is registered as HOME. When a HOME activity
+            // finishes, ActivityManager immediately starts the default HOME
+            // again - which is this same activity - and that repeats forever.
+            // Observed on this image: 576 retries in 15 seconds, driving the
+            // process to ~130 MB RSS and completely defeating the low-RAM goal.
+            //
+            // Instead, stay resident but inert. HOME is then already satisfied,
+            // so nothing re-triggers, and the (empty, translucent) activity
+            // costs almost nothing. Once the game IS installed the successful
+            // branch above finishes normally and hands off.
+            //
+            // This is only reachable when the game APK is missing, which should
+            // never happen in production - it exists so a missing APK degrades
+            // quietly instead of pegging the CPU.
+            failedLaunch = true;
             Log.e(TAG, "could not launch game package=" + pkg
                     + " - is the APK installed on this instance?");
+            Log.e(TAG, "staying resident as HOME to avoid a restart loop");
         }
-
-        // Do not linger in the recents/foreground task stack.
-        finish();
-        overridePendingTransition(0, 0);
     }
 
     /**
@@ -123,6 +147,21 @@ public class DofusLauncherActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        onCreate(null);
+        // Guard against a retry loop.
+        //
+        // With launchMode="singleTask", when this activity finishes()s, the
+        // system may immediately re-deliver a new HOME intent to it. Calling
+        // onCreate(null) again then re-runs the launch attempt. If the game is
+        // NOT installed, every attempt fails, the activity finishes again, and
+        // the cycle repeats - observed spinning to ~160 MB RSS in a loop,
+        // which silently defeats the whole low-RAM goal.
+        //
+        // So: only re-launch when a HOME intent is actually re-delivered AND we
+        // have not already failed. Otherwise do nothing and let the activity
+        // stay finished.
+        if (intent != null && Intent.ACTION_MAIN.equals(intent.getAction())
+                && !failedLaunch) {
+            onCreate(null);
+        }
     }
 }
