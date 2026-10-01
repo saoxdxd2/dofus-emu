@@ -37,11 +37,26 @@ function Head($m) { Write-Host "`n$m" -ForegroundColor Cyan }
 
 Write-Host "Dofus Touch farm - environment check" -ForegroundColor White
 
-Head '1. CPU virtualization'
+Head '1. CPU virtualization / hypervisor'
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-if ($cpu.VirtualizationFirmwareEnabled) { Ok "VT-x enabled ($($cpu.Name.Trim()))" }
-else { Bad 'VT-x disabled in BIOS - the emulator cannot start. Enable Intel VT-x / AMD-V in firmware.' }
-if ($cpu.SecondLevelAddressTranslationExtensions) { Ok 'SLAT available' } else { Warn 'SLAT not reported' }
+$cs  = Get-CimInstance Win32_ComputerSystem
+# IMPORTANT: once a hypervisor is running it MASKS the VT-x/SLAT CPU flags, so
+# Win32_Processor.VirtualizationFirmwareEnabled reports False and SLAT reports
+# False even though virtualization is working perfectly. systeminfo says the
+# same thing in prose: "A hypervisor has been detected. Features required for
+# Hyper-V will not be displayed."
+#
+# So when HypervisorPresent is True we must NOT treat the False flags as a BIOS
+# fault - that is a false alarm. The authoritative test is `emulator
+# -accel-check`, run in section 5.
+if ($cs.HypervisorPresent) {
+  Ok 'hypervisor is running (CPU flags are masked by it - this is normal)'
+} elseif ($cpu.VirtualizationFirmwareEnabled) {
+  Ok "VT-x enabled ($($cpu.Name.Trim()))"
+} else {
+  Bad 'no hypervisor running and VT-x reports disabled - enable Intel VT-x/AMD-V in firmware, then enable HypervisorPlatform'
+  Bad '  without this the emulator exits: "x86_64 emulation currently requires hardware acceleration!"'
+}
 
 Head '2. Windows hypervisor'
 foreach ($f in @('HypervisorPlatform','VirtualMachinePlatform')) {

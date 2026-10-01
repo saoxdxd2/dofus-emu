@@ -96,16 +96,21 @@ if (-not $SkipHostPrereqs) {
   Write-Step '1/5  Host prerequisites'
 
   # --- CPU virtualization -------------------------------------------------
-  # The emulator requires a hypervisor. Without HypervisorPlatform the AVD
-  # refuses to start with:
-  #   "x86_64 emulation currently requires hardware acceleration!"
-  # This is the hardest prerequisite: it needs a reboot.
+  # The emulator requires a hypervisor. Without it the AVD refuses to start
+  # with "x86_64 emulation currently requires hardware acceleration!".
+  # NOTE: when a hypervisor is already running it MASKS the VT-x/SLAT CPU
+  # flags, so Win32_Processor.VirtualizationFirmwareEnabled reads False even
+  # though virtualization is fine. Only treat that as a BIOS fault when no
+  # hypervisor is present.
   $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-  if ($cpu.VirtualizationFirmwareEnabled -eq $false) {
-    Write-Err 'CPU virtualization is DISABLED in firmware (VT-x). Enable it in BIOS.'
-    $script:Failed += 'BIOS virtualization disabled'
-  } else {
+  $cs  = Get-CimInstance Win32_ComputerSystem
+  if ($cs.HypervisorPresent) {
+    Write-Ok 'hypervisor already active (CPU flags masked by it - normal)'
+  } elseif ($cpu.VirtualizationFirmwareEnabled) {
     Write-Ok 'CPU virtualization (VT-x/SLAT) available'
+  } else {
+    Write-Err 'CPU virtualization DISABLED in firmware (VT-x). Enable it in BIOS.'
+    $script:Failed += 'BIOS virtualization disabled'
   }
 
   foreach ($feat in @('HypervisorPlatform','VirtualMachinePlatform')) {

@@ -41,8 +41,19 @@ param(
   [switch] $Headless,
   [switch] $NoWait,
   [switch] $SkipProfile,
-  [switch] $WritableSystem
+  [switch] $WritableSystem,
+  # More than one instance? This script is the single-instance harness with the
+  # Gate 1/2/3 probes. Delegate to start-farm.ps1, which handles N instances
+  # with staggered boots and per-instance ports.
+  [int]    $Count   = 0
 )
+
+if ($Count -gt 1) {
+  Write-Host "[phase0] -Count $Count detected -> delegating to scripts\start-farm.ps1" -ForegroundColor Cyan
+  $farm = Join-Path $PSScriptRoot 'start-farm.ps1'
+  & $farm -Count $Count -RamMb $RamMb -Cores $Cores -AvdName $AvdName -Gpu $Gpu -Headless:$Headless
+  exit $LASTEXITCODE
+}
 
 $ErrorActionPreference = 'Stop'
 
