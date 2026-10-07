@@ -6,11 +6,13 @@
   and native binaries to detect tampering, modification, or reverse engineering attempts.
 #>
 [CmdletBinding()]
-param()
+param(
+  [string] $TargetDir = ''
+)
 
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$ManifestPath = Join-Path $PSScriptRoot 'app.integrity'
+$RepoRoot = if ($TargetDir) { $TargetDir } else { Split-Path -Parent $PSScriptRoot }
+$ManifestPath = Join-Path (Join-Path $RepoRoot 'scripts') 'app.integrity'
 $Salt = 'DOFUS_FARM_INTEGRITY_SALT_2026_K7X9Q'
 
 $CriticalFiles = @(

@@ -3,9 +3,11 @@
   Registers Dofus Touch Farm in Windows Add/Remove Programs (Programs & Features).
 #>
 [CmdletBinding()]
-param()
+param(
+  [string] $InstallDir = ''
+)
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = if ($InstallDir) { $InstallDir } else { Split-Path -Parent $PSScriptRoot }
 $RegPath  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm'
 
 if (-not (Test-Path $RegPath)) {

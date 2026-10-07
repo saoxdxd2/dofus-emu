@@ -23,7 +23,10 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName Microsoft.VisualBasic
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-if (-not $TargetDir) { $TargetDir = $RepoRoot }
+$isTempDeployment = ($RepoRoot -like "*DofusSetup_*") -or ($RepoRoot -like "*\Temp*") -or ($RepoRoot -like "*\AppData\Local\Temp*")
+if (-not $TargetDir -or $isTempDeployment) {
+  $TargetDir = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'DofusFarm'
+}
 
 # Detect host capacity
 $cs       = Get-CimInstance Win32_ComputerSystem
@@ -449,6 +452,37 @@ function Start-InstallationPipeline {
   Log-Install "Target directory: $target"
   Log-Install "Plan: $count instance(s), ${ram}MB RAM, $coresAlloc Core(s), ${width}x${height}@${dpi}DPI"
 
+  # Step 0: Deploy application binaries, scripts, and assets to Target Directory
+  $InstallStatusText.Text = "Deploying application components..."
+  $InstallProgress.Value = 10
+  if (-not (Test-Path $target)) {
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+  }
+
+  $targetResolved = (Resolve-Path $target -ErrorAction SilentlyContinue).Path
+  $repoResolved = (Resolve-Path $RepoRoot -ErrorAction SilentlyContinue).Path
+  if ($targetResolved -ne $repoResolved) {
+    Log-Install "Deploying core engine and scripts to $target..."
+    $destScripts = Join-Path $target 'scripts'
+    if (-not (Test-Path $destScripts)) { New-Item -ItemType Directory -Path $destScripts -Force | Out-Null }
+    Copy-Item (Join-Path $RepoRoot 'scripts\*') $destScripts -Recurse -Force
+
+    @('DofusFarm.exe', 'uninstall.exe', 'app_icon.ico', 'installer_icon.ico', 'install.ps1', 'INSTALL.bat', 'setup.bat') | ForEach-Object {
+      $srcFile = Join-Path $RepoRoot $_
+      if (Test-Path $srcFile) {
+        Copy-Item $srcFile (Join-Path $target $_) -Force
+      }
+    }
+
+    $srcApks = Join-Path $RepoRoot 'apks'
+    if (Test-Path $srcApks) {
+      $destApks = Join-Path $target 'apks'
+      if (-not (Test-Path $destApks)) { New-Item -ItemType Directory -Path $destApks -Force | Out-Null }
+      Copy-Item "$srcApks\*" $destApks -Recurse -Force
+    }
+    Log-Install "Application components deployed successfully." 'ok'
+  }
+
   # Step 1: SDK checks
   $sdkDir = Join-Path $target 'sdk'
   $Emu = Join-Path $sdkDir 'emulator\emulator.exe'
@@ -456,23 +490,46 @@ function Start-InstallationPipeline {
   $Img = Join-Path $sdkDir 'system-images\android-29\default\x86_64\system.img'
 
   $InstallStatusText.Text = "Checking Android SDK and emulator..."
-  $InstallProgress.Value = 20
-  if ((Test-Path $Emu) -and (Test-Path $Adb)) {
-    Log-Install "Android SDK tools already present (emulator & adb found)." 'ok'
+  $InstallProgress.Value = 25
+  if ((Test-Path $Emu) -and (Test-Path $Adb) -and (Test-Path $Img)) {
+    Log-Install "Android SDK tools and system image already present." 'ok'
   } else {
-    Log-Install "Android SDK missing. Invoking installer bootstrap (install.ps1)..." 'warn'
-    # Delegate to install.ps1 to download and extract missing SDK
-    $instScript = Join-Path $RepoRoot 'install.ps1'
-    & $instScript -InstallDir $sdkDir -SkipHostPrereqs
+    Log-Install "Android SDK missing or incomplete. Invoking installer bootstrap..." 'warn'
+    $instScript = Join-Path $target 'install.ps1'
+    if (-not (Test-Path $instScript)) { $instScript = Join-Path $RepoRoot 'install.ps1' }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "powershell.exe"
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$instScript`" -InstallDir `"$sdkDir`" -SkipHostPrereqs -SdkOnly"
+    $psi.UseShellExecute = false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    while (-not $proc.HasExited) {
+      $line = $proc.StandardOutput.ReadLine()
+      if ($line) {
+        $t = $line.Trim()
+        if ($t) { Log-Install $t }
+      }
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 20
+    }
+    $rem = $proc.StandardOutput.ReadToEnd()
+    if ($rem) {
+      $rem -split "`r?`n" | ForEach-Object { if ($_.Trim()) { Log-Install $_.Trim() } }
+    }
+    $proc.WaitForExit()
   }
 
   # Step 2: System Image check
-  $InstallStatusText.Text = "Checking Android 10 API 29 x86_64 system image..."
-  $InstallProgress.Value = 40
+  $InstallStatusText.Text = "Verifying Android 10 API 29 x86_64 system image..."
+  $InstallProgress.Value = 45
   if (Test-Path $Img) {
-    Log-Install "Android 10 API 29 x86_64 system image present." 'ok'
+    Log-Install "Android 10 API 29 x86_64 system image verified." 'ok'
   } else {
-    Log-Install "System image missing at $Img. Please run install.ps1 to download it." 'err'
+    Log-Install "System image not found at $Img." 'err'
   }
 
   # Step 3: Golden Master Template check
@@ -486,6 +543,7 @@ function Start-InstallationPipeline {
     Log-Install "Golden Master Template validated: $(Split-Path -Leaf $golden) ($([math]::Round((Get-Item $golden).Length/1MB,0)) MB)." 'ok'
   } else {
     $bundledTpl = Join-Path $RepoRoot 'template.zip'
+    if (-not (Test-Path $bundledTpl)) { $bundledTpl = Join-Path $target 'template.zip' }
     if (Test-Path $bundledTpl) {
       Log-Install "Deploying pre-configured Golden Master Template from payload..." 'ok'
       $tplDest = Join-Path $AvdHome 'dofus-template.avd'
@@ -496,7 +554,8 @@ function Start-InstallationPipeline {
       Log-Install "Golden Master Template deployed and registered." 'ok'
     } else {
       Log-Install "Freezing Golden Master Template..." 'warn'
-      $freezeScript = Join-Path $RepoRoot 'scripts\freeze-template.ps1'
+      $freezeScript = Join-Path $target 'scripts\freeze-template.ps1'
+      if (-not (Test-Path $freezeScript)) { $freezeScript = Join-Path $RepoRoot 'scripts\freeze-template.ps1' }
       if (Test-Path $freezeScript) {
         & $freezeScript -Force
         Log-Install "Template frozen successfully." 'ok'
@@ -509,7 +568,10 @@ function Start-InstallationPipeline {
   # Step 4: Provision Instances with QCOW2 Overlays
   $InstallStatusText.Text = "Provisioning $count instance(s) with QCOW2 overlays..."
   $InstallProgress.Value = 80
-  $clusterScript = Join-Path $RepoRoot 'scripts\cluster-manager.ps1'
+  $env:ANDROID_SDK_ROOT = $sdkDir
+  $env:ANDROID_HOME = $sdkDir
+  $clusterScript = Join-Path $target 'scripts\cluster-manager.ps1'
+  if (-not (Test-Path $clusterScript)) { $clusterScript = Join-Path $RepoRoot 'scripts\cluster-manager.ps1' }
   if (Test-Path $clusterScript) {
     & $clusterScript -Action Create -Count $count -RamMb $ram -Cores $coresAlloc -Force
     Log-Install "$count instance(s) provisioned with hardlinked QCOW2 overlays." 'ok'
@@ -545,10 +607,12 @@ function Start-InstallationPipeline {
 
   # Step 6: Create Desktop Shortcut with custom icon if requested
   if ($ChkCreateShortcut.IsChecked) {
-    $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1'
+    $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
+    if (-not (Test-Path $scScript)) { $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1' }
     if (Test-Path $scScript) {
       try {
-        & $scScript
+        $farmExe = Join-Path $target 'DofusFarm.exe'
+        & $scScript -TargetExe $farmExe
         Log-Install "Desktop shortcut 'Dofus Farm Manager' created with SAO icon." 'ok'
       } catch {
         Log-Install "Could not create desktop shortcut: $_" 'warn'
@@ -557,10 +621,11 @@ function Start-InstallationPipeline {
   }
 
   # Step 7: Register in Windows Add/Remove Programs
-  $regScript = Join-Path $RepoRoot 'scripts\register-uninstall.ps1'
+  $regScript = Join-Path $target 'scripts\register-uninstall.ps1'
+  if (-not (Test-Path $regScript)) { $regScript = Join-Path $RepoRoot 'scripts\register-uninstall.ps1' }
   if (Test-Path $regScript) {
     try {
-      & $regScript 2>$null | Out-Null
+      & $regScript -InstallDir $target 2>$null | Out-Null
       Log-Install "Registered in Windows Programs & Features." 'ok'
     } catch {}
   }
@@ -568,10 +633,11 @@ function Start-InstallationPipeline {
   # Step 8: Seal Application Integrity & Anti-Tamper Lock
   $InstallStatusText.Text = "Sealing code integrity and locking files against tampering..."
   $InstallProgress.Value = 98
-  $manifestGen = Join-Path $RepoRoot 'scripts\generate-integrity-manifest.ps1'
+  $manifestGen = Join-Path $target 'scripts\generate-integrity-manifest.ps1'
+  if (-not (Test-Path $manifestGen)) { $manifestGen = Join-Path $RepoRoot 'scripts\generate-integrity-manifest.ps1' }
   if (Test-Path $manifestGen) {
     try {
-      & $manifestGen 2>$null | Out-Null
+      & $manifestGen -TargetDir $target 2>$null | Out-Null
       $scriptsDir = Join-Path $target 'scripts'
       if (Test-Path $scriptsDir) {
         attrib +R "$scriptsDir\*.*" /s 2>$null | Out-Null
@@ -593,9 +659,10 @@ function Start-InstallationPipeline {
 
 # Finish Page actions
 $BtnFinishLaunchFarm.Add_Click({
+  $target = $TxtInstallPath.Text.Trim()
   if ($ChkCreateShortcut.IsChecked) {
-    $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & $scScript 2>$null | Out-Null }
+    $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
+    if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
   }
 
   $count = $CmbInstanceCount.SelectedIndex + 1
@@ -603,31 +670,33 @@ $BtnFinishLaunchFarm.Add_Click({
   if ($CmbRam.SelectedItem -match '(\d+)') { $ram = [int]$matches[1] }
   $coresAlloc = if ($CmbCores.SelectedIndex -eq 0) { 1 } else { 2 }
 
-  $startFarmScript = Join-Path $RepoRoot 'scripts\start-farm.ps1'
-  Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$startFarmScript,'-Count',"$count",'-RamMb',"$ram",'-Cores',"$coresAlloc",'-AutoBoot','-EdgeToEdge','-Force') -WorkingDirectory $RepoRoot -WindowStyle Hidden
+  $startFarmScript = Join-Path $target 'scripts\start-farm.ps1'
+  Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$startFarmScript,'-Count',"$count",'-RamMb',"$ram",'-Cores',"$coresAlloc",'-AutoBoot','-EdgeToEdge','-Force') -WorkingDirectory $target -WindowStyle Hidden
   $win.Close()
 })
 
 $BtnFinishOpenGui.Add_Click({
+  $target = $TxtInstallPath.Text.Trim()
   if ($ChkCreateShortcut.IsChecked) {
-    $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & $scScript 2>$null | Out-Null }
+    $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
+    if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
   }
 
-  $farmExe = Join-Path $RepoRoot 'DofusFarm.exe'
+  $farmExe = Join-Path $target 'DofusFarm.exe'
   if (Test-Path $farmExe) {
-    Start-Process $farmExe -WorkingDirectory $RepoRoot
+    Start-Process $farmExe -WorkingDirectory $target
   } else {
-    $guiScript = Join-Path $RepoRoot 'scripts\gui-manager.ps1'
-    Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-WindowStyle','Hidden','-File',$guiScript) -WorkingDirectory $RepoRoot -WindowStyle Hidden
+    $guiScript = Join-Path $target 'scripts\gui-manager.ps1'
+    Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-WindowStyle','Hidden','-File',$guiScript) -WorkingDirectory $target -WindowStyle Hidden
   }
   $win.Close()
 })
 
 $BtnFinishExit.Add_Click({
+  $target = $TxtInstallPath.Text.Trim()
   if ($ChkCreateShortcut.IsChecked) {
-    $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & $scScript 2>$null | Out-Null }
+    $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
+    if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
   }
   $win.Close()
 })

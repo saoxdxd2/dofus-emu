@@ -20,10 +20,7 @@ if (-not (Test-Path $SetupIco)) {
   & (Join-Path $PSScriptRoot 'build-installer-icon.ps1')
 }
 
-# 1. Compile standalone setup.exe with embedded payload
-& (Join-Path $PSScriptRoot 'build-standalone-installer.ps1')
-
-# 2. Compile DofusFarm.exe
+# 1. Compile DofusFarm.exe
 $farmCs = @"
 using System;
 using System.Diagnostics;
@@ -229,7 +226,15 @@ if ($LASTEXITCODE -eq 0) {
   Write-Error "Failed to compile uninstall.exe"
 }
 
-# 4. Refresh desktop shortcut (only if requested)
+# 3. Seal Code Integrity Manifest across all compiled binaries and scripts
+Write-Host "Sealing Code Integrity Manifest..." -ForegroundColor Cyan
+& (Join-Path $PSScriptRoot 'generate-integrity-manifest.ps1')
+
+# 4. Compile standalone setup.exe bundling complete payload
+Write-Host "Compiling standalone setup.exe with complete payload..." -ForegroundColor Cyan
+& (Join-Path $PSScriptRoot 'build-standalone-installer.ps1')
+
+# 5. Refresh desktop shortcut (only if requested)
 if ($CreateShortcut) {
   $scScript = Join-Path $PSScriptRoot 'create-shortcut.ps1'
   if (Test-Path $scScript) {

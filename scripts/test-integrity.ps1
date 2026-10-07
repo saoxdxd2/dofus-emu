@@ -4,12 +4,13 @@
 #>
 [CmdletBinding()]
 param(
+  [string] $TargetDir = '',
   [switch] $ThrowOnMismatch
 )
 
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$ManifestPath = Join-Path $PSScriptRoot 'app.integrity'
+$RepoRoot = if ($TargetDir) { $TargetDir } else { Split-Path -Parent $PSScriptRoot }
+$ManifestPath = Join-Path (Join-Path $RepoRoot 'scripts') 'app.integrity'
 $Salt = 'DOFUS_FARM_INTEGRITY_SALT_2026_K7X9Q'
 
 if (-not (Test-Path $ManifestPath)) {

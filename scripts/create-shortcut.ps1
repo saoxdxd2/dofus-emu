@@ -18,10 +18,9 @@ if (-not $TargetExe) {
   }
 }
 
-$IconPath = Join-Path $RepoRoot 'app_icon.ico'
-if (-not (Test-Path $IconPath)) {
-  & (Join-Path $PSScriptRoot 'build-icon.ps1')
-}
+$appDir = Split-Path -Parent $TargetExe
+$IconPath = Join-Path $appDir 'app_icon.ico'
+if (-not (Test-Path $IconPath)) { $IconPath = Join-Path $RepoRoot 'app_icon.ico' }
 
 $DesktopPath = if ($AllUsers) {
   [Environment]::GetFolderPath('CommonDesktopDirectory')
@@ -36,7 +35,7 @@ Write-Host "Creating desktop shortcut: $ShortcutPath" -ForegroundColor Cyan
 $wsh = New-Object -ComObject WScript.Shell
 $shortcut = $wsh.CreateShortcut($ShortcutPath)
 $shortcut.TargetPath = $TargetExe
-$shortcut.WorkingDirectory = $RepoRoot
+$shortcut.WorkingDirectory = $appDir
 $shortcut.Arguments = ''
 $shortcut.Description = 'Dofus Touch High-Efficiency Android Farm Manager'
 $shortcut.IconLocation = "$IconPath,0"

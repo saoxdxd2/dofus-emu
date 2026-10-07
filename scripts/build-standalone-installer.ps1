@@ -31,6 +31,9 @@ Copy-Item (Join-Path $RepoRoot "install.ps1") $stageDir -Force -EA SilentlyConti
 Copy-Item (Join-Path $RepoRoot "INSTALL.bat") $stageDir -Force -EA SilentlyContinue
 Copy-Item (Join-Path $RepoRoot "installer_icon.ico") $stageDir -Force -EA SilentlyContinue
 Copy-Item (Join-Path $RepoRoot "app_icon.ico") $stageDir -Force -EA SilentlyContinue
+Copy-Item (Join-Path $RepoRoot "DofusFarm.exe") $stageDir -Force -EA SilentlyContinue
+Copy-Item (Join-Path $RepoRoot "uninstall.exe") $stageDir -Force -EA SilentlyContinue
+Copy-Item (Join-Path $RepoRoot "setup.bat") $stageDir -Force -EA SilentlyContinue
 
 # Include game APK bundle
 if (Test-Path (Join-Path $RepoRoot "apks")) {
@@ -39,8 +42,12 @@ if (Test-Path (Join-Path $RepoRoot "apks")) {
 }
 
 # Include Golden Master Template (pre-installed, pre-trimmed) if available
+$repoTpl = Join-Path $RepoRoot 'template.zip'
 $avdTpl = Join-Path $env:USERPROFILE '.android\avd\dofus-template.avd'
-if (Test-Path $avdTpl) {
+if (Test-Path $repoTpl) {
+  Write-Host "Packaging pre-configured Golden Master Template from repo (~40MB)..." -ForegroundColor Gray
+  Copy-Item $repoTpl (Join-Path $stageDir "template.zip") -Force
+} elseif (Test-Path $avdTpl) {
   Write-Host "Packaging pre-configured Golden Master Template (~40MB)..." -ForegroundColor Gray
   Compress-Archive -Path "$avdTpl\*" -DestinationPath (Join-Path $stageDir "template.zip") -Force
 }

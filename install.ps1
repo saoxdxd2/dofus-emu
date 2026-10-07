@@ -43,7 +43,8 @@ param(
   [int]    $Cores      = 2,
   [int]    $Count      = 1,
   [switch] $SkipHostPrereqs,
-  [switch] $RebootWhenNeeded
+  [switch] $RebootWhenNeeded,
+  [switch] $SdkOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,6 +81,7 @@ if (-not (Test-Admin)) {
   if ($Count      -ne 1)              { $elev += @('-Count', $Count) }
   if ($SkipHostPrereqs)              { $elev += '-SkipHostPrereqs' }
   if ($RebootWhenNeeded)             { $elev += '-RebootWhenNeeded' }
+  if ($SdkOnly)                      { $elev += '-SdkOnly' }
   try { Start-Process powershell -Verb RunAs -ArgumentList $elev -Wait }
   catch { Write-Err "Elevation failed: $($_.Exception.Message)" }
   exit 0
@@ -272,65 +274,69 @@ if ((Test-Path $emuSrc) -and (-not (Test-Path $emuPkg))) {
 }
 
 # ============================================================ 3. AVDs
-Write-Step "3/5  Creating $Count AVD(s)"
-
-$env:ANDROID_SDK_ROOT = $Sdk
-$env:ANDROID_HOME     = $Sdk
-$avdmanager = Join-Path $Sdk 'cmdline-tools\latest\bin\avdmanager.bat'
-$avdHome    = Join-Path $env:USERPROFILE '.android\avd'
-
-if (-not (Test-Path $avdmanager)) {
-  Write-Err 'avdmanager missing - cannot create AVDs'
-  $script:Failed += 'avdmanager missing'
+if ($SdkOnly) {
+  Write-Step '3/5  AVDs skipped (-SdkOnly)'
 } else {
-  for ($i = 1; $i -le $Count; $i++) {
-    $name = if ($Count -eq 1) { $AvdName } else { '{0}-{1:d2}' -f $AvdName, $i }
-    $ini  = Join-Path $avdHome "$name.ini"
-    if (Test-Path $ini) {
-      Write-Ok "AVD $name already exists"
-      continue
-    }
-    Write-Info "creating AVD $name ..."
-    # `echo no` answers avdmanager's "custom hardware profile?" prompt.
-    # Invoked via cmd.exe; using the PowerShell call operator here would try to
-    # bind "no" as a parameter to this script.
-    $out = & cmd.exe /c "echo no | `"$avdmanager`" create avd -n $name -k `"system-images;android-29;default;x86_64`" -d pixel -f" 2>&1
-    if (Test-Path $ini) { Write-Ok "created $name" }
-    else {
-      Write-Err "failed to create $name"
-      Write-Info ($out | Out-String)
-      $script:Failed += "AVD $name"
-      continue
-    }
-    # Apply the hardware profile. avdmanager does not expose -gpu mode, so it
-    # has to be written into config.ini directly.
-    $cfg = Join-Path $avdHome "$name.avd\config.ini"
-    if (Test-Path $cfg) {
-      $settings = @{
-        'hw.gpu.enabled'            = 'yes'
-        'hw.gpu.mode'               = 'host'   # real host GPU, NOT SwiftShader
-        'hw.ramSize'                = "$RamMb"
-        'hw.cpu.ncore'              = "$Cores"
-        'hw.keyboard'               = 'yes'
-        'hw.mainKeys'               = 'no'
-        'hw.audioInput'             = 'no'
-        'hw.audioOutput'            = 'no'
-        'hw.camera.back'            = 'none'
-        'hw.camera.front'           = 'none'
-        'disk.dataPartition.size'   = '2048M'
+  Write-Step "3/5  Creating $Count AVD(s)"
+
+  $env:ANDROID_SDK_ROOT = $Sdk
+  $env:ANDROID_HOME     = $Sdk
+  $avdmanager = Join-Path $Sdk 'cmdline-tools\latest\bin\avdmanager.bat'
+  $avdHome    = Join-Path $env:USERPROFILE '.android\avd'
+
+  if (-not (Test-Path $avdmanager)) {
+    Write-Err 'avdmanager missing - cannot create AVDs'
+    $script:Failed += 'avdmanager missing'
+  } else {
+    for ($i = 1; $i -le $Count; $i++) {
+      $name = if ($Count -eq 1) { $AvdName } else { '{0}-{1:d2}' -f $AvdName, $i }
+      $ini  = Join-Path $avdHome "$name.ini"
+      if (Test-Path $ini) {
+        Write-Ok "AVD $name already exists"
+        continue
       }
-      $cur = Get-Content $cfg
-      foreach ($k in $settings.Keys) {
-        # AVD config.ini may use "key = value" or "key=value" depending on how
-        # it was generated, so match either form and replace instead of
-        # appending a duplicate key.
-        $esc = [regex]::Escape($k)
-        if ($cur -match "^\s*$esc\s*=") {
-          $cur = $cur -replace "^\s*$esc\s*=.*$", "$k=$($settings[$k])"
-        } else { $cur += "$k=$($settings[$k])" }
+      Write-Info "creating AVD $name ..."
+      # `echo no` answers avdmanager's "custom hardware profile?" prompt.
+      # Invoked via cmd.exe; using the PowerShell call operator here would try to
+      # bind "no" as a parameter to this script.
+      $out = & cmd.exe /c "echo no | `"$avdmanager`" create avd -n $name -k `"system-images;android-29;default;x86_64`" -d pixel -f" 2>&1
+      if (Test-Path $ini) { Write-Ok "created $name" }
+      else {
+        Write-Err "failed to create $name"
+        Write-Info ($out | Out-String)
+        $script:Failed += "AVD $name"
+        continue
       }
-      Set-Content -Path $cfg -Value $cur
-      Write-Ok "  configured (gpu=host, ram=${RamMb}MB, cores=$Cores)"
+      # Apply the hardware profile. avdmanager does not expose -gpu mode, so it
+      # has to be written into config.ini directly.
+      $cfg = Join-Path $avdHome "$name.avd\config.ini"
+      if (Test-Path $cfg) {
+        $settings = @{
+          'hw.gpu.enabled'            = 'yes'
+          'hw.gpu.mode'               = 'host'   # real host GPU, NOT SwiftShader
+          'hw.ramSize'                = "$RamMb"
+          'hw.cpu.ncore'              = "$Cores"
+          'hw.keyboard'               = 'yes'
+          'hw.mainKeys'               = 'no'
+          'hw.audioInput'             = 'no'
+          'hw.audioOutput'            = 'no'
+          'hw.camera.back'            = 'none'
+          'hw.camera.front'           = 'none'
+          'disk.dataPartition.size'   = '2048M'
+        }
+        $cur = Get-Content $cfg
+        foreach ($k in $settings.Keys) {
+          # AVD config.ini may use "key = value" or "key=value" depending on how
+          # it was generated, so match either form and replace instead of
+          # appending a duplicate key.
+          $esc = [regex]::Escape($k)
+          if ($cur -match "^\s*$esc\s*=") {
+            $cur = $cur -replace "^\s*$esc\s*=.*$", "$k=$($settings[$k])"
+          } else { $cur += "$k=$($settings[$k])" }
+        }
+        Set-Content -Path $cfg -Value $cur
+        Write-Ok "  configured (gpu=host, ram=${RamMb}MB, cores=$Cores)"
+      }
     }
   }
 }
