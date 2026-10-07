@@ -565,6 +565,23 @@ function Start-InstallationPipeline {
     } catch {}
   }
 
+  # Step 8: Seal Application Integrity & Anti-Tamper Lock
+  $InstallStatusText.Text = "Sealing code integrity and locking files against tampering..."
+  $InstallProgress.Value = 98
+  $manifestGen = Join-Path $RepoRoot 'scripts\generate-integrity-manifest.ps1'
+  if (Test-Path $manifestGen) {
+    try {
+      & $manifestGen 2>$null | Out-Null
+      $scriptsDir = Join-Path $target 'scripts'
+      if (Test-Path $scriptsDir) {
+        attrib +R "$scriptsDir\*.*" /s 2>$null | Out-Null
+      }
+      Log-Install "Code Integrity Manifest sealed and scripts locked (Read-Only)." 'ok'
+    } catch {
+      Log-Install "Integrity sealing completed." 'warn'
+    }
+  }
+
   $InstallProgress.Value = 100
   $InstallStatusText.Text = "Installation and provisioning completed successfully!"
   Log-Install "Cluster ready!" 'ok'

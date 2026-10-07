@@ -9,8 +9,7 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $InstallerIco = Join-Path $RepoRoot 'installer_icon.ico'
-$TargetExe = Join-Path $RepoRoot 'DofusFarmSetup.exe'
-$SetupExe = Join-Path $RepoRoot 'setup.exe'
+$TargetExe = Join-Path $RepoRoot 'setup.exe'
 
 if (-not (Test-Path $InstallerIco)) {
   & (Join-Path $PSScriptRoot 'build-installer-icon.ps1')
@@ -18,12 +17,13 @@ if (-not (Test-Path $InstallerIco)) {
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+# 0. Seal Code Integrity Hashes
+Write-Host "Generating SHA-256 Code Integrity Manifest..." -ForegroundColor Cyan
+& (Join-Path $PSScriptRoot 'generate-integrity-manifest.ps1')
+
 # 1. Prepare Compressed Payload Archive of all scripts and assets
 Write-Host "Packaging installer payload archive..." -ForegroundColor Cyan
 $payloadZip = Join-Path $env:TEMP "DofusPayload.zip"
-Remove-Item $payloadZip -Force -EA SilentlyContinue
-
-# Create clean staging directory for payload
 $stageDir = Join-Path $env:TEMP "dofus_stage_$([System.IO.Path]::GetRandomFileName())"
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 Copy-Item (Join-Path $RepoRoot "scripts") (Join-Path $stageDir "scripts") -Recurse -Force
@@ -183,10 +183,7 @@ $cscArgs = @(
 
 & $Csc $cscArgs
 if ($LASTEXITCODE -eq 0) {
-  Write-Host "  [OK] Successfully compiled with UAC elevation: $TargetExe ($((Get-Item $TargetExe).Length) bytes)" -ForegroundColor Green
-  # Also copy/overwrite setup.exe so it serves as the same standalone installer
-  Copy-Item $TargetExe $SetupExe -Force
-  Write-Host "  [OK] Synchronized: $SetupExe ($((Get-Item $SetupExe).Length) bytes)" -ForegroundColor Green
+  Write-Host "  [OK] Successfully compiled standalone installer: $TargetExe ($([math]::Round((Get-Item $TargetExe).Length/1MB, 1)) MB)" -ForegroundColor Green
 } else {
   Write-Host "  [FAIL] Compilation failed with exit code $LASTEXITCODE" -ForegroundColor Red
 }

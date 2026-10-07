@@ -20,7 +20,7 @@ if (-not (Test-Path $SetupIco)) {
   & (Join-Path $PSScriptRoot 'build-installer-icon.ps1')
 }
 
-# 1. Compile standalone setup.exe and DofusFarmSetup.exe with embedded payload
+# 1. Compile standalone setup.exe with embedded payload
 & (Join-Path $PSScriptRoot 'build-standalone-installer.ps1')
 
 # 2. Compile DofusFarm.exe
@@ -28,12 +28,67 @@ $farmCs = @"
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows.Forms;
 
 namespace DofusFarmLauncher
 {
     static class Program
     {
+        private const string Salt = "DOFUS_FARM_INTEGRITY_SALT_2026_K7X9Q";
+
+        private static bool VerifyIntegrity(string baseDir)
+        {
+            string manifestPath = Path.Combine(baseDir, "scripts", "app.integrity");
+            if (!File.Exists(manifestPath)) return false;
+
+            try
+            {
+                string[] lines = File.ReadAllLines(manifestPath);
+                string expectedSig = "";
+                StringBuilder allHashes = new StringBuilder();
+
+                using (SHA256 sha = SHA256.Create())
+                {
+                    foreach (string line in lines)
+                    {
+                        if (line.StartsWith("SIGNATURE|"))
+                        {
+                            expectedSig = line.Substring("SIGNATURE|".Length).Trim();
+                        }
+                        else
+                        {
+                            string[] parts = line.Split('|');
+                            if (parts.Length == 2)
+                            {
+                                string rel = parts[0].Trim();
+                                string expectedHex = parts[1].Trim();
+                                string fullPath = Path.Combine(baseDir, rel);
+                                if (!File.Exists(fullPath)) return false;
+
+                                byte[] bytes = File.ReadAllBytes(fullPath);
+                                byte[] hashBytes = sha.ComputeHash(bytes);
+                                string hex = BitConverter.ToString(hashBytes).Replace("-", "");
+                                if (!hex.Equals(expectedHex, StringComparison.OrdinalIgnoreCase)) return false;
+
+                                allHashes.Append(expectedHex);
+                            }
+                        }
+                    }
+
+                    byte[] saltData = Encoding.UTF8.GetBytes(allHashes.ToString() + Salt);
+                    byte[] sigBytes = sha.ComputeHash(saltData);
+                    string computedSig = BitConverter.ToString(sigBytes).Replace("-", "");
+                    return computedSig.Equals(expectedSig, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         [STAThread]
         static void Main(string[] args)
         {
@@ -44,6 +99,16 @@ namespace DofusFarmLauncher
                 if (!File.Exists(scriptPath))
                 {
                     MessageBox.Show("Could not find gui-manager.ps1 in: " + baseDir, "Launcher Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                if (!VerifyIntegrity(baseDir))
+                {
+                    MessageBox.Show(
+                        "Security Integrity Alert:\n\nOne or more core system files have been modified or tampered with.\nExecution halted to prevent unauthorized reverse engineering.",
+                        "Security Violation",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Stop);
                     return;
                 }
 

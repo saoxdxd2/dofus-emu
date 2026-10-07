@@ -33,6 +33,21 @@ Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName Microsoft.VisualBasic
 
+# Anti-Tamper & Code Integrity Verification
+$integrityScript = Join-Path $PSScriptRoot 'test-integrity.ps1'
+if (Test-Path $integrityScript) {
+  $check = & $integrityScript
+  if (-not $check.Valid) {
+    [System.Windows.MessageBox]::Show(
+      "Security Integrity Violation!`n`nOne or more application files have been modified or tampered with.`nExecution halted to prevent unauthorized reverse engineering.",
+      "Integrity Check Failed",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Stop
+    )
+    exit 1
+  }
+}
+
 # Load Hardware Diagnostics
 . (Join-Path $PSScriptRoot 'detect-hardware.ps1')
 $diag = Get-HardwareDiagnostics
