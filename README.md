@@ -1,7 +1,11 @@
-﻿# dofus-emu
+# dofus-emu
 
 Custom Android virtual-instance farm for running **Dofus Touch** (an HTML5/WebGL
 Cordova app) as multiple concurrent instances on a single x86_64 Windows host.
+
+## Downloads & Code Signing
+- **Downloads**: Download the latest release from the [GitHub Releases page](https://github.com/saoxdxd2/dofus-emu/releases).
+- **Code Signing**: Free code signing provided by the [SignPath Foundation](https://signpath.org).
 
 Status: **first guest booted successfully.** All four Phase 0 gates run; Gate 4
 measured. Remaining work is installing the game + a real Chromium WebView and
