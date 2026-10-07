@@ -28,9 +28,18 @@ $farmCs = @"
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Forms;
+
+[assembly: AssemblyTitle("Dofus Farm Manager")]
+[assembly: AssemblyDescription("Dofus Touch High-Efficiency Virtualization Farm Manager")]
+[assembly: AssemblyCompany("Dofus Farm Project")]
+[assembly: AssemblyProduct("Dofus Farm Manager")]
+[assembly: AssemblyCopyright("Copyright © 2026")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.0.0.0")]
 
 namespace DofusFarmLauncher
 {

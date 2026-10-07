@@ -60,6 +60,14 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Windows.Forms;
 
+[assembly: AssemblyTitle("Dofus Farm Setup")]
+[assembly: AssemblyDescription("Dofus Touch Virtualization Farm Standalone Setup Wizard")]
+[assembly: AssemblyCompany("Dofus Farm Project")]
+[assembly: AssemblyProduct("Dofus Farm Virtualization Setup")]
+[assembly: AssemblyCopyright("Copyright © 2026")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.0.0.0")]
+
 namespace DofusStandaloneSetup
 {
     static class Program
