@@ -24,23 +24,38 @@ set DL=%TEMP%\dl
 if not exist "%DL%" mkdir "%DL%"
 
 set ARIA=C:\ProgramData\chocolatey\bin\aria2c.exe
-if not exist "%ARIA%" set ARIA=aria2c
-set BASE=https://dl.google.com/android/repository
+set USE_ARIA=0
+where aria2c >nul 2>nul
+if %errorlevel%==0 set USE_ARIA=1
+if exist "%ARIA%" set USE_ARIA=1
 
-REM -x16 16 connections per file, -s16 max 16 splits, -c continue a partial
-REM file, --file-allocation=none so a partial does not get preallocated to full
-REM size (which would make a later resume look complete).
+set BASE=https://dl.google.com/android/repository
 set AOPTS=-x16 -s16 -k1M -c --file-allocation=none --console-log-level=warn --auto-file-renaming=false --allow-overwrite=true
 
-echo [dl] 1/3 platform-tools (8MB)...
-"%ARIA%" %AOPTS% -d "%DL%" -o "platform-tools.zip" "%BASE%/platform-tools_r37.0.1-win.zip"
-if errorlevel 1 goto :dlfail
-echo [dl] 2/3 emulator (438MB)...
-"%ARIA%" %AOPTS% -d "%DL%" -o "emulator.zip" "%BASE%/emulator-windows_x64-16433917.zip"
-if errorlevel 1 goto :dlfail
-echo [dl] 3/3 API 29 x86_64 system image (658MB)...
-"%ARIA%" %AOPTS% -d "%DL%" -o "sysimg.zip" "%BASE%/sys-img/android/x86_64-29_r08-windows.zip"
-if errorlevel 1 goto :dlfail
+if "%USE_ARIA%"=="1" (
+  echo [dl] Using aria2c multi-stream download...
+  if not exist "%ARIA%" set ARIA=aria2c
+  echo [dl] 1/3 platform-tools (8MB)...
+  "%ARIA%" %AOPTS% -d "%DL%" -o "platform-tools.zip" "%BASE%/platform-tools_r37.0.1-win.zip"
+  if errorlevel 1 goto :dlfail
+  echo [dl] 2/3 emulator (438MB)...
+  "%ARIA%" %AOPTS% -d "%DL%" -o "emulator.zip" "%BASE%/emulator-windows_x64-16433917.zip"
+  if errorlevel 1 goto :dlfail
+  echo [dl] 3/3 API 29 x86_64 system image (658MB)...
+  "%ARIA%" %AOPTS% -d "%DL%" -o "sysimg.zip" "%BASE%/sys-img/android/x86_64-29_r08-windows.zip"
+  if errorlevel 1 goto :dlfail
+) else (
+  echo [dl] Using native Windows curl download...
+  echo [dl] 1/3 platform-tools (8MB)...
+  curl.exe -L -C - -f --retry 3 -o "%DL%\platform-tools.zip" "%BASE%/platform-tools_r37.0.1-win.zip"
+  if errorlevel 1 goto :dlfail
+  echo [dl] 2/3 emulator (438MB)...
+  curl.exe -L -C - -f --retry 3 -o "%DL%\emulator.zip" "%BASE%/emulator-windows_x64-16433917.zip"
+  if errorlevel 1 goto :dlfail
+  echo [dl] 3/3 API 29 x86_64 system image (658MB)...
+  curl.exe -L -C - -f --retry 3 -o "%DL%\sysimg.zip" "%BASE%/sys-img/android/x86_64-29_r08-windows.zip"
+  if errorlevel 1 goto :dlfail
+)
 
 echo [dl] Final sizes:
 for %%f in ("%DL%\platform-tools.zip" "%DL%\emulator.zip" "%DL%\sysimg.zip") do echo [dl]   %%~nxf = %%~zf bytes

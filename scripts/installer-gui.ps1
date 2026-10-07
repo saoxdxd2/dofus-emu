@@ -485,13 +485,24 @@ function Start-InstallationPipeline {
   if (Test-Path $golden) {
     Log-Install "Golden Master Template validated: $(Split-Path -Leaf $golden) ($([math]::Round((Get-Item $golden).Length/1MB,0)) MB)." 'ok'
   } else {
-    Log-Install "Freezing Golden Master Template..." 'warn'
-    $freezeScript = Join-Path $RepoRoot 'scripts\freeze-template.ps1'
-    if (Test-Path $freezeScript) {
-      & $freezeScript -Force
-      Log-Install "Template frozen successfully." 'ok'
+    $bundledTpl = Join-Path $RepoRoot 'template.zip'
+    if (Test-Path $bundledTpl) {
+      Log-Install "Deploying pre-configured Golden Master Template from payload..." 'ok'
+      $tplDest = Join-Path $AvdHome 'dofus-template.avd'
+      if (-not (Test-Path $tplDest)) { New-Item -ItemType Directory -Path $tplDest -Force | Out-Null }
+      Expand-Archive -Path $bundledTpl -DestinationPath $tplDest -Force
+      $iniPath = Join-Path $AvdHome 'dofus-template.ini'
+      "avd.ini.encoding=UTF-8`r`npath=$tplDest`r`npath.rel=avd/dofus-template.avd`r`ntarget=android-29" | Set-Content -Path $iniPath -Encoding UTF8
+      Log-Install "Golden Master Template deployed and registered." 'ok'
     } else {
-      Log-Install "freeze-template.ps1 not found." 'err'
+      Log-Install "Freezing Golden Master Template..." 'warn'
+      $freezeScript = Join-Path $RepoRoot 'scripts\freeze-template.ps1'
+      if (Test-Path $freezeScript) {
+        & $freezeScript -Force
+        Log-Install "Template frozen successfully." 'ok'
+      } else {
+        Log-Install "freeze-template.ps1 not found." 'err'
+      }
     }
   }
 
