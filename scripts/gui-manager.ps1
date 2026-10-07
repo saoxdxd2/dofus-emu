@@ -169,9 +169,9 @@ function Get-LiveSerials {
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-          <TextBlock Text="⚡ DOFUS TOUCH FARM" Foreground="#569CD6" FontSize="18" FontWeight="ExtraBold" VerticalAlignment="Center"/>
+          <TextBlock Text="&#x26A1; DOFUS TOUCH FARM" Foreground="#569CD6" FontSize="18" FontWeight="ExtraBold" VerticalAlignment="Center"/>
           <Border Background="#2D2D30" CornerRadius="4" Padding="6,2" Margin="12,0,0,0" VerticalAlignment="Center">
-            <TextBlock Text="🔒 Samsung A51 Disguise: ALWAYS-ON (LOCKED)" Foreground="#98C379" FontSize="11" FontWeight="Bold"/>
+            <TextBlock Text="&#x1F512; Samsung A51 Disguise: ALWAYS-ON (LOCKED)" Foreground="#98C379" FontSize="11" FontWeight="Bold"/>
           </Border>
           <Border Background="#2D2D30" CornerRadius="4" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center">
             <TextBlock x:Name="HeaderGpuText" Text="Intel UHD Graphics Passthrough" Foreground="#DCDCAA" FontSize="11"/>
@@ -180,9 +180,9 @@ function Get-LiveSerials {
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock x:Name="HostStatsHeader" Text="Host: 7.8 GB RAM (4.9 GB Free) | 8 Cores" Foreground="#9AA0A6" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
-          <Button x:Name="BtnHeaderAutoTune" Content="⚡ 1-Click Auto-Tune" Height="26" Width="130"
+          <Button x:Name="BtnHeaderAutoTune" Content="&#x26A1; 1-Click Auto-Tune" Height="26" Width="130"
                   Background="#238636" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand"/>
-          <Button x:Name="BtnHeaderUninstall" Content="🗑 Uninstall" Height="26" Width="85"
+          <Button x:Name="BtnHeaderUninstall" Content="&#x1F5D1; Uninstall" Height="26" Width="85"
                   Background="#4A1D1D" Foreground="#FFAAAA" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand" Margin="8,0,0,0"
                   ToolTip="Safely halt instances, clean up shortcuts, and uninstall farm"/>
         </StackPanel>
@@ -193,7 +193,7 @@ function Get-LiveSerials {
     <TabControl Grid.Row="1" Background="Transparent" BorderThickness="0">
       
       <!-- TAB 1: Live Farm Dashboard -->
-      <TabItem Header="  🎮 Farm Dashboard  ">
+      <TabItem Header="  &#x1F3AE; Farm Dashboard  ">
         <Grid Margin="0,12,0,0">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -235,12 +235,12 @@ function Get-LiveSerials {
                       </Grid.RowDefinitions>
                       <StackPanel Grid.Row="0" VerticalAlignment="Center">
                         <TextBlock x:Name="Slot1Name" Text="Slot 1: dofus-01" Foreground="#FFF" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock x:Name="Slot1Status" Text="● Stopped (5554)" Foreground="#888" FontSize="10"/>
+                        <TextBlock x:Name="Slot1Status" Text="&#x25CF; Stopped (5554)" Foreground="#888" FontSize="10"/>
                       </StackPanel>
                       <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
                         <Button x:Name="BtnSlot1Reduce" Content="_" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Reduce / Minimize"/>
-                        <Button x:Name="BtnSlot1Max" Content="🗖" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
-                        <Button x:Name="BtnSlot1Exit" Content="✕" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
+                        <Button x:Name="BtnSlot1Max" Content="&#x25A1;" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
+                        <Button x:Name="BtnSlot1Exit" Content="&#x2715;" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
                       </StackPanel>
                     </Grid>
                   </Border>
@@ -254,12 +254,12 @@ function Get-LiveSerials {
                       </Grid.RowDefinitions>
                       <StackPanel Grid.Row="0" VerticalAlignment="Center">
                         <TextBlock x:Name="Slot2Name" Text="Slot 2: dofus-02" Foreground="#FFF" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock x:Name="Slot2Status" Text="● Stopped (5556)" Foreground="#888" FontSize="10"/>
+                        <TextBlock x:Name="Slot2Status" Text="&#x25CF; Stopped (5556)" Foreground="#888" FontSize="10"/>
                       </StackPanel>
                       <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
                         <Button x:Name="BtnSlot2Reduce" Content="_" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Reduce / Minimize"/>
-                        <Button x:Name="BtnSlot2Max" Content="🗖" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
-                        <Button x:Name="BtnSlot2Exit" Content="✕" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
+                        <Button x:Name="BtnSlot2Max" Content="&#x25A1;" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
+                        <Button x:Name="BtnSlot2Exit" Content="&#x2715;" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
                       </StackPanel>
                     </Grid>
                   </Border>
@@ -273,12 +273,12 @@ function Get-LiveSerials {
                       </Grid.RowDefinitions>
                       <StackPanel Grid.Row="0" VerticalAlignment="Center">
                         <TextBlock x:Name="Slot3Name" Text="Slot 3: dofus-03" Foreground="#FFF" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock x:Name="Slot3Status" Text="● Stopped (5558)" Foreground="#888" FontSize="10"/>
+                        <TextBlock x:Name="Slot3Status" Text="&#x25CF; Stopped (5558)" Foreground="#888" FontSize="10"/>
                       </StackPanel>
                       <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
                         <Button x:Name="BtnSlot3Reduce" Content="_" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Reduce / Minimize"/>
-                        <Button x:Name="BtnSlot3Max" Content="🗖" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
-                        <Button x:Name="BtnSlot3Exit" Content="✕" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
+                        <Button x:Name="BtnSlot3Max" Content="&#x25A1;" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
+                        <Button x:Name="BtnSlot3Exit" Content="&#x2715;" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
                       </StackPanel>
                     </Grid>
                   </Border>
@@ -292,12 +292,12 @@ function Get-LiveSerials {
                       </Grid.RowDefinitions>
                       <StackPanel Grid.Row="0" VerticalAlignment="Center">
                         <TextBlock x:Name="Slot4Name" Text="Slot 4: dofus-04" Foreground="#FFF" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock x:Name="Slot4Status" Text="● Stopped (5560)" Foreground="#888" FontSize="10"/>
+                        <TextBlock x:Name="Slot4Status" Text="&#x25CF; Stopped (5560)" Foreground="#888" FontSize="10"/>
                       </StackPanel>
                       <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
                         <Button x:Name="BtnSlot4Reduce" Content="_" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Reduce / Minimize"/>
-                        <Button x:Name="BtnSlot4Max" Content="🗖" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
-                        <Button x:Name="BtnSlot4Exit" Content="✕" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
+                        <Button x:Name="BtnSlot4Max" Content="&#x25A1;" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
+                        <Button x:Name="BtnSlot4Exit" Content="&#x2715;" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
                       </StackPanel>
                     </Grid>
                   </Border>
@@ -326,18 +326,18 @@ function Get-LiveSerials {
                     <ColumnDefinition Width="160"/>
                   </Grid.ColumnDefinitions>
 
-                  <Button x:Name="BtnLaunchFarm" Grid.Row="0" Grid.Column="0" Content="▶  LAUNCH 4-INSTANCE FARM (2x2 GRID)"
+                  <Button x:Name="BtnLaunchFarm" Grid.Row="0" Grid.Column="0" Content="&#x25B6;  LAUNCH 4-INSTANCE FARM (2x2 GRID)"
                           Background="#238636" Foreground="#FFFFFF" FontWeight="ExtraBold" FontSize="13" BorderThickness="0" Cursor="Hand"/>
 
-                  <Button x:Name="BtnStopAll" Grid.Row="0" Grid.Column="2" Content="⏹  STOP ALL INSTANCES"
+                  <Button x:Name="BtnStopAll" Grid.Row="0" Grid.Column="2" Content="&#x25A0;  STOP ALL INSTANCES"
                           Background="#DA3633" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand"/>
 
                   <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal">
-                    <Button x:Name="BtnRelayout" Content="⊞ Re-tile 2x2 Edge-to-Edge Grid" Width="200" Height="32" Margin="0,0,8,0"
+                    <Button x:Name="BtnRelayout" Content="&#x229E; Re-tile 2x2 Edge-to-Edge Grid" Width="200" Height="32" Margin="0,0,8,0"
                             Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand"/>
-                    <Button x:Name="BtnAuditAll" Content="🛡 Audit Stealth &amp; WebGL Leaks" Width="190" Height="32" Margin="0,0,8,0"
+                    <Button x:Name="BtnAuditAll" Content="&#x1F6E1; Audit Stealth &amp; WebGL Leaks" Width="190" Height="32" Margin="0,0,8,0"
                             Background="#0E639C" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand"/>
-                    <Button x:Name="BtnRefreshDashboard" Content="🔄 Refresh Status" Width="120" Height="32"
+                    <Button x:Name="BtnRefreshDashboard" Content="&#x21BB; Refresh Status" Width="120" Height="32"
                             Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand"/>
                   </StackPanel>
                 </Grid>
@@ -353,13 +353,13 @@ function Get-LiveSerials {
                       AlternatingRowBackground="#262629">
               <DataGrid.ContextMenu>
                 <ContextMenu Background="#252526" Foreground="#E0E0E0">
-                  <MenuItem x:Name="CtxLaunch" Header="▶ Launch This Instance"/>
-                  <MenuItem x:Name="CtxStop" Header="⏹ Stop This Instance"/>
-                  <MenuItem x:Name="CtxRename" Header="✏ Rename (Double-Click)..."/>
-                  <MenuItem x:Name="CtxProxy" Header="🌐 Configure Proxy / SOCKS5..."/>
+                  <MenuItem x:Name="CtxLaunch" Header="&#x25B6; Launch This Instance"/>
+                  <MenuItem x:Name="CtxStop" Header="&#x25A0; Stop This Instance"/>
+                  <MenuItem x:Name="CtxRename" Header="&#x270E; Rename (Double-Click)..."/>
+                  <MenuItem x:Name="CtxProxy" Header="&#x1F310; Configure Proxy / SOCKS5..."/>
                   <Separator/>
-                  <MenuItem x:Name="CtxAudit" Header="🛡 Run Deep Spoof Audit"/>
-                  <MenuItem x:Name="CtxDelete" Header="🗑 Delete Instance"/>
+                  <MenuItem x:Name="CtxAudit" Header="&#x1F6E1; Run Deep Spoof Audit"/>
+                  <MenuItem x:Name="CtxDelete" Header="&#x1F5D1; Delete Instance"/>
                 </ContextMenu>
               </DataGrid.ContextMenu>
               <DataGrid.Columns>
@@ -380,17 +380,17 @@ function Get-LiveSerials {
           <Border Grid.Row="2" Background="#202022" CornerRadius="8" Padding="10" Margin="0,10,0,0" BorderBrush="#333333" BorderThickness="1">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="Selected Instance:" Foreground="#888" VerticalAlignment="Center" Margin="0,0,10,0" FontSize="11"/>
-              <Button x:Name="BtnLaunchSingle" Content="▶ Launch Selected" Width="130" Height="28" Margin="0,0,6,0"
+              <Button x:Name="BtnLaunchSingle" Content="&#x25B6; Launch Selected" Width="130" Height="28" Margin="0,0,6,0"
                       Background="#2EA043" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand"/>
-              <Button x:Name="BtnStopSingle" Content="⏹ Stop Selected" Width="110" Height="28" Margin="0,0,6,0"
+              <Button x:Name="BtnStopSingle" Content="&#x25A0; Stop Selected" Width="110" Height="28" Margin="0,0,6,0"
                       Background="#DA3633" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand"/>
-              <Button x:Name="BtnRename" Content="✏ Rename..." Width="90" Height="28" Margin="0,0,6,0"
+              <Button x:Name="BtnRename" Content="&#x270E; Rename..." Width="90" Height="28" Margin="0,0,6,0"
                       Background="#0E639C" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand"/>
-              <Button x:Name="BtnSetProxy" Content="🌐 Set Proxy..." Width="100" Height="28" Margin="0,0,6,0"
+              <Button x:Name="BtnSetProxy" Content="&#x1F310; Set Proxy..." Width="100" Height="28" Margin="0,0,6,0"
                       Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand"/>
-              <Button x:Name="BtnAuditSingle" Content="🛡 Audit Spoofing" Width="110" Height="28" Margin="0,0,6,0"
+              <Button x:Name="BtnAuditSingle" Content="&#x1F6E1; Audit Spoofing" Width="110" Height="28" Margin="0,0,6,0"
                       Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand"/>
-              <Button x:Name="BtnDelete" Content="🗑 Delete" Width="80" Height="28" Margin="0,0,0,0"
+              <Button x:Name="BtnDelete" Content="&#x1F5D1; Delete" Width="80" Height="28" Margin="0,0,0,0"
                       Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand"/>
             </StackPanel>
           </Border>
@@ -404,24 +404,24 @@ function Get-LiveSerials {
                 <ColumnDefinition Width="Auto"/>
               </Grid.ColumnDefinitions>
               <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="⚡ Quick Controls:" Foreground="#569CD6" FontWeight="Bold" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <Button x:Name="BtnNavBack" Content="◀ Return" Width="72" Height="26" Margin="0,0,5,0"
+                <TextBlock Text="&#x26A1; Quick Controls:" Foreground="#569CD6" FontWeight="Bold" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <Button x:Name="BtnNavBack" Content="&#x25C0; Return" Width="72" Height="26" Margin="0,0,5,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Sends KEYCODE_BACK (ESC) to selected or active instance"/>
-                <Button x:Name="BtnNavHome" Content="● Home" Width="64" Height="26" Margin="0,0,5,0"
+                <Button x:Name="BtnNavHome" Content="&#x25CF; Home" Width="64" Height="26" Margin="0,0,5,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Sends KEYCODE_HOME to selected or active instance"/>
-                <Button x:Name="BtnNavRecents" Content="■ Tabs" Width="60" Height="26" Margin="0,0,5,0"
+                <Button x:Name="BtnNavRecents" Content="&#x25A0; Tabs" Width="60" Height="26" Margin="0,0,5,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Sends KEYCODE_APP_SWITCH to selected or active instance"/>
-                <Button x:Name="BtnNavSettings" Content="⚙ Settings" Width="76" Height="26" Margin="0,0,8,0"
+                <Button x:Name="BtnNavSettings" Content="&#x2699; Settings" Width="76" Height="26" Margin="0,0,8,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Opens Android Settings on selected instance"/>
                 <Button x:Name="BtnReduceAll" Content="_ Minimize All" Width="95" Height="26" Margin="0,0,5,0"
                         Background="#2D2D30" Foreground="#CCCCCC" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Reduce / minimize all running emulator windows"/>
-                <Button x:Name="BtnRetileAll" Content="🗖 Retile 2x2" Width="85" Height="26" Margin="0,0,5,0"
+                <Button x:Name="BtnRetileAll" Content="&#x25A1; Retile 2x2" Width="85" Height="26" Margin="0,0,5,0"
                         Background="#2D2D30" Foreground="#CCCCCC" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Restore all running windows into 2x2 edge-to-edge grid"/>
               </StackPanel>
               <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button x:Name="BtnToggleBorders" Content="🗖 Toggle Window Borders" Width="165" Height="26" Margin="0,0,6,0"
+                <Button x:Name="BtnToggleBorders" Content="&#x25A1; Toggle Window Borders" Width="165" Height="26" Margin="0,0,6,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Toggle between seamless edge-to-edge canvas and standard window title bars"/>
-                <Button x:Name="BtnToggleSidebars" Content="📱 Toggle Sidebars" Width="135" Height="26"
+                <Button x:Name="BtnToggleSidebars" Content="&#x1F4F1; Toggle Sidebars" Width="135" Height="26"
                         Background="#0E639C" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Show or Hide the Qt side menu toolbar to reclaim screen space"/>
               </StackPanel>
             </Grid>
@@ -430,7 +430,7 @@ function Get-LiveSerials {
       </TabItem>
 
       <!-- TAB 2: Hardware Diagnostics & Compatibility -->
-      <TabItem Header="  💻 Hardware &amp; Drivers  ">
+      <TabItem Header="  &#x1F4BB; Hardware &amp; Drivers  ">
         <Border Background="#202022" CornerRadius="8" Padding="20" Margin="0,12,0,0" BorderBrush="#333333" BorderThickness="1">
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <StackPanel>
@@ -475,7 +475,7 @@ function Get-LiveSerials {
                              Foreground="#CCC" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,12"/>
 
                   <StackPanel Orientation="Horizontal">
-                    <Button x:Name="BtnApplyAutoTuneProfile" Content="⚡ Apply Auto-Tuned Profile to All Instances" Width="280" Height="32"
+                    <Button x:Name="BtnApplyAutoTuneProfile" Content="&#x26A1; Apply Auto-Tuned Profile to All Instances" Width="280" Height="32"
                             Background="#238636" Foreground="#FFFFFF" FontWeight="Bold" BorderThickness="0" Cursor="Hand"/>
                     <TextBlock Text="(Updates config.ini across all instances instantly)" Foreground="#888" VerticalAlignment="Center" Margin="12,0,0,0" FontSize="11"/>
                   </StackPanel>
@@ -487,7 +487,7 @@ function Get-LiveSerials {
       </TabItem>
 
       <!-- TAB 3: Network & Anti-Detection Center -->
-      <TabItem Header="  🌐 Network &amp; Anti-Detection  ">
+      <TabItem Header="  &#x1F310; Network &amp; Anti-Detection  ">
         <Border Background="#202022" CornerRadius="8" Padding="20" Margin="0,12,0,0" BorderBrush="#333333" BorderThickness="1">
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <StackPanel>
@@ -497,7 +497,7 @@ function Get-LiveSerials {
 
               <Border Background="#1C2D1F" CornerRadius="6" Padding="14,10" Margin="0,0,0,14" BorderBrush="#238636" BorderThickness="1">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                  <TextBlock Text="🔒 ALWAYS-ON MOBILE DISGUISE:" Foreground="#98C379" FontWeight="Bold" FontSize="12" VerticalAlignment="Center"/>
+                  <TextBlock Text="&#x1F512; ALWAYS-ON MOBILE DISGUISE:" Foreground="#98C379" FontWeight="Bold" FontSize="12" VerticalAlignment="Center"/>
                   <TextBlock Text=" PERMANENTLY LOCKED &amp; ACTIVE (Cannot be disabled or altered by user)" Foreground="#DCDCAA" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
               </Border>
@@ -517,7 +517,7 @@ function Get-LiveSerials {
                       <ColumnDefinition Width="Auto"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="🛡" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="0" Text="&#x1F6E1;" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     <StackPanel Grid.Column="1">
                       <TextBlock Text="Samsung Hardware MAC OUI (bc:72:b7:xx:xx:xx)" Foreground="#98C379" FontWeight="Bold" FontSize="12"/>
                       <TextBlock Text="Replaces generic QEMU MAC (52:54:00:...) with physical Samsung Electronics mobile network adapter OUIs." Foreground="#AAA" FontSize="11"/>
@@ -531,7 +531,7 @@ function Get-LiveSerials {
                       <ColumnDefinition Width="Auto"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="🌐" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="0" Text="&#x1F310;" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     <StackPanel Grid.Column="1">
                       <TextBlock Text="QEMU SLIRP 10.0.2.15 Invariant Elimination" Foreground="#98C379" FontWeight="Bold" FontSize="12"/>
                       <TextBlock Text="DNS points to Cloudflare (1.1.1.1) instead of QEMU 10.0.2.3. WebRTC ICE gathers 192.168.1.10X mobile LAN candidates." Foreground="#AAA" FontSize="11"/>
@@ -545,7 +545,7 @@ function Get-LiveSerials {
                       <ColumnDefinition Width="Auto"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="📶" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="0" Text="&#x1F4F6;" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     <StackPanel Grid.Column="1">
                       <TextBlock Text="Orange France (20801) LTE Carrier Telephony" Foreground="#98C379" FontWeight="Bold" FontSize="12"/>
                       <TextBlock Text="Telephony subsystem reports standard nominal carrier state: Orange France SIM, READY, LTE." Foreground="#AAA" FontSize="11"/>
@@ -559,7 +559,7 @@ function Get-LiveSerials {
                       <ColumnDefinition Width="Auto"/>
                       <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="🔌" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="0" Text="&#x1F50C;" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     <StackPanel Grid.Column="1">
                       <TextBlock Text="Per-Instance Dedicated Proxy / SOCKS5 Routing" Foreground="#569CD6" FontWeight="Bold" FontSize="12"/>
                       <TextBlock Text="Assign distinct residential or datacenter proxies per instance so accounts connect from different external IP addresses." Foreground="#AAA" FontSize="11"/>
@@ -573,7 +573,7 @@ function Get-LiveSerials {
       </TabItem>
 
       <!-- TAB 4: Fast Instance Provisioning -->
-      <TabItem Header="  ➕ Provision Instance  ">
+      <TabItem Header="  &#x2795; Provision Instance  ">
         <Border Background="#202022" CornerRadius="8" Padding="20" Margin="0,12,0,0" BorderBrush="#333333" BorderThickness="1">
           <StackPanel>
             <TextBlock Text="Create New Virtualized Instance" FontSize="16" FontWeight="Bold" Foreground="#FFFFFF" Margin="0,0,0,6"/>
@@ -695,7 +695,7 @@ function Refresh-Grid {
   $insts = @(Get-Instances)
   $rows = $insts | ForEach-Object {
     $isRunning = $live -contains $_.Serial
-    $stateStr = if ($isRunning) { '🟢 RUNNING' } else { '⚪ STOPPED' }
+    $stateStr = if ($isRunning) { "$([char]0x25CF) RUNNING" } else { "$([char]0x25CB) STOPPED" }
     [pscustomobject]@{
       StateDisplay = $stateStr
       DisplayName  = $_.DisplayName
@@ -723,17 +723,17 @@ function Refresh-Grid {
     if ($it) {
       $nameEl.Text = "Slot $slotIdx : $($it.DisplayName)"
       if ($it.IsRunning) {
-        $statEl.Text = "🟢 RUNNING (Port $($it.Port))"
+        $statEl.Text = "$([char]0x25CF) RUNNING (Port $($it.Port))"
         $statEl.Foreground = '#98C379'
         $border.Background = '#1E3A25'
       } else {
-        $statEl.Text = "⚪ STOPPED (Port $($it.Port))"
+        $statEl.Text = "$([char]0x25CB) STOPPED (Port $($it.Port))"
         $statEl.Foreground = '#888888'
         $border.Background = '#28282B'
       }
     } else {
       $nameEl.Text = "Slot $slotIdx : Unassigned"
-      $statEl.Text = "⚪ Not Provisioned"
+      $statEl.Text = "$([char]0x25CB) Not Provisioned"
       $statEl.Foreground = '#555555'
       $border.Background = '#202022'
     }

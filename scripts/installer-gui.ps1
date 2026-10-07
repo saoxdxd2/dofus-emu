@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   High-Efficiency Android Multi-Instance Farm - Standalone Graphical Installer.
 
@@ -217,7 +217,7 @@ $freeGB   = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMe
       <TabItem>
         <Border Background="#252526" CornerRadius="8" Padding="24" BorderBrush="#3F3F46" BorderThickness="1">
           <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-            <TextBlock Text="✓ Installation Complete!" FontSize="24" FontWeight="Bold" Foreground="#98C379" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+            <TextBlock Text="&#x2713; Installation Complete!" FontSize="24" FontWeight="Bold" Foreground="#98C379" HorizontalAlignment="Center" Margin="0,0,0,10"/>
             <TextBlock x:Name="CompletionSummary" Text="4 instances have been provisioned with stripped AOSP, 1-core tuning, and Samsung Galaxy A51 disguise."
                        Foreground="#E0E0E0" FontSize="13" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="560" Margin="0,0,0,24"/>
 

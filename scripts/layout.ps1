@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Adaptive window placement for N emulator instances. Dot-source this file.
 
@@ -357,7 +357,7 @@ function Set-WindowBorderless([IntPtr]$hWnd) {
 function Set-WindowWithBorders([IntPtr]$hWnd) {
   <#
     Restores standard Windows title bar with the 3 Legend Controls:
-    [_] Reduce (Minimize), [□] Maximize/Restore, [✕] Exit.
+    [_] Reduce (Minimize), [Max] Maximize/Restore, [X] Exit.
   #>
   try {
     $oldStyle = [FarmWin32v3.Win32]::GetWindowLong($hWnd, -16).ToInt64()
