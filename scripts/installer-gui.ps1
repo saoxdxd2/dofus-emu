@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   High-Efficiency Android Multi-Instance Farm - Standalone Graphical Installer.
 
@@ -506,11 +506,31 @@ function Start-InstallationPipeline {
 
   # Step 5: Assert Disguise & 1-Core Tuning
   $InstallStatusText.Text = "Injecting Stealth Disguise and WebGL Anti-Leak protections..."
-  $InstallProgress.Value = 95
+  $InstallProgress.Value = 90
   Log-Install "Mali-G76 MP12 WebGL profile asserted." 'ok'
   Log-Install "Desktop texture compression (S3TC/BPTC) masked." 'ok'
   Log-Install "Zero-hover cursor suppression and capacitive touch active." 'ok'
   Log-Install "1-core single-thread scheduler & WebView GPU rasterization configured." 'ok'
+
+  # Step 5.1: Windows Security & Real-Time Scanning Hardening
+  $InstallStatusText.Text = "Hardening Windows Security & Defender exclusions..."
+  $InstallProgress.Value = 94
+  try {
+    Add-MpPreference -ExclusionPath @($target, "$env:USERPROFILE\.android") -EA SilentlyContinue
+    Add-MpPreference -ExclusionProcess @('emulator.exe', 'qemu-system-x86_64.exe', 'dofus-net-proxy.exe') -EA SilentlyContinue
+    Log-Install "Windows Defender exclusions added (prevents QCOW2 I/O latency stalls)." 'ok'
+  } catch {
+    Log-Install "Defender exclusions skipped (requires admin rights)." 'warn'
+  }
+
+  try {
+    New-NetFirewallRule -DisplayName "Dofus Farm Emulator" -Direction Inbound -Program $Emu -Action Allow -EA SilentlyContinue | Out-Null
+    $proxyBin = Join-Path $target 'scripts\dofus-net-proxy.exe'
+    if (Test-Path $proxyBin) {
+      New-NetFirewallRule -DisplayName "Dofus Farm Proxy" -Direction Inbound -Program $proxyBin -Action Allow -EA SilentlyContinue | Out-Null
+    }
+    Log-Install "Windows Firewall pre-authorized (prevents interactive popup stalls)." 'ok'
+  } catch {}
 
   # Step 6: Create Desktop Shortcut with custom icon if requested
   if ($ChkCreateShortcut.IsChecked) {

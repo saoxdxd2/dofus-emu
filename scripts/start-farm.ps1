@@ -149,15 +149,29 @@ Write-Step 'Instance plan:'
 $plan | Format-Table -AutoSize
 
 # ============================================================ provision + launch
-# Auto-detect active host DNS servers (Wi-Fi/Ethernet)
+# Auto-detect active route interface DNS servers (the live route to the Internet)
 $activeDnsList = @()
 try {
-  $activeDnsList = @(Get-DnsClientServerAddress -AddressFamily IPv4 -EA SilentlyContinue |
-    Where-Object { $_.ServerAddresses.Count -gt 0 } |
-    Select-Object -ExpandProperty ServerAddresses) |
-    Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } |
-    Select-Object -Unique
+  $activeRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -EA SilentlyContinue |
+                 Sort-Object RouteMetric | Select-Object -First 1
+  if ($activeRoute) {
+    $dnsFromIf = (Get-DnsClientServerAddress -InterfaceIndex $activeRoute.InterfaceIndex -AddressFamily IPv4 -EA SilentlyContinue).ServerAddresses
+    if ($dnsFromIf) { $activeDnsList += @($dnsFromIf) }
+    if ($activeRoute.NextHop -and $activeRoute.NextHop -ne '0.0.0.0') {
+      $activeDnsList += @($activeRoute.NextHop)
+    }
+  }
 } catch {}
+
+if (-not $activeDnsList -or $activeDnsList.Count -eq 0) {
+  try {
+    $activeDnsList = @(Get-DnsClientServerAddress -AddressFamily IPv4 -EA SilentlyContinue |
+      Where-Object { $_.ServerAddresses.Count -gt 0 } |
+      Select-Object -ExpandProperty ServerAddresses) |
+      Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' }
+  } catch {}
+}
+
 if (-not $activeDnsList -or $activeDnsList.Count -eq 0) {
   $activeDnsList = @('192.168.1.1', '1.1.1.1', '8.8.8.8')
 } else {
@@ -165,6 +179,16 @@ if (-not $activeDnsList -or $activeDnsList.Count -eq 0) {
 }
 $dnsArg = ($activeDnsList | Select-Object -Unique -First 3) -join ','
 Write-Step "Network DNS configuration: $dnsArg"
+
+# Ensure native Go network proxy daemon is running on 127.0.0.1:8880
+$proxyPort = 8880
+$proxyExe  = Join-Path $PSScriptRoot 'dofus-net-proxy.exe'
+$proxyProc = Get-Process -Name 'dofus-net-proxy' -EA SilentlyContinue | Select-Object -First 1
+if (-not $proxyProc -and (Test-Path $proxyExe)) {
+  Write-Step "Starting native Go network proxy daemon on 127.0.0.1:$proxyPort..."
+  Start-Process -FilePath $proxyExe -ArgumentList "-port $proxyPort -quiet" -WindowStyle Hidden
+  Start-Sleep -Milliseconds 600
+}
 
 $started = @()
 foreach ($p in $plan) {
@@ -275,9 +299,13 @@ foreach ($p in $plan) {
     $pContent = (Get-Content $instProxyFile -Raw -EA SilentlyContinue).Trim()
     if ($pContent) { $instanceProxy = $pContent }
   }
+  if (-not $instanceProxy) {
+    # Default to high-performance local Go network accelerator proxy
+    $instanceProxy = "127.0.0.1:$proxyPort"
+  }
   if ($instanceProxy) {
     $a += @("-http-proxy", $instanceProxy)
-    Write-Step "  [$($p.Name)] Routing traffic via dedicated proxy: $instanceProxy"
+    Write-Step "  [$($p.Name)] Routing traffic via accelerator proxy: $instanceProxy"
   }
   # Standard Samsung Mobile Properties & High-Speed Boot Performance
   $standardProps = @(
@@ -295,6 +323,10 @@ foreach ($p in $plan) {
     "gsm.sim.operator.numeric=20801",
     "gsm.sim.operator.alpha=Orange",
     "gsm.network.type=LTE",
+    "persist.sys.timezone=Europe/Paris",
+    "persist.sys.country=FR",
+    "persist.sys.language=fr",
+    "persist.sys.locale=fr-FR",
     "net.dns1=10.0.2.3",
     "net.dns2=1.1.1.1",
     "net.dns3=8.8.8.8",

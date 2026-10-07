@@ -42,6 +42,38 @@
         } catch (e) {}
     }
 
+    // --- 1.1 Transient Network Reload Dialog Silencing ---
+    try {
+        var originalAlert = window.alert;
+        window.alert = makeNative(function(msg) {
+            if (msg && typeof msg === 'string') {
+                var lower = msg.toLowerCase();
+                if (lower.indexOf('server cannot be reached') !== -1 || lower.indexOf('check your internet') !== -1) {
+                    console.log('[disguise] Suppressed transient reload network dialog: ' + msg);
+                    return;
+                }
+            }
+            if (originalAlert) { return originalAlert.apply(this, arguments); }
+        }, 'alert');
+
+        document.addEventListener('deviceready', function() {
+            if (navigator.notification && navigator.notification.alert) {
+                var origCdvAlert = navigator.notification.alert;
+                navigator.notification.alert = makeNative(function(msg, callback, title, buttonName) {
+                    if (msg && typeof msg === 'string') {
+                        var lower = msg.toLowerCase();
+                        if (lower.indexOf('server cannot be reached') !== -1 || lower.indexOf('check your internet') !== -1) {
+                            console.log('[disguise] Suppressed Cordova reload network dialog: ' + msg);
+                            if (typeof callback === 'function') { callback(); }
+                            return;
+                        }
+                    }
+                    return origCdvAlert.apply(this, arguments);
+                }, 'alert');
+            }
+        }, false);
+    } catch (e) {}
+
     // --- 2. Navigator Properties ---
     var MOBILE_UA = 'Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36';
     var MOBILE_APP_VERSION = '5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36';

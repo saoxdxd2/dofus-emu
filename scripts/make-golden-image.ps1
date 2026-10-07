@@ -189,8 +189,8 @@ Write-Ok "root confirmed: $((A @('shell','id')))"
 
 Write-Step '3/7  strip down Android (remove all non-needed bloat apps & services)'
 $bloatPkgs = @(
-  # telephony / radio / cellular services
-  'com.android.phone','com.android.providers.telephony','com.android.cellbroadcastreceiver',
+  # telephony / radio / cellular services (keep provider alive so phone app does not crash-loop)
+  'com.android.cellbroadcastreceiver',
   'com.android.dialer','com.android.ims.rcsservice','com.android.mms.service','com.android.server.telecom',
   'com.android.carrierdefaultapp','com.android.service.ims','com.android.service.ims.presence','com.android.smspush',
   # location / sensors / smartcard / nfc / bluetooth

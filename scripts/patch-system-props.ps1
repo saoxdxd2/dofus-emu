@@ -82,7 +82,7 @@ foreach ($pf in $propFiles) {
       [System.IO.File]::WriteAllBytes($tempFile, $bytes)
       & $Adb -s $Serial shell "chmod 644 /dev/__properties__/$pf 2>/dev/null" | Out-Null
       & $Adb -s $Serial push $tempFile "/dev/__properties__/$pf" 2>&1 | Out-Null
-      & $Adb -s $Serial shell "chmod 444 /dev/__properties__/$pf 2>/dev/null" | Out-Null
+      & $Adb -s $Serial shell "chcon $pf /dev/__properties__/$pf 2>/dev/null; chmod 444 /dev/__properties__/$pf 2>/dev/null" | Out-Null
       Write-Host "  [ok] Patched /dev/__properties__/$pf" -ForegroundColor Green
     }
     Remove-Item $tempFile -Force -EA SilentlyContinue

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Gate 4 - measure the real per-instance memory floor, WITH trimming applied.
 
@@ -417,8 +417,7 @@ foreach ($mb in $Levels) {
     #    dependency, and disabling it risks focus-stealing crash dialogs.
     #    Also excludes com.android.inputmethod.latin: only ~25 MB and it is the
     #    debugging fallback if a text input is ever needed.
-    foreach ($pkg in @('com.android.phone','com.android.providers.telephony',
-                       'com.android.cellbroadcastreceiver','com.android.dialer',
+    foreach ($pkg in @('com.android.cellbroadcastreceiver','com.android.dialer',
                        'com.android.printspooler','com.android.wallpaper.livepicker',
                        'com.android.dreams.basic','com.android.bluetooth',
                        'com.android.location.fused','com.android.camera2',

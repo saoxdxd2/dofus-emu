@@ -74,11 +74,22 @@ Exec-Adb "setprop net.dns1 10.0.2.3"
 Exec-Adb "setprop net.dns2 10.0.2.3"
 
 # Telephony: Carrier Orange France (20801) LTE
+# Enable telephony provider so com.android.phone siminfo queries succeed without crash-looping
+Exec-Adb "pm enable com.android.providers.telephony"
 Exec-Adb "setprop gsm.sim.state READY"
 Exec-Adb "setprop gsm.sim.operator.numeric 20801"
 Exec-Adb "setprop gsm.sim.operator.alpha 'Orange'"
 Exec-Adb "setprop gsm.operator.alpha 'Orange'"
 Exec-Adb "setprop gsm.network.type LTE"
+
+# Locale & Timezone Normalization (Sync with Orange France SIM to eliminate server telemetry mismatch)
+Exec-Adb "setprop persist.sys.timezone Europe/Paris"
+Exec-Adb "setprop persist.sys.country FR"
+Exec-Adb "setprop persist.sys.language fr"
+Exec-Adb "setprop persist.sys.locale fr-FR"
+
+# Clipboard Sanitization (Host isolation)
+Exec-Adb 'service call clipboard 2 s16 ""'
 
 # 6. Deep CPU Hog Stripping (Eliminates hidden background CPU drains on 1 vCPU)
 # Cancel background dexopt compilation (prevents 100% CPU spikes during gameplay)

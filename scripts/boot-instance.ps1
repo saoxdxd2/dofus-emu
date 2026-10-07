@@ -155,8 +155,16 @@ foreach ($s in $Serials) {
   A @('shell','dumpsys battery set status 3; dumpsys battery set level 85; dumpsys battery set temp 285') | Out-Null
   Write-Ok 'battery telemetry normalized (status=3 level=85 temp=285)'
 
-  A @('shell','setprop gsm.sim.state READY; setprop gsm.sim.operator.numeric 20801; setprop gsm.sim.operator.alpha "Orange"; setprop gsm.network.type LTE') | Out-Null
+  A @('shell','pm enable com.android.providers.telephony 2>/dev/null; setprop gsm.sim.state READY; setprop gsm.sim.operator.numeric 20801; setprop gsm.sim.operator.alpha "Orange"; setprop gsm.network.type LTE') | Out-Null
   Write-Ok 'telephony state nominal (Orange/20801/LTE)'
+
+  # Assert matching France timezone & locale to prevent carrier-telemetry mismatch
+  A @('shell','setprop persist.sys.timezone Europe/Paris; setprop persist.sys.country FR; setprop persist.sys.language fr; setprop persist.sys.locale fr-FR') | Out-Null
+  Write-Ok 'locale/timezone synchronized (Europe/Paris / fr-FR)'
+
+  # Clear host clipboard leaks (prevent desktop paths/data from leaking into guest)
+  A @('shell','service call clipboard 2 s16 "" 2>/dev/null') | Out-Null
+  Write-Ok 'clipboard sanitized (host isolation active)'
 
   # --- 6. deep guest OS debloating, network hardening & scheduler priority ---
   $optScript = Join-Path $PSScriptRoot 'optimize-guest-deep.ps1'
@@ -168,6 +176,19 @@ foreach ($s in $Serials) {
   $patchPropsScript = Join-Path $PSScriptRoot 'patch-system-props.ps1'
   if (Test-Path $patchPropsScript) {
     & $patchPropsScript -Serial $s
+  }
+
+  # --- 6.2 restore session vault if available and local storage is missing ---
+  $vaultArchive = Join-Path $env:USERPROFILE ".android\avd\$instAvd.avd\vault_session\session_vault.tar.gz"
+  if (Test-Path $vaultArchive) {
+    $guestLs = (A @('shell','ls','/data/data/com.ankama.dofustouch/app_webview/Default/Local Storage/leveldb/ 2>/dev/null')).Trim()
+    if (-not $guestLs) {
+      Write-Host "    [vault] Auto-restoring saved session & OAuth tokens from vault..." -ForegroundColor Cyan
+      $vaultScript = Join-Path $PSScriptRoot 'session-vault.ps1'
+      if (Test-Path $vaultScript) {
+        & $vaultScript -Action Restore -InstanceName $instAvd -Serial $s
+      }
+    }
   }
 
   # --- 7. ensure game is foreground ---------------------------------------

@@ -98,6 +98,27 @@ $AvdDir  = Join-Path $AvdHome "$AvdName.avd"
 # Mounting explicit data partition only if requested
 $targetData = $Data
 
+# Auto-detect active route interface DNS servers (the live route to the Internet)
+$activeDnsList = @()
+try {
+  $activeRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -EA SilentlyContinue |
+                 Sort-Object RouteMetric | Select-Object -First 1
+  if ($activeRoute) {
+    $dnsFromIf = (Get-DnsClientServerAddress -InterfaceIndex $activeRoute.InterfaceIndex -AddressFamily IPv4 -EA SilentlyContinue).ServerAddresses
+    if ($dnsFromIf) { $activeDnsList += @($dnsFromIf) }
+    if ($activeRoute.NextHop -and $activeRoute.NextHop -ne '0.0.0.0') {
+      $activeDnsList += @($activeRoute.NextHop)
+    }
+  }
+} catch {}
+
+if (-not $activeDnsList -or $activeDnsList.Count -eq 0) {
+  $activeDnsList = @('192.168.1.1', '1.1.1.1', '8.8.8.8')
+} else {
+  $activeDnsList += @('1.1.1.1', '8.8.8.8')
+}
+$dnsList = ($activeDnsList | Select-Object -Unique -First 3) -join ','
+
 $emuArgs = @(
   "-avd", $AvdName,
   "-port", $Port,
@@ -110,7 +131,7 @@ $emuArgs = @(
   "-skip-adb-auth",
   "-no-location-ui",
   "-no-passive-gps",
-  "-dns-server", "1.1.1.1,8.8.8.8,1.0.0.1",
+  "-dns-server", $dnsList,
   # NOTE: -accel accepts only "on" | "off" | "auto" in emulator 37.x.
   "-accel", "on"
 )

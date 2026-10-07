@@ -63,8 +63,8 @@ if (Test-Path $Adb) {
   }
 }
 Start-Sleep -Seconds 1
-Get-Process -Name 'qemu-system-x86_64', 'emulator' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
-Write-Host "      Emulators stopped." -ForegroundColor Green
+Get-Process -Name 'qemu-system-x86_64', 'emulator', 'dofus-net-proxy' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+Write-Host "      Emulators and network proxy stopped." -ForegroundColor Green
 
 # 2. Remove Desktop & Start Menu shortcuts
 Write-Host "[2/5] Removing desktop & start menu shortcuts..." -ForegroundColor Cyan
