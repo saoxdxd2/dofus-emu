@@ -175,65 +175,71 @@ Write-Step '2/5  Android SDK (cmdline-tools, platform-tools, emulator, API 29 im
 
 if (-not (Test-Path $Sdk)) { New-Item -ItemType Directory -Force -Path $Sdk | Out-Null }
 
-# --- cmdline-tools ---------------------------------------------------------
-# Needed for avdmanager. Installed by direct download because sdkmanager
-# throttled heavily on this class of machine; the zip is ~150 MB and involves
-# no license-prompt interaction.
-$cmdlineBat = Join-Path $Sdk 'cmdline-tools\latest\bin\sdkmanager.bat'
-if (Test-Path $cmdlineBat) {
-  Write-Ok 'cmdline-tools already installed'
-} else {
-  $cmdlineZip = Join-Path $env:TEMP 'commandlinetools.zip'
-  if (-not (Test-Path $cmdlineZip)) {
-    Write-Info 'downloading cmdline-tools (~150 MB)...'
-    & curl.exe -L -C - -s -f --retry 5 -o $cmdlineZip `
-      'https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip'
-    if ($LASTEXITCODE -ne 0) { Write-Err 'cmdline-tools download failed'; $script:Failed += 'cmdline-tools dl' }
-  }
-  if (Test-Path $cmdlineZip) {
-    Write-Info 'unpacking cmdline-tools...'
-    $tmp = Join-Path $env:TEMP 'dl-cmdline'
-    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-    Expand-Archive -Path $cmdlineZip -DestinationPath $tmp -Force
-    $dest = Join-Path $Sdk 'cmdline-tools\latest'
-    if (Test-Path (Join-Path $dest 'bin')) { Remove-Item $dest -Recurse -Force }
-    New-Item -ItemType Directory -Force -Path $dest | Out-Null
-    Move-Item -Path (Join-Path $tmp 'cmdline-tools\*') -Destination $dest -Force
-    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-    if (Test-Path $cmdlineBat) { Write-Ok 'cmdline-tools installed' }
-    else { Write-Err 'cmdline-tools incomplete'; $script:Failed += 'cmdline-tools' }
-  }
-}
-
-# --- SDK licenses ----------------------------------------------------------
-
-# --- platform-tools / emulator / system image -----------------------------
-# Delegated to scripts\download-artifacts.bat, which downloads with aria2c
-# (16 streams) and unpacks into the correct SDK layout. It is byte-size
-# verified, which matters because a truncated zip previously produced a
-# confusing "emulator package must be installed" failure.
+# --- High-Speed Parallel Go Downloader ------------------------------------
+$goDownloader = Join-Path $RepoRoot 'scripts\dofus-downloader.exe'
 $emuExe = Join-Path $Sdk 'emulator\emulator.exe'
 $adbExe = Join-Path $Sdk 'platform-tools\adb.exe'
 $sysImg = Join-Path $Sdk 'system-images\android-29\default\x86_64\system.img'
-if ((Test-Path $emuExe) -and (Test-Path $adbExe) -and (Test-Path $sysImg)) {
-  Write-Ok 'platform-tools, emulator and API 29 image already installed'
-} else {
-  $dl = Join-Path $RepoRoot 'scripts\download-artifacts.bat'
-  if (-not (Test-Path $dl)) {
-    Write-Err "missing $dl"
-    $script:Failed += 'download-artifacts.bat missing'
+$cmdlineBat = Join-Path $Sdk 'cmdline-tools\latest\bin\sdkmanager.bat'
+
+if ((Test-Path $emuExe) -and (Test-Path $adbExe) -and (Test-Path $sysImg) -and (Test-Path $cmdlineBat)) {
+  Write-Ok 'All Android SDK components (tools, emulator, system image) already installed'
+} elseif (Test-Path $goDownloader) {
+  Write-Info 'Using high-speed Go parallel downloader (16 concurrent streams)...'
+  & $goDownloader -sdk "$Sdk" -workers 16
+  if ($LASTEXITCODE -eq 0) {
+    Write-Ok 'Android SDK components downloaded, extracted and verified via Go engine'
   } else {
-    Write-Info 'downloading SDK components (~890 MB total, 16-way parallel)...'
-    $env:ANDROID_SDK_ROOT = $Sdk
-    $out = & cmd.exe /c "`"$dl`" `"$Sdk`"" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-      Write-Info ($out | Out-String)
+    Write-Err 'Go downloader encountered an issue'
+    $script:Failed += 'Go SDK installer'
+  }
+} else {
+  # Fallback to legacy curl & batch artifacts
+  # --- cmdline-tools ---------------------------------------------------------
+  if (Test-Path $cmdlineBat) {
+    Write-Ok 'cmdline-tools already installed'
+  } else {
+    $cmdlineZip = Join-Path $env:TEMP 'commandlinetools.zip'
+    if (-not (Test-Path $cmdlineZip)) {
+      Write-Info 'downloading cmdline-tools (~150 MB)...'
+      & curl.exe -L -C - -s -f --retry 5 -o $cmdlineZip 'https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip'
+      if ($LASTEXITCODE -ne 0) { Write-Err 'cmdline-tools download failed'; $script:Failed += 'cmdline-tools dl' }
     }
-    if ((Test-Path $emuExe) -and (Test-Path $adbExe) -and (Test-Path $sysImg)) {
-      Write-Ok 'SDK components installed'
+    if (Test-Path $cmdlineZip) {
+      Write-Info 'unpacking cmdline-tools...'
+      $tmp = Join-Path $env:TEMP 'dl-cmdline'
+      if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+      Expand-Archive -Path $cmdlineZip -DestinationPath $tmp -Force
+      $dest = Join-Path $Sdk 'cmdline-tools\latest'
+      if (Test-Path (Join-Path $dest 'bin')) { Remove-Item $dest -Recurse -Force }
+      New-Item -ItemType Directory -Force -Path $dest | Out-Null
+      Move-Item -Path (Join-Path $tmp 'cmdline-tools\*') -Destination $dest -Force
+      Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+      if (Test-Path $cmdlineBat) { Write-Ok 'cmdline-tools installed' }
+      else { Write-Err 'cmdline-tools incomplete'; $script:Failed += 'cmdline-tools' }
+    }
+  }
+
+  if ((Test-Path $emuExe) -and (Test-Path $adbExe) -and (Test-Path $sysImg)) {
+    Write-Ok 'platform-tools, emulator and API 29 image already installed'
+  } else {
+    $dl = Join-Path $RepoRoot 'scripts\download-artifacts.bat'
+    if (-not (Test-Path $dl)) {
+      Write-Err "missing $dl"
+      $script:Failed += 'download-artifacts.bat missing'
     } else {
-      Write-Err 'SDK component install incomplete'
-      $script:Failed += 'SDK components'
+      Write-Info 'downloading SDK components (~890 MB total, 16-way parallel)...'
+      $env:ANDROID_SDK_ROOT = $Sdk
+      $out = & cmd.exe /c "`"$dl`" `"$Sdk`"" 2>&1
+      if ($LASTEXITCODE -ne 0) {
+        Write-Info ($out | Out-String)
+      }
+      if ((Test-Path $emuExe) -and (Test-Path $adbExe) -and (Test-Path $sysImg)) {
+        Write-Ok 'SDK components installed'
+      } else {
+        Write-Err 'SDK component install incomplete'
+        $script:Failed += 'SDK components'
+      }
     }
   }
 }

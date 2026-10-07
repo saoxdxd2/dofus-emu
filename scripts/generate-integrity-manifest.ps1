@@ -29,6 +29,7 @@ $CriticalFiles = @(
   'scripts\fps-governor.ps1',
   'scripts\layout.ps1',
   'scripts\dofus-net-proxy.exe',
+  'scripts\dofus-downloader.exe',
   'scripts\test-response-timing.ps1',
   'scripts\bench-input-latency.ps1',
   'scripts\run-spoof-audit.ps1',

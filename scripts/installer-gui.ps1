@@ -494,33 +494,64 @@ function Start-InstallationPipeline {
   if ((Test-Path $Emu) -and (Test-Path $Adb) -and (Test-Path $Img)) {
     Log-Install "Android SDK tools and system image already present." 'ok'
   } else {
-    Log-Install "Android SDK missing or incomplete. Invoking installer bootstrap..." 'warn'
-    $instScript = Join-Path $target 'install.ps1'
-    if (-not (Test-Path $instScript)) { $instScript = Join-Path $RepoRoot 'install.ps1' }
+    Log-Install "Android SDK missing or incomplete. Launching high-speed Go parallel downloader..." 'warn'
+    $goDownloader = Join-Path $target 'scripts\dofus-downloader.exe'
+    if (-not (Test-Path $goDownloader)) { $goDownloader = Join-Path $RepoRoot 'scripts\dofus-downloader.exe' }
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "powershell.exe"
-    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$instScript`" -InstallDir `"$sdkDir`" -SkipHostPrereqs -SdkOnly"
-    $psi.UseShellExecute = false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
+    if (Test-Path $goDownloader) {
+      Log-Install "Using 16-worker Go segmented downloader for maximum throughput..." 'info'
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = $goDownloader
+      $psi.Arguments = "-sdk `"$sdkDir`" -workers 16"
+      $psi.UseShellExecute = false
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError = $true
+      $psi.CreateNoWindow = $true
 
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    while (-not $proc.HasExited) {
-      $line = $proc.StandardOutput.ReadLine()
-      if ($line) {
-        $t = $line.Trim()
-        if ($t) { Log-Install $t }
+      $proc = [System.Diagnostics.Process]::Start($psi)
+      while (-not $proc.HasExited) {
+        $line = $proc.StandardOutput.ReadLine()
+        if ($line) {
+          $t = $line.Trim()
+          if ($t) { Log-Install $t }
+        }
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 15
       }
-      [System.Windows.Forms.Application]::DoEvents()
-      Start-Sleep -Milliseconds 20
+      $rem = $proc.StandardOutput.ReadToEnd()
+      if ($rem) {
+        $rem -split "`r?`n" | ForEach-Object { if ($_.Trim()) { Log-Install $_.Trim() } }
+      }
+      $proc.WaitForExit()
+    } else {
+      Log-Install "Go downloader binary not found, falling back to PowerShell installer..." 'warn'
+      $instScript = Join-Path $target 'install.ps1'
+      if (-not (Test-Path $instScript)) { $instScript = Join-Path $RepoRoot 'install.ps1' }
+
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = "powershell.exe"
+      $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$instScript`" -InstallDir `"$sdkDir`" -SkipHostPrereqs -SdkOnly"
+      $psi.UseShellExecute = false
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError = $true
+      $psi.CreateNoWindow = $true
+
+      $proc = [System.Diagnostics.Process]::Start($psi)
+      while (-not $proc.HasExited) {
+        $line = $proc.StandardOutput.ReadLine()
+        if ($line) {
+          $t = $line.Trim()
+          if ($t) { Log-Install $t }
+        }
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 20
+      }
+      $rem = $proc.StandardOutput.ReadToEnd()
+      if ($rem) {
+        $rem -split "`r?`n" | ForEach-Object { if ($_.Trim()) { Log-Install $_.Trim() } }
+      }
+      $proc.WaitForExit()
     }
-    $rem = $proc.StandardOutput.ReadToEnd()
-    if ($rem) {
-      $rem -split "`r?`n" | ForEach-Object { if ($_.Trim()) { Log-Install $_.Trim() } }
-    }
-    $proc.WaitForExit()
   }
 
   # Step 2: System Image check

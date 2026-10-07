@@ -20,6 +20,17 @@ if (-not (Test-Path $SetupIco)) {
   & (Join-Path $PSScriptRoot 'build-installer-icon.ps1')
 }
 
+# 0. Compile Go high-speed downloader
+if (Get-Command go -ErrorAction SilentlyContinue) {
+  Write-Host "Compiling Go high-speed downloader (dofus-downloader.exe)..." -ForegroundColor Cyan
+  $downloaderGo = Join-Path $PSScriptRoot 'dofus-downloader.go'
+  $downloaderOut = Join-Path $PSScriptRoot 'dofus-downloader.exe'
+  & go build -ldflags "-s -w" -o $downloaderOut $downloaderGo
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host "  [OK] Compiled: $downloaderOut ($((Get-Item $downloaderOut).Length) bytes)" -ForegroundColor Green
+  }
+}
+
 # 1. Compile DofusFarm.exe
 $farmCs = @"
 using System;
