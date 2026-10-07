@@ -69,10 +69,9 @@ Exec-Adb "settings put global private_dns_mode off"
 Exec-Adb "settings put global captive_portal_use_https 0"
 Exec-Adb "settings put global captive_portal_http_url 'http://www.google.com/gen_204'"
 
-# DNS Bridge: Primary via QEMU Winsock proxy (10.0.2.3) with Cloudflare (1.1.1.1) fallback
+# DNS Bridge: Primary via QEMU Winsock proxy (10.0.2.3) which delegates to active host DNS
 Exec-Adb "setprop net.dns1 10.0.2.3"
-Exec-Adb "setprop net.dns2 1.1.1.1"
-Exec-Adb "setprop net.dns3 8.8.8.8"
+Exec-Adb "setprop net.dns2 10.0.2.3"
 
 # Telephony: Carrier Orange France (20801) LTE
 Exec-Adb "setprop gsm.sim.state READY"

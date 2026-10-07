@@ -149,6 +149,23 @@ Write-Step 'Instance plan:'
 $plan | Format-Table -AutoSize
 
 # ============================================================ provision + launch
+# Auto-detect active host DNS servers (Wi-Fi/Ethernet)
+$activeDnsList = @()
+try {
+  $activeDnsList = @(Get-DnsClientServerAddress -AddressFamily IPv4 -EA SilentlyContinue |
+    Where-Object { $_.ServerAddresses.Count -gt 0 } |
+    Select-Object -ExpandProperty ServerAddresses) |
+    Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } |
+    Select-Object -Unique
+} catch {}
+if (-not $activeDnsList -or $activeDnsList.Count -eq 0) {
+  $activeDnsList = @('192.168.1.1', '1.1.1.1', '8.8.8.8')
+} else {
+  $activeDnsList += @('1.1.1.1', '8.8.8.8')
+}
+$dnsArg = ($activeDnsList | Select-Object -Unique -First 3) -join ','
+Write-Step "Network DNS configuration: $dnsArg"
+
 $started = @()
 foreach ($p in $plan) {
   $avdDir = Join-Path $env:USERPROFILE ".android\avd\$($p.Name).avd"
@@ -249,9 +266,8 @@ foreach ($p in $plan) {
     "-no-snapshot", "-no-snapshot-load", "-no-snapshot-save",
     "-no-audio", "-no-boot-anim", "-no-metrics", "-accel", "on",
     "-skip-adb-auth", "-no-location-ui", "-no-passive-gps",
-    # Robust Multi-Instance Networking & Cloudflare/Google DNS passthrough
-    "-dns-server", "1.1.1.1,8.8.8.8,1.0.0.1",
-    "-shared-net-id", "$([math]::Max(1, $p.Index))"
+    # Robust Multi-Instance Networking & Active Host DNS passthrough
+    "-dns-server", $dnsArg
   )
   $instanceProxy = $Proxy
   $instProxyFile = Join-Path $avdDir 'proxy.txt'

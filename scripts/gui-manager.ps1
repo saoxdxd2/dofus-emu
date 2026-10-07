@@ -534,7 +534,7 @@ function Get-LiveSerials {
                     <TextBlock Grid.Column="0" Text="&#x1F310;" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     <StackPanel Grid.Column="1">
                       <TextBlock Text="QEMU SLIRP 10.0.2.15 Invariant Elimination" Foreground="#98C379" FontWeight="Bold" FontSize="12"/>
-                      <TextBlock Text="DNS points to Cloudflare (1.1.1.1) instead of QEMU 10.0.2.3. WebRTC ICE gathers 192.168.1.10X mobile LAN candidates." Foreground="#AAA" FontSize="11"/>
+                      <TextBlock Text="Auto-detects active host adapter DNS (LAN gateway) with zero dropouts. WebRTC ICE gathers 192.168.1.10X mobile LAN candidates." Foreground="#AAA" FontSize="11"/>
                     </StackPanel>
                   </Grid>
                 </Border>
