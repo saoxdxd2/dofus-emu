@@ -44,7 +44,19 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$SdkRoot = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path (Split-Path -Parent $PSScriptRoot) 'sdk' }
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$sdkCandidates = @(
+  (Join-Path $repoRoot 'sdk'),
+  $env:ANDROID_SDK_ROOT,
+  $env:ANDROID_HOME,
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'DofusFarm\sdk'),
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Documents\dofus-emu\sdk'),
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'AppData\Local\Android\Sdk')
+) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'platform-tools\adb.exe')) }
+
+$SdkRoot = if ($sdkCandidates.Count -gt 0) { $sdkCandidates[0] } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $repoRoot 'sdk' }
+$env:ANDROID_SDK_ROOT = $SdkRoot
+$env:ANDROID_HOME = $SdkRoot
 $Emu     = Join-Path $SdkRoot 'emulator\emulator.exe'
 $Avd     = Join-Path $SdkRoot 'cmdline-tools\latest\bin\avdmanager.bat'
 $Adb     = Join-Path $SdkRoot 'platform-tools\adb.exe'

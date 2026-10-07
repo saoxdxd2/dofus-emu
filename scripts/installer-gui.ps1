@@ -517,21 +517,35 @@ function Start-InstallationPipeline {
       $psi.RedirectStandardError = $true
       $psi.CreateNoWindow = $true
 
-      $proc = [System.Diagnostics.Process]::Start($psi)
-      while (-not $proc.HasExited) {
-        $line = $proc.StandardOutput.ReadLine()
-        if ($line) {
-          $t = $line.Trim()
-          if ($t) { Log-Install $t }
+      $proc = New-Object System.Diagnostics.Process
+      $proc.StartInfo = $psi
+      $proc.EnableRaisingEvents = $true
+      $proc.add_OutputDataReceived({
+        param($s, $e)
+        if ($e.Data) {
+          $line = $e.Data.Trim()
+          if ($line) {
+            try { $win.Dispatcher.Invoke([Action]{ Log-Install $line }) } catch {}
+          }
         }
+      })
+      $proc.add_ErrorDataReceived({
+        param($s, $e)
+        if ($e.Data) {
+          $line = $e.Data.Trim()
+          if ($line) {
+            try { $win.Dispatcher.Invoke([Action]{ Log-Install $line 'warn' }) } catch {}
+          }
+        }
+      })
+      $proc.Start() | Out-Null
+      $proc.BeginOutputReadLine()
+      $proc.BeginErrorReadLine()
+
+      while (-not $proc.WaitForExit(40)) {
         [System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 15
       }
-      $rem = $proc.StandardOutput.ReadToEnd()
-      if ($rem) {
-        $rem -split "`r?`n" | ForEach-Object { if ($_.Trim()) { Log-Install $_.Trim() } }
-      }
-      $proc.WaitForExit()
+      [System.Windows.Forms.Application]::DoEvents()
     } else {
       Log-Install "Go downloader binary not found, falling back to PowerShell installer..." 'warn'
       $instScript = Join-Path $target 'install.ps1'
@@ -545,21 +559,35 @@ function Start-InstallationPipeline {
       $psi.RedirectStandardError = $true
       $psi.CreateNoWindow = $true
 
-      $proc = [System.Diagnostics.Process]::Start($psi)
-      while (-not $proc.HasExited) {
-        $line = $proc.StandardOutput.ReadLine()
-        if ($line) {
-          $t = $line.Trim()
-          if ($t) { Log-Install $t }
+      $proc = New-Object System.Diagnostics.Process
+      $proc.StartInfo = $psi
+      $proc.EnableRaisingEvents = $true
+      $proc.add_OutputDataReceived({
+        param($s, $e)
+        if ($e.Data) {
+          $line = $e.Data.Trim()
+          if ($line) {
+            try { $win.Dispatcher.Invoke([Action]{ Log-Install $line }) } catch {}
+          }
         }
+      })
+      $proc.add_ErrorDataReceived({
+        param($s, $e)
+        if ($e.Data) {
+          $line = $e.Data.Trim()
+          if ($line) {
+            try { $win.Dispatcher.Invoke([Action]{ Log-Install $line 'warn' }) } catch {}
+          }
+        }
+      })
+      $proc.Start() | Out-Null
+      $proc.BeginOutputReadLine()
+      $proc.BeginErrorReadLine()
+
+      while (-not $proc.WaitForExit(40)) {
         [System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 20
       }
-      $rem = $proc.StandardOutput.ReadToEnd()
-      if ($rem) {
-        $rem -split "`r?`n" | ForEach-Object { if ($_.Trim()) { Log-Install $_.Trim() } }
-      }
-      $proc.WaitForExit()
+      [System.Windows.Forms.Application]::DoEvents()
     }
   }
 
@@ -645,18 +673,16 @@ function Start-InstallationPipeline {
     Log-Install "Windows Firewall pre-authorized (prevents interactive popup stalls)." 'ok'
   } catch {}
 
-  # Step 6: Create Desktop Shortcut with custom icon if requested
-  if ($ChkCreateShortcut.IsChecked) {
-    $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
-    if (-not (Test-Path $scScript)) { $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1' }
-    if (Test-Path $scScript) {
-      try {
-        $farmExe = Join-Path $target 'DofusFarm.exe'
-        & $scScript -TargetExe $farmExe
-        Log-Install "Desktop shortcut 'Dofus Farm Manager' created with SAO icon." 'ok'
-      } catch {
-        Log-Install "Could not create desktop shortcut: $_" 'warn'
-      }
+  # Step 6: Create Desktop & Start Menu Shortcut with custom SAO icon
+  $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
+  if (-not (Test-Path $scScript)) { $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1' }
+  if (Test-Path $scScript) {
+    try {
+      $farmExe = Join-Path $target 'DofusFarm.exe'
+      & $scScript -TargetExe $farmExe
+      Log-Install "Desktop & Start Menu shortcut 'Dofus Farm Manager' created with SAO icon." 'ok'
+    } catch {
+      Log-Install "Could not create desktop shortcut: $_" 'warn'
     }
   }
 
@@ -693,17 +719,46 @@ function Start-InstallationPipeline {
   Log-Install "Cluster ready!" 'ok'
 
   Start-Sleep -Milliseconds 600
-  $CompletionSummary.Text = "Successfully provisioned $count instance(s) in $target.`r`nConfigured: ${ram}MB RAM, $coresAlloc Core(s), Samsung Galaxy A51 stealth disguise."
   Set-WizardStep 4
+
+  # Auto-Launch Countdown (Auto-runs Farm Manager in 3 seconds)
+  $script:countdownSeconds = 3
+  $script:hasLaunched = $false
+  $CompletionSummary.Text = "Successfully provisioned $count instance(s) in $target.`r`nConfigured: ${ram}MB RAM, $coresAlloc Core(s), Samsung Galaxy A51 stealth disguise.`r`n`r`nAuto-launching Farm Manager in $script:countdownSeconds seconds..."
+
+  $script:autoLaunchTimer = New-Object System.Windows.Threading.DispatcherTimer
+  $script:autoLaunchTimer.Interval = [TimeSpan]::FromSeconds(1)
+  $script:autoLaunchTimer.Add_Tick({
+    if ($script:hasLaunched) {
+      if ($script:autoLaunchTimer) { $script:autoLaunchTimer.Stop() }
+      return
+    }
+    $script:countdownSeconds--
+    if ($script:countdownSeconds -gt 0) {
+      $CompletionSummary.Text = "Successfully provisioned $count instance(s) in $target.`r`nConfigured: ${ram}MB RAM, $coresAlloc Core(s), Samsung Galaxy A51 stealth disguise.`r`n`r`nAuto-launching Farm Manager in $script:countdownSeconds seconds..."
+    } else {
+      if ($script:autoLaunchTimer) { $script:autoLaunchTimer.Stop() }
+      $script:hasLaunched = $true
+      $farmExe = Join-Path $target 'DofusFarm.exe'
+      if (Test-Path $farmExe) {
+        Start-Process $farmExe -WorkingDirectory $target
+      } else {
+        $guiScript = Join-Path $target 'scripts\gui-manager.ps1'
+        Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-WindowStyle','Hidden','-File',$guiScript) -WorkingDirectory $target -WindowStyle Hidden
+      }
+      $win.Close()
+    }
+  })
+  $script:autoLaunchTimer.Start()
 }
 
 # Finish Page actions
 $BtnFinishLaunchFarm.Add_Click({
+  if ($script:autoLaunchTimer) { $script:autoLaunchTimer.Stop() }
+  $script:hasLaunched = $true
   $target = $TxtInstallPath.Text.Trim()
-  if ($ChkCreateShortcut.IsChecked) {
-    $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
-  }
+  $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
+  if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
 
   $count = $CmbInstanceCount.SelectedIndex + 1
   $ram = 768
@@ -716,11 +771,11 @@ $BtnFinishLaunchFarm.Add_Click({
 })
 
 $BtnFinishOpenGui.Add_Click({
+  if ($script:autoLaunchTimer) { $script:autoLaunchTimer.Stop() }
+  $script:hasLaunched = $true
   $target = $TxtInstallPath.Text.Trim()
-  if ($ChkCreateShortcut.IsChecked) {
-    $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
-  }
+  $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
+  if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
 
   $farmExe = Join-Path $target 'DofusFarm.exe'
   if (Test-Path $farmExe) {
@@ -733,11 +788,11 @@ $BtnFinishOpenGui.Add_Click({
 })
 
 $BtnFinishExit.Add_Click({
+  if ($script:autoLaunchTimer) { $script:autoLaunchTimer.Stop() }
+  $script:hasLaunched = $true
   $target = $TxtInstallPath.Text.Trim()
-  if ($ChkCreateShortcut.IsChecked) {
-    $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
-  }
+  $scScript = Join-Path $target 'scripts\create-shortcut.ps1'
+  if (Test-Path $scScript) { & $scScript -TargetExe (Join-Path $target 'DofusFarm.exe') 2>$null | Out-Null }
   $win.Close()
 })
 

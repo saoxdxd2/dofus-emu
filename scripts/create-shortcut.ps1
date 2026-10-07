@@ -22,27 +22,35 @@ $appDir = Split-Path -Parent $TargetExe
 $IconPath = Join-Path $appDir 'app_icon.ico'
 if (-not (Test-Path $IconPath)) { $IconPath = Join-Path $RepoRoot 'app_icon.ico' }
 
-$DesktopPath = if ($AllUsers) {
-  [Environment]::GetFolderPath('CommonDesktopDirectory')
-} else {
-  [Environment]::GetFolderPath('Desktop')
+$destFolders = @(
+  [Environment]::GetFolderPath('Desktop'),
+  [Environment]::GetFolderPath('Programs')
+)
+if ($AllUsers) {
+  $destFolders += [Environment]::GetFolderPath('CommonDesktopDirectory')
+  $destFolders += [Environment]::GetFolderPath('CommonPrograms')
 }
 
-$ShortcutPath = Join-Path $DesktopPath 'Dofus Farm Manager.lnk'
-
-Write-Host "Creating desktop shortcut: $ShortcutPath" -ForegroundColor Cyan
-
 $wsh = New-Object -ComObject WScript.Shell
-$shortcut = $wsh.CreateShortcut($ShortcutPath)
-$shortcut.TargetPath = $TargetExe
-$shortcut.WorkingDirectory = $appDir
-$shortcut.Arguments = ''
-$shortcut.Description = 'Dofus Touch High-Efficiency Android Farm Manager'
-$shortcut.IconLocation = "$IconPath,0"
-$shortcut.WindowStyle = 1
-$shortcut.Save()
-
-[System.Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut) | Out-Null
+foreach ($dir in ($destFolders | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique)) {
+  $ShortcutPath = Join-Path $dir 'Dofus Farm Manager.lnk'
+  try {
+    $shortcut = $wsh.CreateShortcut($ShortcutPath)
+    $shortcut.TargetPath = $TargetExe
+    $shortcut.WorkingDirectory = $appDir
+    $shortcut.Arguments = ''
+    $shortcut.Description = 'Dofus Touch High-Efficiency Android Farm Manager'
+    if (Test-Path $IconPath) {
+      $shortcut.IconLocation = "$IconPath,0"
+    }
+    $shortcut.WindowStyle = 1
+    $shortcut.Save()
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut) | Out-Null
+    Write-Host "  [OK] Shortcut created: $ShortcutPath" -ForegroundColor Green
+  } catch {
+    Write-Warning "Could not write shortcut to ${dir}: $_"
+  }
+}
 [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wsh) | Out-Null
 
 if (Test-Path $ShortcutPath) {

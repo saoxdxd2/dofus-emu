@@ -40,7 +40,7 @@ var artifacts = []Artifact{
 		Name:         "cmdline-tools",
 		URL:          "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip",
 		ZipFilename:  "commandlinetools.zip",
-		ExpectedLen:  149867056,
+		ExpectedLen:  153583359,
 		StripPrefix:  "cmdline-tools",
 		TargetSubDir: "cmdline-tools/latest",
 		CheckFile:    "cmdline-tools/latest/bin/avdmanager.bat",
@@ -194,6 +194,13 @@ func downloadArtifact(art Artifact, destPath string, concurrency int) error {
 	contentLength := resp.ContentLength
 	if contentLength <= 0 && art.ExpectedLen > 0 {
 		contentLength = art.ExpectedLen
+	}
+
+	if fi, err := os.Stat(destPath); err == nil {
+		if (contentLength > 0 && fi.Size() == contentLength) || (art.ExpectedLen > 0 && fi.Size() == art.ExpectedLen) {
+			fmt.Printf("  [cache] %s matches size (%d bytes), skipping download.\n", filepath.Base(destPath), fi.Size())
+			return nil
+		}
 	}
 
 	acceptRanges := resp.Header.Get("Accept-Ranges") == "bytes" || resp.StatusCode == 206 || contentLength > 10*1024*1024
@@ -407,7 +414,7 @@ func printProgress(current, total int64, start time.Time) {
 	curMB := float64(current) / 1024 / 1024
 	totMB := float64(total) / 1024 / 1024
 
-	fmt.Printf("\r  [dl] %5.1f%% (%6.1f MB / %6.1f MB) [%5.1f MB/s] ", pct, curMB, totMB, mbps)
+	fmt.Printf("  [dl] %5.1f%% (%6.1f MB / %6.1f MB) [%5.1f MB/s]\n", pct, curMB, totMB, mbps)
 	os.Stdout.Sync()
 }
 

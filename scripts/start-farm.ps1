@@ -47,7 +47,18 @@ param(
 $ErrorActionPreference = 'Continue'
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$SdkRoot  = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $RepoRoot 'sdk' }
+$sdkCandidates = @(
+  (Join-Path $RepoRoot 'sdk'),
+  $env:ANDROID_SDK_ROOT,
+  $env:ANDROID_HOME,
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'DofusFarm\sdk'),
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Documents\dofus-emu\sdk'),
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'AppData\Local\Android\Sdk')
+) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'platform-tools\adb.exe')) }
+
+$SdkRoot = if ($sdkCandidates.Count -gt 0) { $sdkCandidates[0] } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $RepoRoot 'sdk' }
+$env:ANDROID_SDK_ROOT = $SdkRoot
+$env:ANDROID_HOME = $SdkRoot
 $Emu      = Join-Path $SdkRoot 'emulator\emulator.exe'
 $Adb      = Join-Path $SdkRoot 'platform-tools\adb.exe'
 $Golden   = Join-Path $env:USERPROFILE ".android\avd\$AvdPrefix.avd\userdata-golden.img"

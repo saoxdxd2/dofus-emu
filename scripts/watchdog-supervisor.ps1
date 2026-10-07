@@ -20,8 +20,17 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$SdkRoot  = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $RepoRoot 'sdk' }
-$Adb      = Join-Path $SdkRoot 'platform-tools\adb.exe'
+$sdkCandidates = @(
+  (Join-Path $RepoRoot 'sdk'),
+  $env:ANDROID_SDK_ROOT,
+  $env:ANDROID_HOME,
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'DofusFarm\sdk'),
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Documents\dofus-emu\sdk'),
+  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'AppData\Local\Android\Sdk')
+) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'platform-tools\adb.exe')) }
+
+$SdkRoot = if ($sdkCandidates.Count -gt 0) { $sdkCandidates[0] } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $RepoRoot 'sdk' }
+$Adb     = Join-Path $SdkRoot 'platform-tools\adb.exe'
 
 function Write-Log($msg, $color = 'White') {
   $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
@@ -29,6 +38,7 @@ function Write-Log($msg, $color = 'White') {
 }
 
 function Check-And-Heal-Instances {
+  if (-not (Test-Path $Adb)) { return }
   # Discover instances currently expected to be running
   $liveSerials = @((& $Adb devices 2>$null) | Select-String -Pattern '^(emulator-\d+)\s+device' | ForEach-Object { $_.Matches[0].Groups[1].Value })
 
