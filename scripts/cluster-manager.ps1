@@ -31,8 +31,8 @@ param(
   [ValidateSet('Create','Start','Stop','Status','Provision','Normalize')]
   [string]   $Action = 'Status',
   [ValidateRange(1,4)] [int] $Count = 4,
-  [int]      $RamMb    = 1024,
-  [int]      $Cores    = 2,
+  [int]      $RamMb    = 768,
+  [int]      $Cores    = 1,
   [int]      $BasePort = 5554,
   [string]   $AvdName  = 'dofus',
   [string]   $GoldenImgPath = '',

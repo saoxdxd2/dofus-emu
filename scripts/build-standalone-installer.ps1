@@ -99,8 +99,10 @@ namespace DofusStandaloneSetup
 
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = "powershell.exe";
-                psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -STA -File \"" + scriptPath + "\"";
-                psi.UseShellExecute = true;
+                psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File \"" + scriptPath + "\"";
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
                 Process p = Process.Start(psi);
                 if (p != null)
                 {
@@ -123,17 +125,40 @@ namespace DofusStandaloneSetup
 }
 "@
 
-$csFile = Join-Path $env:TEMP "StandaloneSetup.cs"
-Set-Content -Path $csFile -Value $csSource -Encoding UTF8
+$manifestSource = @"
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="DofusFarmSetup"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+</assembly>
+"@
 
-# 3. Compile DofusFarmSetup.exe with embedded payload & icon
-Write-Host "Compiling standalone DofusFarmSetup.exe with embedded payload..." -ForegroundColor Cyan
+$csFile = Join-Path $env:TEMP "StandaloneSetup.cs"
+$manifestFile = Join-Path $env:TEMP "StandaloneSetup.manifest"
+Set-Content -Path $csFile -Value $csSource -Encoding UTF8
+Set-Content -Path $manifestFile -Value $manifestSource -Encoding UTF8
+
+# 3. Compile DofusFarmSetup.exe with embedded payload & icon & UAC manifest
+Write-Host "Compiling standalone DofusFarmSetup.exe with embedded payload & UAC manifest..." -ForegroundColor Cyan
 
 $cscArgs = @(
   "/target:winexe",
   "/platform:anycpu",
   "/optimize+",
   "/win32icon:$InstallerIco",
+  "/win32manifest:$manifestFile",
   "/resource:$payloadZip,DofusPayload.zip",
   "/reference:System.Windows.Forms.dll",
   "/reference:System.Drawing.dll",
@@ -145,7 +170,7 @@ $cscArgs = @(
 
 & $Csc $cscArgs
 if ($LASTEXITCODE -eq 0) {
-  Write-Host "  [OK] Successfully compiled: $TargetExe ($((Get-Item $TargetExe).Length) bytes)" -ForegroundColor Green
+  Write-Host "  [OK] Successfully compiled with UAC elevation: $TargetExe ($((Get-Item $TargetExe).Length) bytes)" -ForegroundColor Green
   # Also copy/overwrite setup.exe so it serves as the same standalone installer
   Copy-Item $TargetExe $SetupExe -Force
   Write-Host "  [OK] Synchronized: $SetupExe ($((Get-Item $SetupExe).Length) bytes)" -ForegroundColor Green
@@ -154,4 +179,5 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Remove-Item $csFile -Force -EA SilentlyContinue
+Remove-Item $manifestFile -Force -EA SilentlyContinue
 Remove-Item $payloadZip -Force -EA SilentlyContinue

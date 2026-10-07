@@ -51,7 +51,8 @@ namespace DofusFarmLauncher
                 psi.FileName = "powershell.exe";
                 psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File \"" + scriptPath + "\"";
                 psi.WorkingDirectory = baseDir;
-                psi.UseShellExecute = true;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
 
                 Process.Start(psi);
@@ -124,9 +125,11 @@ namespace DofusUninstall
 
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = "powershell.exe";
-                psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -STA -File \"" + scriptPath + "\"" + extraArgs;
+                psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File \"" + scriptPath + "\"" + extraArgs;
                 psi.WorkingDirectory = baseDir;
-                psi.UseShellExecute = true;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
 
                 Process p = Process.Start(psi);
                 if (p != null) p.WaitForExit();

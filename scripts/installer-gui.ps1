@@ -463,7 +463,7 @@ function Start-InstallationPipeline {
     Log-Install "Android SDK missing. Invoking installer bootstrap (install.ps1)..." 'warn'
     # Delegate to install.ps1 to download and extract missing SDK
     $instScript = Join-Path $RepoRoot 'install.ps1'
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $instScript -InstallDir $sdkDir -SkipHostPrereqs
+    & $instScript -InstallDir $sdkDir -SkipHostPrereqs
   }
 
   # Step 2: System Image check
@@ -488,7 +488,7 @@ function Start-InstallationPipeline {
     Log-Install "Freezing Golden Master Template..." 'warn'
     $freezeScript = Join-Path $RepoRoot 'scripts\freeze-template.ps1'
     if (Test-Path $freezeScript) {
-      & powershell -NoProfile -ExecutionPolicy Bypass -File $freezeScript -Force
+      & $freezeScript -Force
       Log-Install "Template frozen successfully." 'ok'
     } else {
       Log-Install "freeze-template.ps1 not found." 'err'
@@ -500,7 +500,7 @@ function Start-InstallationPipeline {
   $InstallProgress.Value = 80
   $clusterScript = Join-Path $RepoRoot 'scripts\cluster-manager.ps1'
   if (Test-Path $clusterScript) {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $clusterScript -Action Create -Count $count -RamMb $ram -Cores $coresAlloc -Force
+    & $clusterScript -Action Create -Count $count -RamMb $ram -Cores $coresAlloc -Force
     Log-Install "$count instance(s) provisioned with hardlinked QCOW2 overlays." 'ok'
   }
 
@@ -537,7 +537,7 @@ function Start-InstallationPipeline {
     $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1'
     if (Test-Path $scScript) {
       try {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $scScript
+        & $scScript
         Log-Install "Desktop shortcut 'Dofus Farm Manager' created with SAO icon." 'ok'
       } catch {
         Log-Install "Could not create desktop shortcut: $_" 'warn'
@@ -549,7 +549,7 @@ function Start-InstallationPipeline {
   $regScript = Join-Path $RepoRoot 'scripts\register-uninstall.ps1'
   if (Test-Path $regScript) {
     try {
-      & powershell -NoProfile -ExecutionPolicy Bypass -File $regScript 2>$null | Out-Null
+      & $regScript 2>$null | Out-Null
       Log-Install "Registered in Windows Programs & Features." 'ok'
     } catch {}
   }
@@ -567,7 +567,7 @@ function Start-InstallationPipeline {
 $BtnFinishLaunchFarm.Add_Click({
   if ($ChkCreateShortcut.IsChecked) {
     $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & powershell -NoProfile -ExecutionPolicy Bypass -File $scScript 2>$null | Out-Null }
+    if (Test-Path $scScript) { & $scScript 2>$null | Out-Null }
   }
 
   $count = $CmbInstanceCount.SelectedIndex + 1
@@ -576,14 +576,14 @@ $BtnFinishLaunchFarm.Add_Click({
   $coresAlloc = if ($CmbCores.SelectedIndex -eq 0) { 1 } else { 2 }
 
   $startFarmScript = Join-Path $RepoRoot 'scripts\start-farm.ps1'
-  Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$startFarmScript,'-Count',"$count",'-RamMb',"$ram",'-Cores',"$coresAlloc",'-AutoBoot','-EdgeToEdge','-Force') -WorkingDirectory $RepoRoot -WindowStyle Minimized
+  Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$startFarmScript,'-Count',"$count",'-RamMb',"$ram",'-Cores',"$coresAlloc",'-AutoBoot','-EdgeToEdge','-Force') -WorkingDirectory $RepoRoot -WindowStyle Hidden
   $win.Close()
 })
 
 $BtnFinishOpenGui.Add_Click({
   if ($ChkCreateShortcut.IsChecked) {
     $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & powershell -NoProfile -ExecutionPolicy Bypass -File $scScript 2>$null | Out-Null }
+    if (Test-Path $scScript) { & $scScript 2>$null | Out-Null }
   }
 
   $farmExe = Join-Path $RepoRoot 'DofusFarm.exe'
@@ -591,7 +591,7 @@ $BtnFinishOpenGui.Add_Click({
     Start-Process $farmExe -WorkingDirectory $RepoRoot
   } else {
     $guiScript = Join-Path $RepoRoot 'scripts\gui-manager.ps1'
-    Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-File',$guiScript) -WorkingDirectory $RepoRoot
+    Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-WindowStyle','Hidden','-File',$guiScript) -WorkingDirectory $RepoRoot -WindowStyle Hidden
   }
   $win.Close()
 })
@@ -599,7 +599,7 @@ $BtnFinishOpenGui.Add_Click({
 $BtnFinishExit.Add_Click({
   if ($ChkCreateShortcut.IsChecked) {
     $scScript = Join-Path $RepoRoot 'scripts\create-shortcut.ps1'
-    if (Test-Path $scScript) { & powershell -NoProfile -ExecutionPolicy Bypass -File $scScript 2>$null | Out-Null }
+    if (Test-Path $scScript) { & $scScript 2>$null | Out-Null }
   }
   $win.Close()
 })

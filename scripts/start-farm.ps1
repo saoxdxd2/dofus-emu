@@ -84,10 +84,8 @@ if ($RamMb -le 0) {
 }
 
 if ($Cores -le 0) {
-  # Provisional: used only for the CPU-bound count check below. The final
-  # value is recomputed once Count is known, so this must stay conservative.
-  $Cores = [math]::Max(1, [math]::Min(2, [math]::Floor($cpuCores / 4)))
-  Write-Step "Cores not specified -> provisional ${Cores} per instance (host has ${cpuCores} logical)"
+  $Cores = 1
+  Write-Step "Cores not specified -> defaulting to 1 core per instance (lean 1-vCPU profile)"
 }
 
 $usableGB = $freeGB - $reserveGB
@@ -104,14 +102,12 @@ if ($Count -le 0) {
   Write-Step "Count not specified -> ${Count} (RAM allows ~${maxByRam}, CPU allows ~${maxByCpu}, auto-suggest ${maxCount})"
 }
 
-
-
 # Final core allocation, now that Count is known:
-# For 3+ instances, 1 core per instance prevents host core thrashing and runs
+# 1 core per instance prevents host core thrashing and runs
 # smoothly with stripped AOSP & Intel UHD GPU rasterization.
 if (-not $PSBoundParameters.ContainsKey('Cores') -or $Cores -le 0) {
-  $Cores = if ($Count -ge 3) { 1 } else { 2 }
-  Write-Step "Cores -> $Cores per instance (optimized for $Count instance(s) on $cpuCores host threads)"
+  $Cores = 1
+  Write-Step "Cores -> 1 per instance (lean 1-vCPU profile: optimal for $Count instance(s) on $cpuCores host threads)"
 }
 
 Write-Step "Host: ${hostGB}GB total / ${freeGB}GB free / ${cpuCores} logical cores"
