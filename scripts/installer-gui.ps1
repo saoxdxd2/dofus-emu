@@ -467,7 +467,7 @@ function Start-InstallationPipeline {
     if (-not (Test-Path $destScripts)) { New-Item -ItemType Directory -Path $destScripts -Force | Out-Null }
     Copy-Item (Join-Path $RepoRoot 'scripts\*') $destScripts -Recurse -Force
 
-    @('DofusFarm.exe', 'uninstall.exe', 'app_icon.ico', 'installer_icon.ico', 'install.ps1', 'INSTALL.bat', 'setup.bat') | ForEach-Object {
+    @('DofusFarm.exe', 'uninstall.exe', 'app_icon.ico', 'installer_icon.ico', 'install.ps1', 'INSTALL.bat', 'setup.bat', 'LICENSE', 'README.md', 'sao_image.png') | ForEach-Object {
       $srcFile = Join-Path $RepoRoot $_
       if (Test-Path $srcFile) {
         Copy-Item $srcFile (Join-Path $target $_) -Force
@@ -479,6 +479,15 @@ function Start-InstallationPipeline {
       $destApks = Join-Path $target 'apks'
       if (-not (Test-Path $destApks)) { New-Item -ItemType Directory -Path $destApks -Force | Out-Null }
       Copy-Item "$srcApks\*" $destApks -Recurse -Force
+    }
+
+    @('config', 'launcher') | ForEach-Object {
+      $srcFolder = Join-Path $RepoRoot $_
+      if (Test-Path $srcFolder) {
+        $destFolder = Join-Path $target $_
+        if (-not (Test-Path $destFolder)) { New-Item -ItemType Directory -Path $destFolder -Force | Out-Null }
+        Copy-Item "$srcFolder\*" $destFolder -Recurse -Force
+      }
     }
     Log-Install "Application components deployed successfully." 'ok'
   }

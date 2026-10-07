@@ -34,6 +34,15 @@ Copy-Item (Join-Path $RepoRoot "app_icon.ico") $stageDir -Force -EA SilentlyCont
 Copy-Item (Join-Path $RepoRoot "DofusFarm.exe") $stageDir -Force -EA SilentlyContinue
 Copy-Item (Join-Path $RepoRoot "uninstall.exe") $stageDir -Force -EA SilentlyContinue
 Copy-Item (Join-Path $RepoRoot "setup.bat") $stageDir -Force -EA SilentlyContinue
+Copy-Item (Join-Path $RepoRoot "LICENSE") $stageDir -Force -EA SilentlyContinue
+Copy-Item (Join-Path $RepoRoot "README.md") $stageDir -Force -EA SilentlyContinue
+Copy-Item (Join-Path $RepoRoot "sao_image.png") $stageDir -Force -EA SilentlyContinue
+if (Test-Path (Join-Path $RepoRoot "config")) {
+  Copy-Item (Join-Path $RepoRoot "config") (Join-Path $stageDir "config") -Recurse -Force
+}
+if (Test-Path (Join-Path $RepoRoot "launcher")) {
+  Copy-Item (Join-Path $RepoRoot "launcher") (Join-Path $stageDir "launcher") -Recurse -Force
+}
 
 # Include game APK bundle
 if (Test-Path (Join-Path $RepoRoot "apks")) {
