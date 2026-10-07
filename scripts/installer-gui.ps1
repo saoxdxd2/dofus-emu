@@ -525,6 +525,15 @@ function Start-InstallationPipeline {
     }
   }
 
+  # Step 7: Register in Windows Add/Remove Programs
+  $regScript = Join-Path $RepoRoot 'scripts\register-uninstall.ps1'
+  if (Test-Path $regScript) {
+    try {
+      & powershell -NoProfile -ExecutionPolicy Bypass -File $regScript 2>$null | Out-Null
+      Log-Install "Registered in Windows Programs & Features." 'ok'
+    } catch {}
+  }
+
   $InstallProgress.Value = 100
   $InstallStatusText.Text = "Installation and provisioning completed successfully!"
   Log-Install "Cluster ready!" 'ok'

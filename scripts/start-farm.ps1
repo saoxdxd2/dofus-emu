@@ -248,21 +248,40 @@ foreach ($p in $plan) {
     # point of the golden image.
     "-no-snapshot", "-no-snapshot-load", "-no-snapshot-save",
     "-no-audio", "-no-boot-anim", "-no-metrics", "-accel", "on",
-    "-skip-adb-auth", "-no-location-ui", "-no-passive-gps"
+    "-skip-adb-auth", "-no-location-ui", "-no-passive-gps",
+    # Robust Multi-Instance Networking & Cloudflare/Google DNS passthrough
+    "-dns-server", "1.1.1.1,8.8.8.8,1.0.0.1",
+    "-shared-net-id", "$([math]::Max(1, $p.Index))"
   )
-  if ($Proxy) {
-    $a += @("-http-proxy", $Proxy)
-    Write-Step "  [$($p.Name)] Routing traffic via proxy: $Proxy"
+  $instanceProxy = $Proxy
+  $instProxyFile = Join-Path $avdDir 'proxy.txt'
+  if (-not $instanceProxy -and (Test-Path $instProxyFile)) {
+    $pContent = (Get-Content $instProxyFile -Raw -EA SilentlyContinue).Trim()
+    if ($pContent) { $instanceProxy = $pContent }
+  }
+  if ($instanceProxy) {
+    $a += @("-http-proxy", $instanceProxy)
+    Write-Step "  [$($p.Name)] Routing traffic via dedicated proxy: $instanceProxy"
   }
   # Standard Samsung Mobile Properties & High-Speed Boot Performance
   $standardProps = @(
+    "ro.product.brand=samsung",
+    "ro.product.manufacturer=samsung",
+    "ro.product.model=SM-A515F",
+    "ro.product.name=a51nsxx",
+    "ro.product.device=a51",
+    "ro.build.flavor=a51nsxx-user",
+    "ro.build.type=user",
+    "ro.build.tags=release-keys",
+    "ro.build.fingerprint=samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys",
     "qemu.hw.mainkeys=1",
     "gsm.sim.state=READY",
     "gsm.sim.operator.numeric=20801",
     "gsm.sim.operator.alpha=Orange",
     "gsm.network.type=LTE",
-    "net.dns1=1.1.1.1",
-    "net.dns2=8.8.8.8",
+    "net.dns1=10.0.2.3",
+    "net.dns2=1.1.1.1",
+    "net.dns3=8.8.8.8",
     "config.disable_animations=1",
     "dalvik.vm.verify-bytecode=false",
     "debug.sf.latch_unsignaled=1",

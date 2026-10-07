@@ -355,6 +355,10 @@ function Set-WindowBorderless([IntPtr]$hWnd) {
 }
 
 function Set-WindowWithBorders([IntPtr]$hWnd) {
+  <#
+    Restores standard Windows title bar with the 3 Legend Controls:
+    [_] Reduce (Minimize), [□] Maximize/Restore, [✕] Exit.
+  #>
   try {
     $oldStyle = [FarmWin32v3.Win32]::GetWindowLong($hWnd, -16).ToInt64()
     $restore = 0x00C00000L -bor 0x00040000L -bor 0x00020000L -bor 0x00010000L -bor 0x00080000L
@@ -362,6 +366,45 @@ function Set-WindowWithBorders([IntPtr]$hWnd) {
     [void][FarmWin32v3.Win32]::SetWindowLong($hWnd, -16, [IntPtr]$newStyle)
     [void][FarmWin32v3.Win32]::SetWindowPos($hWnd, [IntPtr]::Zero, 0, 0, 0, 0, 0x0027)
   } catch {}
+}
+
+# --- The 3 Legend Tweaks ---
+function Reduce-EmulatorWindow([IntPtr]$hWnd) {
+  <# Legend Tweak 1: Reduce (Minimize to Taskbar) #>
+  [void][FarmWin32v3.Win32]::ShowWindow($hWnd, 6) # SW_MINIMIZE
+}
+
+function Maximize-EmulatorWindow([IntPtr]$hWnd, [int]$X = -1, [int]$Y = -1, [int]$W = -1, [int]$H = -1) {
+  <# Legend Tweak 2: Maximize (Toggle Fullscreen Maximize vs Grid Tile) #>
+  $r = New-Object FarmWin32v3.Win32+RECT
+  [void][FarmWin32v3.Win32]::GetWindowRect($hWnd, [ref]$r)
+  $wa = Get-ScreenWorkArea
+  $curW = $r.Right - $r.Left
+  $curH = $r.Bottom - $r.Top
+  if ($curW -ge ($wa.W - 10) -and $curH -ge ($wa.H - 10)) {
+    # Currently maximized -> restore to tile or normal
+    if ($W -gt 0 -and $H -gt 0) {
+      [void][FarmWin32v3.Win32]::MoveWindow($hWnd, $X, $Y, $W, $H, $true)
+    } else {
+      [void][FarmWin32v3.Win32]::ShowWindow($hWnd, 9) # SW_RESTORE
+    }
+  } else {
+    # Currently tiled -> maximize full screen
+    [void][FarmWin32v3.Win32]::ShowWindow($hWnd, 3) # SW_MAXIMIZE
+  }
+}
+
+function Exit-EmulatorWindow([IntPtr]$hWnd, [string]$Serial = '') {
+  <# Legend Tweak 3: Exit (Clean Shutdown via ADB or Close) #>
+  if ($Serial) {
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+    $Adb = Join-Path $RepoRoot 'sdk\platform-tools\adb.exe'
+    if (Test-Path $Adb) {
+      & $Adb -s $Serial emu kill 2>$null | Out-Null
+      return
+    }
+  }
+  [void][FarmWin32v3.Win32]::ShowWindow($hWnd, 0) # SW_HIDE
 }
 
 function Set-FarmLayout {

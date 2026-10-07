@@ -110,6 +110,7 @@ $emuArgs = @(
   "-skip-adb-auth",
   "-no-location-ui",
   "-no-passive-gps",
+  "-dns-server", "1.1.1.1,8.8.8.8,1.0.0.1",
   # NOTE: -accel accepts only "on" | "off" | "auto" in emulator 37.x.
   "-accel", "on"
 )
@@ -169,8 +170,9 @@ gsm.sim.state=READY
 gsm.sim.operator.numeric=20801
 gsm.sim.operator.alpha=Orange
 gsm.network.type=LTE
-net.dns1=1.1.1.1
-net.dns2=8.8.8.8
+net.dns1=10.0.2.3
+net.dns2=1.1.1.1
+net.dns3=8.8.8.8
 config.disable_animations=1
 dalvik.vm.verify-bytecode=false
 debug.sf.latch_unsignaled=1
@@ -180,13 +182,28 @@ ro.config.hw_quickpoweron=true
   Set-Content -Path $sysPropFile -Value $sysProp
 }
 
-if ($Proxy) {
-  $emuArgs += @("-http-proxy", $Proxy)
-  Write-Step "Routing instance traffic through proxy: $Proxy"
+$instanceProxy = $Proxy
+$instProxyFile = Join-Path $AvdDir 'proxy.txt'
+if (-not $instanceProxy -and (Test-Path $instProxyFile)) {
+  $pContent = (Get-Content $instProxyFile -Raw -EA SilentlyContinue).Trim()
+  if ($pContent) { $instanceProxy = $pContent }
+}
+if ($instanceProxy) {
+  $emuArgs += @("-http-proxy", $instanceProxy)
+  Write-Step "Routing instance traffic through proxy: $instanceProxy"
 }
 
 $emuArgs += @(
   "-no-metrics",
+  "-prop", "ro.product.brand=samsung",
+  "-prop", "ro.product.manufacturer=samsung",
+  "-prop", "ro.product.model=SM-A515F",
+  "-prop", "ro.product.name=a51nsxx",
+  "-prop", "ro.product.device=a51",
+  "-prop", "ro.build.flavor=a51nsxx-user",
+  "-prop", "ro.build.type=user",
+  "-prop", "ro.build.tags=release-keys",
+  "-prop", "ro.build.fingerprint=samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys",
   "-prop", "qemu.hw.mainkeys=1",
   "-android-serialno", $instSerial
 )
@@ -226,9 +243,14 @@ Write-Step 'Waiting for boot completion (cold boot can take several minutes)...'
 
     $oldEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    & $Adb -s $Serial shell "setprop gsm.sim.state READY 2>/dev/null; setprop gsm.sim.operator.numeric 60401 2>/dev/null; setprop gsm.network.type LTE 2>/dev/null" 2>$null | Out-Null
+    & $Adb -s $Serial shell "setprop gsm.sim.state READY 2>/dev/null; setprop gsm.sim.operator.numeric 20801 2>/dev/null; setprop gsm.sim.operator.alpha Orange 2>/dev/null; setprop gsm.network.type LTE 2>/dev/null" 2>$null | Out-Null
     $ErrorActionPreference = $oldEap
-    Write-Ok "telephony nominal: READY / 60401 / LTE"
+    Write-Ok "telephony nominal: READY / 20801 (Orange) / LTE"
+
+    $patchPropsScript = Join-Path $PSScriptRoot 'patch-system-props.ps1'
+    if (Test-Path $patchPropsScript) {
+      & $patchPropsScript -Serial $Serial
+    }
   } else {
     Write-Err 'Guest did not report boot_completed within timeout.'; exit 2
   }

@@ -182,6 +182,9 @@ function Get-LiveSerials {
           <TextBlock x:Name="HostStatsHeader" Text="Host: 7.8 GB RAM (4.9 GB Free) | 8 Cores" Foreground="#9AA0A6" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
           <Button x:Name="BtnHeaderAutoTune" Content="⚡ 1-Click Auto-Tune" Height="26" Width="130"
                   Background="#238636" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand"/>
+          <Button x:Name="BtnHeaderUninstall" Content="🗑 Uninstall" Height="26" Width="85"
+                  Background="#4A1D1D" Foreground="#FFAAAA" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand" Margin="8,0,0,0"
+                  ToolTip="Safely halt instances, clean up shortcuts, and uninstall farm"/>
         </StackPanel>
       </Grid>
     </Border>
@@ -211,7 +214,7 @@ function Get-LiveSerials {
             <Border Grid.Column="0" Background="#202022" CornerRadius="8" Padding="12" BorderBrush="#333333" BorderThickness="1">
               <StackPanel>
                 <TextBlock Text="2x2 Screen Tile Preview" FontWeight="Bold" Foreground="#CCCCCC" FontSize="12" Margin="0,0,0,8"/>
-                <Grid Height="110">
+                <Grid Height="128">
                   <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="4"/>
@@ -225,34 +228,78 @@ function Get-LiveSerials {
 
                   <!-- Slot 1 -->
                   <Border x:Name="Slot1Border" Grid.Row="0" Grid.Column="0" Background="#28282B" CornerRadius="4" Padding="6">
-                    <StackPanel VerticalAlignment="Center">
-                      <TextBlock x:Name="Slot1Name" Text="Slot 1: dofus-01" Foreground="#FFF" FontWeight="Bold" FontSize="11"/>
-                      <TextBlock x:Name="Slot1Status" Text="● Stopped (5554)" Foreground="#888" FontSize="10"/>
-                    </StackPanel>
+                    <Grid>
+                      <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                      </Grid.RowDefinitions>
+                      <StackPanel Grid.Row="0" VerticalAlignment="Center">
+                        <TextBlock x:Name="Slot1Name" Text="Slot 1: dofus-01" Foreground="#FFF" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock x:Name="Slot1Status" Text="● Stopped (5554)" Foreground="#888" FontSize="10"/>
+                      </StackPanel>
+                      <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
+                        <Button x:Name="BtnSlot1Reduce" Content="_" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Reduce / Minimize"/>
+                        <Button x:Name="BtnSlot1Max" Content="🗖" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
+                        <Button x:Name="BtnSlot1Exit" Content="✕" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
+                      </StackPanel>
+                    </Grid>
                   </Border>
 
                   <!-- Slot 2 -->
                   <Border x:Name="Slot2Border" Grid.Row="0" Grid.Column="2" Background="#28282B" CornerRadius="4" Padding="6">
-                    <StackPanel VerticalAlignment="Center">
-                      <TextBlock x:Name="Slot2Name" Text="Slot 2: dofus-02" Foreground="#FFF" FontWeight="Bold" FontSize="11"/>
-                      <TextBlock x:Name="Slot2Status" Text="● Stopped (5556)" Foreground="#888" FontSize="10"/>
-                    </StackPanel>
+                    <Grid>
+                      <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                      </Grid.RowDefinitions>
+                      <StackPanel Grid.Row="0" VerticalAlignment="Center">
+                        <TextBlock x:Name="Slot2Name" Text="Slot 2: dofus-02" Foreground="#FFF" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock x:Name="Slot2Status" Text="● Stopped (5556)" Foreground="#888" FontSize="10"/>
+                      </StackPanel>
+                      <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
+                        <Button x:Name="BtnSlot2Reduce" Content="_" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Reduce / Minimize"/>
+                        <Button x:Name="BtnSlot2Max" Content="🗖" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
+                        <Button x:Name="BtnSlot2Exit" Content="✕" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
+                      </StackPanel>
+                    </Grid>
                   </Border>
 
                   <!-- Slot 3 -->
                   <Border x:Name="Slot3Border" Grid.Row="2" Grid.Column="0" Background="#28282B" CornerRadius="4" Padding="6">
-                    <StackPanel VerticalAlignment="Center">
-                      <TextBlock x:Name="Slot3Name" Text="Slot 3: dofus-03" Foreground="#FFF" FontWeight="Bold" FontSize="11"/>
-                      <TextBlock x:Name="Slot3Status" Text="● Stopped (5558)" Foreground="#888" FontSize="10"/>
-                    </StackPanel>
+                    <Grid>
+                      <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                      </Grid.RowDefinitions>
+                      <StackPanel Grid.Row="0" VerticalAlignment="Center">
+                        <TextBlock x:Name="Slot3Name" Text="Slot 3: dofus-03" Foreground="#FFF" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock x:Name="Slot3Status" Text="● Stopped (5558)" Foreground="#888" FontSize="10"/>
+                      </StackPanel>
+                      <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
+                        <Button x:Name="BtnSlot3Reduce" Content="_" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Reduce / Minimize"/>
+                        <Button x:Name="BtnSlot3Max" Content="🗖" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
+                        <Button x:Name="BtnSlot3Exit" Content="✕" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
+                      </StackPanel>
+                    </Grid>
                   </Border>
 
                   <!-- Slot 4 -->
                   <Border x:Name="Slot4Border" Grid.Row="2" Grid.Column="2" Background="#28282B" CornerRadius="4" Padding="6">
-                    <StackPanel VerticalAlignment="Center">
-                      <TextBlock x:Name="Slot4Name" Text="Slot 4: dofus-04" Foreground="#FFF" FontWeight="Bold" FontSize="11"/>
-                      <TextBlock x:Name="Slot4Status" Text="● Stopped (5560)" Foreground="#888" FontSize="10"/>
-                    </StackPanel>
+                    <Grid>
+                      <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                      </Grid.RowDefinitions>
+                      <StackPanel Grid.Row="0" VerticalAlignment="Center">
+                        <TextBlock x:Name="Slot4Name" Text="Slot 4: dofus-04" Foreground="#FFF" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock x:Name="Slot4Status" Text="● Stopped (5560)" Foreground="#888" FontSize="10"/>
+                      </StackPanel>
+                      <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,3,0,0">
+                        <Button x:Name="BtnSlot4Reduce" Content="_" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Reduce / Minimize"/>
+                        <Button x:Name="BtnSlot4Max" Content="🗖" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#38383B" Foreground="#CCCCCC" BorderThickness="0" Margin="0,0,2,0" Cursor="Hand" ToolTip="Maximize / Restore Tile"/>
+                        <Button x:Name="BtnSlot4Exit" Content="✕" Width="20" Height="17" FontSize="9" FontWeight="Bold" Background="#5A1D1D" Foreground="#FFAAAA" BorderThickness="0" Cursor="Hand" ToolTip="Exit / Close Instance"/>
+                      </StackPanel>
+                    </Grid>
                   </Border>
                 </Grid>
               </StackPanel>
@@ -357,18 +404,24 @@ function Get-LiveSerials {
                 <ColumnDefinition Width="Auto"/>
               </Grid.ColumnDefinitions>
               <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="⚡ Quick Navigation:" Foreground="#569CD6" FontWeight="Bold" FontSize="11" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <Button x:Name="BtnNavBack" Content="◀ Return" Width="85" Height="26" Margin="0,0,6,0"
+                <TextBlock Text="⚡ Quick Controls:" Foreground="#569CD6" FontWeight="Bold" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <Button x:Name="BtnNavBack" Content="◀ Return" Width="72" Height="26" Margin="0,0,5,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Sends KEYCODE_BACK (ESC) to selected or active instance"/>
-                <Button x:Name="BtnNavHome" Content="● Home" Width="75" Height="26" Margin="0,0,6,0"
+                <Button x:Name="BtnNavHome" Content="● Home" Width="64" Height="26" Margin="0,0,5,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Sends KEYCODE_HOME to selected or active instance"/>
-                <Button x:Name="BtnNavRecents" Content="■ Tabs (Recents)" Width="105" Height="26" Margin="0,0,6,0"
+                <Button x:Name="BtnNavRecents" Content="■ Tabs" Width="60" Height="26" Margin="0,0,5,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Sends KEYCODE_APP_SWITCH to selected or active instance"/>
-                <Button x:Name="BtnNavSettings" Content="⚙ Settings" Width="85" Height="26" Margin="0,0,6,0"
+                <Button x:Name="BtnNavSettings" Content="⚙ Settings" Width="76" Height="26" Margin="0,0,8,0"
                         Background="#3F3F46" Foreground="#FFFFFF" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Opens Android Settings on selected instance"/>
+                <Button x:Name="BtnReduceAll" Content="_ Minimize All" Width="95" Height="26" Margin="0,0,5,0"
+                        Background="#2D2D30" Foreground="#CCCCCC" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Reduce / minimize all running emulator windows"/>
+                <Button x:Name="BtnRetileAll" Content="🗖 Retile 2x2" Width="85" Height="26" Margin="0,0,5,0"
+                        Background="#2D2D30" Foreground="#CCCCCC" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Restore all running windows into 2x2 edge-to-edge grid"/>
               </StackPanel>
               <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button x:Name="BtnToggleSidebars" Content="📱 Toggle Emulator Sidebars" Width="175" Height="26"
+                <Button x:Name="BtnToggleBorders" Content="🗖 Toggle Window Borders" Width="165" Height="26" Margin="0,0,6,0"
+                        Background="#3F3F46" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Toggle between seamless edge-to-edge canvas and standard window title bars"/>
+                <Button x:Name="BtnToggleSidebars" Content="📱 Toggle Sidebars" Width="135" Height="26"
                         Background="#0E639C" Foreground="#FFFFFF" FontWeight="Bold" FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Show or Hide the Qt side menu toolbar to reclaim screen space"/>
               </StackPanel>
             </Grid>
@@ -1048,6 +1101,107 @@ $win.FindName('BtnToggleSidebars').Add_Click({
   }
 })
 
+# Toggle Window Borders handler (Bordered Titlebar vs Edge-to-Edge Canvas)
+$script:bordersVisible = $false
+$win.FindName('BtnToggleBorders').Add_Click({
+  . (Join-Path $PSScriptRoot 'layout.ps1')
+  $live = Get-LiveSerials
+  if (-not $live) { Set-Status 'No running instances found.' '#E5C07B'; return }
+  $pids = @()
+  foreach ($s in $live) {
+    $port_ = [int]($s -replace 'emulator-','')
+    $p = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" -EA SilentlyContinue |
+         Where-Object { $_.CommandLine -match "-port\s+$port_\b" } | Select-Object -First 1
+    if ($p) { $pids += $p.ProcessId }
+  }
+  if ($pids.Count -eq 0) { Set-Status 'Could not map instances to emulator processes.' '#E06C75'; return }
+
+  if ($script:bordersVisible) {
+    foreach ($pid_ in $pids) {
+      $w = Get-RenderWindow -LauncherPid $pid_ -TimeoutSec 3
+      if ($w) { Set-WindowBorderless -hWnd $w.Handle }
+    }
+    $script:bordersVisible = $false
+    Set-Status "Switched to seamless borderless mode (0 black bars)." '#98C379'
+  } else {
+    foreach ($pid_ in $pids) {
+      $w = Get-RenderWindow -LauncherPid $pid_ -TimeoutSec 3
+      if ($w) { Set-WindowWithBorders -hWnd $w.Handle }
+    }
+    $script:bordersVisible = $true
+    Set-Status "Restored standard window borders with native title bars." '#569CD6'
+  }
+})
+
+# Reduce All & Retile All handlers
+$win.FindName('BtnReduceAll').Add_Click({
+  . (Join-Path $PSScriptRoot 'layout.ps1')
+  $live = Get-LiveSerials
+  if (-not $live) { Set-Status 'No running instances to minimize.' '#E5C07B'; return }
+  $count_ = 0
+  foreach ($s in $live) {
+    $port_ = [int]($s -replace 'emulator-','')
+    $p = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" -EA SilentlyContinue |
+         Where-Object { $_.CommandLine -match "-port\s+$port_\b" } | Select-Object -First 1
+    if ($p) {
+      $w = Get-RenderWindow -LauncherPid $p.ProcessId -TimeoutSec 3
+      if ($w) { Reduce-EmulatorWindow -hWnd $w.Handle; $count_++ }
+    }
+  }
+  Set-Status "Reduced (minimized) $count_ running emulator window(s)." '#98C379'
+})
+
+$win.FindName('BtnRetileAll').Add_Click({
+  $win.FindName('BtnRelayout').RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+})
+
+# Helper for per-slot actions (3 Legend Tweaks)
+function Invoke-SlotLegendAction([int]$SlotIdx, [string]$Action) {
+  . (Join-Path $PSScriptRoot 'layout.ps1')
+  $port = 5554 + 2 * ($SlotIdx - 1)
+  $serial = "emulator-$port"
+  $p = Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" -EA SilentlyContinue |
+       Where-Object { $_.CommandLine -match "-port\s+$port\b" } | Select-Object -First 1
+  if (-not $p) {
+    Set-Status "Slot $SlotIdx ($serial) is not currently running." '#E5C07B'
+    return
+  }
+  $win = Get-RenderWindow -LauncherPid $p.ProcessId -TimeoutSec 3
+  if (-not $win) {
+    Set-Status "Could not find render window for Slot $SlotIdx." '#E06C75'
+    return
+  }
+  switch ($Action) {
+    'Reduce' {
+      Reduce-EmulatorWindow -hWnd $win.Handle
+      Set-Status "Slot $SlotIdx ($serial) reduced (minimized)." '#98C379'
+    }
+    'Maximize' {
+      $rects = Get-FarmLayout -Count 4 -EdgeToEdge
+      $r = $rects[$SlotIdx - 1]
+      Maximize-EmulatorWindow -hWnd $win.Handle -X $r.X -Y $r.Y -W $r.W -H $r.H
+      Set-Status "Slot $SlotIdx ($serial) toggled Maximize / Tile." '#98C379'
+    }
+    'Exit' {
+      Exit-EmulatorWindow -hWnd $win.Handle -Serial $serial
+      Set-Status "Closed Slot $SlotIdx ($serial)." '#98C379'
+      Start-Sleep -Seconds 2
+      Refresh-Grid
+    }
+  }
+}
+
+# Wire up Slot 1-4 Legend Buttons
+1..4 | ForEach-Object {
+  $idx = $_
+  $btnRed = $win.FindName("BtnSlot${idx}Reduce")
+  $btnMax = $win.FindName("BtnSlot${idx}Max")
+  $btnExt = $win.FindName("BtnSlot${idx}Exit")
+  if ($btnRed) { $btnRed.Add_Click([scriptblock]::Create("Invoke-SlotLegendAction -SlotIdx $idx -Action 'Reduce'")) }
+  if ($btnMax) { $btnMax.Add_Click([scriptblock]::Create("Invoke-SlotLegendAction -SlotIdx $idx -Action 'Maximize'")) }
+  if ($btnExt) { $btnExt.Add_Click([scriptblock]::Create("Invoke-SlotLegendAction -SlotIdx $idx -Action 'Exit'")) }
+}
+
 # Auto-Tune Profile button handler
 $autoTuneAction = {
   $ans = [System.Windows.MessageBox]::Show(
@@ -1073,6 +1227,18 @@ $autoTuneAction = {
 }
 $win.FindName('BtnHeaderAutoTune').Add_Click($autoTuneAction)
 $win.FindName('BtnApplyAutoTuneProfile').Add_Click($autoTuneAction)
+
+$win.FindName('BtnHeaderUninstall').Add_Click({
+  $uninstExe = Join-Path $RepoRoot 'uninstall.exe'
+  $uninstScript = Join-Path $PSScriptRoot 'uninstall.ps1'
+  if (Test-Path $uninstExe) {
+    Start-Process $uninstExe
+    $win.Close()
+  } elseif (Test-Path $uninstScript) {
+    Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-File',"`"$uninstScript`"")
+    $win.Close()
+  }
+})
 
 # Context Menu handlers
 $win.FindName('CtxLaunch').Add_Click({ $win.FindName('BtnLaunchSingle').RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent))) })

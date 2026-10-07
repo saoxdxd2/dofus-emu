@@ -61,10 +61,18 @@ foreach ($pkg in $packagesToDisable) {
   Exec-Adb "pm disable-user --user 0 $pkg"
 }
 
-# 5. Network Normalization (Wi-Fi & Telephony state)
-# Set realistic DNS servers (Cloudflare & Google) instead of synthetic 10.0.2.3
-Exec-Adb "setprop net.dns1 1.1.1.1"
-Exec-Adb "setprop net.dns2 8.8.8.8"
+# 5. Network Normalization & Captive Portal Elimination
+# Disabling captive portal & private DNS probing guarantees Android never flags the network as 'NO_INTERNET'
+Exec-Adb "settings put global captive_portal_mode 0"
+Exec-Adb "settings put global captive_portal_detection_enabled 0"
+Exec-Adb "settings put global private_dns_mode off"
+Exec-Adb "settings put global captive_portal_use_https 0"
+Exec-Adb "settings put global captive_portal_http_url 'http://www.google.com/gen_204'"
+
+# DNS Bridge: Primary via QEMU Winsock proxy (10.0.2.3) with Cloudflare (1.1.1.1) fallback
+Exec-Adb "setprop net.dns1 10.0.2.3"
+Exec-Adb "setprop net.dns2 1.1.1.1"
+Exec-Adb "setprop net.dns3 8.8.8.8"
 
 # Telephony: Carrier Orange France (20801) LTE
 Exec-Adb "setprop gsm.sim.state READY"
@@ -73,16 +81,43 @@ Exec-Adb "setprop gsm.sim.operator.alpha 'Orange'"
 Exec-Adb "setprop gsm.operator.alpha 'Orange'"
 Exec-Adb "setprop gsm.network.type LTE"
 
-# 6. SurfaceFlinger & HWUI zero-stutter flags
+# 6. Deep CPU Hog Stripping (Eliminates hidden background CPU drains on 1 vCPU)
+# Cancel background dexopt compilation (prevents 100% CPU spikes during gameplay)
+Exec-Adb "cmd package cancel-bg-dexopt-job"
+Exec-Adb "setprop pm.dexopt.bg-dexopt ''"
+
+# Disable Location / GPS polling loops
+Exec-Adb "settings put secure location_mode 0"
+Exec-Adb "settings put secure location_providers_allowed ''"
+
+# Disable System MediaScanner recursive storage indexing
+Exec-Adb "touch /sdcard/.nomedia"
+Exec-Adb "touch /sdcard/Download/.nomedia"
+Exec-Adb "touch /sdcard/Android/.nomedia"
+
+# Disable Sync & Background Package Verifiers
+Exec-Adb "settings put global auto_sync 0"
+Exec-Adb "settings put global package_verifier_enable 0"
+Exec-Adb "settings put global upload_apk_enable 0"
+Exec-Adb "settings put global verifier_verify_adb_installs 0"
+
+# Disable Ambient Display & Doze wakes
+Exec-Adb "settings put secure doze_enabled 0"
+Exec-Adb "settings put secure doze_always_on 0"
+
+# 7. SurfaceFlinger & HWUI zero-stutter flags
 Exec-Adb "setprop debug.sf.disable_backpressure 1"
 Exec-Adb "setprop debug.sf.latch_unsignaled 1"
 Exec-Adb "setprop debug.hwui.render_dirty_regions false"
+Exec-Adb "setprop debug.sf.early_phase_offset_ns 500000"
+Exec-Adb "setprop debug.sf.early_app_phase_offset_ns 500000"
 
-# 7. Logd Buffer Reclaim (Reclaims ~18 MB guest RAM per instance)
+# 8. Logd Buffer Reclaim (Reclaims ~18 MB guest RAM per instance & stops compaction CPU)
+Exec-Adb "setprop persist.logd.size 16K"
 Exec-Adb "logcat -b all -c"
 Exec-Adb "logcat -G 16K"
 
-# 8. Single-Core CFS Scheduler Tuning
+# 9. Single-Core CFS Scheduler Tuning (Smooth 1-vCPU time slices)
 Exec-Adb "echo 10000000 > /proc/sys/kernel/sched_latency_ns"
 Exec-Adb "echo 2000000 > /proc/sys/kernel/sched_min_granularity_ns"
 Exec-Adb "echo 2500000 > /proc/sys/kernel/sched_wakeup_granularity_ns"
@@ -93,5 +128,12 @@ if ($gPid) {
   Exec-Adb "renice -n -10 $gPid"
   Write-Host "    [ok] Dofus Touch PID $gPid elevated to nice -10 (high scheduler priority)" -ForegroundColor Green
 }
+
+# 10. Conceal Root Binaries & Emulator Device Nodes
+Exec-Adb "mount -t tmpfs tmpfs /system/xbin 2>/dev/null"
+Exec-Adb "rm /dev/qemu_pipe 2>/dev/null"
+Exec-Adb "echo 0 > /sys/kernel/tracing/tracing_on 2>/dev/null"
+Exec-Adb "echo 0 > /sys/kernel/debug/tracing/tracing_on 2>/dev/null"
+Write-Host "    [ok] Root binaries (/system/xbin/su) and QEMU pipe nodes concealed." -ForegroundColor Green
 
 Write-Host "    [ok] Deep OS stripping & network properties applied successfully." -ForegroundColor Green

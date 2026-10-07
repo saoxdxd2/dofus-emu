@@ -93,8 +93,8 @@ foreach ($s in $Serials) {
                     @('vm/vfs_cache_pressure',200))) {
     A @('shell',"echo $($kv[1]) > /proc/sys/$($kv[0])") | Out-Null
   }
-  A @('shell','setprop','dalvik.vm.heapgrowthlimit','192m') | Out-Null
-  A @('shell','setprop','dalvik.vm.heapsize','512m') | Out-Null
+  A @('shell','setprop','dalvik.vm.heapgrowthlimit','128m') | Out-Null
+  A @('shell','setprop','dalvik.vm.heapsize','256m') | Out-Null
   $sw = A @('shell','cat','/proc/sys/vm/swappiness')
   if ($sw -match "$Swappiness") { Write-Ok "vm sysctls set (swappiness=$sw page-cluster=0 vfs_cache_pressure=200)" }
   else { Write-Warn "swappiness reads '$sw'" }
@@ -114,14 +114,15 @@ foreach ($s in $Serials) {
   # waking the disabled com.android.phone package.
   A @('shell','cmd','appops','set','com.android.phone','RUN_IN_BACKGROUND','ignore') | Out-Null
 
-  # Cap logd memory buffer to 64K to reclaim ~18MB of guest RAM per instance
-  A @('shell','logcat','-G','64K') | Out-Null
+  # Silence kernel ftrace to eliminate background kernel tracing CPU spikes
+  A @('shell','echo 0 > /sys/kernel/tracing/tracing_on 2>/dev/null; echo 0 > /sys/kernel/debug/tracing/tracing_on 2>/dev/null') | Out-Null
+
+  # Cap logd memory buffer to 16K to reclaim guest RAM and stop compaction CPU
+  A @('shell','logcat','-G','16K') | Out-Null
   A @('shell','logcat','-c') | Out-Null
 
-  # Chromium Single-Core Worker Tuning & Safe Font Rasterization:
-  # With 1 vCPU, setting --num-raster-threads=1 prevents thread contention between
-  # raster workers and the main JavaScript loop, while avoiding font serialization bugs.
-  $wvFlags = "_ --ignore-gpu-blocklist --disable-gpu-rasterization --num-raster-threads=1 --disable-background-timer-throttling"
+  # Chromium Single-Core Worker Tuning & Ultra-Lean Memory Allocation:
+  $wvFlags = "_ --ignore-gpu-blocklist --enable-gpu-rasterization --num-raster-threads=1 --disable-background-timer-throttling --renderer-process-limit=1 --disable-smooth-scrolling --disable-speech-api --disable-breakpad --no-pings --force-gpu-mem-available-mb=256"
   A @('shell',"echo '$wvFlags' > /data/local/tmp/webview-command-line") | Out-Null
   A @('shell','chmod','644','/data/local/tmp/webview-command-line') | Out-Null
   $wcl = (A @('shell','cat','/data/local/tmp/webview-command-line'))
@@ -161,6 +162,12 @@ foreach ($s in $Serials) {
   $optScript = Join-Path $PSScriptRoot 'optimize-guest-deep.ps1'
   if (Test-Path $optScript) {
     & $optScript -Serial $s -InstanceIndex $instIdx
+  }
+
+  # --- 6.1 patch in-memory system properties (ro.product.*, ro.build.*) ---
+  $patchPropsScript = Join-Path $PSScriptRoot 'patch-system-props.ps1'
+  if (Test-Path $patchPropsScript) {
+    & $patchPropsScript -Serial $s
   }
 
   # --- 7. ensure game is foreground ---------------------------------------

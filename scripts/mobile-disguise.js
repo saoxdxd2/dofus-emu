@@ -89,6 +89,19 @@
     defineProp(navigator, 'mozConnection', connectionObj);
     defineProp(navigator, 'webkitConnection', connectionObj);
 
+    // Guaranteed Online State & Suppression of False Offline Triggers
+    defineProp(navigator, 'onLine', true);
+    var suppressOffline = function(e) {
+        if (e && (e.type === 'offline' || e.type === 'error')) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+        }
+    };
+    try {
+        window.addEventListener('offline', suppressOffline, true);
+        document.addEventListener('offline', suppressOffline, true);
+    } catch (e) {}
+
     // Client Hints (User-Agent Data)
     if (navigator.userAgentData || window.NavigatorUAData) {
         var uaData = {

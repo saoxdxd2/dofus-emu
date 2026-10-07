@@ -81,11 +81,13 @@ function Normalize-InstanceSubsystems([string]$Serial, [string]$AndroidId) {
   # Telephony state & WebView User-Agent flag
   $oldEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  & $Adb -s $Serial shell "setprop gsm.sim.state READY 2>/dev/null; setprop gsm.sim.operator.numeric 60401 2>/dev/null; setprop gsm.network.type LTE 2>/dev/null" 2>$null | Out-Null
+  & $Adb -s $Serial shell "setprop gsm.sim.state READY 2>/dev/null; setprop gsm.sim.operator.numeric 20801 2>/dev/null; setprop gsm.sim.operator.alpha Orange 2>/dev/null; setprop gsm.network.type LTE 2>/dev/null" 2>$null | Out-Null
   $wvCmd = "_ --user-agent=`"Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36`""
   & $Adb -s $Serial shell "sh -c `"echo '$wvCmd' > /data/local/tmp/webview-command-line`"; chmod 666 /data/local/tmp/webview-command-line" 2>$null | Out-Null
   $ErrorActionPreference = $oldEap
-  Write-Ok "  $Serial : telephony state nominal (READY/60401/LTE) and webview-command-line active"
+  Write-Ok "  $Serial : telephony state nominal (READY/20801/LTE) and webview-command-line active"
+  $patchPropsScript = Join-Path $PSScriptRoot 'patch-system-props.ps1'
+  if (Test-Path $patchPropsScript) { & $patchPropsScript -Serial $Serial | Out-Null }
 }
 
 # Console ports must be even: each AVD consumes a pair (console, adb).
@@ -267,7 +269,8 @@ ro.build.type=user
 ro.build.tags=release-keys
 qemu.hw.mainkeys=1
 gsm.sim.state=READY
-gsm.sim.operator.numeric=60401
+gsm.sim.operator.numeric=20801
+gsm.sim.operator.alpha=Orange
 gsm.network.type=LTE
 "@
       Set-Content -Path (Join-Path $dir 'system.prop') -Value $sysProp
@@ -311,6 +314,12 @@ gsm.network.type=LTE
         "-accel", "on"
       )
 
+      $proxyFile = Join-Path $dir 'proxy.txt'
+      if (Test-Path $proxyFile) {
+        $prx = (Get-Content $proxyFile -Raw -EA SilentlyContinue).Trim()
+        if ($prx) { $a += @("-http-proxy", $prx); Write-Step "  $($p.Name) : using proxy $prx" }
+      }
+
       # Standardized hardware definitions and identity via system.prop
       $sysPropFile = Join-Path $dir 'system.prop'
       if (-not (Test-Path $sysPropFile)) {
@@ -319,7 +328,8 @@ qemu.hw.mainkeys=1
 ro.serialno=$serial
 ro.boot.serialno=$serial
 gsm.sim.state=READY
-gsm.sim.operator.numeric=60401
+gsm.sim.operator.numeric=20801
+gsm.sim.operator.alpha=Orange
 gsm.network.type=LTE
 "@
         Set-Content -Path $sysPropFile -Value $sysProp
@@ -328,7 +338,8 @@ gsm.network.type=LTE
       $standardProps = @(
         "qemu.hw.mainkeys=1",
         "gsm.sim.state=READY",
-        "gsm.sim.operator.numeric=60401",
+        "gsm.sim.operator.numeric=20801",
+        "gsm.sim.operator.alpha=Orange",
         "gsm.network.type=LTE"
       )
       foreach ($sp in $standardProps) {
