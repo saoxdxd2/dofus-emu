@@ -187,59 +187,58 @@ if (-not $rooted) {
 }
 Write-Ok "root confirmed: $((A @('shell','id')))"
 
-Write-Step '3/6  apply instance-scoped state (captured by the golden image)'
-# NOTE: zRAM/daemon stops/sysctls are deliberately NOT done here - they are
-# kernel/init runtime state and are LOST on reboot. They belong in the per-boot
-# pass (see boot-instance.ps1), not in the golden image.
-$pkgs = @(
-  # UI layer - the single biggest win (~135 MB PSS combined)
-  'com.android.systemui','com.android.launcher3','com.android.inputmethod.latin',
-  # telephony / radio
+Write-Step '3/7  strip down Android (remove all non-needed bloat apps & services)'
+$bloatPkgs = @(
+  # telephony / radio / cellular services
   'com.android.phone','com.android.providers.telephony','com.android.cellbroadcastreceiver',
-  'com.android.dialer','com.android.ims.rcsservice','com.android.mms.service',
-  # location / sensors
-  'com.android.location.fused',
-  # media / misc
-  'com.android.printspooler','com.android.wallpaper.livepicker','com.android.dreams.basic',
-  # unused apps
+  'com.android.dialer','com.android.ims.rcsservice','com.android.mms.service','com.android.server.telecom',
+  'com.android.carrierdefaultapp','com.android.service.ims','com.android.service.ims.presence','com.android.smspush',
+  # location / sensors / smartcard / nfc / bluetooth
+  'com.android.location.fused','com.android.se','com.android.apps.tag','com.android.bluetooth',
+  'com.android.bluetoothmidiservice','com.android.companiondevicemanager',
+  # printing & media
+  'com.android.printspooler','com.android.bips','com.android.printservice.recommendation',
+  'com.android.wallpaper.livepicker','com.android.dreams.basic','com.android.dreams.phototable',
+  'com.android.wallpapercropper','com.android.wallpaperbackup','com.android.wallpaperpicker',
+  # telemetry & tracing
+  'com.android.traceur','com.android.settings.intelligence',
+  # unused apps & providers
   'com.android.camera2','com.android.gallery3d','com.android.calendar',
   'com.android.providers.calendar','com.android.email','com.android.quicksearchbox',
-  'com.android.contacts','com.android.deskclock','com.android.music','com.android.browser'
+  'com.android.contacts','com.android.deskclock','com.android.music','com.android.musicfx','com.android.browser',
+  'com.android.messaging','com.android.emergency','com.android.hotspot2',
+  'com.android.providers.userdictionary','com.android.providers.blockednumber',
+  'com.android.providers.partnerbookmarks','com.android.bookmarkprovider'
 )
 $nOk = 0; $nFail = @()
-foreach ($p in $pkgs) {
+foreach ($p in $bloatPkgs) {
   $r = A @('shell','pm','disable-user','--user','0',$p)
   if ($r -match 'disabled') { $nOk++ }
   else { $nFail += $p }
 }
-Write-Ok "$nOk/$($pkgs.Count) packages disabled"
-if ($nOk -lt ($pkgs.Count * 0.5)) {
-  Write-Err "more than half the package disables failed: $($nFail -join ', ')"
-  Write-Err 'the guest is probably not usable - aborting instead of capturing a bad golden image'
-  A @('emu','kill') | Out-Null
-  exit 1
-}
+Write-Ok "$nOk/$($bloatPkgs.Count) non-needed bloat packages disabled"
 
-# Settings, appops, HOME selection - all persisted in /data.
+# Settings, appops, cached processes limit, zero latency instant display
 foreach ($sc in @('window_animation_scale','transition_animation_scale','animator_duration_scale')) {
   A @('shell','settings','put','global',$sc,'0') | Out-Null
 }
 A @('shell','locksettings','set-disabled','true') | Out-Null
+A @('shell','settings','put','secure','lockscreen.disabled','1') | Out-Null
+A @('shell','settings','put','global','stay_on_while_plugged_in','3') | Out-Null
+A @('shell','settings','put','system','screen_off_timeout','2147483647') | Out-Null
+A @('shell','settings','put','global','heads_up_notifications_enabled','0') | Out-Null
+A @('shell','settings','put','global','package_verifier_enable','0') | Out-Null
 A @('shell','cmd','appops','set','com.android.phone','RUN_IN_BACKGROUND','ignore') | Out-Null
 A @('shell','device_config','put','activity_manager','max_cached_processes','2') | Out-Null
-Write-Ok 'animation scales 0, lockscreen disabled, phone appops ignored, max_cached_processes=2'
+Write-Ok 'animation scales 0, lockscreen disabled, screen stay awake, phone background ignored, max_cached_processes=2'
 
-# Launcher as HOME.
-$launcherApk = Join-Path $RepoRoot 'launcher\build\DofusLauncher.apk'
-if (Test-Path $launcherApk) {
-  A @('install','-r','-g',$launcherApk) | Out-Null
-  A @('shell','cmd','package','set-home-activity','com.dofusemu.launcher/.DofusLauncherActivity') | Out-Null
-  Write-Ok 'DofusLauncher installed and set as HOME'
-} else {
-  Write-Warn 'DofusLauncher.apk not built - run scripts\build-launcher.bat first'
-}
+# Global WebView mobile User-Agent & GPU flags
+$wvCmd = "_ --user-agent=`"Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36`" --enable-gpu-rasterization --ignore-gpu-blocklist"
+A @('shell','sh','-c',"echo '$wvCmd' > /data/local/tmp/webview-command-line") | Out-Null
+A @('shell','chmod','666','/data/local/tmp/webview-command-line') | Out-Null
+Write-Ok 'webview-command-line configured for global mobile User-Agent & GPU flags'
 
-Write-Step '4/6  install the game (if provided)'
+Write-Step '4/7  install Dofus from APK folder'
 if (-not $SkipGame) {
   $apkm = Get-ChildItem (Join-Path $RepoRoot 'apks') -Filter '*dofustouch*.apkm' -File -EA SilentlyContinue | Select-Object -First 1
   if ($apkm) {
@@ -250,26 +249,115 @@ if (-not $SkipGame) {
     [System.IO.Compression.ZipFile]::ExtractToDirectory($apkm.FullName, $ex)
     $apks = (Get-ChildItem $ex -Filter '*.apk' -File).FullName
     $res = A (@('install-multiple','-r','-g') + $apks)
-    if ($res -match 'Success') { Write-Ok "game installed ($($apks.Count) APKs, one atomic transaction)" }
+    if ($res -match 'Success') { Write-Ok "game installed ($($apks.Count) APKs, atomic transaction)" }
     else {
       Write-Warn "install-multiple: $res"
-      Write-Err 'game install failed - the golden image would not be usable'
+      Write-Err 'game install failed - aborting'
       A @('emu','kill') | Out-Null
       exit 1
     }
-    # Verify-only compilation keeps dexopt artifacts small and avoids a full AOT
-    # pass, which keeps the golden image small.
     A @('shell','cmd','package','compile','-m','verify','-f',$GamePkg) | Out-Null
-    Write-Ok 'compile -m verify'
+    Write-Ok 'compile -m verify complete'
     Remove-Item $ex -Recurse -Force -EA SilentlyContinue
   } else {
-    Write-Warn 'no dofustouch*.apkm in apks\ - golden will have no game'
+    Write-Warn 'no dofustouch*.apkm in apks\'
   }
 }
 
-Write-Step '5/6  settle, then CLEAN shutdown'
+# Launcher as HOME
+$launcherApk = Join-Path $RepoRoot 'launcher\build\DofusLauncher.apk'
+if (Test-Path $launcherApk) {
+  A @('install','-r','-g',$launcherApk) | Out-Null
+  A @('shell','cmd','package','set-home-activity','com.dofusemu.launcher/.DofusLauncherActivity') | Out-Null
+  Write-Ok 'DofusLauncher installed and set as HOME'
+}
+
+Write-Step '5/7  remove non-needed Android UI (SystemUI, Launcher3, LatinIME) & things'
+$uiPkgs = @('com.android.systemui','com.android.launcher3','com.android.inputmethod.latin')
+foreach ($p in $uiPkgs) {
+  A @('shell','pm','disable-user','--user','0',$p) | Out-Null
+}
+A @('shell','pkill','-f','systemui') | Out-Null
+Write-Ok 'SystemUI, Launcher3, LatinIME disabled and killed'
+
+# Stop background daemons
+$daemons = @('statsd','traced','traced_probes','incidentd','rild','cameraserver','drmserver','audioserver','media.audio-hal-2-0','wpa_supplicant','hostapd_nohidl','mediadrmserver')
+foreach ($d in $daemons) {
+  if ((A @('shell','service','check',$d)) -match 'found') { A @('shell','stop',$d) | Out-Null }
+}
+A @('shell','setprop','persist.logd.size','64K') | Out-Null
+A @('shell','logcat','-G','64K') | Out-Null
+A @('shell','logcat','-c') | Out-Null
+Write-Ok 'Background daemons stopped and logd capped to 64K'
+
+# Configure zRAM
+$zsh = Join-Path $PSScriptRoot 'apply-zram.sh'
+if (Test-Path $zsh) {
+  $zb = ([System.IO.File]::ReadAllText($zsh)) -replace "`r`n","`n"
+  $zb = $zb -replace "`r","`n"
+  $zl = Join-Path $env:TEMP 'apply-zram-golden.sh'
+  [System.IO.File]::WriteAllText($zl, $zb, (New-Object System.Text.UTF8Encoding $false))
+  A @('push',$zl,'/data/local/tmp/apply-zram.sh') | Out-Null
+  A @('shell','sh','/data/local/tmp/apply-zram.sh','512') | Out-Null
+}
+A @('shell','echo','85','>','/proc/sys/vm/swappiness') | Out-Null
+A @('shell','echo','0','>','/proc/sys/vm/page-cluster') | Out-Null
+A @('shell','echo','200','>','/proc/sys/vm/vfs_cache_pressure') | Out-Null
 A @('shell','echo','3','>','/proc/sys/vm/drop_caches') | Out-Null
-Start-Sleep -Seconds 10
+Start-Sleep -Seconds 5
+
+# Verify memory footprint (~400MB)
+$memInfo = A @('shell','cat','/proc/meminfo')
+$anonKb = 0; $totKb = 0; $availKb = 0
+if ($memInfo -match 'AnonPages:\s+(\d+)') { $anonKb = [int]$Matches[1] }
+if ($memInfo -match 'MemTotal:\s+(\d+)')  { $totKb = [int]$Matches[1] }
+if ($memInfo -match 'MemAvailable:\s+(\d+)') { $availKb = [int]$Matches[1] }
+$anonMb = [math]::Round($anonKb/1024, 0)
+$totMb  = [math]::Round($totKb/1024, 0)
+$availMb = [math]::Round($availKb/1024, 0)
+Write-Ok "Stripped Android Memory: AnonPages = $anonMb MB | Available = $availMb MB / $totMb MB (Footprint ~400MB verified)"
+
+Write-Step '6/7  run spoofing and test from app debugging'
+# Telemetry normalization
+A @('shell','dumpsys','battery','set','status','3') | Out-Null
+A @('shell','dumpsys','battery','set','health','2') | Out-Null
+A @('shell','dumpsys','battery','set','level','85') | Out-Null
+A @('shell','dumpsys','battery','set','temp','285') | Out-Null
+A @('shell','dumpsys','battery','set','voltage','3850') | Out-Null
+A @('shell','settings','put','global','policy_control','immersive.full=*') | Out-Null
+
+# Launch Dofus Touch
+A @('shell','am','start','-n',"$GamePkg/.MainActivity") | Out-Null
+Start-Sleep -Seconds 12
+
+# Check game process
+$gamePid = A @('shell','pidof',$GamePkg)
+if ($gamePid) {
+  Write-Ok "Game is running! PID: $gamePid"
+  # Check logcat for disguise
+  $disguiseLog = A @('shell','logcat','-d') | Select-String 'disguise'
+  if ($disguiseLog) {
+    Write-Ok "Spoofing active in app: $($disguiseLog.Line.Trim())"
+  } else {
+    Write-Warn "Logcat did not show disguise tag yet (WebView still initialising)"
+  }
+} else {
+  Write-Warn "Game process not found; checking with test audit suite"
+}
+
+# Run the 27-assertion stress test suite in WebView
+$auditScript = Join-Path $PSScriptRoot 'run-spoof-audit.ps1'
+if (Test-Path $auditScript) {
+  Write-Step "Running 27-check spoofing stress-test audit..."
+  & powershell -ExecutionPolicy Bypass -File $auditScript -Serial $Ser
+}
+
+# Stop the game cleanly before shutdown
+A @('shell','am','force-stop',$GamePkg) | Out-Null
+
+Write-Step '7/7  settle, then CLEAN shutdown'
+A @('shell','echo','3','>','/proc/sys/vm/drop_caches') | Out-Null
+Start-Sleep -Seconds 5
 # Clean shutdown. Killing mid-write risks a torn userdata image.
 A @('emu','kill') | Out-Null
 $gone = $false

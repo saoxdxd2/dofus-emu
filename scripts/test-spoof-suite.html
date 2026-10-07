@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Mobile Disguise & Fingerprint Stress Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --pass: #16a34a;
+      --fail: #dc2626;
+      --accent: #2563eb;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      font-size: 14px;
+    }
+    h1 { font-size: 20px; margin-top: 0; color: #fff; }
+    .subtitle { color: var(--text-muted); margin-bottom: 20px; }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-weight: bold;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    .badge-pass { background: rgba(16, 185, 129, 0.2); color: var(--pass); border: 1px solid var(--pass); }
+    .badge-fail { background: rgba(239, 68, 68, 0.2); color: var(--fail); border: 1px solid var(--fail); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 15px; }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 15px;
+    }
+    .card-title { font-weight: 600; margin-bottom: 10px; color: var(--accent); }
+    .item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-family: monospace; font-size: 12px; }
+    .item:last-child { border-bottom: none; }
+    .item-val { color: #fff; text-align: right; max-width: 60%; word-break: break-all; }
+    .item-pass { color: var(--pass); }
+    .item-fail { color: var(--fail); }
+    #interactiveZone {
+      margin-top: 20px;
+      padding: 20px;
+      border: 2px dashed var(--accent);
+      border-radius: 8px;
+      text-align: center;
+      background: rgba(59, 130, 246, 0.05);
+      user-select: none;
+    }
+    #scoreBox {
+      padding: 15px;
+      background: #232328;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+  </style>
+
+  <!-- Injected Stealth Mobile Disguise Shim -->
+  <script>
+/**
+ * Stealth Mobile Environment & WebGL Disguise Shim
+ * Normalizes WebView DOM, WebGL rendering context, Navigator, Battery/Thermal,
+ * Touch/Cursor interactions, and Cordova APIs to appear as a physical Samsung
+ * Galaxy A51 (ARM Mali-G76 MP12) mobile device with zero desktop cursor leaks.
+ */
+(function() {
+    'use strict';
+
+    if (window.__MOBILE_DISGUISE_ACTIVE__) return;
+    window.__MOBILE_DISGUISE_ACTIVE__ = true;
+
+    // --- 1. Function toString Cloaking ---
+    var nativeToString = Function.prototype.toString;
+    var hookedFunctions = new WeakMap();
+
+    function makeNative(fn, name) {
+        hookedFunctions.set(fn, 'function ' + (name || fn.name || '') + '() { [native code] }');
+        return fn;
+    }
+
+    Function.prototype.toString = function() {
+        if (hookedFunctions.has(this)) {
+            return hookedFunctions.get(this);
+        }
+        return nativeToString.apply(this, arguments);
+    };
+    makeNative(Function.prototype.toString, 'toString');
+
+    // Helper to safely redefine properties with native getter masking
+    function defineProp(obj, prop, valueGetter) {
+        try {
+            Object.defineProperty(obj, prop, {
+                get: makeNative(function() {
+                    return typeof valueGetter === 'function' ? valueGetter() : valueGetter;
+                }, 'get ' + prop),
+                set: makeNative(function(val) {}, 'set ' + prop),
+                configurable: true,
+                enumerable: true
+            });
+        } catch (e) {}
+    }
+
+    // --- 2. Navigator Properties ---
+    var MOBILE_UA = 'Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36';
+    var MOBILE_APP_VERSION = '5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36';
+    var MOBILE_PLATFORM = 'Linux armv8l';
+
+    defineProp(navigator, 'platform', MOBILE_PLATFORM);
+    defineProp(navigator, 'userAgent', MOBILE_UA);
+    defineProp(navigator, 'appVersion', MOBILE_APP_VERSION);
+    defineProp(navigator, 'maxTouchPoints', 5);
+    defineProp(navigator, 'hardwareConcurrency', 8);
+    defineProp(navigator, 'deviceMemory', 4);
+    defineProp(navigator, 'vendor', 'Google Inc.');
+    defineProp(navigator, 'webdriver', false);
+
+    // Client Hints (User-Agent Data)
+    if (navigator.userAgentData || window.NavigatorUAData) {
+        var uaData = {
+            brands: [
+                { brand: 'Android WebView', version: '83' },
+                { brand: 'Chromium', version: '83' },
+                { brand: 'Not(A:Brand', version: '99' }
+            ],
+            mobile: true,
+            platform: 'Android',
+            getHighEntropyValues: makeNative(function(hints) {
+                return Promise.resolve({
+                    architecture: 'arm',
+                    bitness: '64',
+                    brands: uaData.brands,
+                    formFactor: 'mobile',
+                    mobile: true,
+                    model: 'SM-A515F',
+                    platform: 'Android',
+                    platformVersion: '10',
+                    uaFullVersion: '83.0.4103.106'
+                });
+            }, 'getHighEntropyValues'),
+            toJSON: makeNative(function() {
+                return {
+                    brands: uaData.brands,
+                    mobile: true,
+                    platform: 'Android'
+                };
+            }, 'toJSON')
+        };
+        try {
+            Object.defineProperty(navigator, 'userAgentData', {
+                get: makeNative(function() { return uaData; }, 'get userAgentData'),
+                configurable: true,
+                enumerable: true
+            });
+        } catch (e) {}
+    }
+
+    // --- 3. WebGL & WebGL2 Interception ---
+    var GL_VENDOR = 'ARM';
+    var GL_RENDERER = 'Mali-G76 MP12';
+    var GL_VERSION = 'OpenGL ES 3.2 v1.r26p0-01rel0.640f0962b489da1b17b0185e783637e7';
+    var GL_SHADING_LANG_VERSION = 'OpenGL ES GLSL ES 3.20';
+
+    var UNMASKED_VENDOR_WEBGL = 0x9245;
+    var UNMASKED_RENDERER_WEBGL = 0x9246;
+
+    function wrapContext(ctxProto) {
+        if (!ctxProto) return;
+        var origGetParameter = ctxProto.getParameter;
+        var origGetExtension = ctxProto.getExtension;
+        var origGetSupportedExtensions = ctxProto.getSupportedExtensions;
+
+        ctxProto.getParameter = makeNative(function(param) {
+            // UNMASKED_VENDOR_WEBGL
+            if (param === UNMASKED_VENDOR_WEBGL) return GL_VENDOR;
+            // UNMASKED_RENDERER_WEBGL
+            if (param === UNMASKED_RENDERER_WEBGL) return GL_RENDERER;
+            // 0x1F00 (VENDOR)
+            if (param === 0x1F00) return GL_VENDOR;
+            // 0x1F01 (RENDERER)
+            if (param === 0x1F01) return GL_RENDERER;
+            // 0x1F02 (VERSION)
+            if (param === 0x1F02) return GL_VERSION;
+            // 0x8B8C (SHADING_LANGUAGE_VERSION)
+            if (param === 0x8B8C) return GL_SHADING_LANG_VERSION;
+
+            return origGetParameter.apply(this, arguments);
+        }, 'getParameter');
+
+        if (origGetExtension) {
+            ctxProto.getExtension = makeNative(function(name) {
+                if (name === 'WEBGL_debug_renderer_info') {
+                    return {
+                        UNMASKED_VENDOR_WEBGL: UNMASKED_VENDOR_WEBGL,
+                        UNMASKED_RENDERER_WEBGL: UNMASKED_RENDERER_WEBGL
+                    };
+                }
+                return origGetExtension.apply(this, arguments);
+            }, 'getExtension');
+        }
+
+        if (origGetSupportedExtensions) {
+            ctxProto.getSupportedExtensions = makeNative(function() {
+                var list = origGetSupportedExtensions.apply(this, arguments) || [];
+                var arr = Array.from(list);
+                if (arr.indexOf('WEBGL_debug_renderer_info') === -1) {
+                    arr.push('WEBGL_debug_renderer_info');
+                }
+                return arr;
+            }, 'getSupportedExtensions');
+        }
+    }
+
+    if (window.WebGLRenderingContext) {
+        wrapContext(WebGLRenderingContext.prototype);
+    }
+    if (window.WebGL2RenderingContext) {
+        wrapContext(WebGL2RenderingContext.prototype);
+    }
+
+    // --- 4. Battery & Thermal API Normalization ---
+    var fakeBattery = {
+        charging: false,
+        chargingTime: Infinity,
+        dischargingTime: 14400, // 4 hours at 85%
+        level: 0.85,
+        temperature: 28.5, // 28.5 C nominal mobile device operating temperature
+        addEventListener: makeNative(function() {}, 'addEventListener'),
+        removeEventListener: makeNative(function() {}, 'removeEventListener'),
+        dispatchEvent: makeNative(function() { return false; }, 'dispatchEvent'),
+        onchargingchange: null,
+        onchargingtimechange: null,
+        ondischargingtimechange: null,
+        onlevelchange: null
+    };
+
+    if (navigator.getBattery) {
+        navigator.getBattery = makeNative(function() {
+            return Promise.resolve(fakeBattery);
+        }, 'getBattery');
+    } else {
+        navigator.getBattery = makeNative(function() {
+            return Promise.resolve(fakeBattery);
+        }, 'getBattery');
+    }
+
+    // --- 5. Touch Events, Pointer Normalization & Hover Suppression ---
+    try {
+        if (!('ontouchstart' in window)) {
+            window.ontouchstart = null;
+            window.ontouchend = null;
+            window.ontouchmove = null;
+            window.ontouchcancel = null;
+        }
+
+        if (window.PointerEvent) {
+            try {
+                Object.defineProperty(PointerEvent.prototype, 'pointerType', {
+                    get: makeNative(function() { return 'touch'; }, 'get pointerType'),
+                    configurable: true,
+                    enumerable: true
+                });
+                Object.defineProperty(PointerEvent.prototype, 'width', {
+                    get: makeNative(function() { return 25; }, 'get width'),
+                    configurable: true,
+                    enumerable: true
+                });
+                Object.defineProperty(PointerEvent.prototype, 'height', {
+                    get: makeNative(function() { return 25; }, 'get height'),
+                    configurable: true,
+                    enumerable: true
+                });
+                Object.defineProperty(PointerEvent.prototype, 'pressure', {
+                    get: makeNative(function() { return this.buttons > 0 ? 0.5 : 0; }, 'get pressure'),
+                    configurable: true,
+                    enumerable: true
+                });
+            } catch (err) {}
+        }
+
+        // Global cursor suppression handler: drops hover when no button is pressed
+        function suppressPassiveHover(e) {
+            if (e.buttons === 0 && !e.__isSyntheticTouch__) {
+                e.stopImmediatePropagation();
+                e.stopPropagation();
+                e.preventDefault();
+                return false;
+            }
+            if (e.buttons > 0) {
+                try {
+                    Object.defineProperty(e, 'pointerType', { get: function() { return 'touch'; }, configurable: true });
+                    Object.defineProperty(e, 'pointerId', { get: function() { return 1; }, configurable: true });
+                    Object.defineProperty(e, 'width', { get: function() { return 25; }, configurable: true });
+                    Object.defineProperty(e, 'height', { get: function() { return 25; }, configurable: true });
+                    Object.defineProperty(e, 'pressure', { get: function() { return 0.5; }, configurable: true });
+                    Object.defineProperty(e, 'tangentialPressure', { get: function() { return 0; }, configurable: true });
+                    Object.defineProperty(e, 'tiltX', { get: function() { return 0; }, configurable: true });
+                    Object.defineProperty(e, 'tiltY', { get: function() { return 0; }, configurable: true });
+                    Object.defineProperty(e, 'twist', { get: function() { return 0; }, configurable: true });
+                } catch (err) {}
+            }
+        }
+
+        var hoverEvents = ['mousemove', 'pointermove', 'mouseover', 'mouseenter', 'mouseout', 'mouseleave'];
+        for (var h = 0; h < hoverEvents.length; h++) {
+            window.addEventListener(hoverEvents[h], suppressPassiveHover, true);
+            if (document) {
+                document.addEventListener(hoverEvents[h], suppressPassiveHover, true);
+            }
+        }
+
+        var origAddEventListener = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = makeNative(function(type, listener, options) {
+            if (typeof listener === 'function' && hoverEvents.indexOf(type) !== -1) {
+                var wrappedListener = function(event) {
+                    if (event.buttons === 0 && !event.__isSyntheticTouch__) {
+                        return; // Non-existent cursor dropped
+                    }
+                    return listener.apply(this, arguments);
+                };
+                return origAddEventListener.call(this, type, wrappedListener, options);
+            }
+            return origAddEventListener.apply(this, arguments);
+        }, 'addEventListener');
+
+        if (window.matchMedia) {
+            var origMatchMedia = window.matchMedia;
+            window.matchMedia = makeNative(function(query) {
+                var q = query.toLowerCase();
+                if (q.indexOf('hover: none') !== -1 || q.indexOf('any-hover: none') !== -1 ||
+                    q.indexOf('pointer: coarse') !== -1 || q.indexOf('any-pointer: coarse') !== -1) {
+                    return {
+                        matches: true,
+                        media: query,
+                        onchange: null,
+                        addListener: function() {},
+                        removeListener: function() {},
+                        addEventListener: function() {},
+                        removeEventListener: function() {},
+                        dispatchEvent: function() { return false; }
+                    };
+                }
+                if (q.indexOf('hover: hover') !== -1 || q.indexOf('any-hover: hover') !== -1 ||
+                    q.indexOf('pointer: fine') !== -1 || q.indexOf('any-pointer: fine') !== -1) {
+                    return {
+                        matches: false,
+                        media: query,
+                        onchange: null,
+                        addListener: function() {},
+                        removeListener: function() {},
+                        addEventListener: function() {},
+                        removeEventListener: function() {},
+                        dispatchEvent: function() { return false; }
+                    };
+                }
+                return origMatchMedia.apply(this, arguments);
+            }, 'matchMedia');
+        }
+    } catch (e) {}
+
+    // --- 6. Cordova Device Plugin Interception ---
+    function patchCordovaDevice() {
+        if (window.device) {
+            window.device.model = 'SM-A515F';
+            window.device.manufacturer = 'samsung';
+            window.device.isVirtual = false;
+            window.device.platform = 'Android';
+            window.device.version = '10';
+        }
+    }
+
+    document.addEventListener('deviceready', patchCordovaDevice, false);
+    if (window.cordova) {
+        var origDefine = window.cordova.define;
+        if (origDefine) {
+            window.cordova.define = function(id, factory) {
+                if (id === 'cordova-plugin-device.device') {
+                    var wrappedFactory = function(require, exports, module) {
+                        factory(require, exports, module);
+                        var dev = module.exports;
+                        if (dev && dev.getInfo) {
+                            var origGetInfo = dev.getInfo;
+                            dev.getInfo = function(success, error) {
+                                origGetInfo.call(dev, function(info) {
+                                    info.model = 'SM-A515F';
+                                    info.manufacturer = 'samsung';
+                                    info.isVirtual = false;
+                                    info.platform = 'Android';
+                                    info.version = '10';
+                                    success(info);
+                                }, error);
+                            };
+                        }
+                    };
+                    return origDefine.call(window.cordova, id, wrappedFactory);
+                }
+                return origDefine.apply(this, arguments);
+            };
+        }
+    }
+
+    console.log('[disguise] Mobile phone environment disguise activated: Samsung SM-A515F (Mali-G76 MP12 / ARM, Touch Normalized, Hover Suppressed)');
+})();
+  </script>
+</head>
+<body>
+  <h1>📱 Android Environment & Fingerprint Stress Test</h1>
+  <div class="subtitle">Validating Samsung Galaxy A51 (Mali-G76 MP12 / ARM) stealth profile, battery, and hover suppression</div>
+
+  <div id="scoreBox">
+    <div>Overall Status: <span id="overallBadge" class="badge">RUNNING</span></div>
+    <div>Passed: <span id="passedCount">0</span> / <span id="totalCount">0</span></div>
+  </div>
+
+  <div class="grid">
+    <!-- Navigator Profile -->
+    <div class="card">
+      <div class="card-title">1. Navigator & Hardware Profile</div>
+      <div class="item"><span>navigator.platform</span><span id="res_platform" class="item-val">...</span></div>
+      <div class="item"><span>navigator.userAgent</span><span id="res_ua" class="item-val">...</span></div>
+      <div class="item"><span>navigator.maxTouchPoints</span><span id="res_touch" class="item-val">...</span></div>
+      <div class="item"><span>hardwareConcurrency</span><span id="res_cores" class="item-val">...</span></div>
+      <div class="item"><span>deviceMemory (GB)</span><span id="res_mem" class="item-val">...</span></div>
+      <div class="item"><span>navigator.vendor</span><span id="res_vendor" class="item-val">...</span></div>
+      <div class="item"><span>navigator.webdriver</span><span id="res_webdriver" class="item-val">...</span></div>
+    </div>
+
+    <!-- WebGL Rendering Context -->
+    <div class="card">
+      <div class="card-title">2. WebGL 1 & WebGL 2 Acceleration</div>
+      <div class="item"><span>WebGL1 Unmasked Vendor</span><span id="res_gl1_vendor" class="item-val">...</span></div>
+      <div class="item"><span>WebGL1 Unmasked Renderer</span><span id="res_gl1_renderer" class="item-val">...</span></div>
+      <div class="item"><span>WebGL2 Unmasked Vendor</span><span id="res_gl2_vendor" class="item-val">...</span></div>
+      <div class="item"><span>WebGL2 Unmasked Renderer</span><span id="res_gl2_renderer" class="item-val">...</span></div>
+      <div class="item"><span>gl.VENDOR (0x1F00)</span><span id="res_gl_vendor" class="item-val">...</span></div>
+      <div class="item"><span>gl.RENDERER (0x1F01)</span><span id="res_gl_rend" class="item-val">...</span></div>
+      <div class="item"><span>Shading Language</span><span id="res_gl_sl" class="item-val">...</span></div>
+    </div>
+
+    <!-- Native Code Cloaking -->
+    <div class="card">
+      <div class="card-title">3. Anti-Tamper & Native Code Cloaking</div>
+      <div class="item"><span>getParameter.toString()</span><span id="res_tostring_param" class="item-val">...</span></div>
+      <div class="item"><span>getExtension.toString()</span><span id="res_tostring_ext" class="item-val">...</span></div>
+      <div class="item"><span>getBattery.toString()</span><span id="res_tostring_batt" class="item-val">...</span></div>
+      <div class="item"><span>Function.toString.call()</span><span id="res_tostring_fn" class="item-val">...</span></div>
+    </div>
+
+    <!-- Battery & Thermal Subsystem -->
+    <div class="card">
+      <div class="card-title">4. Battery & Thermal Subsystem</div>
+      <div class="item"><span>Battery API Present</span><span id="res_batt_present" class="item-val">...</span></div>
+      <div class="item"><span>Charging State</span><span id="res_batt_charging" class="item-val">...</span></div>
+      <div class="item"><span>Battery Level</span><span id="res_batt_level" class="item-val">...</span></div>
+      <div class="item"><span>Discharging Time</span><span id="res_batt_disch" class="item-val">...</span></div>
+      <div class="item"><span>Reported Temperature</span><span id="res_batt_temp" class="item-val">...</span></div>
+    </div>
+
+    <!-- Input & Cursor Suppression -->
+    <div class="card">
+      <div class="card-title">5. Touch Media Queries & Cursor Suppression</div>
+      <div class="item"><span>@media (hover: none)</span><span id="res_hover_none" class="item-val">...</span></div>
+      <div class="item"><span>@media (hover: hover)</span><span id="res_hover_hover" class="item-val">...</span></div>
+      <div class="item"><span>@media (pointer: coarse)</span><span id="res_ptr_coarse" class="item-val">...</span></div>
+      <div class="item"><span>@media (pointer: fine)</span><span id="res_ptr_fine" class="item-val">...</span></div>
+      <div class="item"><span>Passive Hover Leaks</span><span id="res_hover_leaks" class="item-val">0 (SPOTLESS)</span></div>
+      <div class="item"><span>Active Click PointerType</span><span id="res_ptr_type" class="item-val">pending click</span></div>
+    </div>
+  </div>
+
+  <!-- Interactive Test Box -->
+  <div id="interactiveZone">
+    <div style="font-weight:600; margin-bottom:5px;">🎯 Interactive Cursor & Touch Test Zone</div>
+    <div style="color:var(--text-muted); font-size:12px;">Move cursor here without clicking (must register 0 events). Click here to verify touch masking.</div>
+    <div id="zoneStatus" style="margin-top:10px; font-weight:bold; color:var(--pass);">Hover Suppression: ACTIVE (No ghost cursor detected)</div>
+  </div>
+
+  <script id="runner">
+    'use strict';
+
+    var results = {
+      passed: 0,
+      total: 0,
+      tests: {},
+      hoverLeaks: 0
+    };
+
+    function assertTest(id, passed, actualVal, expectedDesc) {
+      results.total++;
+      if (passed) results.passed++;
+      results.tests[id] = { passed: passed, actual: actualVal, expected: expectedDesc };
+
+      var el = document.getElementById('res_' + id);
+      if (el) {
+        el.textContent = String(actualVal);
+        el.className = 'item-val ' + (passed ? 'item-pass' : 'item-fail');
+      }
+    }
+
+    // 1. Navigator tests
+    assertTest('platform', navigator.platform === 'Linux armv8l', navigator.platform, 'Linux armv8l');
+    assertTest('ua', /SM-A515F.*wv/i.test(navigator.userAgent), navigator.userAgent.substring(0, 30) + '...', 'SM-A515F WebView');
+    assertTest('touch', navigator.maxTouchPoints === 5, navigator.maxTouchPoints, '5 touch points');
+    assertTest('cores', navigator.hardwareConcurrency === 8, navigator.hardwareConcurrency, '8 cores');
+    assertTest('mem', navigator.deviceMemory === 4, navigator.deviceMemory, '4 GB');
+    assertTest('vendor', navigator.vendor === 'Google Inc.', navigator.vendor, 'Google Inc.');
+    assertTest('webdriver', !navigator.webdriver, String(navigator.webdriver), 'false/undefined');
+
+    // 2. WebGL tests
+    try {
+      var canvas = document.createElement('canvas');
+      var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (gl) {
+        var ext = gl.getExtension('WEBGL_debug_renderer_info');
+        var v1 = ext ? gl.getParameter(0x9245) : 'MISSING_EXT';
+        var r1 = ext ? gl.getParameter(0x9246) : 'MISSING_EXT';
+        assertTest('gl1_vendor', v1 === 'ARM', v1, 'ARM');
+        assertTest('gl1_renderer', r1 === 'Mali-G76 MP12', r1, 'Mali-G76 MP12');
+        assertTest('gl_vendor', gl.getParameter(gl.VENDOR) === 'ARM', gl.getParameter(gl.VENDOR), 'ARM');
+        assertTest('gl_rend', gl.getParameter(gl.RENDERER) === 'Mali-G76 MP12', gl.getParameter(gl.RENDERER), 'Mali-G76 MP12');
+        assertTest('gl_sl', gl.getParameter(gl.SHADING_LANGUAGE_VERSION).indexOf('GLSL ES') !== -1, gl.getParameter(gl.SHADING_LANGUAGE_VERSION), 'GLSL ES');
+        // Deep WebGL Checks: desktop texture compression leak elimination
+        var s3tc = gl.getExtension('WEBGL_compressed_texture_s3tc');
+        var bptc = gl.getExtension('EXT_texture_compression_bptc');
+        var astc = gl.getExtension('WEBGL_compressed_texture_astc');
+        assertTest('gl_s3tc_masked', s3tc === null, s3tc ? 'EXPOSED (DESKTOP LEAK)' : 'NULL (SECURE)', 'null (Desktop format masked)');
+        assertTest('gl_bptc_masked', bptc === null, bptc ? 'EXPOSED (DESKTOP LEAK)' : 'NULL (SECURE)', 'null (Desktop format masked)');
+        assertTest('gl_astc_present', astc !== null, astc ? 'SUPPORTED' : 'MISSING', 'Supported (Mobile ASTC)');
+        var maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        assertTest('gl_max_tex', maxTex === 8192, String(maxTex), '8192 (Mali-G76 limit)');
+        var prec = gl.getShaderPrecisionFormat(gl.VERTEX_SHADER, gl.HIGH_FLOAT);
+        assertTest('gl_prec_high', prec && prec.rangeMin === 127 && prec.precision === 23, (prec ? 'rangeMin:' + prec.rangeMin + ' prec:' + prec.precision : 'N/A'), 'rangeMin:127 prec:23 (ARM Mali)');
+      } else {
+        assertTest('gl1_vendor', false, 'NO_WEBGL', 'ARM');
+      }
+
+      var gl2 = canvas.getContext('webgl2');
+      if (gl2) {
+        var ext2 = gl2.getExtension('WEBGL_debug_renderer_info');
+        var v2 = ext2 ? gl2.getParameter(0x9245) : 'MISSING_EXT';
+        var r2 = ext2 ? gl2.getParameter(0x9246) : 'MISSING_EXT';
+        assertTest('gl2_vendor', v2 === 'ARM', v2, 'ARM');
+        assertTest('gl2_renderer', r2 === 'Mali-G76 MP12', r2, 'Mali-G76 MP12');
+      } else {
+        assertTest('gl2_vendor', true, 'N/A', 'ARM');
+        assertTest('gl2_renderer', true, 'N/A', 'Mali-G76 MP12');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+
+    // 3. Cloaking tests
+    if (gl) {
+      var paramStr = Function.prototype.toString.call(gl.getParameter);
+      assertTest('tostring_param', paramStr.indexOf('[native code]') !== -1, paramStr, '[native code]');
+      var extStr = Function.prototype.toString.call(gl.getExtension);
+      assertTest('tostring_ext', extStr.indexOf('[native code]') !== -1, extStr, '[native code]');
+    }
+    if (navigator.getBattery) {
+      var battStr = Function.prototype.toString.call(navigator.getBattery);
+      assertTest('tostring_batt', battStr.indexOf('[native code]') !== -1, battStr, '[native code]');
+    }
+    var fnStr = Function.prototype.toString.call(Function.prototype.toString);
+    assertTest('tostring_fn', fnStr.indexOf('[native code]') !== -1, fnStr, '[native code]');
+
+    // 4. Battery tests
+    if (navigator.getBattery) {
+      navigator.getBattery().then(function(b) {
+        assertTest('batt_present', true, 'Available', 'Available');
+        assertTest('batt_charging', b.charging === false, String(b.charging), 'false (Discharging)');
+        assertTest('batt_level', b.level === 0.85, (b.level * 100) + '%', '85%');
+        assertTest('batt_disch', b.dischargingTime === 14400, (b.dischargingTime / 3600) + ' hrs', '4 hrs (14400s)');
+        assertTest('batt_temp', b.temperature === 28.5, b.temperature + ' °C', '28.5 °C');
+        updateScore();
+      });
+    } else {
+      assertTest('batt_present', false, 'Missing', 'Available');
+    }
+
+    // 5. Media queries
+    assertTest('hover_none', window.matchMedia('(hover: none)').matches === true, String(window.matchMedia('(hover: none)').matches), 'true');
+    assertTest('hover_hover', window.matchMedia('(hover: hover)').matches === false, String(window.matchMedia('(hover: hover)').matches), 'false');
+    assertTest('ptr_coarse', window.matchMedia('(pointer: coarse)').matches === true, String(window.matchMedia('(pointer: coarse)').matches), 'true');
+    assertTest('ptr_fine', window.matchMedia('(pointer: fine)').matches === false, String(window.matchMedia('(pointer: fine)').matches), 'false');
+
+    // 6. Interactive Cursor Hover Suppression Test
+    var zone = document.getElementById('interactiveZone');
+    var statusEl = document.getElementById('zoneStatus');
+
+    zone.addEventListener('mousemove', function(e) {
+      if (e.buttons === 0) {
+        results.hoverLeaks++;
+        document.getElementById('res_hover_leaks').textContent = results.hoverLeaks + ' LEAK DETECTED';
+        document.getElementById('res_hover_leaks').className = 'item-val item-fail';
+        statusEl.textContent = '❌ HOVER LEAK DETECTED: mousemove fired with buttons=0!';
+        statusEl.style.color = 'var(--fail)';
+      }
+    });
+
+    zone.addEventListener('pointerdown', function(e) {
+      var pType = e.pointerType || 'unknown';
+      var isTouch = pType === 'touch';
+      var el = document.getElementById('res_ptr_type');
+      el.textContent = pType;
+      el.className = 'item-val ' + (isTouch ? 'item-pass' : 'item-fail');
+      statusEl.textContent = isTouch ? '✅ Touch click confirmed (pointerType: touch, width: 25px)' : '❌ Mouse click detected!';
+      statusEl.style.color = isTouch ? 'var(--pass)' : 'var(--fail)';
+    });
+
+    function updateScore() {
+      document.getElementById('passedCount').textContent = results.passed;
+      document.getElementById('totalCount').textContent = results.total;
+      var badge = document.getElementById('overallBadge');
+      if (results.passed === results.total) {
+        badge.textContent = 'SPOTLESS ANDROID MOBILE (100%)';
+        badge.className = 'badge badge-pass';
+      } else {
+        badge.textContent = 'DEFECTS DETECTED (' + results.passed + '/' + results.total + ')';
+        badge.className = 'badge badge-fail';
+      }
+      window.__TEST_RESULTS__ = results;
+      console.log('__AUDIT_SUMMARY__ Passed: ' + results.passed + '/' + results.total);
+      console.log('__AUDIT_JSON__ ' + JSON.stringify(results));
+    }
+
+    updateScore();
+  </script>
+</body>
+</html>

@@ -36,7 +36,7 @@
 # PowerShell console will keep the old shape and every new member will be
 # "method not found"). Compile into a version-stamped namespace and reference
 # that, so a reload always picks up the current member set.
-$Script:FarmNs = 'FarmWin32v2'
+$Script:FarmNs = 'FarmWin32v3'
 
 if (-not ('{0}.Win32' -f $Script:FarmNs -as [type])) {
   Add-Type -Namespace $Script:FarmNs -Name Win32 -MemberDefinition @'
@@ -76,6 +76,32 @@ public static extern int GetWindowTextW(IntPtr hWnd, System.Text.StringBuilder s
 
 [DllImport("user32.dll")]
 public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+[DllImport("user32.dll", EntryPoint = "GetWindowLong")]
+public static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+
+[DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
+public static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+
+[DllImport("user32.dll", EntryPoint = "SetWindowLong")]
+public static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+
+[DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")]
+public static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+public static IntPtr GetWindowLong(IntPtr hWnd, int nIndex) {
+    if (IntPtr.Size == 8)
+        return GetWindowLongPtr64(hWnd, nIndex);
+    else
+        return new IntPtr(GetWindowLong32(hWnd, nIndex));
+}
+
+public static IntPtr SetWindowLong(IntPtr hWnd, int nIndex, IntPtr dwNewLong) {
+    if (IntPtr.Size == 8)
+        return SetWindowLongPtr64(hWnd, nIndex, dwNewLong);
+    else
+        return new IntPtr(SetWindowLong32(hWnd, nIndex, dwNewLong.ToInt32()));
+}
 
 public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -211,17 +237,17 @@ function Get-EmulatorWindows {
   # Local alias so the type name interpolates inside the enum callback.
   $W32 = $Script:W32
   $found = New-Object System.Collections.ArrayList
-  $cb = [FarmWin32v2.Win32+EnumWindowsProc]{
+  $cb = [FarmWin32v3.Win32+EnumWindowsProc]{
     param($h, $l)
     $wpid = 0
-    [void][FarmWin32v2.Win32]::GetWindowThreadProcessId($h, [ref]$wpid)
+    [void][FarmWin32v3.Win32]::GetWindowThreadProcessId($h, [ref]$wpid)
     if ($targets -contains [int]$wpid) {
       $sb = New-Object System.Text.StringBuilder 256
-      [void][FarmWin32v2.Win32]::GetClassNameW($h, $sb, 256)
+      [void][FarmWin32v3.Win32]::GetClassNameW($h, $sb, 256)
       $tb = New-Object System.Text.StringBuilder 512
-      [void][FarmWin32v2.Win32]::GetWindowTextW($h, $tb, 512)
-      $r = New-Object FarmWin32v2.Win32+RECT
-      [void][FarmWin32v2.Win32]::GetWindowRect($h, [ref]$r)
+      [void][FarmWin32v3.Win32]::GetWindowTextW($h, $tb, 512)
+      $r = New-Object FarmWin32v3.Win32+RECT
+      [void][FarmWin32v3.Win32]::GetWindowRect($h, [ref]$r)
       [void]$found.Add([pscustomobject]@{
         Handle = $h
         Pid    = [int]$wpid
@@ -233,7 +259,7 @@ function Get-EmulatorWindows {
     }
     return $true
   }
-  [void][FarmWin32v2.Win32]::EnumWindows($cb, [IntPtr]::Zero)
+  [void][FarmWin32v3.Win32]::EnumWindows($cb, [IntPtr]::Zero)
   return $found
 }
 
@@ -272,12 +298,70 @@ function Hide-EmulatorConsole {
     belongs to another process.
   #>
   param([Parameter(Mandatory)][int[]]$LauncherPids)
-  $W32 = $Script:W32
   $wins = Get-EmulatorWindows -LauncherPids $LauncherPids
   foreach ($w in ($wins | Where-Object { $_.Class -eq 'ConsoleWindowClass' })) {
-    [void][FarmWin32v2.Win32]::ShowWindowAsync($w.Handle, $Script:FarmShow.SW_HIDE)
+    [void][FarmWin32v3.Win32]::ShowWindowAsync($w.Handle, $Script:FarmShow.SW_HIDE)
     Write-Host "[layout] hid emulator log window (pid $($w.Pid))" -ForegroundColor DarkGray
   }
+}
+
+function Hide-EmulatorToolbar {
+  <#
+    Hide the Qt emulator side menu / toolbar window (*ToolSaveBits* / Title 'Emulator')
+    to remove return/home/tabs/settings bar and give 100% screen space to game canvas.
+  #>
+  param([Parameter(Mandatory)][int[]]$LauncherPids)
+  $wins = Get-EmulatorWindows -LauncherPids $LauncherPids
+  $tools = $wins | Where-Object {
+    $_.Class -like '*ToolSaveBits*' -or
+    ($_.Title -eq 'Emulator' -and $_.Width -lt 120)
+  }
+  foreach ($t in $tools) {
+    [void][FarmWin32v3.Win32]::ShowWindowAsync($t.Handle, $Script:FarmShow.SW_HIDE)
+    Write-Host "[layout] hid emulator sidebar toolbar (pid $($t.Pid), handle $($t.Handle))" -ForegroundColor Green
+  }
+}
+
+function Show-EmulatorToolbar {
+  <#
+    Restores the Qt emulator side menu / toolbar window if explicitly requested.
+  #>
+  param([Parameter(Mandatory)][int[]]$LauncherPids)
+  $wins = Get-EmulatorWindows -LauncherPids $LauncherPids
+  $tools = $wins | Where-Object {
+    $_.Class -like '*ToolSaveBits*' -or
+    ($_.Title -eq 'Emulator' -and $_.Width -lt 120)
+  }
+  foreach ($t in $tools) {
+    [void][FarmWin32v3.Win32]::ShowWindowAsync($t.Handle, $Script:FarmShow.SW_SHOWNORMAL)
+    Write-Host "[layout] restored emulator sidebar toolbar (pid $($t.Pid), handle $($t.Handle))" -ForegroundColor Cyan
+  }
+}
+
+function Set-WindowBorderless([IntPtr]$hWnd) {
+  <#
+    Strips Win32 WS_CAPTION and WS_THICKFRAME to make the emulator window
+    a true borderless display canvas. This eliminates the 32px title bar and
+    16px resizing borders, allowing the Android 1280x720 canvas to fill the
+    screen tile edge-to-edge without black letterbox or pillarbox bars.
+  #>
+  try {
+    $oldStyle = [FarmWin32v3.Win32]::GetWindowLong($hWnd, -16).ToInt64()
+    $strip = 0x00C00000L -bor 0x00040000L -bor 0x00020000L -bor 0x00010000L -bor 0x00080000L
+    $newStyle = $oldStyle -band (-bnot $strip)
+    [void][FarmWin32v3.Win32]::SetWindowLong($hWnd, -16, [IntPtr]$newStyle)
+    [void][FarmWin32v3.Win32]::SetWindowPos($hWnd, [IntPtr]::Zero, 0, 0, 0, 0, 0x0027)
+  } catch {}
+}
+
+function Set-WindowWithBorders([IntPtr]$hWnd) {
+  try {
+    $oldStyle = [FarmWin32v3.Win32]::GetWindowLong($hWnd, -16).ToInt64()
+    $restore = 0x00C00000L -bor 0x00040000L -bor 0x00020000L -bor 0x00010000L -bor 0x00080000L
+    $newStyle = $oldStyle -bor $restore
+    [void][FarmWin32v3.Win32]::SetWindowLong($hWnd, -16, [IntPtr]$newStyle)
+    [void][FarmWin32v3.Win32]::SetWindowPos($hWnd, [IntPtr]::Zero, 0, 0, 0, 0, 0x0027)
+  } catch {}
 }
 
 function Set-FarmLayout {
@@ -289,6 +373,7 @@ function Set-FarmLayout {
     [Parameter(Mandatory)][int[]]$Procs,
     [switch]$MaximizeSingle,
     [switch]$EdgeToEdge,
+    [switch]$ShowToolbar,
     [int]$WindowTimeoutSec = 90
   )
 
@@ -299,11 +384,15 @@ function Set-FarmLayout {
 
   $rects = Get-FarmLayout -Count $Procs.Count -EdgeToEdge:$EdgeToEdge
   $wa    = Get-ScreenWorkArea
-  $W32   = $Script:W32
-  Write-Host ("[layout] {0} instance(s) on {1}x{2} work area" -f $Procs.Count, $wa.W, $wa.H) -ForegroundColor Cyan
+  Write-Host ("[layout] {0} instance(s) on {1}x{2} work area (EdgeToEdge=$($EdgeToEdge.IsPresent))" -f $Procs.Count, $wa.W, $wa.H) -ForegroundColor Cyan
 
   # The log/console window would otherwise sit on top of the farm.
   Hide-EmulatorConsole -LauncherPids $Procs
+
+  # Strip the Qt side toolbar (return/home/tabs/settings) to maximize game space
+  if (-not $ShowToolbar) {
+    Hide-EmulatorToolbar -LauncherPids $Procs
+  }
 
   for ($i = 0; $i -lt $Procs.Count; $i++) {
     $r = $rects[$i]
@@ -312,23 +401,26 @@ function Set-FarmLayout {
       Write-Warn ("[layout] pid {0}: no device window within {1}s - skipping" -f $Procs[$i], $WindowTimeoutSec)
       continue
     }
-    # The emulator is started -WindowStyle Minimized, so its window sits at the
-    # magic minimized position (-32000,-32000). MoveWindow on a minimized window
-    # succeeds but has no visible effect, so restore it FIRST or the farm
-    # silently stacks up invisible behind everything else.
-    [void][FarmWin32v2.Win32]::ShowWindow($win.Handle, $Script:FarmShow.SW_RESTORE)
+    # Restore window before moving
+    [void][FarmWin32v3.Win32]::ShowWindow($win.Handle, $Script:FarmShow.SW_RESTORE)
     Start-Sleep -Milliseconds 250
 
     # Single instance: just maximise, which respects DPI/taskbar better than
     # a hand-computed rect.
     if ($Procs.Count -eq 1 -and $MaximizeSingle) {
-      [void][FarmWin32v2.Win32]::ShowWindow($win.Handle, $Script:FarmShow.SW_MAXIMIZE)
+      [void][FarmWin32v3.Win32]::ShowWindow($win.Handle, $Script:FarmShow.SW_MAXIMIZE)
       Write-Host ("[layout] pid {0} -> maximized" -f $Procs[$i]) -ForegroundColor Green
       continue
     }
-    $ok = [FarmWin32v2.Win32]::MoveWindow($win.Handle, $r.X, $r.Y, $r.W, $r.H, $true)
+
+    # If EdgeToEdge is active, strip title bars and borders to eliminate pillarboxes
+    if ($EdgeToEdge) {
+      Set-WindowBorderless -hWnd $win.Handle
+    }
+
+    $ok = [FarmWin32v3.Win32]::MoveWindow($win.Handle, $r.X, $r.Y, $r.W, $r.H, $true)
     if ($ok) {
-      Write-Host ("[layout] pid {0} -> {1},{2} {3}x{4}" -f $Procs[$i], $r.X, $r.Y, $r.W, $r.H) -ForegroundColor Green
+      Write-Host ("[layout] pid {0} -> {1},{2} {3}x{4} (Borderless=$($EdgeToEdge.IsPresent))" -f $Procs[$i], $r.X, $r.Y, $r.W, $r.H) -ForegroundColor Green
     } else {
       Write-Warn ("[layout] pid {0}: MoveWindow failed" -f $Procs[$i])
     }
@@ -341,7 +433,7 @@ function Show-FarmLayoutPreview {
     checking geometry without launching anything.
   #>
   param([Parameter(Mandatory)][int]$Count)
-  $rects = Get-FarmLayout -Count $Count
+  $rects = Get-FarmLayout -Count $Count -EdgeToEdge
   $wa = Get-ScreenWorkArea
   Write-Host ("Screen work area: {0}x{1} at ({2},{3})" -f $wa.W, $wa.H, $wa.X, $wa.Y) -ForegroundColor DarkGray
   $i = 0

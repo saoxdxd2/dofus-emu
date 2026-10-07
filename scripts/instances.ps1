@@ -47,20 +47,18 @@ param(
   #
   # 1536 MB remains the safe fallback if a build regresses.
   [int]    $RamMb   = 1024,
-  [int]    $Cores   = 2,
+  [int]    $Cores   = 1,
   [int]    $Port    = 5554,
   [string] $AvdName = 'dofus',
-  [string] $Mac     = '02:00:00:00:00:01',
+  [string] $Mac     = 'bc:72:b7:12:34:01',
   [string] $Gpu     = 'host',
+  [string] $Proxy   = '',
   [switch] $Headless,
   [switch] $NoWait,
   [switch] $SkipProfile,
   [string] $Data    = '',
   [string] $SerialNo = '',
   [string] $AndroidId = '',
-  # More than one instance? This script is the single-instance harness with the
-  # Gate 1/2/3 probes. Delegate to start-farm.ps1, which handles N instances
-  # with staggered boots and per-instance ports.
   [int]    $Count   = 0
 )
 
@@ -97,14 +95,8 @@ Write-Ok "image:    API 29 x86_64"
 $AvdHome = Join-Path $env:USERPROFILE '.android\avd'
 $AvdDir  = Join-Path $AvdHome "$AvdName.avd"
 
-# Mounting QCOW2 overlay if present or specified (writeback cache)
+# Mounting explicit data partition only if requested
 $targetData = $Data
-if (-not $targetData) {
-  $qcowCandidate = Join-Path $AvdDir 'userdata.qcow2'
-  if (Test-Path $qcowCandidate) {
-    $targetData = $qcowCandidate
-  }
-}
 
 $emuArgs = @(
   "-avd", $AvdName,
@@ -115,19 +107,21 @@ $emuArgs = @(
   "-no-snapshot",
   "-no-audio",
   "-no-boot-anim",
+  "-skip-adb-auth",
+  "-no-location-ui",
+  "-no-passive-gps",
   # NOTE: -accel accepts only "on" | "off" | "auto" in emulator 37.x.
   "-accel", "on"
 )
 
 if ($targetData) {
-  # Emulator -data parameter mounts userdata.qcow2 as data partition with writeback caching.
-  # Stripping .qcow2 suffix ensures emulator mounts <path>.qcow2 directly without double suffix.
+  # Strip .qcow2 suffix if present to prevent double suffix
   $dataBase = $targetData
   if ($dataBase.EndsWith('.qcow2', [System.StringComparison]::OrdinalIgnoreCase)) {
     $dataBase = $dataBase.Substring(0, $dataBase.Length - 6)
   }
   $emuArgs += @("-data", $dataBase)
-  Write-Ok "Data partition mounted from QCOW2 overlay: $targetData"
+  Write-Ok "Data partition mounted from override: $targetData"
 }
 
 # Per-instance identity generation & persistence
@@ -153,30 +147,49 @@ if (Test-Path $AvdDir) {
 }
 
 # Task 1 & 3: Standardized physical hardware definitions (Samsung Galaxy A51 / SM-A515F)
-$standardProps = @(
-  "ro.product.brand=samsung",
-  "ro.product.manufacturer=samsung",
-  "ro.product.model=SM-A515F",
-  "ro.product.name=a51nsxx",
-  "ro.product.device=a51",
-  "ro.build.flavor=a51nsxx-user",
-  "ro.build.type=user",
-  "ro.build.tags=release-keys",
-  "ro.build.fingerprint=samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys",
-  "ro.hardware=exynos9611",
-  "ro.kernel.qemu=0",
-  "ro.boot.qemu=0",
-  "qemu.hw.mainkeys=1",
-  "ro.serialno=$instSerial",
-  "ro.boot.serialno=$instSerial",
-  "gsm.sim.state=READY",
-  "gsm.sim.operator.numeric=60401",
-  "gsm.network.type=LTE"
-)
-foreach ($sp in $standardProps) {
-  $emuArgs += @("-prop", $sp)
+$sysPropFile = Join-Path $AvdDir 'system.prop'
+if (Test-Path $AvdDir) {
+  $sysProp = @"
+ro.product.brand=samsung
+ro.product.manufacturer=samsung
+ro.product.model=SM-A515F
+ro.product.name=a51nsxx
+ro.product.device=a51
+ro.build.flavor=a51nsxx-user
+ro.build.type=user
+ro.build.tags=release-keys
+ro.build.fingerprint=samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys
+ro.hardware=exynos9611
+ro.kernel.qemu=0
+ro.boot.qemu=0
+qemu.hw.mainkeys=1
+ro.serialno=$instSerial
+ro.boot.serialno=$instSerial
+gsm.sim.state=READY
+gsm.sim.operator.numeric=20801
+gsm.sim.operator.alpha=Orange
+gsm.network.type=LTE
+net.dns1=1.1.1.1
+net.dns2=8.8.8.8
+config.disable_animations=1
+dalvik.vm.verify-bytecode=false
+debug.sf.latch_unsignaled=1
+sys.use_fifo_ui=1
+ro.config.hw_quickpoweron=true
+"@
+  Set-Content -Path $sysPropFile -Value $sysProp
 }
-$emuArgs += @("-android-serialno", $instSerial)
+
+if ($Proxy) {
+  $emuArgs += @("-http-proxy", $Proxy)
+  Write-Step "Routing instance traffic through proxy: $Proxy"
+}
+
+$emuArgs += @(
+  "-no-metrics",
+  "-prop", "qemu.hw.mainkeys=1",
+  "-android-serialno", $instSerial
+)
 
 if ($Headless) { $emuArgs += '-no-window' }
 
@@ -184,10 +197,16 @@ Write-Step "Launching AVD '$AvdName' port=$Port ram=${RamMb}MB cores=$Cores gpu=
 $proc = Start-Process -FilePath $Emu -ArgumentList $emuArgs -PassThru -WindowStyle Minimized
 Write-Ok "emulator pid=$($proc.Id)"
 
+if ($NoWait) {
+  Write-Ok "Launched in background (-NoWait)."
+  exit 0
+}
+
 # ------------------------------------------------------- wait for boot ready
-if (-not $NoWait) {
-  Write-Step 'Waiting for boot completion (cold boot can take several minutes)...'
-  & $Adb -s $Serial wait-for-device 2>&1 | Out-Null
+$oldEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+Write-Step 'Waiting for boot completion (cold boot can take several minutes)...'
+& $Adb -s $Serial wait-for-device 2>&1 | Out-Null
   $booted = $false
   for ($i = 0; $i -lt 180; $i++) {
     Start-Sleep -Seconds 5
@@ -213,7 +232,6 @@ if (-not $NoWait) {
   } else {
     Write-Err 'Guest did not report boot_completed within timeout.'; exit 2
   }
-}
 
 
 # ------------------------------------------------------- low-RAM + identity

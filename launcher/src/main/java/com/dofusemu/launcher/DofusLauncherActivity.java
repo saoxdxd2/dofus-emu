@@ -30,8 +30,8 @@ public class DofusLauncherActivity extends Activity {
     /** Known Dofus Touch package. Overridable via intent extra for testing. */
     private static final String GAME_PACKAGE = "com.ankama.dofustouch";
 
-    /** Fallback activity, used when the package resolves but the class differs. */
-    private static final String GAME_ACTIVITY = "com.ankama.dofustouch.DofusTouchActivity";
+    /** Primary game activity for direct instant launch. */
+    private static final String GAME_ACTIVITY = "com.ankama.dofustouch.MainActivity";
 
     /**
      * Set once a launch attempt fails, so onNewIntent does not retry forever.

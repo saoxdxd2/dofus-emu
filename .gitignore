@@ -23,5 +23,18 @@ scripts/gate4-memory.csv
 # SDK installed by install.ps1 / INSTALL.bat (~4.6 GB)
 sdk/
 
-# Golden userdata image (6 GB) from scripts/make-golden-image.ps1
+# Golden userdata images and QCOW2 differential overlays
 userdata*.img
+*.img
+*.qcow2
+*.lock
+*.iso
+
+# Temporary downloads and archives
+*.zip
+*.tar.gz
+*.tgz
+
+# Local identity and runtime state
+identity.json
+alias.json

@@ -58,7 +58,8 @@ if (-not $Serials) { Write-Warn 'no online emulator instances'; exit 1 }
 
 # netd owns DNS and the game loads assets from Ankama's servers - stopping it
 # breaks the network, so it is deliberately excluded.
-$DAEMONS = @('statsd','traced','traced_probes','incidentd','rild','cameraserver','drmserver')
+# NOTE: audioserver is deliberately kept alive so Cordova/WebAudio AudioTrack does NOT hang on Binder.
+$DAEMONS = @('statsd','traced','traced_probes','incidentd','rild','cameraserver','drmserver','wpa_supplicant','hostapd_nohidl','mediadrmserver')
 
 foreach ($s in $Serials) {
   function A($x) { (& $Adb -s $s @x 2>&1 | Out-String).Trim() }
@@ -92,6 +93,8 @@ foreach ($s in $Serials) {
                     @('vm/vfs_cache_pressure',200))) {
     A @('shell',"echo $($kv[1]) > /proc/sys/$($kv[0])") | Out-Null
   }
+  A @('shell','setprop','dalvik.vm.heapgrowthlimit','192m') | Out-Null
+  A @('shell','setprop','dalvik.vm.heapsize','512m') | Out-Null
   $sw = A @('shell','cat','/proc/sys/vm/swappiness')
   if ($sw -match "$Swappiness") { Write-Ok "vm sysctls set (swappiness=$sw page-cluster=0 vfs_cache_pressure=200)" }
   else { Write-Warn "swappiness reads '$sw'" }
@@ -111,34 +114,60 @@ foreach ($s in $Serials) {
   # waking the disabled com.android.phone package.
   A @('shell','cmd','appops','set','com.android.phone','RUN_IN_BACKGROUND','ignore') | Out-Null
 
-  # Audio HAL: already disabled at launch, but stop the service too in case the
-  # instance was booted by hand.
-  A @('shell','service','call','audio','1') | Out-Null
+  # Cap logd memory buffer to 64K to reclaim ~18MB of guest RAM per instance
+  A @('shell','logcat','-G','64K') | Out-Null
+  A @('shell','logcat','-c') | Out-Null
 
-  # Chromium GPU rasterization. Without this the WebView can fall back to
-  # CPU Skia tile rendering, which would move the whole render loop into the
-  # guest vCPU. NOTE: the redirect must be a single adb argument - splitting it
-  # makes adb drop the redirection and the write silently fails.
-  # --enable-zero-copy is intentionally absent: it needs a working dma-buf path
-  # and is ignored here, so listing it would only look configured.
-  A @('shell',"echo '_ --enable-gpu-rasterization --ignore-gpu-blocklist' > /data/local/tmp/webview-command-line") | Out-Null
+  # Chromium Single-Core Worker Tuning & Safe Font Rasterization:
+  # With 1 vCPU, setting --num-raster-threads=1 prevents thread contention between
+  # raster workers and the main JavaScript loop, while avoiding font serialization bugs.
+  $wvFlags = "_ --ignore-gpu-blocklist --disable-gpu-rasterization --num-raster-threads=1 --disable-background-timer-throttling"
+  A @('shell',"echo '$wvFlags' > /data/local/tmp/webview-command-line") | Out-Null
   A @('shell','chmod','644','/data/local/tmp/webview-command-line') | Out-Null
   $wcl = (A @('shell','cat','/data/local/tmp/webview-command-line'))
-  if ($wcl -match 'enable-gpu-rasterization') { Write-Ok 'webview GPU rasterization flags asserted' }
+  if ($wcl -match 'num-raster-threads') { Write-Ok 'webview single-core worker & font stability flags asserted' }
   else { Write-Warn 'could not write /data/local/tmp/webview-command-line' }
+
+  # Single-core kernel scheduler optimization (reduces preemption latency)
+  A @('shell','echo 10000000 > /proc/sys/kernel/sched_latency_ns 2>/dev/null') | Out-Null
+  A @('shell','echo 2000000 > /proc/sys/kernel/sched_min_granularity_ns 2>/dev/null') | Out-Null
+  A @('shell','echo 2500000 > /proc/sys/kernel/sched_wakeup_granularity_ns 2>/dev/null') | Out-Null
 
   # ABI guard: a regression to an ARM translation layer would reintroduce a
   # large, silent CPU cost, so assert the native x86_64 oat dir every boot.
   $oat = (A @('shell','ls /data/app/com.ankama.dofustouch*/oat/ 2>/dev/null')).Trim()
   if ($oat -match 'x86_64') { Write-Ok "game ABI native x86_64 (oat: $oat)" }
-  # --- 5. subsystem normalization (battery & telephony) -------------------
+  # --- 5. subsystem normalization (identity, battery & telephony) ---------
+  $instIdx = if ($s -match 'emulator-(\d+)') { [int]([math]::Floor(([int]$matches[1] - 5554) / 2) + 1) } else { 1 }
+  $instAvd = 'dofus-{0:d2}' -f $instIdx
+  $identFile = Join-Path $env:USERPROFILE ".android\avd\$instAvd.avd\identity.json"
+  if (Test-Path $identFile) {
+    try {
+      $idObj = Get-Content $identFile -Raw | ConvertFrom-Json
+      if ($idObj.AndroidId) {
+        A @('shell','settings','put','secure','android_id', $idObj.AndroidId) | Out-Null
+        Write-Ok "android_id asserted ($($idObj.AndroidId))"
+      }
+    } catch {}
+  }
+
   A @('shell','dumpsys battery set status 3; dumpsys battery set level 85; dumpsys battery set temp 285') | Out-Null
   Write-Ok 'battery telemetry normalized (status=3 level=85 temp=285)'
 
-  A @('shell','setprop gsm.sim.state READY; setprop gsm.sim.operator.numeric 60401; setprop gsm.network.type LTE') | Out-Null
-  Write-Ok 'telephony state nominal (READY/60401/LTE)'
+  A @('shell','setprop gsm.sim.state READY; setprop gsm.sim.operator.numeric 20801; setprop gsm.sim.operator.alpha "Orange"; setprop gsm.network.type LTE') | Out-Null
+  Write-Ok 'telephony state nominal (Orange/20801/LTE)'
 
-  # --- 6. final state -----------------------------------------------------
+  # --- 6. deep guest OS debloating, network hardening & scheduler priority ---
+  $optScript = Join-Path $PSScriptRoot 'optimize-guest-deep.ps1'
+  if (Test-Path $optScript) {
+    & $optScript -Serial $s -InstanceIndex $instIdx
+  }
+
+  # --- 7. ensure game is foreground ---------------------------------------
+  A @('shell','am','start','-n','com.ankama.dofustouch/.MainActivity') | Out-Null
+  Write-Ok 'game activity asserted in foreground'
+
+  # --- 7. final state -----------------------------------------------------
   $m = A @('shell','cat','/proc/meminfo')
   $tot = if ($m -match 'MemTotal:\s+(\d+)') { [math]::Round([int]$matches[1]/1024,0) } else { 0 }
   $av  = if ($m -match 'MemAvailable:\s+(\d+)') { [math]::Round([int]$matches[1]/1024,0) } else { 0 }
