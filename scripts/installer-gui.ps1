@@ -12,7 +12,8 @@
 #>
 [CmdletBinding()]
 param(
-  [string] $TargetDir = ''
+  [string] $TargetDir = '',
+  [string] $CallerDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,9 +24,20 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName Microsoft.VisualBasic
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$isTempDeployment = ($RepoRoot -like "*DofusSetup_*") -or ($RepoRoot -like "*\Temp*") -or ($RepoRoot -like "*\AppData\Local\Temp*")
-if (-not $TargetDir -or $isTempDeployment) {
-  $TargetDir = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'DofusFarm'
+
+if (-not $TargetDir) {
+  $regInstall = Get-ItemPropertyValue -Path 'HKCU:\Software\DofusFarm' -Name 'InstallPath' -ErrorAction SilentlyContinue
+  if ($regInstall -and (Test-Path $regInstall)) {
+    $TargetDir = $regInstall
+  } elseif ($CallerDir -and (Test-Path $CallerDir) -and ($CallerDir -notlike "*\AppData\Local\Temp*") -and ($CallerDir -notlike "*\Temp*") -and ($CallerDir -notlike "*\Downloads*")) {
+    $TargetDir = $CallerDir
+  } elseif (($RepoRoot -notlike "*DofusSetup_*") -and ($RepoRoot -notlike "*\Temp*") -and ($RepoRoot -notlike "*\AppData\Local\Temp*")) {
+    $TargetDir = $RepoRoot
+  } elseif (Test-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Documents\dofus-emu')) {
+    $TargetDir = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Documents\dofus-emu'
+  } else {
+    $TargetDir = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'dofus-emu'
+  }
 }
 
 # Detect host capacity
@@ -686,7 +698,7 @@ function Start-InstallationPipeline {
     }
   }
 
-  # Step 7: Register in Windows Add/Remove Programs
+  # Step 7: Register in Windows Add/Remove Programs & Environment
   $regScript = Join-Path $target 'scripts\register-uninstall.ps1'
   if (-not (Test-Path $regScript)) { $regScript = Join-Path $RepoRoot 'scripts\register-uninstall.ps1' }
   if (Test-Path $regScript) {
@@ -695,6 +707,18 @@ function Start-InstallationPipeline {
       Log-Install "Registered in Windows Programs & Features." 'ok'
     } catch {}
   }
+
+  try {
+    if (-not (Test-Path 'HKCU:\Software\DofusFarm')) { New-Item -Path 'HKCU:\Software\DofusFarm' -Force | Out-Null }
+    Set-ItemProperty -Path 'HKCU:\Software\DofusFarm' -Name 'InstallPath' -Value $target -Force
+    [Environment]::SetEnvironmentVariable('DOFUS_FARM_HOME', $target, 'User')
+    [Environment]::SetEnvironmentVariable('ANDROID_SDK_ROOT', $sdkDir, 'User')
+    [Environment]::SetEnvironmentVariable('ANDROID_HOME', $sdkDir, 'User')
+    $env:DOFUS_FARM_HOME = $target
+    $env:ANDROID_SDK_ROOT = $sdkDir
+    $env:ANDROID_HOME = $sdkDir
+    Log-Install "Persisted target environment configuration to $target." 'ok'
+  } catch {}
 
   # Step 8: Seal Application Integrity & Anti-Tamper Lock
   $InstallStatusText.Text = "Sealing code integrity and locking files against tampering..."

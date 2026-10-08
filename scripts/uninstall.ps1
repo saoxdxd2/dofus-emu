@@ -92,11 +92,17 @@ if ($removeAvds) {
   Write-Host "[3/5] Preserving AVD instances in $AvdHome (skipped)." -ForegroundColor DarkGray
 }
 
-# 4. Remove Windows Registry Uninstall Entry
+# 4. Remove Windows Registry Uninstall Entry & Environment
 Write-Host "[4/5] Removing Windows Programs & Features registration..." -ForegroundColor Cyan
 if (Test-Path $RegPath) {
   Remove-Item -Path $RegPath -Recurse -Force -EA SilentlyContinue
   Write-Host "      Unregistered from Windows Add/Remove Programs." -ForegroundColor Green
+}
+if (Test-Path 'HKCU:\Software\DofusFarm') {
+  Remove-Item -Path 'HKCU:\Software\DofusFarm' -Recurse -Force -EA SilentlyContinue
+}
+if ([Environment]::GetEnvironmentVariable('DOFUS_FARM_HOME', 'User') -eq $RepoRoot) {
+  [Environment]::SetEnvironmentVariable('DOFUS_FARM_HOME', $null, 'User')
 }
 
 # 5. Clean up temporary and log files

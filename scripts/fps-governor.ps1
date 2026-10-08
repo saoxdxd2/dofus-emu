@@ -15,8 +15,16 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$SdkRoot  = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $RepoRoot 'sdk' }
-$Adb      = Join-Path $SdkRoot 'platform-tools\adb.exe'
+$sdkCandidates = @(
+  (Join-Path $RepoRoot 'sdk'),
+  (if ($env:DOFUS_FARM_HOME) { Join-Path $env:DOFUS_FARM_HOME 'sdk' } else { $null }),
+  (Get-ItemPropertyValue -Path 'HKCU:\Software\DofusFarm' -Name 'InstallPath' -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_ 'sdk' }),
+  $env:ANDROID_SDK_ROOT,
+  $env:ANDROID_HOME
+) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'platform-tools\adb.exe')) }
+
+$SdkRoot = if ($sdkCandidates.Count -gt 0) { $sdkCandidates[0] } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $RepoRoot 'sdk' }
+$Adb     = Join-Path $SdkRoot 'platform-tools\adb.exe'
 
 # Win32 APIs for foreground window detection
 $win32Def = @"

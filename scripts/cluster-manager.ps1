@@ -47,10 +47,10 @@ $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sdkCandidates = @(
   (Join-Path $repoRoot 'sdk'),
+  (if ($env:DOFUS_FARM_HOME) { Join-Path $env:DOFUS_FARM_HOME 'sdk' } else { $null }),
+  (Get-ItemPropertyValue -Path 'HKCU:\Software\DofusFarm' -Name 'InstallPath' -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_ 'sdk' }),
   $env:ANDROID_SDK_ROOT,
   $env:ANDROID_HOME,
-  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'DofusFarm\sdk'),
-  (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Documents\dofus-emu\sdk'),
   (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'AppData\Local\Android\Sdk')
 ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'platform-tools\adb.exe')) }
 
