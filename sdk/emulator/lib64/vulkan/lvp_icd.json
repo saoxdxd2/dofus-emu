@@ -1,0 +1,7 @@
+{
+    "ICD": {
+        "api_version": "1.4.318",
+        "library_path": "libvulkan_lvp.dll"
+    },
+    "file_format_version": "1.0.1"
+}

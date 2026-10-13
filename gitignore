@@ -1,0 +1,51 @@
+# Build outputs
+launcher/build/
+*.apk
+*.apks
+*.dex
+*.class
+*.jar
+
+!gradle/wrapper/gradle-wrapper.jar
+
+# Logs produced by the setup scripts
+scripts/*.log
+scripts/gate4-memory.csv
+
+# AVD state: config is tracked, per-machine runtime state is not
+*.avd/
+*.ini.bak
+
+# Local tooling
+.idea/
+*.iml
+.vscode/
+
+# Local build outputs and generated project directories
+builder/
+desktop/
+scripts/bin/
+
+# SDK installed by install.ps1 / INSTALL.bat (~4.6 GB)
+sdk/
+
+# Golden userdata images and QCOW2 differential overlays
+userdata*.img
+*.img
+*.qcow2
+*.lock
+*.iso
+
+# Temporary downloads and archives
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+*.exe
+
+# Top-level generated launch/build files
+compile.bat
+
+# Local identity and runtime state
+identity.json
+alias.json

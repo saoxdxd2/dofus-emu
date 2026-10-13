@@ -1,0 +1,56 @@
+# OS files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Editor / IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+*.log
+
+# Visual Studio / .NET
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.pdb
+*.aps
+*.ncb
+*.opendb
+*.VC.db
+*.VC.VC.opendb
+[Bb]in/
+[Dd]ebug/
+[Rr]elease/
+obj/
+packages/
+*.cache
+*.exe
+*.dll
+*.img
+*.7z
+*.zip
+
+# Java / build artifacts
+*.class
+*.jar
+*.war
+*.ear
+target/
+build/
+.gradle/
+
+# Local runtime data
+*.bak
+*.orig
+*.rej
+
+# Windows-specific generated files
+*.tmp
+*.temp
+~$
