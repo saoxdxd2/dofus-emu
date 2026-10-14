@@ -267,7 +267,8 @@ namespace DofusFarm.Native
                     !w.Class.Contains("IME") &&
                     !w.Class.Contains("DummyWin") &&
                     !w.Class.Contains("ToolSaveBits") &&
-                    !w.Class.Contains("PbufferClass"))
+                    !w.Class.Contains("PbufferClass") &&
+                    w.Width > 200 && w.Height > 150)
                 {
                     if (w.Title.StartsWith("Android Emulator", StringComparison.OrdinalIgnoreCase) ||
                         w.Class.Contains("QWindowIcon"))

@@ -811,6 +811,7 @@ namespace DofusFarm.UI
                     }
 
                     Log(string.Format("Launching {0} instance(s)...", existingInsts.Count));
+                    try { _engine.Adb("", "start-server", 6000); } catch { }
 
                     foreach (InstanceModel im in existingInsts)
                     {
@@ -822,7 +823,7 @@ namespace DofusFarm.UI
                             im.RamMb > 0 ? im.RamMb : defaultRam,
                             im.Cores > 0 ? im.Cores : defaultCores,
                             im.Proxy);
-                        Thread.Sleep(450);
+                        Thread.Sleep(1500);
                     }
 
                     Thread.Sleep(2500);

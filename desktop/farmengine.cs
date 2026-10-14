@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -345,23 +346,29 @@ namespace DofusFarm.Engine
                 string dotAndroid = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".android");
                 if (!Directory.Exists(dotAndroid)) Directory.CreateDirectory(dotAndroid);
                 string iniPath = Path.Combine(dotAndroid, "advancedFeatures.ini");
-                string content = 
+                string content =
                     "GrallocSync = on\r\n" +
+                    "GLPipeChecksum = on\r\n" +
                     "LogcatPipe = on\r\n" +
                     "GLAsyncSwap = on\r\n" +
                     "GLESDynamicVersion = on\r\n" +
                     "GLDMA = on\r\n" +
+                    "GLDirectMem = on\r\n" +
                     "VirtioInput = on\r\n" +
                     "EncryptUserData = off\r\n" +
                     "IntelPerformanceMonitoringUnit = on\r\n" +
                     "Wifi = on\r\n" +
                     "HostComposition = on\r\n" +
+                    "RefCountPipe = on\r\n" +
+                    "SystemAsRoot = on\r\n" +
                     "DynamicPartition = on\r\n" +
                     "HardwareDecoder = on\r\n" +
-                    "GLDirectMem = on\r\n";
+                    "FastSnapshotV1 = on\r\n" +
+                    "WindowsHypervisorPlatform = on\r\n" +
+                    "Vulkan = off\r\n" +
+                    "GuestAngle = off\r\n";
                 File.WriteAllText(iniPath, content, Encoding.ASCII);
 
-                // Also ensure in SDK system images dir if present
                 if (!string.IsNullOrEmpty(SdkRoot))
                 {
                     string sdkIni = Path.Combine(SdkRoot, @"system-images\android-29\default\x86_64\advancedFeatures.ini");
@@ -503,7 +510,10 @@ namespace DofusFarm.Engine
                     if (line.StartsWith("emulator-"))
                     {
                         string[] parts = line.Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length >= 2 && parts[0].StartsWith("emulator-") && parts[1].Equals("device", StringComparison.OrdinalIgnoreCase))
+                        if (parts.Length >= 2 && parts[0].StartsWith("emulator-") &&
+                            (parts[1].Equals("device", StringComparison.OrdinalIgnoreCase) ||
+                             parts[1].Equals("offline", StringComparison.OrdinalIgnoreCase) ||
+                             parts[1].Equals("connecting", StringComparison.OrdinalIgnoreCase)))
                         {
                             live.Add(parts[0].Trim());
                         }
@@ -797,68 +807,49 @@ namespace DofusFarm.Engine
             if (!Directory.Exists(AvdHome)) return list;
 
             Dictionary<int, int> portToPid = new Dictionary<int, int>();
-            if (live.Count > 0)
+            bool anyQemuOnHost = false;
+            try
             {
-                bool needWmiLookup = false;
-                lock (_pidCacheLock)
+                Process[] qProcs = Process.GetProcessesByName("qemu-system-x86_64");
+                if (qProcs != null && qProcs.Length > 0)
                 {
-                    foreach (string s in live)
-                    {
-                        int pNum;
-                        if (s.StartsWith("emulator-") && int.TryParse(s.Substring(9), out pNum))
-                        {
-                            int cachedPid;
-                            if (_cachedPortToPid.TryGetValue(pNum, out cachedPid) && cachedPid > 0)
-                            {
-                                try
-                                {
-                                    using (Process p = Process.GetProcessById(cachedPid))
-                                    {
-                                        if (!p.HasExited)
-                                        {
-                                            portToPid[pNum] = cachedPid;
-                                            continue;
-                                        }
-                                    }
-                                }
-                                catch { }
-                            }
-                            needWmiLookup = true;
-                        }
-                    }
+                    anyQemuOnHost = true;
+                    for (int i = 0; i < qProcs.Length; i++) { try { qProcs[i].Dispose(); } catch { } }
                 }
+            }
+            catch { anyQemuOnHost = true; }
 
-                if (needWmiLookup)
+            if (anyQemuOnHost || live.Count > 0)
+            {
+                try
                 {
-                    try
+                    using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
+                        "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'"))
                     {
-                        using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
-                            "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'"))
+                        searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+                        using (System.Management.ManagementObjectCollection collection = searcher.Get())
                         {
-                            searcher.Options.Timeout = TimeSpan.FromSeconds(2);
-                            using (System.Management.ManagementObjectCollection collection = searcher.Get())
+                            foreach (System.Management.ManagementObject mo in collection)
                             {
-                                foreach (System.Management.ManagementObject mo in collection)
+                                using (mo)
                                 {
-                                    using (mo)
+                                    string cl = (mo["CommandLine"] ?? "").ToString();
+                                    Match mp = RxQemuPort.Match(cl);
+                                    if (mp.Success)
                                     {
-                                        string cl = (mo["CommandLine"] ?? "").ToString();
-                                        Match mp = RxQemuPort.Match(cl);
-                                        if (mp.Success)
-                                        {
-                                            int pNum = int.Parse(mp.Groups[1].Value);
-                                            int qPid = Convert.ToInt32(mo["ProcessId"]);
-                                            portToPid[pNum] = qPid;
-                                            lock (_pidCacheLock) { _cachedPortToPid[pNum] = qPid; }
-                                            PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2));
-                                        }
+                                        int pNum = int.Parse(mp.Groups[1].Value);
+                                        int qPid = Convert.ToInt32(mo["ProcessId"]);
+                                        portToPid[pNum] = qPid;
+                                        live.Add("emulator-" + pNum);
+                                        lock (_pidCacheLock) { _cachedPortToPid[pNum] = qPid; }
+                                        PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2));
                                     }
                                 }
                             }
                         }
                     }
-                    catch { }
                 }
+                catch { }
             }
             else
             {
@@ -1295,10 +1286,17 @@ namespace DofusFarm.Engine
         private void UpdateConfigIni(string cfgFile, string name, int ramMb, int cores, DeviceProfile profile = null)
         {
             if (profile == null) profile = DeviceCatalog.GetProfile("galaxy-tab-s6");
+            int safeRam = Math.Max(1024, ramMb);
+            int safeCores = Math.Max(1, cores);
+
             Dictionary<string, string> settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
+                { "AvdId", name },
                 { "avd.name", name },
                 { "avd.id", name },
+                { "PlayStore.enabled", "false" },
+                { "tag.id", "default" },
+                { "tag.display", "Default Android System Image" },
                 { "hw.device.manufacturer", profile.Manufacturer },
                 { "hw.device.name", profile.DisplayName },
                 { "hw.gpu.enabled", "yes" },
@@ -1306,12 +1304,14 @@ namespace DofusFarm.Engine
                 { "fastboot.forceFastBoot", "yes" },
                 { "fastboot.forceColdBoot", "no" },
                 { "firstboot.saveToLocalSnapshot", "yes" },
-                { "hw.ramSize", ramMb.ToString() },
-                { "hw.cpu.ncore", cores.ToString() },
-                { "hw.lcd.width", profile.LcdWidth.ToString() },
-                { "hw.lcd.height", profile.LcdHeight.ToString() },
-                { "hw.lcd.density", profile.LcdDensity.ToString() },
+                { "userdata.useQcow2", "yes" },
+                { "hw.ramSize", safeRam.ToString() },
+                { "hw.cpu.ncore", safeCores.ToString() },
+                { "hw.lcd.width", "1280" },
+                { "hw.lcd.height", "720" },
+                { "hw.lcd.density", "240" },
                 { "hw.initialOrientation", "landscape" },
+                { "hw.sdCard", "no" },
                 { "hw.audioInput", "no" },
                 { "hw.audioOutput", "no" },
                 { "hw.camera.back", "none" },
@@ -1321,13 +1321,26 @@ namespace DofusFarm.Engine
                 { "qemu.hw.mainkeys", "1" },
                 { "qemu.vsync", "30" },
                 { "showDeviceFrame", "no" },
-                { "skin.name", profile.LcdWidth + "x" + profile.LcdHeight },
+                { "skin.name", "1280x720" },
                 { "skin.path", "_no_skin" },
                 { "skin.dynamic", "yes" },
-                { "disk.dataPartition.path", "userdata-qemu.img" },
+                { "disk.dataPartition.path", "userdata-qemu.img.qcow2" },
                 { "image.sysdir.1", @"system-images\android-29\default\x86_64\" },
                 { "abi.type", "x86_64" },
                 { "hw.cpu.arch", "x86_64" }
+            };
+
+            string[] staleKeys = new[]
+            {
+                "disk.dataPartition.size",
+                "disk.dataPartition.initPath",
+                "disk.cachePartition.path",
+                "disk.encryptionKeyPartition.path",
+                "hw.sdCard.path",
+                "sdcard.path",
+                "fastboot.chosenSnapshotFile",
+                "android.sdk.root",
+                "android.avd.home"
             };
 
             Dictionary<string, string> existing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1336,9 +1349,18 @@ namespace DofusFarm.Engine
                 foreach (string l in File.ReadAllLines(cfgFile))
                 {
                     string[] p = l.Split(new[] { '=' }, 2);
-                    if (p.Length == 2) existing[p[0].Trim()] = p[1].Trim();
+                    if (p.Length == 2)
+                    {
+                        string k = p[0].Trim();
+                        string v = p[1].Trim();
+                        v = Regex.Replace(v, @"dofus-(?:template|\d+)\.avd", name + ".avd", RegexOptions.IgnoreCase);
+                        existing[k] = v;
+                    }
                 }
             }
+
+            foreach (string sk in staleKeys)
+                existing.Remove(sk);
 
             foreach (var kvp in settings)
                 existing[kvp.Key] = kvp.Value;
@@ -1395,15 +1417,67 @@ namespace DofusFarm.Engine
 
         public void EnsureOverlay(string avdDir)
         {
+            if (!Directory.Exists(avdDir)) Directory.CreateDirectory(avdDir);
+
+            // Auto-extract template.zip if GoldenMasterPath is missing
+            if (!File.Exists(GoldenMasterPath))
+            {
+                string tplZip = Path.Combine(AppBaseDir, "template.zip");
+                if (File.Exists(tplZip))
+                {
+                    try
+                    {
+                        string tplDir = Path.Combine(AvdHome, "dofus-template.avd");
+                        if (!Directory.Exists(tplDir)) Directory.CreateDirectory(tplDir);
+                        using (ZipArchive za = ZipFile.OpenRead(tplZip))
+                        {
+                            foreach (ZipArchiveEntry entry in za.Entries)
+                            {
+                                if (string.IsNullOrEmpty(entry.Name)) continue;
+                                string dest = Path.Combine(tplDir, entry.FullName.Replace('/', '\\'));
+                                string parent = Path.GetDirectoryName(dest);
+                                if (!string.IsNullOrEmpty(parent) && !Directory.Exists(parent)) Directory.CreateDirectory(parent);
+                                entry.ExtractToFile(dest, true);
+                            }
+                        }
+                        string candGolden = Path.Combine(tplDir, "userdata-golden.img");
+                        if (File.Exists(candGolden)) GoldenMasterPath = candGolden;
+                    }
+                    catch { }
+                }
+            }
+
             if (!File.Exists(GoldenMasterPath)) return;
             try { File.SetAttributes(GoldenMasterPath, FileAttributes.Normal); } catch { }
+
+            // Copy auxiliary partition images (encryptionkey.img, cache.img, sdcard.img) from template or system-images if present
+            try
+            {
+                string tplDir = Path.GetDirectoryName(GoldenMasterPath);
+                string sysImgDir = !string.IsNullOrEmpty(SdkRoot) ? Path.Combine(SdkRoot, @"system-images\android-29\default\x86_64") : "";
+                foreach (string aux in new[] { "encryptionkey.img", "cache.img", "sdcard.img" })
+                {
+                    string dstAux = Path.Combine(avdDir, aux);
+                    if (!File.Exists(dstAux))
+                    {
+                        string srcAux = (!string.IsNullOrEmpty(tplDir)) ? Path.Combine(tplDir, aux) : "";
+                        if (!string.IsNullOrEmpty(srcAux) && File.Exists(srcAux))
+                        {
+                            try { File.Copy(srcAux, dstAux, true); } catch { }
+                        }
+                        else if (!string.IsNullOrEmpty(sysImgDir) && File.Exists(Path.Combine(sysImgDir, aux)))
+                        {
+                            try { File.Copy(Path.Combine(sysImgDir, aux), dstAux, true); } catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
 
             string emuQcow2 = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
             string rawUd = Path.Combine(avdDir, "userdata-qemu.img");
 
             bool needRaw = !File.Exists(rawUd) || (new FileInfo(rawUd).Length != new FileInfo(GoldenMasterPath).Length);
-            bool needQcow2 = needRaw || !File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0);
-
             if (needRaw)
             {
                 try
@@ -1429,6 +1503,27 @@ namespace DofusFarm.Engine
             if (File.Exists(QemuImgPath) && File.Exists(rawUd))
             {
                 string baseFmt = DetectDiskFormat(rawUd);
+                bool needQcow2 = needRaw || !File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0);
+
+                // Verify existing QCOW2 overlay has not been overwritten with wrong backing format
+                if (!needQcow2 && File.Exists(emuQcow2))
+                {
+                    try
+                    {
+                        string infoOut = RunCommand(QemuImgPath, "info \"userdata-qemu.img.qcow2\"", 8000, avdDir);
+                        if (!string.IsNullOrEmpty(infoOut))
+                        {
+                            string infoLower = infoOut.ToLowerInvariant();
+                            if (infoLower.Contains("error") || infoLower.Contains("corrupt") ||
+                                (baseFmt == "qcow2" && infoLower.Contains("backing file format: raw")))
+                            {
+                                needQcow2 = true;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
                 if (needQcow2)
                 {
                     try
@@ -1437,21 +1532,20 @@ namespace DofusFarm.Engine
                         {
                             try { File.SetAttributes(emuQcow2, FileAttributes.Normal); File.Delete(emuQcow2); } catch { }
                         }
-                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"{0}\" -F {1} \"{2}\"", rawUd, baseFmt, emuQcow2), 30000, avdDir);
+                        string snapDir = Path.Combine(avdDir, "snapshots");
+                        if (Directory.Exists(snapDir))
+                        {
+                            ForceDeleteDirectory(snapDir);
+                        }
+                        string coldFlag = Path.Combine(avdDir, "cold_run_completed.flag");
+                        if (File.Exists(coldFlag)) { try { File.Delete(coldFlag); } catch { } }
+
+                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", baseFmt), 30000, avdDir);
                         if (!File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0))
                         {
                             string altFmt = (baseFmt == "raw") ? "qcow2" : "raw";
-                            RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"{0}\" -F {1} \"{2}\"", rawUd, altFmt, emuQcow2), 30000, avdDir);
+                            RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", altFmt), 30000, avdDir);
                         }
-                    }
-                    catch { }
-                }
-                else if (File.Exists(emuQcow2))
-                {
-                    // Ensure backing path in existing QCOW2 is absolute so emulator.exe running from sdk\emulator never fails to open backing file
-                    try
-                    {
-                        RunCommand(QemuImgPath, string.Format("rebase -u -b \"{0}\" -F {1} \"{2}\"", rawUd, baseFmt, emuQcow2), 15000, avdDir);
                     }
                     catch { }
                 }
@@ -1482,6 +1576,95 @@ namespace DofusFarm.Engine
             catch { }
         }
 
+        private void EnsureAvdIni(string name, string avdDir)
+        {
+            try
+            {
+                // Clean any stray .avd.ini files if created by older scripts
+                string strayIni = Path.Combine(AvdHome, name + ".avd.ini");
+                if (File.Exists(strayIni)) { try { File.Delete(strayIni); } catch { } }
+
+                string iniFile = Path.Combine(AvdHome, name + ".ini");
+                string iniContent = string.Format("avd.ini.encoding=UTF-8\r\npath={0}\r\npath.rel=avd\\{1}.avd\r\ntarget=android-29\r\n", avdDir, name);
+                File.WriteAllText(iniFile, iniContent, Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        private void KillProcessForInstance(string name, int port)
+        {
+            try
+            {
+                using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
+                    "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe' OR Name='emulator.exe'"))
+                {
+                    searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+                    using (System.Management.ManagementObjectCollection collection = searcher.Get())
+                    {
+                        foreach (System.Management.ManagementObject mo in collection)
+                        {
+                            using (mo)
+                            {
+                                string cl = (mo["CommandLine"] ?? "").ToString();
+                                if ((!string.IsNullOrEmpty(name) && cl.IndexOf("-avd " + name, StringComparison.OrdinalIgnoreCase) >= 0) ||
+                                    cl.Contains("-port " + port))
+                                {
+                                    int pid = Convert.ToInt32(mo["ProcessId"]);
+                                    try
+                                    {
+                                        using (Process p = Process.GetProcessById(pid))
+                                        {
+                                            p.Kill();
+                                            p.WaitForExit(1500);
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private bool IsInstanceProcessAlive(Process launcherProc, string name, int port)
+        {
+            try
+            {
+                if (launcherProc != null && !launcherProc.HasExited) return true;
+            }
+            catch { }
+
+            try
+            {
+                using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
+                    "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'"))
+                {
+                    searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+                    using (System.Management.ManagementObjectCollection collection = searcher.Get())
+                    {
+                        foreach (System.Management.ManagementObject mo in collection)
+                        {
+                            using (mo)
+                            {
+                                string cl = (mo["CommandLine"] ?? "").ToString();
+                                if ((!string.IsNullOrEmpty(name) && cl.IndexOf("-avd " + name, StringComparison.OrdinalIgnoreCase) >= 0) ||
+                                    cl.Contains("-port " + port))
+                                {
+                                    int qPid = Convert.ToInt32(mo["ProcessId"]);
+                                    lock (_pidCacheLock) { _cachedPortToPid[port] = qPid; }
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
         private Process StartEmulatorProcess(string emuArgs, bool minimized)
         {
             ProcessStartInfo psi = new ProcessStartInfo
@@ -1491,11 +1674,12 @@ namespace DofusFarm.Engine
                 WorkingDirectory = Path.Combine(SdkRoot, "emulator"),
                 CreateNoWindow = true,
                 UseShellExecute = false,
-                WindowStyle = minimized ? ProcessWindowStyle.Minimized : ProcessWindowStyle.Normal
+                WindowStyle = minimized ? ProcessWindowStyle.Minimized : ProcessWindowStyle.Hidden
             };
             psi.EnvironmentVariables["ANDROID_SDK_ROOT"] = SdkRoot;
             psi.EnvironmentVariables["ANDROID_HOME"] = SdkRoot;
             psi.EnvironmentVariables["ANDROID_AVD_HOME"] = AvdHome;
+            psi.EnvironmentVariables["ANDROID_SDK_HOME"] = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             psi.EnvironmentVariables["ANDROID_EMULATOR_HOME"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".android");
             psi.EnvironmentVariables["ANDROID_EMULATOR_METRICS_ENABLED"] = "0";
             return Process.Start(psi);
@@ -1503,8 +1687,13 @@ namespace DofusFarm.Engine
 
         public void LaunchInstance(string name, int port, int ramMb, int cores, string proxy = null)
         {
+            int safeRam = Math.Max(1024, ramMb);
+            int safeCores = Math.Max(1, cores);
+
             EnsureAdvancedFeatures();
             string avdDir = Path.Combine(AvdHome, name + ".avd");
+            KillProcessForInstance(name, port);
+            EnsureAvdIni(name, avdDir);
             CleanLocks(avdDir);
             EnsureOverlay(avdDir);
 
@@ -1552,12 +1741,13 @@ namespace DofusFarm.Engine
                 catch { }
             }
 
-            // Ensure config.ini has disk.dataPartition.path = userdata-qemu.img before booting
             string cfgFile = Path.Combine(avdDir, "config.ini");
-            if (File.Exists(cfgFile))
+            if (!File.Exists(cfgFile))
             {
-                UpdateConfigIni(cfgFile, name, ramMb, cores, instProfile);
+                string tplCfg = Path.Combine(AvdHome, @"dofus-template.avd\config.ini");
+                if (File.Exists(tplCfg)) { try { File.Copy(tplCfg, cfgFile, true); } catch { } }
             }
+            UpdateConfigIni(cfgFile, name, safeRam, safeCores, instProfile);
 
             bool proxyActive = false;
             if (useProxy)
@@ -1565,25 +1755,21 @@ namespace DofusFarm.Engine
                 proxyActive = EnsureProxyRunning(localProxyPort, upstreamProxy, serialNo, androidId, instProfile);
             }
 
+            string qcow2Path = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
+            string dataArg = File.Exists(qcow2Path) ? string.Format("-data \"{0}\" ", qcow2Path) : "";
             string proxyArg = (useProxy && proxyActive) ? string.Format("-http-proxy http://127.0.0.1:{0} ", localProxyPort) : "";
 
-            // Clean, universally supported emulator.exe CLI flags (no invalid -wifi-mac-address or -no-location-ui)
             string emuArgs = string.Format(
                 "-avd {0} -port {1} -gpu host -memory {2} -cores {3} " +
                 "-no-boot-anim -no-audio -accel on -skip-adb-auth " +
-                "-no-passive-gps {4}-prop qemu.hw.mainkeys=1",
-                name, port, ramMb, cores, proxyArg);
+                "-no-passive-gps {4}{5}-prop qemu.hw.mainkeys=1",
+                name, port, safeRam, safeCores, dataArg, proxyArg);
 
-            Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / {4} / MAC {5})...", name, port, ramMb, cores, instProfile.DisplayName, mac));
+            Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / {4} / MAC {5})...", name, port, safeRam, safeCores, instProfile.DisplayName, mac));
 
             try { Adb("", "start-server", 6000); } catch { }
 
             Process proc = StartEmulatorProcess(emuArgs, false);
-            if (proc != null)
-            {
-                lock (_pidCacheLock) { _cachedPortToPid[port] = proc.Id; }
-                PriorityGovernor.RegisterInstancePid(proc.Id, slot, cores);
-            }
             string serial = "emulator-" + port;
 
             try
@@ -1591,19 +1777,19 @@ namespace DofusFarm.Engine
                 int totalCores = Environment.ProcessorCount;
                 if (totalCores >= 4 && proc != null && !proc.HasExited)
                 {
-                    long affinityMask = PriorityGovernor.ComputeAffinityMask(slot, cores, totalCores);
+                    long affinityMask = PriorityGovernor.ComputeAffinityMask(slot, safeCores, totalCores);
                     if (IntPtr.Size == 8)
                         proc.ProcessorAffinity = new IntPtr(affinityMask);
                     else
                         proc.ProcessorAffinity = new IntPtr(unchecked((int)affinityMask));
-                    Log(string.Format("Pinned {0} (PID: {1}, {2} Core(s)) to Host CPU Affinity 0x{3:X}.", name, proc.Id, cores, affinityMask));
+                    Log(string.Format("Pinned {0} (PID: {1}, {2} Core(s)) to Host CPU Affinity 0x{3:X}.", name, proc.Id, safeCores, affinityMask));
                 }
             }
             catch { }
 
             ThreadPool.QueueUserWorkItem(delegate
             {
-                ConfigureGuestAndLaunchGame(name, serial, port, ramMb, cores, avdDir, serialNo, androidId, mac, proxyArg, proc, false);
+                ConfigureGuestAndLaunchGame(name, serial, port, safeRam, safeCores, avdDir, serialNo, androidId, mac, proxyArg, proc, false);
             });
         }
 
@@ -1611,34 +1797,37 @@ namespace DofusFarm.Engine
         {
             Stopwatch sw = Stopwatch.StartNew();
             bool adbReady = false;
-            bool retriedGpuFallback = false;
+            int fallbackAttempt = 0;
 
-            while (sw.Elapsed.TotalSeconds < 90)
+            while (sw.Elapsed.TotalSeconds < 110)
             {
-                if (proc != null && proc.HasExited)
+                if (!IsInstanceProcessAlive(proc, name, port))
                 {
-                    if (!retriedGpuFallback)
+                    if (fallbackAttempt < 2)
                     {
-                        retriedGpuFallback = true;
+                        fallbackAttempt++;
+                        string gpuMode = (fallbackAttempt == 1) ? "angle_indirect" : "swiftshader_indirect";
+                        Log(string.Format("Auto-healing {0} (clearing stale snapshot & retrying with -gpu {1})...", name, gpuMode));
+
+                        KillProcessForInstance(name, port);
                         CleanLocks(avdDir);
+                        InvalidateWarmSnapshot(name);
+                        EnsureOverlay(avdDir);
+
+                        string qcow2Path = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
+                        string dataArg = File.Exists(qcow2Path) ? string.Format("-data \"{0}\" ", qcow2Path) : "";
                         string fallbackArgs = string.Format(
-                            "-avd {0} -port {1} -gpu angle_indirect -memory {2} -cores {3} " +
-                            "-no-boot-anim -no-audio -accel on -skip-adb-auth " +
-                            "-no-passive-gps {4}-prop qemu.hw.mainkeys=1",
-                            name, port, ramMb, cores, proxyArg ?? "");
-                        Log(string.Format("Host GPU init exited early on {0}; automatically retrying with ANGLE Direct3D renderer...", name));
+                            "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
+                            "-no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth " +
+                            "-no-passive-gps {5}{6}-prop qemu.hw.mainkeys=1",
+                            name, port, gpuMode, ramMb, cores, dataArg, proxyArg ?? "");
+
                         proc = StartEmulatorProcess(fallbackArgs, shutdownAfterSnapshot);
-                        if (proc != null)
-                        {
-                            int slot = Math.Max(0, (port - 5554) / 2);
-                            lock (_pidCacheLock) { _cachedPortToPid[port] = proc.Id; }
-                            PriorityGovernor.RegisterInstancePid(proc.Id, slot, cores);
-                        }
                         sw.Restart();
-                        Thread.Sleep(500);
+                        Thread.Sleep(800);
                         continue;
                     }
-                    Log(string.Format("Error: Emulator process for {0} exited unexpectedly (code {1}).", name, proc.ExitCode));
+                    Log(string.Format("Error: Emulator process for {0} exited unexpectedly.", name));
                     return;
                 }
 
@@ -1648,12 +1837,12 @@ namespace DofusFarm.Engine
                     adbReady = true;
                     break;
                 }
-                Thread.Sleep(450);
+                Thread.Sleep(500);
             }
 
             if (!adbReady)
             {
-                Log(string.Format("Warning: {0} did not reach ADB device state within 90s.", name));
+                Log(string.Format("Warning: {0} did not reach ADB device state within 110s.", name));
                 return;
             }
 
@@ -1685,7 +1874,7 @@ namespace DofusFarm.Engine
             Stopwatch bootSw = Stopwatch.StartNew();
             while (bootSw.Elapsed.TotalSeconds < 120)
             {
-                if (proc != null && proc.HasExited) return;
+                if (!IsInstanceProcessAlive(proc, name, port)) return;
                 string bootCheck = AdbShell(serial, "getprop sys.boot_completed; getprop sys.logbootcomplete; getprop init.svc.bootanim");
                 if (!string.IsNullOrEmpty(bootCheck) && (bootCheck.Contains("1") || bootCheck.Contains("stopped")))
                 {
@@ -1806,8 +1995,12 @@ namespace DofusFarm.Engine
 
         public void WarmInstanceColdRunSync(string name, int port, int ramMb, int cores)
         {
+            ramMb = Math.Max(1024, ramMb);
+            cores = Math.Max(1, cores);
             EnsureAdvancedFeatures();
             string avdDir = Path.Combine(AvdHome, name + ".avd");
+            KillProcessForInstance(name, port);
+            EnsureAvdIni(name, avdDir);
             CleanLocks(avdDir);
             EnsureOverlay(avdDir);
 
@@ -1834,11 +2027,13 @@ namespace DofusFarm.Engine
                 catch { }
             }
 
+            string qcow2Path = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
+            string dataArg = File.Exists(qcow2Path) ? string.Format("-data \"{0}\" ", qcow2Path) : "";
             string emuArgs = string.Format(
                 "-avd {0} -port {1} -gpu host -memory {2} -cores {3} " +
                 "-no-boot-anim -no-audio -accel on -skip-adb-auth " +
-                "-no-passive-gps -prop qemu.hw.mainkeys=1",
-                name, port, ramMb, cores);
+                "-no-passive-gps {4}-prop qemu.hw.mainkeys=1",
+                name, port, ramMb, cores, dataArg);
 
             Log(string.Format("🔥 Starting background Cold-Run warmup for {0} (port {1})...", name, port));
 

@@ -61,7 +61,7 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "Program.cs")
             };
             string iconArg = File.Exists(ico) ? string.Format("\"/win32icon:{0}\" ", ico) : "";
-            string farmArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll \"{2}\"",
+            string farmArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll \"{2}\"",
                 iconArg, outFarm, string.Join("\" \"", farmSources));
 
             if (Run(Csc, farmArgs) != 0)
