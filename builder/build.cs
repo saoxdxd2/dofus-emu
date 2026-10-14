@@ -50,7 +50,7 @@ namespace DofusBuild
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n[1/3] Compiling native C# DofusFarm.exe...");
             Console.ResetColor();
-            string[] farmSources = new[]
+            var farmSources = new List<string>(7)
             {
                 Path.Combine(desktopDir, "Win32.cs"),
                 Path.Combine(desktopDir, "Hardware.cs"),
@@ -60,9 +60,8 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "MainForm.cs"),
                 Path.Combine(desktopDir, "Program.cs")
             };
-            string iconArg = File.Exists(ico) ? string.Format("\"/win32icon:{0}\" ", ico) : "";
-            string farmArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll \"{2}\"",
-                iconArg, outFarm, string.Join("\" \"", farmSources));
+            string iconArg = File.Exists(ico) ? $"\"/win32icon:{ico}\" " : "";
+            string farmArgs = $"/nologo /target:winexe /optimize+ {iconArg}\"/out:{outFarm}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll \"{string.Join("\" \"", farmSources)}\"";
 
             if (Run(Csc, farmArgs) != 0)
             {

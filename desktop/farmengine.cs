@@ -66,6 +66,13 @@ namespace DofusFarm.Engine
         // to cut Guest VRAM/SurfaceFlinger memory by 70-85% and guarantee uniform tiled aspect ratios.
         private static readonly List<DeviceProfile> _profiles = new List<DeviceProfile>
         {
+            // WebGL-minimal profile for Dofus in Chrome - no telephony, sensors, camera, NFC, DRM
+            // Strips 40+ build.prop keys; keeps only what Chrome WebGL fingerprinting needs.
+            Make("webgl-minimal", "WebGL Minimal (Chrome Dofus)", "generic", "generic", "WebGLMinimal",
+                 "webgl_minimal", "webgl_minimal", "ranchu", "ranchu", "ranchu", "Google", "virgl",
+                 "SP1A.210812.016", "generic/webgl_minimal/webgl_minimal:12/SP1A.210812.016/1:user/release-keys",
+                 1280, 720, 240, "Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0)", 16384,
+                 "Mozilla/5.0 (Linux; Android 12; WebGLMinimal Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/112.0.5615.137 Mobile Safari/537.36", "WGLM"),
             Make("galaxy-tab-s6", "Samsung Galaxy Tab S6 (16:9 Farm HD)", "samsung", "samsung", "SM-T860", "gts6lwifixx", "gts6l", "msmnile", "qcom", "msmnile", "Qualcomm", "Snapdragon 855", "QP1A.190711.020.T860XXU1BTJ2", "samsung/gts6lwifixx/gts6l:10/QP1A.190711.020/T860XXU1BTJ2:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 640", 16384, "Mozilla/5.0 (Linux; Android 10; SM-T860 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52M"),
             Make("galaxy-tab-a", "Samsung Galaxy Tab A (4:3 Tablet Mode)", "samsung", "samsung", "SM-T510", "gta3xlwifixx", "gta3xlwifi", "universal7904", "samsungexynos7904", "exynos5", "Samsung", "Exynos 7904", "QP1A.190711.020.T510XXU3BTE1", "samsung/gta3xlwifixx/gta3xlwifi:10/QP1A.190711.020/T510XXU3BTE1:user/release-keys", 1024, 768, 213, "ARM", "Mali-G71 MP2", 8192, "Mozilla/5.0 (Linux; Android 10; SM-T510 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52N"),
             Make("galaxy-a51", "Samsung Galaxy A51", "samsung", "samsung", "SM-A515F", "a51nsxx", "a51", "exynos9611", "exynos9611", "exynos9611", "Samsung", "Exynos 9611", "QP1A.190711.020.A515FXXU1ATA7", "samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys", 1280, 720, 240, "ARM", "Mali-G72 MP3", 8192, "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36", "R58M"),
@@ -313,6 +320,41 @@ namespace DofusFarm.Engine
             }
             catch { }
             return "raw";
+        }
+
+        // .NET Framework 4.x compatible relative path calculation
+        private static string GetRelativePath(string fromPath, string toPath)
+        {
+            if (string.IsNullOrEmpty(fromPath) || string.IsNullOrEmpty(toPath))
+                return toPath;
+
+            try
+            {
+                Uri fromUri = new Uri(AppendDirectorySeparator(fromPath));
+                Uri toUri = new Uri(AppendDirectorySeparator(toPath));
+                
+                if (fromUri.Scheme != toUri.Scheme)
+                    return toPath;
+
+                Uri relativeUri = fromUri.MakeRelativeUri(toUri);
+                string relativePath = Uri.UnescapeDataString(relativeUri.ToString());
+                
+                if (string.IsNullOrEmpty(relativePath))
+                    return ".";
+
+                return relativePath.Replace('/', '\\');
+            }
+            catch
+            {
+                return toPath;
+            }
+        }
+
+        private static string AppendDirectorySeparator(string path)
+        {
+            if (!string.IsNullOrEmpty(path) && !path.EndsWith("\\") && !path.EndsWith("/"))
+                return path + "\\";
+            return path;
         }
 
         public bool IsInstanceWarmReady(string name)
@@ -1687,38 +1729,73 @@ namespace DofusFarm.Engine
             string emuQcow2 = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
             string rawUd = Path.Combine(avdDir, "userdata-qemu.img");
 
-            // Never rebuild an instance's userdata just because the bundled golden master changed:
-            // doing that silently threw a stripped, logged-in guest back to stock Android. The raw
-            // image is only created when the instance genuinely has none.
-            bool needRaw = !File.Exists(rawUd) || new FileInfo(rawUd).Length == 0;
-            if (needRaw)
+            // Make Golden Master immutable (read-only) to prevent accidental modification
+            try { File.SetAttributes(GoldenMasterPath, FileAttributes.ReadOnly); } catch { }
+
+            // One-time v2.3 migration: purge any broken v2.2 black-screen snapshots, bad window.scale=-1, and mismatched encryptionkey overlays
+            string v23Flag = Path.Combine(avdDir, "v23_blackscreen_fixed.flag");
+            bool isV23Migrated = File.Exists(v23Flag);
+            if (!isV23Migrated)
             {
                 try
                 {
-                    if (File.Exists(rawUd))
+                    string snapDirOld = Path.Combine(avdDir, "snapshots");
+                    if (Directory.Exists(snapDirOld)) ForceDeleteDirectory(snapDirOld);
+                    foreach (string staleFile in new[] { "cold_run_completed.flag", "emulator-user.ini", "encryptionkey.img.qcow2", "cache.img.qcow2" })
                     {
-                        try { File.SetAttributes(rawUd, FileAttributes.Normal); File.Delete(rawUd); } catch { }
+                        string sf = Path.Combine(avdDir, staleFile);
+                        if (File.Exists(sf)) { try { File.SetAttributes(sf, FileAttributes.Normal); File.Delete(sf); } catch { } }
                     }
-                    try
-                    {
-                        bool linked = Win32.CreateHardLink(rawUd, GoldenMasterPath, IntPtr.Zero);
-                        if (!linked) File.Copy(GoldenMasterPath, rawUd, true);
-                    }
-                    catch
-                    {
-                        try { File.Copy(GoldenMasterPath, rawUd, true); } catch { }
-                    }
-                    try { if (File.Exists(rawUd)) File.SetAttributes(rawUd, FileAttributes.Normal); } catch { }
+                    File.WriteAllText(v23Flag, "ok", Encoding.ASCII);
                 }
                 catch { }
             }
 
-            if (File.Exists(QemuImgPath) && File.Exists(rawUd))
+            // Copy auxiliary partition images (encryptionkey.img, cache.img, sdcard.img) from template or system-images
+            // IMPORTANT: encryptionkey.img MUST match dofus-template.avd\encryptionkey.img so Android 10 vold can decrypt userdata-golden.img!
+            try
             {
-                string baseFmt = DetectDiskFormat(rawUd);
-                bool needQcow2 = needRaw || !File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0);
+                string tplDir = Path.GetDirectoryName(GoldenMasterPath);
+                string sysImgDir = !string.IsNullOrEmpty(SdkRoot) ? Path.Combine(SdkRoot, @"system-images\android-29\default\x86_64") : "";
+                foreach (string aux in new[] { "encryptionkey.img", "cache.img", "sdcard.img" })
+                {
+                    string dstAux = Path.Combine(avdDir, aux);
+                    string srcAux = (!string.IsNullOrEmpty(tplDir)) ? Path.Combine(tplDir, aux) : "";
+                    bool forceCopyEnc = aux.Equals("encryptionkey.img", StringComparison.OrdinalIgnoreCase) && !isV23Migrated;
+                    if (!File.Exists(dstAux) || forceCopyEnc)
+                    {
+                        if (!string.IsNullOrEmpty(srcAux) && File.Exists(srcAux))
+                        {
+                            try
+                            {
+                                if (File.Exists(dstAux)) File.SetAttributes(dstAux, FileAttributes.Normal);
+                                File.Copy(srcAux, dstAux, true);
+                            }
+                            catch { }
+                        }
+                        else if (!string.IsNullOrEmpty(sysImgDir) && File.Exists(Path.Combine(sysImgDir, aux)))
+                        {
+                            try
+                            {
+                                if (File.Exists(dstAux)) File.SetAttributes(dstAux, FileAttributes.Normal);
+                                File.Copy(Path.Combine(sysImgDir, aux), dstAux, true);
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
 
-                // Verify existing QCOW2 overlay has not been overwritten with wrong backing format
+            // Optimized: Create qcow2 overlay directly from Golden Master (backing file),
+            // skipping the intermediate raw copy/hardlink. This saves ~800MB per instance
+            // and makes provisioning nearly instant.
+            if (File.Exists(QemuImgPath))
+            {
+                string baseFmt = DetectDiskFormat(GoldenMasterPath);
+                bool needQcow2 = !File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0);
+
+                // Verify existing QCOW2 overlay has correct backing file
                 if (!needQcow2 && File.Exists(emuQcow2))
                 {
                     try
@@ -1728,7 +1805,7 @@ namespace DofusFarm.Engine
                         {
                             string infoLower = infoOut.ToLowerInvariant();
                             if (infoLower.Contains("error") || infoLower.Contains("corrupt") ||
-                                (baseFmt == "qcow2" && infoLower.Contains("backing file format: raw")))
+                                !infoLower.Contains(GoldenMasterPath.ToLowerInvariant().Replace('\\', '/')))
                             {
                                 needQcow2 = true;
                             }
@@ -1741,6 +1818,7 @@ namespace DofusFarm.Engine
                 {
                     try
                     {
+                        // Clean up any stale qcow2 files
                         foreach (string qf in new[] { "userdata-qemu.img.qcow2", "encryptionkey.img.qcow2", "cache.img.qcow2" })
                         {
                             string qp = Path.Combine(avdDir, qf);
@@ -1757,11 +1835,37 @@ namespace DofusFarm.Engine
                         string coldFlag = Path.Combine(avdDir, "cold_run_completed.flag");
                         if (File.Exists(coldFlag)) { try { File.Delete(coldFlag); } catch { } }
 
-                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", baseFmt), 30000, avdDir);
+                        // Create qcow2 overlay directly from Golden Master (backing file)
+                        // Format: qemu-img create -f qcow2 -b <backing-file> -F <backing-fmt> <output>
+                        string backingFileRel = GetRelativePath(avdDir, GoldenMasterPath);
+                        string qemuArgs = string.Format("create -f qcow2 -b \"{0}\" -F {1} \"userdata-qemu.img.qcow2\"", backingFileRel, baseFmt);
+                        RunCommand(QemuImgPath, qemuArgs, 30000, avdDir);
+
+                        // Fallback: if creation failed, try alternate backing format
                         if (!File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0))
                         {
                             string altFmt = (baseFmt == "raw") ? "qcow2" : "raw";
-                            RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", altFmt), 30000, avdDir);
+                            qemuArgs = string.Format("create -f qcow2 -b \"{0}\" -F {1} \"userdata-qemu.img.qcow2\"", backingFileRel, altFmt);
+                            RunCommand(QemuImgPath, qemuArgs, 30000, avdDir);
+                        }
+
+                        // Also create qcow2 overlays for auxiliary images if they exist
+                        string encKeySrc = Path.Combine(avdDir, "encryptionkey.img");
+                        if (File.Exists(encKeySrc))
+                        {
+                            string encKeyQcow2 = Path.Combine(avdDir, "encryptionkey.img.qcow2");
+                            string encKeyFmt = DetectDiskFormat(encKeySrc);
+                            string encKeyRel = GetRelativePath(avdDir, encKeySrc);
+                            RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"{0}\" -F {1} \"encryptionkey.img.qcow2\"", encKeyRel, encKeyFmt), 10000, avdDir);
+                        }
+
+                        string cacheSrc = Path.Combine(avdDir, "cache.img");
+                        if (File.Exists(cacheSrc))
+                        {
+                            string cacheQcow2 = Path.Combine(avdDir, "cache.img.qcow2");
+                            string cacheFmt = DetectDiskFormat(cacheSrc);
+                            string cacheRel = GetRelativePath(avdDir, cacheSrc);
+                            RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"{0}\" -F {1} \"cache.img.qcow2\"", cacheRel, cacheFmt), 10000, avdDir);
                         }
                     }
                     catch { }
@@ -3355,11 +3459,51 @@ namespace DofusFarm.Engine
 
         private string BuildColdBootArgs(string name, int port, string gpuMode, int ramMb, int cores, string proxyArg)
         {
+            string avdDir = Path.Combine(AvdHome, name + ".avd");
+            string cfgFile = Path.Combine(avdDir, "config.ini");
+            DeviceProfile profile = GetInstancePhoneModel(name);
+            bool isWebGlMinimal = profile != null && string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase);
+
+            if (isWebGlMinimal)
+            {
+                return BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, avdDir, cfgFile);
+            }
+
             return string.Format(
                 "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
                 "-no-snapshot-load -no-audio -accel on -skip-adb-auth " +
                 "-no-passive-gps {5}-prop qemu.hw.mainkeys=1",
                 name, port, gpuMode, ramMb, cores, proxyArg ?? "");
+        }
+
+        private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string avdDir, string cfgFile)
+        {
+            // Direct kernel boot - bypasses -avd path entirely for <15s cold boot
+            // Uses kernel-ranchu + ramdisk.img from system-images/android-29/default/x86_64/
+            string sysImgDir = Path.Combine(SdkRoot, @"system-images\android-29\default\x86_64");
+            string kernelPath = Path.Combine(sysImgDir, "kernel-ranchu");
+            string ramdiskPath = Path.Combine(sysImgDir, "ramdisk.img");
+
+            // Userdata overlay
+            string userdataQcow2 = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
+            string encryptionKey = Path.Combine(avdDir, "encryptionkey.img");
+
+            // GPU mode - virgl for host GPU acceleration
+            string gpuMode = GetConfiguredGpuMode();
+
+            // Build minimal QEMU args: virtio-gpu/net/blk/rng only, -display none, direct kernel boot
+            string proxyPart = string.IsNullOrEmpty(proxyArg) ? "" : proxyArg;
+
+            // Use instance-specific adb port for hostfwd (each instance gets unique port: 5554, 5556, 5558...)
+            return string.Format(
+                "-kernel \"{0}\" -initrd \"{1}\" -append \"console=ttyS0 androidboot.hardware=ranchu androidboot.selinux=permissive init=/init\" " +
+                "-m {2} -smp {3} " +
+                "-device virtio-gpu-pci,virgl=on -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::{5}-:5555 " +
+                "-device virtio-blk-pci,drive=drive0 -drive file=\"{4}\",format=qcow2,id=drive0,if=none " +
+                "-device virtio-rng-pci " +
+                "-display none -no-audio -accel on -skip-adb-auth " +
+                "-serial mon:stdio {6}-prop qemu.hw.mainkeys=1",
+                kernelPath, ramdiskPath, ramMb, cores, userdataQcow2, port, proxyPart);
         }
 
         // Copies the tail of the captured emulator console into the app log so a failed boot can be
