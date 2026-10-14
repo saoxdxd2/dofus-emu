@@ -8,6 +8,7 @@ using System.Threading;
 using Microsoft.Win32;
 using System.Security.Cryptography;
 using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Threading.Tasks;
 using DofusFarm.Native;
@@ -513,42 +514,101 @@ namespace DofusFarm.Engine
         }
 
         private static readonly Dictionary<int, Process> _proxyProcesses = new Dictionary<int, Process>();
+        private static readonly Dictionary<int, InProcessProxyServer> _inProcProxies = new Dictionary<int, InProcessProxyServer>();
         private static readonly object _proxyLock = new object();
 
-        public void EnsureProxyRunning(int port = 8880, string upstream = null, string serialNo = null, string androidId = null, DeviceProfile deviceProfile = null)
+        public static string NormalizeUpstreamProxy(string raw)
         {
-            if (!File.Exists(ProxyExePath)) return;
+            if (string.IsNullOrEmpty(raw)) return null;
+            string s = raw.Trim();
+            if (s.StartsWith("[🌐] ")) s = s.Substring(5).Trim();
+            if (s.StartsWith("[⚡]") || s.IndexOf("Accelerator", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                s.Equals("DIRECT", StringComparison.OrdinalIgnoreCase) || s.Equals("[DIRECT] DIRECT", StringComparison.OrdinalIgnoreCase) ||
+                s.StartsWith("127.0.0.1:888", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            string scheme = "http";
+            string rest = s;
+            int schemeIdx = s.IndexOf("://", StringComparison.Ordinal);
+            if (schemeIdx > 0)
+            {
+                scheme = s.Substring(0, schemeIdx).ToLowerInvariant();
+                rest = s.Substring(schemeIdx + 3);
+            }
+            if (!rest.Contains("@"))
+            {
+                string[] parts = rest.Split(':');
+                if (parts.Length == 4)
+                {
+                    // Convert host:port:user:pass -> scheme://user:pass@host:port
+                    return string.Format("{0}://{1}:{2}@{3}:{4}", scheme, Uri.EscapeDataString(parts[2]), Uri.EscapeDataString(parts[3]), parts[0], parts[1]);
+                }
+            }
+            return string.Format("{0}://{1}", scheme, rest);
+        }
+
+        public static string GenerateRealisticMac(DeviceProfile profile, int slotIdx, string seedStr = null)
+        {
+            string manuf = (profile != null && !string.IsNullOrEmpty(profile.Manufacturer)) ? profile.Manufacturer.ToLowerInvariant() : "samsung";
+            string oui = "F8:E6:1A"; // Samsung physical IEEE OUI
+            if (manuf.Contains("google")) oui = "3C:28:6D";
+            else if (manuf.Contains("xiaomi") || manuf.Contains("redmi") || manuf.Contains("poco")) oui = "64:CC:2E";
+            else if (manuf.Contains("oneplus")) oui = "94:65:2D";
+            else if (manuf.Contains("sony")) oui = "D0:51:62";
+            else if (manuf.Contains("motorola")) oui = "F8:E0:79";
+            else if (manuf.Contains("realme")) oui = "C4:06:83";
+            else if (manuf.Contains("asus")) oui = "04:D9:F5";
+
+            uint h = (uint)(2166136261UL ^ (uint)slotIdx);
+            string s = seedStr ?? Guid.NewGuid().ToString("N");
+            for (int i = 0; i < s.Length; i++)
+            {
+                h ^= s[i];
+                h *= 16777619U;
+            }
+            byte b1 = (byte)((h & 0xFF) ^ (slotIdx & 0xFF));
+            byte b2 = (byte)((h >> 8) & 0xFF);
+            byte b3 = (byte)(((h >> 16) & 0xFE) | 0x01);
+            return string.Format("{0}:{1:X2}:{2:X2}:{3:X2}", oui, b1, b2, b3);
+        }
+
+        private static bool IsLocalPortOpen(int port, int timeoutMs = 200)
+        {
+            try
+            {
+                using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+                {
+                    var result = socket.BeginConnect(new IPEndPoint(IPAddress.Loopback, port), null, null);
+                    bool open = result.AsyncWaitHandle.WaitOne(timeoutMs);
+                    if (open)
+                    {
+                        try { socket.EndConnect(result); } catch { }
+                    }
+                    else
+                    {
+                        try { socket.Close(); } catch { }
+                    }
+                    return open;
+                }
+            }
+            catch { return false; }
+        }
+
+        public bool EnsureProxyRunning(int port = 8880, string upstream = null, string serialNo = null, string androidId = null, DeviceProfile deviceProfile = null)
+        {
+            string normalizedUpstream = NormalizeUpstreamProxy(upstream);
 
             lock (_proxyLock)
             {
-                bool isPortOpen = false;
-                try
+                if (IsLocalPortOpen(port, 180))
                 {
-                    using (var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp))
+                    if ((_proxyProcesses.ContainsKey(port) && !_proxyProcesses[port].HasExited) ||
+                        (_inProcProxies.ContainsKey(port) && _inProcProxies[port].IsRunning))
                     {
-                        var result = socket.BeginConnect(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port), null, null);
-                        isPortOpen = result.AsyncWaitHandle.WaitOne(200);
-                        if (isPortOpen)
-                        {
-                            try { socket.EndConnect(result); } catch { }
-                        }
-                        else
-                        {
-                            try { socket.Close(); } catch { }
-                        }
-                    }
-                }
-                catch { isPortOpen = false; }
-
-                if (isPortOpen)
-                {
-                    if (_proxyProcesses.ContainsKey(port) && !_proxyProcesses[port].HasExited)
-                    {
-                        return;
+                        return true;
                     }
 
-                    // Port is occupied by an orphan proxy not tracked by current session.
-                    // Kill untracked dofus-net-proxy processes to release port.
                     try
                     {
                         var trackedIds = new HashSet<int>();
@@ -566,72 +626,92 @@ namespace DofusFarm.Engine
                                 }
                             }
                         }
-                        Thread.Sleep(250);
+                        Thread.Sleep(200);
                     }
                     catch { }
                 }
 
                 if (_proxyProcesses.ContainsKey(port))
                 {
-                    try
-                    {
-                        if (!_proxyProcesses[port].HasExited)
-                            _proxyProcesses[port].Kill();
-                    }
-                    catch { }
+                    try { if (!_proxyProcesses[port].HasExited) _proxyProcesses[port].Kill(); } catch { }
                     _proxyProcesses.Remove(port);
+                }
+                if (_inProcProxies.ContainsKey(port))
+                {
+                    try { _inProcProxies[port].Stop(); } catch { }
+                    _inProcProxies.Remove(port);
                 }
 
                 string cacheDir = Path.Combine(AppBaseDir, "asset_cache");
-                string args = string.Format("-port {0} -cache \"{1}\" -quiet", port, cacheDir);
-                if (!string.IsNullOrEmpty(upstream))
+                if (File.Exists(ProxyExePath))
                 {
-                    args += string.Format(" -upstream \"{0}\"", upstream);
-                    Log(string.Format("Starting Native Go Network Accelerator Proxy (Port {0} -> Upstream: {1})...", port, upstream));
-                }
-                else
-                {
-                    Log(string.Format("Starting Native Go Network Accelerator Proxy (Port {0} -> Direct Gigabit)...", port));
+                    string args = string.Format("-port {0} -cache \"{1}\" -quiet", port, cacheDir);
+                    if (!string.IsNullOrEmpty(normalizedUpstream))
+                    {
+                        args += string.Format(" -upstream \"{0}\"", normalizedUpstream);
+                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, normalizedUpstream));
+                    }
+                    else
+                    {
+                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
+                    }
+
+                    string fullArgs = args;
+                    if (!string.IsNullOrEmpty(serialNo)) fullArgs += string.Format(" -serial \"{0}\"", serialNo);
+                    if (!string.IsNullOrEmpty(androidId)) fullArgs += string.Format(" -uuid \"{0}\"", androidId);
+                    if (deviceProfile != null)
+                    {
+                        if (!string.IsNullOrEmpty(deviceProfile.Model)) fullArgs += string.Format(" -model \"{0}\"", deviceProfile.Model);
+                        if (!string.IsNullOrEmpty(deviceProfile.Manufacturer)) fullArgs += string.Format(" -manufacturer \"{0}\"", deviceProfile.Manufacturer);
+                        if (!string.IsNullOrEmpty(deviceProfile.UserAgent)) fullArgs += string.Format(" -ua \"{0}\"", deviceProfile.UserAgent.Replace("\"", "\\\""));
+                        if (!string.IsNullOrEmpty(deviceProfile.GlVendor)) fullArgs += string.Format(" -gl-vendor \"{0}\"", deviceProfile.GlVendor);
+                        if (!string.IsNullOrEmpty(deviceProfile.GlRenderer)) fullArgs += string.Format(" -gl-renderer \"{0}\"", deviceProfile.GlRenderer);
+                        if (deviceProfile.MaxTextureSize > 0) fullArgs += string.Format(" -texture-size \"{0}\"", deviceProfile.MaxTextureSize);
+                    }
+
+                    try
+                    {
+                        Process proc = Process.Start(new ProcessStartInfo
+                        {
+                            FileName = ProxyExePath,
+                            Arguments = fullArgs,
+                            WorkingDirectory = AppBaseDir,
+                            CreateNoWindow = true,
+                            UseShellExecute = false,
+                            WindowStyle = ProcessWindowStyle.Hidden
+                        });
+                        Thread.Sleep(250);
+                        if (proc != null && !proc.HasExited && IsLocalPortOpen(port, 250))
+                        {
+                            _proxyProcesses[port] = proc;
+                            return true;
+                        }
+                        if (proc != null && !proc.HasExited)
+                        {
+                            try { proc.Kill(); } catch { }
+                        }
+                    }
+                    catch { }
                 }
 
-                if (!string.IsNullOrEmpty(serialNo))
+                // Built-in C# In-Process Network Spoofing & SOCKS5/HTTP Proxy Engine (100% guaranteed fallback even without Go)
+                try
                 {
-                    args += string.Format(" -serial \"{0}\"", serialNo);
+                    string disguisePath = GetScriptPath("mobile-disguise.js");
+                    InProcessProxyServer inProc = new InProcessProxyServer(port, normalizedUpstream, serialNo, androidId, deviceProfile, disguisePath);
+                    if (inProc.Start())
+                    {
+                        _inProcProxies[port] = inProc;
+                        Log(string.Format("[🛡️ Net-Spoof] Active C# Network Spoofing Proxy listening on 127.0.0.1:{0} ({1}).", port, deviceProfile != null ? deviceProfile.Model : "Mobile"));
+                        return true;
+                    }
                 }
-                if (!string.IsNullOrEmpty(androidId))
+                catch (Exception ex)
                 {
-                    args += string.Format(" -uuid \"{0}\"", androidId);
-                }
-                if (deviceProfile != null)
-                {
-                    if (!string.IsNullOrEmpty(deviceProfile.Model))
-                        args += string.Format(" -model \"{0}\"", deviceProfile.Model);
-                    if (!string.IsNullOrEmpty(deviceProfile.Manufacturer))
-                        args += string.Format(" -manufacturer \"{0}\"", deviceProfile.Manufacturer);
-                    if (!string.IsNullOrEmpty(deviceProfile.UserAgent))
-                        args += string.Format(" -ua \"{0}\"", deviceProfile.UserAgent.Replace("\"", "\\\""));
-                    if (!string.IsNullOrEmpty(deviceProfile.GlVendor))
-                        args += string.Format(" -gl-vendor \"{0}\"", deviceProfile.GlVendor);
-                    if (!string.IsNullOrEmpty(deviceProfile.GlRenderer))
-                        args += string.Format(" -gl-renderer \"{0}\"", deviceProfile.GlRenderer);
-                    if (deviceProfile.MaxTextureSize > 0)
-                        args += string.Format(" -texture-size \"{0}\"", deviceProfile.MaxTextureSize);
+                    Log(string.Format("[Proxy Warning] Could not bind local proxy port {0}: {1}", port, ex.Message));
                 }
 
-                ProcessStartInfo psi = new ProcessStartInfo
-                {
-                    FileName = ProxyExePath,
-                    Arguments = args,
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
-                Process proc = Process.Start(psi);
-                if (proc != null)
-                {
-                    _proxyProcesses[port] = proc;
-                }
-                Thread.Sleep(300);
+                return IsLocalPortOpen(port, 200);
             }
         }
 
@@ -641,13 +721,13 @@ namespace DofusFarm.Engine
             {
                 if (_proxyProcesses.ContainsKey(port))
                 {
-                    try
-                    {
-                        if (!_proxyProcesses[port].HasExited)
-                            _proxyProcesses[port].Kill();
-                    }
-                    catch { }
+                    try { if (!_proxyProcesses[port].HasExited) _proxyProcesses[port].Kill(); } catch { }
                     _proxyProcesses.Remove(port);
+                }
+                if (_inProcProxies.ContainsKey(port))
+                {
+                    try { _inProcProxies[port].Stop(); } catch { }
+                    _inProcProxies.Remove(port);
                 }
             }
         }
@@ -658,20 +738,24 @@ namespace DofusFarm.Engine
             {
                 foreach (var kvp in _proxyProcesses)
                 {
-                    try
-                    {
-                        if (!kvp.Value.HasExited)
-                            kvp.Value.Kill();
-                    }
-                    catch { }
+                    try { if (!kvp.Value.HasExited) kvp.Value.Kill(); } catch { }
                 }
                 _proxyProcesses.Clear();
+
+                foreach (var kvp in _inProcProxies)
+                {
+                    try { kvp.Value.Stop(); } catch { }
+                }
+                _inProcProxies.Clear();
 
                 try
                 {
                     foreach (var p in Process.GetProcessesByName("dofus-net-proxy"))
                     {
-                        try { if (!p.HasExited) p.Kill(); } catch { }
+                        using (p)
+                        {
+                            try { if (!p.HasExited) p.Kill(); } catch { }
+                        }
                     }
                 }
                 catch { }
@@ -1046,7 +1130,7 @@ namespace DofusFarm.Engine
                 : DeviceCatalog.GetDefaultProfileForIndex(instIdx);
 
             string serialNo = (activeProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
-            string mac = string.Format("52:54:00:12:34:{0:X2}", instIdx);
+            string mac = GenerateRealisticMac(activeProfile, instIdx, serialNo);
             string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
             string existingCustomName = "Instance #" + instIdx;
             string existingProxy = "";
@@ -1064,7 +1148,7 @@ namespace DofusFarm.Engine
                     var mA = RxAndroidId.Match(idJson);
                     if (mA.Success && !string.IsNullOrEmpty(mA.Groups[1].Value)) androidId = mA.Groups[1].Value.Trim().ToLower();
                     var mM = RxMac.Match(idJson);
-                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value)) mac = mM.Groups[1].Value.Trim();
+                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value) && !mM.Groups[1].Value.Trim().StartsWith("52:54:00")) mac = mM.Groups[1].Value.Trim();
                     var mP = RxProxy.Match(idJson);
                     if (mP.Success && !string.IsNullOrEmpty(mP.Groups[1].Value)) existingProxy = mP.Groups[1].Value.Trim();
                     var mPM = RxPhoneModel.Match(idJson);
@@ -1138,7 +1222,7 @@ namespace DofusFarm.Engine
 
             string resolvedCustomName = !string.IsNullOrEmpty(customName) ? customName.Trim() : ("Instance #" + instIdx);
             string serialNo = (activeProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
-            string mac = string.Format("52:54:00:12:34:{0:X2}", instIdx);
+            string mac = GenerateRealisticMac(activeProfile, instIdx, serialNo);
             string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
             string proxy = proxyOverride ?? "";
 
@@ -1166,7 +1250,7 @@ namespace DofusFarm.Engine
                         androidId = mA.Groups[1].Value.Trim().ToLower();
                     }
                     var mM = RxMac.Match(idJson);
-                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value))
+                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value) && !mM.Groups[1].Value.Trim().StartsWith("52:54:00"))
                     {
                         mac = mM.Groups[1].Value.Trim();
                     }
@@ -1242,7 +1326,7 @@ namespace DofusFarm.Engine
                 { "skin.name", profile.LcdWidth + "x" + profile.LcdHeight },
                 { "skin.path", "_no_skin" },
                 { "skin.dynamic", "yes" },
-                { "disk.dataPartition.path", "userdata-qemu.img.qcow2" },
+                { "disk.dataPartition.path", "userdata-qemu.img" },
                 { "image.sysdir.1", @"system-images\android-29\default\x86_64\" },
                 { "abi.type", "x86_64" },
                 { "hw.cpu.arch", "x86_64" }
@@ -1319,23 +1403,17 @@ namespace DofusFarm.Engine
             string emuQcow2 = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
             string rawUd = Path.Combine(avdDir, "userdata-qemu.img");
 
-            bool needCreate = !File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0) ||
-                              !File.Exists(rawUd) || (new FileInfo(rawUd).Length != new FileInfo(GoldenMasterPath).Length);
+            bool needRaw = !File.Exists(rawUd) || (new FileInfo(rawUd).Length != new FileInfo(GoldenMasterPath).Length);
+            bool needQcow2 = needRaw || !File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0);
 
-            if (needCreate && File.Exists(QemuImgPath))
+            if (needRaw)
             {
                 try
                 {
-                    if (File.Exists(emuQcow2))
-                    {
-                        try { File.SetAttributes(emuQcow2, FileAttributes.Normal); File.Delete(emuQcow2); } catch { }
-                    }
                     if (File.Exists(rawUd))
                     {
                         try { File.SetAttributes(rawUd, FileAttributes.Normal); File.Delete(rawUd); } catch { }
                     }
-
-                    // Create instant Win32 hardlink or copy golden master
                     try
                     {
                         bool linked = Win32.CreateHardLink(rawUd, GoldenMasterPath, IntPtr.Zero);
@@ -1345,20 +1423,40 @@ namespace DofusFarm.Engine
                     {
                         try { File.Copy(GoldenMasterPath, rawUd, true); } catch { }
                     }
-
                     try { if (File.Exists(rawUd)) File.SetAttributes(rawUd, FileAttributes.Normal); } catch { }
-
-                    string baseFmt = DetectDiskFormat(rawUd);
-                    RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", baseFmt), 30000, avdDir);
-
-                    // Automatic fallback if creation failed
-                    if (!File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0))
-                    {
-                        string altFmt = (baseFmt == "raw") ? "qcow2" : "raw";
-                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", altFmt), 30000, avdDir);
-                    }
                 }
                 catch { }
+            }
+
+            if (File.Exists(QemuImgPath) && File.Exists(rawUd))
+            {
+                string baseFmt = DetectDiskFormat(rawUd);
+                if (needQcow2)
+                {
+                    try
+                    {
+                        if (File.Exists(emuQcow2))
+                        {
+                            try { File.SetAttributes(emuQcow2, FileAttributes.Normal); File.Delete(emuQcow2); } catch { }
+                        }
+                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b "{0}" -F {1} "{2}"", rawUd, baseFmt, emuQcow2), 30000, avdDir);
+                        if (!File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0))
+                        {
+                            string altFmt = (baseFmt == "raw") ? "qcow2" : "raw";
+                            RunCommand(QemuImgPath, string.Format("create -f qcow2 -b "{0}" -F {1} "{2}"", rawUd, altFmt, emuQcow2), 30000, avdDir);
+                        }
+                    }
+                    catch { }
+                }
+                else if (File.Exists(emuQcow2))
+                {
+                    // Ensure backing path in existing QCOW2 is absolute so emulator.exe running from sdk\emulator never fails to open backing file
+                    try
+                    {
+                        RunCommand(QemuImgPath, string.Format("rebase -u -b "{0}" -F {1} "{2}"", rawUd, baseFmt, emuQcow2), 15000, avdDir);
+                    }
+                    catch { }
+                }
             }
         }
 
@@ -1386,6 +1484,25 @@ namespace DofusFarm.Engine
             catch { }
         }
 
+        private Process StartEmulatorProcess(string emuArgs, bool minimized)
+        {
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = EmulatorPath,
+                Arguments = emuArgs,
+                WorkingDirectory = Path.Combine(SdkRoot, "emulator"),
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = minimized ? ProcessWindowStyle.Minimized : ProcessWindowStyle.Normal
+            };
+            psi.EnvironmentVariables["ANDROID_SDK_ROOT"] = SdkRoot;
+            psi.EnvironmentVariables["ANDROID_HOME"] = SdkRoot;
+            psi.EnvironmentVariables["ANDROID_AVD_HOME"] = AvdHome;
+            psi.EnvironmentVariables["ANDROID_EMULATOR_HOME"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".android");
+            psi.EnvironmentVariables["ANDROID_EMULATOR_METRICS_ENABLED"] = "0";
+            return Process.Start(psi);
+        }
+
         public void LaunchInstance(string name, int port, int ramMb, int cores, string proxy = null)
         {
             EnsureAdvancedFeatures();
@@ -1393,7 +1510,6 @@ namespace DofusFarm.Engine
             CleanLocks(avdDir);
             EnsureOverlay(avdDir);
 
-            // Determine per-slot local proxy port and upstream proxy configuration (NET-01)
             int slot = Math.Max(0, (port - 5554) / 2);
             int localProxyPort = 8880 + slot;
             string upstreamProxy = null;
@@ -1409,75 +1525,62 @@ namespace DofusFarm.Engine
             }
             else
             {
-                string pTrim = proxy.StartsWith("[🌐] ") ? proxy.Substring(5).Trim() : proxy.Trim();
-                if (!pTrim.StartsWith("127.0.0.1:888", StringComparison.OrdinalIgnoreCase))
-                {
-                    upstreamProxy = pTrim;
-                }
+                upstreamProxy = NormalizeUpstreamProxy(proxy);
             }
 
-            // Retrieve instance-specific hardware identity
+            DeviceProfile instProfile = GetInstancePhoneModel(name);
             string identFile = Path.Combine(avdDir, "identity.json");
-            string serialNo = Guid.NewGuid().ToString("N").Substring(0, 12).ToUpper();
-            string androidId = Guid.NewGuid().ToString("N").Substring(0, 16);
-            string mac = string.Format("52:54:00:12:34:{0:X2}", (port / 2) % 256);
+            string serialNo = (instProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
+            string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
+            string mac = GenerateRealisticMac(instProfile, slot + 1, serialNo);
 
             if (File.Exists(identFile))
             {
                 try
                 {
                     string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    System.Text.RegularExpressions.Match mS = RxSerial.Match(idJson);
+                    Match mS = RxSerial.Match(idJson);
                     if (mS.Success && !string.IsNullOrEmpty(mS.Groups[1].Value))
-                    {
                         serialNo = mS.Groups[1].Value.Trim().ToUpper();
-                    }
-                    System.Text.RegularExpressions.Match mA = RxAndroidId.Match(idJson);
+                    Match mA = RxAndroidId.Match(idJson);
                     if (mA.Success && !string.IsNullOrEmpty(mA.Groups[1].Value))
-                    {
                         androidId = mA.Groups[1].Value.Trim().ToLower();
-                    }
-                    System.Text.RegularExpressions.Match mM = RxMac.Match(idJson);
-                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value))
-                    {
+                    Match mM = RxMac.Match(idJson);
+                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value) && !mM.Groups[1].Value.Trim().StartsWith("52:54:00"))
                         mac = mM.Groups[1].Value.Trim();
-                    }
+                    else
+                        mac = GenerateRealisticMac(instProfile, slot + 1, serialNo);
                 }
                 catch { }
             }
 
-            if (useProxy)
+            // Ensure config.ini has disk.dataPartition.path = userdata-qemu.img before booting
+            string cfgFile = Path.Combine(avdDir, "config.ini");
+            if (File.Exists(cfgFile))
             {
-                DeviceProfile proxyProfile = GetInstancePhoneModel(name);
-                EnsureProxyRunning(localProxyPort, upstreamProxy, serialNo, androidId, proxyProfile);
+                UpdateConfigIni(cfgFile, name, ramMb, cores, instProfile);
             }
 
-            string qcow2Path = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
-            string dataArg = File.Exists(qcow2Path) ? string.Format("-data \"{0}\" ", qcow2Path) : "";
-            string proxyArg = useProxy ? string.Format("-http-proxy http://127.0.0.1:{0} ", localProxyPort) : "";
+            bool proxyActive = false;
+            if (useProxy)
+            {
+                proxyActive = EnsureProxyRunning(localProxyPort, upstreamProxy, serialNo, androidId, instProfile);
+            }
 
+            string proxyArg = (useProxy && proxyActive) ? string.Format("-http-proxy http://127.0.0.1:{0} ", localProxyPort) : "";
+
+            // Clean, universally supported emulator.exe CLI flags (no invalid -wifi-mac-address or -no-location-ui)
             string emuArgs = string.Format(
                 "-avd {0} -port {1} -gpu host -memory {2} -cores {3} " +
-                "-no-boot-anim " +
-                "-no-audio -no-metrics -accel on -skip-adb-auth " +
-                "-no-location-ui -no-passive-gps {4}{5}" +
-                "-wifi-mac-address {6} " +
-                "-prop qemu.hw.mainkeys=1",
-                name, port, ramMb, cores, dataArg, proxyArg, mac);
+                "-no-boot-anim -no-audio -accel on -skip-adb-auth " +
+                "-no-passive-gps {4}-prop qemu.hw.mainkeys=1",
+                name, port, ramMb, cores, proxyArg);
 
-            Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core / MAC {4})...", name, port, ramMb, cores, mac));
+            Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / {4} / MAC {5})...", name, port, ramMb, cores, instProfile.DisplayName, mac));
 
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = EmulatorPath,
-                Arguments = emuArgs,
-                WorkingDirectory = Path.Combine(SdkRoot, "emulator"),
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
+            try { Adb("", "start-server", 6000); } catch { }
 
-            Process proc = Process.Start(psi);
+            Process proc = StartEmulatorProcess(emuArgs, false);
             if (proc != null)
             {
                 lock (_pidCacheLock) { _cachedPortToPid[port] = proc.Id; }
@@ -1485,7 +1588,6 @@ namespace DofusFarm.Engine
             }
             string serial = "emulator-" + port;
 
-            // Pin dedicated CPU core affinity mask scaled to user's configured core count (PERF-AFFINITY-01)
             try
             {
                 int totalCores = Environment.ProcessorCount;
@@ -1501,21 +1603,48 @@ namespace DofusFarm.Engine
             }
             catch { }
 
-            // Start asynchronous background monitor with Warm QuickBoot Fast-Path (~2-3s) & Auto-Snapshot Sealing
             ThreadPool.QueueUserWorkItem(delegate
             {
-                ConfigureGuestAndLaunchGame(name, serial, port, ramMb, avdDir, serialNo, androidId, false);
+                ConfigureGuestAndLaunchGame(name, serial, port, ramMb, cores, avdDir, serialNo, androidId, mac, proxyArg, proc, false);
             });
         }
 
-        private void ConfigureGuestAndLaunchGame(string name, string serial, int port, int ramMb, string avdDir, string serialNo, string androidId, bool shutdownAfterSnapshot)
+        private void ConfigureGuestAndLaunchGame(string name, string serial, int port, int ramMb, int cores, string avdDir, string serialNo, string androidId, string mac, string proxyArg, Process proc, bool shutdownAfterSnapshot)
         {
             Stopwatch sw = Stopwatch.StartNew();
             bool adbReady = false;
+            bool retriedGpuFallback = false;
 
-            while (sw.Elapsed.TotalSeconds < 120)
+            while (sw.Elapsed.TotalSeconds < 90)
             {
-                string state = Adb(serial, "get-state", 4000);
+                if (proc != null && proc.HasExited)
+                {
+                    if (!retriedGpuFallback)
+                    {
+                        retriedGpuFallback = true;
+                        CleanLocks(avdDir);
+                        string fallbackArgs = string.Format(
+                            "-avd {0} -port {1} -gpu angle_indirect -memory {2} -cores {3} " +
+                            "-no-boot-anim -no-audio -accel on -skip-adb-auth " +
+                            "-no-passive-gps {4}-prop qemu.hw.mainkeys=1",
+                            name, port, ramMb, cores, proxyArg ?? "");
+                        Log(string.Format("Host GPU init exited early on {0}; automatically retrying with ANGLE Direct3D renderer...", name));
+                        proc = StartEmulatorProcess(fallbackArgs, shutdownAfterSnapshot);
+                        if (proc != null)
+                        {
+                            int slot = Math.Max(0, (port - 5554) / 2);
+                            lock (_pidCacheLock) { _cachedPortToPid[port] = proc.Id; }
+                            PriorityGovernor.RegisterInstancePid(proc.Id, slot, cores);
+                        }
+                        sw.Restart();
+                        Thread.Sleep(500);
+                        continue;
+                    }
+                    Log(string.Format("Error: Emulator process for {0} exited unexpectedly (code {1}).", name, proc.ExitCode));
+                    return;
+                }
+
+                string state = Adb(serial, "get-state", 3500);
                 if (state.Contains("device"))
                 {
                     adbReady = true;
@@ -1526,14 +1655,14 @@ namespace DofusFarm.Engine
 
             if (!adbReady)
             {
-                Log(string.Format("Warning: {0} did not reach ADB device state within timeout.", name));
+                Log(string.Format("Warning: {0} did not reach ADB device state within 90s.", name));
                 return;
             }
 
             string flagPath = Path.Combine(avdDir, "sanitize_session.flag");
             bool needsSanitize = File.Exists(flagPath);
 
-            // FAST-PATH: Check if instance restored directly from a pre-warmed QuickBoot RAM snapshot
+            // 1. FAST-PATH: Check if instance restored directly from a pre-warmed QuickBoot RAM snapshot
             if (!shutdownAfterSnapshot && !needsSanitize)
             {
                 string warmState = AdbShell(serial, "test -f /data/local/tmp/fake_cpuinfo && grep -q fake_cpuinfo /proc/mounts && getprop sys.boot_completed");
@@ -1554,21 +1683,35 @@ namespace DofusFarm.Engine
                 }
             }
 
-            // COLD-BOOT / WARMUP PIPELINE: Elevate to root for VFS coherence, zRAM, and HAL/bloatware suppression
-            Adb(serial, "root");
-            Thread.Sleep(350);
+            // 2. COLD-BOOT WAIT: Let Android finish booting FIRST before running root/settings/mounts so system_server & zygote never stall!
+            Stopwatch bootSw = Stopwatch.StartNew();
+            while (bootSw.Elapsed.TotalSeconds < 120)
+            {
+                if (proc != null && proc.HasExited) return;
+                string bootCheck = AdbShell(serial, "getprop sys.boot_completed; getprop sys.logbootcomplete; getprop init.svc.bootanim");
+                if (!string.IsNullOrEmpty(bootCheck) && (bootCheck.Contains("1") || bootCheck.Contains("stopped")))
+                {
+                    break;
+                }
+                Thread.Sleep(1000);
+            }
 
-            ApplyNativeHardwareCoherence(serial, serialNo, name);
-            AdbShell(serial, "settings put secure android_id " + androidId);
+            // 3. Elevate to root now that zygote & system_server are fully initialized
+            Adb(serial, "root", 8000);
+            Thread.Sleep(300);
 
-            // Activate LZ4 zRAM compressed swap if not yet active
+            // 4. Apply Kernel, VFS, sysfs & Network Interface / ARP / MAC / Carrier Coherence in a single fast pass
+            ApplyNativeHardwareCoherence(serial, serialNo, name, mac);
+            AdbShell(serial, string.Format("settings put secure android_id {0}; settings put global window_animation_scale 0.0; settings put global transition_animation_scale 0.0; settings put global animator_duration_scale 0.0", androidId));
+
+            // 5. Activate LZ4 zRAM compressed swap if not yet active
             string zramPath = GetScriptPath("apply-zram.sh");
             if (!string.IsNullOrEmpty(zramPath) && File.Exists(zramPath))
             {
                 string swapCheck = AdbShell(serial, "grep -q zram0 /proc/swaps && echo ACTIVE || echo NONE");
                 if (!swapCheck.Contains("ACTIVE"))
                 {
-                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/apply-zram.sh", zramPath));
+                    Adb(serial, string.Format("push "{0}" /data/local/tmp/apply-zram.sh", zramPath));
                     AdbShell(serial, "chmod 755 /data/local/tmp/apply-zram.sh && sh /data/local/tmp/apply-zram.sh >/dev/null 2>&1 || true");
                 }
             }
@@ -1580,7 +1723,7 @@ namespace DofusFarm.Engine
                 Log(string.Format("Sanitized cloned session tokens, IndexedDB databases, and cookies for {0}.", name));
             }
 
-            // Deploy unified mobile-disguise.js (includes HumanFatigueModel) via 1 push + 1 in-guest copy
+            // 6. Deploy interpolated mobile-disguise.js
             string disguisePath = GetScriptPath("mobile-disguise.js");
             if (!string.IsNullOrEmpty(disguisePath) && File.Exists(disguisePath))
             {
@@ -1598,7 +1741,7 @@ namespace DofusFarm.Engine
                 try
                 {
                     File.WriteAllText(tempDisguise, interpolatedJs, Encoding.UTF8);
-                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/mobile-disguise.js", tempDisguise));
+                    Adb(serial, string.Format("push "{0}" /data/local/tmp/mobile-disguise.js", tempDisguise));
                 }
                 finally
                 {
@@ -1606,7 +1749,9 @@ namespace DofusFarm.Engine
                 }
             }
 
-            string distCmd =
+            // 7. Single combined shell pass for WebView flags, JS placement, service suppression & one-time package debloat
+            string heapLimit = (ramMb >= 8192) ? "1024m" : (ramMb >= 4096) ? "512m" : (ramMb >= 2048) ? "384m" : (ramMb >= 1024) ? "256m" : "192m";
+            string combinedSetupCmd =
                 "echo '_ --enable-devtools-experiments --remote-debugging-port=9222 --disable-background-timer-throttling' > /data/local/tmp/webview-command-line; " +
                 "chmod 644 /data/local/tmp/webview-command-line /data/local/tmp/mobile-disguise.js 2>/dev/null || true; " +
                 "mkdir -p /data/user/0/com.ankama.dofustouch/files/files/js /data/data/com.ankama.dofustouch/files/files/js /data/user/0/com.ankama.dofustouch/files/js /data/data/com.ankama.dofustouch/files/js; " +
@@ -1615,85 +1760,29 @@ namespace DofusFarm.Engine
                 "done; " +
                 "APP_UID=$(stat -c '%u' /data/data/com.ankama.dofustouch 2>/dev/null || echo 10000); " +
                 "chown -R $APP_UID:$APP_UID /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null; " +
-                "chmod -R 777 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null; " +
-                "chcon -R u:object_r:app_data_file:s0 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null || true";
-            AdbShell(serial, distCmd);
-
-            // Fast service suppression via ctl.stop & Dalvik heap scaling
-            string heapLimit = (ramMb >= 8192) ? "1024m" : (ramMb >= 4096) ? "512m" : (ramMb >= 2048) ? "384m" : (ramMb >= 1024) ? "256m" : "192m";
-            string stopCmd =
+                "chmod -R 755 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null; " +
+                "chcon -R u:object_r:app_data_file:s0 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null || true; " +
                 "setprop dalvik.vm.heapgrowthlimit " + heapLimit + "; " +
-                "setprop ctl.stop cameraserver; " +
-                "setprop ctl.stop vendor.camera-provider-2-4; " +
-                "setprop ctl.stop drmserver; " +
-                "setprop ctl.stop vendor.drm-hal-1-0; " +
-                "setprop ctl.stop vendor.drm-clearkey-hal-1-2; " +
-                "setprop ctl.stop vendor.drm-widevine-hal-1-2; " +
-                "setprop ctl.stop mediadrmserver; " +
-                "setprop ctl.stop traced; " +
-                "setprop ctl.stop traced_probes; " +
-                "setprop ctl.stop statsd; " +
-                "setprop ctl.stop incidentd; " +
-                "setprop ctl.stop tombstoned; " +
-                "setprop ctl.stop llkd-1; " +
-                "setprop ctl.stop mdnsd; " +
-                "setprop ctl.stop goldfish-logcat; " +
-                "setprop ctl.stop vendor.fps_hal; " +
-                "setprop ctl.stop broadcastradio-hal; " +
-                "setprop ctl.stop vendor.cas-hal-1-1; " +
-                "setprop ctl.stop vendor.gnss_service; " +
-                "setprop ctl.stop hostapd";
-            AdbShell(serial, stopCmd);
-
-            // Wait for PackageManager readiness
-            while (sw.Elapsed.TotalSeconds < 120)
-            {
-                string logBoot = AdbShell(serial, "getprop sys.logbootcomplete");
-                string bootAnim = AdbShell(serial, "getprop init.svc.bootanim");
-                string devBoot = AdbShell(serial, "getprop sys.boot_completed");
-
-                if (logBoot.Contains("1") || bootAnim.Contains("stopped") || devBoot.Contains("1"))
-                {
-                    break;
-                }
-                Thread.Sleep(800);
-            }
-
-            // One-time persistent package debloat (skipped on subsequent boots if .dofus_debloated exists)
-            string debloatCmd =
+                "for svc in cameraserver vendor.camera-provider-2-4 drmserver vendor.drm-hal-1-0 vendor.drm-clearkey-hal-1-2 vendor.drm-widevine-hal-1-2 mediadrmserver traced traced_probes statsd incidentd tombstoned llkd-1 mdnsd goldfish-logcat vendor.fps_hal broadcastradio-hal vendor.cas-hal-1-1 vendor.gnss_service hostapd; do " +
+                "  setprop ctl.stop $svc 2>/dev/null || true; " +
+                "done; " +
                 "if [ ! -f /data/local/tmp/.dofus_debloated ]; then " +
-                "  settings put global window_animation_scale 0.0; " +
-                "  settings put global transition_animation_scale 0.0; " +
-                "  settings put global animator_duration_scale 0.0; " +
-                "  pm disable-user --user 0 com.android.cts.priv.ctsshim; " +
-                "  pm disable-user --user 0 com.android.cts.ctsshim; " +
-                "  pm disable-user --user 0 org.chromium.webview_shell; " +
-                "  pm disable-user --user 0 com.android.sdksetup; " +
-                "  pm disable-user --user 0 com.android.provision; " +
-                "  pm disable-user --user 0 com.android.statementservice; " +
-                "  pm disable-user --user 0 com.android.printspooler; " +
-                "  pm disable-user --user 0 com.android.bips; " +
-                "  pm disable-user --user 0 com.android.camera2; " +
-                "  pm disable-user --user 0 com.android.music; " +
-                "  pm disable-user --user 0 com.android.dreams.basic; " +
-                "  pm disable-user --user 0 com.android.wallpaper.livepicker; " +
-                "  pm disable-user --user 0 com.android.wallpaperbackup; " +
-                "  pm disable-user --user 0 com.android.calllogbackup; " +
-                "  pm disable-user --user 0 com.android.quicksearchbox; " +
+                "  for pkg in com.android.cts.priv.ctsshim com.android.cts.ctsshim org.chromium.webview_shell com.android.sdksetup com.android.provision com.android.statementservice com.android.printspooler com.android.bips com.android.camera2 com.android.music com.android.dreams.basic com.android.wallpaper.livepicker com.android.wallpaperbackup com.android.calllogbackup com.android.quicksearchbox; do " +
+                "    pm disable-user --user 0 $pkg 2>/dev/null || true; " +
+                "  done; " +
                 "  touch /data/local/tmp/.dofus_debloated; " +
                 "fi";
-            AdbShell(serial, debloatCmd);
+            AdbShell(serial, combinedSetupCmd);
 
             if (shutdownAfterSnapshot)
             {
                 AdbShell(serial, "cmd package compile -m speed-profile com.ankama.dofustouch 2>/dev/null || true");
             }
 
-            // Drop root daemon privileges prior to snapshot & gameplay to eliminate anti-cheat root detection (BUG-34)
-            Adb(serial, "unroot");
-            Thread.Sleep(350);
+            // Drop root daemon privileges prior to snapshot & gameplay
+            Adb(serial, "unroot", 6000);
+            Thread.Sleep(250);
 
-            // Seal clean QuickBoot snapshot (default_boot) BEFORE starting the game activity so snapshots never freeze login or capture stale sockets
             try
             {
                 AdbShell(serial, "sync");
@@ -1707,7 +1796,6 @@ namespace DofusFarm.Engine
                 return;
             }
 
-            // Launch Dofus Touch main activity
             AdbShell(serial, "am start -n com.ankama.dofustouch/.MainActivity");
 
             ThreadPool.QueueUserWorkItem(delegate
@@ -1725,10 +1813,12 @@ namespace DofusFarm.Engine
             CleanLocks(avdDir);
             EnsureOverlay(avdDir);
 
+            int slot = Math.Max(0, (port - 5554) / 2);
+            DeviceProfile instProfile = GetInstancePhoneModel(name);
             string identFile = Path.Combine(avdDir, "identity.json");
-            string serialNo = Guid.NewGuid().ToString("N").Substring(0, 12).ToUpper();
-            string androidId = Guid.NewGuid().ToString("N").Substring(0, 16);
-            string mac = string.Format("52:54:00:12:34:{0:X2}", (port / 2) % 256);
+            string serialNo = (instProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
+            string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
+            string mac = GenerateRealisticMac(instProfile, slot + 1, serialNo);
 
             if (File.Exists(identFile))
             {
@@ -1740,33 +1830,22 @@ namespace DofusFarm.Engine
                     var mA = RxAndroidId.Match(idJson);
                     if (mA.Success && !string.IsNullOrEmpty(mA.Groups[1].Value)) androidId = mA.Groups[1].Value.Trim().ToLower();
                     var mM = RxMac.Match(idJson);
-                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value)) mac = mM.Groups[1].Value.Trim();
+                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value) && !mM.Groups[1].Value.Trim().StartsWith("52:54:00"))
+                        mac = mM.Groups[1].Value.Trim();
                 }
                 catch { }
             }
 
-            string qcow2Path = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
-            string dataArg = File.Exists(qcow2Path) ? string.Format("-data \"{0}\" ", qcow2Path) : "";
-
             string emuArgs = string.Format(
                 "-avd {0} -port {1} -gpu host -memory {2} -cores {3} " +
-                "-no-boot-anim -no-audio -no-metrics -accel on -skip-adb-auth " +
-                "-no-location-ui -no-passive-gps {4}-wifi-mac-address {5} -prop qemu.hw.mainkeys=1",
-                name, port, ramMb, cores, dataArg, mac);
+                "-no-boot-anim -no-audio -accel on -skip-adb-auth " +
+                "-no-passive-gps -prop qemu.hw.mainkeys=1",
+                name, port, ramMb, cores);
 
             Log(string.Format("🔥 Starting background Cold-Run warmup for {0} (port {1})...", name, port));
 
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = EmulatorPath,
-                Arguments = emuArgs,
-                WorkingDirectory = Path.Combine(SdkRoot, "emulator"),
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Minimized
-            };
-
-            Process proc = Process.Start(psi);
+            try { Adb("", "start-server", 6000); } catch { }
+            Process proc = StartEmulatorProcess(emuArgs, true);
             string serial = "emulator-" + port;
 
             try
@@ -1781,7 +1860,7 @@ namespace DofusFarm.Engine
                     }
                 });
 
-                ConfigureGuestAndLaunchGame(name, serial, port, ramMb, avdDir, serialNo, androidId, true);
+                ConfigureGuestAndLaunchGame(name, serial, port, ramMb, cores, avdDir, serialNo, androidId, mac, "", proc, true);
             }
             finally
             {
@@ -1820,12 +1899,17 @@ namespace DofusFarm.Engine
             return null;
         }
 
-        private void ApplyNativeHardwareCoherence(string serial, string slotSerial, string name = null)
+        private void ApplyNativeHardwareCoherence(string serial, string slotSerial, string name = null, string mac = null)
         {
             try
             {
                 DeviceProfile activeProf = !string.IsNullOrEmpty(name) ? GetInstancePhoneModel(name) : DeviceCatalog.GetProfile("galaxy-a51");
                 if (activeProf == null) activeProf = DeviceCatalog.GetProfile("galaxy-a51");
+                if (string.IsNullOrEmpty(mac) || mac.StartsWith("52:54:00"))
+                {
+                    mac = GenerateRealisticMac(activeProf, 1, slotSerial);
+                }
+                string lowerMac = mac.ToLowerInvariant();
 
                 // 1. Construct CPU topology & hardware string dynamically for profile SoC
                 StringBuilder cpuinfo = new StringBuilder();
@@ -1859,94 +1943,97 @@ namespace DofusFarm.Engine
                 cpuinfo.Append("Revision\t: 0000\n");
                 cpuinfo.Append(string.Format("Serial\t\t: {0}\n", slotSerial));
 
-                // 2. Construct authentic Linux kernel /proc/version
+                // 2. Construct authentic Linux kernel /proc/version & /proc/cmdline
                 string version = (activeProf.SocManufacturer == "Qualcomm")
                     ? string.Format("Linux version 4.19.157-perf (android-build@google.com) (Android clang version 10.0.7) #1 SMP PREEMPT {0}\n", DateTime.UtcNow.ToString("ddd MMM d HH:mm:ss UTC yyyy"))
                     : (activeProf.SocManufacturer == "Google"
                         ? string.Format("Linux version 5.10.43-android12-9-00001 (android-build@google.com) (Android clang version 12.0.5) #1 SMP PREEMPT {0}\n", DateTime.UtcNow.ToString("ddd MMM d HH:mm:ss UTC yyyy"))
                         : "Linux version 4.14.113-18116515 (dpi@SWDG4908) (Android (5484270 based on r353983c) clang version 9.0.3) #1 SMP PREEMPT Thu Jan 9 20:01:14 KST 2020\n");
 
-                // 2b. Construct authentic /proc/cmdline (BUG-23, BUG-33, BUG-39, androidboot.hardware=exynos9611 androidboot.serialno={0})
                 string bootDevice = (activeProf.SocManufacturer == "Qualcomm")
                     ? string.Format("soc/{0}.ufshc", activeProf.Hardware)
                     : (activeProf.SocManufacturer == "Google" ? "14700000.ufs" : "soc/13520000.ufs");
-                string cmdline = string.Format("console=ram loglevel=4 androidboot.hardware={0} androidboot.serialno={1} loop.max_part=7 androidboot.boot_devices={2} buildvariant=user androidboot.selinux=enforcing androidboot.verifiedbootstate=green\n", activeProf.Hardware, slotSerial, bootDevice);
+                string cmdline = string.Format("console=ram loglevel=4 androidboot.hardware={0} androidboot.serialno={1} androidboot.wifimacaddr={2} loop.max_part=7 androidboot.boot_devices={3} buildvariant=user androidboot.selinux=enforcing androidboot.verifiedbootstate=green\n", activeProf.Hardware, slotSerial, lowerMac, bootDevice);
 
-                // 3. Write temporary files and push to guest
-                string tmpCpu = Path.Combine(Path.GetTempPath(), "dofus_cpuinfo_" + Guid.NewGuid().ToString("N"));
-                string tmpVer = Path.Combine(Path.GetTempPath(), "dofus_version_" + Guid.NewGuid().ToString("N"));
-                string tmpCmd = Path.Combine(Path.GetTempPath(), "dofus_cmdline_" + Guid.NewGuid().ToString("N"));
-                try
-                {
-                    File.WriteAllText(tmpCpu, cpuinfo.ToString(), new UTF8Encoding(false));
-                    File.WriteAllText(tmpVer, version, new UTF8Encoding(false));
-                    File.WriteAllText(tmpCmd, cmdline, new UTF8Encoding(false));
+                // 3. Per-instance French mobile carrier rotation & residential ARP table (hiding QEMU 10.0.2.2 SLIRP MAC 52:55:0a:00:02:02)
+                string[] carrierCodes = new[] { "20801", "20810", "20820", "20815" };
+                string[] carrierNames = new[] { "Orange F", "SFR", "Bouygues Telecom", "Free" };
+                int cIdx = Math.Abs((slotSerial ?? "R58M").GetHashCode()) % carrierCodes.Length;
+                string cCode = carrierCodes[cIdx];
+                string cName = carrierNames[cIdx];
+                string routerMac = string.Format("dc:00:b0:{0:x2}:{1:x2}:fe", (cIdx * 37 + 19) & 0xFF, (slotSerial.Length * 53) & 0xFF);
+                string fakeArp = string.Format("IP address       HW type     Flags       HW address            Mask     Device\n192.168.1.254    0x1         0x2         {0}     *        wlan0\n", routerMac);
 
-                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/fake_cpuinfo", tmpCpu));
-                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/fake_version", tmpVer));
-                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/fake_cmdline", tmpCmd));
-                }
-                finally
-                {
-                    try { if (File.Exists(tmpCpu)) File.Delete(tmpCpu); } catch { }
-                    try { if (File.Exists(tmpVer)) File.Delete(tmpVer); } catch { }
-                    try { if (File.Exists(tmpCmd)) File.Delete(tmpCmd); } catch { }
-                }
-
-                // 4. Set permissions, SELinux labels, and bind-mount over /proc/cpuinfo, /proc/version, and /proc/cmdline
-                string vfsCmd =
-                    "setenforce 0 2>/dev/null || true; " +
-                    "chmod 444 /data/local/tmp/fake_cpuinfo /data/local/tmp/fake_version /data/local/tmp/fake_cmdline; " +
-                    "chcon u:object_r:proc_cpuinfo:s0 /data/local/tmp/fake_cpuinfo 2>/dev/null || chcon u:object_r:proc:s0 /data/local/tmp/fake_cpuinfo 2>/dev/null || true; " +
-                    "chcon u:object_r:proc_version:s0 /data/local/tmp/fake_version 2>/dev/null || chcon u:object_r:proc:s0 /data/local/tmp/fake_version 2>/dev/null || true; " +
-                    "chcon u:object_r:proc_cmdline:s0 /data/local/tmp/fake_cmdline 2>/dev/null || chcon u:object_r:proc:s0 /data/local/tmp/fake_cmdline 2>/dev/null || true; " +
-                    "mount -o bind /data/local/tmp/fake_cpuinfo /proc/cpuinfo; " +
-                    "mount -o bind /data/local/tmp/fake_version /proc/version; " +
-                    "mount -o bind /data/local/tmp/fake_cmdline /proc/cmdline; " +
-                    "for p in $(pidof zygote zygote64 2>/dev/null); do " +
-                    "  nsenter -t $p -m mount -o bind /data/local/tmp/fake_cpuinfo /proc/cpuinfo 2>/dev/null || true; " +
-                    "  nsenter -t $p -m mount -o bind /data/local/tmp/fake_version /proc/version 2>/dev/null || true; " +
-                    "  nsenter -t $p -m mount -o bind /data/local/tmp/fake_cmdline /proc/cmdline 2>/dev/null || true; " +
-                    "done";
-                AdbShell(serial, vfsCmd);
-
-                // 5. Build sysfs SoC topology (/sys/devices/soc0) dynamically per profile and enforce SELinux Enforcing
                 string socId = !string.IsNullOrEmpty(activeProf.Board) ? activeProf.Board.ToUpper() : "EXYNOS9611";
                 string socFamily = activeProf.SocManufacturer ?? "Samsung";
                 string socMachine = string.Format("{0} {1}", activeProf.SocManufacturer, activeProf.SocModel);
                 string socRawId = string.Format("0x{0}", activeProf.Hardware);
 
-                string socCmd = string.Format(
-                    "mkdir -p /data/local/tmp/soc0; " +
-                    "echo -n '{0}' > /data/local/tmp/soc0/soc_id; " +
-                    "echo -n '{1}' > /data/local/tmp/soc0/family; " +
-                    "echo -n '{2}' > /data/local/tmp/soc0/machine; " +
-                    "echo -n '10' > /data/local/tmp/soc0/revision; " +
-                    "echo -n '{3}' > /data/local/tmp/soc0/raw_id; " +
-                    "echo -n '{1}' > /data/local/tmp/soc0/type; " +
-                    "chmod 755 /data/local/tmp/soc0; " +
-                    "chmod 644 /data/local/tmp/soc0/*; " +
-                    "chcon -R u:object_r:sysfs:s0 /data/local/tmp/soc0 2>/dev/null || true; " +
-                    "mkdir -p /sys/devices/soc0 2>/dev/null || true; " +
-                    "mount -o bind /data/local/tmp/soc0 /sys/devices/soc0 2>/dev/null || true; " +
-                    "for p in $(pidof zygote zygote64 2>/dev/null); do " +
-                    "  nsenter -t $p -m mount -o bind /data/local/tmp/soc0 /sys/devices/soc0 2>/dev/null || true; " +
-                    "done; " +
-                    "setenforce 1 2>/dev/null || true",
-                    socId, socFamily, socMachine, socRawId);
-                AdbShell(serial, socCmd);
+                // 4. Build a single self-contained shell script to apply all VFS/sysfs/network bind-mounts in 1 ADB round-trip
+                StringBuilder sh = new StringBuilder();
+                sh.Append("setenforce 0 2>/dev/null || true\n");
+                sh.Append("cat << 'EOF_CPU' > /data/local/tmp/fake_cpuinfo\n").Append(cpuinfo.ToString()).Append("EOF_CPU\n");
+                sh.Append("cat << 'EOF_VER' > /data/local/tmp/fake_version\n").Append(version).Append("EOF_VER\n");
+                sh.Append("cat << 'EOF_CMD' > /data/local/tmp/fake_cmdline\n").Append(cmdline).Append("EOF_CMD\n");
+                sh.Append("cat << 'EOF_ARP' > /data/local/tmp/fake_arp\n").Append(fakeArp).Append("EOF_ARP\n");
+                sh.Append(string.Format("echo '{0}' > /data/local/tmp/fake_mac\n", lowerMac));
+                sh.Append("chmod 444 /data/local/tmp/fake_cpuinfo /data/local/tmp/fake_version /data/local/tmp/fake_cmdline /data/local/tmp/fake_arp /data/local/tmp/fake_mac\n");
+                sh.Append("chcon u:object_r:proc_cpuinfo:s0 /data/local/tmp/fake_cpuinfo 2>/dev/null || chcon u:object_r:proc:s0 /data/local/tmp/fake_cpuinfo 2>/dev/null || true\n");
+                sh.Append("chcon u:object_r:proc_version:s0 /data/local/tmp/fake_version 2>/dev/null || chcon u:object_r:proc:s0 /data/local/tmp/fake_version 2>/dev/null || true\n");
+                sh.Append("chcon u:object_r:proc_cmdline:s0 /data/local/tmp/fake_cmdline 2>/dev/null || chcon u:object_r:proc:s0 /data/local/tmp/fake_cmdline 2>/dev/null || true\n");
+                sh.Append("chcon u:object_r:proc_net:s0 /data/local/tmp/fake_arp 2>/dev/null || chcon u:object_r:proc:s0 /data/local/tmp/fake_arp 2>/dev/null || true\n");
+                sh.Append("chcon u:object_r:sysfs:s0 /data/local/tmp/fake_mac 2>/dev/null || true\n");
+                sh.Append("mount -o bind /data/local/tmp/fake_cpuinfo /proc/cpuinfo 2>/dev/null || true\n");
+                sh.Append("mount -o bind /data/local/tmp/fake_version /proc/version 2>/dev/null || true\n");
+                sh.Append("mount -o bind /data/local/tmp/fake_cmdline /proc/cmdline 2>/dev/null || true\n");
+                sh.Append("mount -o bind /data/local/tmp/fake_arp /proc/net/arp 2>/dev/null || true\n");
+                sh.Append("if [ -f /sys/class/net/wlan0/address ]; then mount -o bind /data/local/tmp/fake_mac /sys/class/net/wlan0/address 2>/dev/null || true; fi\n");
+                sh.Append("if [ -f /sys/class/net/eth0/address ]; then mount -o bind /data/local/tmp/fake_mac /sys/class/net/eth0/address 2>/dev/null || true; fi\n");
+                sh.Append("mkdir -p /data/local/tmp/soc0\n");
+                sh.Append(string.Format("echo -n '{0}' > /data/local/tmp/soc0/soc_id\n", socId));
+                sh.Append(string.Format("echo -n '{0}' > /data/local/tmp/soc0/family\n", socFamily));
+                sh.Append(string.Format("echo -n '{0}' > /data/local/tmp/soc0/machine\n", socMachine));
+                sh.Append("echo -n '10' > /data/local/tmp/soc0/revision\n");
+                sh.Append(string.Format("echo -n '{0}' > /data/local/tmp/soc0/raw_id\n", socRawId));
+                sh.Append(string.Format("echo -n '{0}' > /data/local/tmp/soc0/type\n", socFamily));
+                sh.Append("chmod 755 /data/local/tmp/soc0 && chmod 644 /data/local/tmp/soc0/*\n");
+                sh.Append("chcon -R u:object_r:sysfs:s0 /data/local/tmp/soc0 2>/dev/null || true\n");
+                sh.Append("mkdir -p /sys/devices/soc0 2>/dev/null || true\n");
+                sh.Append("mount -o bind /data/local/tmp/soc0 /sys/devices/soc0 2>/dev/null || true\n");
+                sh.Append("for p in $(pidof zygote zygote64 com.ankama.dofustouch 2>/dev/null); do\n");
+                sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_cpuinfo /proc/cpuinfo 2>/dev/null || true\n");
+                sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_version /proc/version 2>/dev/null || true\n");
+                sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_cmdline /proc/cmdline 2>/dev/null || true\n");
+                sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_arp /proc/net/arp 2>/dev/null || true\n");
+                sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/soc0 /sys/devices/soc0 2>/dev/null || true\n");
+                sh.Append("  if [ -f /sys/class/net/wlan0/address ]; then nsenter -t $p -m mount -o bind /data/local/tmp/fake_mac /sys/class/net/wlan0/address 2>/dev/null || true; fi\n");
+                sh.Append("  if [ -f /sys/class/net/eth0/address ]; then nsenter -t $p -m mount -o bind /data/local/tmp/fake_mac /sys/class/net/eth0/address 2>/dev/null || true; fi\n");
+                sh.Append("done\n");
+                sh.Append("setprop debug.choreographer.skipwarning 30\n");
+                sh.Append("setprop gsm.sim.state READY\n");
+                sh.Append(string.Format("setprop gsm.sim.operator.numeric {0}\n", cCode));
+                sh.Append(string.Format("setprop gsm.operator.numeric {0}\n", cCode));
+                sh.Append(string.Format("setprop gsm.sim.operator.alpha \"{0}\"\n", cName));
+                sh.Append(string.Format("setprop gsm.operator.alpha \"{0}\"\n", cName));
+                sh.Append("setprop gsm.sim.operator.iso-country fr\n");
+                sh.Append("setprop gsm.operator.iso-country fr\n");
+                sh.Append("setprop gsm.network.type LTE\n");
+                sh.Append("setprop wifi.interface wlan0\n");
+                sh.Append("setenforce 1 2>/dev/null || true\n");
 
-                // 6. Enforce dynamic runtime properties (debug frame pacing, telephony)
-                // Note: All ro.* properties are sealed at boot time via -prop and system.prop per Android spec
-                string propsCmd =
-                    "setprop debug.choreographer.skipwarning 30; " +
-                    "setprop gsm.sim.state READY; " +
-                    "setprop gsm.sim.operator.numeric 20801; " +
-                    "setprop gsm.sim.operator.alpha Orange; " +
-                    "setprop gsm.network.type LTE";
-                AdbShell(serial, propsCmd);
+                string tmpSh = Path.Combine(Path.GetTempPath(), "dofus_coherence_" + Guid.NewGuid().ToString("N") + ".sh");
+                try
+                {
+                    File.WriteAllText(tmpSh, sh.ToString().Replace("\r\n", "\n"), new UTF8Encoding(false));
+                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/apply-coherence.sh", tmpSh));
+                    AdbShell(serial, "chmod 755 /data/local/tmp/apply-coherence.sh && sh /data/local/tmp/apply-coherence.sh >/dev/null 2>&1 && rm -f /data/local/tmp/apply-coherence.sh");
+                }
+                finally
+                {
+                    try { if (File.Exists(tmpSh)) File.Delete(tmpSh); } catch { }
+                }
 
-                Log(string.Format("[🛡️ Kernel Coherence] Applied {0} {1} VFS & sysfs disguise on {2}.", activeProf.SocManufacturer, activeProf.SocModel, serial));
+                Log(string.Format("[🛡️ Coherence] Applied {0} {1} VFS, sysfs, MAC ({2}) & {3} network disguise on {4}.", activeProf.SocManufacturer, activeProf.SocModel, mac, cName, serial));
             }
             catch (Exception ex)
             {
@@ -2472,7 +2559,7 @@ namespace DofusFarm.Engine
             DeviceProfile tgtProfile = DeviceCatalog.GetDefaultProfileForIndex(targetIdx);
             string serialNo = (tgtProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
             string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
-            string mac = string.Format("52:54:00:12:34:{0:X2}", targetIdx);
+            string mac = GenerateRealisticMac(tgtProfile, targetIdx, serialNo);
 
             // Preserve source instance's upstream proxy configuration (BUG-27)
             string srcProxy = GetProxy(sourceName);
@@ -2531,7 +2618,7 @@ namespace DofusFarm.Engine
                 if (File.Exists(QemuImgPath))
                 {
                     string baseFmt = DetectDiskFormat(tgtRaw);
-                    RunCommand(QemuImgPath, string.Format("rebase -u -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", baseFmt), 30000, tgtDir);
+                    RunCommand(QemuImgPath, string.Format("rebase -u -b \"{0}\" -F {1} \"{2}\"", tgtRaw, baseFmt, tgtQcow2), 30000, tgtDir);
                     // Validate QCOW2 cluster consistency post-rebase (VULN-12)
                     RunCommand(QemuImgPath, "check \"userdata-qemu.img.qcow2\"", 30000, tgtDir);
                 }
@@ -2542,11 +2629,11 @@ namespace DofusFarm.Engine
                 if (File.Exists(QemuImgPath))
                 {
                     string baseFmt = DetectDiskFormat(tgtRaw);
-                    RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", baseFmt), 30000, tgtDir);
+                    RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"{0}\" -F {1} \"{2}\"", tgtRaw, baseFmt, tgtQcow2), 30000, tgtDir);
                     if (!File.Exists(tgtQcow2) || (new FileInfo(tgtQcow2).Length == 0))
                     {
                         string altFmt = (baseFmt == "raw") ? "qcow2" : "raw";
-                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"userdata-qemu.img\" -F {0} \"userdata-qemu.img.qcow2\"", altFmt), 30000, tgtDir);
+                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"{0}\" -F {1} \"{2}\"", tgtRaw, altFmt, tgtQcow2), 30000, tgtDir);
                     }
                 }
             }
@@ -2712,4 +2799,365 @@ namespace DofusFarm.Engine
             }
         }
     }
+
+    internal sealed class InProcessProxyServer
+    {
+        private readonly int _port;
+        private readonly Uri _upstreamUri;
+        private readonly bool _isSocks5;
+        private readonly string _ua;
+        private readonly string _model;
+        private readonly string _osVer;
+        private readonly string _buildId;
+        private readonly string _disguiseContent;
+        private TcpListener _listener;
+        private volatile bool _running;
+
+        public bool IsRunning { get { return _running; } }
+
+        public InProcessProxyServer(int port, string upstream, string serialNo, string androidId, DeviceProfile profile, string disguisePath)
+        {
+            _port = port;
+            if (!string.IsNullOrEmpty(upstream))
+            {
+                Uri u;
+                if (Uri.TryCreate(upstream, UriKind.Absolute, out u))
+                {
+                    _upstreamUri = u;
+                    _isSocks5 = u.Scheme.StartsWith("socks5", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            _model = (profile != null && !string.IsNullOrEmpty(profile.Model)) ? profile.Model : "SM-A515F";
+            _ua = (profile != null && !string.IsNullOrEmpty(profile.UserAgent))
+                ? profile.UserAgent
+                : "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36";
+            _osVer = "10";
+            Match mVer = Regex.Match(_ua, @"Android\s+([0-9.]+)");
+            if (mVer.Success) _osVer = mVer.Groups[1].Value;
+            _buildId = (profile != null && !string.IsNullOrEmpty(profile.BuildId)) ? profile.BuildId : "QP1A.190711.020";
+
+            if (!string.IsNullOrEmpty(disguisePath) && File.Exists(disguisePath))
+            {
+                try
+                {
+                    string raw = File.ReadAllText(disguisePath, Encoding.UTF8);
+                    _disguiseContent = raw
+                        .Replace("__DEVICE_UUID__", androidId ?? "ca8ea76b0fe32f85")
+                        .Replace("__DEVICE_SERIAL__", serialNo ?? "R58M45F41EFD")
+                        .Replace("__DEVICE_MODEL__", _model)
+                        .Replace("__DEVICE_MANUFACTURER__", (profile != null && !string.IsNullOrEmpty(profile.Manufacturer)) ? profile.Manufacturer : "samsung")
+                        .Replace("__DEVICE_UA__", _ua)
+                        .Replace("__DEVICE_GL_VENDOR__", (profile != null && !string.IsNullOrEmpty(profile.GlVendor)) ? profile.GlVendor : "ARM")
+                        .Replace("__DEVICE_GL_RENDERER__", (profile != null && !string.IsNullOrEmpty(profile.GlRenderer)) ? profile.GlRenderer : "Mali-G72 MP3")
+                        .Replace("__DEVICE_MAX_TEXTURE_SIZE__", (profile != null && profile.MaxTextureSize > 0) ? profile.MaxTextureSize.ToString() : "8192");
+                }
+                catch { _disguiseContent = ""; }
+            }
+        }
+
+        public bool Start()
+        {
+            try
+            {
+                _listener = new TcpListener(IPAddress.Loopback, _port);
+                _listener.Start(128);
+                _running = true;
+                ThreadPool.QueueUserWorkItem(AcceptLoop);
+                return true;
+            }
+            catch
+            {
+                _running = false;
+                return false;
+            }
+        }
+
+        public void Stop()
+        {
+            _running = false;
+            try { if (_listener != null) _listener.Stop(); } catch { }
+        }
+
+        private void AcceptLoop(object state)
+        {
+            while (_running)
+            {
+                try
+                {
+                    TcpClient client = _listener.AcceptTcpClient();
+                    ThreadPool.QueueUserWorkItem(HandleClient, client);
+                }
+                catch
+                {
+                    if (!_running) break;
+                }
+            }
+        }
+
+        private TcpClient ConnectTarget(string host, int port)
+        {
+            if (_upstreamUri != null)
+            {
+                string upHost = _upstreamUri.Host;
+                int upPort = _upstreamUri.Port > 0 ? _upstreamUri.Port : (_isSocks5 ? 1080 : 8080);
+                TcpClient upClient = new TcpClient();
+                upClient.NoDelay = true;
+                IAsyncResult ar = upClient.BeginConnect(upHost, upPort, null, null);
+                if (!ar.AsyncWaitHandle.WaitOne(6000))
+                {
+                    upClient.Close();
+                    throw new TimeoutException("Upstream proxy timeout");
+                }
+                upClient.EndConnect(ar);
+                NetworkStream ns = upClient.GetStream();
+                ns.ReadTimeout = 8000;
+                ns.WriteTimeout = 8000;
+
+                string user = null, pass = null;
+                if (!string.IsNullOrEmpty(_upstreamUri.UserInfo))
+                {
+                    string[] upParts = _upstreamUri.UserInfo.Split(new[] { ':' }, 2);
+                    user = Uri.UnescapeDataString(upParts[0]);
+                    if (upParts.Length > 1) pass = Uri.UnescapeDataString(upParts[1]);
+                }
+
+                if (_isSocks5)
+                {
+                    bool hasAuth = !string.IsNullOrEmpty(user);
+                    byte[] greet = hasAuth ? new byte[] { 0x05, 0x02, 0x00, 0x02 } : new byte[] { 0x05, 0x01, 0x00 };
+                    ns.Write(greet, 0, greet.Length);
+                    byte[] gResp = new byte[2];
+                    ReadExact(ns, gResp, 2);
+                    if (gResp[1] == 0x02 && hasAuth)
+                    {
+                        byte[] uBytes = Encoding.UTF8.GetBytes(user);
+                        byte[] pBytes = Encoding.UTF8.GetBytes(pass ?? "");
+                        byte[] authMsg = new byte[3 + uBytes.Length + pBytes.Length];
+                        authMsg[0] = 0x01;
+                        authMsg[1] = (byte)uBytes.Length;
+                        Buffer.BlockCopy(uBytes, 0, authMsg, 2, uBytes.Length);
+                        authMsg[2 + uBytes.Length] = (byte)pBytes.Length;
+                        Buffer.BlockCopy(pBytes, 0, authMsg, 3 + uBytes.Length, pBytes.Length);
+                        ns.Write(authMsg, 0, authMsg.Length);
+                        byte[] aResp = new byte[2];
+                        ReadExact(ns, aResp, 2);
+                        if (aResp[1] != 0x00) { upClient.Close(); throw new Exception("SOCKS5 auth failed"); }
+                    }
+                    byte[] hBytes = Encoding.ASCII.GetBytes(host);
+                    byte[] req = new byte[7 + hBytes.Length];
+                    req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x03;
+                    req[4] = (byte)hBytes.Length;
+                    Buffer.BlockCopy(hBytes, 0, req, 5, hBytes.Length);
+                    req[5 + hBytes.Length] = (byte)(port >> 8);
+                    req[6 + hBytes.Length] = (byte)(port & 0xFF);
+                    ns.Write(req, 0, req.Length);
+                    byte[] cResp = new byte[4];
+                    ReadExact(ns, cResp, 4);
+                    if (cResp[1] != 0x00) { upClient.Close(); throw new Exception("SOCKS5 connect rejected"); }
+                    int skip = (cResp[3] == 0x01) ? 6 : (cResp[3] == 0x04 ? 18 : 0);
+                    if (cResp[3] == 0x03)
+                    {
+                        int dLen = ns.ReadByte();
+                        skip = dLen + 2;
+                    }
+                    if (skip > 0) ReadExact(ns, new byte[skip], skip);
+                    ns.ReadTimeout = Timeout.Infinite;
+                    ns.WriteTimeout = Timeout.Infinite;
+                    return upClient;
+                }
+                else
+                {
+                    string authHdr = "";
+                    if (!string.IsNullOrEmpty(user))
+                    {
+                        string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(user + ":" + (pass ?? "")));
+                        authHdr = "Proxy-Authorization: Basic " + b64 + "\r\n";
+                    }
+                    byte[] cReq = Encoding.ASCII.GetBytes(string.Format("CONNECT {0}:{1} HTTP/1.1\r\nHost: {0}:{1}\r\nUser-Agent: {2}\r\n{3}\r\n", host, port, _ua, authHdr));
+                    ns.Write(cReq, 0, cReq.Length);
+                    string statusLine = ReadAsciiLine(ns);
+                    while (!string.IsNullOrEmpty(ReadAsciiLine(ns))) { }
+                    if (statusLine == null || !statusLine.Contains(" 200"))
+                    {
+                        upClient.Close();
+                        throw new Exception("Upstream HTTP CONNECT rejected");
+                    }
+                    ns.ReadTimeout = Timeout.Infinite;
+                    ns.WriteTimeout = Timeout.Infinite;
+                    return upClient;
+                }
+            }
+
+            TcpClient direct = new TcpClient();
+            direct.NoDelay = true;
+            IAsyncResult dAr = direct.BeginConnect(host, port, null, null);
+            if (!dAr.AsyncWaitHandle.WaitOne(5000))
+            {
+                direct.Close();
+                throw new TimeoutException("Direct connect timeout");
+            }
+            direct.EndConnect(dAr);
+            return direct;
+        }
+
+        private static void ReadExact(Stream s, byte[] buf, int count)
+        {
+            int off = 0;
+            while (off < count)
+            {
+                int r = s.Read(buf, off, count - off);
+                if (r <= 0) throw new EndOfStreamException();
+                off += r;
+            }
+        }
+
+        private static string ReadAsciiLine(Stream s)
+        {
+            List<byte> bytes = new List<byte>(128);
+            while (true)
+            {
+                int b = s.ReadByte();
+                if (b < 0) return bytes.Count > 0 ? Encoding.ASCII.GetString(bytes.ToArray()) : null;
+                if (b == '\n') break;
+                if (b != '\r') bytes.Add((byte)b);
+            }
+            return Encoding.ASCII.GetString(bytes.ToArray());
+        }
+
+        private void HandleClient(object obj)
+        {
+            TcpClient client = (TcpClient)obj;
+            try
+            {
+                client.NoDelay = true;
+                NetworkStream cStream = client.GetStream();
+                string reqLine = ReadAsciiLine(cStream);
+                if (string.IsNullOrEmpty(reqLine)) { client.Close(); return; }
+
+                List<string> headers = new List<string>();
+                string hostHeader = "";
+                while (true)
+                {
+                    string hLine = ReadAsciiLine(cStream);
+                    if (string.IsNullOrEmpty(hLine)) break;
+                    if (hLine.StartsWith("Host:", StringComparison.OrdinalIgnoreCase))
+                        hostHeader = hLine.Substring(5).Trim();
+                    headers.Add(hLine);
+                }
+
+                string[] parts = reqLine.Split(' ');
+                if (parts.Length < 2) { client.Close(); return; }
+                string method = parts[0].ToUpperInvariant();
+                string rawTarget = parts[1];
+
+                if (method == "GET" && (rawTarget.EndsWith("/__health") || rawTarget.EndsWith("/__disguise.js") || rawTarget.EndsWith("/mobile-disguise.js")))
+                {
+                    string body = rawTarget.EndsWith("/__health") ? "{\"status\":\"ok\"}" : (_disguiseContent ?? "");
+                    string cType = rawTarget.EndsWith("/__health") ? "application/json" : "application/javascript; charset=utf-8";
+                    byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
+                    byte[] respHdr = Encoding.ASCII.GetBytes(string.Format("HTTP/1.1 200 OK\r\nContent-Type: {0}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n", cType, bodyBytes.Length));
+                    cStream.Write(respHdr, 0, respHdr.Length);
+                    cStream.Write(bodyBytes, 0, bodyBytes.Length);
+                    client.Close();
+                    return;
+                }
+
+                if (method == "CONNECT")
+                {
+                    string tHost = rawTarget;
+                    int tPort = 443;
+                    int colon = rawTarget.LastIndexOf(':');
+                    if (colon > 0)
+                    {
+                        tHost = rawTarget.Substring(0, colon);
+                        int.TryParse(rawTarget.Substring(colon + 1), out tPort);
+                    }
+                    TcpClient remote = ConnectTarget(tHost, tPort);
+                    NetworkStream rStream = remote.GetStream();
+                    byte[] okBytes = Encoding.ASCII.GetBytes("HTTP/1.1 200 Connection Established\r\n\r\n");
+                    cStream.Write(okBytes, 0, okBytes.Length);
+                    SpliceStreams(client, cStream, remote, rStream);
+                    return;
+                }
+
+                // Standard HTTP or WebSocket request: parse host/port & rewrite spoofing headers
+                string destHost = hostHeader;
+                int destPort = 80;
+                string pathAndQuery = rawTarget;
+                if (rawTarget.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+                {
+                    Uri u = new Uri(rawTarget);
+                    destHost = u.Host;
+                    destPort = u.Port > 0 ? u.Port : 80;
+                    pathAndQuery = u.PathAndQuery;
+                }
+                else if (destHost.Contains(":"))
+                {
+                    int cIdx = destHost.LastIndexOf(':');
+                    int.TryParse(destHost.Substring(cIdx + 1), out destPort);
+                    destHost = destHost.Substring(0, cIdx);
+                }
+
+                TcpClient httpRemote = ConnectTarget(destHost, destPort);
+                NetworkStream httpRStream = httpRemote.GetStream();
+
+                StringBuilder outReq = new StringBuilder();
+                outReq.AppendFormat("{0} {1} HTTP/1.1\r\n", method, pathAndQuery);
+                bool wroteUa = false;
+                foreach (string h in headers)
+                {
+                    int sep = h.IndexOf(':');
+                    if (sep <= 0) continue;
+                    string k = h.Substring(0, sep).Trim();
+                    string v = h.Substring(sep + 1).Trim();
+                    if (k.Equals("Proxy-Connection", StringComparison.OrdinalIgnoreCase) ||
+                        k.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase) ||
+                        k.Equals("Via", StringComparison.OrdinalIgnoreCase) ||
+                        k.Equals("X-Forwarded-For", StringComparison.OrdinalIgnoreCase) ||
+                        k.Equals("Forwarded", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (k.Equals("User-Agent", StringComparison.OrdinalIgnoreCase))
+                    {
+                        wroteUa = true;
+                        if (v.StartsWith("Dalvik/", StringComparison.OrdinalIgnoreCase))
+                            v = string.Format("Dalvik/2.1.0 (Linux; U; Android {0}; {1} Build/{2})", _osVer, _model, _buildId);
+                        else
+                            v = _ua;
+                    }
+                    else if (k.Equals("Sec-CH-UA-Arch", StringComparison.OrdinalIgnoreCase))
+                        v = "\"arm\"";
+                    else if (k.Equals("Sec-CH-UA-Platform", StringComparison.OrdinalIgnoreCase))
+                        v = "\"Android\"";
+                    else if (k.Equals("Sec-CH-UA-Model", StringComparison.OrdinalIgnoreCase))
+                        v = "\"" + _model + "\"";
+
+                    outReq.AppendFormat("{0}: {1}\r\n", k, v);
+                }
+                if (!wroteUa) outReq.AppendFormat("User-Agent: {0}\r\n", _ua);
+                outReq.Append("\r\n");
+
+                byte[] reqBytes = Encoding.ASCII.GetBytes(outReq.ToString());
+                httpRStream.Write(reqBytes, 0, reqBytes.Length);
+                SpliceStreams(client, cStream, httpRemote, httpRStream);
+            }
+            catch
+            {
+                try { client.Close(); } catch { }
+            }
+        }
+
+        private static void SpliceStreams(TcpClient c1, Stream s1, TcpClient c2, Stream s2)
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try { s1.CopyTo(s2, 16384); } catch { }
+                try { c2.Client.Shutdown(SocketShutdown.Send); } catch { try { c2.Close(); } catch { } }
+            });
+            try { s2.CopyTo(s1, 16384); } catch { }
+            try { c1.Close(); } catch { }
+            try { c2.Close(); } catch { }
+        }
+    }
+
 }

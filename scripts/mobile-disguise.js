@@ -125,7 +125,6 @@
         return '100.' + o2 + '.' + o3 + '.' + o4;
     })();
 
-    // Per-model hardware specs (RAM GB & CPU core count) matching real physical devices
     var _hwSpecs = (function() {
         var m = (_deviceModel || '').toUpperCase();
         if (m.indexOf('SM-G998') !== -1 || m.indexOf('PIXEL 6') !== -1 || m.indexOf('LE2123') !== -1 || m.indexOf('XQ-BC52') !== -1 || m.indexOf('I005D') !== -1) {
@@ -465,9 +464,9 @@
         }, 'getContext');
     }
 
-    // 5. Lazy, Per-Instance Seeded BatteryManager (1% integer steps matching Android BatteryManager)
+    // 5. Lazy, Per-Instance Seeded BatteryManager
     var battStartTime = Date.now();
-    var initialBattPct = 72 + (_instanceHash % 23); // 72% .. 94% unique starting charge per slot
+    var initialBattPct = 72 + (_instanceHash % 23);
     var battProto = (typeof BatteryManager !== 'undefined' && BatteryManager.prototype)
         ? BatteryManager.prototype
         : Object.create((typeof EventTarget !== 'undefined' && EventTarget.prototype) ? EventTarget.prototype : Object.prototype);
@@ -596,7 +595,7 @@
         }
     } catch (e) {}
 
-    // 7. On-Demand Accelerometer & Gyroscope Sensor Spoofing (0% CPU until a listener attaches)
+    // 7. On-Demand Accelerometer & Gyroscope Sensor Spoofing
     try {
         var motionListeners = [];
         var orientationListeners = [];
@@ -720,7 +719,7 @@
         });
     } catch (e) {}
 
-    // 8. Coherent Screen & Orientation (matches viewport so innerWidth <= screen.width without 4K supersampling)
+    // 8. Coherent Screen & Orientation
     try {
         if (window.screen) {
             defineProp(window.screen, 'colorDepth', 24);
@@ -742,7 +741,7 @@
         }
     } catch (e) {}
 
-    // 9. Cordova Device Plugin Identity Synchronization (matches _osVer from User-Agent)
+    // 9. Cordova Device Plugin Identity Synchronization
     function applyDevProps(dev) {
         if (!dev) return;
         dev.model = _deviceModel;
@@ -905,7 +904,55 @@
         }
     } catch (e) {}
 
-    // 12. Child Iframe Disguise (uses WeakSet — zero window properties added)
+    // 12. Outbound HTTPS XHR & Fetch Payload/Header Sanitizer (scrubs x86/QEMU/10.0.2.15 before TLS encryption)
+    try {
+        function scrubNetworkString(str) {
+            if (typeof str !== 'string' || str.length === 0) return str;
+            if (str.indexOf('10.0.2.15') === -1 && str.indexOf('x86') === -1 && str.indexOf('goldfish') === -1 && str.indexOf('ranchu') === -1 && str.indexOf('sdk_gphone') === -1) {
+                return str;
+            }
+            return str
+                .replace(/10\.0\.2\.15/g, _fakeLocalIp)
+                .replace(/x86_64/gi, 'arm64-v8a')
+                .replace(/sdk_gphone_x86_64|Android SDK built for x86_64|sdk_gphone_x86/gi, _deviceModel)
+                .replace(/goldfish|ranchu/gi, 'qcom');
+        }
+
+        if (window.XMLHttpRequest && XMLHttpRequest.prototype) {
+            var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+            if (origSetHeader) {
+                XMLHttpRequest.prototype.setRequestHeader = makeNative(function(header, value) {
+                    var hLower = (header || '').toLowerCase();
+                    if (hLower === 'user-agent') value = MOBILE_UA;
+                    else if (hLower === 'sec-ch-ua-arch') value = '"arm"';
+                    else if (hLower === 'sec-ch-ua-platform') value = '"Android"';
+                    else if (hLower === 'sec-ch-ua-model') value = '"' + _deviceModel + '"';
+                    else if (typeof value === 'string') value = scrubNetworkString(value);
+                    return origSetHeader.call(this, header, value);
+                }, 'setRequestHeader');
+            }
+            var origXhrSend = XMLHttpRequest.prototype.send;
+            if (origXhrSend) {
+                XMLHttpRequest.prototype.send = makeNative(function(body) {
+                    if (typeof body === 'string') {
+                        body = scrubNetworkString(body);
+                    }
+                    return origXhrSend.call(this, body);
+                }, 'send');
+            }
+        }
+        if (typeof window.fetch === 'function') {
+            var origFetch = window.fetch;
+            window.fetch = makeNative(function(input, init) {
+                if (init && typeof init === 'object' && typeof init.body === 'string') {
+                    init.body = scrubNetworkString(init.body);
+                }
+                return origFetch.apply(this, arguments);
+            }, 'fetch');
+        }
+    } catch (e) {}
+
+    // 13. Child Iframe Disguise
     function disguiseFrameWindow(targetWin) {
         if (!targetWin || targetWin === window || disguisedFrames.has(targetWin)) return;
         try {
