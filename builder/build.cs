@@ -48,7 +48,7 @@ namespace DofusBuild
 
             // 1. Compile DofusFarm.exe
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("\n[1/4] Compiling native C# DofusFarm.exe...");
+            Console.WriteLine("\n[1/3] Compiling native C# DofusFarm.exe...");
             Console.ResetColor();
             string[] farmSources = new[]
             {
@@ -77,7 +77,7 @@ namespace DofusBuild
 
             // 2. Compile uninstall.exe
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("\n[2/4] Compiling native C# uninstall.exe...");
+            Console.WriteLine("\n[2/3] Compiling native C# uninstall.exe...");
             Console.ResetColor();
             string uninstallerCs = Path.Combine(desktopDir, "Uninstaller.cs");
             string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
@@ -95,15 +95,9 @@ namespace DofusBuild
             Console.WriteLine("  [OK] uninstall.exe compiled ({0:N0} bytes)", new FileInfo(outUninstall).Length);
             Console.ResetColor();
 
-            // 3. Seal Code Integrity Manifest (runtime binaries only — zero 896 MB archive hashing overhead)
+            // 3. Compile standalone setup.exe embedding sdk.7z & template.zip directly without temp copies
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("\n[3/4] Sealing Code Integrity Manifest...");
-            Console.ResetColor();
-            GenerateIntegrityManifest();
-
-            // 4. Compile standalone setup.exe embedding sdk.7z & template.zip directly without temp copies
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("\n[4/4] Packaging release payload and compiling standalone setup.exe...");
+            Console.WriteLine("\n[3/3] Packaging release payload and compiling standalone setup.exe...");
             Console.ResetColor();
             if (!BuildStandaloneSetup(outSetup, setupIco, desktopDir))
             {
@@ -150,54 +144,6 @@ namespace DofusBuild
             }
         }
 
-        static void GenerateIntegrityManifest()
-        {
-            string[] runtimeFiles = new[]
-            {
-                "DofusFarm.exe",
-                "uninstall.exe",
-                "dofus-net-proxy.exe",
-                @"scripts\mobile-disguise.js"
-            };
-
-            string manifestPath = Path.Combine(RepoRoot, @"scripts\app.integrity");
-            string salt = "DOFUS_FARM_INTEGRITY_SALT_2026_K7X9Q";
-            StringBuilder allHashes = new StringBuilder();
-            List<string> lines = new List<string>();
-
-            using (SHA256 sha = SHA256.Create())
-            {
-                foreach (string rel in runtimeFiles)
-                {
-                    string full = Path.Combine(RepoRoot, rel);
-                    if (!File.Exists(full))
-                    {
-                        string alt = Path.Combine(RepoRoot, "scripts", Path.GetFileName(rel));
-                        if (File.Exists(alt)) full = alt;
-                    }
-                    if (File.Exists(full))
-                    {
-                        byte[] hash;
-                        using (FileStream fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read))
-                        {
-                            hash = sha.ComputeHash(fs);
-                        }
-                        string hex = BitConverter.ToString(hash).Replace("-", "");
-                        lines.Add(rel + "|" + hex);
-                        allHashes.Append(hex);
-                    }
-                }
-
-                byte[] salted = Encoding.UTF8.GetBytes(allHashes.ToString() + salt);
-                byte[] sig = sha.ComputeHash(salted);
-                string sigHex = BitConverter.ToString(sig).Replace("-", "");
-                lines.Add("SIGNATURE|" + sigHex);
-            }
-
-            File.WriteAllLines(manifestPath, lines.ToArray(), new UTF8Encoding(false));
-            Console.WriteLine("  [OK] Sealed app.integrity ({0} runtime files)", lines.Count - 1);
-        }
-
         static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir)
         {
             string tempDir = Path.GetTempPath();
@@ -211,7 +157,7 @@ namespace DofusBuild
 
                 string stageScripts = Path.Combine(stageDir, "scripts");
                 Directory.CreateDirectory(stageScripts);
-                foreach (string rs in new[] { "mobile-disguise.js", "apply-zram.sh", "app.integrity" })
+                foreach (string rs in new[] { "mobile-disguise.js", "apply-zram.sh" })
                 {
                     string src = Path.Combine(RepoRoot, "scripts", rs);
                     if (File.Exists(src))

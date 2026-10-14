@@ -377,8 +377,6 @@ namespace DofusStandaloneSetup
                         }
                     }
 
-                    FarmEngine.ResealLocalIntegrity(TargetDir);
-
                     // 2. Unpack Android SDK (sdk.7z) with smooth real-time progress interpolation (20% -> 52%)
                     Report(20, "Unpacking Android virtualization engine...");
                     string destSdk = Path.Combine(TargetDir, "sdk");

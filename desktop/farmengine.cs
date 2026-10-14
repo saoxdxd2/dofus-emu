@@ -163,16 +163,16 @@ namespace DofusFarm.Engine
             AppBaseDir = !string.IsNullOrEmpty(explicitBaseDir)
                 ? explicitBaseDir.TrimEnd('\\')
                 : AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-            if (!File.Exists(Path.Combine(AppBaseDir, @"scripts\app.integrity")) && Directory.GetParent(AppBaseDir) != null)
+            if (!File.Exists(Path.Combine(AppBaseDir, @"scripts\mobile-disguise.js")) && Directory.GetParent(AppBaseDir) != null)
             {
                 string parentDir = Directory.GetParent(AppBaseDir).FullName.TrimEnd('\\');
-                if (File.Exists(Path.Combine(parentDir, @"scripts\app.integrity")))
+                if (File.Exists(Path.Combine(parentDir, @"scripts\mobile-disguise.js")))
                 {
                     AppBaseDir = parentDir;
                 }
             }
 
-            if (!File.Exists(Path.Combine(AppBaseDir, @"scripts\app.integrity")))
+            if (!File.Exists(Path.Combine(AppBaseDir, @"scripts\mobile-disguise.js")))
             {
                 try
                 {
@@ -180,17 +180,17 @@ namespace DofusFarm.Engine
                     if (!string.IsNullOrEmpty(asmLoc))
                     {
                         string asmDir = Path.GetDirectoryName(asmLoc).TrimEnd('\\');
-                        if (File.Exists(Path.Combine(asmDir, @"scripts\app.integrity")))
+                        if (File.Exists(Path.Combine(asmDir, @"scripts\mobile-disguise.js")))
                             AppBaseDir = asmDir;
                     }
                 }
                 catch { }
             }
 
-            if (!File.Exists(Path.Combine(AppBaseDir, @"scripts\app.integrity")))
+            if (!File.Exists(Path.Combine(AppBaseDir, @"scripts\mobile-disguise.js")))
             {
                 string cwd = Directory.GetCurrentDirectory().TrimEnd('\\');
-                if (File.Exists(Path.Combine(cwd, @"scripts\app.integrity")))
+                if (File.Exists(Path.Combine(cwd, @"scripts\mobile-disguise.js")))
                     AppBaseDir = cwd;
             }
             AvdHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".android\avd");
@@ -287,10 +287,6 @@ namespace DofusFarm.Engine
             }
 
             EnsureAdvancedFeatures();
-            if (!skipIntegrityCheck && !VerifyIntegrity(AppBaseDir, Log))
-            {
-                ResealLocalIntegrity(AppBaseDir, Log);
-            }
         }
 
         public static string DetectDiskFormat(string imagePath)
@@ -314,177 +310,6 @@ namespace DofusFarm.Engine
             }
             catch { }
             return "raw";
-        }
-
-        public static bool VerifyIntegrity(string baseDir, Action<string> logger = null)
-        {
-            string manifestPath = Path.Combine(baseDir, @"scripts\app.integrity");
-            if (!File.Exists(manifestPath)) manifestPath = Path.Combine(baseDir, "app.integrity");
-            if (!File.Exists(manifestPath) && Directory.GetParent(baseDir) != null)
-            {
-                string parentDir = Directory.GetParent(baseDir).FullName.TrimEnd('\\');
-                manifestPath = Path.Combine(parentDir, @"scripts\app.integrity");
-                if (!File.Exists(manifestPath)) manifestPath = Path.Combine(parentDir, "app.integrity");
-                if (File.Exists(manifestPath)) baseDir = parentDir;
-            }
-            if (!File.Exists(manifestPath))
-            {
-                if (logger != null) logger("[SECURITY ALERT] Master integrity manifest missing!");
-                return false;
-            }
-
-            try
-            {
-                string[] lines = File.ReadAllLines(manifestPath, Encoding.UTF8);
-                string salt = "DOFUS_FARM_INTEGRITY_SALT_2026_K7X9Q";
-                StringBuilder allHashes = new StringBuilder();
-                string expectedSig = null;
-
-                using (SHA256 sha = SHA256.Create())
-                {
-                    foreach (string rawLine in lines)
-                    {
-                        string line = (rawLine ?? "").Trim().TrimStart('\uFEFF');
-                        if (string.IsNullOrEmpty(line)) continue;
-                        string[] parts = line.Split('|');
-                        if (parts.Length != 2) continue;
-
-                        if (parts[0] == "SIGNATURE")
-                        {
-                            expectedSig = parts[1];
-                            continue;
-                        }
-
-                        string rel = parts[0];
-                        string expectedHash = parts[1];
-                        string full = Path.Combine(baseDir, rel);
-
-                        // Fast-path large setup archives or optional Go helper binaries if not present on disk
-                        if (rel.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
-                            rel.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ||
-                            rel.StartsWith("dofus-", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (rel.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".7z", StringComparison.OrdinalIgnoreCase))
-                            {
-                                if (File.Exists(Path.Combine(baseDir, @"sdk\emulator\emulator.exe")) || !File.Exists(full))
-                                {
-                                    allHashes.Append(expectedHash);
-                                    continue;
-                                }
-                            }
-                            else if (!File.Exists(full) && !File.Exists(Path.Combine(baseDir, "scripts", Path.GetFileName(rel))))
-                            {
-                                allHashes.Append(expectedHash);
-                                continue;
-                            }
-                        }
-
-                        if (!File.Exists(full))
-                        {
-                            string alt = Path.Combine(baseDir, "scripts", Path.GetFileName(rel));
-                            if (File.Exists(alt)) full = alt;
-                            else
-                            {
-                                string alt2 = Path.Combine(baseDir, Path.GetFileName(rel));
-                                if (File.Exists(alt2)) full = alt2;
-                            }
-                        }
-
-                        if (File.Exists(full))
-                        {
-                            byte[] hash;
-                            using (FileStream fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                            {
-                                hash = sha.ComputeHash(fs);
-                            }
-                            string hex = BitConverter.ToString(hash).Replace("-", "");
-                            if (!string.Equals(hex, expectedHash, StringComparison.OrdinalIgnoreCase))
-                            {
-                                if (logger != null) logger(string.Format("[SECURITY NOTICE] Updated binary detected on {0}.", rel));
-                                return false;
-                            }
-                            allHashes.Append(hex);
-                        }
-                        else
-                        {
-                            if (logger != null) logger(string.Format("[SECURITY NOTICE] Missing file: {0}.", rel));
-                            return false;
-                        }
-                    }
-
-                    if (!string.IsNullOrEmpty(expectedSig))
-                    {
-                        byte[] salted = Encoding.UTF8.GetBytes(allHashes.ToString() + salt);
-                        byte[] sig = sha.ComputeHash(salted);
-                        string sigHex = BitConverter.ToString(sig).Replace("-", "");
-                        if (!string.Equals(sigHex, expectedSig, StringComparison.OrdinalIgnoreCase))
-                        {
-                            return false;
-                        }
-                    }
-                }
-                if (logger != null) logger("[SECURITY] Code integrity verified successfully.");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                if (logger != null) logger("[SECURITY] Integrity check warning: " + ex.Message);
-                return false;
-            }
-        }
-
-        public static void ResealLocalIntegrity(string baseDir, Action<string> logger = null)
-        {
-            try
-            {
-                string[] criticalFiles = new[]
-                {
-                    "DofusFarm.exe",
-                    "uninstall.exe",
-                    "dofus-net-proxy.exe",
-                    @"scripts\mobile-disguise.js"
-                };
-
-                string scriptsDir = Path.Combine(baseDir, "scripts");
-                if (!Directory.Exists(scriptsDir)) Directory.CreateDirectory(scriptsDir);
-                string manifestPath = Path.Combine(scriptsDir, "app.integrity");
-                string salt = "DOFUS_FARM_INTEGRITY_SALT_2026_K7X9Q";
-                StringBuilder allHashes = new StringBuilder();
-                List<string> lines = new List<string>();
-
-                using (SHA256 sha = SHA256.Create())
-                {
-                    foreach (string rel in criticalFiles)
-                    {
-                        string full = Path.Combine(baseDir, rel);
-                        if (!File.Exists(full))
-                        {
-                            string alt = Path.Combine(baseDir, "scripts", Path.GetFileName(rel));
-                            if (File.Exists(alt)) full = alt;
-                        }
-                        if (File.Exists(full))
-                        {
-                            byte[] hash;
-                            using (FileStream fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                            {
-                                hash = sha.ComputeHash(fs);
-                            }
-                            string hex = BitConverter.ToString(hash).Replace("-", "");
-                            lines.Add(rel + "|" + hex);
-                            allHashes.Append(hex);
-                        }
-                    }
-
-                    byte[] salted = Encoding.UTF8.GetBytes(allHashes.ToString() + salt);
-                    byte[] sig = sha.ComputeHash(salted);
-                    string sigHex = BitConverter.ToString(sig).Replace("-", "");
-                    lines.Add("SIGNATURE|" + sigHex);
-                }
-
-                File.WriteAllLines(manifestPath, lines.ToArray(), new UTF8Encoding(false));
-                if (logger != null) logger(string.Format("[SECURITY] Sealed scripts\\app.integrity ({0} files).", lines.Count - 1));
-            }
-            catch { }
         }
 
         public bool IsInstanceWarmReady(string name)
@@ -853,6 +678,33 @@ namespace DofusFarm.Engine
             }
         }
 
+        private static void ReadConfigRamCores(string cfgFile, ref int ramMb, ref int cores)
+        {
+            if (string.IsNullOrEmpty(cfgFile) || !File.Exists(cfgFile)) return;
+            try
+            {
+                using (FileStream fs = new FileStream(cfgFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (StreamReader sr = new StreamReader(fs, Encoding.UTF8))
+                {
+                    string l;
+                    while ((l = sr.ReadLine()) != null)
+                    {
+                        if (l.StartsWith("hw.ramSize", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string[] p = l.Split('=');
+                            if (p.Length == 2) int.TryParse(p[1].Trim(), out ramMb);
+                        }
+                        else if (l.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string[] p = l.Split('=');
+                            if (p.Length == 2) int.TryParse(p[1].Trim(), out cores);
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
         public List<InstanceModel> GetInstances()
         {
             List<InstanceModel> list = new List<InstanceModel>();
@@ -946,32 +798,7 @@ namespace DofusFarm.Engine
 
                 int ram = 1024;
                 int cores = 1;
-                string cfgFile = Path.Combine(d, "config.ini");
-                if (File.Exists(cfgFile))
-                {
-                    try
-                    {
-                        using (FileStream fs = new FileStream(cfgFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                        using (StreamReader sr = new StreamReader(fs, Encoding.UTF8))
-                        {
-                            string l;
-                            while ((l = sr.ReadLine()) != null)
-                            {
-                                if (l.StartsWith("hw.ramSize", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    string[] p = l.Split('=');
-                                    if (p.Length == 2) int.TryParse(p[1].Trim(), out ram);
-                                }
-                                else if (l.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    string[] p = l.Split('=');
-                                    if (p.Length == 2) int.TryParse(p[1].Trim(), out cores);
-                                }
-                            }
-                        }
-                    }
-                    catch { }
-                }
+                ReadConfigRamCores(Path.Combine(d, "config.ini"), ref ram, ref cores);
 
                 bool isRunning = live.Contains(serial);
                 int pid = (isRunning && portToPid.ContainsKey(port)) ? portToPid[port] : 0;
@@ -1212,26 +1039,7 @@ namespace DofusFarm.Engine
             int oldCores = cores;
             string oldPhoneModel = "";
             string cfgFile = Path.Combine(avdDir, "config.ini");
-            if (File.Exists(cfgFile))
-            {
-                try
-                {
-                    foreach (string l in File.ReadAllLines(cfgFile, Encoding.UTF8))
-                    {
-                        if (l.StartsWith("hw.ramSize", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string[] p = l.Split('=');
-                            if (p.Length == 2) int.TryParse(p[1].Trim(), out oldRam);
-                        }
-                        else if (l.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string[] p = l.Split('=');
-                            if (p.Length == 2) int.TryParse(p[1].Trim(), out oldCores);
-                        }
-                    }
-                }
-                catch { }
-            }
+            ReadConfigRamCores(cfgFile, ref oldRam, ref oldCores);
 
             DeviceProfile activeProfile = !string.IsNullOrEmpty(phoneModelId)
                 ? DeviceCatalog.GetProfile(phoneModelId)
@@ -2677,26 +2485,7 @@ namespace DofusFarm.Engine
             // Inherit RAM and CPU Core allocation from source instance
             int inheritedRam = 1024;
             int inheritedCores = 1;
-            if (File.Exists(srcCfg))
-            {
-                try
-                {
-                    foreach (string line in File.ReadAllLines(srcCfg, Encoding.UTF8))
-                    {
-                        if (line.StartsWith("hw.ramSize", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string[] p = line.Split('=');
-                            if (p.Length == 2) int.TryParse(p[1].Trim(), out inheritedRam);
-                        }
-                        else if (line.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string[] p = line.Split('=');
-                            if (p.Length == 2) int.TryParse(p[1].Trim(), out inheritedCores);
-                        }
-                    }
-                }
-                catch { }
-            }
+            ReadConfigRamCores(srcCfg, ref inheritedRam, ref inheritedCores);
 
             // Generate target system.prop matching target phone model
             string tgtProp = Path.Combine(tgtDir, "system.prop");
@@ -2780,33 +2569,9 @@ namespace DofusFarm.Engine
             if (srcWasRunning && isSourceNumbered)
             {
                 Log(string.Format("Resuming active source instance '{0}' post-clone...", sourceName));
-                int srcRam = 1536;
-                int srcCores = 2;
-                if (File.Exists(srcCfg))
-                {
-                    try
-                    {
-                        using (FileStream fs = new FileStream(srcCfg, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                        using (StreamReader sr = new StreamReader(fs, Encoding.UTF8))
-                        {
-                            string l;
-                            while ((l = sr.ReadLine()) != null)
-                            {
-                                if (l.StartsWith("hw.ramSize", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    string[] p = l.Split('=');
-                                    if (p.Length == 2) int.TryParse(p[1].Trim(), out srcRam);
-                                }
-                                else if (l.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    string[] p = l.Split('=');
-                                    if (p.Length == 2) int.TryParse(p[1].Trim(), out srcCores);
-                                }
-                            }
-                        }
-                    }
-                    catch { }
-                }
+                int srcRam = 1024;
+                int srcCores = 1;
+                ReadConfigRamCores(srcCfg, ref srcRam, ref srcCores);
                 string srcProxy = GetProxy(sourceName);
                 LaunchInstance(sourceName, srcPort, srcRam > 0 ? srcRam : 1536, srcCores > 0 ? srcCores : 2, srcProxy);
             }

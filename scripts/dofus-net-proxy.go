@@ -716,6 +716,7 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 							if mimeType != "" {
 								w.Header().Set("Content-Type", mimeType)
 							}
+							w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
 							w.WriteHeader(http.StatusOK)
 							buf := bufPool.Get().([]byte)
 							defer bufPool.Put(buf)
