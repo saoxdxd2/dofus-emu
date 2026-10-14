@@ -292,7 +292,7 @@ namespace DofusStandaloneSetup
             }
         }
 
-        private static void ExtractArchiveToDirectory(ZipArchive archive, string destDir)
+        private static void ExtractArchiveToDirectory(System.IO.Compression.ZipArchive archive, string destDir)
         {
             if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
             string fullDestDir = Path.GetFullPath(destDir);
@@ -548,6 +548,12 @@ namespace DofusStandaloneSetup
                                 k.SetValue("InstallPath", TargetDir);
                                 k.SetValue("DefaultRamMb", RamMb);
                                 k.SetValue("DefaultCores", Cores);
+                                // Renderer check: pick the graphics backend that fits this machine once,
+                                // at install time, instead of leaving the user to guess Host vs ANGLE.
+                                if (k.GetValue("GpuMode") == null && farm != null)
+                                {
+                                    k.SetValue("GpuMode", farm.DetectBestGpuMode());
+                                }
                             }
                         }
                     }

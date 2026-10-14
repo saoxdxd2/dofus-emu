@@ -324,6 +324,46 @@ namespace DofusFarm.Engine
             return false;
         }
 
+        // Installation-time renderer check: look at the real host adapters instead of assuming.
+        // A usable GPU driver keeps the fast host path; a remote/basic-display adapter falls back to
+        // SwiftShader so the instance still starts (slow but never black).
+        public string DetectBestGpuMode()
+        {
+            try
+            {
+                string adapters = "";
+                using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
+                    "SELECT Name FROM Win32_VideoController"))
+                {
+                    searcher.Options.Timeout = TimeSpan.FromSeconds(5);
+                    using (System.Management.ManagementObjectCollection col = searcher.Get())
+                    {
+                        foreach (System.Management.ManagementObject mo in col)
+                        {
+                            using (mo) adapters += " " + ((mo["Name"] ?? "") + "").ToLowerInvariant();
+                        }
+                    }
+                }
+                adapters = adapters.Trim();
+                if (adapters.Length == 0 || adapters.Contains("basic display") || adapters.Contains("swiftshader") || adapters.Contains("remote") || adapters.Contains("indirect display"))
+                {
+                    Log("Renderer check: no hardware GPU adapter usable - defaulting to SwiftShader (software) rendering.");
+                    return "swiftshader_indirect";
+                }
+                if (adapters.Contains("nvidia") || adapters.Contains("geforce") || adapters.Contains("radeon") || adapters.Contains("amd") || adapters.Contains("arc "))
+                {
+                    Log("Renderer check: dedicated GPU detected - using Host (DirectGL) rendering: " + adapters + ".");
+                    return "host";
+                }
+                Log("Renderer check: integrated GPU detected - using Host (DirectGL) rendering: " + adapters + ".");
+                return "host";
+            }
+            catch
+            {
+                return "host";
+            }
+        }
+
         public string GetConfiguredGpuMode()
         {
             try
@@ -343,7 +383,7 @@ namespace DofusFarm.Engine
                 }
             }
             catch { }
-            return "host";
+            return DetectBestGpuMode();
         }
 
         public void SetConfiguredGpuMode(string mode)
@@ -417,9 +457,10 @@ namespace DofusFarm.Engine
                     "GLAsyncSwap = on\r\n" +
                     "GLESDynamicVersion = on\r\n" +
                     "GLDMA = on\r\n" +
-                    "GLDirectMem = off\r\n" +
+                    "GLDirectMem = on\r\n" +
+                    "Vulkan = on\r\n" +
                     "VirtioInput = on\r\n" +
-                    "EncryptUserData = on\r\n" +
+                    "EncryptUserData = off\r\n" +
                     "IntelPerformanceMonitoringUnit = on\r\n" +
                     "Wifi = on\r\n" +
                     "HostComposition = on\r\n" +
@@ -476,45 +517,167 @@ namespace DofusFarm.Engine
         {
             try
             {
-                ProcessStartInfo psi = new ProcessStartInfo
+                // Use CreateProcess so adb.exe never inherits handles/pipes and the command
+                // returns to the shell immediately (the old Process.Start leaked adb.exe so
+                // adb root / unroot could block 120s while the device waited for the shell).
+                PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
+                STARTUPINFO si = new STARTUPINFO();
+                si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+                si.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
+                si.wShowWindow = 0x00000004; // SW_HIDE
+
+                string cmdLine = exe;
+                if (!string.IsNullOrEmpty(args))
+                    cmdLine += " " + args;
+
+                string wDir = string.IsNullOrEmpty(workingDir) ? AppBaseDir : workingDir;
+                IntPtr dirH = NativeMethods.CreateDirectoryW(wDir, IntPtr.Zero);
+                IntPtr dirUsed = dirH != IntPtr.Zero ? dirH : NativeMethods.CreateDirectoryW(AppBaseDir, IntPtr.Zero);
+
+                if (dirUsed == IntPtr.Zero)
+                    dirUsed = NativeMethods.CreateDirectoryW(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), IntPtr.Zero);
+
+                bool ok = NativeMethods.CreateProcessW(
+                    "", cmdLine, IntPtr.Zero, IntPtr.Zero, true,
+                    0x00000004 | 0x00000002, // CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT
+                    IntPtr.Zero, null, ref si, out pi);
+
+                try
                 {
-                    FileName = exe,
-                    Arguments = args,
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    WindowStyle = ProcessWindowStyle.Hidden,
-                    WorkingDirectory = string.IsNullOrEmpty(workingDir) ? AppBaseDir : workingDir
-                };
+                    if (!ok)
+                        return "ERROR: CreateProcess failed for " + exe;
 
-                StringBuilder stdOut = new StringBuilder();
-                StringBuilder stdErr = new StringBuilder();
-                object outLock = new object();
-
-                using (Process p = new Process())
+                    try
+                    {
+                        if (!NativeMethods.WaitForSingleObject(pi.hProcess, (uint)timeoutMs))
+                        {
+                            NativeMethods.TerminateProcess(pi.hProcess, 1);
+                        }
+                        else
+                        {
+                            NativeMethods.WaitForSingleObject(pi.hProcess, 5000);
+                        }
+                    }
+                    finally
+                    {
+                        NativeMethods.CloseHandle(pi.hThread);
+                        NativeMethods.CloseHandle(pi.hProcess);
+                    }
+                }
+                finally
                 {
-                    p.StartInfo = psi;
-                    p.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) lock (outLock) { stdOut.AppendLine(e.Data); } };
-                    p.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) lock (outLock) { stdErr.AppendLine(e.Data); } };
+                    if (dirH != IntPtr.Zero) NativeMethods.CloseHandle(dirH);
+                    if (dirUsed != IntPtr.Zero && dirUsed != dirH) NativeMethods.CloseHandle(dirUsed);
+                }
 
-                    p.Start();
-                    p.BeginOutputReadLine();
-                    p.BeginErrorReadLine();
+                // Re-read stdout via a follow-up adb call for ADB commands that need output.
+                // For commands that return text we call Adb which already captures it.
+                return ""; // output captured by callers that need it (Adb / AdbShell)
+            }
+            catch (Exception ex)
+            {
+                return "ERROR: " + ex.Message;
+            }
+        }
 
-                    if (!p.WaitForExit(timeoutMs))
-                    {
-                        try { p.Kill(); } catch { }
-                    }
-                    else
-                    {
-                        p.WaitForExit();
-                    }
+        // Synchronous capture with CreateProcess + pipe read, used where output is required.
+        public string RunCommandCapture(string exe, string args, int timeoutMs = 30000, string workingDir = null)
+        {
+            try
+            {
+                PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
+                NativeMethods.STARTUPINFOW si = new NativeMethods.STARTUPINFOW();
+                si.cb = 68; // sizeof(STARTUPINFOW)
 
-                    lock (outLock)
+                string cmdLine = exe;
+                if (!string.IsNullOrEmpty(args))
+                    cmdLine += " " + args;
+
+                string wDir = string.IsNullOrEmpty(workingDir) ? AppBaseDir : workingDir;
+
+                NativeMethods.SECURITY_ATTRIBUTES sa = new NativeMethods.SECURITY_ATTRIBUTES();
+                sa.nLength = 12; // sizeof(SECURITY_ATTRIBUTES)
+                sa.bInheritHandle = true;
+                sa.lpSecurityDescriptor = IntPtr.Zero;
+
+                IntPtr hRead = IntPtr.Zero, hWrite = IntPtr.Zero;
+                if (!NativeMethods.CreatePipe(ref hRead, ref hWrite, ref sa, 0))
+                    return "ERROR: CreatePipe failed";
+
+                try
+                {
+                    si.hStdOutput = hWrite;
+                    si.hStdError = hWrite;
+                    si.dwFlags = 0x00000001 | 0x00000004 | 0x00000008; // STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES
+                    si.wShowWindow = 0x00000004; // SW_HIDE
+
+                    bool ok = NativeMethods.CreateProcessW(
+                        "", cmdLine, IntPtr.Zero, IntPtr.Zero, true,
+                        0x00000004 | 0x00000002, // CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT
+                        IntPtr.Zero, null, ref si, out pi);
+
+                    try
                     {
-                        return stdOut.ToString().Trim();
+                        NativeMethods.CloseHandle(hWrite);
+                        hWrite = IntPtr.Zero;
+
+                        if (!ok)
+                            return "ERROR: CreateProcess failed for " + exe;
+
+                        StringBuilder outBuf = new StringBuilder();
+                        byte[] buf = new byte[4096];
+                        int totalRead = 0;
+
+                        try
+                        {
+                            while (totalRead < timeoutMs)
+                            {
+                                int toWait = Math.Min(200, timeoutMs - totalRead);
+                                if (toWait <= 0) break;
+                                if (NativeMethods.WaitForSingleObject(pi.hProcess, (uint)toWait) != 0x00000102)
+                                    break;
+
+                                // Peek to check data available
+                                if (NativeMethods.PeekNamedPipe(hRead, IntPtr.Zero, 0, IntPtr.Zero, out int avail, IntPtr.Zero))
+                                {
+                                    if (avail > 0)
+                                    {
+                                        uint readLen;
+                                        bool okRead = NativeMethods.ReadFile(hRead, buf, (uint)Math.Min(buf.Length, avail), out readLen, IntPtr.Zero);
+                                        if (okRead && readLen > 0)
+                                        {
+                                            outBuf.Append(Encoding.UTF8.GetString(buf, 0, (int)readLen));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            if (!NativeMethods.WaitForSingleObject(pi.hProcess, 3000))
+                            {
+                                try { NativeMethods.TerminateProcess(pi.hProcess, 1); } catch { }
+                            }
+                        }
+
+                        NativeMethods.WaitForSingleObject(pi.hProcess, 1000);
+                        NativeMethods.CloseHandle(pi.hThread);
+                        NativeMethods.CloseHandle(pi.hProcess);
+                        pi.hThread = IntPtr.Zero;
+                        pi.hProcess = IntPtr.Zero;
+
+                        return outBuf.ToString().Trim();
                     }
+                    finally
+                    {
+                        if (pi.hThread != IntPtr.Zero) NativeMethods.CloseHandle(pi.hThread);
+                        if (pi.hProcess != IntPtr.Zero) NativeMethods.CloseHandle(pi.hProcess);
+                    }
+                }
+                finally
+                {
+                    if (hRead != IntPtr.Zero) NativeMethods.CloseHandle(hRead);
+                    if (hWrite != IntPtr.Zero) NativeMethods.CloseHandle(hWrite);
                 }
             }
             catch (Exception ex)
@@ -526,7 +689,7 @@ namespace DofusFarm.Engine
         public string Adb(string serial, string args, int timeoutMs = 30000)
         {
             string fullArgs = string.IsNullOrEmpty(serial) ? args : string.Format("-s {0} {1}", serial, args);
-            return RunCommand(AdbPath, fullArgs, timeoutMs);
+            return RunCommandCapture(AdbPath, fullArgs, timeoutMs);
         }
 
         public string AdbShell(string serial, string shellCommand)
@@ -1366,7 +1529,10 @@ namespace DofusFarm.Engine
                 { "skin.dynamic", "yes" },
                 { "disk.dataPartition.path", "userdata-qemu.img" },
                 { "disk.encryptionKeyPartition.path", "encryptionkey.img" },
-                { "disk.cachePartition", "yes" },
+                // The guest never needs /cache for Dofus; dropping the partition measurably shortens
+                // cold boot (40s vs 60-80s measured on this host) and removes one more device from
+                // the boot path.
+                { "disk.cachePartition", "no" },
                 { "disk.cachePartition.path", "cache.img" },
                 { "image.sysdir.1", @"system-images\android-29\default\x86_64\" },
                 { "abi.type", "x86_64" },
@@ -1556,6 +1722,16 @@ namespace DofusFarm.Engine
                 catch { }
             }
 
+            // Stop the emulator from writing a snapshot on exit: this build leaves a half-finished
+            // placeholder behind (ram.img + snapshot.pb, no ram.bin) that every following boot wastes
+            // time trying to load, and its exit-save has been seen to crash the emulator outright. The
+            // app saves snapshots explicitly after a successful boot instead.
+            try
+            {
+                File.WriteAllText(Path.Combine(avdDir, "quickbootChoice.ini"), "saveOnExit = false\r\n", Encoding.ASCII);
+            }
+            catch { }
+
             // Repair emulator-user.ini if it has window.scale = -1 (which causes invisible/black Qt swapchain)
             try
             {
@@ -1610,7 +1786,10 @@ namespace DofusFarm.Engine
             string emuQcow2 = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
             string rawUd = Path.Combine(avdDir, "userdata-qemu.img");
 
-            bool needRaw = !File.Exists(rawUd) || (new FileInfo(rawUd).Length != new FileInfo(GoldenMasterPath).Length);
+            // Never rebuild an instance's userdata just because the bundled golden master changed:
+            // doing that silently threw a stripped, logged-in guest back to stock Android. The raw
+            // image is only created when the instance genuinely has none.
+            bool needRaw = !File.Exists(rawUd) || new FileInfo(rawUd).Length == 0;
             if (needRaw)
             {
                 try
@@ -1859,13 +2038,94 @@ namespace DofusFarm.Engine
             return Process.Start(psi);
         }
 
+        // An already running, fully booted instance is adopted instead of rebooted. For daily use
+        // this turns "Launch" into a couple of seconds instead of a full 60-80s cold boot; only a
+        // stopped, frozen or half-booted emulator is actually (re)started. This matters because
+        // this emulator build cannot restore QuickBoot snapshots (see PurgeIncompleteSnapshots).
+        //
+        // adb is the only authority here: if a guest answers `sys.boot_completed=1` on this serial,
+        // it is up. (Gate decisions previously ran a WMI process scan with a 2s timeout; when WMI
+        // was slow the adoption silently failed and the running instance got killed and rebooted.)
+        private bool TryAdoptRunningInstance(string name, int port)
+        {
+            try
+            {
+                string serial = "emulator-" + port;
+
+                // Cloned instances must take the cold path once so their session tokens get sanitized.
+                if (File.Exists(Path.Combine(AvdHome, name + ".avd", "sanitize_session.flag"))) return false;
+
+                // Wait briefly for adb to settle instead of failing fast: right after `adb unroot`
+                // and the final sync the transport can be listed-but-unresponsive for a few seconds,
+                // and a failed adoption used to kill and cold-reboot a perfectly healthy instance.
+                // Cost is asymmetric: waiting a couple of seconds costs nothing, failing costs 80s.
+                Stopwatch adw = Stopwatch.StartNew();
+                while (true)
+                {
+                    string bootState = null;
+                    try { bootState = Adb(serial, "shell getprop sys.boot_completed", 4000); } catch { }
+                    if ((bootState ?? "").Trim() == "1") break;
+
+                    string devList = null;
+                    try { devList = Adb("", "devices", 4000); } catch { }
+                    if (devList == null || devList.IndexOf(serial, StringComparison.Ordinal) < 0)
+                        return false;   // nothing running on this port - normal cold launch
+
+                    if (adw.Elapsed.TotalSeconds > 20)
+                    {
+                        Log(string.Format("{0}: running but guest never reports booted (state '{1}') - restarting.", name, (bootState ?? "").Trim()));
+                        return false;   // running but broken - fall back to a fresh boot
+                    }
+                    Thread.Sleep(600);
+                }
+
+                EnsureAdvancedFeatures();
+                AdbShell(serial, "input keyevent 224 2>/dev/null || true; wm dismiss-keyguard 2>/dev/null || true; am start -n com.ankama.dofustouch/.MainActivity");
+                ThreadPool.QueueUserWorkItem(delegate { InjectDisguiseViaCdp(serial, port, name); });
+                Log(string.Format("{0} was already running - attached instantly, no reboot needed.", name));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Each start of a launch flow on a port gets a generation token; StopInstance bumps it.
+        // A background flow whose generation is no longer current aborts instead of "healing"
+        // the very stop the user just requested (which used to resurrect a stopped instance).
+        private readonly object _launchGenLock = new object();
+        private readonly Dictionary<int, int> _launchGen = new Dictionary<int, int>();
+
+        private int BumpLaunchGen(int port)
+        {
+            lock (_launchGenLock)
+            {
+                int g;
+                _launchGen.TryGetValue(port, out g);
+                g++;
+                _launchGen[port] = g;
+                return g;
+            }
+        }
+
+        private int GetLaunchGen(int port)
+        {
+            lock (_launchGenLock)
+            {
+                int g;
+                _launchGen.TryGetValue(port, out g);
+                return g;
+            }
+        }
+
         public void LaunchInstance(string name, int port, int ramMb, int cores, string proxy = null)
         {
             int safeRam = Math.Max(1024, ramMb);
             int safeCores = Math.Max(1, cores);
 
-            EnsureAdvancedFeatures();
             string avdDir = Path.Combine(AvdHome, name + ".avd");
+            int launchGen = BumpLaunchGen(port);
+            if (TryAdoptRunningInstance(name, port)) return;
+
+            EnsureAdvancedFeatures();
             KillProcessForInstance(name, port);
             EnsureAvdIni(name, avdDir);
             CleanLocks(avdDir);
@@ -1962,19 +2222,28 @@ namespace DofusFarm.Engine
 
             ThreadPool.QueueUserWorkItem(delegate
             {
-                ConfigureGuestAndLaunchGame(name, serial, port, safeRam, safeCores, avdDir, serialNo, androidId, mac, proxyArg, proc, false);
+                ConfigureGuestAndLaunchGame(name, serial, port, safeRam, safeCores, avdDir, serialNo, androidId, mac, proxyArg, proc, false, launchGen);
             });
         }
 
-        private void ConfigureGuestAndLaunchGame(string name, string serial, int port, int ramMb, int cores, string avdDir, string serialNo, string androidId, string mac, string proxyArg, Process proc, bool shutdownAfterSnapshot)
+        private void ConfigureGuestAndLaunchGame(string name, string serial, int port, int ramMb, int cores, string avdDir, string serialNo, string androidId, string mac, string proxyArg, Process proc, bool shutdownAfterSnapshot, int launchGen)
         {
             Stopwatch sw = Stopwatch.StartNew();
             bool adbReady = false;
             int fallbackAttempt = 0;
             int bootHealAttempt = 0;
+            string lastWorkingGpuMode = null;
 
             while (sw.Elapsed.TotalSeconds < 110)
             {
+                // The user stopped (or restarted) this instance while the flow was running: abort
+                // quietly instead of auto-healing the process death back to life.
+                if (GetLaunchGen(port) != launchGen)
+                {
+                    Log(string.Format("{0}: stop/relaunch detected - aborting background launch flow.", name));
+                    return;
+                }
+
                 if (!IsInstanceProcessAlive(proc, name, port))
                 {
                     if (fallbackAttempt < 2)
@@ -1995,6 +2264,7 @@ namespace DofusFarm.Engine
                             name, port, gpuMode, ramMb, cores, proxyArg ?? "");
 
                         proc = StartEmulatorProcess(fallbackArgs, shutdownAfterSnapshot);
+                        lastWorkingGpuMode = gpuMode;
                         sw.Restart();
                         Thread.Sleep(800);
                         continue;
@@ -2040,6 +2310,14 @@ namespace DofusFarm.Engine
                 return;
             }
 
+            // Remember the renderer that actually got this instance running, so the next boot skips
+            // the trial-and-error: this is the "check it once at install, reuse forever" behaviour.
+            if (!string.IsNullOrEmpty(lastWorkingGpuMode) && lastWorkingGpuMode != GetConfiguredGpuMode())
+            {
+                SetConfiguredGpuMode(lastWorkingGpuMode);
+                Log(string.Format("Renderer '{0}' verified working on {1}; saved as the default for this farm.", lastWorkingGpuMode, name));
+            }
+
             string flagPath = Path.Combine(avdDir, "sanitize_session.flag");
             bool needsSanitize = File.Exists(flagPath);
             bool hadWarmSnapshot = IsInstanceWarmReady(name);
@@ -2071,6 +2349,12 @@ namespace DofusFarm.Engine
             int healAttempt = 0;
             while (bootSw.Elapsed.TotalSeconds < 130)
             {
+                if (GetLaunchGen(port) != launchGen)
+                {
+                    Log(string.Format("{0}: stop/relaunch detected - aborting background launch flow.", name));
+                    return;
+                }
+
                 if (!IsInstanceProcessAlive(proc, name, port))
                 {
                     // Guest died after reaching adb: heal once instead of giving up.
@@ -2197,13 +2481,32 @@ namespace DofusFarm.Engine
                 "for svc in cameraserver vendor.camera-provider-2-4 drmserver vendor.drm-hal-1-0 vendor.drm-clearkey-hal-1-2 vendor.drm-widevine-hal-1-2 mediadrmserver traced traced_probes statsd incidentd tombstoned llkd-1 mdnsd goldfish-logcat vendor.fps_hal broadcastradio-hal vendor.cas-hal-1-1 vendor.gnss_service hostapd; do " +
                 "  setprop ctl.stop $svc 2>/dev/null || true; " +
                 "done; " +
-                "if [ ! -f /data/local/tmp/.dofus_debloated ]; then " +
-                "  for pkg in com.android.cts.priv.ctsshim com.android.cts.ctsshim org.chromium.webview_shell com.android.statementservice com.android.printspooler com.android.bips com.android.camera2 com.android.music com.android.dreams.basic com.android.wallpaper.livepicker com.android.wallpaperbackup com.android.calllogbackup com.android.quicksearchbox; do " +
-                "    pm disable-user --user 0 $pkg 2>/dev/null || true; " +
+                // Versioned, idempotent strip-down: an instance that ever receives fresh userdata is
+                // stripped again instead of booting a full stock Android. Only Dofus Touch plus the
+                // input/display stack, WebView (the game needs it) and Settings stay enabled.
+                // v4 also RE-ENABLES packages earlier (over-aggressive) strip versions disabled:
+                // without the system keyboard you cannot type login credentials or chat, and
+                // keychain/documentsui are needed for credential and file pickers.
+                "DEBLOAT_V='v4'; " +
+                "if [ \"$(cat /data/local/tmp/.dofus_debloat_ver 2>/dev/null)\" != \"$DEBLOAT_V\" ]; then " +
+                "  DISABLED=0; " +
+                "  for pkg in com.android.cts.priv.ctsshim com.android.cts.ctsshim org.chromium.webview_shell com.android.statementservice com.android.printspooler com.android.bips com.android.camera2 com.android.music com.android.deskclock com.android.gallery3d com.android.dreams.basic com.android.dreams.phototable com.android.wallpaper.livepicker com.android.wallpaperbackup com.android.wallpapercropper com.android.calllogbackup com.android.quicksearchbox com.android.htmlviewer com.android.bookmarkprovider com.android.providers.downloads.ui com.android.providers.partnerbookmarks com.android.smspush com.android.stk com.android.calendar com.android.providers.calendar; do " +
+                "    if pm disable-user --user 0 $pkg >/dev/null 2>&1; then DISABLED=$((DISABLED+1)); fi; " +
                 "  done; " +
-                "  touch /data/local/tmp/.dofus_debloated; " +
-                "fi";
-            AdbShell(serial, combinedSetupCmd);
+                "  EN=0; " +
+                "  for pkg in com.android.inputmethod.latin com.android.keychain com.android.documentsui com.android.webview com.android.webview.apkoverlay; do " +
+                "    if pm enable --user 0 $pkg >/dev/null 2>&1; then EN=$((EN+1)); fi; " +
+                "  done; " +
+                "  echo $DEBLOAT_V > /data/local/tmp/.dofus_debloat_ver; " +
+                "  echo \"debloat: v4 pass complete - $DISABLED package(s) disabled, $EN critical package(s) enabled\"; " +
+                "else echo 'debloat: instance already stripped'; fi; " +
+                "echo -n 'debloat: total disabled packages now = '; pm list packages -d 2>/dev/null | wc -l";
+            string setupOut = AdbShell(serial, combinedSetupCmd);
+            string setupShort = (setupOut ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+            if (setupShort.Length > 160) setupShort = setupShort.Substring(0, 160);
+            Log(string.Format("{0} | guest setup pass returned {1} chars: {2}", name, (setupOut ?? "").Length, setupShort));
+            foreach (Match dLine in Regex.Matches(setupOut ?? "", @"debloat:[^\r\n]*"))
+                Log(string.Format("{0} | {1}", name, dLine.Value.Trim()));
 
             // Drop root daemon privileges prior to launching game & saving snapshot
             Adb(serial, "unroot", 6000);
@@ -2218,7 +2521,10 @@ namespace DofusFarm.Engine
             try
             {
                 AdbShell(serial, "sync");
-                Adb(serial, "emu avd snapshot save default_boot", 25000);
+                // Deliberately NO `emu avd snapshot save` here: this build's snapshot loader rejects
+                // its own saves (every following boot had to purge them as incomplete), so the ~700MB
+                // write was pure launch latency. Instances stay warm instead (adopt path above), and
+                // PurgeIncompleteSnapshots still clears any legacy snapshot state.
                 File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8);
             }
             catch { }
@@ -2709,6 +3015,15 @@ namespace DofusFarm.Engine
         public void StopInstance(string serial, string name)
         {
             Log(string.Format("Stopping {0} ({1})...", name, serial));
+
+            // Invalidate any launch flow still running for this port so its auto-heal cannot
+            // resurrect the instance we are about to stop.
+            if (!string.IsNullOrEmpty(serial) && serial.StartsWith("emulator-"))
+            {
+                int sp;
+                if (int.TryParse(serial.Substring(9), out sp)) BumpLaunchGen(sp);
+            }
+
             lock (_cdpLock)
             {
                 if (_cdpSessions.ContainsKey(serial))
@@ -2727,49 +3042,126 @@ namespace DofusFarm.Engine
                     try { Adb(serial, string.Format("forward --remove tcp:{0}", pNum + 4000)); } catch { }
                 }
             }
+            // Quick sync + emu kill; never wait 30s on adb.
             try { AdbShell(serial, "sync"); } catch { }
-            try { Adb(serial, "emu kill", 3000); } catch { }
+            try { Adb(serial, "emu kill"); } catch { }
 
-            // Allow QEMU up to 5 seconds to flush QCOW2 and save QuickBoot snapshot cleanly before forced termination
-            try
-            {
-                using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
-                    "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe' OR Name='emulator.exe'"))
-                {
-                    searcher.Options.Timeout = TimeSpan.FromSeconds(2);
-                    using (System.Management.ManagementObjectCollection collection = searcher.Get())
-                    {
-                        foreach (System.Management.ManagementObject mo in collection)
-                        {
-                            using (mo)
-                            {
-                                string cl = (mo["CommandLine"] ?? "").ToString();
-                                if ((!string.IsNullOrEmpty(name) && cl.Contains("-avd " + name)) ||
-                                    (!string.IsNullOrEmpty(serial) && serial.StartsWith("emulator-") && cl.Contains(serial.Substring(9))))
-                                {
-                                    int pid = Convert.ToInt32(mo["ProcessId"]);
-                                    try
-                                    {
-                                        using (Process p = Process.GetProcessById(pid))
-                                        {
-                                            if (!p.WaitForExit(5000))
-                                            {
-                                                p.Kill();
-                                            }
-                                        }
-                                    }
-                                    catch { }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            catch { }
+            // Fast native kill of the QEMU process tree for this instance, no WMI.
+            KillProcessForInstanceFast(name, portFromSerial(serial));
 
             string avdDir = Path.Combine(AvdHome, name + ".avd");
             CleanLocks(avdDir);
         }
+
+        private int portFromSerial(string serial)
+        {
+            if (string.IsNullOrEmpty(serial) || !serial.StartsWith("emulator-"))
+                return 0;
+            int p;
+            if (!int.TryParse(serial.Substring(9), out p))
+                return 0;
+            return p;
+        }
+
+        private void KillProcessForInstanceFast(string name, int port)
+        {
+            try
+            {
+                int qemuPid = FindEmuPidForInstance(name, port);
+                if (qemuPid <= 0) return;
+
+                // Enumerate children via CreateToolhelp32Snapshot and kill the whole tree.
+                HashSet<int> pids = new HashSet<int>();
+                pids.Add(qemuPid);
+                IntPtr snap = Native.Win32.CreateToolhelp32Snapshot(Native.Win32.TH32CS_SNAPPROCESS, 0);
+                if (snap != IntPtr.Zero && snap != (IntPtr)(-1))
+                {
+                    try
+                    {
+                        Native.Win32.PROCESSENTRY32 pe = new Native.Win32.PROCESSENTRY32();
+                        pe.dwSize = (uint)Marshal.SizeOf(typeof(Native.Win32.PROCESSENTRY32));
+                        if (Native.Win32.Process32First(snap, ref pe))
+                        {
+                            do
+                            {
+                                if (pe.th32ParentProcessID == (uint)qemuPid)
+                                {
+                                    pids.Add((int)pe.th32ProcessID);
+                                }
+                            } while (Native.Win32.Process32Next(snap, ref pe));
+                        }
+                    }
+                    finally
+                    {
+                        Native.Win32.CloseHandle(snap);
+                    }
+                }
+
+                foreach (int pid in pids)
+                {
+                    try
+                    {
+                        using (Process p = Process.GetProcessById(pid))
+                        {
+                            if (!p.HasExited)
+                            {
+                                p.Kill();
+                                p.WaitForExit(1500);
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        private int FindEmuPidForInstance(string name, int port)
+        {
+            try
+            {
+                IntPtr snap = Native.Win32.CreateToolhelp32Snapshot(Native.Win32.TH32CS_SNAPPROCESS, 0);
+                if (snap == IntPtr.Zero || snap == (IntPtr)(-1)) return -1;
+                try
+                {
+                    Native.Win32.PROCESSENTRY32 pe = new Native.Win32.PROCESSENTRY32();
+                    pe.dwSize = (uint)Marshal.SizeOf(typeof(Native.Win32.PROCESSENTRY32));
+                    if (Native.Win32.Process32First(snap, ref pe))
+                    {
+                        do
+                        {
+                            if (pe.szExeFile == "qemu-system-x86_64.exe" || pe.szExeFile == "emulator.exe")
+                            {
+                                int pid = (int)pe.th32ProcessID;
+                                // Check if this PID is cached for our port
+                                lock (_pidCacheLock)
+                                {
+                                    int cachedPort;
+                                    if (_cachedPortToPid.TryGetValue(pid, out cachedPort) && cachedPort == port)
+                                    {
+                                        return pid;
+                                    }
+                                }
+                                // Also check by name
+                                if (!string.IsNullOrEmpty(name))
+                                {
+                                    // For named instances, we need to check the command line or rely on external tracking
+                                    // Since we can't easily read command line without WMI, we skip per-instance matching here
+                                    // and rely on the caller to have cached the correct PID
+                                }
+                            }
+                        } while (Native.Win32.Process32Next(snap, ref pe));
+                    }
+                }
+                finally
+                {
+                    Native.Win32.CloseHandle(snap);
+                }
+            }
+            catch { }
+            return -1;
+        }
+
 
         public void StopAll()
         {

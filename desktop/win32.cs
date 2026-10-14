@@ -9,6 +9,140 @@ using System.Windows.Forms;
 
 namespace DofusFarm.Native
 {
+    public static class NativeMethods
+    {
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool CreateProcessW(
+            string lpApplicationName, string lpCommandLine,
+            IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,
+            bool bInheritHandles, uint dwCreationFlags,
+            IntPtr lpEnvironment, string lpCurrentDirectory,
+            ref STARTUPINFOW lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress,
+            byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesRead);
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern uint NtQueryInformationProcess(IntPtr hProcess, int processInfoClass,
+            ref PROCESS_BASIC_INFORMATION_X processInformation, uint processInformationLength,
+            ref uint returnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_BASIC_INFORMATION_X
+        {
+            public IntPtr ExitStatus;
+            public IntPtr PebBaseAddress;
+            public IntPtr AffinityMask;
+            public int BasePriority;
+            public IntPtr UniqueProcessId;
+            public IntPtr InheritedFromUniqueProcessId;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct PEB_X
+        {
+            public byte byteReserved1; public byte BeingDebugged; public byte Reserved2; public byte Reserved3;
+            public IntPtr Reserved4; public IntPtr Reserved5; public IntPtr Reserved6;
+            public IntPtr ProcessParameters;
+            public IntPtr Reserved7; public IntPtr Reserved8; public IntPtr Reserved9;
+            public IntPtr Reserved10; public IntPtr CLSID; public IntPtr Reserved11;
+            public IntPtr Reserved12; public IntPtr Reserved13; public IntPtr Reserved14;
+            public IntPtr Reserved15; public IntPtr Reserved16; public IntPtr Reserved17;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct RTL_USER_PROCESS_PARAMETERS_X
+        {
+            public ushort Length; public ushort MaximumLength; public IntPtr DisposalParameters;
+            public IntPtr ImagePathName; public IntPtr CommandLine;
+        }
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern uint NtQueryInformationProcess(IntPtr hProcess, int processInfoClass,
+            ref PROCESS_BASIC_INFORMATION_X processInformation, uint processInformationLength,
+            ref uint returnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_BASIC_INFORMATION_X
+        {
+            public IntPtr ExitStatus;
+            public IntPtr PebBaseAddress;
+            public IntPtr AffinityMask;
+            public int BasePriority;
+            public IntPtr UniqueProcessId;
+            public IntPtr InheritedFromUniqueProcessId;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CreatePipe(ref IntPtr hReadPipe, ref IntPtr hWritePipe,
+            ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool ReadFile(IntPtr hFile, byte[] lpBuffer, uint nNumberOfBytesToRead,
+            out uint lpNumberOfBytesRead, IntPtr lpOverlapped);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool PeekNamedPipe(IntPtr hPipe, IntPtr lpBuffer, uint nBufferSize,
+            out uint lpBytesRead, out uint lpTotalBytesAvail, IntPtr lpReserved);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern IntPtr CreateDirectoryW(string lpPathName, IntPtr lpSecurityAttributes);
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct STARTUPINFOW
+    {
+        public uint cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public uint dwX;
+        public uint dwY;
+        public uint dwXSize;
+        public uint dwYSize;
+        public uint dwXCountChars;
+        public uint dwYCountChars;
+        public uint dwFillAttribute;
+        public uint dwFlags;
+        public ushort wShowWindow;
+        public ushort cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public uint dwProcessId;
+        public uint dwThreadId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SECURITY_ATTRIBUTES
+    {
+        public int nLength;
+        public bool bInheritHandle;
+        public IntPtr lpSecurityDescriptor;
+    }
+
+
     public static class Win32
     {
         [DllImport("user32.dll", SetLastError = true)]

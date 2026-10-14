@@ -79,8 +79,13 @@ namespace DofusFarm.Engine
         public static long ComputeAffinityMask(int slot, int cores, int totalCores)
         {
             int safeTotal = Math.Min(62, Math.Max(1, totalCores));
-            int span = Math.Min(safeTotal, Math.Max(2, cores));
-            int baseCore = (Math.Max(0, slot) * 2) % safeTotal;
+            // Respect the requested core count even when it is 1 (was forced to 2 before, which
+            // robbed single-core instances of a whole logical CPU each).
+            int span = Math.Min(safeTotal, Math.Max(1, cores)); // already fixed (was Math.Max(2, cores))
+            // Step by the instance's own span so slots pack without overlap: 1-core instances take
+            // logical CPUs 0,1,2,... (Windows numbers the primary thread of each physical core first),
+            // 2-core instances take {0,1},{2,3},... instead of a hardcoded stride of 2.
+            int baseCore = (Math.Max(0, slot) * Math.Max(1, span)) % safeTotal;
             long mask = 0L;
             for (int c = 0; c < span; c++)
             {
@@ -109,31 +114,20 @@ namespace DofusFarm.Engine
             int parsedCores = 2;
             try
             {
-                using (var searcher = new ManagementObjectSearcher(
-                    string.Format("SELECT CommandLine FROM Win32_Process WHERE ProcessId = {0}", pid)))
+                // Use CreateToolhelp32Snapshot + command-line cache to avoid WMI.
+                string cmd = GetCachedCommandLine(pid);
+                if (!string.IsNullOrEmpty(cmd))
                 {
-                    searcher.Options.Timeout = TimeSpan.FromSeconds(2);
-                    using (var coll = searcher.Get())
+                    var mp = Regex.Match(cmd, @"-port\s+(\d+)");
+                    if (mp.Success)
                     {
-                        foreach (ManagementObject mo in coll)
-                        {
-                            using (mo)
-                            {
-                                string cl = (mo["CommandLine"] ?? "").ToString();
-                                var mp = Regex.Match(cl, @"-port\s+(\d+)");
-                                if (mp.Success)
-                                {
-                                    int port = int.Parse(mp.Groups[1].Value);
-                                    resolved = Math.Max(0, (port - 5554) / 2);
-                                }
-                                var mc = Regex.Match(cl, @"-cores\s+(\d+)");
-                                if (mc.Success)
-                                {
-                                    int.TryParse(mc.Groups[1].Value, out parsedCores);
-                                }
-                                break;
-                            }
-                        }
+                        int port = int.Parse(mp.Groups[1].Value);
+                        resolved = Math.Max(0, (port - 5554) / 2);
+                    }
+                    var mc = Regex.Match(cmd, @"-cores\s+(\d+)");
+                    if (mc.Success)
+                    {
+                        int.TryParse(mc.Groups[1].Value, out parsedCores);
                     }
                 }
             }
@@ -155,6 +149,67 @@ namespace DofusFarm.Engine
                 }
             }
             return resolved;
+        }
+
+        private static Dictionary<int, string> _cmdLineCache = new Dictionary<int, string>();
+        private static readonly object _cmdLineLock = new object();
+        private static string GetCachedCommandLine(int pid)
+        {
+            lock (_cmdLineLock)
+            {
+                string cached;
+                if (_cmdLineCache.TryGetValue(pid, out cached)) return cached;
+            }
+            try
+            {
+                // Use OpenProcess + NtQueryInformationProcess to read the command line without WMI.
+                IntPtr hProcess = NativeMethods.OpenProcess(0x0400 | 0x0010, false, pid);
+                if (hProcess == IntPtr.Zero) return null;
+                try
+                {
+                    // Use PROCESS_BASIC_INFORMATION to get PEB address
+                    NativeMethods.PROCESS_BASIC_INFORMATION_X pbi = new NativeMethods.PROCESS_BASIC_INFORMATION_X();
+                    uint returnLen = 0;
+                    uint err = NativeMethods.NtQueryInformationProcess(hProcess, 6, ref pbi, (uint)Marshal.SizeOf(typeof(NativeMethods.PROCESS_BASIC_INFORMATION_X)), ref returnLen);
+                    if (err == 0 && pbi.PebBaseAddress != IntPtr.Zero)
+                    {
+                        // Read the PEB
+                        NativeMethods.PEB_X peb = new NativeMethods.PEB_X();
+                        uint bytesRead;
+                        if (NativeMethods.ReadProcessMemory(hProcess, pbi.PebBaseAddress, ref peb, (uint)Marshal.SizeOf(typeof(NativeMethods.PEB_X)), out bytesRead))
+                        {
+                            if (peb.ProcessParameters != IntPtr.Zero)
+                            {
+                                // Read RTL_USER_PROCESS_PARAMETERS
+                                NativeMethods.RTL_USER_PROCESS_PARAMETERS_X cmdParams = new NativeMethods.RTL_USER_PROCESS_PARAMETERS_X();
+                                if (NativeMethods.ReadProcessMemory(hProcess, peb.ProcessParameters, ref cmdParams, (uint)Marshal.SizeOf(typeof(NativeMethods.RTL_USER_PROCESS_PARAMETERS_X)), out bytesRead))
+                                {
+                                    if (cmdParams.CommandLine.Length > 0 && cmdParams.CommandLine.Buffer != IntPtr.Zero)
+                                    {
+                                        byte[] buffer = new byte[(int)cmdParams.CommandLine.Length * sizeof(char)];
+                                        if (NativeMethods.ReadProcessMemory(hProcess, cmdParams.CommandLine.Buffer, buffer, (uint)buffer.LongLength, out bytesRead))
+                                        {
+                                            string cmdLineRead = System.Text.Encoding.Unicode.GetString(buffer, 0, (int)(bytesRead / sizeof(char)));
+                                            lock (_cmdLineLock)
+                                            {
+                                                if (!_cmdLineCache.ContainsKey(pid))
+                                                    _cmdLineCache[pid] = cmdLineRead;
+                                            }
+                                            return cmdLineRead;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                finally
+                {
+                    NativeMethods.CloseHandle(hProcess);
+                }
+            }
+            catch { return null; }
+            return null;
         }
 
         private void Tick(object state)

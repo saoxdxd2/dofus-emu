@@ -43,6 +43,7 @@ namespace DofusFarm.UI
         private Button _btnApplyAllHw;
         private ContextMenuStrip _rowMenu;
         private bool _suppressGpuEvent = false;
+        private bool _keepInstancesOnExit = true;
 
         private DataGridView _grid;
         private Font _cellBadgeFont;
@@ -1412,15 +1413,11 @@ namespace DofusFarm.UI
                 if (activeCount > 0)
                 {
                     DialogResult dr = MessageBox.Show(
-                        string.Format("You have {0} active game instance(s) currently running.\n\nClosing the manager will save their snapshots and close all running game windows. Exit anyway?", activeCount),
-                        "Close Active Instances?",
+                        string.Format("You have {0} game instance(s) running.\n\nYES - keep them running in the background (recommended): the next Launch attaches instantly, no 60-80s reboot.\nNO  - shut every instance down now.", activeCount),
+                        "Keep Instances Running?",
                         MessageBoxButtons.YesNo,
                         MessageBoxIcon.Question);
-                    if (dr == DialogResult.No)
-                    {
-                        e.Cancel = true;
-                        return;
-                    }
+                    _keepInstancesOnExit = (dr == DialogResult.Yes);
                 }
             }
 
@@ -1429,7 +1426,9 @@ namespace DofusFarm.UI
 
             if (_lblStatusText != null)
             {
-                _lblStatusText.Text = "Saving instance snapshots and shutting down cleanly...";
+                _lblStatusText.Text = _keepInstancesOnExit
+                    ? "Detaching from running instances (they keep playing in the background)..."
+                    : "Saving instance snapshots and shutting down cleanly...";
                 Application.DoEvents();
             }
 
@@ -1450,7 +1449,14 @@ namespace DofusFarm.UI
             }
             if (_engine != null)
             {
-                _engine.StopAll();
+                if (_keepInstancesOnExit)
+                {
+                    Log("Instances left running on purpose - next Launch will attach to them instantly.");
+                }
+                else
+                {
+                    _engine.StopAll();
+                }
             }
             base.OnFormClosing(e);
         }
