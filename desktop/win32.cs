@@ -33,9 +33,7 @@ namespace DofusFarm.Native
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress,
-            byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesRead);
-
-        [DllImport("ntdll.dll", SetLastError = true)]
+            byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesRead);        [DllImport("ntdll.dll", SetLastError = true)]
         public static extern uint NtQueryInformationProcess(IntPtr hProcess, int processInfoClass,
             ref PROCESS_BASIC_INFORMATION_X processInformation, uint processInformationLength,
             ref uint returnLength);
@@ -70,22 +68,6 @@ namespace DofusFarm.Native
             public IntPtr ImagePathName; public IntPtr CommandLine;
         }
 
-        [DllImport("ntdll.dll", SetLastError = true)]
-        public static extern uint NtQueryInformationProcess(IntPtr hProcess, int processInfoClass,
-            ref PROCESS_BASIC_INFORMATION_X processInformation, uint processInformationLength,
-            ref uint returnLength);
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct PROCESS_BASIC_INFORMATION_X
-        {
-            public IntPtr ExitStatus;
-            public IntPtr PebBaseAddress;
-            public IntPtr AffinityMask;
-            public int BasePriority;
-            public IntPtr UniqueProcessId;
-            public IntPtr InheritedFromUniqueProcessId;
-        }
-
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool CreatePipe(ref IntPtr hReadPipe, ref IntPtr hWritePipe,
             ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
@@ -102,7 +84,6 @@ namespace DofusFarm.Native
         public static extern IntPtr CreateDirectoryW(string lpPathName, IntPtr lpSecurityAttributes);
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct STARTUPINFOW
     {
         public uint cb;
@@ -126,20 +107,20 @@ namespace DofusFarm.Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct PROCESS_INFORMATION
-    {
-        public IntPtr hProcess;
-        public IntPtr hThread;
-        public uint dwProcessId;
-        public uint dwThreadId;
-    }
-
     [StructLayout(LayoutKind.Sequential)]
     public struct SECURITY_ATTRIBUTES
     {
         public int nLength;
         public bool bInheritHandle;
         public IntPtr lpSecurityDescriptor;
+    }
+
+    public struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public uint dwProcessId;
+        public uint dwThreadId;
     }
 
 

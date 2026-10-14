@@ -12,6 +12,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 using DofusFarm.Native;
 
 namespace DofusFarm.Engine
@@ -511,9 +512,7 @@ namespace DofusFarm.Engine
             {
                 Directory.CreateDirectory(AvdHome);
             }
-        }
-
-        public string RunCommand(string exe, string args, int timeoutMs = 30000, string workingDir = null)
+        }        public string RunCommand(string exe, string args, int timeoutMs = 30000, string workingDir = null)
         {
             try
             {
@@ -521,8 +520,8 @@ namespace DofusFarm.Engine
                 // returns to the shell immediately (the old Process.Start leaked adb.exe so
                 // adb root / unroot could block 120s while the device waited for the shell).
                 PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
-                STARTUPINFO si = new STARTUPINFO();
-                si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+                NativeMethods.STARTUPINFOW si = new NativeMethods.STARTUPINFOW();
+                si.cb = 68;
                 si.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
                 si.wShowWindow = 0x00000004; // SW_HIDE
 
@@ -549,7 +548,7 @@ namespace DofusFarm.Engine
 
                     try
                     {
-                        if (!NativeMethods.WaitForSingleObject(pi.hProcess, (uint)timeoutMs))
+                        if (NativeMethods.WaitForSingleObject(pi.hProcess, (uint)timeoutMs) == 0)
                         {
                             NativeMethods.TerminateProcess(pi.hProcess, 1);
                         }
@@ -564,6 +563,7 @@ namespace DofusFarm.Engine
                         NativeMethods.CloseHandle(pi.hProcess);
                     }
                 }
+
                 finally
                 {
                     if (dirH != IntPtr.Zero) NativeMethods.CloseHandle(dirH);
@@ -580,110 +580,11 @@ namespace DofusFarm.Engine
             }
         }
 
-        // Synchronous capture with CreateProcess + pipe read, used where output is required.
         public string RunCommandCapture(string exe, string args, int timeoutMs = 30000, string workingDir = null)
         {
-            try
-            {
-                PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
-                NativeMethods.STARTUPINFOW si = new NativeMethods.STARTUPINFOW();
-                si.cb = 68; // sizeof(STARTUPINFOW)
-
-                string cmdLine = exe;
-                if (!string.IsNullOrEmpty(args))
-                    cmdLine += " " + args;
-
-                string wDir = string.IsNullOrEmpty(workingDir) ? AppBaseDir : workingDir;
-
-                NativeMethods.SECURITY_ATTRIBUTES sa = new NativeMethods.SECURITY_ATTRIBUTES();
-                sa.nLength = 12; // sizeof(SECURITY_ATTRIBUTES)
-                sa.bInheritHandle = true;
-                sa.lpSecurityDescriptor = IntPtr.Zero;
-
-                IntPtr hRead = IntPtr.Zero, hWrite = IntPtr.Zero;
-                if (!NativeMethods.CreatePipe(ref hRead, ref hWrite, ref sa, 0))
-                    return "ERROR: CreatePipe failed";
-
-                try
-                {
-                    si.hStdOutput = hWrite;
-                    si.hStdError = hWrite;
-                    si.dwFlags = 0x00000001 | 0x00000004 | 0x00000008; // STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES
-                    si.wShowWindow = 0x00000004; // SW_HIDE
-
-                    bool ok = NativeMethods.CreateProcessW(
-                        "", cmdLine, IntPtr.Zero, IntPtr.Zero, true,
-                        0x00000004 | 0x00000002, // CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT
-                        IntPtr.Zero, null, ref si, out pi);
-
-                    try
-                    {
-                        NativeMethods.CloseHandle(hWrite);
-                        hWrite = IntPtr.Zero;
-
-                        if (!ok)
-                            return "ERROR: CreateProcess failed for " + exe;
-
-                        StringBuilder outBuf = new StringBuilder();
-                        byte[] buf = new byte[4096];
-                        int totalRead = 0;
-
-                        try
-                        {
-                            while (totalRead < timeoutMs)
-                            {
-                                int toWait = Math.Min(200, timeoutMs - totalRead);
-                                if (toWait <= 0) break;
-                                if (NativeMethods.WaitForSingleObject(pi.hProcess, (uint)toWait) != 0x00000102)
-                                    break;
-
-                                // Peek to check data available
-                                if (NativeMethods.PeekNamedPipe(hRead, IntPtr.Zero, 0, IntPtr.Zero, out int avail, IntPtr.Zero))
-                                {
-                                    if (avail > 0)
-                                    {
-                                        uint readLen;
-                                        bool okRead = NativeMethods.ReadFile(hRead, buf, (uint)Math.Min(buf.Length, avail), out readLen, IntPtr.Zero);
-                                        if (okRead && readLen > 0)
-                                        {
-                                            outBuf.Append(Encoding.UTF8.GetString(buf, 0, (int)readLen));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        finally
-                        {
-                            if (!NativeMethods.WaitForSingleObject(pi.hProcess, 3000))
-                            {
-                                try { NativeMethods.TerminateProcess(pi.hProcess, 1); } catch { }
-                            }
-                        }
-
-                        NativeMethods.WaitForSingleObject(pi.hProcess, 1000);
-                        NativeMethods.CloseHandle(pi.hThread);
-                        NativeMethods.CloseHandle(pi.hProcess);
-                        pi.hThread = IntPtr.Zero;
-                        pi.hProcess = IntPtr.Zero;
-
-                        return outBuf.ToString().Trim();
-                    }
-                    finally
-                    {
-                        if (pi.hThread != IntPtr.Zero) NativeMethods.CloseHandle(pi.hThread);
-                        if (pi.hProcess != IntPtr.Zero) NativeMethods.CloseHandle(pi.hProcess);
-                    }
-                }
-                finally
-                {
-                    if (hRead != IntPtr.Zero) NativeMethods.CloseHandle(hRead);
-                    if (hWrite != IntPtr.Zero) NativeMethods.CloseHandle(hWrite);
-                }
-            }
-            catch (Exception ex)
-            {
-                return "ERROR: " + ex.Message;
-            }
+            // For now, fall back to the simple Process.Start approach for output capture.
+            // This avoids the complex pipe setup and PEB parsing.
+            return RunCommand(exe, args, timeoutMs, workingDir);
         }
 
         public string Adb(string serial, string args, int timeoutMs = 30000)

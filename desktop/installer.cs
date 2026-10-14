@@ -298,8 +298,7 @@ namespace DofusStandaloneSetup
             string fullDestDir = Path.GetFullPath(destDir);
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
-                string destPath = Path.GetFullPath(Path.Combine(destDir, entry.FullName));
-                if (!destPath.StartsWith(fullDestDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+                string destPath = Path.GetFullPath(Path.Combine(destDir, entry.FullName));                    if (!destPath.StartsWith(fullDestDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
                     !destPath.Equals(fullDestDir, StringComparison.OrdinalIgnoreCase))
                     continue;
 

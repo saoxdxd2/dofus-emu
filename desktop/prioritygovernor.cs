@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Management;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Runtime.InteropServices;
 using DofusFarm.Native;
 
 namespace DofusFarm.Engine
@@ -170,24 +171,41 @@ namespace DofusFarm.Engine
                     // Use PROCESS_BASIC_INFORMATION to get PEB address
                     NativeMethods.PROCESS_BASIC_INFORMATION_X pbi = new NativeMethods.PROCESS_BASIC_INFORMATION_X();
                     uint returnLen = 0;
-                    uint err = NativeMethods.NtQueryInformationProcess(hProcess, 6, ref pbi, (uint)Marshal.SizeOf(typeof(NativeMethods.PROCESS_BASIC_INFORMATION_X)), ref returnLen);
+                    uint err = NativeMethods.NtQueryInformationProcess(hProcess, 6, ref pbi, (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(NativeMethods.PROCESS_BASIC_INFORMATION_X)), ref returnLen);
                     if (err == 0 && pbi.PebBaseAddress != IntPtr.Zero)
                     {
-                        // Read the PEB
-                        NativeMethods.PEB_X peb = new NativeMethods.PEB_X();
+                        // Read the PEB structure from the remote process
+                        byte[] pebBytes = new byte[System.Runtime.InteropServices.Marshal.SizeOf(typeof(NativeMethods.PEB_X))];
                         uint bytesRead;
-                        if (NativeMethods.ReadProcessMemory(hProcess, pbi.PebBaseAddress, ref peb, (uint)Marshal.SizeOf(typeof(NativeMethods.PEB_X)), out bytesRead))
+                        if (NativeMethods.ReadProcessMemory(hProcess, pbi.PebBaseAddress, pebBytes, (uint)pebBytes.Length, out bytesRead))
                         {
-                            if (peb.ProcessParameters != IntPtr.Zero)
+                            // Parse PEB to get ProcessParameters pointer
+                            IntPtr processParams = IntPtr.Zero;
+                            // Offset depends on architecture: x64 = 0x20, x86 = 0x10
+                            int offset = IntPtr.Size == 8 ? 0x20 : 0x10;
+                            processParams = IntPtr.Add(pbi.PebBaseAddress, offset);
+
+                            // Read RTL_USER_PROCESS_PARAMETERS
+                            byte[] paramsBytes = new byte[System.Runtime.InteropServices.Marshal.SizeOf(typeof(NativeMethods.RTL_USER_PROCESS_PARAMETERS_X))];
+                            if (NativeMethods.ReadProcessMemory(hProcess, processParams, paramsBytes, (uint)paramsBytes.Length, out bytesRead))
                             {
-                                // Read RTL_USER_PROCESS_PARAMETERS
-                                NativeMethods.RTL_USER_PROCESS_PARAMETERS_X cmdParams = new NativeMethods.RTL_USER_PROCESS_PARAMETERS_X();
-                                if (NativeMethods.ReadProcessMemory(hProcess, peb.ProcessParameters, ref cmdParams, (uint)Marshal.SizeOf(typeof(NativeMethods.RTL_USER_PROCESS_PARAMETERS_X)), out bytesRead))
+                                // Parse command line from parameters
+                                IntPtr cmdLinePtr = IntPtr.Zero;
+                                int cmdLineOffset = IntPtr.Size == 8 ? 0x70 : 0x38;
+                                cmdLinePtr = IntPtr.Add(processParams, cmdLineOffset);
+
+                                // Read the command line length and buffer pointer
+                                byte[] cmdLineInfo = new byte[8]; // 2 ushort + 1 IntPtr
+                                if (NativeMethods.ReadProcessMemory(hProcess, cmdLinePtr, cmdLineInfo, (uint)cmdLineInfo.Length, out bytesRead))
                                 {
-                                    if (cmdParams.CommandLine.Length > 0 && cmdParams.CommandLine.Buffer != IntPtr.Zero)
+                                    ushort cmdLen = System.BitConverter.ToUInt16(cmdLineInfo, 0);
+                                    ushort cmdMaxLen = System.BitConverter.ToUInt16(cmdLineInfo, 2);
+                                    IntPtr cmdBuffer = IntPtr.Size == 8 ? (IntPtr)System.BitConverter.ToInt64(cmdLineInfo, 4) : (IntPtr)System.BitConverter.ToInt32(cmdLineInfo, 4);
+
+                                    if (cmdLen > 0 && cmdBuffer != IntPtr.Zero)
                                     {
-                                        byte[] buffer = new byte[(int)cmdParams.CommandLine.Length * sizeof(char)];
-                                        if (NativeMethods.ReadProcessMemory(hProcess, cmdParams.CommandLine.Buffer, buffer, (uint)buffer.LongLength, out bytesRead))
+                                        byte[] buffer = new byte[cmdLen * sizeof(char)];
+                                        if (NativeMethods.ReadProcessMemory(hProcess, cmdBuffer, buffer, (uint)buffer.Length, out bytesRead))
                                         {
                                             string cmdLineRead = System.Text.Encoding.Unicode.GetString(buffer, 0, (int)(bytesRead / sizeof(char)));
                                             lock (_cmdLineLock)
