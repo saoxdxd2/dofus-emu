@@ -10,7 +10,7 @@ namespace DofusBuild
 {
     class Program
     {
-        static readonly string Csc = @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe";
+        static string Csc = @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe";
         static string RepoRoot;
 
         static int Main(string[] args)
@@ -22,12 +22,16 @@ namespace DofusBuild
             Console.WriteLine("==========================================================");
             Console.ResetColor();
 
-            RepoRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-            if (File.Exists(Path.Combine(RepoRoot, "builder", "Build.cs")))
+            if (!File.Exists(Csc))
             {
-                // Running from repo root
+                string altCsc = @"C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe";
+                if (File.Exists(altCsc)) Csc = altCsc;
             }
-            else if (Directory.GetParent(RepoRoot) != null && File.Exists(Path.Combine(Directory.GetParent(RepoRoot).FullName, "DofusFarm.exe")))
+
+            RepoRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
+            if (!File.Exists(Path.Combine(RepoRoot, "builder", "Build.cs")) &&
+                Directory.GetParent(RepoRoot) != null &&
+                File.Exists(Path.Combine(Directory.GetParent(RepoRoot).FullName, "builder", "Build.cs")))
             {
                 RepoRoot = Directory.GetParent(RepoRoot).FullName;
             }
@@ -38,6 +42,9 @@ namespace DofusBuild
             string outFarm = Path.Combine(RepoRoot, "DofusFarm.exe");
             string outUninstall = Path.Combine(RepoRoot, "uninstall.exe");
             string outSetup = Path.Combine(RepoRoot, "setup.exe");
+
+            // 0. Compile Go Network Proxy if go.exe is available
+            TryBuildGoProxy();
 
             // 1. Compile DofusFarm.exe
             Console.ForegroundColor = ConsoleColor.Cyan;
@@ -53,13 +60,19 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "MainForm.cs"),
                 Path.Combine(desktopDir, "Program.cs")
             };
-            string farmArgs = string.Format("/nologo /target:winexe \"/win32icon:{0}\" \"/out:{1}\" /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll \"{2}\"",
-                ico, outFarm, string.Join("\" \"", farmSources));
+            string iconArg = File.Exists(ico) ? string.Format("\"/win32icon:{0}\" ", ico) : "";
+            string farmArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll \"{2}\"",
+                iconArg, outFarm, string.Join("\" \"", farmSources));
 
-            int ec = Run(Csc, farmArgs);
-            if (ec != 0) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine("Failed to compile DofusFarm.exe"); return 1; }
+            if (Run(Csc, farmArgs) != 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Failed to compile DofusFarm.exe");
+                Console.ResetColor();
+                return 1;
+            }
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("  [OK] DofusFarm.exe compiled ({0} bytes)", new FileInfo(outFarm).Length);
+            Console.WriteLine("  [OK] DofusFarm.exe compiled ({0:N0} bytes)", new FileInfo(outFarm).Length);
             Console.ResetColor();
 
             // 2. Compile uninstall.exe
@@ -67,13 +80,19 @@ namespace DofusBuild
             Console.WriteLine("\n[2/4] Compiling native C# uninstall.exe...");
             Console.ResetColor();
             string uninstallerCs = Path.Combine(desktopDir, "Uninstaller.cs");
-            string uninstArgs = string.Format("/nologo /target:winexe \"/win32icon:{0}\" \"/out:{1}\" /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll \"{2}\"",
-                setupIco, outUninstall, uninstallerCs);
+            string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
+            string uninstArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll \"{2}\"",
+                setupIconArg, outUninstall, uninstallerCs);
 
-            ec = Run(Csc, uninstArgs);
-            if (ec != 0) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine("Failed to compile uninstall.exe"); return 1; }
+            if (Run(Csc, uninstArgs) != 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Failed to compile uninstall.exe");
+                Console.ResetColor();
+                return 1;
+            }
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("  [OK] uninstall.exe compiled ({0} bytes)", new FileInfo(outUninstall).Length);
+            Console.WriteLine("  [OK] uninstall.exe compiled ({0:N0} bytes)", new FileInfo(outUninstall).Length);
             Console.ResetColor();
 
             // 3. Seal Code Integrity Manifest
@@ -82,18 +101,53 @@ namespace DofusBuild
             Console.ResetColor();
             GenerateIntegrityManifest();
 
-            // 4. Compile standalone setup.exe with embedded payload
+            // 4. Compile standalone setup.exe sharing Win32, Hardware, and FarmEngine directly
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("\n[4/4] Packaging payload and compiling standalone setup.exe...");
+            Console.WriteLine("\n[4/4] Packaging release payload and compiling standalone setup.exe...");
             Console.ResetColor();
-            BuildStandaloneSetup(outSetup, setupIco);
+            if (!BuildStandaloneSetup(outSetup, setupIco, desktopDir))
+            {
+                return 1;
+            }
 
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("\n==========================================================");
-            Console.WriteLine("   BUILD COMPLETE: 100% NATIVE C# SUITE READY!            ");
+            Console.WriteLine("   BUILD COMPLETE: STANDALONE RELEASE SUITE READY!        ");
             Console.WriteLine("==========================================================");
             Console.ResetColor();
             return 0;
+        }
+
+        static void TryBuildGoProxy()
+        {
+            string proxySrc = Path.Combine(RepoRoot, @"scripts\dofus-net-proxy.go");
+            if (!File.Exists(proxySrc)) return;
+
+            string[] goCandidates = new[] { @"C:\Program Files\Go\bin\go.exe", @"C:\Go\bin\go.exe" };
+            string goExe = null;
+            foreach (string c in goCandidates)
+            {
+                if (File.Exists(c)) { goExe = c; break; }
+            }
+            if (goExe == null)
+            {
+                string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+                foreach (string dir in pathEnv.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    try
+                    {
+                        string p = Path.Combine(dir.Trim(), "go.exe");
+                        if (File.Exists(p)) { goExe = p; break; }
+                    }
+                    catch { }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(goExe))
+            {
+                string proxyOut = Path.Combine(RepoRoot, "dofus-net-proxy.exe");
+                Run(goExe, string.Format("build -ldflags=\"-s -w\" -o \"{0}\" \"{1}\"", proxyOut, proxySrc), RepoRoot);
+            }
         }
 
         static void GenerateIntegrityManifest()
@@ -103,9 +157,7 @@ namespace DofusBuild
                 "DofusFarm.exe",
                 "uninstall.exe",
                 "dofus-net-proxy.exe",
-                "dofus-downloader.exe",
                 @"scripts\mobile-disguise.js",
-                @"scripts\human-behavior-model.js",
                 "template.zip",
                 "sdk.7z"
             };
@@ -120,6 +172,11 @@ namespace DofusBuild
                 foreach (string rel in criticalFiles)
                 {
                     string full = Path.Combine(RepoRoot, rel);
+                    if (!File.Exists(full))
+                    {
+                        string alt = Path.Combine(RepoRoot, "scripts", Path.GetFileName(rel));
+                        if (File.Exists(alt)) full = alt;
+                    }
                     if (File.Exists(full))
                     {
                         byte[] hash;
@@ -139,28 +196,31 @@ namespace DofusBuild
                 lines.Add("SIGNATURE|" + sigHex);
             }
 
-            File.WriteAllLines(manifestPath, lines.ToArray(), Encoding.UTF8);
+            File.WriteAllLines(manifestPath, lines.ToArray(), new UTF8Encoding(false));
             Console.WriteLine("  [OK] Sealed app.integrity ({0} files)", lines.Count - 1);
         }
 
-        static void BuildStandaloneSetup(string outSetup, string setupIco)
+        static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir)
         {
             string tempDir = Path.GetTempPath();
             string stageDir = Path.Combine(tempDir, "dofus_build_stage_" + Guid.NewGuid().ToString("N"));
-            string payloadZip = Path.Combine(tempDir, "DofusPayload.zip");
+            string payloadZip = Path.Combine(tempDir, "DofusPayload_" + Guid.NewGuid().ToString("N") + ".zip");
 
-            if (Directory.Exists(stageDir)) Directory.Delete(stageDir, true);
-            Directory.CreateDirectory(stageDir);
-
-            // Copy scripts and tools
-            string stageScripts = Path.Combine(stageDir, "scripts");
-            Directory.CreateDirectory(stageScripts);
-            string repoScripts = Path.Combine(RepoRoot, "scripts");
-            if (Directory.Exists(repoScripts))
+            try
             {
-                foreach (string f in Directory.GetFiles(repoScripts))
-                    File.Copy(f, Path.Combine(stageScripts, Path.GetFileName(f)), true);
-                string repoBin = Path.Combine(repoScripts, "bin");
+                if (Directory.Exists(stageDir)) Directory.Delete(stageDir, true);
+                Directory.CreateDirectory(stageDir);
+
+                string stageScripts = Path.Combine(stageDir, "scripts");
+                Directory.CreateDirectory(stageScripts);
+                foreach (string rs in new[] { "mobile-disguise.js", "apply-zram.sh", "app.integrity" })
+                {
+                    string src = Path.Combine(RepoRoot, "scripts", rs);
+                    if (File.Exists(src))
+                        File.Copy(src, Path.Combine(stageScripts, rs), true);
+                }
+
+                string repoBin = Path.Combine(RepoRoot, @"scripts\bin");
                 if (Directory.Exists(repoBin))
                 {
                     string stageBin = Path.Combine(stageScripts, "bin");
@@ -168,111 +228,99 @@ namespace DofusBuild
                     foreach (string f in Directory.GetFiles(repoBin))
                         File.Copy(f, Path.Combine(stageBin, Path.GetFileName(f)), true);
                 }
-            }
 
-            // Copy complete source code repository & tools for 1-file standalone project suite
-            string[] sourceDirs = new[] { "desktop", "builder", "launcher" };
-            foreach (string sDir in sourceDirs)
-            {
-                string srcPath = Path.Combine(RepoRoot, sDir);
-                if (Directory.Exists(srcPath))
+                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "app_icon.ico", "installer_icon.ico" })
                 {
-                    CopyDirectoryRecursively(srcPath, Path.Combine(stageDir, sDir));
+                    string p = Path.Combine(RepoRoot, b);
+                    if (!File.Exists(p)) p = Path.Combine(RepoRoot, "scripts", b);
+                    if (File.Exists(p)) File.Copy(p, Path.Combine(stageDir, b), true);
+                }
+
+                string tplZip = Path.Combine(RepoRoot, "template.zip");
+                if (File.Exists(tplZip)) File.Copy(tplZip, Path.Combine(stageDir, "template.zip"), true);
+
+                string sdk7z = Path.Combine(RepoRoot, "sdk.7z");
+                if (File.Exists(sdk7z)) File.Copy(sdk7z, Path.Combine(stageDir, "sdk.7z"), true);
+
+                if (File.Exists(payloadZip)) File.Delete(payloadZip);
+                string z7Exe = Path.Combine(RepoRoot, @"scripts\bin\7z.exe");
+                if (File.Exists(z7Exe))
+                {
+                    Run(z7Exe, string.Format("a -tzip -mx0 \"{0}\" \"{1}\\*\"", payloadZip, stageDir));
+                }
+                else
+                {
+                    ZipFile.CreateFromDirectory(stageDir, payloadZip, CompressionLevel.Fastest, false);
+                }
+
+                Console.WriteLine("  [OK] Payload packaged: {0:F1} MB", new FileInfo(payloadZip).Length / (1024.0 * 1024.0));
+
+                string manifestFile = Path.Combine(tempDir, "StandaloneSetup_" + Guid.NewGuid().ToString("N") + ".manifest");
+                string manifestSource =
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                    "<assembly manifestVersion=\"1.0\" xmlns=\"urn:schemas-microsoft-com:asm.v1\">\n" +
+                    "  <assemblyIdentity version=\"2.1.0.0\" name=\"DofusFarmSetup\"/>\n" +
+                    "  <trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n" +
+                    "    <security>\n" +
+                    "      <requestedPrivileges xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n" +
+                    "        <requestedExecutionLevel level=\"asInvoker\" uiAccess=\"false\" />\n" +
+                    "      </requestedPrivileges>\n" +
+                    "    </security>\n" +
+                    "  </trustInfo>\n" +
+                    "  <compatibility xmlns=\"urn:schemas-microsoft-com:compatibility.v1\">\n" +
+                    "    <application>\n" +
+                    "      <supportedOS Id=\"{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}\" />\n" +
+                    "    </application>\n" +
+                    "  </compatibility>\n" +
+                    "</assembly>";
+                File.WriteAllText(manifestFile, manifestSource, new UTF8Encoding(false));
+
+                string[] setupSources = new[]
+                {
+                    Path.Combine(desktopDir, "Win32.cs"),
+                    Path.Combine(desktopDir, "Hardware.cs"),
+                    Path.Combine(desktopDir, "PriorityGovernor.cs"),
+                    Path.Combine(desktopDir, "FarmEngine.cs"),
+                    Path.Combine(desktopDir, "Installer.cs")
+                };
+                string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
+                string setupArgs = string.Format(
+                    "/nologo /target:winexe /platform:anycpu /optimize+ {0}\"/win32manifest:{1}\" \"/resource:{2},DofusPayload.zip\" " +
+                    "/r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:Microsoft.CSharp.dll \"/out:{3}\" \"{4}\"",
+                    setupIconArg, manifestFile, payloadZip, outSetup, string.Join("\" \"", setupSources));
+
+                int sec = Run(Csc, setupArgs);
+                try { File.Delete(manifestFile); } catch { }
+
+                if (sec == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("  [OK] setup.exe compiled ({0:F1} MB)", new FileInfo(outSetup).Length / (1024.0 * 1024.0));
+                    Console.ResetColor();
+                    return true;
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("  [FAIL] Failed to compile setup.exe");
+                    Console.ResetColor();
+                    return false;
                 }
             }
-
-            // Copy binaries, build tools, and assets
-            string[] binaries = new[] { "DofusFarm.exe", "uninstall.exe", "Build.exe", "compile.bat", "dofus-net-proxy.exe", "dofus-downloader.exe", "app_icon.ico", "installer_icon.ico", "LICENSE", "README.md" };
-            foreach (string b in binaries)
+            finally
             {
-                string p = Path.Combine(RepoRoot, b);
-                if (!File.Exists(p)) p = Path.Combine(RepoRoot, "scripts", b);
-                if (File.Exists(p)) File.Copy(p, Path.Combine(stageDir, b), true);
+                try { if (Directory.Exists(stageDir)) Directory.Delete(stageDir, true); } catch { }
+                try { if (File.Exists(payloadZip)) File.Delete(payloadZip); } catch { }
             }
-
-            // Ensure Build.exe inside setup payload is freshly compiled from latest builder\Build.cs
-            string stageBuildExe = Path.Combine(stageDir, "Build.exe");
-            string stageBuildCs = Path.Combine(stageDir, @"builder\Build.cs");
-            if (File.Exists(stageBuildCs))
-            {
-                string bArgs = string.Format("/nologo /target:exe /r:System.IO.Compression.FileSystem.dll \"/out:{0}\" \"{1}\"", stageBuildExe, stageBuildCs);
-                Run(Csc, bArgs);
-            }
-
-            // Copy template.zip
-            string tplZip = Path.Combine(RepoRoot, "template.zip");
-            if (File.Exists(tplZip)) File.Copy(tplZip, Path.Combine(stageDir, "template.zip"), true);
-
-            // Copy sdk.7z
-            string sdk7z = Path.Combine(RepoRoot, "sdk.7z");
-            if (File.Exists(sdk7z)) File.Copy(sdk7z, Path.Combine(stageDir, "sdk.7z"), true);
-
-            // Compress payload
-            if (File.Exists(payloadZip)) File.Delete(payloadZip);
-            string z7Exe = Path.Combine(RepoRoot, @"scripts\bin\7z.exe");
-            if (File.Exists(z7Exe))
-            {
-                Run(z7Exe, string.Format("a -tzip -mx0 \"{0}\" \"{1}\\*\"", payloadZip, stageDir));
-            }
-            else
-            {
-                ZipFile.CreateFromDirectory(stageDir, payloadZip, CompressionLevel.Fastest, false);
-            }
-            try { Directory.Delete(stageDir, true); } catch { }
-
-            Console.WriteLine("  [OK] Payload compressed: {0:F1} MB", new FileInfo(payloadZip).Length / (1024.0 * 1024.0));
-
-            // Compile setup.exe
-            string manifestFile = Path.Combine(tempDir, "StandaloneSetup.manifest");
-            string manifestSource =
-                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
-                "<assembly manifestVersion=\"1.0\" xmlns=\"urn:schemas-microsoft-com:asm.v1\">\n" +
-                "  <assemblyIdentity version=\"1.0.0.0\" name=\"DofusFarmSetup\"/>\n" +
-                "  <trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n" +
-                "    <security>\n" +
-                "      <requestedPrivileges xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n" +
-                "        <requestedExecutionLevel level=\"asInvoker\" uiAccess=\"false\" />\n" +
-                "      </requestedPrivileges>\n" +
-                "    </security>\n" +
-                "  </trustInfo>\n" +
-                "  <compatibility xmlns=\"urn:schemas-microsoft-com:compatibility.v1\">\n" +
-                "    <application>\n" +
-                "      <supportedOS Id=\"{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}\" />\n" +
-                "    </application>\n" +
-                "  </compatibility>\n" +
-                "</assembly>";
-            File.WriteAllText(manifestFile, manifestSource, Encoding.UTF8);
-
-            string installerCs = Path.Combine(RepoRoot, @"desktop\Installer.cs");
-            string setupArgs = string.Format(
-                "/nologo /target:winexe /platform:anycpu /optimize+ \"/win32icon:{0}\" \"/win32manifest:{1}\" \"/resource:{2},DofusPayload.zip\" " +
-                "/r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:Microsoft.CSharp.dll \"/out:{3}\" \"{4}\"",
-                setupIco, manifestFile, payloadZip, outSetup, installerCs);
-
-            int sec = Run(Csc, setupArgs);
-            if (sec == 0)
-            {
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine("  [OK] setup.exe compiled ({0:F1} MB)", new FileInfo(outSetup).Length / (1024.0 * 1024.0));
-                Console.ResetColor();
-            }
-            else
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("  [FAIL] Failed to compile setup.exe");
-                Console.ResetColor();
-            }
-
-            try { File.Delete(manifestFile); } catch { }
-            try { File.Delete(payloadZip); } catch { }
         }
 
-        static int Run(string exe, string args)
+        static int Run(string exe, string args, string workingDir = null)
         {
             ProcessStartInfo psi = new ProcessStartInfo
             {
                 FileName = exe,
                 Arguments = args,
+                WorkingDirectory = string.IsNullOrEmpty(workingDir) ? RepoRoot : workingDir,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardError = true,
@@ -289,23 +337,6 @@ namespace DofusBuild
                     if (!string.IsNullOrEmpty(errText)) Console.WriteLine(errText);
                 }
                 return p.ExitCode;
-            }
-        }
-
-        static void CopyDirectoryRecursively(string sourceDir, string targetDir)
-        {
-            if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
-            foreach (string file in Directory.GetFiles(sourceDir))
-            {
-                try
-                {
-                    File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
-                }
-                catch { }
-            }
-            foreach (string sub in Directory.GetDirectories(sourceDir))
-            {
-                CopyDirectoryRecursively(sub, Path.Combine(targetDir, Path.GetFileName(sub)));
             }
         }
     }

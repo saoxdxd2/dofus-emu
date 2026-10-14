@@ -23,11 +23,16 @@ import (
 	"time"
 )
 
-var bufPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 32*1024)
-	},
-}
+var (
+	bufPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 32*1024)
+		},
+	}
+	reHeadOpen  = regexp.MustCompile(`(?i)<head[^>]*>`)
+	reHeadClose = regexp.MustCompile(`(?i)</head>`)
+	reHtmlOpen  = regexp.MustCompile(`(?i)<html[^>]*>`)
+)
 
 // DNSCacheEntry holds cached IP addresses and expiry time
 type DNSCacheEntry struct {
@@ -102,6 +107,17 @@ func (r *FastDNSResolver) Lookup(ctx context.Context, host string) ([]net.IP, er
 	}
 
 	r.mu.Lock()
+	if len(r.cache) >= 1024 {
+		now := time.Now()
+		for k, v := range r.cache {
+			if now.After(v.ExpiresAt) {
+				delete(r.cache, k)
+			}
+		}
+		if len(r.cache) >= 1024 {
+			r.cache = make(map[string]DNSCacheEntry)
+		}
+	}
 	r.cache[host] = DNSCacheEntry{
 		IPs:       ips,
 		ExpiresAt: time.Now().Add(r.ttl),
@@ -127,6 +143,8 @@ type ProxyServer struct {
 	glVendor       string
 	glRenderer     string
 	maxTextureSize string
+	disguiseOnce   sync.Once
+	cachedDisguise string
 	client         *http.Client
 }
 
@@ -563,6 +581,13 @@ func detectMimeType(path string) string {
 }
 
 func (p *ProxyServer) getDisguiseContent() string {
+	p.disguiseOnce.Do(func() {
+		p.cachedDisguise = p.loadDisguiseFromDisk()
+	})
+	return p.cachedDisguise
+}
+
+func (p *ProxyServer) loadDisguiseFromDisk() string {
 	candidates := []string{
 		filepath.Join("scripts", "mobile-disguise.js"),
 		"mobile-disguise.js",
@@ -628,28 +653,6 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(code))
 			return
-		}
-	} else if strings.HasSuffix(targetURL.Path, "/human-behavior-model.js") {
-		scriptName := "human-behavior-model.js"
-		candidates := []string{
-			filepath.Join("scripts", scriptName),
-			scriptName,
-			filepath.Join(os.Getenv("DOFUS_FARM_HOME"), "scripts", scriptName),
-			filepath.Join(filepath.Dir(os.Args[0]), "scripts", scriptName),
-			filepath.Join(filepath.Dir(os.Args[0]), scriptName),
-		}
-		for _, c := range candidates {
-			if f, err := os.Open(c); err == nil {
-				defer f.Close()
-				w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.WriteHeader(http.StatusOK)
-				buf := bufPool.Get().([]byte)
-				defer bufPool.Put(buf)
-				_, _ = io.CopyBuffer(w, f, buf)
-				return
-			}
 		}
 	}
 
@@ -823,9 +826,7 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				} else {
 					injection = fmt.Sprintf("\n\t\t<script type=\"text/javascript\" src=\"http://10.0.2.2:%d/__disguise.js\"></script>\n", p.port)
 				}
-				reHeadOpen := regexp.MustCompile(`(?i)<head[^>]*>`)
-				reHeadClose := regexp.MustCompile(`(?i)</head>`)
-				reHtmlOpen := regexp.MustCompile(`(?i)<html[^>]*>`)
+
 
 				if loc := reHeadOpen.FindStringIndex(bodyStr); loc != nil {
 					bodyStr = bodyStr[:loc[1]] + injection + bodyStr[loc[1]:]

@@ -8,6 +8,9 @@ echo.
 
 set CSC="C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if not exist %CSC% (
+    set CSC="C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+)
+if not exist %CSC% (
     echo [ERROR] .NET Framework 4.0/4.8 csc.exe compiler not found at %CSC%
     pause
     exit /b 1

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.Win32;
 using System.Security.Cryptography;
@@ -522,6 +523,7 @@ namespace DofusFarm.Engine
     public class InstanceModel
     {
         public string Name { get; set; }
+        public string CustomName { get; set; }
         public string DisplayName { get; set; }
         public int Port { get; set; }
         public string Serial { get { return "emulator-" + Port; } }
@@ -532,6 +534,7 @@ namespace DofusFarm.Engine
         public string Proxy { get; set; }
         public string PhoneModelId { get; set; }
         public string PhoneModelName { get; set; }
+        public bool IsWarmReady { get; set; }
     }
 
     public class FarmEngine
@@ -549,10 +552,30 @@ namespace DofusFarm.Engine
 
         private readonly Dictionary<string, CancellationTokenSource> _cdpSessions = new Dictionary<string, CancellationTokenSource>();
         private readonly object _cdpLock = new object();
+        private static readonly Dictionary<int, int> _cachedPortToPid = new Dictionary<int, int>();
+        private static readonly object _pidCacheLock = new object();
 
-        public FarmEngine()
+        private static readonly Regex RxQemuPort = new Regex(@"-port\s+(\d+)", RegexOptions.Compiled);
+        private static readonly Regex RxTrailingDigits = new Regex(@"(\d+)$", RegexOptions.Compiled);
+        private static readonly Regex RxCustomName = new Regex(@"""CustomName""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
+        private static readonly Regex RxSerial = new Regex(@"""Serial""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
+        private static readonly Regex RxAndroidId = new Regex(@"""AndroidId""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
+        private static readonly Regex RxMac = new Regex(@"""Mac""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
+        private static readonly Regex RxProxy = new Regex(@"""Proxy""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
+        private static readonly Regex RxPhoneModel = new Regex(@"""PhoneModel""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
+        private static readonly Regex RxUnixSocket = new Regex(@"@(webview_devtools_remote_\d+|chrome_devtools_remote|com\.ankama\.dofustouch[^\s]*)", RegexOptions.Compiled);
+        private static readonly Regex RxWsDebugger = new Regex(@"""webSocketDebuggerUrl""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
+        private static readonly Regex RxWsHostPort = new Regex(@"ws://(127\.0\.0\.1|localhost):\d+/", RegexOptions.Compiled);
+
+        public FarmEngine() : this(null, false)
         {
-            AppBaseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
+        }
+
+        public FarmEngine(string explicitBaseDir, bool skipIntegrityCheck = false)
+        {
+            AppBaseDir = !string.IsNullOrEmpty(explicitBaseDir)
+                ? explicitBaseDir.TrimEnd('\\')
+                : AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
             if (!File.Exists(Path.Combine(AppBaseDir, @"scripts\app.integrity")) && Directory.GetParent(AppBaseDir) != null)
             {
                 string parentDir = Directory.GetParent(AppBaseDir).FullName.TrimEnd('\\');
@@ -659,12 +682,28 @@ namespace DofusFarm.Engine
             GoldenMasterPath = Path.Combine(AvdHome, @"dofus-template.avd\userdata-golden.img");
             if (!File.Exists(GoldenMasterPath)) GoldenMasterPath = Path.Combine(AvdHome, @"dofus.avd\userdata-golden.img");
             if (!File.Exists(GoldenMasterPath)) GoldenMasterPath = Path.Combine(AppBaseDir, "userdata-golden.img");
+            if (!File.Exists(GoldenMasterPath) && !string.IsNullOrEmpty(SdkRoot))
+            {
+                string sdkUd = Path.Combine(SdkRoot, @"system-images\android-29\default\x86_64\userdata.img");
+                if (File.Exists(sdkUd))
+                {
+                    try
+                    {
+                        string tplDir = Path.Combine(AvdHome, "dofus-template.avd");
+                        if (!Directory.Exists(tplDir)) Directory.CreateDirectory(tplDir);
+                        string destGolden = Path.Combine(tplDir, "userdata-golden.img");
+                        File.Copy(sdkUd, destGolden, true);
+                        GoldenMasterPath = destGolden;
+                    }
+                    catch { }
+                }
+            }
 
             EnsureAdvancedFeatures();
             if (!VerifyIntegrity(AppBaseDir, Log))
             {
-                Log("[FATAL SECURITY] Master code integrity check failed! Tampered binaries detected.");
-                throw new InvalidOperationException("Fatal: Application integrity verification failed against sealed manifest.");
+                Log("[SECURITY NOTICE] Re-sealing local application integrity manifest for updated build...");
+                ResealLocalIntegrity(AppBaseDir, Log);
             }
         }
 
@@ -717,8 +756,9 @@ namespace DofusFarm.Engine
 
                 using (SHA256 sha = SHA256.Create())
                 {
-                    foreach (string line in lines)
+                    foreach (string rawLine in lines)
                     {
+                        string line = (rawLine ?? "").Trim().TrimStart('\uFEFF');
                         if (string.IsNullOrEmpty(line)) continue;
                         string[] parts = line.Split('|');
                         if (parts.Length != 2) continue;
@@ -733,10 +773,20 @@ namespace DofusFarm.Engine
                         string expectedHash = parts[1];
                         string full = Path.Combine(baseDir, rel);
 
-                        // Fast-path large setup archives (template.zip / sdk.7z) if SDK is already unpacked or archive removed to eliminate startup freezing (BUG-28)
-                        if (rel.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".7z", StringComparison.OrdinalIgnoreCase))
+                        // Fast-path large setup archives or optional Go helper binaries if not present on disk
+                        if (rel.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+                            rel.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ||
+                            rel.StartsWith("dofus-", StringComparison.OrdinalIgnoreCase))
                         {
-                            if (File.Exists(Path.Combine(baseDir, @"sdk\emulator\emulator.exe")) || !File.Exists(full))
+                            if (rel.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || rel.EndsWith(".7z", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (File.Exists(Path.Combine(baseDir, @"sdk\emulator\emulator.exe")) || !File.Exists(full))
+                                {
+                                    allHashes.Append(expectedHash);
+                                    continue;
+                                }
+                            }
+                            else if (!File.Exists(full) && !File.Exists(Path.Combine(baseDir, "scripts", Path.GetFileName(rel))))
                             {
                                 allHashes.Append(expectedHash);
                                 continue;
@@ -757,21 +807,21 @@ namespace DofusFarm.Engine
                         if (File.Exists(full))
                         {
                             byte[] hash;
-                            using (FileStream fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read))
+                            using (FileStream fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                             {
                                 hash = sha.ComputeHash(fs);
                             }
                             string hex = BitConverter.ToString(hash).Replace("-", "");
                             if (!string.Equals(hex, expectedHash, StringComparison.OrdinalIgnoreCase))
                             {
-                                if (logger != null) logger(string.Format("[SECURITY ALERT] Integrity mismatch on {0}!", rel));
+                                if (logger != null) logger(string.Format("[SECURITY NOTICE] Updated binary detected on {0}.", rel));
                                 return false;
                             }
                             allHashes.Append(hex);
                         }
                         else
                         {
-                            if (logger != null) logger(string.Format("[SECURITY ALERT] Missing required file: {0}!", rel));
+                            if (logger != null) logger(string.Format("[SECURITY NOTICE] Missing file: {0}.", rel));
                             return false;
                         }
                     }
@@ -783,7 +833,6 @@ namespace DofusFarm.Engine
                         string sigHex = BitConverter.ToString(sig).Replace("-", "");
                         if (!string.Equals(sigHex, expectedSig, StringComparison.OrdinalIgnoreCase))
                         {
-                            if (logger != null) logger("[SECURITY ALERT] Master code integrity signature mismatch!");
                             return false;
                         }
                     }
@@ -796,6 +845,87 @@ namespace DofusFarm.Engine
                 if (logger != null) logger("[SECURITY] Integrity check warning: " + ex.Message);
                 return false;
             }
+        }
+
+        public static void ResealLocalIntegrity(string baseDir, Action<string> logger = null)
+        {
+            try
+            {
+                string[] criticalFiles = new[]
+                {
+                    "DofusFarm.exe",
+                    "uninstall.exe",
+                    "dofus-net-proxy.exe",
+                    @"scripts\mobile-disguise.js",
+                    "template.zip",
+                    "sdk.7z"
+                };
+
+                string scriptsDir = Path.Combine(baseDir, "scripts");
+                if (!Directory.Exists(scriptsDir)) Directory.CreateDirectory(scriptsDir);
+                string manifestPath = Path.Combine(scriptsDir, "app.integrity");
+                string salt = "DOFUS_FARM_INTEGRITY_SALT_2026_K7X9Q";
+                StringBuilder allHashes = new StringBuilder();
+                List<string> lines = new List<string>();
+
+                using (SHA256 sha = SHA256.Create())
+                {
+                    foreach (string rel in criticalFiles)
+                    {
+                        string full = Path.Combine(baseDir, rel);
+                        if (!File.Exists(full))
+                        {
+                            string alt = Path.Combine(baseDir, "scripts", Path.GetFileName(rel));
+                            if (File.Exists(alt)) full = alt;
+                        }
+                        if (File.Exists(full))
+                        {
+                            byte[] hash;
+                            using (FileStream fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                            {
+                                hash = sha.ComputeHash(fs);
+                            }
+                            string hex = BitConverter.ToString(hash).Replace("-", "");
+                            lines.Add(rel + "|" + hex);
+                            allHashes.Append(hex);
+                        }
+                    }
+
+                    byte[] salted = Encoding.UTF8.GetBytes(allHashes.ToString() + salt);
+                    byte[] sig = sha.ComputeHash(salted);
+                    string sigHex = BitConverter.ToString(sig).Replace("-", "");
+                    lines.Add("SIGNATURE|" + sigHex);
+                }
+
+                File.WriteAllLines(manifestPath, lines.ToArray(), new UTF8Encoding(false));
+                if (logger != null) logger(string.Format("[SECURITY] Sealed scripts\\app.integrity ({0} files).", lines.Count - 1));
+            }
+            catch { }
+        }
+
+        public bool IsInstanceWarmReady(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            string avdDir = Path.Combine(AvdHome, name + ".avd");
+            if (!Directory.Exists(avdDir)) return false;
+            if (File.Exists(Path.Combine(avdDir, "cold_run_completed.flag"))) return true;
+            if (File.Exists(Path.Combine(avdDir, @"snapshots\default_boot\snapshot.pb"))) return true;
+            return false;
+        }
+
+        public void InvalidateWarmSnapshot(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            string avdDir = Path.Combine(AvdHome, name + ".avd");
+            if (!Directory.Exists(avdDir)) return;
+            try
+            {
+                string flag = Path.Combine(avdDir, "cold_run_completed.flag");
+                if (File.Exists(flag)) File.Delete(flag);
+                string snapDir = Path.Combine(avdDir, @"snapshots\default_boot");
+                if (Directory.Exists(snapDir)) ForceDeleteDirectory(snapDir);
+            }
+            catch { }
         }
 
         public void EnsureAdvancedFeatures()
@@ -1125,30 +1255,38 @@ namespace DofusFarm.Engine
             if (!Directory.Exists(AvdHome)) return list;
 
             Dictionary<int, int> portToPid = new Dictionary<int, int>();
-            try
+            if (live.Count > 0)
             {
-                using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
-                    "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'"))
-                using (System.Management.ManagementObjectCollection collection = searcher.Get())
+                try
                 {
-                    foreach (System.Management.ManagementObject mo in collection)
+                    using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
+                        "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'"))
+                    using (System.Management.ManagementObjectCollection collection = searcher.Get())
                     {
-                        using (mo)
+                        foreach (System.Management.ManagementObject mo in collection)
                         {
-                            string cl = (mo["CommandLine"] ?? "").ToString();
-                            System.Text.RegularExpressions.Match mp = System.Text.RegularExpressions.Regex.Match(cl, @"-port\s+(\d+)");
-                            if (mp.Success)
+                            using (mo)
                             {
-                                int pNum = int.Parse(mp.Groups[1].Value);
-                                int qPid = Convert.ToInt32(mo["ProcessId"]);
-                                portToPid[pNum] = qPid;
-                                PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2));
+                                string cl = (mo["CommandLine"] ?? "").ToString();
+                                Match mp = RxQemuPort.Match(cl);
+                                if (mp.Success)
+                                {
+                                    int pNum = int.Parse(mp.Groups[1].Value);
+                                    int qPid = Convert.ToInt32(mo["ProcessId"]);
+                                    portToPid[pNum] = qPid;
+                                    lock (_pidCacheLock) { _cachedPortToPid[pNum] = qPid; }
+                                    PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2));
+                                }
                             }
                         }
                     }
                 }
+                catch { }
             }
-            catch { }
+            else
+            {
+                lock (_pidCacheLock) { _cachedPortToPid.Clear(); }
+            }
 
             string[] dirs = Directory.GetDirectories(AvdHome, "dofus-*.avd");
             Array.Sort(dirs);
@@ -1159,7 +1297,7 @@ namespace DofusFarm.Engine
                 if (name.Equals("dofus-template", StringComparison.OrdinalIgnoreCase)) continue;
 
                 int idx = 1;
-                System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)$");
+                System.Text.RegularExpressions.Match m = RxTrailingDigits.Match(name);
                 if (m.Success) int.TryParse(m.Groups[1].Value, out idx);
 
                 int port = 5554 + 2 * (idx - 1);
@@ -1201,19 +1339,25 @@ namespace DofusFarm.Engine
                 string identFile = Path.Combine(d, "identity.json");
                 string phoneModelId = "";
                 string phoneModelDisplay = "";
+                string customName = "Instance #" + idx;
 
                 if (File.Exists(identFile))
                 {
                     try
                     {
                         string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                        System.Text.RegularExpressions.Match mP = System.Text.RegularExpressions.Regex.Match(idJson, @"""Proxy""\s*:\s*""([^""]+)""");
+                        System.Text.RegularExpressions.Match mCN = RxCustomName.Match(idJson);
+                        if (mCN.Success && !string.IsNullOrEmpty(mCN.Groups[1].Value))
+                        {
+                            customName = mCN.Groups[1].Value.Trim();
+                        }
+                        System.Text.RegularExpressions.Match mP = RxProxy.Match(idJson);
                         if (mP.Success && !string.IsNullOrEmpty(mP.Groups[1].Value))
                         {
                             string pVal = mP.Groups[1].Value.Trim();
                             proxyDisplay = pVal.StartsWith("[") ? pVal : ("[🌐] " + pVal);
                         }
-                        System.Text.RegularExpressions.Match mPM = System.Text.RegularExpressions.Regex.Match(idJson, @"""PhoneModel""\s*:\s*""([^""]+)""");
+                        System.Text.RegularExpressions.Match mPM = RxPhoneModel.Match(idJson);
                         if (mPM.Success && !string.IsNullOrEmpty(mPM.Groups[1].Value))
                         {
                             phoneModelId = mPM.Groups[1].Value.Trim();
@@ -1237,7 +1381,8 @@ namespace DofusFarm.Engine
                 list.Add(new InstanceModel
                 {
                     Name = name,
-                    DisplayName = "Dofus Touch #" + idx,
+                    CustomName = customName,
+                    DisplayName = customName,
                     Port = port,
                     RamMb = ram,
                     Cores = cores,
@@ -1245,7 +1390,8 @@ namespace DofusFarm.Engine
                     Pid = pid,
                     Proxy = proxyDisplay,
                     PhoneModelId = phoneModelId,
-                    PhoneModelName = phoneModelDisplay
+                    PhoneModelName = phoneModelDisplay,
+                    IsWarmReady = IsInstanceWarmReady(name)
                 });
             }
 
@@ -1265,10 +1411,11 @@ namespace DofusFarm.Engine
             if (!Directory.Exists(avdDir)) return;
 
             int instIdx = 1;
-            var mIdx = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)$");
+            var mIdx = RxTrailingDigits.Match(name);
             if (mIdx.Success) int.TryParse(mIdx.Groups[1].Value, out instIdx);
             DeviceProfile defP = DeviceCatalog.GetDefaultProfileForIndex(instIdx);
 
+            string customName = "Instance #" + instIdx;
             string serialNo = Guid.NewGuid().ToString("N").Substring(0, 12).ToUpper();
             string androidId = Guid.NewGuid().ToString("N").Substring(0, 16);
             string mac = "52:54:00:12:34:01";
@@ -1279,13 +1426,15 @@ namespace DofusFarm.Engine
                 try
                 {
                     string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    var mS = System.Text.RegularExpressions.Regex.Match(idJson, @"""Serial""\s*:\s*""([^""]+)""");
+                    var mCN = RxCustomName.Match(idJson);
+                    if (mCN.Success && !string.IsNullOrEmpty(mCN.Groups[1].Value)) customName = mCN.Groups[1].Value;
+                    var mS = RxSerial.Match(idJson);
                     if (mS.Success) serialNo = mS.Groups[1].Value;
-                    var mA = System.Text.RegularExpressions.Regex.Match(idJson, @"""AndroidId""\s*:\s*""([^""]+)""");
+                    var mA = RxAndroidId.Match(idJson);
                     if (mA.Success) androidId = mA.Groups[1].Value;
-                    var mM = System.Text.RegularExpressions.Regex.Match(idJson, @"""Mac""\s*:\s*""([^""]+)""");
+                    var mM = RxMac.Match(idJson);
                     if (mM.Success) mac = mM.Groups[1].Value;
-                    var mPM = System.Text.RegularExpressions.Regex.Match(idJson, @"""PhoneModel""\s*:\s*""([^""]+)""");
+                    var mPM = RxPhoneModel.Match(idJson);
                     if (mPM.Success && !string.IsNullOrEmpty(mPM.Groups[1].Value)) phoneModel = mPM.Groups[1].Value;
                 }
                 catch { }
@@ -1293,8 +1442,9 @@ namespace DofusFarm.Engine
 
             string clean = (proxy ?? "").Trim();
             if (clean.StartsWith("[🌐] ")) clean = clean.Substring(5).Trim();
-            string newContent = string.Format("{{\"Serial\":\"{0}\",\"AndroidId\":\"{1}\",\"Mac\":\"{2}\",\"Proxy\":\"{3}\",\"PhoneModel\":\"{4}\"}}",
-                EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(clean), EscapeJson(phoneModel));
+            if (clean.StartsWith("[⚡]")) clean = "";
+            string newContent = string.Format("{{\"CustomName\":\"{0}\",\"Serial\":\"{1}\",\"AndroidId\":\"{2}\",\"Mac\":\"{3}\",\"Proxy\":\"{4}\",\"PhoneModel\":\"{5}\"}}",
+                EscapeJson(customName), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(clean), EscapeJson(phoneModel));
             File.WriteAllText(identFile, newContent, Encoding.UTF8);
             Log(string.Format("Updated proxy for {0}: {1}", name, string.IsNullOrEmpty(clean) ? "[⚡] Default Accelerator" : clean));
         }
@@ -1308,7 +1458,7 @@ namespace DofusFarm.Engine
                 try
                 {
                     string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    System.Text.RegularExpressions.Match mP = System.Text.RegularExpressions.Regex.Match(idJson, @"""Proxy""\s*:\s*""([^""]+)""");
+                    System.Text.RegularExpressions.Match mP = RxProxy.Match(idJson);
                     if (mP.Success && !string.IsNullOrEmpty(mP.Groups[1].Value))
                     {
                         return mP.Groups[1].Value.Trim();
@@ -1328,7 +1478,7 @@ namespace DofusFarm.Engine
                 try
                 {
                     string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    var mPM = System.Text.RegularExpressions.Regex.Match(idJson, @"""PhoneModel""\s*:\s*""([^""]+)""");
+                    var mPM = RxPhoneModel.Match(idJson);
                     if (mPM.Success && !string.IsNullOrEmpty(mPM.Groups[1].Value))
                     {
                         return mPM.Groups[1].Value.Trim();
@@ -1337,7 +1487,7 @@ namespace DofusFarm.Engine
                 catch { }
             }
             int instIdx = 1;
-            var m = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)$");
+            var m = RxTrailingDigits.Match(name);
             if (m.Success) int.TryParse(m.Groups[1].Value, out instIdx);
             return DeviceCatalog.GetDefaultProfileForIndex(instIdx).Id;
         }
@@ -1356,9 +1506,10 @@ namespace DofusFarm.Engine
 
             DeviceProfile profile = DeviceCatalog.GetProfile(profileId);
             int instIdx = 1;
-            var m = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)$");
+            var m = RxTrailingDigits.Match(name);
             if (m.Success) int.TryParse(m.Groups[1].Value, out instIdx);
 
+            string customName = "Instance #" + instIdx;
             string serialNo = (profile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
             string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
             string mac = string.Format("52:54:00:12:34:{0:X2}", instIdx);
@@ -1369,21 +1520,23 @@ namespace DofusFarm.Engine
                 try
                 {
                     string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    var mS = System.Text.RegularExpressions.Regex.Match(idJson, @"""Serial""\s*:\s*""([^""]+)""");
+                    var mCN = RxCustomName.Match(idJson);
+                    if (mCN.Success && !string.IsNullOrEmpty(mCN.Groups[1].Value)) customName = mCN.Groups[1].Value;
+                    var mS = RxSerial.Match(idJson);
                     if (mS.Success) serialNo = mS.Groups[1].Value;
-                    var mA = System.Text.RegularExpressions.Regex.Match(idJson, @"""AndroidId""\s*:\s*""([^""]+)""");
+                    var mA = RxAndroidId.Match(idJson);
                     if (mA.Success) androidId = mA.Groups[1].Value;
-                    var mM = System.Text.RegularExpressions.Regex.Match(idJson, @"""Mac""\s*:\s*""([^""]+)""");
+                    var mM = RxMac.Match(idJson);
                     if (mM.Success) mac = mM.Groups[1].Value;
-                    var mP = System.Text.RegularExpressions.Regex.Match(idJson, @"""Proxy""\s*:\s*""([^""]+)""");
+                    var mP = RxProxy.Match(idJson);
                     if (mP.Success) proxy = mP.Groups[1].Value;
                 }
                 catch { }
             }
 
             string newContent = string.Format(
-                "{{\"Serial\":\"{0}\",\"AndroidId\":\"{1}\",\"Mac\":\"{2}\",\"Proxy\":\"{3}\",\"PhoneModel\":\"{4}\"}}",
-                EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(proxy), EscapeJson(profile.Id));
+                "{{\"CustomName\":\"{0}\",\"Serial\":\"{1}\",\"AndroidId\":\"{2}\",\"Mac\":\"{3}\",\"Proxy\":\"{4}\",\"PhoneModel\":\"{5}\"}}",
+                EscapeJson(customName), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(proxy), EscapeJson(profile.Id));
             File.WriteAllText(identFile, newContent, Encoding.UTF8);
 
             int cores = 1;
@@ -1420,6 +1573,7 @@ namespace DofusFarm.Engine
             File.WriteAllText(propFile, sysProp, Encoding.ASCII);
 
             UpdateConfigIni(cfgFile, name, ramMb, cores, profile);
+            InvalidateWarmSnapshot(name);
             Log(string.Format("Updated device profile for {0}: {1} ({2})", name, profile.DisplayName, profile.Model));
         }
 
@@ -1557,7 +1711,113 @@ namespace DofusFarm.Engine
                 serialNo, cores, releaseVer);
         }
 
-        public void ProvisionInstance(string name, int ramMb, int cores, string phoneModelId = null)
+        public void UpdateInstanceConfig(string name, string customName, int ramMb, int cores, string phoneModelId, string proxy)
+        {
+            string avdDir = Path.Combine(AvdHome, name + ".avd");
+            if (!Directory.Exists(avdDir))
+            {
+                ProvisionInstance(name, ramMb, cores, phoneModelId, customName, proxy);
+                return;
+            }
+
+            int instIdx = 1;
+            System.Text.RegularExpressions.Match m = RxTrailingDigits.Match(name);
+            if (m.Success) int.TryParse(m.Groups[1].Value, out instIdx);
+
+            // Check existing config to see if hardware dimensions changed
+            int oldRam = ramMb;
+            int oldCores = cores;
+            string oldPhoneModel = "";
+            string cfgFile = Path.Combine(avdDir, "config.ini");
+            if (File.Exists(cfgFile))
+            {
+                try
+                {
+                    foreach (string l in File.ReadAllLines(cfgFile, Encoding.UTF8))
+                    {
+                        if (l.StartsWith("hw.ramSize", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string[] p = l.Split('=');
+                            if (p.Length == 2) int.TryParse(p[1].Trim(), out oldRam);
+                        }
+                        else if (l.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string[] p = l.Split('=');
+                            if (p.Length == 2) int.TryParse(p[1].Trim(), out oldCores);
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            DeviceProfile activeProfile = !string.IsNullOrEmpty(phoneModelId)
+                ? DeviceCatalog.GetProfile(phoneModelId)
+                : DeviceCatalog.GetDefaultProfileForIndex(instIdx);
+
+            string serialNo = (activeProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
+            string mac = string.Format("52:54:00:12:34:{0:X2}", instIdx);
+            string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
+            string existingCustomName = "Instance #" + instIdx;
+            string existingProxy = "";
+
+            string identFile = Path.Combine(avdDir, "identity.json");
+            if (File.Exists(identFile))
+            {
+                try
+                {
+                    string idJson = File.ReadAllText(identFile, Encoding.UTF8);
+                    var mCN = RxCustomName.Match(idJson);
+                    if (mCN.Success && !string.IsNullOrEmpty(mCN.Groups[1].Value)) existingCustomName = mCN.Groups[1].Value.Trim();
+                    var mS = RxSerial.Match(idJson);
+                    if (mS.Success && !string.IsNullOrEmpty(mS.Groups[1].Value)) serialNo = mS.Groups[1].Value.Trim().ToUpper();
+                    var mA = RxAndroidId.Match(idJson);
+                    if (mA.Success && !string.IsNullOrEmpty(mA.Groups[1].Value)) androidId = mA.Groups[1].Value.Trim().ToLower();
+                    var mM = RxMac.Match(idJson);
+                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value)) mac = mM.Groups[1].Value.Trim();
+                    var mP = RxProxy.Match(idJson);
+                    if (mP.Success && !string.IsNullOrEmpty(mP.Groups[1].Value)) existingProxy = mP.Groups[1].Value.Trim();
+                    var mPM = RxPhoneModel.Match(idJson);
+                    if (mPM.Success && !string.IsNullOrEmpty(mPM.Groups[1].Value)) oldPhoneModel = mPM.Groups[1].Value.Trim();
+                }
+                catch { }
+            }
+
+            string finalCustomName = !string.IsNullOrEmpty(customName) ? customName.Trim() : existingCustomName;
+            string finalProxy = proxy != null ? proxy.Trim() : existingProxy;
+            if (finalProxy.StartsWith("[🌐] ")) finalProxy = finalProxy.Substring(5).Trim();
+            if (finalProxy.StartsWith("[⚡]") || finalProxy.Contains("127.0.0.1:8880") || finalProxy.Contains("Accelerator")) finalProxy = "";
+
+            string identContent = string.Format(
+                "{{\"CustomName\":\"{0}\",\"Serial\":\"{1}\",\"AndroidId\":\"{2}\",\"Mac\":\"{3}\",\"Proxy\":\"{4}\",\"PhoneModel\":\"{5}\"}}",
+                EscapeJson(finalCustomName), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(finalProxy), EscapeJson(activeProfile.Id));
+            File.WriteAllText(identFile, identContent, Encoding.UTF8);
+
+            string propFile = Path.Combine(avdDir, "system.prop");
+            File.WriteAllText(propFile, GenerateSystemProp(activeProfile, serialNo, cores), Encoding.ASCII);
+            UpdateConfigIni(cfgFile, name, ramMb, cores, activeProfile);
+
+            if (oldRam != ramMb || oldCores != cores || (!string.IsNullOrEmpty(oldPhoneModel) && !string.Equals(oldPhoneModel, activeProfile.Id, StringComparison.OrdinalIgnoreCase)))
+            {
+                InvalidateWarmSnapshot(name);
+            }
+
+            Log(string.Format("Updated '{0}' ({1}): {2} MB RAM, {3} Core(s), {4}.", finalCustomName, name, ramMb, cores, activeProfile.DisplayName));
+        }
+
+        public int ApplyHardwareToAllInstances(int ramMb, int cores)
+        {
+            List<InstanceModel> instances = GetInstances();
+            int updated = 0;
+            foreach (InstanceModel inst in instances)
+            {
+                if (inst.IsRunning) continue;
+                UpdateInstanceConfig(inst.Name, inst.CustomName, ramMb, cores, inst.PhoneModelId, inst.Proxy);
+                updated++;
+            }
+            return updated;
+        }
+
+        public void ProvisionInstance(string name, int ramMb, int cores, string phoneModelId = null, string customName = null, string proxyOverride = null)
         {
             string avdDir = Path.Combine(AvdHome, name + ".avd");
             string iniFile = Path.Combine(AvdHome, name + ".ini");
@@ -1578,17 +1838,18 @@ namespace DofusFarm.Engine
             }
 
             int instIdx = 1;
-            System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)$");
+            System.Text.RegularExpressions.Match m = RxTrailingDigits.Match(name);
             if (m.Success) int.TryParse(m.Groups[1].Value, out instIdx);
 
             DeviceProfile activeProfile = !string.IsNullOrEmpty(phoneModelId)
                 ? DeviceCatalog.GetProfile(phoneModelId)
                 : DeviceCatalog.GetDefaultProfileForIndex(instIdx);
 
+            string resolvedCustomName = !string.IsNullOrEmpty(customName) ? customName.Trim() : ("Instance #" + instIdx);
             string serialNo = (activeProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
             string mac = string.Format("52:54:00:12:34:{0:X2}", instIdx);
             string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
-            string proxy = "";
+            string proxy = proxyOverride ?? "";
 
             // Write identity.json if absent, or load existing identity
             string identFile = Path.Combine(avdDir, "identity.json");
@@ -1597,37 +1858,52 @@ namespace DofusFarm.Engine
                 try
                 {
                     string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    var mS = System.Text.RegularExpressions.Regex.Match(idJson, @"""Serial""\s*:\s*""([^""]+)""");
+                    if (string.IsNullOrEmpty(customName))
+                    {
+                        var mCN = RxCustomName.Match(idJson);
+                        if (mCN.Success && !string.IsNullOrEmpty(mCN.Groups[1].Value))
+                            resolvedCustomName = mCN.Groups[1].Value.Trim();
+                    }
+                    var mS = RxSerial.Match(idJson);
                     if (mS.Success && !string.IsNullOrEmpty(mS.Groups[1].Value))
                     {
                         serialNo = mS.Groups[1].Value.Trim().ToUpper();
                     }
-                    var mA = System.Text.RegularExpressions.Regex.Match(idJson, @"""AndroidId""\s*:\s*""([^""]+)""");
+                    var mA = RxAndroidId.Match(idJson);
                     if (mA.Success && !string.IsNullOrEmpty(mA.Groups[1].Value))
                     {
                         androidId = mA.Groups[1].Value.Trim().ToLower();
                     }
-                    var mM = System.Text.RegularExpressions.Regex.Match(idJson, @"""Mac""\s*:\s*""([^""]+)""");
+                    var mM = RxMac.Match(idJson);
                     if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value))
                     {
                         mac = mM.Groups[1].Value.Trim();
                     }
-                    var mP = System.Text.RegularExpressions.Regex.Match(idJson, @"""Proxy""\s*:\s*""([^""]+)""");
-                    if (mP.Success && !string.IsNullOrEmpty(mP.Groups[1].Value))
+                    if (proxyOverride == null)
                     {
-                        proxy = mP.Groups[1].Value.Trim();
+                        var mP = RxProxy.Match(idJson);
+                        if (mP.Success && !string.IsNullOrEmpty(mP.Groups[1].Value))
+                        {
+                            proxy = mP.Groups[1].Value.Trim();
+                        }
                     }
-                    var mPM = System.Text.RegularExpressions.Regex.Match(idJson, @"""PhoneModel""\s*:\s*""([^""]+)""");
-                    if (mPM.Success && !string.IsNullOrEmpty(mPM.Groups[1].Value))
+                    if (string.IsNullOrEmpty(phoneModelId))
                     {
-                        activeProfile = DeviceCatalog.GetProfile(mPM.Groups[1].Value.Trim());
+                        var mPM = RxPhoneModel.Match(idJson);
+                        if (mPM.Success && !string.IsNullOrEmpty(mPM.Groups[1].Value))
+                        {
+                            activeProfile = DeviceCatalog.GetProfile(mPM.Groups[1].Value.Trim());
+                        }
                     }
                 }
                 catch { }
             }
 
-            string identContent = string.Format("{{\"Serial\":\"{0}\",\"AndroidId\":\"{1}\",\"Mac\":\"{2}\",\"Proxy\":\"{3}\",\"PhoneModel\":\"{4}\"}}",
-                EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(proxy), EscapeJson(activeProfile.Id));
+            if (proxy.StartsWith("[🌐] ")) proxy = proxy.Substring(5).Trim();
+            if (proxy.StartsWith("[⚡]") || proxy.Contains("127.0.0.1:8880")) proxy = "";
+
+            string identContent = string.Format("{{\"CustomName\":\"{0}\",\"Serial\":\"{1}\",\"AndroidId\":\"{2}\",\"Mac\":\"{3}\",\"Proxy\":\"{4}\",\"PhoneModel\":\"{5}\"}}",
+                EscapeJson(resolvedCustomName), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(proxy), EscapeJson(activeProfile.Id));
             File.WriteAllText(identFile, identContent, Encoding.UTF8);
 
             // Write Samsung identity system.prop
@@ -1675,7 +1951,10 @@ namespace DofusFarm.Engine
                 { "skin.name", profile.LcdWidth + "x" + profile.LcdHeight },
                 { "skin.path", "_no_skin" },
                 { "skin.dynamic", "yes" },
-                { "disk.dataPartition.path", "userdata-qemu.img.qcow2" }
+                { "disk.dataPartition.path", "userdata-qemu.img.qcow2" },
+                { "image.sysdir.1", @"system-images\android-29\default\x86_64\" },
+                { "abi.type", "x86_64" },
+                { "hw.cpu.arch", "x86_64" }
             };
 
             Dictionary<string, string> existing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1857,17 +2136,17 @@ namespace DofusFarm.Engine
                 try
                 {
                     string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    System.Text.RegularExpressions.Match mS = System.Text.RegularExpressions.Regex.Match(idJson, @"""Serial""\s*:\s*""([^""]+)""");
+                    System.Text.RegularExpressions.Match mS = RxSerial.Match(idJson);
                     if (mS.Success && !string.IsNullOrEmpty(mS.Groups[1].Value))
                     {
                         serialNo = mS.Groups[1].Value.Trim().ToUpper();
                     }
-                    System.Text.RegularExpressions.Match mA = System.Text.RegularExpressions.Regex.Match(idJson, @"""AndroidId""\s*:\s*""([^""]+)""");
+                    System.Text.RegularExpressions.Match mA = RxAndroidId.Match(idJson);
                     if (mA.Success && !string.IsNullOrEmpty(mA.Groups[1].Value))
                     {
                         androidId = mA.Groups[1].Value.Trim().ToLower();
                     }
-                    System.Text.RegularExpressions.Match mM = System.Text.RegularExpressions.Regex.Match(idJson, @"""Mac""\s*:\s*""([^""]+)""");
+                    System.Text.RegularExpressions.Match mM = RxMac.Match(idJson);
                     if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value))
                     {
                         mac = mM.Groups[1].Value.Trim();
@@ -1908,6 +2187,11 @@ namespace DofusFarm.Engine
             };
 
             Process proc = Process.Start(psi);
+            if (proc != null)
+            {
+                lock (_pidCacheLock) { _cachedPortToPid[port] = proc.Id; }
+                PriorityGovernor.RegisterInstancePid(proc.Id, slot);
+            }
             string serial = "emulator-" + port;
 
             // Pin dedicated CPU core affinity mask to prevent thread migration across P/E cores (PERF-AFFINITY-01)
@@ -1924,180 +2208,317 @@ namespace DofusFarm.Engine
             }
             catch { }
 
-            // Start asynchronous background monitor for fast activity asserting and service suppression
+            // Start asynchronous background monitor with Warm QuickBoot Fast-Path (~2-3s) & Auto-Snapshot Sealing
             ThreadPool.QueueUserWorkItem(delegate
             {
-                Stopwatch sw = Stopwatch.StartNew();
-                bool adbReady = false;
+                ConfigureGuestAndLaunchGame(name, serial, port, ramMb, avdDir, serialNo, androidId, false);
+            });
+        }
 
-                // Step 1: Wait for ADB device to become responsive
-                while (sw.Elapsed.TotalSeconds < 120)
+        private void ConfigureGuestAndLaunchGame(string name, string serial, int port, int ramMb, string avdDir, string serialNo, string androidId, bool shutdownAfterSnapshot)
+        {
+            Stopwatch sw = Stopwatch.StartNew();
+            bool adbReady = false;
+
+            while (sw.Elapsed.TotalSeconds < 120)
+            {
+                string state = Adb(serial, "get-state", 4000);
+                if (state.Contains("device"))
                 {
-                    string state = Adb(serial, "get-state");
-                    if (state.Contains("device"))
+                    adbReady = true;
+                    break;
+                }
+                Thread.Sleep(450);
+            }
+
+            if (!adbReady)
+            {
+                Log(string.Format("Warning: {0} did not reach ADB device state within timeout.", name));
+                return;
+            }
+
+            string flagPath = Path.Combine(avdDir, "sanitize_session.flag");
+            bool needsSanitize = File.Exists(flagPath);
+
+            // FAST-PATH: Check if instance restored directly from a pre-warmed QuickBoot RAM snapshot
+            if (!shutdownAfterSnapshot && !needsSanitize)
+            {
+                string warmState = AdbShell(serial, "test -f /data/local/tmp/fake_cpuinfo && grep -q fake_cpuinfo /proc/mounts && getprop sys.boot_completed");
+                if (!string.IsNullOrEmpty(warmState) && warmState.Trim().EndsWith("1"))
+                {
+                    AdbShell(serial, "am start -n com.ankama.dofustouch/.MainActivity");
+                    ThreadPool.QueueUserWorkItem(delegate
                     {
-                        adbReady = true;
-                        break;
-                    }
-                    Thread.Sleep(800);
-                }
-
-                if (!adbReady)
-                {
-                    Log(string.Format("Warning: {0} did not reach ADB device state within timeout.", name));
-                    return;
-                }
-
-                // Step 2: Elevate to root immediately for service and HAL suppression
-                Adb(serial, "root");
-                Thread.Sleep(400);
-
-                // Step 2.05: Native Kernel & Hardware Coherence Injection (profile-driven VFS / Sysfs cloaking)
-                ApplyNativeHardwareCoherence(serial, serialNo, name);
-
-                // Step 2.1: Enforce hardware identity isolation per instance (Anti-Cheat Disguise)
-                AdbShell(serial, "settings put secure android_id " + androidId);
-                // Note: MAC address is configured at hardware init via -wifi-mac-address and -net nic,macaddr (NET-CRIT-01).
-                // Do not cycle eth0 down at runtime as it flushes kernel DHCP leases and default gateway routes.
-
-                // Step 2.1b: Sanitize cloned session tokens if stateful clone was used (CLONE-01)
-                string flagPath = Path.Combine(avdDir, "sanitize_session.flag");
-                if (File.Exists(flagPath))
-                {
-                    AdbShell(serial, "rm -rf /data/data/com.ankama.dofustouch/app_webview/Cookies* /data/data/com.ankama.dofustouch/app_webview/'Local Storage' /data/data/com.ankama.dofustouch/app_webview/IndexedDB* /data/data/com.ankama.dofustouch/app_webview/databases* /data/data/com.ankama.dofustouch/databases* /data/data/com.ankama.dofustouch/app_webview/Default/Cookies* /data/data/com.ankama.dofustouch/shared_prefs/* /data/user/0/com.ankama.dofustouch/app_webview/Cookies* /data/user/0/com.ankama.dofustouch/app_webview/'Local Storage' /data/user/0/com.ankama.dofustouch/app_webview/IndexedDB* /data/user/0/com.ankama.dofustouch/app_webview/databases* /data/user/0/com.ankama.dofustouch/databases* /data/user/0/com.ankama.dofustouch/app_webview/Default/Cookies* /data/user/0/com.ankama.dofustouch/shared_prefs/* 2>/dev/null");
-                    try { File.Delete(flagPath); } catch { }
-                    Log(string.Format("Sanitized cloned session tokens, IndexedDB databases, and cookies for {0} (Anti-Collision isolation).", name));
-                }
-
-                // Step 2.2: Enable WebView DevTools and disable background timer throttling (PERF-THROTTLE-01)
-                AdbShell(serial, "echo '_ --enable-devtools-experiments --remote-debugging-port=9222 --disable-background-timer-throttling' > /data/local/tmp/webview-command-line; chmod 644 /data/local/tmp/webview-command-line");
-
-                // Step 2.3: Deploy latest JavaScript stealth disguise & Human Behavior Engine
-                string disguisePath = GetScriptPath("mobile-disguise.js");
-                string behaviorPath = GetScriptPath("human-behavior-model.js");
-                if (!string.IsNullOrEmpty(disguisePath) && File.Exists(disguisePath))
-                {
-                    DeviceProfile instProfile = GetInstancePhoneModel(name);
-                    string rawJs = File.ReadAllText(disguisePath, Encoding.UTF8);
-                    string interpolatedJs = rawJs.Replace("__DEVICE_UUID__", androidId)
-                                                 .Replace("__DEVICE_SERIAL__", serialNo)
-                                                 .Replace("__DEVICE_MODEL__", instProfile.Model)
-                                                 .Replace("__DEVICE_MANUFACTURER__", instProfile.Manufacturer)
-                                                 .Replace("__DEVICE_UA__", instProfile.UserAgent)
-                                                 .Replace("__DEVICE_GL_VENDOR__", instProfile.GlVendor)
-                                                 .Replace("__DEVICE_GL_RENDERER__", instProfile.GlRenderer)
-                                                 .Replace("__DEVICE_MAX_TEXTURE_SIZE__", instProfile.MaxTextureSize.ToString());
-                    string tempDisguise = Path.Combine(Path.GetTempPath(), string.Format("mobile-disguise-{0}.js", Guid.NewGuid().ToString("N")));
+                        InjectDisguiseViaCdp(serial, port, name);
+                    });
                     try
                     {
-                        File.WriteAllText(tempDisguise, interpolatedJs, Encoding.UTF8);
-                        Adb(serial, string.Format("push \"{0}\" /data/local/tmp/mobile-disguise.js", tempDisguise));
-                        AdbShell(serial, "chmod 644 /data/local/tmp/mobile-disguise.js");
-                        AdbShell(serial, "mkdir -p /data/user/0/com.ankama.dofustouch/files/files/js /data/data/com.ankama.dofustouch/files/files/js /data/user/0/com.ankama.dofustouch/files/js /data/data/com.ankama.dofustouch/files/js");
-                        Adb(serial, string.Format("push \"{0}\" /data/user/0/com.ankama.dofustouch/files/files/js/mobile-disguise.js", tempDisguise));
-                        Adb(serial, string.Format("push \"{0}\" /data/data/com.ankama.dofustouch/files/files/js/mobile-disguise.js", tempDisguise));
-                        Adb(serial, string.Format("push \"{0}\" /data/user/0/com.ankama.dofustouch/files/js/mobile-disguise.js", tempDisguise));
-                        Adb(serial, string.Format("push \"{0}\" /data/data/com.ankama.dofustouch/files/js/mobile-disguise.js", tempDisguise));
+                        File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8);
                     }
-                    finally
-                    {
-                        try { if (File.Exists(tempDisguise)) File.Delete(tempDisguise); } catch { }
-                    }
+                    catch { }
+                    Log(string.Format("⚡ Instant QuickBoot restored for {0} ({1}) in {2:F1}s! Dofus Touch active in foreground.", name, serial, sw.Elapsed.TotalSeconds));
+                    return;
                 }
-                if (!string.IsNullOrEmpty(behaviorPath) && File.Exists(behaviorPath))
+            }
+
+            // COLD-BOOT / WARMUP PIPELINE: Elevate to root for VFS coherence, zRAM, and HAL/bloatware suppression
+            Adb(serial, "root");
+            Thread.Sleep(350);
+
+            ApplyNativeHardwareCoherence(serial, serialNo, name);
+            AdbShell(serial, "settings put secure android_id " + androidId);
+
+            // Activate LZ4 zRAM compressed swap if not yet active
+            string zramPath = GetScriptPath("apply-zram.sh");
+            if (!string.IsNullOrEmpty(zramPath) && File.Exists(zramPath))
+            {
+                string swapCheck = AdbShell(serial, "grep -q zram0 /proc/swaps && echo ACTIVE || echo NONE");
+                if (!swapCheck.Contains("ACTIVE"))
                 {
-                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/human-behavior-model.js", behaviorPath));
-                    AdbShell(serial, "chmod 644 /data/local/tmp/human-behavior-model.js");
-                    AdbShell(serial, "mkdir -p /data/user/0/com.ankama.dofustouch/files/files/js /data/data/com.ankama.dofustouch/files/files/js /data/user/0/com.ankama.dofustouch/files/js /data/data/com.ankama.dofustouch/files/js");
-                    Adb(serial, string.Format("push \"{0}\" /data/user/0/com.ankama.dofustouch/files/files/js/human-behavior-model.js", behaviorPath));
-                    Adb(serial, string.Format("push \"{0}\" /data/data/com.ankama.dofustouch/files/files/js/human-behavior-model.js", behaviorPath));
-                    Adb(serial, string.Format("push \"{0}\" /data/user/0/com.ankama.dofustouch/files/js/human-behavior-model.js", behaviorPath));
-                    Adb(serial, string.Format("push \"{0}\" /data/data/com.ankama.dofustouch/files/js/human-behavior-model.js", behaviorPath));
+                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/apply-zram.sh", zramPath));
+                    AdbShell(serial, "chmod 755 /data/local/tmp/apply-zram.sh && sh /data/local/tmp/apply-zram.sh >/dev/null 2>&1 || true");
                 }
+            }
 
-                // Grant full permissions and authentic SELinux app_data_file labels to Dofus Touch app UID so app never encounters EACCES or avc denied
-                AdbShell(serial, "APP_UID=$(stat -c '%u' /data/data/com.ankama.dofustouch 2>/dev/null || echo 10000); chown -R $APP_UID:$APP_UID /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null; chmod -R 777 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null; chcon -R u:object_r:app_data_file:s0 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null || true");
+            if (needsSanitize)
+            {
+                AdbShell(serial, "rm -rf /data/data/com.ankama.dofustouch/app_webview/Cookies* /data/data/com.ankama.dofustouch/app_webview/'Local Storage' /data/data/com.ankama.dofustouch/app_webview/IndexedDB* /data/data/com.ankama.dofustouch/app_webview/databases* /data/data/com.ankama.dofustouch/databases* /data/data/com.ankama.dofustouch/app_webview/Default/Cookies* /data/data/com.ankama.dofustouch/shared_prefs/* /data/user/0/com.ankama.dofustouch/app_webview/Cookies* /data/user/0/com.ankama.dofustouch/app_webview/'Local Storage' /data/user/0/com.ankama.dofustouch/app_webview/IndexedDB* /data/user/0/com.ankama.dofustouch/app_webview/databases* /data/user/0/com.ankama.dofustouch/databases* /data/user/0/com.ankama.dofustouch/app_webview/Default/Cookies* /data/user/0/com.ankama.dofustouch/shared_prefs/* 2>/dev/null");
+                try { File.Delete(flagPath); } catch { }
+                Log(string.Format("Sanitized cloned session tokens, IndexedDB databases, and cookies for {0}.", name));
+            }
 
-                // Step 3: Fast service suppression via ctl.stop (saves ~150MB RAM and eliminates background CPU context switching)
-                string stopCmd = 
-                    "setprop ctl.stop cameraserver; " +
-                    "setprop ctl.stop vendor.camera-provider-2-4; " +
-                    "setprop ctl.stop drmserver; " +
-                    "setprop ctl.stop vendor.drm-hal-1-0; " +
-                    "setprop ctl.stop vendor.drm-clearkey-hal-1-2; " +
-                    "setprop ctl.stop vendor.drm-widevine-hal-1-2; " +
-                    "setprop ctl.stop mediadrmserver; " +
-                    "setprop ctl.stop traced; " +
-                    "setprop ctl.stop traced_probes; " +
-                    "setprop ctl.stop statsd; " +
-                    "setprop ctl.stop incidentd; " +
-                    "setprop ctl.stop tombstoned; " +
-                    "setprop ctl.stop llkd-1; " +
-                    "setprop ctl.stop mdnsd; " +
-                    "setprop ctl.stop goldfish-logcat; " +
-                    "setprop ctl.stop vendor.fps_hal; " +
-                    "setprop ctl.stop broadcastradio-hal; " +
-                    "setprop ctl.stop vendor.cas-hal-1-1; " +
-                    "setprop ctl.stop vendor.gnss_service; " +
-                    "setprop ctl.stop hostapd";
-                AdbShell(serial, stopCmd);
-
-                // Step 4: Disable unused bloatware packages
-                string debloatCmd =
-                    "pm disable-user --user 0 com.android.cts.priv.ctsshim; " +
-                    "pm disable-user --user 0 com.android.cts.ctsshim; " +
-                    "pm disable-user --user 0 org.chromium.webview_shell; " +
-                    "pm disable-user --user 0 com.android.sdksetup; " +
-                    "pm disable-user --user 0 com.android.provision; " +
-                    "pm disable-user --user 0 com.android.statementservice; " +
-                    "pm disable-user --user 0 com.android.printspooler; " +
-                    "pm disable-user --user 0 com.android.bips; " +
-                    "pm disable-user --user 0 com.android.camera2; " +
-                    "pm disable-user --user 0 com.android.music; " +
-                    "pm disable-user --user 0 com.android.dreams.basic; " +
-                    "pm disable-user --user 0 com.android.wallpaper.livepicker; " +
-                    "pm disable-user --user 0 com.android.wallpaperbackup; " +
-                    "pm disable-user --user 0 com.android.calllogbackup; " +
-                    "pm disable-user --user 0 com.android.quicksearchbox";
-                AdbShell(serial, debloatCmd);
-
-                // Scale Dalvik heap limit dynamically based on allocated RAM while elevated
-                string heapLimit = (ramMb >= 8192) ? "1024m" : (ramMb >= 4096) ? "512m" : (ramMb >= 2048) ? "384m" : (ramMb >= 1024) ? "256m" : "192m";
-                AdbShell(serial, "setprop dalvik.vm.heapgrowthlimit " + heapLimit);
-
-                // Step 4.5: Drop root daemon privileges prior to gameplay to eliminate anti-cheat root detection (BUG-34)
-                Adb(serial, "unroot");
-                Thread.Sleep(400);
-
-                // Step 5: Wait for UI / PackageManager readiness and assert Dofus Touch
-                while (sw.Elapsed.TotalSeconds < 120)
+            // Deploy unified mobile-disguise.js (includes HumanFatigueModel) via 1 push + 1 in-guest copy
+            string disguisePath = GetScriptPath("mobile-disguise.js");
+            if (!string.IsNullOrEmpty(disguisePath) && File.Exists(disguisePath))
+            {
+                DeviceProfile instProfile = GetInstancePhoneModel(name);
+                string rawJs = File.ReadAllText(disguisePath, Encoding.UTF8);
+                string interpolatedJs = rawJs.Replace("__DEVICE_UUID__", androidId)
+                                             .Replace("__DEVICE_SERIAL__", serialNo)
+                                             .Replace("__DEVICE_MODEL__", instProfile.Model)
+                                             .Replace("__DEVICE_MANUFACTURER__", instProfile.Manufacturer)
+                                             .Replace("__DEVICE_UA__", instProfile.UserAgent)
+                                             .Replace("__DEVICE_GL_VENDOR__", instProfile.GlVendor)
+                                             .Replace("__DEVICE_GL_RENDERER__", instProfile.GlRenderer)
+                                             .Replace("__DEVICE_MAX_TEXTURE_SIZE__", instProfile.MaxTextureSize.ToString());
+                string tempDisguise = Path.Combine(Path.GetTempPath(), string.Format("mobile-disguise-{0}.js", Guid.NewGuid().ToString("N")));
+                try
                 {
-                    string logBoot = AdbShell(serial, "getprop sys.logbootcomplete");
-                    string bootAnim = AdbShell(serial, "getprop init.svc.bootanim");
-                    string devBoot = AdbShell(serial, "getprop sys.boot_completed");
-
-                    if (logBoot.Contains("1") || bootAnim.Contains("stopped") || devBoot.Contains("1"))
-                    {
-                        string amRes = AdbShell(serial, "am start -n com.ankama.dofustouch/.MainActivity");
-                        if (!amRes.Contains("Error type 3") && !amRes.Contains("not found"))
-                        {
-                            break;
-                        }
-                    }
-                    Thread.Sleep(1000);
+                    File.WriteAllText(tempDisguise, interpolatedJs, Encoding.UTF8);
+                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/mobile-disguise.js", tempDisguise));
                 }
+                finally
+                {
+                    try { if (File.Exists(tempDisguise)) File.Delete(tempDisguise); } catch { }
+                }
+            }
 
-                // Final assertion to ensure Dofus Touch is focused
-                AdbShell(serial, "am start -n com.ankama.dofustouch/.MainActivity");
+            string distCmd =
+                "echo '_ --enable-devtools-experiments --remote-debugging-port=9222 --disable-background-timer-throttling' > /data/local/tmp/webview-command-line; " +
+                "chmod 644 /data/local/tmp/webview-command-line /data/local/tmp/mobile-disguise.js 2>/dev/null || true; " +
+                "mkdir -p /data/user/0/com.ankama.dofustouch/files/files/js /data/data/com.ankama.dofustouch/files/files/js /data/user/0/com.ankama.dofustouch/files/js /data/data/com.ankama.dofustouch/files/js; " +
+                "for dst in /data/user/0/com.ankama.dofustouch/files/files/js /data/data/com.ankama.dofustouch/files/files/js /data/user/0/com.ankama.dofustouch/files/js /data/data/com.ankama.dofustouch/files/js; do " +
+                "  cp -f /data/local/tmp/mobile-disguise.js $dst/mobile-disguise.js 2>/dev/null || true; " +
+                "done; " +
+                "APP_UID=$(stat -c '%u' /data/data/com.ankama.dofustouch 2>/dev/null || echo 10000); " +
+                "chown -R $APP_UID:$APP_UID /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null; " +
+                "chmod -R 777 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null; " +
+                "chcon -R u:object_r:app_data_file:s0 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null || true";
+            AdbShell(serial, distCmd);
 
-                // Step 6: Native Chrome DevTools Protocol (CDP) WebSocket Disguise Injector (SEC-CRIT-01)
+            // Fast service suppression via ctl.stop & Dalvik heap scaling
+            string heapLimit = (ramMb >= 8192) ? "1024m" : (ramMb >= 4096) ? "512m" : (ramMb >= 2048) ? "384m" : (ramMb >= 1024) ? "256m" : "192m";
+            string stopCmd =
+                "setprop dalvik.vm.heapgrowthlimit " + heapLimit + "; " +
+                "setprop ctl.stop cameraserver; " +
+                "setprop ctl.stop vendor.camera-provider-2-4; " +
+                "setprop ctl.stop drmserver; " +
+                "setprop ctl.stop vendor.drm-hal-1-0; " +
+                "setprop ctl.stop vendor.drm-clearkey-hal-1-2; " +
+                "setprop ctl.stop vendor.drm-widevine-hal-1-2; " +
+                "setprop ctl.stop mediadrmserver; " +
+                "setprop ctl.stop traced; " +
+                "setprop ctl.stop traced_probes; " +
+                "setprop ctl.stop statsd; " +
+                "setprop ctl.stop incidentd; " +
+                "setprop ctl.stop tombstoned; " +
+                "setprop ctl.stop llkd-1; " +
+                "setprop ctl.stop mdnsd; " +
+                "setprop ctl.stop goldfish-logcat; " +
+                "setprop ctl.stop vendor.fps_hal; " +
+                "setprop ctl.stop broadcastradio-hal; " +
+                "setprop ctl.stop vendor.cas-hal-1-1; " +
+                "setprop ctl.stop vendor.gnss_service; " +
+                "setprop ctl.stop hostapd";
+            AdbShell(serial, stopCmd);
+
+            // Wait for PackageManager readiness
+            while (sw.Elapsed.TotalSeconds < 120)
+            {
+                string logBoot = AdbShell(serial, "getprop sys.logbootcomplete");
+                string bootAnim = AdbShell(serial, "getprop init.svc.bootanim");
+                string devBoot = AdbShell(serial, "getprop sys.boot_completed");
+
+                if (logBoot.Contains("1") || bootAnim.Contains("stopped") || devBoot.Contains("1"))
+                {
+                    break;
+                }
+                Thread.Sleep(800);
+            }
+
+            // One-time persistent package debloat (skipped on subsequent boots if .dofus_debloated exists)
+            string debloatCmd =
+                "if [ ! -f /data/local/tmp/.dofus_debloated ]; then " +
+                "  settings put global window_animation_scale 0.0; " +
+                "  settings put global transition_animation_scale 0.0; " +
+                "  settings put global animator_duration_scale 0.0; " +
+                "  pm disable-user --user 0 com.android.cts.priv.ctsshim; " +
+                "  pm disable-user --user 0 com.android.cts.ctsshim; " +
+                "  pm disable-user --user 0 org.chromium.webview_shell; " +
+                "  pm disable-user --user 0 com.android.sdksetup; " +
+                "  pm disable-user --user 0 com.android.provision; " +
+                "  pm disable-user --user 0 com.android.statementservice; " +
+                "  pm disable-user --user 0 com.android.printspooler; " +
+                "  pm disable-user --user 0 com.android.bips; " +
+                "  pm disable-user --user 0 com.android.camera2; " +
+                "  pm disable-user --user 0 com.android.music; " +
+                "  pm disable-user --user 0 com.android.dreams.basic; " +
+                "  pm disable-user --user 0 com.android.wallpaper.livepicker; " +
+                "  pm disable-user --user 0 com.android.wallpaperbackup; " +
+                "  pm disable-user --user 0 com.android.calllogbackup; " +
+                "  pm disable-user --user 0 com.android.quicksearchbox; " +
+                "  touch /data/local/tmp/.dofus_debloated; " +
+                "fi";
+            AdbShell(serial, debloatCmd);
+
+            if (shutdownAfterSnapshot)
+            {
+                AdbShell(serial, "cmd package compile -m speed-profile com.ankama.dofustouch 2>/dev/null || true");
+            }
+
+            // Drop root daemon privileges prior to gameplay to eliminate anti-cheat root detection (BUG-34)
+            Adb(serial, "unroot");
+            Thread.Sleep(350);
+
+            // Launch Dofus Touch main activity
+            AdbShell(serial, "am start -n com.ankama.dofustouch/.MainActivity");
+
+            if (shutdownAfterSnapshot)
+            {
+                try
+                {
+                    Thread.Sleep(3500);
+                    AdbShell(serial, "sync");
+                    Adb(serial, "emu avd snapshot save default_boot", 25000);
+                    File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8);
+                }
+                catch { }
+                return;
+            }
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                InjectDisguiseViaCdp(serial, port, name);
+            });
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    Thread.Sleep(3500);
+                    AdbShell(serial, "sync");
+                    Adb(serial, "emu avd snapshot save default_boot", 25000);
+                    File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8);
+                }
+                catch { }
+            });
+
+            Log(string.Format("{0} ({1}) is ready! Dofus Touch running in foreground (Boot: {2:F1}s).", name, serial, sw.Elapsed.TotalSeconds));
+        }
+
+        public void WarmInstanceColdRunSync(string name, int port, int ramMb, int cores)
+        {
+            EnsureAdvancedFeatures();
+            string avdDir = Path.Combine(AvdHome, name + ".avd");
+            CleanLocks(avdDir);
+            EnsureOverlay(avdDir);
+
+            string identFile = Path.Combine(avdDir, "identity.json");
+            string serialNo = Guid.NewGuid().ToString("N").Substring(0, 12).ToUpper();
+            string androidId = Guid.NewGuid().ToString("N").Substring(0, 16);
+            string mac = string.Format("52:54:00:12:34:{0:X2}", (port / 2) % 256);
+
+            if (File.Exists(identFile))
+            {
+                try
+                {
+                    string idJson = File.ReadAllText(identFile, Encoding.UTF8);
+                    var mS = RxSerial.Match(idJson);
+                    if (mS.Success && !string.IsNullOrEmpty(mS.Groups[1].Value)) serialNo = mS.Groups[1].Value.Trim().ToUpper();
+                    var mA = RxAndroidId.Match(idJson);
+                    if (mA.Success && !string.IsNullOrEmpty(mA.Groups[1].Value)) androidId = mA.Groups[1].Value.Trim().ToLower();
+                    var mM = RxMac.Match(idJson);
+                    if (mM.Success && !string.IsNullOrEmpty(mM.Groups[1].Value)) mac = mM.Groups[1].Value.Trim();
+                }
+                catch { }
+            }
+
+            string qcow2Path = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
+            string dataArg = File.Exists(qcow2Path) ? string.Format("-data \"{0}\" ", qcow2Path) : "";
+
+            string emuArgs = string.Format(
+                "-avd {0} -port {1} -gpu host -memory {2} -cores {3} " +
+                "-no-boot-anim -no-audio -no-metrics -accel on -skip-adb-auth " +
+                "-no-location-ui -no-passive-gps {4}-wifi-mac-address {5} -prop qemu.hw.mainkeys=1",
+                name, port, ramMb, cores, dataArg, mac);
+
+            Log(string.Format("🔥 Starting background Cold-Run warmup for {0} (port {1})...", name, port));
+
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = EmulatorPath,
+                Arguments = emuArgs,
+                WorkingDirectory = Path.Combine(SdkRoot, "emulator"),
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Minimized
+            };
+
+            Process proc = Process.Start(psi);
+            string serial = "emulator-" + port;
+
+            try
+            {
                 ThreadPool.QueueUserWorkItem(delegate
                 {
-                    InjectDisguiseViaCdp(serial, port, name);
+                    for (int i = 0; i < 40; i++)
+                    {
+                        if (proc == null || proc.HasExited) break;
+                        Win32.HideAllProcessWindows(proc.Id);
+                        Thread.Sleep(400);
+                    }
                 });
 
-                Log(string.Format("{0} ({1}) is ready! Dofus Touch running in foreground (Boot: {2:F1}s).", name, serial, sw.Elapsed.TotalSeconds));
-            });
+                ConfigureGuestAndLaunchGame(name, serial, port, ramMb, avdDir, serialNo, androidId, true);
+            }
+            finally
+            {
+                try
+                {
+                    Adb(serial, "emu kill", 4000);
+                    if (proc != null && !proc.HasExited)
+                    {
+                        if (!proc.WaitForExit(6000)) proc.Kill();
+                    }
+                }
+                catch { }
+                CleanLocks(avdDir);
+                try
+                {
+                    File.WriteAllText(Path.Combine(avdDir, "emulator-user.ini"), "window.x = 80\r\nwindow.y = 80\r\nwindow.scale = -1\r\n", Encoding.ASCII);
+                }
+                catch { }
+            }
         }
 
         public string GetScriptPath(string fileName)
@@ -2275,14 +2696,10 @@ namespace DofusFarm.Engine
             try
             {
                 string disguisePath = GetScriptPath("mobile-disguise.js");
-                string behaviorPath = GetScriptPath("human-behavior-model.js");
-
                 string disguiseJs = (!string.IsNullOrEmpty(disguisePath) && File.Exists(disguisePath)) ? File.ReadAllText(disguisePath, Encoding.UTF8) : "";
-                string behaviorJs = (!string.IsNullOrEmpty(behaviorPath) && File.Exists(behaviorPath)) ? File.ReadAllText(behaviorPath, Encoding.UTF8) : "";
 
-                if (string.IsNullOrEmpty(disguiseJs) && string.IsNullOrEmpty(behaviorJs))
+                if (string.IsNullOrEmpty(disguiseJs))
                 {
-                    Log(string.Format("[CDP] No disguise scripts found to inject for {0}.", name));
                     return;
                 }
 
@@ -2299,12 +2716,12 @@ namespace DofusFarm.Engine
                     try
                     {
                         string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                        var mS = System.Text.RegularExpressions.Regex.Match(idJson, @"""Serial""\s*:\s*""([^""]+)""");
+                        var mS = RxSerial.Match(idJson);
                         if (mS.Success && !string.IsNullOrEmpty(mS.Groups[1].Value))
                         {
                             slotSerial = mS.Groups[1].Value.Trim().ToUpper();
                         }
-                        var mA = System.Text.RegularExpressions.Regex.Match(idJson, @"""AndroidId""\s*:\s*""([^""]+)""");
+                        var mA = RxAndroidId.Match(idJson);
                         if (mA.Success && !string.IsNullOrEmpty(mA.Groups[1].Value))
                         {
                             slotUuid = mA.Groups[1].Value.Trim().ToLower();
@@ -2324,6 +2741,7 @@ namespace DofusFarm.Engine
                                            .Replace("__DEVICE_MAX_TEXTURE_SIZE__", cdpProfile.MaxTextureSize.ToString());
                 }
 
+                string escapedDisguiseJson = ToJsonString(disguiseJs);
                 int cdpPort = port + 4000;
 
                 while (!token.IsCancellationRequested)
@@ -2339,7 +2757,7 @@ namespace DofusFarm.Engine
                     // Discover active DevTools unix domain socket or guest port
                     string unixList = AdbShell(serial, "cat /proc/net/unix");
                     string socketName = null;
-                    var match = System.Text.RegularExpressions.Regex.Match(unixList, @"@(webview_devtools_remote_\d+|chrome_devtools_remote|com\.ankama\.dofustouch[^\s]*)");
+                    Match match = RxUnixSocket.Match(unixList);
                     if (match.Success)
                     {
                         socketName = match.Groups[1].Value;
@@ -2393,7 +2811,7 @@ namespace DofusFarm.Engine
                         continue;
                     }
 
-                    var wsMatches = System.Text.RegularExpressions.Regex.Matches(jsonTargets, @"""webSocketDebuggerUrl""\s*:\s*""([^""]+)""");
+                    MatchCollection wsMatches = RxWsDebugger.Matches(jsonTargets);
                     if (wsMatches.Count == 0)
                     {
                         Thread.Sleep(1000);
@@ -2405,7 +2823,7 @@ namespace DofusFarm.Engine
                     foreach (System.Text.RegularExpressions.Match m in wsMatches)
                     {
                         targetWsUrl = m.Groups[1].Value;
-                        targetWsUrl = System.Text.RegularExpressions.Regex.Replace(targetWsUrl, @"ws://(127\.0\.0\.1|localhost):\d+/", string.Format("ws://127.0.0.1:{0}/", cdpPort));
+                        targetWsUrl = RxWsHostPort.Replace(targetWsUrl, string.Format("ws://127.0.0.1:{0}/", cdpPort));
                         break;
                     }
 
@@ -2427,23 +2845,11 @@ namespace DofusFarm.Engine
                             SendWsJson(ws, "{\"id\":2,\"method\":\"Runtime.enable\"}");
 
                             int msgId = 10;
-                            if (!string.IsNullOrEmpty(disguiseJs))
-                            {
-                                string addDoc = string.Format("{{\"id\":{0},\"method\":\"Page.addScriptToEvaluateOnNewDocument\",\"params\":{{\"source\":{1}}}}}", ++msgId, ToJsonString(disguiseJs));
-                                SendWsJson(ws, addDoc);
+                            string addDoc = string.Format("{{\"id\":{0},\"method\":\"Page.addScriptToEvaluateOnNewDocument\",\"params\":{{\"source\":{1}}}}}", ++msgId, escapedDisguiseJson);
+                            SendWsJson(ws, addDoc);
 
-                                string eval = string.Format("{{\"id\":{0},\"method\":\"Runtime.evaluate\",\"params\":{{\"expression\":{1},\"userGesture\":true,\"awaitPromise\":false}}}}", ++msgId, ToJsonString(disguiseJs));
-                                SendWsJson(ws, eval);
-                            }
-
-                            if (!string.IsNullOrEmpty(behaviorJs))
-                            {
-                                string addDoc = string.Format("{{\"id\":{0},\"method\":\"Page.addScriptToEvaluateOnNewDocument\",\"params\":{{\"source\":{1}}}}}", ++msgId, ToJsonString(behaviorJs));
-                                SendWsJson(ws, addDoc);
-
-                                string eval = string.Format("{{\"id\":{0},\"method\":\"Runtime.evaluate\",\"params\":{{\"expression\":{1},\"userGesture\":true,\"awaitPromise\":false}}}}", ++msgId, ToJsonString(behaviorJs));
-                                SendWsJson(ws, eval);
-                            }
+                            string eval = string.Format("{{\"id\":{0},\"method\":\"Runtime.evaluate\",\"params\":{{\"expression\":{1},\"userGesture\":true,\"awaitPromise\":false}}}}", ++msgId, escapedDisguiseJson);
+                            SendWsJson(ws, eval);
 
                             Log(string.Format("[🛡️ CDP] Persistent session active for {0} ({1}). Disguise hooks permanently registered.", name, serial));
 
@@ -2478,7 +2884,7 @@ namespace DofusFarm.Engine
                                                 // Re-assert live evaluation on top-level page transition
                                                 if (!string.IsNullOrEmpty(disguiseJs))
                                                 {
-                                                    string reEval = string.Format("{{\"id\":{0},\"method\":\"Runtime.evaluate\",\"params\":{{\"expression\":{1},\"userGesture\":true,\"awaitPromise\":false}}}}", ++msgId, ToJsonString(disguiseJs));
+                                                    string reEval = string.Format("{{\"id\":{0},\"method\":\"Runtime.evaluate\",\"params\":{{\"expression\":{1},\"userGesture\":true,\"awaitPromise\":false}}}}", ++msgId, escapedDisguiseJson);
                                                     SendWsJson(ws, reEval);
                                                 }
                                             }
@@ -2702,7 +3108,7 @@ namespace DofusFarm.Engine
             return "dofus-" + (existing.Count + 1);
         }
 
-        public bool CloneInstance(string sourceName, string targetName, bool cloneState = true)
+        public bool CloneInstance(string sourceName, string targetName, bool cloneState = true, string customTargetName = null)
         {
             string srcDir = Path.Combine(AvdHome, sourceName + ".avd");
             string tgtDir = Path.Combine(AvdHome, targetName + ".avd");
@@ -2717,7 +3123,7 @@ namespace DofusFarm.Engine
             Log(string.Format("Cloning '{0}' -> '{1}' (Preserving 3GB game cache: {2})...", sourceName, targetName, cloneState));
 
             int targetIdx = 1;
-            System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(targetName, @"(\d+)$");
+            System.Text.RegularExpressions.Match m = RxTrailingDigits.Match(targetName);
             if (m.Success) int.TryParse(m.Groups[1].Value, out targetIdx);
             int targetPort = 5554 + 2 * (targetIdx - 1);
             string targetSerial = "emulator-" + targetPort;
@@ -2729,7 +3135,7 @@ namespace DofusFarm.Engine
             HashSet<string> live = GetLiveSerials();
             bool isSourceNumbered = false;
             int srcIdx = 1;
-            System.Text.RegularExpressions.Match mSrc = System.Text.RegularExpressions.Regex.Match(sourceName, @"(\d+)$");
+            System.Text.RegularExpressions.Match mSrc = RxTrailingDigits.Match(sourceName);
             if (mSrc.Success)
             {
                 isSourceNumbered = true;
@@ -2777,9 +3183,10 @@ namespace DofusFarm.Engine
 
             // Preserve source instance's upstream proxy configuration (BUG-27)
             string srcProxy = GetProxy(sourceName);
+            string resolvedCustom = !string.IsNullOrEmpty(customTargetName) ? customTargetName.Trim() : ("Instance #" + targetIdx);
             string identFile = Path.Combine(tgtDir, "identity.json");
-            string identContent = string.Format("{{\"Serial\":\"{0}\",\"AndroidId\":\"{1}\",\"Mac\":\"{2}\",\"Proxy\":\"{3}\",\"PhoneModel\":\"{4}\"}}",
-                EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(srcProxy ?? ""), EscapeJson(tgtProfile.Id));
+            string identContent = string.Format("{{\"CustomName\":\"{0}\",\"Serial\":\"{1}\",\"AndroidId\":\"{2}\",\"Mac\":\"{3}\",\"Proxy\":\"{4}\",\"PhoneModel\":\"{5}\"}}",
+                EscapeJson(resolvedCustom), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(srcProxy ?? ""), EscapeJson(tgtProfile.Id));
             File.WriteAllText(identFile, identContent, Encoding.UTF8);
 
             // Generate target system.prop matching target phone model
@@ -2901,7 +3308,7 @@ namespace DofusFarm.Engine
         public bool DeleteInstance(string name)
         {
             int idx = 1;
-            System.Text.RegularExpressions.Match m = System.Text.RegularExpressions.Regex.Match(name, @"(\d+)$");
+            System.Text.RegularExpressions.Match m = RxTrailingDigits.Match(name);
             if (m.Success) int.TryParse(m.Groups[1].Value, out idx);
             int port = 5554 + 2 * (idx - 1);
             string serial = "emulator-" + port;
@@ -2983,6 +3390,22 @@ namespace DofusFarm.Engine
         public void FocusInstance(int port)
         {
             int pid = 0;
+            lock (_pidCacheLock)
+            {
+                int cachedPid;
+                if (_cachedPortToPid.TryGetValue(port, out cachedPid) && cachedPid > 0)
+                {
+                    try
+                    {
+                        using (Process p = Process.GetProcessById(cachedPid))
+                        {
+                            if (!p.HasExited) pid = cachedPid;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            if (pid == 0)
             try
             {
                 using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(

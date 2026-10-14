@@ -8,49 +8,62 @@ $RECYCLE.BIN/
 .vs/
 .vscode/
 .idea/
+*.iml
 *.swp
 *.swo
 *.tmp
+*.temp
 *.log
+~$*
 
-# Visual Studio / .NET
+# Visual Studio / .NET build artifacts
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
 *.pdb
-*.aps
-*.ncb
-*.opendb
-*.VC.db
-*.VC.VC.opendb
 [Bb]in/
 [Dd]ebug/
 [Rr]elease/
 obj/
 packages/
 *.cache
-*.exe
-*.dll
+
+# Local heavy archives & compiled executables (packed into setup.exe by compile.bat)
+/Build.exe
+/DofusFarm.exe
+/uninstall.exe
+/setup.exe
+/dofus-net-proxy.exe
+/scripts/dofus-net-proxy.exe
+/scripts/bin/
+/sdk/
+/asset_cache/
+/proxy_cache/
+*.avd/
+*.ini.bak
+userdata*.img
 *.img
+*.qcow2
+*.lock
+*.iso
 *.7z
 *.zip
+*.tar.gz
+*.tgz
 
-# Java / build artifacts
+# Android Launcher build outputs
+launcher/build/
+launcher/.gradle/
+*.apk
+*.apks
+*.dex
 *.class
 *.jar
-*.war
-*.ear
-target/
-build/
-.gradle/
 
-# Local runtime data
+# Local runtime state
+identity.json
+alias.json
 *.bak
 *.orig
 *.rej
-
-# Windows-specific generated files
-*.tmp
-*.temp
-~$

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Management;
 using System.Threading;
 using DofusFarm.Native;
 
@@ -80,6 +79,31 @@ namespace DofusFarm.Engine
             }
         }
 
+        private void RestartInstanceAndTile(InstanceModel inst)
+        {
+            try
+            {
+                _engine.StopInstance(inst.Serial, inst.Name);
+            }
+            catch { }
+
+            Thread.Sleep(1500);
+            if (!Enabled) return;
+
+            string healProxy = !string.IsNullOrEmpty(inst.Proxy) ? inst.Proxy : "127.0.0.1:8880";
+            _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, healProxy);
+
+            Thread.Sleep(2500);
+            if (!Enabled) return;
+
+            List<int> pids = new List<int>();
+            foreach (InstanceModel live in _engine.GetInstances())
+            {
+                if (live.IsRunning && live.Pid > 0) pids.Add(live.Pid);
+            }
+            if (pids.Count > 0) Win32.ApplyFarmLayout(pids, true);
+        }
+
         public void CheckAndHeal()
         {
             if (!Enabled) return;
@@ -89,7 +113,7 @@ namespace DofusFarm.Engine
                 if (!Enabled) break;
                 if (!inst.IsRunning || inst.Pid <= 0) continue;
 
-                // 1. Check process uptime (120-second initial boot grace period) and PID validation
+                // 1. Check process uptime (90-second initial boot grace period) and PID validation
                 double procAgeSec = 999;
                 try
                 {
@@ -98,7 +122,6 @@ namespace DofusFarm.Engine
                         string pName = p.ProcessName.ToLower();
                         if (!pName.Contains("qemu") && !pName.Contains("emulator"))
                         {
-                            // Stale PID reused by unrelated host process - do not touch
                             continue;
                         }
                         procAgeSec = (DateTime.Now - p.StartTime).TotalSeconds;
@@ -106,13 +129,11 @@ namespace DofusFarm.Engine
                 }
                 catch
                 {
-                    // Target process is already dead
                     continue;
                 }
 
-                if (procAgeSec < 120)
+                if (procAgeSec < 90)
                 {
-                    // Instance is still in its boot window. Do NOT kill!
                     continue;
                 }
 
@@ -132,58 +153,26 @@ namespace DofusFarm.Engine
 
                     if (fails < 3)
                     {
-                        Log(string.Format("Instance {0} ({1}) unresponsive (check {2}/3). Waiting for next cycle...",
-                            inst.Name, inst.Serial, fails));
+                        Log(string.Format("Instance {0} ({1}) unresponsive (check {2}/3)...", inst.Name, inst.Serial, fails));
                         continue;
                     }
 
-                    lock (_syncLock) { _consecutiveFailures.Remove(inst.Serial); }
-                    if (!Enabled) break;
-
-                    Log(string.Format("HEAL TRIGGERED: {0} ({1}, PID: {2}, Age: {3:0}s) is UNRESPONSIVE / FROZEN (3 consecutive failed checks)!",
-                        inst.Name, inst.Serial, inst.Pid, procAgeSec));
-
-                    // Kill stale emulator process safely confirming process name
-                    try
+                    lock (_syncLock)
                     {
-                        _engine.Adb(inst.Serial, "emu kill", 3000);
-                        using (Process p = Process.GetProcessById(inst.Pid))
-                        {
-                            string pName = p.ProcessName.ToLower();
-                            if (pName.Contains("qemu") || pName.Contains("emulator"))
-                            {
-                                p.Kill();
-                            }
-                        }
+                        _consecutiveFailures.Remove(inst.Serial);
+                        _gameDownCount.Remove(inst.Serial);
                     }
-                    catch { }
-
-                    Thread.Sleep(2000);
                     if (!Enabled) break;
 
-                    // Restart only this single instance preserving proxy isolation
-                    Log(string.Format("Relaunching slot {0}...", inst.Name));
-                    string healProxy = !string.IsNullOrEmpty(inst.Proxy) ? inst.Proxy : "127.0.0.1:8880";
-                    _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, healProxy);
-
-                    Thread.Sleep(3000);
-                    if (!Enabled) break;
-
-                    // Re-tile windows
-                    List<int> pids = new List<int>();
-                    foreach (InstanceModel live in _engine.GetInstances())
-                    {
-                        if (live.IsRunning && live.Pid > 0) pids.Add(live.Pid);
-                    }
-                    if (pids.Count > 0) Win32.ApplyFarmLayout(pids, true);
-
+                    Log(string.Format("HEAL TRIGGERED: {0} ({1}) is frozen. Restarting instance...", inst.Name, inst.Serial));
+                    RestartInstanceAndTile(inst);
                     Log(string.Format("Self-heal completed for {0}!", inst.Name));
                 }
                 else
                 {
                     lock (_syncLock) { _consecutiveFailures.Remove(inst.Serial); }
 
-                    // Instance is healthy. Verify game status
+                    // Instance is healthy. Verify Dofus Touch process
                     string gamePid = _engine.AdbShell(inst.Serial, "pidof com.ankama.dofustouch");
                     bool isGameRunning = false;
                     if (!string.IsNullOrEmpty(gamePid) && !gamePid.Contains("ERROR") && !gamePid.Contains("error"))
@@ -206,12 +195,19 @@ namespace DofusFarm.Engine
 
                         if (downs <= 3 && Enabled)
                         {
-                            Log(string.Format("Dofus Touch stopped in {0} (attempt {1}/3). Relaunching game...", inst.Name, downs));
+                            Log(string.Format("Dofus Touch stopped in {0} (attempt {1}/3). Relaunching activity...", inst.Name, downs));
                             _engine.AdbShell(inst.Serial, "am start -n com.ankama.dofustouch/.MainActivity");
                             ThreadPool.QueueUserWorkItem(delegate
                             {
                                 if (Enabled) _engine.InjectDisguiseViaCdp(inst.Serial, inst.Port, inst.Name);
                             });
+                        }
+                        else if (Enabled)
+                        {
+                            // Escalate to full instance restart after 3 failed activity relaunches
+                            lock (_syncLock) { _gameDownCount.Remove(inst.Serial); }
+                            Log(string.Format("Activity failed to recover in {0} after 3 attempts; restarting instance...", inst.Name));
+                            RestartInstanceAndTile(inst);
                         }
                     }
                     else

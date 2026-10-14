@@ -10,8 +10,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("Dofus Farm Project")]
 [assembly: AssemblyProduct("Dofus Farm Virtualization")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
-[assembly: AssemblyVersion("2.0.0.0")]
+[assembly: AssemblyFileVersion("2.1.0.0")]
+[assembly: AssemblyVersion("2.1.0.0")]
 
 namespace DofusUninstall
 {
@@ -62,7 +62,6 @@ namespace DofusUninstall
                     }
                 }
 
-                // If running inside install directory and not requested -NoRespawn, copy self to %TEMP% so targetDir has NO open file locks!
                 if (!noRespawn && !exePath.StartsWith(tempDir, StringComparison.OrdinalIgnoreCase))
                 {
                     int currentPid = Process.GetCurrentProcess().Id;
@@ -86,7 +85,6 @@ namespace DofusUninstall
                     catch { }
                 }
 
-                // If spawned from parent, wait for parent process to fully exit and release file locks
                 if (waitForPid > 0)
                 {
                     try
@@ -116,21 +114,18 @@ namespace DofusUninstall
                     catch { }
                 }
 
-                // Safety guard: NEVER purge the source development repository
                 if (!string.IsNullOrEmpty(targetDir) && (File.Exists(Path.Combine(targetDir, @"desktop\MainForm.cs")) || File.Exists(Path.Combine(targetDir, @"builder\Build.cs"))))
                 {
                     targetDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "DofusFarm");
                 }
 
-                // User confirmation dialog
                 if (!isQuiet && !isForce)
                 {
                     string msg = "Are you sure you want to completely uninstall Dofus Touch Farm?\n\n" +
                                  "This will automatically:\n" +
-                                 "  * Terminate all running emulators and background proxies\n" +
-                                 "  * Clean all virtual disks, shader caches, and download archives\n" +
-                                 "  * Remove desktop and start menu shortcuts\n" +
-                                 "  * Remove all installed files and folders (preserving ONLY setup.exe)\n\n" +
+                                 "  • Stop all running instances and network proxies\n" +
+                                 "  • Remove all virtual disks, snapshots, and caches\n" +
+                                 "  • Remove desktop shortcuts and installed files\n\n" +
                                  "Proceed with uninstallation?";
 
                     DialogResult res = MessageBox.Show(msg, "Uninstall Dofus Touch Farm", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
@@ -138,10 +133,10 @@ namespace DofusUninstall
                 }
 
                 // 1. Terminate all active emulators, ADB, and proxy daemons
-                KillProcesses(new[] { "qemu-system-x86_64", "emulator", "dofus-net-proxy", "dofus-downloader", "DofusFarm", "adb" }, targetDir);
+                KillProcesses(new[] { "qemu-system-x86_64", "emulator", "dofus-net-proxy", "DofusFarm", "adb" }, targetDir);
                 System.Threading.Thread.Sleep(2000);
 
-                // 2. Wipe AVD virtual disks and emulator caches
+                // 2. Wipe all dofus-* AVD virtual disks (including template) and emulator caches
                 string userProfile = Environment.GetEnvironmentVariable("USERPROFILE");
                 if (string.IsNullOrEmpty(userProfile)) userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 string avdHome = Path.Combine(userProfile, @".android\avd");
@@ -153,7 +148,7 @@ namespace DofusUninstall
                         if (dirName.EndsWith(".avd", StringComparison.OrdinalIgnoreCase))
                         {
                             string baseName = dirName.Substring(0, dirName.Length - 4);
-                            if (baseName.StartsWith("dofus-", StringComparison.OrdinalIgnoreCase) && !baseName.Equals("dofus-template", StringComparison.OrdinalIgnoreCase))
+                            if (baseName.StartsWith("dofus-", StringComparison.OrdinalIgnoreCase))
                             {
                                 SafeDeleteDirectory(d);
                             }
@@ -165,7 +160,7 @@ namespace DofusUninstall
                         if (fileName.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
                         {
                             string baseName = fileName.Substring(0, fileName.Length - 4);
-                            if (baseName.StartsWith("dofus-", StringComparison.OrdinalIgnoreCase) && !baseName.Equals("dofus-template", StringComparison.OrdinalIgnoreCase))
+                            if (baseName.StartsWith("dofus-", StringComparison.OrdinalIgnoreCase))
                             {
                                 try { File.SetAttributes(f, FileAttributes.Normal); File.Delete(f); } catch { }
                             }
@@ -179,19 +174,16 @@ namespace DofusUninstall
                     try { Directory.Delete(androidCache, true); } catch { }
                 }
 
-                // Purge temp caches
                 try
                 {
                     foreach (string d in Directory.GetDirectories(tempDir, "DofusSetup_*"))
                     {
                         try { Directory.Delete(d, true); } catch { }
                     }
-                    foreach (string d in Directory.GetDirectories(tempDir, "dofus_stage_*"))
+                    foreach (string d in Directory.GetDirectories(tempDir, "dofus_build_stage_*"))
                     {
                         try { Directory.Delete(d, true); } catch { }
                     }
-                    string zip = Path.Combine(tempDir, "DofusPayload.zip");
-                    if (File.Exists(zip)) try { File.Delete(zip); } catch { }
                 }
                 catch { }
 
@@ -217,17 +209,8 @@ namespace DofusUninstall
                 }
 
                 // 4. Clean Registry & Environment variables
-                try
-                {
-                    Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm", false);
-                }
-                catch { }
-
-                try
-                {
-                    Registry.CurrentUser.DeleteSubKeyTree(@"Software\DofusFarm", false);
-                }
-                catch { }
+                try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm", false); } catch { }
+                try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\DofusFarm", false); } catch { }
 
                 try
                 {
@@ -250,7 +233,7 @@ namespace DofusUninstall
                 }
                 catch { }
 
-                // 5. Purge target installation directory (preserving ONLY setup.exe unless -force is specified)
+                // 5. Purge target installation directory
                 if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
                 {
                     DirectoryInfo di = new DirectoryInfo(targetDir);
@@ -271,7 +254,6 @@ namespace DofusUninstall
                     }
                 }
 
-                // If running in temp as spawned helper, schedule self deletion
                 if (noRespawn && exePath.StartsWith(tempDir, StringComparison.OrdinalIgnoreCase))
                 {
                     try
@@ -291,7 +273,7 @@ namespace DofusUninstall
 
                 if (!isQuiet)
                 {
-                    MessageBox.Show("Dofus Touch Farm has been completely uninstalled.\nAll caches and virtual disks have been cleaned.",
+                    MessageBox.Show("Dofus Touch Farm has been completely uninstalled.",
                         "Uninstall Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
             }
@@ -307,7 +289,6 @@ namespace DofusUninstall
             {
                 if (!string.IsNullOrEmpty(targetDir) && name.Equals("qemu-system-x86_64", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Scope QEMU termination to DofusFarm directory
                     foreach (Process p in Process.GetProcessesByName(name))
                     {
                         try

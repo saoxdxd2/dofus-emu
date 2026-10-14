@@ -226,6 +226,15 @@ namespace DofusFarm.Native
             return found;
         }
 
+        public static void HideAllProcessWindows(int rootPid)
+        {
+            if (rootPid <= 0) return;
+            foreach (WindowInfo w in GetEmulatorWindows(new[] { rootPid }))
+            {
+                ShowWindowAsync(w.Handle, SW_HIDE);
+            }
+        }
+
         public static void HideEmulatorConsole(IEnumerable<int> launcherPids)
         {
             foreach (WindowInfo w in GetEmulatorWindows(launcherPids))
