@@ -21,8 +21,8 @@ using DofusFarm.Native;
 [assembly: AssemblyCompany("Dofus Farm Project")]
 [assembly: AssemblyProduct("Dofus Touch Farm Setup")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
-[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.3.0.0")]
+[assembly: AssemblyVersion("2.3.0.0")]
 
 namespace DofusStandaloneSetup
 {
@@ -561,7 +561,7 @@ namespace DofusStandaloneSetup
                             {
                                 uk.SetValue("DisplayName", "Dofus Touch Farm Manager");
                                 uk.SetValue("DisplayIcon", icoPath);
-                                uk.SetValue("DisplayVersion", "2.2.0");
+                                uk.SetValue("DisplayVersion", "2.3.0");
                                 uk.SetValue("Publisher", "Dofus Farm Project");
                                 uk.SetValue("InstallLocation", TargetDir);
                                 uk.SetValue("UninstallString", "\"" + Path.Combine(TargetDir, "uninstall.exe") + "\"");

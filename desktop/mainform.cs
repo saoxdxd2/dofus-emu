@@ -30,14 +30,20 @@ namespace DofusFarm.UI
         private Button _btnStopAll;
         private Button _btnAddSlot;
         private Button _btnEditSelected;
+        private Button _btnDeleteSelected;
+        private Button _btnFixBlackScreen;
         private Button _btnRelayout;
         private Button _btnCascade;
 
+        private Label _lblGpu;
+        private ComboBox _cmbGpu;
         private Label _lblRam;
         private ComboBox _cmbRam;
         private Label _lblCores;
         private ComboBox _cmbCores;
         private Button _btnApplyAllHw;
+        private ContextMenuStrip _rowMenu;
+        private bool _suppressGpuEvent = false;
 
         private DataGridView _grid;
         private Font _cellBadgeFont;
@@ -114,9 +120,9 @@ namespace DofusFarm.UI
 
         private void InitializeComponent()
         {
-            this.Text = "Dofus Touch Farm Manager";
-            this.Size = new Size(1160, 680);
-            this.MinimumSize = new Size(1020, 520);
+            this.Text = "Dofus Touch Farm Manager v2.3";
+            this.Size = new Size(1220, 680);
+            this.MinimumSize = new Size(1060, 520);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = Color.FromArgb(18, 19, 24);
             this.ForeColor = Color.FromArgb(235, 235, 240);
@@ -185,40 +191,66 @@ namespace DofusFarm.UI
             int btnY = 10;
             int btnH = 34;
 
-            _btnLaunchFarm = CreateButton("Launch All", Color.FromArgb(37, 99, 235), Color.FromArgb(59, 130, 246), Color.White, 125, btnH, true);
-            _btnLaunchFarm.Location = new Point(18, btnY);
+            _btnLaunchFarm = CreateButton("Launch All", Color.FromArgb(37, 99, 235), Color.FromArgb(59, 130, 246), Color.White, 112, btnH, true);
+            _btnLaunchFarm.Location = new Point(16, btnY);
             _btnLaunchFarm.Click += OnLaunchFarmClick;
 
-            _btnStopAll = CreateButton("Stop All", Color.FromArgb(185, 28, 28), Color.FromArgb(220, 38, 38), Color.White, 92, btnH, true);
-            _btnStopAll.Location = new Point(150, btnY);
+            _btnStopAll = CreateButton("Stop All", Color.FromArgb(185, 28, 28), Color.FromArgb(220, 38, 38), Color.White, 80, btnH, true);
+            _btnStopAll.Location = new Point(134, btnY);
             _btnStopAll.Click += OnStopAllClick;
 
-            _btnAddSlot = CreateButton("+ Add Instance", Color.FromArgb(16, 150, 108), Color.FromArgb(16, 185, 129), Color.White, 122, btnH, true);
-            _btnAddSlot.Location = new Point(252, btnY);
+            _btnAddSlot = CreateButton("+ Add", Color.FromArgb(16, 150, 108), Color.FromArgb(16, 185, 129), Color.White, 76, btnH, true);
+            _btnAddSlot.Location = new Point(220, btnY);
             _btnAddSlot.Click += OnAddSlotClick;
 
-            _btnEditSelected = CreateButton("Edit Selected", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 112, btnH, false);
-            _btnEditSelected.Location = new Point(381, btnY);
+            _btnEditSelected = CreateButton("Edit", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 62, btnH, false);
+            _btnEditSelected.Location = new Point(302, btnY);
             _btnEditSelected.Click += OnEditSelectedClick;
 
-            _btnRelayout = CreateButton("Tile Grid", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 86, btnH, false);
-            _btnRelayout.Location = new Point(500, btnY);
+            _btnDeleteSelected = CreateButton("Delete", Color.FromArgb(153, 27, 27), Color.FromArgb(220, 38, 38), Color.White, 72, btnH, true);
+            _btnDeleteSelected.Location = new Point(370, btnY);
+            _btnDeleteSelected.Click += OnDeleteSelectedClick;
+
+            _btnFixBlackScreen = CreateButton("Fix Black Screen", Color.FromArgb(180, 83, 9), Color.FromArgb(217, 119, 6), Color.White, 122, btnH, true);
+            _btnFixBlackScreen.Location = new Point(448, btnY);
+            _btnFixBlackScreen.Click += OnFixBlackScreenClick;
+
+            _btnRelayout = CreateButton("Tile", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 56, btnH, false);
+            _btnRelayout.Location = new Point(576, btnY);
             _btnRelayout.Click += OnRelayoutClick;
 
-            _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 84, btnH, false);
-            _btnCascade.Location = new Point(592, btnY);
+            _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 68, btnH, false);
+            _btnCascade.Location = new Point(638, btnY);
             _btnCascade.Click += OnCascadeClick;
 
-            // Global RAM & CPU Allocation Controls on Right
-            _lblRam = new Label { Text = "RAM:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(698, 17) };
+            // Global GPU, RAM & CPU Allocation Controls on Right
+            _lblGpu = new Label { Text = "GPU:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(716, 17) };
+            _cmbGpu = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(28, 30, 40),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Width = 108,
+                Location = new Point(750, 14)
+            };
+            _cmbGpu.Items.AddRange(new object[] {
+                "Host (OpenGL)",
+                "ANGLE (D3D11)",
+                "SwiftShader"
+            });
+            _cmbGpu.SelectedIndex = 0;
+            _cmbGpu.SelectedIndexChanged += OnGpuModeChanged;
+
+            _lblRam = new Label { Text = "RAM:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(866, 17) };
             _cmbRam = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 BackColor = Color.FromArgb(28, 30, 40),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Width = 105,
-                Location = new Point(738, 14)
+                Width = 90,
+                Location = new Point(904, 14)
             };
             _cmbRam.Items.AddRange(new object[] {
                 "512 MB", "768 MB", "1024 MB", "1536 MB", "2048 MB",
@@ -226,29 +258,33 @@ namespace DofusFarm.UI
             });
             _cmbRam.SelectedIndex = 2; // 1024 MB
 
-            _lblCores = new Label { Text = "CPU:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(854, 17) };
+            _lblCores = new Label { Text = "CPU:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(1000, 17) };
             _cmbCores = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 BackColor = Color.FromArgb(28, 30, 40),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Width = 84,
-                Location = new Point(892, 14)
+                Width = 76,
+                Location = new Point(1034, 14)
             };
             _cmbCores.Items.AddRange(new object[] { "1 Core", "2 Cores", "3 Cores", "4 Cores", "6 Cores", "8 Cores" });
             _cmbCores.SelectedIndex = 0; // 1 Core
 
-            _btnApplyAllHw = CreateButton("Apply to All", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 108, btnH, true);
-            _btnApplyAllHw.Location = new Point(986, btnY);
+            _btnApplyAllHw = CreateButton("Apply All", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 84, btnH, true);
+            _btnApplyAllHw.Location = new Point(1116, btnY);
             _btnApplyAllHw.Click += OnApplyAllHardwareClick;
 
             _toolbarPanel.Controls.Add(_btnLaunchFarm);
             _toolbarPanel.Controls.Add(_btnStopAll);
             _toolbarPanel.Controls.Add(_btnAddSlot);
             _toolbarPanel.Controls.Add(_btnEditSelected);
+            _toolbarPanel.Controls.Add(_btnDeleteSelected);
+            _toolbarPanel.Controls.Add(_btnFixBlackScreen);
             _toolbarPanel.Controls.Add(_btnRelayout);
             _toolbarPanel.Controls.Add(_btnCascade);
+            _toolbarPanel.Controls.Add(_lblGpu);
+            _toolbarPanel.Controls.Add(_cmbGpu);
             _toolbarPanel.Controls.Add(_lblRam);
             _toolbarPanel.Controls.Add(_cmbRam);
             _toolbarPanel.Controls.Add(_lblCores);
@@ -336,21 +372,40 @@ namespace DofusFarm.UI
             };
             _grid.Columns.Add(btnDelete);
 
-            _grid.Columns["Status"].Width = 110;
-            _grid.Columns["CustomName"].Width = 175;
-            _grid.Columns["Name"].Width = 85;
-            _grid.Columns["Ram"].Width = 90;
-            _grid.Columns["Cores"].Width = 90;
-            _grid.Columns["Device"].Width = 210;
-            _grid.Columns["Proxy"].Width = 155;
-            _grid.Columns["Action"].Width = 84;
-            _grid.Columns["Edit"].Width = 72;
-            _grid.Columns["Clone"].Width = 72;
+            _grid.Columns["Status"].Width = 100;
+            _grid.Columns["CustomName"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            _grid.Columns["CustomName"].FillWeight = 115;
+            _grid.Columns["CustomName"].MinimumWidth = 110;
+            _grid.Columns["Name"].Width = 78;
+            _grid.Columns["Ram"].Width = 76;
+            _grid.Columns["Cores"].Width = 80;
+            _grid.Columns["Device"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            _grid.Columns["Device"].FillWeight = 135;
+            _grid.Columns["Device"].MinimumWidth = 125;
+            _grid.Columns["Proxy"].Width = 138;
+            _grid.Columns["Action"].Width = 78;
+            _grid.Columns["Edit"].Width = 66;
+            _grid.Columns["Clone"].Width = 66;
             _grid.Columns["Delete"].Width = 72;
 
+            _rowMenu = new ContextMenuStrip();
+            _rowMenu.BackColor = Color.FromArgb(26, 28, 37);
+            _rowMenu.ForeColor = Color.White;
+            _rowMenu.Items.Add("Launch / Stop Instance", null, delegate { TriggerSelectedRowAction("Action"); });
+            _rowMenu.Items.Add("Edit Instance...", null, delegate { OnEditSelectedClick(null, EventArgs.Empty); });
+            _rowMenu.Items.Add("Clone Instance...", null, delegate { TriggerSelectedRowAction("Clone"); });
+            _rowMenu.Items.Add(new ToolStripSeparator());
+            _rowMenu.Items.Add("Fix Black Screen (Reset Snapshot & Repair)", null, delegate { RepairSelectedOrAllInstances(); });
+            _rowMenu.Items.Add(new ToolStripSeparator());
+            ToolStripItem delItem = _rowMenu.Items.Add("Delete Selected Instance", null, delegate { OnDeleteSelectedClick(null, EventArgs.Empty); });
+            delItem.ForeColor = Color.FromArgb(248, 113, 113);
+            ToolStripItem delAllItem = _rowMenu.Items.Add("Delete ALL Instances...", null, delegate { PromptAndDeleteAllInstances(); });
+            delAllItem.ForeColor = Color.FromArgb(248, 113, 113);
+
             _grid.CellPainting += OnGridCellPainting;
-            _grid.CellContentClick += OnGridCellContentClick;
+            _grid.CellMouseClick += OnGridCellMouseClick;
             _grid.CellDoubleClick += OnGridCellDoubleClick;
+            _grid.KeyDown += OnGridKeyDown;
             _grid.CellMouseEnter += OnGridCellMouseEnter;
             _grid.CellMouseLeave += delegate { _grid.Cursor = Cursors.Default; };
 
@@ -570,6 +625,17 @@ namespace DofusFarm.UI
         {
             _engine = new FarmEngine();
             _engine.OnLog += Log;
+
+            try
+            {
+                _suppressGpuEvent = true;
+                string gpu = _engine.GetConfiguredGpuMode();
+                if (gpu == "angle_indirect") _cmbGpu.SelectedIndex = 1;
+                else if (gpu == "swiftshader_indirect") _cmbGpu.SelectedIndex = 2;
+                else _cmbGpu.SelectedIndex = 0;
+            }
+            catch { }
+            finally { _suppressGpuEvent = false; }
 
             _watchdog = new FarmWatchdog(_engine);
             _watchdog.OnLog += Log;
@@ -1017,6 +1083,179 @@ namespace DofusFarm.UI
             return s;
         }
 
+        private void OnGpuModeChanged(object sender, EventArgs e)
+        {
+            if (_suppressGpuEvent || _engine == null) return;
+            int idx = _cmbGpu.SelectedIndex;
+            string mode = (idx == 1) ? "angle_indirect" : (idx == 2 ? "swiftshader_indirect" : "host");
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    _engine.SetConfiguredGpuMode(mode);
+                }
+                catch { }
+            });
+        }
+
+        private void OnDeleteSelectedClick(object sender, EventArgs e)
+        {
+            if (_grid.SelectedRows.Count == 0)
+            {
+                DialogResult drAll = MessageBox.Show(
+                    "No single row is selected.\n\nWould you like to delete ALL instances and reset the farm?",
+                    "Delete Instances",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (drAll == DialogResult.Yes)
+                {
+                    PromptAndDeleteAllInstances();
+                }
+                return;
+            }
+
+            InstanceModel inst = _grid.SelectedRows[0].Tag as InstanceModel;
+            if (inst != null)
+            {
+                PromptAndDeleteInstance(inst);
+            }
+        }
+
+        private void PromptAndDeleteInstance(InstanceModel inst)
+        {
+            if (inst == null) return;
+            DialogResult confirm = MessageBox.Show(
+                string.Format("Delete instance '{0}' ({1}) and permanently remove its virtual disk?", inst.CustomName ?? inst.Name, inst.Name),
+                "Confirm Delete Instance",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (confirm == DialogResult.Yes)
+            {
+                if (!TryBeginOp(inst.Name)) return;
+                string nameToDelete = inst.Name;
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    try
+                    {
+                        if (_isClosing) return;
+                        _engine.DeleteInstance(nameToDelete);
+                        Thread.Sleep(400);
+                        RefreshGrid(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log(string.Format("Error deleting {0}: {1}", nameToDelete, ex.Message));
+                    }
+                    finally
+                    {
+                        EndOp(nameToDelete);
+                    }
+                });
+            }
+        }
+
+        private void PromptAndDeleteAllInstances()
+        {
+            DialogResult confirm = MessageBox.Show(
+                "Are you sure you want to stop and DELETE ALL instances (dofus-01..N)?\n\nYour Golden Master template is preserved so you can re-add clean instances anytime.",
+                "Confirm Delete All Instances",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (confirm == DialogResult.Yes)
+            {
+                _btnDeleteSelected.Enabled = false;
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    try
+                    {
+                        int count = _engine.DeleteAllInstances();
+                        Log(string.Format("Deleted {0} instance(s).", count));
+                        Thread.Sleep(400);
+                        RefreshGrid(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log("Error deleting all instances: " + ex.Message);
+                    }
+                    finally
+                    {
+                        SafeBeginInvoke(delegate { _btnDeleteSelected.Enabled = true; });
+                    }
+                });
+            }
+        }
+
+        private void OnFixBlackScreenClick(object sender, EventArgs e)
+        {
+            RepairSelectedOrAllInstances();
+        }
+
+        private void RepairSelectedOrAllInstances()
+        {
+            DialogResult dr = MessageBox.Show(
+                "This will repair the Android Black Screen issue across all instances by:\n\n" +
+                "1. Enabling Android 10 userdata encryption key mounting & fixing advancedFeatures.ini\n" +
+                "2. Purging corrupted boot snapshots & window scale locks\n" +
+                "3. Restoring clean ranchu Gralloc/SurfaceFlinger graphics HAL properties\n\n" +
+                "Click YES to repair using Host GPU (fastest), or NO to repair and switch GPU mode to Direct3D ANGLE (best for laptops / hybrid GPUs).",
+                "Fix Android Black Screen",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Information);
+
+            if (dr == DialogResult.Cancel) return;
+            string targetGpu = (dr == DialogResult.No) ? "angle_indirect" : "host";
+
+            try
+            {
+                _suppressGpuEvent = true;
+                _cmbGpu.SelectedIndex = (targetGpu == "angle_indirect") ? 1 : 0;
+            }
+            catch { }
+            finally { _suppressGpuEvent = false; }
+
+            _btnFixBlackScreen.Enabled = false;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    int fixedCount = _engine.RepairAllInstancesBlackScreen(targetGpu);
+                    RefreshGrid(true);
+                    Log(string.Format("Black screen repair completed for {0} instance(s) (GPU: {1}). Click 'Launch' to boot cleanly!", fixedCount, targetGpu));
+                }
+                catch (Exception ex)
+                {
+                    Log("Error repairing instances: " + ex.Message);
+                }
+                finally
+                {
+                    SafeBeginInvoke(delegate { _btnFixBlackScreen.Enabled = true; });
+                }
+            });
+        }
+
+        private void TriggerSelectedRowAction(string colName)
+        {
+            if (_grid.SelectedRows.Count == 0) return;
+            int rowIdx = _grid.SelectedRows[0].Index;
+            int colIdx = _grid.Columns[colName].Index;
+            HandleGridAction(rowIdx, colIdx);
+        }
+
+        private void OnGridKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Delete && _grid.SelectedRows.Count > 0)
+            {
+                e.Handled = true;
+                InstanceModel inst = _grid.SelectedRows[0].Tag as InstanceModel;
+                if (inst != null)
+                {
+                    PromptAndDeleteInstance(inst);
+                }
+            }
+        }
+
         private void OpenEditDialogForInstance(InstanceModel inst)
         {
             if (inst == null) return;
@@ -1029,7 +1268,13 @@ namespace DofusFarm.UI
                 inst.PhoneModelId,
                 inst.Proxy))
             {
-                if (dlg.ShowDialog(this) == DialogResult.OK)
+                DialogResult result = dlg.ShowDialog(this);
+                if (dlg.DeleteRequested || result == DialogResult.Abort)
+                {
+                    PromptAndDeleteInstance(inst);
+                    return;
+                }
+                if (result == DialogResult.OK)
                 {
                     string slotName = inst.Name;
                     string slotSerial = inst.Serial;
@@ -1084,13 +1329,31 @@ namespace DofusFarm.UI
             }
         }
 
-        private void OnGridCellContentClick(object sender, DataGridViewCellEventArgs e)
+        private void OnGridCellMouseClick(object sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.RowIndex < 0 || e.RowIndex >= _grid.Rows.Count) return;
-            DataGridViewRow row = _grid.Rows[e.RowIndex];
+            if (e.Button == MouseButtons.Right)
+            {
+                _grid.ClearSelection();
+                _grid.Rows[e.RowIndex].Selected = true;
+                if (_rowMenu != null)
+                {
+                    _rowMenu.Show(Cursor.Position);
+                }
+                return;
+            }
+            if (e.Button != MouseButtons.Left || e.ColumnIndex < 0) return;
+            HandleGridAction(e.RowIndex, e.ColumnIndex);
+        }
+
+        private void HandleGridAction(int rowIndex, int columnIndex)
+        {
+            if (rowIndex < 0 || rowIndex >= _grid.Rows.Count || columnIndex < 0) return;
+            DataGridViewRow row = _grid.Rows[rowIndex];
             if (row == null) return;
             InstanceModel inst = row.Tag as InstanceModel;
             if (inst == null) return;
+            DataGridViewCellEventArgs e = new DataGridViewCellEventArgs(columnIndex, rowIndex);
 
             // 0. Click on Running Status pill -> Bring emulator window to front
             if (e.ColumnIndex == _grid.Columns["Status"].Index)
@@ -1176,35 +1439,7 @@ namespace DofusFarm.UI
             // 4. Delete Instance
             else if (e.ColumnIndex == _grid.Columns["Delete"].Index)
             {
-                DialogResult confirm = MessageBox.Show(
-                    string.Format("Delete instance '{0}' ({1}) and remove its virtual disk?", inst.CustomName ?? inst.Name, inst.Name),
-                    "Confirm Delete",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
-
-                if (confirm == DialogResult.Yes)
-                {
-                    if (!TryBeginOp(inst.Name)) return;
-                    string nameToDelete = inst.Name;
-                    ThreadPool.QueueUserWorkItem(delegate
-                    {
-                        try
-                        {
-                            if (_isClosing) return;
-                            _engine.DeleteInstance(nameToDelete);
-                            Thread.Sleep(600);
-                            RefreshGrid(true);
-                        }
-                        catch (Exception ex)
-                        {
-                            Log(string.Format("Error deleting {0}: {1}", nameToDelete, ex.Message));
-                        }
-                        finally
-                        {
-                            EndOp(nameToDelete);
-                        }
-                    });
-                }
+                PromptAndDeleteInstance(inst);
             }
         }
 
@@ -1307,6 +1542,7 @@ namespace DofusFarm.UI
         public int SelectedCores { get; private set; }
         public string SelectedProfileId { get; private set; }
         public string SelectedProxy { get; private set; }
+        public bool DeleteRequested { get; private set; }
 
         private TextBox _txtCustomName;
         private ComboBox _cmbRam;
@@ -1495,6 +1731,29 @@ namespace DofusFarm.UI
                 Cursor = Cursors.Hand
             };
             _btnCancel.FlatAppearance.BorderSize = 0;
+
+            if (!isNew)
+            {
+                Button btnDeleteInDlg = new Button
+                {
+                    Text = "Delete Instance",
+                    Location = new Point(22, y),
+                    Size = new Size(130, 36),
+                    BackColor = Color.FromArgb(153, 27, 27),
+                    ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat,
+                    Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                    Cursor = Cursors.Hand
+                };
+                btnDeleteInDlg.FlatAppearance.BorderSize = 0;
+                btnDeleteInDlg.Click += delegate
+                {
+                    DeleteRequested = true;
+                    this.DialogResult = DialogResult.Abort;
+                    this.Close();
+                };
+                this.Controls.Add(btnDeleteInDlg);
+            }
 
             this.Controls.Add(lblName);
             this.Controls.Add(_txtCustomName);
