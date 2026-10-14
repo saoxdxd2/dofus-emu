@@ -617,7 +617,10 @@ namespace DofusStandaloneSetup
                 {
                     foreach (Process p in Process.GetProcessesByName(pName))
                     {
-                        try { p.Kill(); p.WaitForExit(3000); } catch { }
+                        using (p)
+                        {
+                            try { p.Kill(); p.WaitForExit(3000); } catch { }
+                        }
                     }
                 }
                 catch { }
@@ -653,6 +656,7 @@ namespace DofusStandaloneSetup
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            if (this.Width <= 4 || this.Height <= 4) return;
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
@@ -666,8 +670,9 @@ namespace DofusStandaloneSetup
 
             if (_value > 0)
             {
-                int fillW = Math.Max(4, (int)Math.Round(((this.Width - 2) * _value) / 100.0));
-                Rectangle fillRect = new Rectangle(1, 1, fillW, this.Height - 2);
+                int fillW = Math.Min(this.Width - 2, Math.Max(4, (int)Math.Round(((this.Width - 2) * _value) / 100.0)));
+                int fillH = Math.Max(2, this.Height - 2);
+                Rectangle fillRect = new Rectangle(1, 1, fillW, fillH);
                 using (LinearGradientBrush grad = new LinearGradientBrush(
                     fillRect,
                     Color.FromArgb(37, 99, 235),

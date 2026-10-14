@@ -41,7 +41,11 @@ namespace DofusFarm.Engine
                 _timer = null;
             }
             lock (_pinnedPids) { _pinnedPids.Clear(); }
-            lock (_slotCache) { _slotCache.Clear(); }
+            lock (_slotCache)
+            {
+                _slotCache.Clear();
+                _slotCoresCache.Clear();
+            }
         }
 
         private void Log(string message)
@@ -58,41 +62,75 @@ namespace DofusFarm.Engine
         }
 
         private static readonly Dictionary<int, int> _slotCache = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> _slotCoresCache = new Dictionary<int, int>();
 
-        public static void RegisterInstancePid(int pid, int slot)
+        public static void RegisterInstancePid(int pid, int slot, int cores = 2)
         {
             lock (_slotCache)
             {
                 _slotCache[pid] = slot;
+                if (cores > 0)
+                {
+                    _slotCoresCache[slot] = cores;
+                }
             }
         }
 
-        private static int GetInstanceSlot(int pid)
+        public static long ComputeAffinityMask(int slot, int cores, int totalCores)
         {
+            int safeTotal = Math.Min(62, Math.Max(1, totalCores));
+            int span = Math.Min(safeTotal, Math.Max(2, cores));
+            int baseCore = (Math.Max(0, slot) * 2) % safeTotal;
+            long mask = 0L;
+            for (int c = 0; c < span; c++)
+            {
+                int bit = (baseCore + c) % safeTotal;
+                mask |= (1L << bit);
+            }
+            return mask != 0L ? mask : 1L;
+        }
+
+        private static int GetInstanceSlot(int pid, out int assignedCores)
+        {
+            assignedCores = 2;
             lock (_slotCache)
             {
                 int cached;
                 if (_slotCache.TryGetValue(pid, out cached))
+                {
+                    int cCores;
+                    if (_slotCoresCache.TryGetValue(cached, out cCores) && cCores > 0)
+                        assignedCores = cCores;
                     return cached;
+                }
             }
 
             int resolved = -1;
+            int parsedCores = 2;
             try
             {
                 using (var searcher = new ManagementObjectSearcher(
                     string.Format("SELECT CommandLine FROM Win32_Process WHERE ProcessId = {0}", pid)))
-                using (var coll = searcher.Get())
                 {
-                    foreach (ManagementObject mo in coll)
+                    searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+                    using (var coll = searcher.Get())
                     {
-                        using (mo)
+                        foreach (ManagementObject mo in coll)
                         {
-                            string cl = (mo["CommandLine"] ?? "").ToString();
-                            var mp = Regex.Match(cl, @"-port\s+(\d+)");
-                            if (mp.Success)
+                            using (mo)
                             {
-                                int port = int.Parse(mp.Groups[1].Value);
-                                resolved = Math.Max(0, (port - 5554) / 2);
+                                string cl = (mo["CommandLine"] ?? "").ToString();
+                                var mp = Regex.Match(cl, @"-port\s+(\d+)");
+                                if (mp.Success)
+                                {
+                                    int port = int.Parse(mp.Groups[1].Value);
+                                    resolved = Math.Max(0, (port - 5554) / 2);
+                                }
+                                var mc = Regex.Match(cl, @"-cores\s+(\d+)");
+                                if (mc.Success)
+                                {
+                                    int.TryParse(mc.Groups[1].Value, out parsedCores);
+                                }
                                 break;
                             }
                         }
@@ -104,6 +142,17 @@ namespace DofusFarm.Engine
             lock (_slotCache)
             {
                 _slotCache[pid] = resolved;
+                if (resolved >= 0)
+                {
+                    int cCores;
+                    if (_slotCoresCache.TryGetValue(resolved, out cCores) && cCores > 0)
+                        assignedCores = cCores;
+                    else
+                    {
+                        assignedCores = Math.Max(2, parsedCores);
+                        _slotCoresCache[resolved] = assignedCores;
+                    }
+                }
             }
             return resolved;
         }
@@ -123,7 +172,7 @@ namespace DofusFarm.Engine
                     return;
                 }
 
-                // Dynamic CPU core affinity assignment to isolate P/E cores and eliminate thread migration
+                // Dynamic CPU core affinity assignment respecting user's configured core count per instance
                 int totalCores = Environment.ProcessorCount;
                 if (totalCores >= 4)
                 {
@@ -138,18 +187,17 @@ namespace DofusFarm.Engine
                             {
                                 try
                                 {
-                                    int slot = GetInstanceSlot(p.Id);
+                                    int instCores;
+                                    int slot = GetInstanceSlot(p.Id, out instCores);
                                     if (slot < 0) slot = i;
-                                    int baseCore = (slot * 2) % totalCores;
-                                    if (baseCore > 60) baseCore = baseCore % 60;
-                                    long mask = (1L << baseCore) | (1L << ((baseCore + 1) % Math.Min(62, totalCores)));
+                                    long mask = ComputeAffinityMask(slot, instCores, totalCores);
                                     if (IntPtr.Size == 8)
                                         p.ProcessorAffinity = new IntPtr(mask);
                                     else
                                         p.ProcessorAffinity = new IntPtr(unchecked((int)mask));
 
                                     _pinnedPids.Add(p.Id);
-                                    Log(string.Format("Governor pinned PID {0} (Slot #{1}) to Host CPU Cores {2}-{3} (Affinity: 0x{4:X}).", p.Id, slot + 1, baseCore, (baseCore + 1) % totalCores, mask));
+                                    Log(string.Format("Governor pinned PID {0} (Slot #{1}, {2} threads) to Affinity Mask 0x{3:X}.", p.Id, slot + 1, Math.Max(2, instCores), mask));
                                 }
                                 catch { }
                             }

@@ -1061,6 +1061,28 @@ namespace DofusFarm.Engine
         public HashSet<string> GetLiveSerials()
         {
             HashSet<string> live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool anyEmuProcess = false;
+            try
+            {
+                Process[] qProcs = Process.GetProcessesByName("qemu-system-x86_64");
+                if (qProcs != null && qProcs.Length > 0)
+                {
+                    anyEmuProcess = true;
+                    for (int i = 0; i < qProcs.Length; i++) { try { qProcs[i].Dispose(); } catch { } }
+                }
+                if (!anyEmuProcess)
+                {
+                    Process[] eProcs = Process.GetProcessesByName("emulator");
+                    if (eProcs != null && eProcs.Length > 0)
+                    {
+                        anyEmuProcess = true;
+                        for (int i = 0; i < eProcs.Length; i++) { try { eProcs[i].Dispose(); } catch { } }
+                    }
+                }
+            }
+            catch { anyEmuProcess = true; }
+            if (!anyEmuProcess) return live;
+
             string outDevices = Adb("", "devices");
             using (StringReader sr = new StringReader(outDevices))
             {
@@ -1257,31 +1279,66 @@ namespace DofusFarm.Engine
             Dictionary<int, int> portToPid = new Dictionary<int, int>();
             if (live.Count > 0)
             {
-                try
+                bool needWmiLookup = false;
+                lock (_pidCacheLock)
                 {
-                    using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
-                        "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'"))
-                    using (System.Management.ManagementObjectCollection collection = searcher.Get())
+                    foreach (string s in live)
                     {
-                        foreach (System.Management.ManagementObject mo in collection)
+                        int pNum;
+                        if (s.StartsWith("emulator-") && int.TryParse(s.Substring(9), out pNum))
                         {
-                            using (mo)
+                            int cachedPid;
+                            if (_cachedPortToPid.TryGetValue(pNum, out cachedPid) && cachedPid > 0)
                             {
-                                string cl = (mo["CommandLine"] ?? "").ToString();
-                                Match mp = RxQemuPort.Match(cl);
-                                if (mp.Success)
+                                try
                                 {
-                                    int pNum = int.Parse(mp.Groups[1].Value);
-                                    int qPid = Convert.ToInt32(mo["ProcessId"]);
-                                    portToPid[pNum] = qPid;
-                                    lock (_pidCacheLock) { _cachedPortToPid[pNum] = qPid; }
-                                    PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2));
+                                    using (Process p = Process.GetProcessById(cachedPid))
+                                    {
+                                        if (!p.HasExited)
+                                        {
+                                            portToPid[pNum] = cachedPid;
+                                            continue;
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+                            needWmiLookup = true;
+                        }
+                    }
+                }
+
+                if (needWmiLookup)
+                {
+                    try
+                    {
+                        using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
+                            "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'"))
+                        {
+                            searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+                            using (System.Management.ManagementObjectCollection collection = searcher.Get())
+                            {
+                                foreach (System.Management.ManagementObject mo in collection)
+                                {
+                                    using (mo)
+                                    {
+                                        string cl = (mo["CommandLine"] ?? "").ToString();
+                                        Match mp = RxQemuPort.Match(cl);
+                                        if (mp.Success)
+                                        {
+                                            int pNum = int.Parse(mp.Groups[1].Value);
+                                            int qPid = Convert.ToInt32(mo["ProcessId"]);
+                                            portToPid[pNum] = qPid;
+                                            lock (_pidCacheLock) { _cachedPortToPid[pNum] = qPid; }
+                                            PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2));
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+                    catch { }
                 }
-                catch { }
             }
             else
             {
@@ -2190,20 +2247,22 @@ namespace DofusFarm.Engine
             if (proc != null)
             {
                 lock (_pidCacheLock) { _cachedPortToPid[port] = proc.Id; }
-                PriorityGovernor.RegisterInstancePid(proc.Id, slot);
+                PriorityGovernor.RegisterInstancePid(proc.Id, slot, cores);
             }
             string serial = "emulator-" + port;
 
-            // Pin dedicated CPU core affinity mask to prevent thread migration across P/E cores (PERF-AFFINITY-01)
+            // Pin dedicated CPU core affinity mask scaled to user's configured core count (PERF-AFFINITY-01)
             try
             {
                 int totalCores = Environment.ProcessorCount;
                 if (totalCores >= 4 && proc != null && !proc.HasExited)
                 {
-                    int baseCore = (slot * 2) % totalCores;
-                    long affinityMask = (1L << baseCore) | (1L << ((baseCore + 1) % totalCores));
-                    proc.ProcessorAffinity = (IntPtr)affinityMask;
-                    Log(string.Format("Pinned {0} (PID: {1}) to Host CPU Cores {2}-{3} (Affinity: 0x{4:X}).", name, proc.Id, baseCore, (baseCore + 1) % totalCores, affinityMask));
+                    long affinityMask = PriorityGovernor.ComputeAffinityMask(slot, cores, totalCores);
+                    if (IntPtr.Size == 8)
+                        proc.ProcessorAffinity = new IntPtr(affinityMask);
+                    else
+                        proc.ProcessorAffinity = new IntPtr(unchecked((int)affinityMask));
+                    Log(string.Format("Pinned {0} (PID: {1}, {2} Core(s)) to Host CPU Affinity 0x{3:X}.", name, proc.Id, cores, affinityMask));
                 }
             }
             catch { }
@@ -2396,41 +2455,30 @@ namespace DofusFarm.Engine
                 AdbShell(serial, "cmd package compile -m speed-profile com.ankama.dofustouch 2>/dev/null || true");
             }
 
-            // Drop root daemon privileges prior to gameplay to eliminate anti-cheat root detection (BUG-34)
+            // Drop root daemon privileges prior to snapshot & gameplay to eliminate anti-cheat root detection (BUG-34)
             Adb(serial, "unroot");
             Thread.Sleep(350);
+
+            // Seal clean QuickBoot snapshot (default_boot) BEFORE starting the game activity so snapshots never freeze login or capture stale sockets
+            try
+            {
+                AdbShell(serial, "sync");
+                Adb(serial, "emu avd snapshot save default_boot", 25000);
+                File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8);
+            }
+            catch { }
+
+            if (shutdownAfterSnapshot)
+            {
+                return;
+            }
 
             // Launch Dofus Touch main activity
             AdbShell(serial, "am start -n com.ankama.dofustouch/.MainActivity");
 
-            if (shutdownAfterSnapshot)
-            {
-                try
-                {
-                    Thread.Sleep(3500);
-                    AdbShell(serial, "sync");
-                    Adb(serial, "emu avd snapshot save default_boot", 25000);
-                    File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8);
-                }
-                catch { }
-                return;
-            }
-
             ThreadPool.QueueUserWorkItem(delegate
             {
                 InjectDisguiseViaCdp(serial, port, name);
-            });
-
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                try
-                {
-                    Thread.Sleep(3500);
-                    AdbShell(serial, "sync");
-                    Adb(serial, "emu avd snapshot save default_boot", 25000);
-                    File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8);
-                }
-                catch { }
             });
 
             Log(string.Format("{0} ({1}) is ready! Dofus Touch running in foreground (Boot: {2:F1}s).", name, serial, sw.Elapsed.TotalSeconds));
@@ -2983,25 +3031,39 @@ namespace DofusFarm.Engine
                     try { Adb(serial, string.Format("forward --remove tcp:{0}", pNum + 4000)); } catch { }
                 }
             }
-            try { Adb(serial, "emu kill", 2000); } catch { }
+            try { AdbShell(serial, "sync"); } catch { }
+            try { Adb(serial, "emu kill", 3000); } catch { }
 
-            // Forcibly terminate any lingering QEMU or emulator process for this instance/port
+            // Allow QEMU up to 5 seconds to flush QCOW2 and save QuickBoot snapshot cleanly before forced termination
             try
             {
                 using (System.Management.ManagementObjectSearcher searcher = new System.Management.ManagementObjectSearcher(
                     "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe' OR Name='emulator.exe'"))
-                using (System.Management.ManagementObjectCollection collection = searcher.Get())
                 {
-                    foreach (System.Management.ManagementObject mo in collection)
+                    searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+                    using (System.Management.ManagementObjectCollection collection = searcher.Get())
                     {
-                        using (mo)
+                        foreach (System.Management.ManagementObject mo in collection)
                         {
-                            string cl = (mo["CommandLine"] ?? "").ToString();
-                            if ((!string.IsNullOrEmpty(name) && cl.Contains("-avd " + name)) ||
-                                (!string.IsNullOrEmpty(serial) && serial.StartsWith("emulator-") && cl.Contains(serial.Substring(9))))
+                            using (mo)
                             {
-                                int pid = Convert.ToInt32(mo["ProcessId"]);
-                                try { Process.GetProcessById(pid).Kill(); } catch { }
+                                string cl = (mo["CommandLine"] ?? "").ToString();
+                                if ((!string.IsNullOrEmpty(name) && cl.Contains("-avd " + name)) ||
+                                    (!string.IsNullOrEmpty(serial) && serial.StartsWith("emulator-") && cl.Contains(serial.Substring(9))))
+                                {
+                                    int pid = Convert.ToInt32(mo["ProcessId"]);
+                                    try
+                                    {
+                                        using (Process p = Process.GetProcessById(pid))
+                                        {
+                                            if (!p.WaitForExit(5000))
+                                            {
+                                                p.Kill();
+                                            }
+                                        }
+                                    }
+                                    catch { }
+                                }
                             }
                         }
                     }
@@ -3036,15 +3098,16 @@ namespace DofusFarm.Engine
                         string serialCopy = s;
                         ThreadPool.QueueUserWorkItem(delegate
                         {
-                            try { Adb(serialCopy, "emu kill", 2000); } catch { }
+                            try { AdbShell(serialCopy, "sync"); } catch { }
+                            try { Adb(serialCopy, "emu kill", 3000); } catch { }
                             finally { try { countdown.Signal(); } catch { } }
                         });
                     }
-                    try { countdown.Wait(2000); } catch { }
+                    try { countdown.Wait(3500); } catch { }
                 }
             }
 
-            // Forcibly terminate any lingering QEMU or emulator or proxy processes to ensure clean shutdown
+            // Wait up to 4.5 seconds for QEMU processes to finish saving QuickBoot state cleanly before forced kill
             string[] procNames = new[] { "qemu-system-x86_64", "emulator", "dofus-net-proxy" };
             foreach (string pName in procNames)
             {
@@ -3052,7 +3115,18 @@ namespace DofusFarm.Engine
                 {
                     foreach (Process p in Process.GetProcessesByName(pName))
                     {
-                        try { p.Kill(); p.WaitForExit(1500); } catch { }
+                        using (p)
+                        {
+                            try
+                            {
+                                if (pName == "dofus-net-proxy" || !p.WaitForExit(4500))
+                                {
+                                    p.Kill();
+                                    p.WaitForExit(1000);
+                                }
+                            }
+                            catch { }
+                        }
                     }
                 }
                 catch { }
@@ -3189,12 +3263,35 @@ namespace DofusFarm.Engine
                 EscapeJson(resolvedCustom), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(srcProxy ?? ""), EscapeJson(tgtProfile.Id));
             File.WriteAllText(identFile, identContent, Encoding.UTF8);
 
+            // Inherit RAM and CPU Core allocation from source instance
+            int inheritedRam = 1024;
+            int inheritedCores = 1;
+            if (File.Exists(srcCfg))
+            {
+                try
+                {
+                    foreach (string line in File.ReadAllLines(srcCfg, Encoding.UTF8))
+                    {
+                        if (line.StartsWith("hw.ramSize", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string[] p = line.Split('=');
+                            if (p.Length == 2) int.TryParse(p[1].Trim(), out inheritedRam);
+                        }
+                        else if (line.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string[] p = line.Split('=');
+                            if (p.Length == 2) int.TryParse(p[1].Trim(), out inheritedCores);
+                        }
+                    }
+                }
+                catch { }
+            }
+
             // Generate target system.prop matching target phone model
             string tgtProp = Path.Combine(tgtDir, "system.prop");
-            int tgtCores = 1;
-            string sysProp = GenerateSystemProp(tgtProfile, serialNo, tgtCores);
+            string sysProp = GenerateSystemProp(tgtProfile, serialNo, inheritedCores);
             File.WriteAllText(tgtProp, sysProp, Encoding.ASCII);
-            UpdateConfigIni(tgtCfg, targetName, 1024, tgtCores, tgtProfile);
+            UpdateConfigIni(tgtCfg, targetName, inheritedRam, inheritedCores, tgtProfile);
 
             // Clone virtual disk storage
             string srcRaw = Path.Combine(srcDir, "userdata-qemu.img");

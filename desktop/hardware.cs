@@ -6,30 +6,36 @@ namespace DofusFarm.Hardware
     public class HardwareSpecs
     {
         public string CpuName = "Unknown CPU";
-        public int PhysicalCores = 1;
-        public int LogicalThreads = 1;
-        public double HostRamGB = 0;
-        public double FreeRamGB = 0;
-        public string GpuName = "Generic GPU";
+        public int PhysicalCores = Math.Max(1, Environment.ProcessorCount / 2);
+        public int LogicalThreads = Math.Max(1, Environment.ProcessorCount);
+        public double HostRamGB = 8.0;
+        public double FreeRamGB = 4.0;
+        public string GpuName = "DirectX / OpenGL Hardware GPU";
         public string GpuDriver = "Unknown";
         public string Recommendation = "";
 
         public static HardwareSpecs Detect()
         {
             HardwareSpecs specs = new HardwareSpecs();
+            TimeSpan wmiTimeout = TimeSpan.FromSeconds(3);
+
             try
             {
                 using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Name, NumberOfCores, NumberOfLogicalProcessors FROM Win32_Processor"))
-                using (ManagementObjectCollection coll = s.Get())
                 {
-                    foreach (ManagementObject mo in coll)
+                    s.Options.Timeout = wmiTimeout;
+                    using (ManagementObjectCollection coll = s.Get())
                     {
-                        using (mo)
+                        foreach (ManagementObject mo in coll)
                         {
-                            specs.CpuName = (mo["Name"] ?? "").ToString().Trim();
-                            specs.PhysicalCores = Convert.ToInt32(mo["NumberOfCores"] ?? 1);
-                            specs.LogicalThreads = Convert.ToInt32(mo["NumberOfLogicalProcessors"] ?? 1);
-                            break;
+                            using (mo)
+                            {
+                                string cName = (mo["Name"] ?? "").ToString().Trim();
+                                if (!string.IsNullOrEmpty(cName)) specs.CpuName = cName;
+                                specs.PhysicalCores = Math.Max(1, Convert.ToInt32(mo["NumberOfCores"] ?? specs.PhysicalCores));
+                                specs.LogicalThreads = Math.Max(1, Convert.ToInt32(mo["NumberOfLogicalProcessors"] ?? specs.LogicalThreads));
+                                break;
+                            }
                         }
                     }
                 }
@@ -39,15 +45,19 @@ namespace DofusFarm.Hardware
             try
             {
                 using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT TotalPhysicalMemory FROM Win32_ComputerSystem"))
-                using (ManagementObjectCollection coll = s.Get())
                 {
-                    foreach (ManagementObject mo in coll)
+                    s.Options.Timeout = wmiTimeout;
+                    using (ManagementObjectCollection coll = s.Get())
                     {
-                        using (mo)
+                        foreach (ManagementObject mo in coll)
                         {
-                            ulong bytes = Convert.ToUInt64(mo["TotalPhysicalMemory"] ?? 0);
-                            specs.HostRamGB = Math.Round(bytes / (1024.0 * 1024.0 * 1024.0), 1);
-                            break;
+                            using (mo)
+                            {
+                                ulong bytes = Convert.ToUInt64(mo["TotalPhysicalMemory"] ?? 0);
+                                if (bytes > 0)
+                                    specs.HostRamGB = Math.Round(bytes / (1024.0 * 1024.0 * 1024.0), 1);
+                                break;
+                            }
                         }
                     }
                 }
@@ -57,15 +67,19 @@ namespace DofusFarm.Hardware
             try
             {
                 using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT FreePhysicalMemory FROM Win32_OperatingSystem"))
-                using (ManagementObjectCollection coll = s.Get())
                 {
-                    foreach (ManagementObject mo in coll)
+                    s.Options.Timeout = wmiTimeout;
+                    using (ManagementObjectCollection coll = s.Get())
                     {
-                        using (mo)
+                        foreach (ManagementObject mo in coll)
                         {
-                            ulong kb = Convert.ToUInt64(mo["FreePhysicalMemory"] ?? 0);
-                            specs.FreeRamGB = Math.Round(kb / (1024.0 * 1024.0), 1);
-                            break;
+                            using (mo)
+                            {
+                                ulong kb = Convert.ToUInt64(mo["FreePhysicalMemory"] ?? 0);
+                                if (kb > 0)
+                                    specs.FreeRamGB = Math.Round(kb / (1024.0 * 1024.0), 1);
+                                break;
+                            }
                         }
                     }
                 }
@@ -75,18 +89,21 @@ namespace DofusFarm.Hardware
             try
             {
                 using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Name, DriverVersion FROM Win32_VideoController"))
-                using (ManagementObjectCollection coll = s.Get())
                 {
-                    foreach (ManagementObject mo in coll)
+                    s.Options.Timeout = wmiTimeout;
+                    using (ManagementObjectCollection coll = s.Get())
                     {
-                        using (mo)
+                        foreach (ManagementObject mo in coll)
                         {
-                            string name = (mo["Name"] ?? "").ToString().Trim();
-                            if (!name.ToLower().Contains("basic") && !name.ToLower().Contains("remote"))
+                            using (mo)
                             {
-                                specs.GpuName = name;
-                                specs.GpuDriver = (mo["DriverVersion"] ?? "").ToString().Trim();
-                                break;
+                                string name = (mo["Name"] ?? "").ToString().Trim();
+                                if (!string.IsNullOrEmpty(name) && !name.ToLower().Contains("basic") && !name.ToLower().Contains("remote"))
+                                {
+                                    specs.GpuName = name;
+                                    specs.GpuDriver = (mo["DriverVersion"] ?? "").ToString().Trim();
+                                    break;
+                                }
                             }
                         }
                     }

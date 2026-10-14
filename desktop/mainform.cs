@@ -40,6 +40,8 @@ namespace DofusFarm.UI
         private Button _btnApplyAllHw;
 
         private DataGridView _grid;
+        private Font _cellBadgeFont;
+        private Font _customNameFont;
 
         private Panel _statusPanel;
         private Label _lblStatusText;
@@ -120,6 +122,9 @@ namespace DofusFarm.UI
             this.ForeColor = Color.FromArgb(235, 235, 240);
             this.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
             this.DoubleBuffered = true;
+
+            _cellBadgeFont = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+            _customNameFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
 
             string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_icon.ico");
             if (File.Exists(iconPath))
@@ -346,6 +351,8 @@ namespace DofusFarm.UI
             _grid.CellPainting += OnGridCellPainting;
             _grid.CellContentClick += OnGridCellContentClick;
             _grid.CellDoubleClick += OnGridCellDoubleClick;
+            _grid.CellMouseEnter += OnGridCellMouseEnter;
+            _grid.CellMouseLeave += delegate { _grid.Cursor = Cursors.Default; };
 
             // Clean Bottom Status Bar
             _statusPanel = new Panel
@@ -377,22 +384,22 @@ namespace DofusFarm.UI
             _btnFocus1 = CreateButton("#1", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
             _btnFocus1.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnFocus1.Location = new Point(_statusPanel.Width - 175, 6);
-            _btnFocus1.Click += delegate { _engine.FocusInstance(5554); };
+            _btnFocus1.Click += delegate { FocusSlotByIndex(0); };
 
             _btnFocus2 = CreateButton("#2", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
             _btnFocus2.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnFocus2.Location = new Point(_statusPanel.Width - 133, 6);
-            _btnFocus2.Click += delegate { _engine.FocusInstance(5556); };
+            _btnFocus2.Click += delegate { FocusSlotByIndex(1); };
 
             _btnFocus3 = CreateButton("#3", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
             _btnFocus3.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnFocus3.Location = new Point(_statusPanel.Width - 91, 6);
-            _btnFocus3.Click += delegate { _engine.FocusInstance(5558); };
+            _btnFocus3.Click += delegate { FocusSlotByIndex(2); };
 
             _btnFocus4 = CreateButton("#4", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
             _btnFocus4.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnFocus4.Location = new Point(_statusPanel.Width - 49, 6);
-            _btnFocus4.Click += delegate { _engine.FocusInstance(5560); };
+            _btnFocus4.Click += delegate { FocusSlotByIndex(3); };
 
             _statusPanel.Controls.Add(_lblStatusText);
             _statusPanel.Controls.Add(lblFocus);
@@ -410,6 +417,42 @@ namespace DofusFarm.UI
             _syncTimer = new System.Windows.Forms.Timer { Interval = 4000 };
             _syncTimer.Tick += OnSyncTimerTick;
             _syncTimer.Start();
+        }
+
+        private void FocusSlotByIndex(int rowIndex)
+        {
+            if (rowIndex >= 0 && rowIndex < _grid.Rows.Count)
+            {
+                InstanceModel inst = _grid.Rows[rowIndex].Tag as InstanceModel;
+                if (inst != null)
+                {
+                    _engine.FocusInstance(inst.Port);
+                    return;
+                }
+            }
+            _engine.FocusInstance(5554 + (rowIndex * 2));
+        }
+
+        private void OnGridCellMouseEnter(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+            {
+                _grid.Cursor = Cursors.Default;
+                return;
+            }
+            string colName = _grid.Columns[e.ColumnIndex].Name;
+            if (colName == "Action" || colName == "Edit" || colName == "Clone" || colName == "Delete")
+            {
+                _grid.Cursor = Cursors.Hand;
+                return;
+            }
+            if (colName == "Status")
+            {
+                InstanceModel inst = _grid.Rows[e.RowIndex].Tag as InstanceModel;
+                _grid.Cursor = (inst != null && inst.IsRunning) ? Cursors.Hand : Cursors.Default;
+                return;
+            }
+            _grid.Cursor = Cursors.Default;
         }
 
         private Button CreateButton(string text, Color baseColor, Color hoverColor, Color foreColor, int width, int height, bool bold)
@@ -433,6 +476,7 @@ namespace DofusFarm.UI
 
         /// <summary>
         /// Custom GDI+ renderer for commercial-grade pill status badges and action buttons in the DataGridView.
+        /// Uses cached Font instances (_cellBadgeFont) to guarantee zero GDI handle leaks.
         /// </summary>
         private void OnGridCellPainting(object sender, DataGridViewCellPaintingEventArgs e)
         {
@@ -461,7 +505,7 @@ namespace DofusFarm.UI
                 {
                     g.FillRectangle(bg, pillRect);
                 }
-                TextRenderer.DrawText(g, label, new Font("Segoe UI", 8.5f, FontStyle.Bold), pillRect, pillText,
+                TextRenderer.DrawText(g, label, _cellBadgeFont, pillRect, pillText,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 e.Handled = true;
                 return;
@@ -517,7 +561,7 @@ namespace DofusFarm.UI
                 g.FillRectangle(bg, btnRect);
                 g.DrawRectangle(pen, btnRect);
             }
-            TextRenderer.DrawText(g, btnText, new Font("Segoe UI", 8.5f, FontStyle.Bold), btnRect, btnFg,
+            TextRenderer.DrawText(g, btnText, _cellBadgeFont, btnRect, btnFg,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             e.Handled = true;
         }
@@ -677,11 +721,15 @@ namespace DofusFarm.UI
 
                             DataGridViewRow row = _grid.Rows[rowIdx];
                             row.Tag = inst;
-                            row.Cells["CustomName"].Style.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+                            row.Cells["CustomName"].Style.Font = _customNameFont;
                             row.Cells["CustomName"].Style.ForeColor = Color.White;
                             row.Cells["Name"].Style.ForeColor = Color.FromArgb(148, 163, 184);
                             row.Cells["Device"].Style.ForeColor = Color.FromArgb(226, 232, 240);
                             row.Cells["Proxy"].Style.ForeColor = Color.FromArgb(148, 163, 184);
+                            if (inst.IsRunning)
+                            {
+                                row.Cells["Status"].ToolTipText = "Click to bring this running instance window to front";
+                            }
 
                             if (!string.IsNullOrEmpty(selectedName) && string.Equals(inst.Name, selectedName, StringComparison.OrdinalIgnoreCase))
                             {
@@ -960,6 +1008,14 @@ namespace DofusFarm.UI
             }
         }
 
+        private static string NormalizeProxyForComparison(string raw)
+        {
+            string s = (raw ?? "").Trim();
+            if (s.StartsWith("[🌐] ")) s = s.Substring(5).Trim();
+            if (s.StartsWith("[⚡]") || s.Contains("127.0.0.1:8880") || s.Contains("Accelerator")) return "";
+            return s;
+        }
+
         private void OpenEditDialogForInstance(InstanceModel inst)
         {
             if (inst == null) return;
@@ -987,13 +1043,14 @@ namespace DofusFarm.UI
 
                     bool hwOrNetChanged = (ram != inst.RamMb) ||
                                           (cores != inst.Cores) ||
-                                          !string.Equals(profileId, inst.PhoneModelId, StringComparison.OrdinalIgnoreCase);
+                                          !string.Equals(profileId, inst.PhoneModelId, StringComparison.OrdinalIgnoreCase) ||
+                                          !string.Equals(NormalizeProxyForComparison(proxy), NormalizeProxyForComparison(inst.Proxy), StringComparison.OrdinalIgnoreCase);
 
                     bool restartNow = false;
                     if (wasRunning && hwOrNetChanged)
                     {
                         DialogResult dr = MessageBox.Show(
-                            string.Format("'{0}' is currently running.\n\nWould you like to restart it now so the new RAM / CPU / device settings take effect immediately?", customName),
+                            string.Format("'{0}' is currently running.\n\nWould you like to restart it now so the new RAM / CPU / device / network settings take effect immediately?", customName),
                             "Apply Changes Now?",
                             MessageBoxButtons.YesNo,
                             MessageBoxIcon.Question);
@@ -1033,6 +1090,16 @@ namespace DofusFarm.UI
             if (row == null) return;
             InstanceModel inst = row.Tag as InstanceModel;
             if (inst == null) return;
+
+            // 0. Click on Running Status pill -> Bring emulator window to front
+            if (e.ColumnIndex == _grid.Columns["Status"].Index)
+            {
+                if (inst.IsRunning)
+                {
+                    _engine.FocusInstance(inst.Port);
+                }
+                return;
+            }
 
             // 1. Launch / Stop
             if (e.ColumnIndex == _grid.Columns["Action"].Index)
@@ -1153,8 +1220,38 @@ namespace DofusFarm.UI
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            if (e.CloseReason == CloseReason.UserClosing && !_isClosing)
+            {
+                int activeCount = 0;
+                foreach (DataGridViewRow r in _grid.Rows)
+                {
+                    InstanceModel im = r.Tag as InstanceModel;
+                    if (im != null && im.IsRunning) activeCount++;
+                }
+
+                if (activeCount > 0)
+                {
+                    DialogResult dr = MessageBox.Show(
+                        string.Format("You have {0} active game instance(s) currently running.\n\nClosing the manager will save their snapshots and close all running game windows. Exit anyway?", activeCount),
+                        "Close Active Instances?",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question);
+                    if (dr == DialogResult.No)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+                }
+            }
+
             _isClosing = true;
             _isFarmLaunching = false;
+
+            if (_lblStatusText != null)
+            {
+                _lblStatusText.Text = "Saving instance snapshots and shutting down cleanly...";
+                Application.DoEvents();
+            }
 
             if (_syncTimer != null)
             {
@@ -1183,6 +1280,16 @@ namespace DofusFarm.UI
             if (disposing)
             {
                 _isClosing = true;
+                if (_cellBadgeFont != null)
+                {
+                    try { _cellBadgeFont.Dispose(); } catch { }
+                    _cellBadgeFont = null;
+                }
+                if (_customNameFont != null)
+                {
+                    try { _customNameFont.Dispose(); } catch { }
+                    _customNameFont = null;
+                }
                 if (this.Icon != null)
                 {
                     try { this.Icon.Dispose(); } catch { }
