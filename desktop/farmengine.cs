@@ -1018,8 +1018,6 @@ namespace DofusFarm.Engine
                 "ro.product.brand={0}\r\n" +
                 "ro.product.manufacturer={1}\r\n" +
                 "ro.product.model={2}\r\n" +
-                "ro.product.cpu.abi=arm64-v8a\r\n" +
-                "ro.product.cpu.abilist=arm64-v8a,armeabi-v7a,armeabi\r\n" +
                 "ro.product.name={3}\r\n" +
                 "ro.product.device={4}\r\n" +
                 "ro.product.board={5}\r\n" +
@@ -1044,13 +1042,16 @@ namespace DofusFarm.Engine
                 "ro.product.bootimage.model={2}\r\n" +
                 "ro.product.bootimage.name={3}\r\n" +
                 "ro.product.bootimage.device={4}\r\n" +
-                "ro.hardware={6}\r\n" +
                 "ro.hardware.chipname={6}\r\n" +
                 "ro.chipname={6}\r\n" +
-                "ro.arch={6}\r\n" +
+                "ro.arch=arm64-v8a\r\n" +
                 "ro.board.platform={7}\r\n" +
                 "ro.soc.manufacturer={8}\r\n" +
                 "ro.soc.model={9}\r\n" +
+                "ro.enable.native.bridge.exec=1\r\n" +
+                "ro.enable.native.bridge.exec64=1\r\n" +
+                "ro.dalvik.vm.isa.arm=x86\r\n" +
+                "ro.dalvik.vm.isa.arm64=x86_64\r\n" +
                 "ro.build.flavor={3}-user\r\n" +
                 "ro.build.type=user\r\n" +
                 "ro.build.tags=release-keys\r\n" +
@@ -1062,11 +1063,8 @@ namespace DofusFarm.Engine
                 "ro.build.description={3}-user {14} {11} release-keys\r\n" +
                 "ro.system.build.type=user\r\n" +
                 "ro.system.build.tags=release-keys\r\n" +
-                "ro.kernel.qemu=0\r\n" +
-                "ro.boot.qemu=0\r\n" +
                 "ro.hardware.virtual=0\r\n" +
                 "ro.emulator=0\r\n" +
-                "ro.boot.hardware={6}\r\n" +
                 "qemu.hw.mainkeys=1\r\n" +
                 "ro.serialno={12}\r\n" +
                 "ro.boot.serialno={12}\r\n" +
@@ -1998,14 +1996,20 @@ namespace DofusFarm.Engine
                 sh.Append(string.Format("echo -n '{0}' > /data/local/tmp/soc0/type\n", socFamily));
                 sh.Append("chmod 755 /data/local/tmp/soc0 && chmod 644 /data/local/tmp/soc0/*\n");
                 sh.Append("chcon -R u:object_r:sysfs:s0 /data/local/tmp/soc0 2>/dev/null || true\n");
-                sh.Append("mkdir -p /sys/devices/soc0 2>/dev/null || true\n");
+                sh.Append("mkdir -p /sys/devices/soc0 /data/local/tmp/empty_binfmt 2>/dev/null || true\n");
+                sh.Append("echo -n '' > /data/local/tmp/fake_modules && chmod 444 /data/local/tmp/fake_modules\n");
+                sh.Append(string.Format("if [ -f /system/build.prop ]; then sed -e 's/x86_64/arm64-v8a/g' -e 's/x86/armeabi-v7a/g' -e 's/ranchu/{0}/g' -e 's/goldfish/{0}/g' -e 's/sdk_gphone_arm64-v8a/{1}/g' /system/build.prop > /data/local/tmp/fake_build.prop; chmod 644 /data/local/tmp/fake_build.prop; chcon u:object_r:system_file:s0 /data/local/tmp/fake_build.prop 2>/dev/null || true; mount -o bind /data/local/tmp/fake_build.prop /system/build.prop 2>/dev/null || true; fi\n", activeProf.Hardware, activeProf.Model));
                 sh.Append("mount -o bind /data/local/tmp/soc0 /sys/devices/soc0 2>/dev/null || true\n");
+                sh.Append("mount -o bind /data/local/tmp/fake_modules /proc/modules 2>/dev/null || true\n");
                 sh.Append("for p in $(pidof zygote zygote64 com.ankama.dofustouch 2>/dev/null); do\n");
                 sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_cpuinfo /proc/cpuinfo 2>/dev/null || true\n");
                 sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_version /proc/version 2>/dev/null || true\n");
                 sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_cmdline /proc/cmdline 2>/dev/null || true\n");
                 sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_arp /proc/net/arp 2>/dev/null || true\n");
+                sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/fake_modules /proc/modules 2>/dev/null || true\n");
                 sh.Append("  nsenter -t $p -m mount -o bind /data/local/tmp/soc0 /sys/devices/soc0 2>/dev/null || true\n");
+                sh.Append("  if [ -f /data/local/tmp/fake_build.prop ]; then nsenter -t $p -m mount -o bind /data/local/tmp/fake_build.prop /system/build.prop 2>/dev/null || true; fi\n");
+                sh.Append("  if [ -d /proc/sys/fs/binfmt_misc ]; then nsenter -t $p -m mount -o bind /data/local/tmp/empty_binfmt /proc/sys/fs/binfmt_misc 2>/dev/null || true; fi\n");
                 sh.Append("  if [ -f /sys/class/net/wlan0/address ]; then nsenter -t $p -m mount -o bind /data/local/tmp/fake_mac /sys/class/net/wlan0/address 2>/dev/null || true; fi\n");
                 sh.Append("  if [ -f /sys/class/net/eth0/address ]; then nsenter -t $p -m mount -o bind /data/local/tmp/fake_mac /sys/class/net/eth0/address 2>/dev/null || true; fi\n");
                 sh.Append("done\n");
