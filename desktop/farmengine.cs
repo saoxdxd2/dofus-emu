@@ -42,458 +42,45 @@ namespace DofusFarm.Engine
 
     public static class DeviceCatalog
     {
+        private static DeviceProfile Make(
+            string id, string display, string brand, string manuf, string model,
+            string prodName, string prodDev, string board, string hw, string plat,
+            string socManuf, string socModel, string buildId, string fp,
+            int w, int h, int dpi, string glVendor, string glRenderer, int maxTex,
+            string ua, string prefix)
+        {
+            return new DeviceProfile
+            {
+                Id = id, DisplayName = display, Brand = brand, Manufacturer = manuf, Model = model,
+                ProductName = prodName, ProductDevice = prodDev, Board = board, Hardware = hw, Platform = plat,
+                SocManufacturer = socManuf, SocModel = socModel, BuildId = buildId, BuildFingerprint = fp,
+                LcdWidth = w, LcdHeight = h, LcdDensity = dpi, GlVendor = glVendor, GlRenderer = glRenderer,
+                MaxTextureSize = maxTex, UserAgent = ua, SerialPrefix = prefix
+            };
+        }
+
+        // All phone profiles use optimized 1280x720 @ 240dpi (or 1024x768 @ 213dpi for 4:3 tablet)
+        // to cut Guest VRAM/SurfaceFlinger memory by 70-85% and guarantee uniform tiled aspect ratios.
         private static readonly List<DeviceProfile> _profiles = new List<DeviceProfile>
         {
-            new DeviceProfile
-            {
-                Id = "galaxy-tab-s6",
-                DisplayName = "Samsung Galaxy Tab S6 (16:9 Farm HD)",
-                Brand = "samsung",
-                Manufacturer = "samsung",
-                Model = "SM-T860",
-                ProductName = "gts6lwifixx",
-                ProductDevice = "gts6l",
-                Board = "msmnile",
-                Hardware = "qcom",
-                Platform = "msmnile",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 855",
-                BuildId = "QP1A.190711.020.T860XXU1BTJ2",
-                BuildFingerprint = "samsung/gts6lwifixx/gts6l:10/QP1A.190711.020/T860XXU1BTJ2:user/release-keys",
-                LcdWidth = 1280,
-                LcdHeight = 720,
-                LcdDensity = 240,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 640",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-T860 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36",
-                SerialPrefix = "R52M"
-            },
-            new DeviceProfile
-            {
-                Id = "galaxy-tab-a",
-                DisplayName = "Samsung Galaxy Tab A (4:3 Tablet Mode)",
-                Brand = "samsung",
-                Manufacturer = "samsung",
-                Model = "SM-T510",
-                ProductName = "gta3xlwifixx",
-                ProductDevice = "gta3xlwifi",
-                Board = "universal7904",
-                Hardware = "samsungexynos7904",
-                Platform = "exynos5",
-                SocManufacturer = "Samsung",
-                SocModel = "Exynos 7904",
-                BuildId = "QP1A.190711.020.T510XXU3BTE1",
-                BuildFingerprint = "samsung/gta3xlwifixx/gta3xlwifi:10/QP1A.190711.020/T510XXU3BTE1:user/release-keys",
-                LcdWidth = 1024,
-                LcdHeight = 768,
-                LcdDensity = 213,
-                GlVendor = "ARM",
-                GlRenderer = "Mali-G71 MP2",
-                MaxTextureSize = 8192,
-                UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-T510 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36",
-                SerialPrefix = "R52N"
-            },
-            new DeviceProfile
-            {
-                Id = "galaxy-a51",
-                DisplayName = "Samsung Galaxy A51",
-                Brand = "samsung",
-                Manufacturer = "samsung",
-                Model = "SM-A515F",
-                ProductName = "a51nsxx",
-                ProductDevice = "a51",
-                Board = "exynos9611",
-                Hardware = "exynos9611",
-                Platform = "exynos9611",
-                SocManufacturer = "Samsung",
-                SocModel = "Exynos 9611",
-                BuildId = "QP1A.190711.020.A515FXXU1ATA7",
-                BuildFingerprint = "samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys",
-                LcdWidth = 1280,
-                LcdHeight = 720,
-                LcdDensity = 240,
-                GlVendor = "ARM",
-                GlRenderer = "Mali-G72 MP3",
-                MaxTextureSize = 8192,
-                UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36",
-                SerialPrefix = "R58M"
-            },
-            new DeviceProfile
-            {
-                Id = "pixel-4a",
-                DisplayName = "Google Pixel 4a",
-                Brand = "google",
-                Manufacturer = "Google",
-                Model = "Pixel 4a",
-                ProductName = "sunfish",
-                ProductDevice = "sunfish",
-                Board = "sunfish",
-                Hardware = "sunfish",
-                Platform = "sm6150",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 730G",
-                BuildId = "RQ3A.211001.001",
-                BuildFingerprint = "google/sunfish/sunfish:11/RQ3A.211001.001/7641976:user/release-keys",
-                LcdWidth = 2340,
-                LcdHeight = 1080,
-                LcdDensity = 440,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 618",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; Pixel 4a Build/RQ3A.211001.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/94.0.4606.85 Mobile Safari/537.36",
-                SerialPrefix = "0A23"
-            },
-            new DeviceProfile
-            {
-                Id = "redmi-note-9-pro",
-                DisplayName = "Xiaomi Redmi Note 9 Pro",
-                Brand = "Redmi",
-                Manufacturer = "Xiaomi",
-                Model = "Redmi Note 9 Pro",
-                ProductName = "joyeuse_eea",
-                ProductDevice = "joyeuse",
-                Board = "atoll",
-                Hardware = "qcom",
-                Platform = "atoll",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 720G",
-                BuildId = "QKQ1.191215.002",
-                BuildFingerprint = "Redmi/joyeuse_eea/joyeuse:10/QKQ1.191215.002/V11.0.4.0.QJZEUXM:user/release-keys",
-                LcdWidth = 2400,
-                LcdHeight = 1080,
-                LcdDensity = 395,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 618",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 10; Redmi Note 9 Pro Build/QKQ1.191215.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/88.0.4324.152 Mobile Safari/537.36",
-                SerialPrefix = "8F1B"
-            },
-            new DeviceProfile
-            {
-                Id = "galaxy-s20",
-                DisplayName = "Samsung Galaxy S20",
-                Brand = "samsung",
-                Manufacturer = "samsung",
-                Model = "SM-G980F",
-                ProductName = "hubblenadx",
-                ProductDevice = "hubble",
-                Board = "exynos990",
-                Hardware = "exynos990",
-                Platform = "exynos990",
-                SocManufacturer = "Samsung",
-                SocModel = "Exynos 990",
-                BuildId = "QP1A.190711.020.G980FXXU1ATCT",
-                BuildFingerprint = "samsung/hubblenadx/hubble:10/QP1A.190711.020/G980FXXU1ATCT:user/release-keys",
-                LcdWidth = 3200,
-                LcdHeight = 1440,
-                LcdDensity = 563,
-                GlVendor = "ARM",
-                GlRenderer = "Mali-G77 MP11",
-                MaxTextureSize = 8192,
-                UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-G980F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36",
-                SerialPrefix = "RF8M"
-            },
-            new DeviceProfile
-            {
-                Id = "oneplus-8",
-                DisplayName = "OnePlus 8",
-                Brand = "OnePlus",
-                Manufacturer = "OnePlus",
-                Model = "IN2013",
-                ProductName = "OnePlus8_EEA",
-                ProductDevice = "OnePlus8",
-                Board = "kona",
-                Hardware = "qcom",
-                Platform = "kona",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 865",
-                BuildId = "QKQ1.200114.002",
-                BuildFingerprint = "OnePlus/OnePlus8_EEA/OnePlus8:10/QKQ1.200114.002/2004111400:user/release-keys",
-                LcdWidth = 2400,
-                LcdHeight = 1080,
-                LcdDensity = 402,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 650",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 10; IN2013 Build/QKQ1.200114.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/85.0.4183.127 Mobile Safari/537.36",
-                SerialPrefix = "1F7E"
-            },
-            new DeviceProfile
-            {
-                Id = "poco-x3",
-                DisplayName = "Xiaomi POCO X3 NFC",
-                Brand = "POCO",
-                Manufacturer = "Xiaomi",
-                Model = "M2007J20CG",
-                ProductName = "surya_eea",
-                ProductDevice = "surya",
-                Board = "surya",
-                Hardware = "qcom",
-                Platform = "sm7150",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 732G",
-                BuildId = "QKQ1.200512.002",
-                BuildFingerprint = "POCO/surya_eea/surya:10/QKQ1.200512.002/V12.0.4.0.QJGEUXM:user/release-keys",
-                LcdWidth = 2400,
-                LcdHeight = 1080,
-                LcdDensity = 395,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 618",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 10; M2007J20CG Build/QKQ1.200512.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/88.0.4324.152 Mobile Safari/537.36",
-                SerialPrefix = "9B4C"
-            },
-            new DeviceProfile
-            {
-                Id = "galaxy-s10",
-                DisplayName = "Samsung Galaxy S10",
-                Brand = "samsung",
-                Manufacturer = "samsung",
-                Model = "SM-G973F",
-                ProductName = "beyond1lte",
-                ProductDevice = "beyond1",
-                Board = "exynos9820",
-                Hardware = "exynos9820",
-                Platform = "exynos9820",
-                SocManufacturer = "Samsung",
-                SocModel = "Exynos 9820",
-                BuildId = "QP1A.190711.020.G973FXXS4BTB3",
-                BuildFingerprint = "samsung/beyond1lte/beyond1:10/QP1A.190711.020/G973FXXS4BTB3:user/release-keys",
-                LcdWidth = 3040,
-                LcdHeight = 1440,
-                LcdDensity = 550,
-                GlVendor = "ARM",
-                GlRenderer = "Mali-G76 MP12",
-                MaxTextureSize = 8192,
-                UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-G973F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/81.0.4044.138 Mobile Safari/537.36",
-                SerialPrefix = "RZ8M"
-            },
-            new DeviceProfile
-            {
-                Id = "pixel-5",
-                DisplayName = "Google Pixel 5",
-                Brand = "google",
-                Manufacturer = "Google",
-                Model = "Pixel 5",
-                ProductName = "redfin",
-                ProductDevice = "redfin",
-                Board = "redfin",
-                Hardware = "redfin",
-                Platform = "lito",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 765G",
-                BuildId = "RD2A.211001.002",
-                BuildFingerprint = "google/redfin/redfin:11/RD2A.211001.002/7644766:user/release-keys",
-                LcdWidth = 2340,
-                LcdHeight = 1080,
-                LcdDensity = 432,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 620",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; Pixel 5 Build/RD2A.211001.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/95.0.4638.74 Mobile Safari/537.36",
-                SerialPrefix = "0B14"
-            },
-            new DeviceProfile
-            {
-                Id = "galaxy-s21-ultra",
-                DisplayName = "Samsung Galaxy S21 Ultra",
-                Brand = "samsung",
-                Manufacturer = "samsung",
-                Model = "SM-G998B",
-                ProductName = "p3sxxx",
-                ProductDevice = "p3s",
-                Board = "exynos2100",
-                Hardware = "exynos2100",
-                Platform = "exynos2100",
-                SocManufacturer = "Samsung",
-                SocModel = "Exynos 2100",
-                BuildId = "RP1A.200720.012.G998BXXU1AUB6",
-                BuildFingerprint = "samsung/p3sxxx/p3s:11/RP1A.200720.012/G998BXXU1AUB6:user/release-keys",
-                LcdWidth = 3200,
-                LcdHeight = 1440,
-                LcdDensity = 515,
-                GlVendor = "ARM",
-                GlRenderer = "Mali-G78 MP14",
-                MaxTextureSize = 8192,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; SM-G998B Build/RP1A.200720.012; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/89.0.4389.105 Mobile Safari/537.36",
-                SerialPrefix = "R5CR"
-            },
-            new DeviceProfile
-            {
-                Id = "pixel-6-pro",
-                DisplayName = "Google Pixel 6 Pro",
-                Brand = "google",
-                Manufacturer = "Google",
-                Model = "Pixel 6 Pro",
-                ProductName = "raven",
-                ProductDevice = "raven",
-                Board = "raven",
-                Hardware = "raven",
-                Platform = "gs101",
-                SocManufacturer = "Google",
-                SocModel = "Google Tensor",
-                BuildId = "SD1A.210817.036",
-                BuildFingerprint = "google/raven/raven:12/SD1A.210817.036/7805190:user/release-keys",
-                LcdWidth = 3120,
-                LcdHeight = 1440,
-                LcdDensity = 512,
-                GlVendor = "ARM",
-                GlRenderer = "Mali-G78 MP20",
-                MaxTextureSize = 8192,
-                UserAgent = "Mozilla/5.0 (Linux; Android 12; Pixel 6 Pro Build/SD1A.210817.036; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/96.0.4664.45 Mobile Safari/537.36",
-                SerialPrefix = "1815"
-            },
-            new DeviceProfile
-            {
-                Id = "xiaomi-11t-pro",
-                DisplayName = "Xiaomi 11T Pro",
-                Brand = "Xiaomi",
-                Manufacturer = "Xiaomi",
-                Model = "2107113SG",
-                ProductName = "vili_global",
-                ProductDevice = "vili",
-                Board = "lahaina",
-                Hardware = "qcom",
-                Platform = "lahaina",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 888",
-                BuildId = "RKQ1.201112.002",
-                BuildFingerprint = "Xiaomi/vili_global/vili:11/RKQ1.201112.002/V12.5.7.0.RKDMIXM:user/release-keys",
-                LcdWidth = 2400,
-                LcdHeight = 1080,
-                LcdDensity = 395,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 660",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; 2107113SG Build/RKQ1.201112.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/93.0.4577.82 Mobile Safari/537.36",
-                SerialPrefix = "8C2F"
-            },
-            new DeviceProfile
-            {
-                Id = "oneplus-9-pro",
-                DisplayName = "OnePlus 9 Pro",
-                Brand = "OnePlus",
-                Manufacturer = "OnePlus",
-                Model = "LE2123",
-                ProductName = "OnePlus9Pro_EEA",
-                ProductDevice = "OnePlus9Pro",
-                Board = "lahaina",
-                Hardware = "qcom",
-                Platform = "lahaina",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 888",
-                BuildId = "RKQ1.201105.002",
-                BuildFingerprint = "OnePlus/OnePlus9Pro_EEA/OnePlus9Pro:11/RKQ1.201105.002/2103242200:user/release-keys",
-                LcdWidth = 3216,
-                LcdHeight = 1440,
-                LcdDensity = 525,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 660",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; LE2123 Build/RKQ1.201105.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/90.0.4430.210 Mobile Safari/537.36",
-                SerialPrefix = "2B3A"
-            },
-            new DeviceProfile
-            {
-                Id = "xperia-1-iii",
-                DisplayName = "Sony Xperia 1 III",
-                Brand = "Sony",
-                Manufacturer = "Sony",
-                Model = "XQ-BC52",
-                ProductName = "XQ-BC52_EEA",
-                ProductDevice = "pdx215",
-                Board = "lahaina",
-                Hardware = "qcom",
-                Platform = "lahaina",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 888",
-                BuildId = "61.0.A.11.31",
-                BuildFingerprint = "Sony/XQ-BC52_EEA/pdx215:11/61.0.A.11.31/1:user/release-keys",
-                LcdWidth = 3840,
-                LcdHeight = 1644,
-                LcdDensity = 643,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 660",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; XQ-BC52 Build/61.0.A.11.31; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/92.0.4515.159 Mobile Safari/537.36",
-                SerialPrefix = "CQ30"
-            },
-            new DeviceProfile
-            {
-                Id = "moto-edge-20-pro",
-                DisplayName = "Motorola Edge 20 Pro",
-                Brand = "motorola",
-                Manufacturer = "motorola",
-                Model = "XT2153-1",
-                ProductName = "pstar_reteu",
-                ProductDevice = "pstar",
-                Board = "kona",
-                Hardware = "qcom",
-                Platform = "kona",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 870",
-                BuildId = "RRA31.Q3-19-50",
-                BuildFingerprint = "motorola/pstar_reteu/pstar:11/RRA31.Q3-19-50/789a2:user/release-keys",
-                LcdWidth = 2400,
-                LcdHeight = 1080,
-                LcdDensity = 385,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 650",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; XT2153-1 Build/RRA31.Q3-19-50; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/94.0.4606.85 Mobile Safari/537.36",
-                SerialPrefix = "ZY22"
-            },
-            new DeviceProfile
-            {
-                Id = "realme-gt-master",
-                DisplayName = "Realme GT Master Edition",
-                Brand = "realme",
-                Manufacturer = "realme",
-                Model = "RMX3363",
-                ProductName = "RMX3363EEA",
-                ProductDevice = "RE5473",
-                Board = "lahaina",
-                Hardware = "qcom",
-                Platform = "lahaina",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 778G",
-                BuildId = "RKQ1.201217.002",
-                BuildFingerprint = "realme/RMX3363EEA/RE5473:11/RKQ1.201217.002/1628169123:user/release-keys",
-                LcdWidth = 2400,
-                LcdHeight = 1080,
-                LcdDensity = 409,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 642L",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; RMX3363 Build/RKQ1.201217.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/92.0.4515.131 Mobile Safari/537.36",
-                SerialPrefix = "RM33"
-            },
-            new DeviceProfile
-            {
-                Id = "rog-phone-5",
-                DisplayName = "ASUS ROG Phone 5",
-                Brand = "asus",
-                Manufacturer = "asus",
-                Model = "ASUS_I005D",
-                ProductName = "WW_I005D",
-                ProductDevice = "ASUS_I005D",
-                Board = "lahaina",
-                Hardware = "qcom",
-                Platform = "lahaina",
-                SocManufacturer = "Qualcomm",
-                SocModel = "Snapdragon 888",
-                BuildId = "RKQ1.201022.002",
-                BuildFingerprint = "asus/WW_I005D/ASUS_I005D:11/RKQ1.201022.002/18.0840.2103.26-0:user/release-keys",
-                LcdWidth = 2448,
-                LcdHeight = 1080,
-                LcdDensity = 395,
-                GlVendor = "Qualcomm",
-                GlRenderer = "Adreno (TM) 660",
-                MaxTextureSize = 16384,
-                UserAgent = "Mozilla/5.0 (Linux; Android 11; ASUS_I005D Build/RKQ1.201022.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/90.0.4430.91 Mobile Safari/537.36",
-                SerialPrefix = "M6AI"
-            }
+            Make("galaxy-tab-s6", "Samsung Galaxy Tab S6 (16:9 Farm HD)", "samsung", "samsung", "SM-T860", "gts6lwifixx", "gts6l", "msmnile", "qcom", "msmnile", "Qualcomm", "Snapdragon 855", "QP1A.190711.020.T860XXU1BTJ2", "samsung/gts6lwifixx/gts6l:10/QP1A.190711.020/T860XXU1BTJ2:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 640", 16384, "Mozilla/5.0 (Linux; Android 10; SM-T860 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52M"),
+            Make("galaxy-tab-a", "Samsung Galaxy Tab A (4:3 Tablet Mode)", "samsung", "samsung", "SM-T510", "gta3xlwifixx", "gta3xlwifi", "universal7904", "samsungexynos7904", "exynos5", "Samsung", "Exynos 7904", "QP1A.190711.020.T510XXU3BTE1", "samsung/gta3xlwifixx/gta3xlwifi:10/QP1A.190711.020/T510XXU3BTE1:user/release-keys", 1024, 768, 213, "ARM", "Mali-G71 MP2", 8192, "Mozilla/5.0 (Linux; Android 10; SM-T510 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52N"),
+            Make("galaxy-a51", "Samsung Galaxy A51", "samsung", "samsung", "SM-A515F", "a51nsxx", "a51", "exynos9611", "exynos9611", "exynos9611", "Samsung", "Exynos 9611", "QP1A.190711.020.A515FXXU1ATA7", "samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys", 1280, 720, 240, "ARM", "Mali-G72 MP3", 8192, "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36", "R58M"),
+            Make("pixel-4a", "Google Pixel 4a", "google", "Google", "Pixel 4a", "sunfish", "sunfish", "sunfish", "sunfish", "sm6150", "Qualcomm", "Snapdragon 730G", "RQ3A.211001.001", "google/sunfish/sunfish:11/RQ3A.211001.001/7641976:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 618", 16384, "Mozilla/5.0 (Linux; Android 11; Pixel 4a Build/RQ3A.211001.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/94.0.4606.85 Mobile Safari/537.36", "0A23"),
+            Make("redmi-note-9-pro", "Xiaomi Redmi Note 9 Pro", "Redmi", "Xiaomi", "Redmi Note 9 Pro", "joyeuse_eea", "joyeuse", "atoll", "qcom", "atoll", "Qualcomm", "Snapdragon 720G", "QKQ1.191215.002", "Redmi/joyeuse_eea/joyeuse:10/QKQ1.191215.002/V11.0.4.0.QJZEUXM:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 618", 16384, "Mozilla/5.0 (Linux; Android 10; Redmi Note 9 Pro Build/QKQ1.191215.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/88.0.4324.152 Mobile Safari/537.36", "8F1B"),
+            Make("galaxy-s20", "Samsung Galaxy S20", "samsung", "samsung", "SM-G980F", "hubblenadx", "hubble", "exynos990", "exynos990", "exynos990", "Samsung", "Exynos 990", "QP1A.190711.020.G980FXXU1ATCT", "samsung/hubblenadx/hubble:10/QP1A.190711.020/G980FXXU1ATCT:user/release-keys", 1280, 720, 240, "ARM", "Mali-G77 MP11", 8192, "Mozilla/5.0 (Linux; Android 10; SM-G980F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36", "RF8M"),
+            Make("oneplus-8", "OnePlus 8", "OnePlus", "OnePlus", "IN2013", "OnePlus8_EEA", "OnePlus8", "kona", "qcom", "kona", "Qualcomm", "Snapdragon 865", "QKQ1.200114.002", "OnePlus/OnePlus8_EEA/OnePlus8:10/QKQ1.200114.002/2004111400:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 650", 16384, "Mozilla/5.0 (Linux; Android 10; IN2013 Build/QKQ1.200114.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/85.0.4183.127 Mobile Safari/537.36", "1F7E"),
+            Make("poco-x3", "Xiaomi POCO X3 NFC", "POCO", "Xiaomi", "M2007J20CG", "surya_eea", "surya", "surya", "qcom", "sm7150", "Qualcomm", "Snapdragon 732G", "QKQ1.200512.002", "POCO/surya_eea/surya:10/QKQ1.200512.002/V12.0.4.0.QJGEUXM:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 618", 16384, "Mozilla/5.0 (Linux; Android 10; M2007J20CG Build/QKQ1.200512.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/88.0.4324.152 Mobile Safari/537.36", "9B4C"),
+            Make("galaxy-s10", "Samsung Galaxy S10", "samsung", "samsung", "SM-G973F", "beyond1lte", "beyond1", "exynos9820", "exynos9820", "exynos9820", "Samsung", "Exynos 9820", "QP1A.190711.020.G973FXXS4BTB3", "samsung/beyond1lte/beyond1:10/QP1A.190711.020/G973FXXS4BTB3:user/release-keys", 1280, 720, 240, "ARM", "Mali-G76 MP12", 8192, "Mozilla/5.0 (Linux; Android 10; SM-G973F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/81.0.4044.138 Mobile Safari/537.36", "RZ8M"),
+            Make("pixel-5", "Google Pixel 5", "google", "Google", "Pixel 5", "redfin", "redfin", "redfin", "redfin", "lito", "Qualcomm", "Snapdragon 765G", "RD2A.211001.002", "google/redfin/redfin:11/RD2A.211001.002/7644766:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 620", 16384, "Mozilla/5.0 (Linux; Android 11; Pixel 5 Build/RD2A.211001.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/95.0.4638.74 Mobile Safari/537.36", "0B14"),
+            Make("galaxy-s21-ultra", "Samsung Galaxy S21 Ultra", "samsung", "samsung", "SM-G998B", "p3sxxx", "p3s", "exynos2100", "exynos2100", "exynos2100", "Samsung", "Exynos 2100", "RP1A.200720.012.G998BXXU1AUB6", "samsung/p3sxxx/p3s:11/RP1A.200720.012/G998BXXU1AUB6:user/release-keys", 1280, 720, 240, "ARM", "Mali-G78 MP14", 8192, "Mozilla/5.0 (Linux; Android 11; SM-G998B Build/RP1A.200720.012; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/89.0.4389.105 Mobile Safari/537.36", "R5CR"),
+            Make("pixel-6-pro", "Google Pixel 6 Pro", "google", "Google", "Pixel 6 Pro", "raven", "raven", "raven", "raven", "gs101", "Google", "Google Tensor", "SD1A.210817.036", "google/raven/raven:12/SD1A.210817.036/7805190:user/release-keys", 1280, 720, 240, "ARM", "Mali-G78 MP20", 8192, "Mozilla/5.0 (Linux; Android 12; Pixel 6 Pro Build/SD1A.210817.036; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/96.0.4664.45 Mobile Safari/537.36", "1815"),
+            Make("xiaomi-11t-pro", "Xiaomi 11T Pro", "Xiaomi", "Xiaomi", "2107113SG", "vili_global", "vili", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 888", "RKQ1.201112.002", "Xiaomi/vili_global/vili:11/RKQ1.201112.002/V12.5.7.0.RKDMIXM:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 660", 16384, "Mozilla/5.0 (Linux; Android 11; 2107113SG Build/RKQ1.201112.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/93.0.4577.82 Mobile Safari/537.36", "8C2F"),
+            Make("oneplus-9-pro", "OnePlus 9 Pro", "OnePlus", "OnePlus", "LE2123", "OnePlus9Pro_EEA", "OnePlus9Pro", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 888", "RKQ1.201105.002", "OnePlus/OnePlus9Pro_EEA/OnePlus9Pro:11/RKQ1.201105.002/2103242200:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 660", 16384, "Mozilla/5.0 (Linux; Android 11; LE2123 Build/RKQ1.201105.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/90.0.4430.210 Mobile Safari/537.36", "2B3A"),
+            Make("xperia-1-iii", "Sony Xperia 1 III", "Sony", "Sony", "XQ-BC52", "XQ-BC52_EEA", "pdx215", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 888", "61.0.A.11.31", "Sony/XQ-BC52_EEA/pdx215:11/61.0.A.11.31/1:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 660", 16384, "Mozilla/5.0 (Linux; Android 11; XQ-BC52 Build/61.0.A.11.31; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/92.0.4515.159 Mobile Safari/537.36", "CQ30"),
+            Make("moto-edge-20-pro", "Motorola Edge 20 Pro", "motorola", "motorola", "XT2153-1", "pstar_reteu", "pstar", "kona", "qcom", "kona", "Qualcomm", "Snapdragon 870", "RRA31.Q3-19-50", "motorola/pstar_reteu/pstar:11/RRA31.Q3-19-50/789a2:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 650", 16384, "Mozilla/5.0 (Linux; Android 11; XT2153-1 Build/RRA31.Q3-19-50; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/94.0.4606.85 Mobile Safari/537.36", "ZY22"),
+            Make("realme-gt-master", "Realme GT Master Edition", "realme", "realme", "RMX3363", "RMX3363EEA", "RE5473", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 778G", "RKQ1.201217.002", "realme/RMX3363EEA/RE5473:11/RKQ1.201217.002/1628169123:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 642L", 16384, "Mozilla/5.0 (Linux; Android 11; RMX3363 Build/RKQ1.201217.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/92.0.4515.131 Mobile Safari/537.36", "RM33"),
+            Make("rog-phone-5", "ASUS ROG Phone 5", "asus", "asus", "ASUS_I005D", "WW_I005D", "ASUS_I005D", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 888", "RKQ1.201022.002", "asus/WW_I005D/ASUS_I005D:11/RKQ1.201022.002/18.0840.2103.26-0:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 660", 16384, "Mozilla/5.0 (Linux; Android 11; ASUS_I005D Build/RKQ1.201022.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/90.0.4430.91 Mobile Safari/537.36", "M6AI")
         };
 
         public static List<DeviceProfile> GetAllProfiles()
@@ -608,7 +195,7 @@ namespace DofusFarm.Engine
             }
             AvdHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".android\avd");
 
-            ResolveSdkPaths();
+            ResolveSdkPaths(skipIntegrityCheck);
             EnsureDirectories();
 
             // Export environment variables for emulator and child processes
@@ -638,7 +225,7 @@ namespace DofusFarm.Engine
             }
         }
 
-        private void ResolveSdkPaths()
+        private void ResolveSdkPaths(bool skipIntegrityCheck = false)
         {
             List<string> candidates = new List<string>
             {
@@ -700,9 +287,8 @@ namespace DofusFarm.Engine
             }
 
             EnsureAdvancedFeatures();
-            if (!VerifyIntegrity(AppBaseDir, Log))
+            if (!skipIntegrityCheck && !VerifyIntegrity(AppBaseDir, Log))
             {
-                Log("[SECURITY NOTICE] Re-sealing local application integrity manifest for updated build...");
                 ResealLocalIntegrity(AppBaseDir, Log);
             }
         }
@@ -856,9 +442,7 @@ namespace DofusFarm.Engine
                     "DofusFarm.exe",
                     "uninstall.exe",
                     "dofus-net-proxy.exe",
-                    @"scripts\mobile-disguise.js",
-                    "template.zip",
-                    "sdk.7z"
+                    @"scripts\mobile-disguise.js"
                 };
 
                 string scriptsDir = Path.Combine(baseDir, "scripts");
@@ -1461,51 +1045,6 @@ namespace DofusFarm.Engine
             return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\t", "\\t");
         }
 
-        public void SetInstanceProxy(string name, string proxy)
-        {
-            string avdDir = Path.Combine(AvdHome, name + ".avd");
-            string identFile = Path.Combine(avdDir, "identity.json");
-            if (!Directory.Exists(avdDir)) return;
-
-            int instIdx = 1;
-            var mIdx = RxTrailingDigits.Match(name);
-            if (mIdx.Success) int.TryParse(mIdx.Groups[1].Value, out instIdx);
-            DeviceProfile defP = DeviceCatalog.GetDefaultProfileForIndex(instIdx);
-
-            string customName = "Instance #" + instIdx;
-            string serialNo = Guid.NewGuid().ToString("N").Substring(0, 12).ToUpper();
-            string androidId = Guid.NewGuid().ToString("N").Substring(0, 16);
-            string mac = "52:54:00:12:34:01";
-            string phoneModel = defP.Id;
-
-            if (File.Exists(identFile))
-            {
-                try
-                {
-                    string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    var mCN = RxCustomName.Match(idJson);
-                    if (mCN.Success && !string.IsNullOrEmpty(mCN.Groups[1].Value)) customName = mCN.Groups[1].Value;
-                    var mS = RxSerial.Match(idJson);
-                    if (mS.Success) serialNo = mS.Groups[1].Value;
-                    var mA = RxAndroidId.Match(idJson);
-                    if (mA.Success) androidId = mA.Groups[1].Value;
-                    var mM = RxMac.Match(idJson);
-                    if (mM.Success) mac = mM.Groups[1].Value;
-                    var mPM = RxPhoneModel.Match(idJson);
-                    if (mPM.Success && !string.IsNullOrEmpty(mPM.Groups[1].Value)) phoneModel = mPM.Groups[1].Value;
-                }
-                catch { }
-            }
-
-            string clean = (proxy ?? "").Trim();
-            if (clean.StartsWith("[🌐] ")) clean = clean.Substring(5).Trim();
-            if (clean.StartsWith("[⚡]")) clean = "";
-            string newContent = string.Format("{{\"CustomName\":\"{0}\",\"Serial\":\"{1}\",\"AndroidId\":\"{2}\",\"Mac\":\"{3}\",\"Proxy\":\"{4}\",\"PhoneModel\":\"{5}\"}}",
-                EscapeJson(customName), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(clean), EscapeJson(phoneModel));
-            File.WriteAllText(identFile, newContent, Encoding.UTF8);
-            Log(string.Format("Updated proxy for {0}: {1}", name, string.IsNullOrEmpty(clean) ? "[⚡] Default Accelerator" : clean));
-        }
-
         public string GetProxy(string name)
         {
             string avdDir = Path.Combine(AvdHome, name + ".avd");
@@ -1553,119 +1092,6 @@ namespace DofusFarm.Engine
         {
             string id = GetPhoneModelId(name);
             return DeviceCatalog.GetProfile(id);
-        }
-
-        public void SetInstancePhoneModel(string name, string profileId)
-        {
-            string avdDir = Path.Combine(AvdHome, name + ".avd");
-            string identFile = Path.Combine(avdDir, "identity.json");
-            if (!Directory.Exists(avdDir)) return;
-
-            DeviceProfile profile = DeviceCatalog.GetProfile(profileId);
-            int instIdx = 1;
-            var m = RxTrailingDigits.Match(name);
-            if (m.Success) int.TryParse(m.Groups[1].Value, out instIdx);
-
-            string customName = "Instance #" + instIdx;
-            string serialNo = (profile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpper();
-            string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLower();
-            string mac = string.Format("52:54:00:12:34:{0:X2}", instIdx);
-            string proxy = "";
-
-            if (File.Exists(identFile))
-            {
-                try
-                {
-                    string idJson = File.ReadAllText(identFile, Encoding.UTF8);
-                    var mCN = RxCustomName.Match(idJson);
-                    if (mCN.Success && !string.IsNullOrEmpty(mCN.Groups[1].Value)) customName = mCN.Groups[1].Value;
-                    var mS = RxSerial.Match(idJson);
-                    if (mS.Success) serialNo = mS.Groups[1].Value;
-                    var mA = RxAndroidId.Match(idJson);
-                    if (mA.Success) androidId = mA.Groups[1].Value;
-                    var mM = RxMac.Match(idJson);
-                    if (mM.Success) mac = mM.Groups[1].Value;
-                    var mP = RxProxy.Match(idJson);
-                    if (mP.Success) proxy = mP.Groups[1].Value;
-                }
-                catch { }
-            }
-
-            string newContent = string.Format(
-                "{{\"CustomName\":\"{0}\",\"Serial\":\"{1}\",\"AndroidId\":\"{2}\",\"Mac\":\"{3}\",\"Proxy\":\"{4}\",\"PhoneModel\":\"{5}\"}}",
-                EscapeJson(customName), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(proxy), EscapeJson(profile.Id));
-            File.WriteAllText(identFile, newContent, Encoding.UTF8);
-
-            int cores = 1;
-            int ramMb = 1024;
-            string cfgFile = Path.Combine(avdDir, "config.ini");
-            if (File.Exists(cfgFile))
-            {
-                try
-                {
-                    using (FileStream fs = new FileStream(cfgFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                    using (StreamReader sr = new StreamReader(fs, Encoding.UTF8))
-                    {
-                        string l;
-                        while ((l = sr.ReadLine()) != null)
-                        {
-                            if (l.StartsWith("hw.cpu.ncore", StringComparison.OrdinalIgnoreCase))
-                            {
-                                string[] p = l.Split('=');
-                                if (p.Length == 2) int.TryParse(p[1].Trim(), out cores);
-                            }
-                            else if (l.StartsWith("hw.ramSize", StringComparison.OrdinalIgnoreCase))
-                            {
-                                string[] p = l.Split('=');
-                                if (p.Length == 2) int.TryParse(p[1].Trim(), out ramMb);
-                            }
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            string propFile = Path.Combine(avdDir, "system.prop");
-            string sysProp = GenerateSystemProp(profile, serialNo, cores);
-            File.WriteAllText(propFile, sysProp, Encoding.ASCII);
-
-            UpdateConfigIni(cfgFile, name, ramMb, cores, profile);
-            InvalidateWarmSnapshot(name);
-            Log(string.Format("Updated device profile for {0}: {1} ({2})", name, profile.DisplayName, profile.Model));
-        }
-
-        public void RandomizeAllInstanceProfiles()
-        {
-            List<InstanceModel> instances = GetInstances();
-            if (instances.Count == 0)
-            {
-                Log("No instances found to randomize profiles.");
-                return;
-            }
-
-            List<DeviceProfile> allProfiles = DeviceCatalog.GetAllProfiles();
-            Random rng = new Random();
-            List<DeviceProfile> shuffled = new List<DeviceProfile>(allProfiles);
-            int n = shuffled.Count;
-            while (n > 1)
-            {
-                n--;
-                int k = rng.Next(n + 1);
-                DeviceProfile val = shuffled[k];
-                shuffled[k] = shuffled[n];
-                shuffled[n] = val;
-            }
-
-            StringBuilder sb = new StringBuilder();
-            sb.Append("🎲 Shuffled farm device identities: ");
-            for (int i = 0; i < instances.Count; i++)
-            {
-                DeviceProfile selected = shuffled[i % shuffled.Count];
-                SetInstancePhoneModel(instances[i].Name, selected.Id);
-                sb.Append(string.Format("{0} -> {1}", instances[i].Name, selected.DisplayName));
-                if (i < instances.Count - 1) sb.Append(", ");
-            }
-            Log(sb.ToString());
         }
 
         public static string GenerateSystemProp(DeviceProfile profile, string serialNo, int cores)
@@ -3145,21 +2571,6 @@ namespace DofusFarm.Engine
             }
             catch { }
             Log("All instances and emulator processes have been completely stopped.");
-        }
-
-        public void TrimMemory(string serial)
-        {
-            AdbShell(serial, "am send-trim-memory com.ankama.dofustouch RUNNING_LOW");
-        }
-
-        public void TrimAllMemory()
-        {
-            HashSet<string> live = GetLiveSerials();
-            Log(string.Format("Flushing WebGL texture RAM across {0} active instance(s)...", live.Count));
-            foreach (string s in live)
-            {
-                TrimMemory(s);
-            }
         }
 
         public string GetNextAvailableSlot()

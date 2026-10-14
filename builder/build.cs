@@ -95,13 +95,13 @@ namespace DofusBuild
             Console.WriteLine("  [OK] uninstall.exe compiled ({0:N0} bytes)", new FileInfo(outUninstall).Length);
             Console.ResetColor();
 
-            // 3. Seal Code Integrity Manifest
+            // 3. Seal Code Integrity Manifest (runtime binaries only — zero 896 MB archive hashing overhead)
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n[3/4] Sealing Code Integrity Manifest...");
             Console.ResetColor();
             GenerateIntegrityManifest();
 
-            // 4. Compile standalone setup.exe sharing Win32, Hardware, and FarmEngine directly
+            // 4. Compile standalone setup.exe embedding sdk.7z & template.zip directly without temp copies
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n[4/4] Packaging release payload and compiling standalone setup.exe...");
             Console.ResetColor();
@@ -152,14 +152,12 @@ namespace DofusBuild
 
         static void GenerateIntegrityManifest()
         {
-            string[] criticalFiles = new[]
+            string[] runtimeFiles = new[]
             {
                 "DofusFarm.exe",
                 "uninstall.exe",
                 "dofus-net-proxy.exe",
-                @"scripts\mobile-disguise.js",
-                "template.zip",
-                "sdk.7z"
+                @"scripts\mobile-disguise.js"
             };
 
             string manifestPath = Path.Combine(RepoRoot, @"scripts\app.integrity");
@@ -169,7 +167,7 @@ namespace DofusBuild
 
             using (SHA256 sha = SHA256.Create())
             {
-                foreach (string rel in criticalFiles)
+                foreach (string rel in runtimeFiles)
                 {
                     string full = Path.Combine(RepoRoot, rel);
                     if (!File.Exists(full))
@@ -197,7 +195,7 @@ namespace DofusBuild
             }
 
             File.WriteAllLines(manifestPath, lines.ToArray(), new UTF8Encoding(false));
-            Console.WriteLine("  [OK] Sealed app.integrity ({0} files)", lines.Count - 1);
+            Console.WriteLine("  [OK] Sealed app.integrity ({0} runtime files)", lines.Count - 1);
         }
 
         static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir)
@@ -236,30 +234,35 @@ namespace DofusBuild
                     if (File.Exists(p)) File.Copy(p, Path.Combine(stageDir, b), true);
                 }
 
+                if (File.Exists(payloadZip)) File.Delete(payloadZip);
+                ZipFile.CreateFromDirectory(stageDir, payloadZip, CompressionLevel.Fastest, false);
+
+                // Embed template.zip and sdk.7z directly from RepoRoot without copying 896 MB into %TEMP%
+                StringBuilder resourceArgs = new StringBuilder();
+                resourceArgs.AppendFormat("\"/resource:{0},DofusPayload.zip\" ", payloadZip);
+
+                long totalBytes = new FileInfo(payloadZip).Length;
                 string tplZip = Path.Combine(RepoRoot, "template.zip");
-                if (File.Exists(tplZip)) File.Copy(tplZip, Path.Combine(stageDir, "template.zip"), true);
+                if (File.Exists(tplZip))
+                {
+                    resourceArgs.AppendFormat("\"/resource:{0},template.zip\" ", tplZip);
+                    totalBytes += new FileInfo(tplZip).Length;
+                }
 
                 string sdk7z = Path.Combine(RepoRoot, "sdk.7z");
-                if (File.Exists(sdk7z)) File.Copy(sdk7z, Path.Combine(stageDir, "sdk.7z"), true);
-
-                if (File.Exists(payloadZip)) File.Delete(payloadZip);
-                string z7Exe = Path.Combine(RepoRoot, @"scripts\bin\7z.exe");
-                if (File.Exists(z7Exe))
+                if (File.Exists(sdk7z))
                 {
-                    Run(z7Exe, string.Format("a -tzip -mx0 \"{0}\" \"{1}\\*\"", payloadZip, stageDir));
-                }
-                else
-                {
-                    ZipFile.CreateFromDirectory(stageDir, payloadZip, CompressionLevel.Fastest, false);
+                    resourceArgs.AppendFormat("\"/resource:{0},sdk.7z\" ", sdk7z);
+                    totalBytes += new FileInfo(sdk7z).Length;
                 }
 
-                Console.WriteLine("  [OK] Payload packaged: {0:F1} MB", new FileInfo(payloadZip).Length / (1024.0 * 1024.0));
+                Console.WriteLine("  [OK] Payload streams ready: {0:F1} MB (zero temp archive duplication)", totalBytes / (1024.0 * 1024.0));
 
                 string manifestFile = Path.Combine(tempDir, "StandaloneSetup_" + Guid.NewGuid().ToString("N") + ".manifest");
                 string manifestSource =
                     "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
                     "<assembly manifestVersion=\"1.0\" xmlns=\"urn:schemas-microsoft-com:asm.v1\">\n" +
-                    "  <assemblyIdentity version=\"2.1.0.0\" name=\"DofusFarmSetup\"/>\n" +
+                    "  <assemblyIdentity version=\"2.2.0.0\" name=\"DofusFarmSetup\"/>\n" +
                     "  <trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n" +
                     "    <security>\n" +
                     "      <requestedPrivileges xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n" +
@@ -285,9 +288,9 @@ namespace DofusBuild
                 };
                 string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
                 string setupArgs = string.Format(
-                    "/nologo /target:winexe /platform:anycpu /optimize+ {0}\"/win32manifest:{1}\" \"/resource:{2},DofusPayload.zip\" " +
+                    "/nologo /target:winexe /platform:anycpu /optimize+ {0}\"/win32manifest:{1}\" {2}" +
                     "/r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:Microsoft.CSharp.dll \"/out:{3}\" \"{4}\"",
-                    setupIconArg, manifestFile, payloadZip, outSetup, string.Join("\" \"", setupSources));
+                    setupIconArg, manifestFile, resourceArgs.ToString(), outSetup, string.Join("\" \"", setupSources));
 
                 int sec = Run(Csc, setupArgs);
                 try { File.Delete(manifestFile); } catch { }

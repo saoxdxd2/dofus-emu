@@ -170,86 +170,108 @@ namespace DofusStandaloneSetup
             Directory.CreateDirectory(StageDir);
 
             Assembly asm = Assembly.GetExecutingAssembly();
+
+            // 1. Extract core runtime binaries & scripts from DofusPayload.zip
             using (Stream resStream = asm.GetManifestResourceStream("DofusPayload.zip"))
             {
-                if (resStream == null) return;
-
-                using (ZipArchive archive = new ZipArchive(resStream, ZipArchiveMode.Read))
+                if (resStream != null)
                 {
-                    int totalEntries = Math.Max(1, archive.Entries.Count);
-                    int processed = 0;
-
-                    foreach (ZipArchiveEntry entry in archive.Entries)
+                    using (ZipArchive archive = new ZipArchive(resStream, ZipArchiveMode.Read))
                     {
-                        processed++;
-                        if (string.IsNullOrEmpty(entry.Name)) continue;
-
-                        string rel = entry.FullName.Replace('/', '\\').TrimStart('\\');
-                        string fileName = entry.Name;
-
-                        // 1. Stream nested template.zip directly into dofus-template.avd in memory (zero temp disk writes!)
-                        if (fileName.Equals("template.zip", StringComparison.OrdinalIgnoreCase))
+                        foreach (ZipArchiveEntry entry in archive.Entries)
                         {
-                            Report(12, "Unpacking Golden Master Android image...");
-                            FarmEngine.ForceDeleteDirectory(targetTemplateAvd);
-                            Directory.CreateDirectory(targetTemplateAvd);
-                            using (Stream nestedZipStream = entry.Open())
-                            using (ZipArchive tplArchive = new ZipArchive(nestedZipStream, ZipArchiveMode.Read))
+                            if (string.IsNullOrEmpty(entry.Name)) continue;
+
+                            string rel = entry.FullName.Replace('/', '\\').TrimStart('\\');
+                            string fileName = entry.Name;
+
+                            if (fileName.Equals("template.zip", StringComparison.OrdinalIgnoreCase))
                             {
-                                ExtractArchiveToDirectory(tplArchive, targetTemplateAvd);
+                                Report(12, "Unpacking Golden Master Android image...");
+                                FarmEngine.ForceDeleteDirectory(targetTemplateAvd);
+                                Directory.CreateDirectory(targetTemplateAvd);
+                                using (Stream nestedZipStream = entry.Open())
+                                using (ZipArchive tplArchive = new ZipArchive(nestedZipStream, ZipArchiveMode.Read))
+                                {
+                                    ExtractArchiveToDirectory(tplArchive, targetTemplateAvd);
+                                }
+                                continue;
                             }
-                            continue;
-                        }
 
-                        // 2. Stage sdk.7z and 7z helper binaries in StageDir for fast 7z.exe extraction
-                        if (fileName.Equals("sdk.7z", StringComparison.OrdinalIgnoreCase) ||
-                            rel.StartsWith(@"scripts\bin\", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string stageDest = Path.Combine(StageDir, rel);
-                            string stageParent = Path.GetDirectoryName(stageDest);
-                            if (!string.IsNullOrEmpty(stageParent) && !Directory.Exists(stageParent))
-                                Directory.CreateDirectory(stageParent);
-
-                            if (fileName.Equals("sdk.7z", StringComparison.OrdinalIgnoreCase))
+                            if (fileName.Equals("sdk.7z", StringComparison.OrdinalIgnoreCase) ||
+                                rel.StartsWith(@"scripts\bin\", StringComparison.OrdinalIgnoreCase))
                             {
-                                CopyEntryWithProgress(entry, stageDest, 4, 8, "Preparing Android virtualization archive...");
+                                string stageDest = Path.Combine(StageDir, rel);
+                                string stageParent = Path.GetDirectoryName(stageDest);
+                                if (!string.IsNullOrEmpty(stageParent) && !Directory.Exists(stageParent))
+                                    Directory.CreateDirectory(stageParent);
+
+                                if (fileName.Equals("sdk.7z", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    using (Stream sIn = entry.Open())
+                                    {
+                                        CopyStreamWithProgress(sIn, entry.Length, stageDest, 4, 8, "Preparing Android virtualization archive...");
+                                    }
+                                }
+                                else
+                                {
+                                    entry.ExtractToFile(stageDest, true);
+                                }
+                                continue;
+                            }
+
+                            string directDest;
+                            if (rel.StartsWith(@"scripts\", StringComparison.OrdinalIgnoreCase))
+                            {
+                                directDest = Path.Combine(targetScriptsDir, fileName);
                             }
                             else
                             {
-                                entry.ExtractToFile(stageDest, true);
+                                directDest = Path.Combine(targetDir, fileName);
                             }
-                            continue;
-                        }
 
-                        // 3. Extract runtime executables and scripts directly to TargetDir
-                        string directDest;
-                        if (rel.StartsWith(@"scripts\", StringComparison.OrdinalIgnoreCase))
-                        {
-                            directDest = Path.Combine(targetScriptsDir, fileName);
-                        }
-                        else
-                        {
-                            directDest = Path.Combine(targetDir, fileName);
-                        }
+                            string parentDir = Path.GetDirectoryName(directDest);
+                            if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
+                                Directory.CreateDirectory(parentDir);
 
-                        string parentDir = Path.GetDirectoryName(directDest);
-                        if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
-                            Directory.CreateDirectory(parentDir);
-
-                        if (File.Exists(directDest))
-                        {
-                            try { File.SetAttributes(directDest, FileAttributes.Normal); } catch { }
+                            if (File.Exists(directDest))
+                            {
+                                try { File.SetAttributes(directDest, FileAttributes.Normal); } catch { }
+                            }
+                            entry.ExtractToFile(directDest, true);
                         }
-                        entry.ExtractToFile(directDest, true);
                     }
+                }
+            }
+
+            // 2. Stream top-level seekable PE resource "template.zip" directly into dofus-template.avd (zero RAM buffering, zero temp writes!)
+            using (Stream tplResStream = asm.GetManifestResourceStream("template.zip"))
+            {
+                if (tplResStream != null)
+                {
+                    Report(6, "Unpacking Golden Master Android image...");
+                    FarmEngine.ForceDeleteDirectory(targetTemplateAvd);
+                    Directory.CreateDirectory(targetTemplateAvd);
+                    using (ZipArchive tplArchive = new ZipArchive(tplResStream, ZipArchiveMode.Read))
+                    {
+                        ExtractArchiveToDirectory(tplArchive, targetTemplateAvd);
+                    }
+                }
+            }
+
+            // 3. Stream top-level PE resource "sdk.7z" to StageDir for 7z.exe extraction
+            using (Stream sdkResStream = asm.GetManifestResourceStream("sdk.7z"))
+            {
+                if (sdkResStream != null)
+                {
+                    string stageSdk = Path.Combine(StageDir, "sdk.7z");
+                    CopyStreamWithProgress(sdkResStream, sdkResStream.Length, stageSdk, 10, 9, "Preparing Android virtualization archive...");
                 }
             }
         }
 
-        private void CopyEntryWithProgress(ZipArchiveEntry entry, string destPath, int startPct, int spanPct, string statusText)
+        private void CopyStreamWithProgress(Stream inStream, long totalLen, string destPath, int startPct, int spanPct, string statusText)
         {
-            long totalLen = entry.Length;
-            using (Stream inStream = entry.Open())
             using (FileStream outStream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 262144))
             {
                 byte[] buffer = new byte[262144];
