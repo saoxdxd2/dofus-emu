@@ -1439,11 +1439,11 @@ namespace DofusFarm.Engine
                         {
                             try { File.SetAttributes(emuQcow2, FileAttributes.Normal); File.Delete(emuQcow2); } catch { }
                         }
-                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b "{0}" -F {1} "{2}"", rawUd, baseFmt, emuQcow2), 30000, avdDir);
+                        RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"{0}\" -F {1} \"{2}\"", rawUd, baseFmt, emuQcow2), 30000, avdDir);
                         if (!File.Exists(emuQcow2) || (new FileInfo(emuQcow2).Length == 0))
                         {
                             string altFmt = (baseFmt == "raw") ? "qcow2" : "raw";
-                            RunCommand(QemuImgPath, string.Format("create -f qcow2 -b "{0}" -F {1} "{2}"", rawUd, altFmt, emuQcow2), 30000, avdDir);
+                            RunCommand(QemuImgPath, string.Format("create -f qcow2 -b \"{0}\" -F {1} \"{2}\"", rawUd, altFmt, emuQcow2), 30000, avdDir);
                         }
                     }
                     catch { }
@@ -1453,7 +1453,7 @@ namespace DofusFarm.Engine
                     // Ensure backing path in existing QCOW2 is absolute so emulator.exe running from sdk\emulator never fails to open backing file
                     try
                     {
-                        RunCommand(QemuImgPath, string.Format("rebase -u -b "{0}" -F {1} "{2}"", rawUd, baseFmt, emuQcow2), 15000, avdDir);
+                        RunCommand(QemuImgPath, string.Format("rebase -u -b \"{0}\" -F {1} \"{2}\"", rawUd, baseFmt, emuQcow2), 15000, avdDir);
                     }
                     catch { }
                 }
@@ -1711,7 +1711,7 @@ namespace DofusFarm.Engine
                 string swapCheck = AdbShell(serial, "grep -q zram0 /proc/swaps && echo ACTIVE || echo NONE");
                 if (!swapCheck.Contains("ACTIVE"))
                 {
-                    Adb(serial, string.Format("push "{0}" /data/local/tmp/apply-zram.sh", zramPath));
+                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/apply-zram.sh", zramPath));
                     AdbShell(serial, "chmod 755 /data/local/tmp/apply-zram.sh && sh /data/local/tmp/apply-zram.sh >/dev/null 2>&1 || true");
                 }
             }
@@ -1741,7 +1741,7 @@ namespace DofusFarm.Engine
                 try
                 {
                     File.WriteAllText(tempDisguise, interpolatedJs, Encoding.UTF8);
-                    Adb(serial, string.Format("push "{0}" /data/local/tmp/mobile-disguise.js", tempDisguise));
+                    Adb(serial, string.Format("push \"{0}\" /data/local/tmp/mobile-disguise.js", tempDisguise));
                 }
                 finally
                 {
