@@ -31,7 +31,6 @@ namespace DofusFarm.UI
         private Button _btnAddSlot;
         private Button _btnEditSelected;
         private Button _btnDeleteSelected;
-        private Button _btnFixBlackScreen;
         private Button _btnRelayout;
         private Button _btnCascade;
 
@@ -211,16 +210,12 @@ namespace DofusFarm.UI
             _btnDeleteSelected.Location = new Point(370, btnY);
             _btnDeleteSelected.Click += OnDeleteSelectedClick;
 
-            _btnFixBlackScreen = CreateButton("Fix Black Screen", Color.FromArgb(180, 83, 9), Color.FromArgb(217, 119, 6), Color.White, 122, btnH, true);
-            _btnFixBlackScreen.Location = new Point(448, btnY);
-            _btnFixBlackScreen.Click += OnFixBlackScreenClick;
-
             _btnRelayout = CreateButton("Tile", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 56, btnH, false);
-            _btnRelayout.Location = new Point(576, btnY);
+            _btnRelayout.Location = new Point(448, btnY);
             _btnRelayout.Click += OnRelayoutClick;
 
             _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 68, btnH, false);
-            _btnCascade.Location = new Point(638, btnY);
+            _btnCascade.Location = new Point(510, btnY);
             _btnCascade.Click += OnCascadeClick;
 
             // Global GPU, RAM & CPU Allocation Controls on Right
@@ -280,7 +275,6 @@ namespace DofusFarm.UI
             _toolbarPanel.Controls.Add(_btnAddSlot);
             _toolbarPanel.Controls.Add(_btnEditSelected);
             _toolbarPanel.Controls.Add(_btnDeleteSelected);
-            _toolbarPanel.Controls.Add(_btnFixBlackScreen);
             _toolbarPanel.Controls.Add(_btnRelayout);
             _toolbarPanel.Controls.Add(_btnCascade);
             _toolbarPanel.Controls.Add(_lblGpu);
@@ -394,8 +388,6 @@ namespace DofusFarm.UI
             _rowMenu.Items.Add("Launch / Stop Instance", null, delegate { TriggerSelectedRowAction("Action"); });
             _rowMenu.Items.Add("Edit Instance...", null, delegate { OnEditSelectedClick(null, EventArgs.Empty); });
             _rowMenu.Items.Add("Clone Instance...", null, delegate { TriggerSelectedRowAction("Clone"); });
-            _rowMenu.Items.Add(new ToolStripSeparator());
-            _rowMenu.Items.Add("Fix Black Screen (Reset Snapshot & Repair)", null, delegate { RepairSelectedOrAllInstances(); });
             _rowMenu.Items.Add(new ToolStripSeparator());
             ToolStripItem delItem = _rowMenu.Items.Add("Delete Selected Instance", null, delegate { OnDeleteSelectedClick(null, EventArgs.Empty); });
             delItem.ForeColor = Color.FromArgb(248, 113, 113);
@@ -1185,54 +1177,6 @@ namespace DofusFarm.UI
                     }
                 });
             }
-        }
-
-        private void OnFixBlackScreenClick(object sender, EventArgs e)
-        {
-            RepairSelectedOrAllInstances();
-        }
-
-        private void RepairSelectedOrAllInstances()
-        {
-            DialogResult dr = MessageBox.Show(
-                "This will repair the Android Black Screen issue across all instances by:\n\n" +
-                "1. Enabling Android 10 userdata encryption key mounting & fixing advancedFeatures.ini\n" +
-                "2. Purging corrupted boot snapshots & window scale locks\n" +
-                "3. Restoring clean ranchu Gralloc/SurfaceFlinger graphics HAL properties\n\n" +
-                "Click YES to repair using Host GPU (fastest), or NO to repair and switch GPU mode to Direct3D ANGLE (best for laptops / hybrid GPUs).",
-                "Fix Android Black Screen",
-                MessageBoxButtons.YesNoCancel,
-                MessageBoxIcon.Information);
-
-            if (dr == DialogResult.Cancel) return;
-            string targetGpu = (dr == DialogResult.No) ? "angle_indirect" : "host";
-
-            try
-            {
-                _suppressGpuEvent = true;
-                _cmbGpu.SelectedIndex = (targetGpu == "angle_indirect") ? 1 : 0;
-            }
-            catch { }
-            finally { _suppressGpuEvent = false; }
-
-            _btnFixBlackScreen.Enabled = false;
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                try
-                {
-                    int fixedCount = _engine.RepairAllInstancesBlackScreen(targetGpu);
-                    RefreshGrid(true);
-                    Log(string.Format("Black screen repair completed for {0} instance(s) (GPU: {1}). Click 'Launch' to boot cleanly!", fixedCount, targetGpu));
-                }
-                catch (Exception ex)
-                {
-                    Log("Error repairing instances: " + ex.Message);
-                }
-                finally
-                {
-                    SafeBeginInvoke(delegate { _btnFixBlackScreen.Enabled = true; });
-                }
-            });
         }
 
         private void TriggerSelectedRowAction(string colName)

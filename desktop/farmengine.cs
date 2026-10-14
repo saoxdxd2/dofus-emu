@@ -405,6 +405,11 @@ namespace DofusFarm.Engine
                 string dotAndroid = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".android");
                 if (!Directory.Exists(dotAndroid)) Directory.CreateDirectory(dotAndroid);
                 string iniPath = Path.Combine(dotAndroid, "advancedFeatures.ini");
+                // Only features this emulator build actually supports may be forced here.
+                // SystemAsRoot = on made the emulator boot with "skip_initramfs" and no root=,
+                // so the guest kernel hung forever at "Waiting for root device ...": black screen,
+                // idle QEMU and adb stuck offline on every launch. FastSnapshotV1,
+                // WindowsHypervisorPlatform, GuestUsesAngle and Vulkan are rejected by this build too.
                 string content =
                     "GrallocSync = off\r\n" +
                     "GLPipeChecksum = on\r\n" +
@@ -419,16 +424,8 @@ namespace DofusFarm.Engine
                     "Wifi = on\r\n" +
                     "HostComposition = on\r\n" +
                     "RefCountPipe = on\r\n" +
-                    "SystemAsRoot = on\r\n" +
                     "DynamicPartition = on\r\n" +
-                    "HardwareDecoder = on\r\n" +
-                    "FastSnapshotV1 = on\r\n" +
-                    "WindowsHypervisorPlatform = on\r\n" +
-                    "Vulkan = off\r\n" +
-                    "GuestAngle = off\r\n" +
-                    "GuestUsesAngle = off\r\n" +
-                    "VirtioVsockPipe = off\r\n" +
-                    "VirtconsoleLogcat = off\r\n";
+                    "HardwareDecoder = on\r\n";
                 File.WriteAllText(iniPath, content, Encoding.ASCII);
 
                 if (!string.IsNullOrEmpty(SdkRoot))
@@ -1459,9 +1456,37 @@ namespace DofusFarm.Engine
             }
         }
 
+        // The emulator loads snapshots\default_boot whenever that folder exists - even when the
+        // snapshot metadata (snapshot.pb) is missing because the emulator was killed mid-save.
+        // Restoring such a half-written RAM image leaves the guest stuck at
+        // "Waiting for root device ..." (black screen, idle QEMU, adb offline forever), so an
+        // incomplete snapshot folder is never allowed to survive: the folder must mean "loadable".
+        private void PurgeIncompleteSnapshots(string avdDir)
+        {
+            try
+            {
+                string snapDir = Path.Combine(avdDir, "snapshots");
+                if (!Directory.Exists(snapDir)) return;
+                string defaultBoot = Path.Combine(snapDir, "default_boot");
+                if (Directory.Exists(defaultBoot) && !File.Exists(Path.Combine(defaultBoot, "snapshot.pb")))
+                {
+                    Log(string.Format("Purging incomplete boot snapshot in {0} (black-screen prevention).", Path.GetFileName(avdDir)));
+                    ForceDeleteDirectory(snapDir);
+                    string coldFlag = Path.Combine(avdDir, "cold_run_completed.flag");
+                    if (File.Exists(coldFlag))
+                    {
+                        try { File.SetAttributes(coldFlag, FileAttributes.Normal); File.Delete(coldFlag); } catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
         public void EnsureOverlay(string avdDir)
         {
             if (!Directory.Exists(avdDir)) Directory.CreateDirectory(avdDir);
+
+            PurgeIncompleteSnapshots(avdDir);
 
             // Auto-extract template.zip if GoldenMasterPath is missing
             if (!File.Exists(GoldenMasterPath))
@@ -1792,8 +1817,45 @@ namespace DofusFarm.Engine
             psi.EnvironmentVariables["ANDROID_HOME"] = SdkRoot;
             psi.EnvironmentVariables["ANDROID_AVD_HOME"] = AvdHome;
             psi.EnvironmentVariables["ANDROID_SDK_HOME"] = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            psi.EnvironmentVariables["ANDROID_EMULATOR_HOME"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".android");
             psi.EnvironmentVariables["ANDROID_EMULATOR_METRICS_ENABLED"] = "0";
+
+            // Capture the emulator console into the AVD folder. Guest kernel output such as
+            // "Waiting for root device ..." or GPU errors is printed here and nowhere else, so
+            // this log is what makes a black screen diagnosable after the fact.
+            try
+            {
+                Match mAvd = Regex.Match(emuArgs ?? "", @"-avd\s+(\S+)");
+                if (mAvd.Success)
+                {
+                    string logDir = Path.Combine(AvdHome, mAvd.Groups[1].Value.Trim() + ".avd");
+                    if (Directory.Exists(logDir))
+                    {
+                        string logFile = Path.Combine(logDir, "emulator-console.log");
+                        psi.RedirectStandardOutput = true;
+                        psi.RedirectStandardError = true;
+                        Process logged = new Process();
+                        logged.StartInfo = psi;
+                        StreamWriter writer = new StreamWriter(logFile, false, Encoding.UTF8);
+                        writer.AutoFlush = true;
+                        logged.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
+                        {
+                            if (e.Data != null) { try { lock (writer) { writer.WriteLine(e.Data); } } catch { } }
+                        };
+                        logged.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+                        {
+                            if (e.Data != null) { try { lock (writer) { writer.WriteLine(e.Data); } } catch { } }
+                        };
+                        if (logged.Start())
+                        {
+                            logged.BeginOutputReadLine();
+                            logged.BeginErrorReadLine();
+                            return logged;
+                        }
+                    }
+                }
+            }
+            catch { }
+
             return Process.Start(psi);
         }
 
@@ -1909,6 +1971,7 @@ namespace DofusFarm.Engine
             Stopwatch sw = Stopwatch.StartNew();
             bool adbReady = false;
             int fallbackAttempt = 0;
+            int bootHealAttempt = 0;
 
             while (sw.Elapsed.TotalSeconds < 110)
             {
@@ -1946,12 +2009,34 @@ namespace DofusFarm.Engine
                     adbReady = true;
                     break;
                 }
+
+                // Black-screen signature: the emulator process is alive but the guest never comes up.
+                // Recover automatically (there is no repair button to click): purge snapshot state
+                // first, then rebuild the instance from scratch if the guest still refuses to boot.
+                if (bootHealAttempt == 0 && sw.Elapsed.TotalSeconds > 45)
+                {
+                    bootHealAttempt = 1;
+                    proc = AutoHealStuckBoot(name, port, avdDir, ramMb, cores, proxyArg, false, shutdownAfterSnapshot);
+                    sw.Restart();
+                    Thread.Sleep(800);
+                    continue;
+                }
+                if (bootHealAttempt == 1 && sw.Elapsed.TotalSeconds > 60)
+                {
+                    bootHealAttempt = 2;
+                    proc = AutoHealStuckBoot(name, port, avdDir, ramMb, cores, proxyArg, true, shutdownAfterSnapshot);
+                    sw.Restart();
+                    Thread.Sleep(800);
+                    continue;
+                }
+
                 Thread.Sleep(500);
             }
 
             if (!adbReady)
             {
-                Log(string.Format("Warning: {0} did not reach ADB device state within 110s.", name));
+                LogEmulatorConsoleTail(name, avdDir);
+                Log(string.Format("Error: {0} could not boot even after automatic recovery. Diagnostics captured in {1}", name, Path.Combine(avdDir, "emulator-console.log")));
                 return;
             }
 
@@ -1983,10 +2068,24 @@ namespace DofusFarm.Engine
             // 2. COLD-BOOT WAIT: Strictly wait for sys.boot_completed == 1 (never break early on bootanim!)
             Stopwatch bootSw = Stopwatch.StartNew();
             bool bootCompleted = false;
-            bool retriedColdBoot = false;
+            int healAttempt = 0;
             while (bootSw.Elapsed.TotalSeconds < 130)
             {
-                if (!IsInstanceProcessAlive(proc, name, port)) return;
+                if (!IsInstanceProcessAlive(proc, name, port))
+                {
+                    // Guest died after reaching adb: heal once instead of giving up.
+                    if (healAttempt == 0)
+                    {
+                        healAttempt = 1;
+                        proc = AutoHealStuckBoot(name, port, avdDir, ramMb, cores, proxyArg, false, shutdownAfterSnapshot);
+                        bootSw.Restart();
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+                    Log(string.Format("Error: Emulator process for {0} exited unexpectedly.", name));
+                    return;
+                }
+
                 string bootCheck = AdbShell(serial, "getprop sys.boot_completed").Trim();
                 if (bootCheck == "1")
                 {
@@ -1994,20 +2093,12 @@ namespace DofusFarm.Engine
                     break;
                 }
 
-                // If a snapshot load is stuck on a black screen for >35s without completing boot, auto-heal by cold booting
-                if (hadWarmSnapshot && !retriedColdBoot && bootSw.Elapsed.TotalSeconds > 35)
+                // adb is already up, so this guest is running and merely slow - only step in when it
+                // never finishes booting at all (well past any healthy cold boot time).
+                if (healAttempt == 0 && bootSw.Elapsed.TotalSeconds > 90)
                 {
-                    retriedColdBoot = true;
-                    Log(string.Format("Detected stuck snapshot on {0}; clearing snapshot and performing clean cold boot...", name));
-                    KillProcessForInstance(name, port);
-                    CleanLocks(avdDir);
-                    InvalidateWarmSnapshot(name);
-                    string coldArgs = string.Format(
-                        "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
-                        "-no-snapshot-load -no-audio -accel on -skip-adb-auth " +
-                        "-no-passive-gps {5}-prop qemu.hw.mainkeys=1",
-                        name, port, GetConfiguredGpuMode(), ramMb, cores, proxyArg ?? "");
-                    proc = StartEmulatorProcess(coldArgs, false);
+                    healAttempt = 1;
+                    proc = AutoHealStuckBoot(name, port, avdDir, ramMb, cores, proxyArg, false, shutdownAfterSnapshot);
                     bootSw.Restart();
                     Thread.Sleep(2000);
                     continue;
@@ -2018,7 +2109,8 @@ namespace DofusFarm.Engine
 
             if (!bootCompleted)
             {
-                Log(string.Format("Warning: {0} did not complete Android boot within timeout. Try clicking 'Fix Black Screen'.", name));
+                LogEmulatorConsoleTail(name, avdDir);
+                Log(string.Format("Error: {0} could not boot even after automatic recovery. Diagnostics captured in {1}", name, Path.Combine(avdDir, "emulator-console.log")));
                 return;
             }
 
@@ -2948,6 +3040,64 @@ namespace DofusFarm.Engine
         }
     }
 
+        // Automatic black-screen recovery. The first pass clears snapshot state and cold boots; the
+        // deep pass additionally rebuilds overlays, encryption keys and config. No user action needed.
+        private Process AutoHealStuckBoot(string name, int port, string avdDir, int ramMb, int cores, string proxyArg, bool deep, bool minimized)
+        {
+            KillProcessForInstance(name, port);
+            if (deep)
+            {
+                Log(string.Format("{0} still will not boot; running deep auto-repair (rebuilding overlays, keys and config)...", name));
+                RepairInstanceBlackScreen(name, false);
+            }
+            else
+            {
+                Log(string.Format("Boot stalled on {0}; auto-healing with a clean cold boot...", name));
+                CleanLocks(avdDir);
+                InvalidateWarmSnapshot(name);
+                EnsureOverlay(avdDir);
+            }
+            return StartEmulatorProcess(BuildColdBootArgs(name, port, GetConfiguredGpuMode(), ramMb, cores, proxyArg), minimized);
+        }
+
+        private string BuildColdBootArgs(string name, int port, string gpuMode, int ramMb, int cores, string proxyArg)
+        {
+            return string.Format(
+                "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
+                "-no-snapshot-load -no-audio -accel on -skip-adb-auth " +
+                "-no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+                name, port, gpuMode, ramMb, cores, proxyArg ?? "");
+        }
+
+        // Copies the tail of the captured emulator console into the app log so a failed boot can be
+        // diagnosed without digging through the AVD folder (guest kernel / snapshot errors live there).
+        private void LogEmulatorConsoleTail(string name, string avdDir)
+        {
+            try
+            {
+                string logFile = Path.Combine(avdDir, "emulator-console.log");
+                if (!File.Exists(logFile)) return;
+                const int maxBytes = 64 * 1024;
+                string text;
+                using (FileStream fs = new FileStream(logFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    long take = Math.Min(fs.Length, maxBytes);
+                    fs.Seek(fs.Length - take, SeekOrigin.Begin);
+                    byte[] buf = new byte[take];
+                    int read = fs.Read(buf, 0, (int)take);
+                    text = Encoding.UTF8.GetString(buf, 0, read);
+                }
+                string[] lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                int start = Math.Max(0, lines.Length - 20);
+                Log(string.Format("[{0}] Emulator console tail:", name));
+                for (int i = start; i < lines.Length; i++)
+                {
+                    Log("  [EMU] " + lines[i]);
+                }
+            }
+            catch { }
+        }
+
         public void RepairInstanceBlackScreen(string name, bool relaunch = false)
         {
             if (string.IsNullOrEmpty(name)) return;
@@ -2991,31 +3141,6 @@ namespace DofusFarm.Engine
             {
                 LaunchInstance(name, port, ramMb, cores, GetProxy(name));
             }
-        }
-
-        public int RepairAllInstancesBlackScreen(string newGpuMode = null)
-        {
-            if (!string.IsNullOrEmpty(newGpuMode))
-            {
-                SetConfiguredGpuMode(newGpuMode);
-            }
-            EnsureAdvancedFeatures();
-            StopAll();
-            int count = 0;
-            if (Directory.Exists(AvdHome))
-            {
-                string[] dirs = Directory.GetDirectories(AvdHome, "dofus-*.avd");
-                Array.Sort(dirs);
-                foreach (string d in dirs)
-                {
-                    string name = Path.GetFileNameWithoutExtension(d);
-                    if (name.Equals("dofus-template", StringComparison.OrdinalIgnoreCase)) continue;
-                    RepairInstanceBlackScreen(name, false);
-                    count++;
-                }
-            }
-            Log(string.Format("Repaired black-screen state, encryption keys, and snapshots across {0} instance(s).", count));
-            return count;
         }
 
         public int DeleteAllInstances()
