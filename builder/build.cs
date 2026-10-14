@@ -60,8 +60,12 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "MainForm.cs"),
                 Path.Combine(desktopDir, "Program.cs")
             };
-            string iconArg = File.Exists(ico) ? $"\"/win32icon:{ico}\" " : "";
-            string farmArgs = $"/nologo /target:winexe /optimize+ {iconArg}\"/out:{outFarm}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll \"{string.Join("\" \"", farmSources)}\"";
+            // NOTE: kept C#5-compatible (no string interpolation) because this builder is
+            // compiled with the .NET Framework 4.x csc.exe, which supports at most C# 5.
+            string iconArg = File.Exists(ico) ? string.Format("\"/win32icon:{0}\" ", ico) : "";
+            string farmArgs = string.Format(
+                "/nologo /target:winexe /optimize+ {0}\"/out:{1}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll \"{2}\"",
+                iconArg, outFarm, string.Join("\" \"", farmSources));
 
             if (Run(Csc, farmArgs) != 0)
             {

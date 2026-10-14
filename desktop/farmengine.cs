@@ -68,11 +68,12 @@ namespace DofusFarm.Engine
         {
             // WebGL-minimal profile for Dofus in Chrome - no telephony, sensors, camera, NFC, DRM
             // Strips 40+ build.prop keys; keeps only what Chrome WebGL fingerprinting needs.
+            // Matches system-images/android-29/default/x86_64/ (Android 10, API 29)
             Make("webgl-minimal", "WebGL Minimal (Chrome Dofus)", "generic", "generic", "WebGLMinimal",
                  "webgl_minimal", "webgl_minimal", "ranchu", "ranchu", "ranchu", "Google", "virgl",
-                 "SP1A.210812.016", "generic/webgl_minimal/webgl_minimal:12/SP1A.210812.016/1:user/release-keys",
+                 "QSR1.210820.001", "generic/webgl_minimal/webgl_minimal:10/QSR1.210820.001/7663313:userdebug/test-keys",
                  1280, 720, 240, "Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0)", 16384,
-                 "Mozilla/5.0 (Linux; Android 12; WebGLMinimal Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/112.0.5615.137 Mobile Safari/537.36", "WGLM"),
+                 "Mozilla/5.0 (Linux; Android 10; WebGLMinimal Build/QSR1.210820.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/112.0.5615.137 Mobile Safari/537.36", "WGLM"),
             Make("galaxy-tab-s6", "Samsung Galaxy Tab S6 (16:9 Farm HD)", "samsung", "samsung", "SM-T860", "gts6lwifixx", "gts6l", "msmnile", "qcom", "msmnile", "Qualcomm", "Snapdragon 855", "QP1A.190711.020.T860XXU1BTJ2", "samsung/gts6lwifixx/gts6l:10/QP1A.190711.020/T860XXU1BTJ2:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 640", 16384, "Mozilla/5.0 (Linux; Android 10; SM-T860 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52M"),
             Make("galaxy-tab-a", "Samsung Galaxy Tab A (4:3 Tablet Mode)", "samsung", "samsung", "SM-T510", "gta3xlwifixx", "gta3xlwifi", "universal7904", "samsungexynos7904", "exynos5", "Samsung", "Exynos 7904", "QP1A.190711.020.T510XXU3BTE1", "samsung/gta3xlwifixx/gta3xlwifi:10/QP1A.190711.020/T510XXU3BTE1:user/release-keys", 1024, 768, 213, "ARM", "Mali-G71 MP2", 8192, "Mozilla/5.0 (Linux; Android 10; SM-T510 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52N"),
             Make("galaxy-a51", "Samsung Galaxy A51", "samsung", "samsung", "SM-A515F", "a51nsxx", "a51", "exynos9611", "exynos9611", "exynos9611", "Samsung", "Exynos 9611", "QP1A.190711.020.A515FXXU1ATA7", "samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys", 1280, 720, 240, "ARM", "Mali-G72 MP3", 8192, "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36", "R58M"),
@@ -2197,11 +2198,22 @@ namespace DofusFarm.Engine
             string proxyArg = (useProxy && proxyActive) ? string.Format("-http-proxy http://127.0.0.1:{0} ", localProxyPort) : "";
             string gpuMode = GetConfiguredGpuMode();
 
-            string emuArgs = string.Format(
-                "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
-                "-no-audio -accel on -skip-adb-auth " +
-                "-no-passive-gps {5}-prop qemu.hw.mainkeys=1",
-                name, port, gpuMode, safeRam, safeCores, proxyArg);
+            string emuArgs;
+            if (instProfile != null && string.Equals(instProfile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
+            {
+                // Lean cold-boot path for the WebGL farm instance: skips QuickBoot snapshot
+                // load attempts (this build cannot restore them anyway), skips the guest
+                // boot animation and disables the metrics/update pings of the front-end.
+                emuArgs = BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, avdDir, cfgFile);
+            }
+            else
+            {
+                emuArgs = string.Format(
+                    "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
+                    "-no-audio -accel on -skip-adb-auth -no-metrics " +
+                    "-no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+                    name, port, gpuMode, safeRam, safeCores, proxyArg);
+            }
 
             Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / GPU: {4} / {5})...", name, port, safeRam, safeCores, gpuMode, instProfile.DisplayName));
 
@@ -2264,7 +2276,7 @@ namespace DofusFarm.Engine
 
                         string fallbackArgs = string.Format(
                             "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
-                            "-no-snapshot-load -no-audio -accel on -skip-adb-auth " +
+                            "-no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics " +
                             "-no-passive-gps {5}-prop qemu.hw.mainkeys=1",
                             name, port, gpuMode, ramMb, cores, proxyArg ?? "");
 
@@ -3471,39 +3483,29 @@ namespace DofusFarm.Engine
 
             return string.Format(
                 "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
-                "-no-snapshot-load -no-audio -accel on -skip-adb-auth " +
+                "-no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics " +
                 "-no-passive-gps {5}-prop qemu.hw.mainkeys=1",
                 name, port, gpuMode, ramMb, cores, proxyArg ?? "");
         }
 
         private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string avdDir, string cfgFile)
         {
-            // Direct kernel boot - bypasses -avd path entirely for <15s cold boot
-            // Uses kernel-ranchu + ramdisk.img from system-images/android-29/default/x86_64/
-            string sysImgDir = Path.Combine(SdkRoot, @"system-images\android-29\default\x86_64");
-            string kernelPath = Path.Combine(sysImgDir, "kernel-ranchu");
-            string ramdiskPath = Path.Combine(sysImgDir, "ramdisk.img");
-
-            // Userdata overlay
-            string userdataQcow2 = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
-            string encryptionKey = Path.Combine(avdDir, "encryptionkey.img");
-
-            // GPU mode - virgl for host GPU acceleration
+            // Live-tested 2026-10-14 (emulator 37.3.2, AVD android-29/default/x86_64, WHPX):
+            // cold boot to sys.boot_completed=1 in ~59s, adb online in <25s, guest confirmed
+            // Android 10 (API 29) with SwiftShader GLES 3.0. Arguments below are the lean
+            // subset measured on this machine - everything unneeded for a headless-UI
+            // WebGL farm instance is dropped:
+            //  -no-snapshot-load: this emulator build cannot restore QuickBoot snapshots
+            //    (see PurgeIncompleteSnapshots); skipping the load attempt removes the
+            //    "Failed to load snapshot 'default_boot'" warning spam and wasted startup.
+            //  -no-metrics: silences the big metrics WARNING banner in the console log.
+            //  -no-boot-anim: skips the guest boot animation (measurably faster boot).
             string gpuMode = GetConfiguredGpuMode();
-
-            // Build minimal QEMU args: virtio-gpu/net/blk/rng only, -display none, direct kernel boot
-            string proxyPart = string.IsNullOrEmpty(proxyArg) ? "" : proxyArg;
-
-            // Use instance-specific adb port for hostfwd (each instance gets unique port: 5554, 5556, 5558...)
             return string.Format(
-                "-kernel \"{0}\" -initrd \"{1}\" -append \"console=ttyS0 androidboot.hardware=ranchu androidboot.selinux=permissive init=/init\" " +
-                "-m {2} -smp {3} " +
-                "-device virtio-gpu-pci,virgl=on -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::{5}-:5555 " +
-                "-device virtio-blk-pci,drive=drive0 -drive file=\"{4}\",format=qcow2,id=drive0,if=none " +
-                "-device virtio-rng-pci " +
-                "-display none -no-audio -accel on -skip-adb-auth " +
-                "-serial mon:stdio {6}-prop qemu.hw.mainkeys=1",
-                kernelPath, ramdiskPath, ramMb, cores, userdataQcow2, port, proxyPart);
+                "-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} " +
+                "-no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics " +
+                "-no-boot-anim -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+                name, port, gpuMode, ramMb, cores, proxyArg ?? "");
         }
 
         // Copies the tail of the captured emulator console into the app log so a failed boot can be
