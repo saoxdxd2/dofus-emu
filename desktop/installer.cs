@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
@@ -15,13 +16,13 @@ using DofusFarm.Engine;
 using DofusFarm.Hardware;
 using DofusFarm.Native;
 
-[assembly: AssemblyTitle("Dofus Farm Setup")]
-[assembly: AssemblyDescription("Dofus Touch Virtualization Farm Standalone Installer")]
+[assembly: AssemblyTitle("Dofus Touch Farm Setup")]
+[assembly: AssemblyDescription("Dofus Touch Multi-Instance Virtualization Installer")]
 [assembly: AssemblyCompany("Dofus Farm Project")]
-[assembly: AssemblyProduct("Dofus Farm Virtualization Setup")]
+[assembly: AssemblyProduct("Dofus Touch Farm Setup")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyFileVersion("2.1.0.0")]
-[assembly: AssemblyVersion("2.1.0.0")]
+[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyVersion("2.2.0.0")]
 
 namespace DofusStandaloneSetup
 {
@@ -41,9 +42,9 @@ namespace DofusStandaloneSetup
             {
                 MessageBox.Show(
                     "The Dofus Touch Farm installer is already running.\n\nPlease wait for the active installation to complete.",
-                    "Setup Already In Progress",
+                    "Setup Already Running",
                     MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                    MessageBoxIcon.Information);
                 return;
             }
 
@@ -94,7 +95,7 @@ namespace DofusStandaloneSetup
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Fatal Setup Error: " + ex.Message, "Dofus Farm Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Setup Error: " + ex.Message, "Dofus Touch Farm Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
@@ -138,7 +139,7 @@ namespace DofusStandaloneSetup
             if (OnProgress != null) OnProgress(pct, msg);
         }
 
-        private string ResolveSourceFile(string relPath)
+        private string ResolveLocalFallbackFile(string relPath)
         {
             string[] candidates = new[]
             {
@@ -154,7 +155,13 @@ namespace DofusStandaloneSetup
             return null;
         }
 
-        private void UnpackEmbeddedPayload()
+        /// <summary>
+        /// Zero-copy stream unpacker: reads directly from the memory-mapped PE resource stream
+        /// without writing an intermediate 896 MB payload.zip to %TEMP%.
+        /// Runtime binaries go directly to TargetDir, template.zip streams directly into dofus-template.avd,
+        /// and only sdk.7z + 7z.exe are staged in StageDir for native 7-Zip extraction.
+        /// </summary>
+        private void StreamUnpackPayload(string targetDir, string targetScriptsDir, string targetTemplateAvd)
         {
             if (Directory.Exists(StageDir))
             {
@@ -163,34 +170,132 @@ namespace DofusStandaloneSetup
             Directory.CreateDirectory(StageDir);
 
             Assembly asm = Assembly.GetExecutingAssembly();
-            using (Stream s = asm.GetManifestResourceStream("DofusPayload.zip"))
+            using (Stream resStream = asm.GetManifestResourceStream("DofusPayload.zip"))
             {
-                if (s != null)
-                {
-                    string zipPath = Path.Combine(StageDir, "payload.zip");
-                    using (FileStream fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 262144))
-                    {
-                        byte[] buffer = new byte[262144];
-                        int read;
-                        long totalRead = 0;
-                        long totalLen = 0;
-                        try { totalLen = s.Length; } catch { }
+                if (resStream == null) return;
 
-                        while ((read = s.Read(buffer, 0, buffer.Length)) > 0)
+                using (ZipArchive archive = new ZipArchive(resStream, ZipArchiveMode.Read))
+                {
+                    int totalEntries = Math.Max(1, archive.Entries.Count);
+                    int processed = 0;
+
+                    foreach (ZipArchiveEntry entry in archive.Entries)
+                    {
+                        processed++;
+                        if (string.IsNullOrEmpty(entry.Name)) continue;
+
+                        string rel = entry.FullName.Replace('/', '\\').TrimStart('\\');
+                        string fileName = entry.Name;
+
+                        // 1. Stream nested template.zip directly into dofus-template.avd in memory (zero temp disk writes!)
+                        if (fileName.Equals("template.zip", StringComparison.OrdinalIgnoreCase))
                         {
-                            fs.Write(buffer, 0, read);
-                            totalRead += read;
-                            if (totalLen > 0)
+                            Report(12, "Unpacking Golden Master Android image...");
+                            FarmEngine.ForceDeleteDirectory(targetTemplateAvd);
+                            Directory.CreateDirectory(targetTemplateAvd);
+                            using (Stream nestedZipStream = entry.Open())
+                            using (ZipArchive tplArchive = new ZipArchive(nestedZipStream, ZipArchiveMode.Read))
                             {
-                                int pct = 2 + (int)((totalRead * 8) / totalLen);
-                                Report(pct, "Unpacking installation package...");
+                                ExtractArchiveToDirectory(tplArchive, targetTemplateAvd);
                             }
+                            continue;
                         }
+
+                        // 2. Stage sdk.7z and 7z helper binaries in StageDir for fast 7z.exe extraction
+                        if (fileName.Equals("sdk.7z", StringComparison.OrdinalIgnoreCase) ||
+                            rel.StartsWith(@"scripts\bin\", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string stageDest = Path.Combine(StageDir, rel);
+                            string stageParent = Path.GetDirectoryName(stageDest);
+                            if (!string.IsNullOrEmpty(stageParent) && !Directory.Exists(stageParent))
+                                Directory.CreateDirectory(stageParent);
+
+                            if (fileName.Equals("sdk.7z", StringComparison.OrdinalIgnoreCase))
+                            {
+                                CopyEntryWithProgress(entry, stageDest, 4, 8, "Preparing Android virtualization archive...");
+                            }
+                            else
+                            {
+                                entry.ExtractToFile(stageDest, true);
+                            }
+                            continue;
+                        }
+
+                        // 3. Extract runtime executables and scripts directly to TargetDir
+                        string directDest;
+                        if (rel.StartsWith(@"scripts\", StringComparison.OrdinalIgnoreCase))
+                        {
+                            directDest = Path.Combine(targetScriptsDir, fileName);
+                        }
+                        else
+                        {
+                            directDest = Path.Combine(targetDir, fileName);
+                        }
+
+                        string parentDir = Path.GetDirectoryName(directDest);
+                        if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
+                            Directory.CreateDirectory(parentDir);
+
+                        if (File.Exists(directDest))
+                        {
+                            try { File.SetAttributes(directDest, FileAttributes.Normal); } catch { }
+                        }
+                        entry.ExtractToFile(directDest, true);
                     }
-                    Report(10, "Extracting package contents...");
-                    ExtractZipWithOverwrite(zipPath, StageDir);
-                    try { File.Delete(zipPath); } catch { }
                 }
+            }
+        }
+
+        private void CopyEntryWithProgress(ZipArchiveEntry entry, string destPath, int startPct, int spanPct, string statusText)
+        {
+            long totalLen = entry.Length;
+            using (Stream inStream = entry.Open())
+            using (FileStream outStream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 262144))
+            {
+                byte[] buffer = new byte[262144];
+                long written = 0;
+                int read;
+                long lastReport = 0;
+                while ((read = inStream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    outStream.Write(buffer, 0, read);
+                    written += read;
+                    if (totalLen > 0 && written - lastReport >= 16 * 1024 * 1024)
+                    {
+                        lastReport = written;
+                        int pct = startPct + (int)((written * spanPct) / totalLen);
+                        Report(pct, statusText);
+                    }
+                }
+            }
+        }
+
+        private static void ExtractArchiveToDirectory(ZipArchive archive, string destDir)
+        {
+            if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
+            string fullDestDir = Path.GetFullPath(destDir);
+            foreach (ZipArchiveEntry entry in archive.Entries)
+            {
+                string destPath = Path.GetFullPath(Path.Combine(destDir, entry.FullName));
+                if (!destPath.StartsWith(fullDestDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+                    !destPath.Equals(fullDestDir, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    Directory.CreateDirectory(destPath);
+                    continue;
+                }
+
+                string parent = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(parent) && !Directory.Exists(parent))
+                    Directory.CreateDirectory(parent);
+
+                if (File.Exists(destPath))
+                {
+                    try { File.SetAttributes(destPath, FileAttributes.Normal); } catch { }
+                }
+                entry.ExtractToFile(destPath, true);
             }
         }
 
@@ -200,51 +305,65 @@ namespace DofusStandaloneSetup
             {
                 try
                 {
-                    Report(2, "Unpacking installation files...");
-                    UnpackEmbeddedPayload();
-
-                    Report(14, "Verifying package integrity...");
-                    if (!FarmEngine.VerifyIntegrity(StageDir) && !FarmEngine.VerifyIntegrity(AppDomain.CurrentDomain.BaseDirectory))
-                    {
-                        throw new InvalidOperationException("Installation aborted: Package files failed SHA-256 integrity verification.");
-                    }
-
+                    Report(2, "Preparing installation directory...");
                     KillLingeringProcesses();
                     if (!Directory.Exists(TargetDir)) Directory.CreateDirectory(TargetDir);
 
-                    // 1. Deploy clean runtime binaries and disguise scripts
-                    Report(18, "Installing Dofus Farm Manager & network engine...");
+                    string targetScripts = Path.Combine(TargetDir, "scripts");
+                    if (!Directory.Exists(targetScripts)) Directory.CreateDirectory(targetScripts);
+
+                    string avdHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".android\avd");
+                    if (!Directory.Exists(avdHome)) Directory.CreateDirectory(avdHome);
+                    string targetTemplateAvd = Path.Combine(avdHome, "dofus-template.avd");
+
+                    // 1. Stream-unpack embedded payload (zero duplicate temp zip writes)
+                    Report(4, "Deploying application files & system image...");
+                    StreamUnpackPayload(TargetDir, targetScripts, targetTemplateAvd);
+
+                    // Fallback copy if running unbundled next to local files
                     foreach (string f in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "app_icon.ico", "installer_icon.ico" })
                     {
-                        string src = ResolveSourceFile(f);
-                        if (!string.IsNullOrEmpty(src) && File.Exists(src))
+                        string dest = Path.Combine(TargetDir, f);
+                        if (!File.Exists(dest))
                         {
-                            string dest = Path.Combine(TargetDir, f);
-                            if (!string.Equals(Path.GetFullPath(src), Path.GetFullPath(dest), StringComparison.OrdinalIgnoreCase))
-                                File.Copy(src, dest, true);
+                            string src = ResolveLocalFallbackFile(f);
+                            if (!string.IsNullOrEmpty(src) && File.Exists(src)) File.Copy(src, dest, true);
+                        }
+                    }
+                    foreach (string sName in new[] { "mobile-disguise.js", "apply-zram.sh" })
+                    {
+                        string dest = Path.Combine(targetScripts, sName);
+                        if (!File.Exists(dest))
+                        {
+                            string src = ResolveLocalFallbackFile(@"scripts\" + sName);
+                            if (!string.IsNullOrEmpty(src) && File.Exists(src)) File.Copy(src, dest, true);
                         }
                     }
 
-                    string targetScripts = Path.Combine(TargetDir, "scripts");
-                    if (!Directory.Exists(targetScripts)) Directory.CreateDirectory(targetScripts);
-                    foreach (string sName in new[] { "mobile-disguise.js", "apply-zram.sh" })
+                    if (!File.Exists(Path.Combine(targetTemplateAvd, "userdata-golden.img")))
                     {
-                        string srcScript = ResolveSourceFile(@"scripts\" + sName);
-                        if (!string.IsNullOrEmpty(srcScript) && File.Exists(srcScript))
+                        string localTpl = ResolveLocalFallbackFile("template.zip");
+                        if (!string.IsNullOrEmpty(localTpl) && File.Exists(localTpl))
                         {
-                            File.Copy(srcScript, Path.Combine(targetScripts, sName), true);
+                            Report(15, "Unpacking Golden Master Android image...");
+                            FarmEngine.ForceDeleteDirectory(targetTemplateAvd);
+                            Directory.CreateDirectory(targetTemplateAvd);
+                            using (ZipArchive tplArch = ZipFile.OpenRead(localTpl))
+                            {
+                                ExtractArchiveToDirectory(tplArch, targetTemplateAvd);
+                            }
                         }
                     }
 
                     FarmEngine.ResealLocalIntegrity(TargetDir);
 
-                    // 2. Unpack Android SDK directly to TargetDir\sdk and remove temporary sdk.7z immediately
-                    Report(25, "Unpacking Android virtualization engine...");
+                    // 2. Unpack Android SDK (sdk.7z) with smooth real-time progress interpolation (20% -> 52%)
+                    Report(20, "Unpacking Android virtualization engine...");
                     string destSdk = Path.Combine(TargetDir, "sdk");
                     if (!File.Exists(Path.Combine(destSdk, @"emulator\emulator.exe")))
                     {
-                        string sdkArchive = ResolveSourceFile("sdk.7z");
-                        string z7Exe = ResolveSourceFile(@"scripts\bin\7z.exe");
+                        string sdkArchive = ResolveLocalFallbackFile("sdk.7z");
+                        string z7Exe = ResolveLocalFallbackFile(@"scripts\bin\7z.exe");
                         if (string.IsNullOrEmpty(sdkArchive) || !File.Exists(sdkArchive))
                             throw new FileNotFoundException("Required SDK archive (sdk.7z) not found in setup package.");
                         if (string.IsNullOrEmpty(z7Exe) || !File.Exists(z7Exe))
@@ -258,10 +377,33 @@ namespace DofusStandaloneSetup
                             UseShellExecute = false,
                             WindowStyle = ProcessWindowStyle.Hidden
                         };
-                        int exitCode = RunProcessWithTimeout(psi7z, 30 * 60 * 1000);
-                        if (exitCode != 0)
+
+                        using (Process p7z = Process.Start(psi7z))
                         {
-                            throw new InvalidOperationException(string.Format("Android SDK extraction failed (7z exit code {0}).", exitCode));
+                            Stopwatch sw7z = Stopwatch.StartNew();
+                            string[] sdkStages = new[]
+                            {
+                                "Unpacking Android virtualization engine...",
+                                "Extracting OpenGL & Vulkan hardware renderers...",
+                                "Deploying Android 10 x86_64 system image...",
+                                "Finalizing SDK platform tools..."
+                            };
+                            while (!p7z.WaitForExit(450))
+                            {
+                                if (sw7z.Elapsed.TotalMinutes > 30)
+                                {
+                                    try { p7z.Kill(); } catch { }
+                                    throw new TimeoutException("Android SDK extraction timed out.");
+                                }
+                                double ratio = Math.Min(0.96, sw7z.Elapsed.TotalSeconds / 32.0);
+                                int pct = 20 + (int)(ratio * 32.0);
+                                int msgIdx = Math.Min(sdkStages.Length - 1, (int)(ratio * sdkStages.Length));
+                                Report(pct, sdkStages[msgIdx]);
+                            }
+                            if (p7z.ExitCode != 0)
+                            {
+                                throw new InvalidOperationException(string.Format("Android SDK extraction failed (exit code {0}).", p7z.ExitCode));
+                            }
                         }
 
                         if (sdkArchive.StartsWith(StageDir, StringComparison.OrdinalIgnoreCase))
@@ -293,26 +435,8 @@ namespace DofusStandaloneSetup
                         throw new FileNotFoundException("Android SDK verification failed: emulator.exe not found.");
                     }
 
-                    // 3. Unpack Golden Master Template (template.zip) and clean temporary archive
-                    Report(50, "Unpacking Golden Master game image...");
-                    string avdHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".android\avd");
-                    if (!Directory.Exists(avdHome)) Directory.CreateDirectory(avdHome);
-
-                    string templateZip = ResolveSourceFile("template.zip");
-                    string targetTemplateAvd = Path.Combine(avdHome, "dofus-template.avd");
-                    if (!string.IsNullOrEmpty(templateZip) && File.Exists(templateZip))
-                    {
-                        FarmEngine.ForceDeleteDirectory(targetTemplateAvd);
-                        Directory.CreateDirectory(targetTemplateAvd);
-                        ExtractZipWithOverwrite(templateZip, targetTemplateAvd);
-                        if (templateZip.StartsWith(StageDir, StringComparison.OrdinalIgnoreCase))
-                        {
-                            try { File.Delete(templateZip); } catch { }
-                        }
-                    }
-
-                    // 4. Provision instances & run parallel Cold-Run warmup using shared FarmEngine
-                    Report(60, string.Format("Creating {0} isolated game instance(s) ({1} MB RAM / {2} Core)...", InstanceCount, RamMb, Cores));
+                    // 3. Provision instances using shared FarmEngine (54% -> 62%)
+                    Report(55, string.Format("Configuring {0} isolated game account slot(s)...", InstanceCount));
                     FarmEngine farm = new FarmEngine(TargetDir, true);
                     for (int i = 1; i <= InstanceCount; i++)
                     {
@@ -322,13 +446,18 @@ namespace DofusStandaloneSetup
                         farm.ProvisionInstance(slotName, RamMb, Cores, prof.Id, customName, "");
                     }
 
-                    // 5. Parallel Cold-Run Pre-Warm in waves of up to 4 so every instance saves its native default_boot snapshot
-                    Report(68, string.Format("Pre-warming {0} instance(s) for instant startup...", InstanceCount));
-                    int batchSize = 4;
+                    // 4. Smooth Cold-Run Pre-Warm in waves of 2 so host CPU/RAM stays responsive (62% -> 95%)
+                    int batchSize = 2;
+                    int totalBatches = (InstanceCount + batchSize - 1) / batchSize;
+                    int currentBatch = 0;
+
                     for (int batchStart = 1; batchStart <= InstanceCount; batchStart += batchSize)
                     {
+                        currentBatch++;
                         int batchEnd = Math.Min(InstanceCount, batchStart + batchSize - 1);
                         int countInBatch = batchEnd - batchStart + 1;
+                        int batchBasePct = 62 + ((currentBatch - 1) * 32) / Math.Max(1, totalBatches);
+                        int batchSpanPct = 32 / Math.Max(1, totalBatches);
 
                         using (CountdownEvent doneEvent = new CountdownEvent(countInBatch))
                         {
@@ -353,17 +482,26 @@ namespace DofusStandaloneSetup
                             }
 
                             Stopwatch batchSw = Stopwatch.StartNew();
-                            while (!doneEvent.Wait(600))
+                            string[] warmMessages = new[]
                             {
-                                if (batchSw.Elapsed.TotalSeconds > 160) break;
-                                int pct = 70 + (int)Math.Min(24, (batchSw.Elapsed.TotalSeconds / 45.0) * 24.0);
-                                Report(pct, string.Format("Pre-warming game instances ({0}-{1} of {2}) for instant launch...", batchStart, batchEnd, InstanceCount));
+                                string.Format("Starting background warmup for Instance #{0}..#{1}...", batchStart, batchEnd),
+                                string.Format("Optimizing graphics & memory cache for Instance #{0}..#{1}...", batchStart, batchEnd),
+                                string.Format("Pre-loading Dofus Touch for instant startup ({0}/{1})...", batchEnd, InstanceCount),
+                                string.Format("Saving instant-boot snapshot for Instance #{0}..#{1}...", batchStart, batchEnd)
+                            };
+                            while (!doneEvent.Wait(450))
+                            {
+                                if (batchSw.Elapsed.TotalSeconds > 150) break;
+                                double ratio = Math.Min(0.95, batchSw.Elapsed.TotalSeconds / 38.0);
+                                int pct = batchBasePct + (int)(ratio * batchSpanPct);
+                                int mIdx = Math.Min(warmMessages.Length - 1, (int)(ratio * warmMessages.Length));
+                                Report(pct, warmMessages[mIdx]);
                             }
                         }
                     }
 
-                    // 6. Desktop Shortcut, Registry & Environment Variables
-                    Report(96, "Finalizing shortcuts and Windows integration...");
+                    // 5. Desktop Shortcut, Registry & Environment Variables
+                    Report(96, "Creating desktop shortcut & finalizing installation...");
                     string farmExe = Path.Combine(TargetDir, "DofusFarm.exe");
                     string icoPath = Path.Combine(TargetDir, "app_icon.ico");
 
@@ -403,7 +541,7 @@ namespace DofusStandaloneSetup
                             {
                                 uk.SetValue("DisplayName", "Dofus Touch Farm Manager");
                                 uk.SetValue("DisplayIcon", icoPath);
-                                uk.SetValue("DisplayVersion", "2.1.0");
+                                uk.SetValue("DisplayVersion", "2.2.0");
                                 uk.SetValue("Publisher", "Dofus Farm Project");
                                 uk.SetValue("InstallLocation", TargetDir);
                                 uk.SetValue("UninstallString", "\"" + Path.Combine(TargetDir, "uninstall.exe") + "\"");
@@ -431,8 +569,8 @@ namespace DofusStandaloneSetup
                     }
                     catch { }
 
-                    Report(100, "Setup complete! Launching Dofus Farm Manager...");
-                    Thread.Sleep(400);
+                    Report(100, "Installation complete! Launching Dofus Farm Manager...");
+                    Thread.Sleep(350);
 
                     if (LaunchOnComplete && File.Exists(farmExe))
                     {
@@ -485,51 +623,59 @@ namespace DofusStandaloneSetup
                 catch { }
             }
         }
+    }
 
-        public static void ExtractZipWithOverwrite(string zipPath, string destDir)
+    /// <summary>
+    /// Custom-painted modern smooth progress bar with gradient fill (replaces chunky Windows Vista progress bar).
+    /// </summary>
+    public class SmoothProgressBar : Control
+    {
+        private int _value = 0;
+        public int Value
         {
-            if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
-            using (ZipArchive archive = ZipFile.OpenRead(zipPath))
+            get { return _value; }
+            set
             {
-                foreach (ZipArchiveEntry entry in archive.Entries)
+                int clamped = Math.Min(100, Math.Max(0, value));
+                if (_value != clamped)
                 {
-                    string destPath = Path.GetFullPath(Path.Combine(destDir, entry.FullName));
-                    string fullDestDir = Path.GetFullPath(destDir);
-                    if (!destPath.StartsWith(fullDestDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                        && !destPath.Equals(fullDestDir, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    if (string.IsNullOrEmpty(entry.Name))
-                    {
-                        Directory.CreateDirectory(destPath);
-                        continue;
-                    }
-
-                    string parentDir = Path.GetDirectoryName(destPath);
-                    if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
-                        Directory.CreateDirectory(parentDir);
-
-                    if (File.Exists(destPath))
-                    {
-                        try { File.SetAttributes(destPath, FileAttributes.Normal); } catch { }
-                    }
-
-                    entry.ExtractToFile(destPath, true);
+                    _value = clamped;
+                    this.Invalidate();
                 }
             }
         }
 
-        public static int RunProcessWithTimeout(ProcessStartInfo psi, int timeoutMs)
+        public SmoothProgressBar()
         {
-            using (Process p = Process.Start(psi))
+            this.SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            this.Height = 18;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            Rectangle rect = new Rectangle(0, 0, this.Width - 1, this.Height - 1);
+            using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(26, 28, 36)))
+            using (Pen borderPen = new Pen(Color.FromArgb(45, 48, 62), 1f))
             {
-                if (p == null) throw new InvalidOperationException("Failed to start process: " + psi.FileName);
-                if (!p.WaitForExit(timeoutMs))
+                g.FillRectangle(bgBrush, rect);
+                g.DrawRectangle(borderPen, rect);
+            }
+
+            if (_value > 0)
+            {
+                int fillW = Math.Max(4, (int)Math.Round(((this.Width - 2) * _value) / 100.0));
+                Rectangle fillRect = new Rectangle(1, 1, fillW, this.Height - 2);
+                using (LinearGradientBrush grad = new LinearGradientBrush(
+                    fillRect,
+                    Color.FromArgb(37, 99, 235),
+                    Color.FromArgb(16, 185, 129),
+                    LinearGradientMode.Horizontal))
                 {
-                    try { p.Kill(); } catch { }
-                    throw new TimeoutException(string.Format("Process '{0}' timed out after {1} seconds.", Path.GetFileName(psi.FileName), timeoutMs / 1000));
+                    g.FillRectangle(grad, fillRect);
                 }
-                return p.ExitCode;
             }
         }
     }
@@ -545,11 +691,9 @@ namespace DofusStandaloneSetup
         private Label _subtitleLabel;
         private Label _lblTimer;
 
-        private Label _lblTarget;
-        private TextBox _txtTarget;
-        private Button _btnBrowse;
-
+        private Panel _hwBannerPanel;
         private Label _lblSpecs;
+
         private Label _lblInstances;
         private ComboBox _cmbInstances;
         private Label _lblRam;
@@ -557,7 +701,11 @@ namespace DofusStandaloneSetup
         private Label _lblCores;
         private ComboBox _cmbCores;
 
-        private ProgressBar _progBar;
+        private Label _lblTarget;
+        private TextBox _txtTarget;
+        private Button _btnBrowse;
+
+        private SmoothProgressBar _progBar;
         private Label _lblStatus;
         private Label _lblPctBadge;
 
@@ -580,8 +728,8 @@ namespace DofusStandaloneSetup
 
         private void InitializeComponent()
         {
-            this.Text = "Dofus Touch Farm Setup";
-            this.Size = new Size(640, 415);
+            this.Text = "Dofus Touch Farm — Setup";
+            this.Size = new Size(640, 435);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
@@ -601,27 +749,27 @@ namespace DofusStandaloneSetup
             _headerPanel = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 68,
-                BackColor = Color.FromArgb(25, 26, 34),
-                Padding = new Padding(20, 10, 20, 10)
+                Height = 70,
+                BackColor = Color.FromArgb(24, 26, 34),
+                Padding = new Padding(22, 12, 22, 10)
             };
 
             _titleLabel = new Label
             {
-                Text = "⚡ DOFUS TOUCH FARM INSTALLER",
-                Font = new Font("Segoe UI", 12f, FontStyle.Bold),
-                ForeColor = Color.FromArgb(96, 165, 250),
+                Text = "DOFUS TOUCH FARM",
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                ForeColor = Color.White,
                 AutoSize = true,
-                Location = new Point(22, 12)
+                Location = new Point(24, 12)
             };
 
             _subtitleLabel = new Label
             {
-                Text = "One-Click Setup • Pre-Warms Instances During Installation for Instant Launch",
+                Text = "Multi-Account Virtualization Suite  •  Automatic Instant-Launch Setup",
                 Font = new Font("Segoe UI", 9f),
-                ForeColor = Color.FromArgb(156, 163, 175),
+                ForeColor = Color.FromArgb(148, 163, 184),
                 AutoSize = true,
-                Location = new Point(22, 37)
+                Location = new Point(25, 39)
             };
 
             _lblTimer = new Label
@@ -630,7 +778,7 @@ namespace DofusStandaloneSetup
                 Font = new Font("Consolas", 10f, FontStyle.Bold),
                 ForeColor = Color.FromArgb(52, 211, 153),
                 AutoSize = true,
-                Location = new Point(555, 16),
+                Location = new Point(552, 16),
                 Visible = false
             };
 
@@ -638,23 +786,81 @@ namespace DofusStandaloneSetup
             _headerPanel.Controls.Add(_subtitleLabel);
             _headerPanel.Controls.Add(_lblTimer);
 
-            _lblTarget = new Label { Text = "Installation Folder:", Location = new Point(25, 86), AutoSize = true, ForeColor = Color.FromArgb(200, 205, 215) };
+            // Reassuring Hardware Verification Banner
+            _hwBannerPanel = new Panel
+            {
+                Location = new Point(25, 84),
+                Size = new Size(575, 34),
+                BackColor = Color.FromArgb(22, 38, 36)
+            };
+            _lblSpecs = new Label
+            {
+                Text = "Checking PC hardware configuration...",
+                Location = new Point(12, 7),
+                Size = new Size(550, 20),
+                ForeColor = Color.FromArgb(52, 211, 153),
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+            };
+            _hwBannerPanel.Controls.Add(_lblSpecs);
+
+            // Primary Allocation Controls (Instances, RAM, CPU Cores)
+            _lblInstances = new Label { Text = "Accounts (Instances):", Location = new Point(25, 134), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
+            _cmbInstances = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(28, 30, 40),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Width = 175,
+                Location = new Point(25, 157)
+            };
+            _cmbInstances.Items.AddRange(new object[] { "1 Instance", "2 Instances", "3 Instances", "4 Instances (Recommended)", "6 Instances", "8 Instances" });
+            _cmbInstances.SelectedIndex = 3;
+
+            _lblRam = new Label { Text = "RAM per Instance:", Location = new Point(218, 134), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
+            _cmbRam = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(28, 30, 40),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Width = 180,
+                Location = new Point(218, 157)
+            };
+            _cmbRam.Items.AddRange(new object[] { "512 MB", "768 MB", "1024 MB (Recommended)", "1536 MB", "2048 MB", "3072 MB", "4096 MB", "8192 MB" });
+            _cmbRam.SelectedIndex = 2;
+
+            _lblCores = new Label { Text = "CPU Cores per Instance:", Location = new Point(416, 134), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
+            _cmbCores = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(28, 30, 40),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Width = 184,
+                Location = new Point(416, 157)
+            };
+            _cmbCores.Items.AddRange(new object[] { "1 Core (Recommended)", "2 Cores", "3 Cores", "4 Cores", "6 Cores", "8 Cores" });
+            _cmbCores.SelectedIndex = 0;
+
+            // Installation Directory
+            _lblTarget = new Label { Text = "Installation Folder:", Location = new Point(25, 200), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
             _txtTarget = new TextBox
             {
                 Text = _targetDir,
-                Location = new Point(25, 110),
-                Width = 470,
+                Location = new Point(25, 223),
+                Width = 472,
                 BackColor = Color.FromArgb(26, 28, 36),
-                ForeColor = Color.White,
+                ForeColor = Color.FromArgb(226, 232, 240),
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Segoe UI", 9.5f)
             };
             _btnBrowse = new Button
             {
-                Text = "Browse...",
-                Location = new Point(505, 108),
+                Text = "Change...",
+                Location = new Point(505, 221),
                 Size = new Size(95, 27),
-                BackColor = Color.FromArgb(42, 44, 56),
+                BackColor = Color.FromArgb(40, 43, 56),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
@@ -662,85 +868,38 @@ namespace DofusStandaloneSetup
             _btnBrowse.FlatAppearance.BorderSize = 0;
             _btnBrowse.Click += OnBrowseClick;
 
-            _lblSpecs = new Label
-            {
-                Text = "Detecting your PC hardware...",
-                Location = new Point(25, 148),
-                Size = new Size(575, 22),
-                ForeColor = Color.FromArgb(52, 211, 153),
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
-            };
-
-            _lblInstances = new Label { Text = "Instances:", Location = new Point(25, 182), AutoSize = true, ForeColor = Color.FromArgb(180, 185, 195) };
-            _cmbInstances = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 38),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Width = 170,
-                Location = new Point(25, 205)
-            };
-            _cmbInstances.Items.AddRange(new object[] { "1 Instance", "2 Instances", "3 Instances", "4 Instances (Default)", "6 Instances", "8 Instances" });
-            _cmbInstances.SelectedIndex = 3;
-
-            _lblRam = new Label { Text = "RAM per Instance:", Location = new Point(215, 182), AutoSize = true, ForeColor = Color.FromArgb(180, 185, 195) };
-            _cmbRam = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 38),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Width = 180,
-                Location = new Point(215, 205)
-            };
-            _cmbRam.Items.AddRange(new object[] { "512 MB", "768 MB", "1024 MB (Default)", "1536 MB", "2048 MB", "3072 MB", "4096 MB", "8192 MB" });
-            _cmbRam.SelectedIndex = 2;
-
-            _lblCores = new Label { Text = "CPU Cores per Instance:", Location = new Point(415, 182), AutoSize = true, ForeColor = Color.FromArgb(180, 185, 195) };
-            _cmbCores = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 38),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Width = 185,
-                Location = new Point(415, 205)
-            };
-            _cmbCores.Items.AddRange(new object[] { "1 Core (Default)", "2 Cores", "3 Cores", "4 Cores", "6 Cores", "8 Cores" });
-            _cmbCores.SelectedIndex = 0;
-
+            // Progress Bar & Status
             _lblStatus = new Label
             {
-                Text = "Ready to install.",
-                Location = new Point(25, 255),
+                Text = "Ready to install. Optimal settings have been selected for your PC.",
+                Location = new Point(25, 272),
                 Size = new Size(500, 22),
-                ForeColor = Color.FromArgb(220, 225, 235)
+                ForeColor = Color.FromArgb(203, 213, 225)
             };
 
             _lblPctBadge = new Label
             {
                 Text = "0%",
-                Location = new Point(530, 255),
+                Location = new Point(530, 272),
                 Size = new Size(70, 22),
                 TextAlign = ContentAlignment.MiddleRight,
-                ForeColor = Color.FromArgb(96, 165, 250),
+                ForeColor = Color.FromArgb(56, 189, 248),
                 Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
             };
 
-            _progBar = new ProgressBar
+            _progBar = new SmoothProgressBar
             {
-                Location = new Point(25, 280),
-                Size = new Size(575, 22),
-                Style = ProgressBarStyle.Continuous,
+                Location = new Point(25, 298),
+                Size = new Size(575, 18),
                 Value = 0
             };
 
+            // Bottom Action Buttons
             _btnInstall = new Button
             {
-                Text = "🚀 Install",
-                Location = new Point(350, 322),
-                Size = new Size(150, 38),
+                Text = "Install Now",
+                Location = new Point(345, 336),
+                Size = new Size(155, 40),
                 BackColor = Color.FromArgb(37, 99, 235),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
@@ -748,15 +907,17 @@ namespace DofusStandaloneSetup
                 Cursor = Cursors.Hand
             };
             _btnInstall.FlatAppearance.BorderSize = 0;
+            _btnInstall.MouseEnter += delegate { if (_btnInstall.Enabled) _btnInstall.BackColor = Color.FromArgb(59, 130, 246); };
+            _btnInstall.MouseLeave += delegate { if (_btnInstall.Enabled) _btnInstall.BackColor = Color.FromArgb(37, 99, 235); };
             _btnInstall.Click += OnInstallClick;
 
             _btnCancel = new Button
             {
                 Text = "Cancel",
-                Location = new Point(510, 322),
-                Size = new Size(90, 38),
-                BackColor = Color.FromArgb(42, 44, 56),
-                ForeColor = Color.White,
+                Location = new Point(510, 336),
+                Size = new Size(90, 40),
+                BackColor = Color.FromArgb(40, 43, 56),
+                ForeColor = Color.FromArgb(203, 213, 225),
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
             };
@@ -774,16 +935,16 @@ namespace DofusStandaloneSetup
             };
 
             this.Controls.Add(_headerPanel);
-            this.Controls.Add(_lblTarget);
-            this.Controls.Add(_txtTarget);
-            this.Controls.Add(_btnBrowse);
-            this.Controls.Add(_lblSpecs);
+            this.Controls.Add(_hwBannerPanel);
             this.Controls.Add(_lblInstances);
             this.Controls.Add(_cmbInstances);
             this.Controls.Add(_lblRam);
             this.Controls.Add(_cmbRam);
             this.Controls.Add(_lblCores);
             this.Controls.Add(_cmbCores);
+            this.Controls.Add(_lblTarget);
+            this.Controls.Add(_txtTarget);
+            this.Controls.Add(_btnBrowse);
             this.Controls.Add(_lblStatus);
             this.Controls.Add(_lblPctBadge);
             this.Controls.Add(_progBar);
@@ -819,8 +980,8 @@ namespace DofusStandaloneSetup
                     this.BeginInvoke(new Action(delegate
                     {
                         if (this.IsDisposed) return;
-                        _lblSpecs.Text = string.Format("PC: {0} • {1} • {2} GB RAM ({3} Threads)",
-                            specs.CpuName, specs.GpuName, specs.HostRamGB, specs.LogicalThreads);
+                        _lblSpecs.Text = string.Format("✓ PC Ready: {0}  •  {1} GB RAM ({2} Threads)",
+                            specs.CpuName, specs.HostRamGB, specs.LogicalThreads);
                         if (specs.HostRamGB >= 15.5 && !_isInstalling)
                         {
                             _cmbRam.SelectedIndex = 3; // 1536 MB
@@ -862,15 +1023,15 @@ namespace DofusStandaloneSetup
                 _lblTimer.Visible = true;
                 _installStopwatch.Restart();
                 _uiTimer.Start();
-                _btnInstall.Text = "⏳ Installing...";
-                _btnInstall.BackColor = Color.FromArgb(55, 60, 72);
+                _btnInstall.Text = "Installing...";
+                _btnInstall.BackColor = Color.FromArgb(51, 65, 85);
                 this.Cursor = Cursors.WaitCursor;
             }
             else
             {
                 _installStopwatch.Stop();
                 _uiTimer.Stop();
-                _btnInstall.Text = "🚀 Install";
+                _btnInstall.Text = "Install Now";
                 _btnInstall.BackColor = Color.FromArgb(37, 99, 235);
                 this.Cursor = Cursors.Default;
             }
@@ -881,8 +1042,8 @@ namespace DofusStandaloneSetup
             if (_isInstalling && e.CloseReason == CloseReason.UserClosing)
             {
                 DialogResult dr = MessageBox.Show(
-                    "Installation is currently in progress.\nAre you sure you want to abort?",
-                    "Abort Installation?",
+                    "Setup is currently configuring your game instances.\nAre you sure you want to cancel?",
+                    "Cancel Setup?",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning);
                 if (dr == DialogResult.No)

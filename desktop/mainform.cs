@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -46,6 +47,10 @@ namespace DofusFarm.UI
         private Button _btnFocus2;
         private Button _btnFocus3;
         private Button _btnFocus4;
+
+        private System.Windows.Forms.Timer _syncTimer;
+        private string _lastStateSignature = "";
+        private int _isSyncing = 0;
 
         private volatile bool _isClosing = false;
         private volatile bool _isFarmLaunching = false;
@@ -127,33 +132,33 @@ namespace DofusFarm.UI
             {
                 Dock = DockStyle.Top,
                 Height = 68,
-                BackColor = Color.FromArgb(25, 26, 34),
-                Padding = new Padding(15, 8, 15, 8)
+                BackColor = Color.FromArgb(24, 26, 34),
+                Padding = new Padding(18, 8, 18, 8)
             };
 
             _titleLabel = new Label
             {
-                Text = "⚡ DOFUS TOUCH FARM MANAGER",
-                Font = new Font("Segoe UI", 12.5f, FontStyle.Bold),
-                ForeColor = Color.FromArgb(96, 165, 250),
+                Text = "DOFUS TOUCH FARM MANAGER",
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                ForeColor = Color.White,
                 AutoSize = true,
-                Location = new Point(16, 10)
+                Location = new Point(18, 10)
             };
 
             _specsLabel = new Label
             {
-                Text = "Detecting PC Hardware...",
+                Text = "Checking PC hardware configuration...",
                 Font = new Font("Segoe UI", 9f),
-                ForeColor = Color.FromArgb(156, 163, 175),
+                ForeColor = Color.FromArgb(148, 163, 184),
                 AutoSize = true,
-                Location = new Point(16, 38)
+                Location = new Point(19, 38)
             };
 
             _lblActiveBadge = new Label
             {
-                Text = "○ 0 / 4 Running",
+                Text = "● 0 / 4 Running",
                 Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
-                ForeColor = Color.FromArgb(156, 163, 175),
+                ForeColor = Color.FromArgb(148, 163, 184),
                 AutoSize = true,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 Location = new Point(_headerPanel.Width - 175, 22)
@@ -167,52 +172,48 @@ namespace DofusFarm.UI
             _toolbarPanel = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 52,
-                BackColor = Color.FromArgb(22, 23, 29),
-                Padding = new Padding(15, 8, 15, 8)
+                Height = 54,
+                BackColor = Color.FromArgb(21, 22, 29),
+                Padding = new Padding(18, 8, 18, 8)
             };
 
-            int btnY = 9;
+            int btnY = 10;
             int btnH = 34;
 
-            _btnLaunchFarm = CreateButton("🚀 Launch All", Color.FromArgb(37, 99, 235), Color.White, 125, btnH);
-            _btnLaunchFarm.Location = new Point(15, btnY);
-            _btnLaunchFarm.Font = new Font("Segoe UI", 9.2f, FontStyle.Bold);
+            _btnLaunchFarm = CreateButton("Launch All", Color.FromArgb(37, 99, 235), Color.FromArgb(59, 130, 246), Color.White, 125, btnH, true);
+            _btnLaunchFarm.Location = new Point(18, btnY);
             _btnLaunchFarm.Click += OnLaunchFarmClick;
 
-            _btnStopAll = CreateButton("🛑 Stop All", Color.FromArgb(220, 38, 38), Color.White, 95, btnH);
-            _btnStopAll.Location = new Point(146, btnY);
-            _btnStopAll.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            _btnStopAll = CreateButton("Stop All", Color.FromArgb(185, 28, 28), Color.FromArgb(220, 38, 38), Color.White, 92, btnH, true);
+            _btnStopAll.Location = new Point(150, btnY);
             _btnStopAll.Click += OnStopAllClick;
 
-            _btnAddSlot = CreateButton("➕ Add Instance", Color.FromArgb(16, 185, 129), Color.White, 125, btnH);
-            _btnAddSlot.Location = new Point(250, btnY);
-            _btnAddSlot.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            _btnAddSlot = CreateButton("+ Add Instance", Color.FromArgb(16, 150, 108), Color.FromArgb(16, 185, 129), Color.White, 122, btnH, true);
+            _btnAddSlot.Location = new Point(252, btnY);
             _btnAddSlot.Click += OnAddSlotClick;
 
-            _btnEditSelected = CreateButton("✏️ Edit Selected", Color.FromArgb(59, 130, 246), Color.White, 120, btnH);
+            _btnEditSelected = CreateButton("Edit Selected", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 112, btnH, false);
             _btnEditSelected.Location = new Point(381, btnY);
-            _btnEditSelected.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
             _btnEditSelected.Click += OnEditSelectedClick;
 
-            _btnRelayout = CreateButton("📐 Tile 2x2", Color.FromArgb(39, 41, 52), Color.White, 88, btnH);
-            _btnRelayout.Location = new Point(510, btnY);
+            _btnRelayout = CreateButton("Tile Grid", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 86, btnH, false);
+            _btnRelayout.Location = new Point(500, btnY);
             _btnRelayout.Click += OnRelayoutClick;
 
-            _btnCascade = CreateButton("📐 Cascade", Color.FromArgb(39, 41, 52), Color.White, 88, btnH);
-            _btnCascade.Location = new Point(604, btnY);
+            _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 84, btnH, false);
+            _btnCascade.Location = new Point(592, btnY);
             _btnCascade.Click += OnCascadeClick;
 
             // Global RAM & CPU Allocation Controls on Right
-            _lblRam = new Label { Text = "RAM:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(712, 16) };
+            _lblRam = new Label { Text = "RAM:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(698, 17) };
             _cmbRam = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 38),
+                BackColor = Color.FromArgb(28, 30, 40),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Width = 105,
-                Location = new Point(752, 13)
+                Location = new Point(738, 14)
             };
             _cmbRam.Items.AddRange(new object[] {
                 "512 MB", "768 MB", "1024 MB", "1536 MB", "2048 MB",
@@ -220,22 +221,21 @@ namespace DofusFarm.UI
             });
             _cmbRam.SelectedIndex = 2; // 1024 MB
 
-            _lblCores = new Label { Text = "CPU:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(866, 16) };
+            _lblCores = new Label { Text = "CPU:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(854, 17) };
             _cmbCores = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 38),
+                BackColor = Color.FromArgb(28, 30, 40),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Width = 82,
-                Location = new Point(904, 13)
+                Width = 84,
+                Location = new Point(892, 14)
             };
             _cmbCores.Items.AddRange(new object[] { "1 Core", "2 Cores", "3 Cores", "4 Cores", "6 Cores", "8 Cores" });
             _cmbCores.SelectedIndex = 0; // 1 Core
 
-            _btnApplyAllHw = CreateButton("⚡ Apply to All", Color.FromArgb(124, 58, 237), Color.White, 115, btnH);
-            _btnApplyAllHw.Location = new Point(996, btnY);
-            _btnApplyAllHw.Font = new Font("Segoe UI", 8.8f, FontStyle.Bold);
+            _btnApplyAllHw = CreateButton("Apply to All", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 108, btnH, true);
+            _btnApplyAllHw.Location = new Point(986, btnY);
             _btnApplyAllHw.Click += OnApplyAllHardwareClick;
 
             _toolbarPanel.Controls.Add(_btnLaunchFarm);
@@ -256,7 +256,7 @@ namespace DofusFarm.UI
                 Dock = DockStyle.Fill,
                 BackgroundColor = Color.FromArgb(16, 17, 22),
                 ForeColor = Color.FromArgb(240, 240, 245),
-                GridColor = Color.FromArgb(36, 38, 48),
+                GridColor = Color.FromArgb(32, 35, 45),
                 BorderStyle = BorderStyle.None,
                 CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
                 ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
@@ -266,34 +266,35 @@ namespace DofusFarm.UI
                 AllowUserToDeleteRows = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 MultiSelect = false,
-                RowTemplate = { Height = 40 },
+                RowTemplate = { Height = 44 },
+                ColumnHeadersHeight = 38,
                 ShowCellToolTips = true,
                 ReadOnly = true
             };
 
-            _grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(26, 28, 36);
-            _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(156, 163, 175);
-            _grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-            _grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(6);
+            _grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(26, 28, 37);
+            _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(148, 163, 184);
+            _grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            _grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(8, 4, 8, 4);
             _grid.DefaultCellStyle.BackColor = Color.FromArgb(18, 19, 25);
             _grid.DefaultCellStyle.ForeColor = Color.FromArgb(240, 240, 245);
-            _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(37, 44, 68);
+            _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(30, 41, 59);
             _grid.DefaultCellStyle.SelectionForeColor = Color.White;
-            _grid.DefaultCellStyle.Padding = new Padding(6);
-            _grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(23, 24, 32);
+            _grid.DefaultCellStyle.Padding = new Padding(8, 4, 8, 4);
+            _grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(22, 24, 32);
 
-            _grid.Columns.Add("Status", "Status");
-            _grid.Columns.Add("CustomName", "Instance Name");
-            _grid.Columns.Add("Name", "Slot");
+            _grid.Columns.Add("Status", "STATUS");
+            _grid.Columns.Add("CustomName", "INSTANCE NAME");
+            _grid.Columns.Add("Name", "SLOT");
             _grid.Columns.Add("Ram", "RAM");
-            _grid.Columns.Add("Cores", "CPU Cores");
-            _grid.Columns.Add("Device", "Phone Identity");
-            _grid.Columns.Add("Proxy", "Network");
+            _grid.Columns.Add("Cores", "CPU CORES");
+            _grid.Columns.Add("Device", "DEVICE PROFILE");
+            _grid.Columns.Add("Proxy", "NETWORK");
 
             DataGridViewButtonColumn btnAction = new DataGridViewButtonColumn
             {
                 Name = "Action",
-                HeaderText = "Run",
+                HeaderText = "ACTION",
                 Text = "Launch",
                 UseColumnTextForButtonValue = false,
                 FlatStyle = FlatStyle.Flat
@@ -303,8 +304,8 @@ namespace DofusFarm.UI
             DataGridViewButtonColumn btnEdit = new DataGridViewButtonColumn
             {
                 Name = "Edit",
-                HeaderText = "Edit",
-                Text = "✏️ Edit",
+                HeaderText = "EDIT",
+                Text = "Edit",
                 UseColumnTextForButtonValue = true,
                 FlatStyle = FlatStyle.Flat
             };
@@ -313,8 +314,8 @@ namespace DofusFarm.UI
             DataGridViewButtonColumn btnClone = new DataGridViewButtonColumn
             {
                 Name = "Clone",
-                HeaderText = "Clone",
-                Text = "📋 Clone",
+                HeaderText = "CLONE",
+                Text = "Clone",
                 UseColumnTextForButtonValue = true,
                 FlatStyle = FlatStyle.Flat
             };
@@ -323,71 +324,72 @@ namespace DofusFarm.UI
             DataGridViewButtonColumn btnDelete = new DataGridViewButtonColumn
             {
                 Name = "Delete",
-                HeaderText = "Delete",
-                Text = "🗑️ Delete",
+                HeaderText = "DELETE",
+                Text = "Delete",
                 UseColumnTextForButtonValue = true,
                 FlatStyle = FlatStyle.Flat
             };
             _grid.Columns.Add(btnDelete);
 
-            _grid.Columns["Status"].Width = 105;
-            _grid.Columns["CustomName"].Width = 165;
+            _grid.Columns["Status"].Width = 110;
+            _grid.Columns["CustomName"].Width = 175;
             _grid.Columns["Name"].Width = 85;
-            _grid.Columns["Ram"].Width = 85;
-            _grid.Columns["Cores"].Width = 85;
-            _grid.Columns["Device"].Width = 205;
+            _grid.Columns["Ram"].Width = 90;
+            _grid.Columns["Cores"].Width = 90;
+            _grid.Columns["Device"].Width = 210;
             _grid.Columns["Proxy"].Width = 155;
-            _grid.Columns["Action"].Width = 80;
-            _grid.Columns["Edit"].Width = 75;
-            _grid.Columns["Clone"].Width = 75;
-            _grid.Columns["Delete"].Width = 75;
+            _grid.Columns["Action"].Width = 84;
+            _grid.Columns["Edit"].Width = 72;
+            _grid.Columns["Clone"].Width = 72;
+            _grid.Columns["Delete"].Width = 72;
 
+            _grid.CellPainting += OnGridCellPainting;
             _grid.CellContentClick += OnGridCellContentClick;
             _grid.CellDoubleClick += OnGridCellDoubleClick;
 
-            // Clean Bottom Status Bar (no developer log clutter!)
+            // Clean Bottom Status Bar
             _statusPanel = new Panel
             {
                 Dock = DockStyle.Bottom,
                 Height = 36,
                 BackColor = Color.FromArgb(24, 26, 34),
-                Padding = new Padding(15, 6, 15, 6)
+                Padding = new Padding(18, 6, 18, 6)
             };
 
             _lblStatusText = new Label
             {
-                Text = "● Ready — Double-click any instance or click '✏️ Edit' to change its Name, RAM, or CPU Cores.",
+                Text = "Ready — Double-click any instance or click 'Edit' to customize its Name, RAM, or CPU Cores.",
                 Font = new Font("Segoe UI", 9f),
-                ForeColor = Color.FromArgb(180, 185, 200),
+                ForeColor = Color.FromArgb(148, 163, 184),
                 AutoSize = true,
-                Location = new Point(15, 9)
+                Location = new Point(18, 9)
             };
 
             Label lblFocus = new Label
             {
                 Text = "Quick Focus:",
-                ForeColor = Color.FromArgb(140, 145, 160),
+                ForeColor = Color.FromArgb(148, 163, 184),
                 AutoSize = true,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 Location = new Point(_statusPanel.Width - 260, 9)
             };
 
-            _btnFocus1 = CreateButton("#1", Color.FromArgb(34, 36, 46), Color.FromArgb(147, 197, 253), 38, 24);
+            _btnFocus1 = CreateButton("#1", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
             _btnFocus1.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnFocus1.Location = new Point(_statusPanel.Width - 175, 6);
             _btnFocus1.Click += delegate { _engine.FocusInstance(5554); };
 
-            _btnFocus2 = CreateButton("#2", Color.FromArgb(34, 36, 46), Color.FromArgb(147, 197, 253), 38, 24);
+            _btnFocus2 = CreateButton("#2", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
             _btnFocus2.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnFocus2.Location = new Point(_statusPanel.Width - 133, 6);
             _btnFocus2.Click += delegate { _engine.FocusInstance(5556); };
 
-            _btnFocus3 = CreateButton("#3", Color.FromArgb(34, 36, 46), Color.FromArgb(147, 197, 253), 38, 24);
+            _btnFocus3 = CreateButton("#3", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
             _btnFocus3.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnFocus3.Location = new Point(_statusPanel.Width - 91, 6);
             _btnFocus3.Click += delegate { _engine.FocusInstance(5558); };
 
-            _btnFocus4 = CreateButton("#4", Color.FromArgb(34, 36, 46), Color.FromArgb(147, 197, 253), 38, 24);
+            _btnFocus4 = CreateButton("#4", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
             _btnFocus4.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnFocus4.Location = new Point(_statusPanel.Width - 49, 6);
             _btnFocus4.Click += delegate { _engine.FocusInstance(5560); };
@@ -403,22 +405,121 @@ namespace DofusFarm.UI
             this.Controls.Add(_statusPanel);
             this.Controls.Add(_toolbarPanel);
             this.Controls.Add(_headerPanel);
+
+            // Real-time background status sync timer (4s interval, only redraws when state changes)
+            _syncTimer = new System.Windows.Forms.Timer { Interval = 4000 };
+            _syncTimer.Tick += OnSyncTimerTick;
+            _syncTimer.Start();
         }
 
-        private Button CreateButton(string text, Color backColor, Color foreColor, int width, int height)
+        private Button CreateButton(string text, Color baseColor, Color hoverColor, Color foreColor, int width, int height, bool bold)
         {
             Button btn = new Button
             {
                 Text = text,
-                BackColor = backColor,
+                BackColor = baseColor,
                 ForeColor = foreColor,
                 FlatStyle = FlatStyle.Flat,
                 Width = width,
                 Height = height,
+                Font = new Font("Segoe UI", 9f, bold ? FontStyle.Bold : FontStyle.Regular),
                 Cursor = Cursors.Hand
             };
             btn.FlatAppearance.BorderSize = 0;
+            btn.MouseEnter += delegate { if (btn.Enabled) btn.BackColor = hoverColor; };
+            btn.MouseLeave += delegate { if (btn.Enabled) btn.BackColor = baseColor; };
             return btn;
+        }
+
+        /// <summary>
+        /// Custom GDI+ renderer for commercial-grade pill status badges and action buttons in the DataGridView.
+        /// </summary>
+        private void OnGridCellPainting(object sender, DataGridViewCellPaintingEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            string colName = _grid.Columns[e.ColumnIndex].Name;
+            if (colName != "Status" && colName != "Action" && colName != "Edit" && colName != "Clone" && colName != "Delete")
+                return;
+
+            e.PaintBackground(e.ClipBounds, true);
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            DataGridViewRow row = _grid.Rows[e.RowIndex];
+            InstanceModel inst = row.Tag as InstanceModel;
+            bool isRunning = inst != null && inst.IsRunning;
+
+            if (colName == "Status")
+            {
+                Rectangle pillRect = new Rectangle(e.CellBounds.X + 8, e.CellBounds.Y + 9, e.CellBounds.Width - 16, e.CellBounds.Height - 18);
+                Color pillBg = isRunning ? Color.FromArgb(16, 52, 42) : Color.FromArgb(30, 33, 44);
+                Color pillText = isRunning ? Color.FromArgb(52, 211, 153) : Color.FromArgb(148, 163, 184);
+                string label = isRunning ? "● Running" : "● Stopped";
+
+                using (SolidBrush bg = new SolidBrush(pillBg))
+                {
+                    g.FillRectangle(bg, pillRect);
+                }
+                TextRenderer.DrawText(g, label, new Font("Segoe UI", 8.5f, FontStyle.Bold), pillRect, pillText,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                e.Handled = true;
+                return;
+            }
+
+            // Action / Edit / Clone / Delete buttons
+            Rectangle btnRect = new Rectangle(e.CellBounds.X + 6, e.CellBounds.Y + 8, e.CellBounds.Width - 12, e.CellBounds.Height - 16);
+            Color btnBg = Color.FromArgb(38, 42, 56);
+            Color btnBorder = Color.FromArgb(55, 62, 82);
+            Color btnFg = Color.White;
+            string btnText = (e.Value ?? "").ToString();
+
+            if (colName == "Action")
+            {
+                if (isRunning)
+                {
+                    btnBg = Color.FromArgb(153, 27, 27);
+                    btnBorder = Color.FromArgb(220, 38, 38);
+                    btnText = "Stop";
+                }
+                else
+                {
+                    btnBg = Color.FromArgb(29, 78, 216);
+                    btnBorder = Color.FromArgb(59, 130, 246);
+                    btnText = "Launch";
+                }
+            }
+            else if (colName == "Edit")
+            {
+                btnBg = Color.FromArgb(30, 41, 59);
+                btnBorder = Color.FromArgb(71, 85, 105);
+                btnFg = Color.FromArgb(147, 197, 253);
+                btnText = "Edit";
+            }
+            else if (colName == "Clone")
+            {
+                btnBg = Color.FromArgb(30, 41, 59);
+                btnBorder = Color.FromArgb(71, 85, 105);
+                btnFg = Color.FromArgb(251, 191, 36);
+                btnText = "Clone";
+            }
+            else if (colName == "Delete")
+            {
+                btnBg = Color.FromArgb(45, 26, 34);
+                btnBorder = Color.FromArgb(127, 29, 29);
+                btnFg = Color.FromArgb(248, 113, 113);
+                btnText = "Delete";
+            }
+
+            using (SolidBrush bg = new SolidBrush(btnBg))
+            using (Pen pen = new Pen(btnBorder, 1f))
+            {
+                g.FillRectangle(bg, btnRect);
+                g.DrawRectangle(pen, btnRect);
+            }
+            TextRenderer.DrawText(g, btnText, new Font("Segoe UI", 8.5f, FontStyle.Bold), btnRect, btnFg,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            e.Handled = true;
         }
 
         private void InitializeEngine()
@@ -426,7 +527,6 @@ namespace DofusFarm.UI
             _engine = new FarmEngine();
             _engine.OnLog += Log;
 
-            // Self-Heal Watchdog and Priority Governor are always active automatically
             _watchdog = new FarmWatchdog(_engine);
             _watchdog.OnLog += Log;
             _watchdog.Start();
@@ -444,7 +544,7 @@ namespace DofusFarm.UI
                     {
                         if (_specs != null)
                         {
-                            _specsLabel.Text = string.Format("PC: {0} • {1} • {2} GB RAM ({3} GB Free) • {4} Threads",
+                            _specsLabel.Text = string.Format("PC: {0}  •  {1}  •  {2} GB RAM ({3} GB Free)  •  {4} Threads",
                                 _specs.CpuName, _specs.GpuName, _specs.HostRamGB, _specs.FreeRamGB, _specs.LogicalThreads);
                             if (_specs.HostRamGB >= 15.5)
                             {
@@ -452,7 +552,7 @@ namespace DofusFarm.UI
                                 _cmbCores.SelectedIndex = 1; // 2 Cores
                             }
                         }
-                        RefreshGrid();
+                        RefreshGrid(true);
                     });
                 }
                 catch { }
@@ -462,7 +562,13 @@ namespace DofusFarm.UI
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            RefreshGrid();
+            RefreshGrid(true);
+        }
+
+        private void OnSyncTimerTick(object sender, EventArgs e)
+        {
+            if (_isClosing || _isFarmLaunching) return;
+            RefreshGrid(false);
         }
 
         private void Log(string msg)
@@ -479,7 +585,6 @@ namespace DofusFarm.UI
             catch { }
 
             if (this.IsDisposed || _isClosing || !this.IsHandleCreated) return;
-            // Show only clean user-relevant status updates on the status bar
             if (!msg.Contains("[GOVERNOR]") && !msg.Contains("[SECURITY]"))
             {
                 SafeBeginInvoke(delegate
@@ -487,7 +592,7 @@ namespace DofusFarm.UI
                     if (_lblStatusText != null && !this.IsDisposed)
                     {
                         string clean = Regex.Replace(msg, @"^\[\d{2}:\d{2}:\d{2}\]\s*", "");
-                        _lblStatusText.Text = "● " + clean;
+                        _lblStatusText.Text = clean;
                     }
                 });
             }
@@ -507,14 +612,36 @@ namespace DofusFarm.UI
             return m.Success ? int.Parse(m.Groups[1].Value) : 1;
         }
 
-        private void RefreshGrid()
+        private void RefreshGrid(bool forceRedraw = true)
         {
+            if (Interlocked.CompareExchange(ref _isSyncing, 1, 0) != 0 && !forceRedraw) return;
+
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
                     if (_isClosing) return;
                     List<InstanceModel> list = _engine.GetInstances();
+
+                    // Build lightweight state signature so periodic timer only redraws when state actually changes
+                    System.Text.StringBuilder sigBuilder = new System.Text.StringBuilder();
+                    foreach (InstanceModel im in list)
+                    {
+                        sigBuilder.Append(im.Name).Append(':')
+                                  .Append(im.CustomName).Append(':')
+                                  .Append(im.IsRunning ? '1' : '0').Append(':')
+                                  .Append(im.RamMb).Append(':')
+                                  .Append(im.Cores).Append(':')
+                                  .Append(im.PhoneModelId).Append(':')
+                                  .Append(im.Proxy).Append(';');
+                    }
+                    string newSig = sigBuilder.ToString();
+                    if (!forceRedraw && string.Equals(newSig, _lastStateSignature, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+                    _lastStateSignature = newSig;
+
                     SafeInvoke(delegate
                     {
                         string selectedName = null;
@@ -530,45 +657,31 @@ namespace DofusFarm.UI
                             if (inst.IsRunning) runningCount++;
                             string proxyDisplay = inst.Proxy ?? "127.0.0.1:8880";
                             if (proxyDisplay.Contains("127.0.0.1") || proxyDisplay.Contains("Accelerator"))
-                                proxyDisplay = "⚡ Built-in Accelerator";
+                                proxyDisplay = "Built-in Accelerator";
                             else
-                                proxyDisplay = "🌐 " + proxyDisplay.Replace("[🌐] ", "");
+                                proxyDisplay = proxyDisplay.Replace("[🌐] ", "");
 
                             int rowIdx = _grid.Rows.Add(
-                                inst.IsRunning ? "● RUNNING" : "○ STOPPED",
+                                inst.IsRunning ? "Running" : "Stopped",
                                 inst.CustomName ?? inst.DisplayName,
                                 inst.Name,
                                 inst.RamMb + " MB",
                                 inst.Cores + (inst.Cores == 1 ? " Core" : " Cores"),
-                                "📱 " + (inst.PhoneModelName ?? "Galaxy Tab S6"),
+                                inst.PhoneModelName ?? "Galaxy Tab S6",
                                 proxyDisplay,
                                 inst.IsRunning ? "Stop" : "Launch",
-                                "✏️ Edit",
-                                "📋 Clone",
-                                "🗑️ Delete"
+                                "Edit",
+                                "Clone",
+                                "Delete"
                             );
 
                             DataGridViewRow row = _grid.Rows[rowIdx];
                             row.Tag = inst;
                             row.Cells["CustomName"].Style.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
                             row.Cells["CustomName"].Style.ForeColor = Color.White;
-                            row.Cells["Name"].Style.ForeColor = Color.FromArgb(140, 145, 160);
-                            row.Cells["Device"].Style.ForeColor = Color.FromArgb(220, 225, 235);
-                            row.Cells["Proxy"].Style.ForeColor = Color.FromArgb(175, 180, 195);
-
-                            if (inst.IsRunning)
-                            {
-                                row.Cells["Status"].Style.ForeColor = Color.FromArgb(52, 211, 153);
-                                row.Cells["Action"].Style.ForeColor = Color.FromArgb(239, 68, 68);
-                            }
-                            else
-                            {
-                                row.Cells["Status"].Style.ForeColor = Color.FromArgb(140, 145, 155);
-                                row.Cells["Action"].Style.ForeColor = Color.FromArgb(59, 130, 246);
-                            }
-                            row.Cells["Edit"].Style.ForeColor = Color.FromArgb(96, 165, 250);
-                            row.Cells["Clone"].Style.ForeColor = Color.FromArgb(245, 158, 11);
-                            row.Cells["Delete"].Style.ForeColor = Color.FromArgb(244, 63, 94);
+                            row.Cells["Name"].Style.ForeColor = Color.FromArgb(148, 163, 184);
+                            row.Cells["Device"].Style.ForeColor = Color.FromArgb(226, 232, 240);
+                            row.Cells["Proxy"].Style.ForeColor = Color.FromArgb(148, 163, 184);
 
                             if (!string.IsNullOrEmpty(selectedName) && string.Equals(inst.Name, selectedName, StringComparison.OrdinalIgnoreCase))
                             {
@@ -577,7 +690,7 @@ namespace DofusFarm.UI
                         }
 
                         int count = list.Count > 0 ? list.Count : 4;
-                        _btnLaunchFarm.Text = string.Format("🚀 Launch All ({0}x)", count);
+                        _btnLaunchFarm.Text = string.Format("Launch All ({0}x)", count);
 
                         if (runningCount > 0)
                         {
@@ -586,12 +699,16 @@ namespace DofusFarm.UI
                         }
                         else
                         {
-                            _lblActiveBadge.Text = string.Format("○ 0 / {0} Running", list.Count);
-                            _lblActiveBadge.ForeColor = Color.FromArgb(156, 163, 175);
+                            _lblActiveBadge.Text = string.Format("● 0 / {0} Running", list.Count);
+                            _lblActiveBadge.ForeColor = Color.FromArgb(148, 163, 184);
                         }
                     });
                 }
                 catch { }
+                finally
+                {
+                    Interlocked.Exchange(ref _isSyncing, 0);
+                }
             });
         }
 
@@ -606,8 +723,8 @@ namespace DofusFarm.UI
                 try
                 {
                     int updated = _engine.ApplyHardwareToAllInstances(ram, cores);
-                    Log(string.Format("Applied {0} MB RAM and {1} CPU Core(s) across {2} instance(s).", ram, cores, updated));
-                    RefreshGrid();
+                    Log(string.Format("Applied {0} MB RAM and {1} CPU Core(s) across {2} stopped instance(s).", ram, cores, updated));
+                    RefreshGrid(true);
                 }
                 catch (Exception ex)
                 {
@@ -664,7 +781,7 @@ namespace DofusFarm.UI
                     if (_isClosing || !_isFarmLaunching) return;
                     SafeInvoke(delegate
                     {
-                        RefreshGrid();
+                        RefreshGrid(true);
                         OnRelayoutClick(null, null);
                     });
 
@@ -672,7 +789,7 @@ namespace DofusFarm.UI
                     if (_isClosing || !_isFarmLaunching) return;
                     SafeInvoke(delegate
                     {
-                        RefreshGrid();
+                        RefreshGrid(true);
                         OnRelayoutClick(null, null);
                     });
                 }
@@ -704,7 +821,7 @@ namespace DofusFarm.UI
                     Thread.Sleep(500);
                     SafeInvoke(delegate
                     {
-                        RefreshGrid();
+                        RefreshGrid(true);
                     });
                 }
                 catch (Exception ex)
@@ -818,7 +935,7 @@ namespace DofusFarm.UI
                         try
                         {
                             _engine.ProvisionInstance(nextSlot, ram, cores, profileId, customName, proxy);
-                            RefreshGrid();
+                            RefreshGrid(true);
                         }
                         catch (Exception ex)
                         {
@@ -833,7 +950,7 @@ namespace DofusFarm.UI
         {
             if (_grid.SelectedRows.Count == 0)
             {
-                MessageBox.Show("Select an instance in the table first to edit it.", "Edit Instance", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Select an instance in the table first to edit its settings.", "Edit Instance", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             InstanceModel inst = _grid.SelectedRows[0].Tag as InstanceModel;
@@ -858,18 +975,47 @@ namespace DofusFarm.UI
                 if (dlg.ShowDialog(this) == DialogResult.OK)
                 {
                     string slotName = inst.Name;
+                    string slotSerial = inst.Serial;
+                    int slotPort = inst.Port;
+                    bool wasRunning = inst.IsRunning;
+
                     string customName = dlg.InstanceCustomName;
                     int ram = dlg.SelectedRamMb;
                     int cores = dlg.SelectedCores;
                     string profileId = dlg.SelectedProfileId;
                     string proxy = dlg.SelectedProxy;
 
+                    bool hwOrNetChanged = (ram != inst.RamMb) ||
+                                          (cores != inst.Cores) ||
+                                          !string.Equals(profileId, inst.PhoneModelId, StringComparison.OrdinalIgnoreCase);
+
+                    bool restartNow = false;
+                    if (wasRunning && hwOrNetChanged)
+                    {
+                        DialogResult dr = MessageBox.Show(
+                            string.Format("'{0}' is currently running.\n\nWould you like to restart it now so the new RAM / CPU / device settings take effect immediately?", customName),
+                            "Apply Changes Now?",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Question);
+                        restartNow = (dr == DialogResult.Yes);
+                    }
+
                     ThreadPool.QueueUserWorkItem(delegate
                     {
                         try
                         {
+                            if (restartNow)
+                            {
+                                _engine.StopInstance(slotSerial, slotName);
+                                Thread.Sleep(800);
+                            }
                             _engine.UpdateInstanceConfig(slotName, customName, ram, cores, profileId, proxy);
-                            RefreshGrid();
+                            if (restartNow)
+                            {
+                                _engine.LaunchInstance(slotName, slotPort, ram, cores, proxy);
+                                Thread.Sleep(1500);
+                            }
+                            RefreshGrid(true);
                         }
                         catch (Exception ex)
                         {
@@ -906,7 +1052,7 @@ namespace DofusFarm.UI
                             _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, inst.Proxy);
                         }
                         Thread.Sleep(800);
-                        RefreshGrid();
+                        RefreshGrid(true);
                     }
                     catch (Exception ex)
                     {
@@ -918,7 +1064,7 @@ namespace DofusFarm.UI
                     }
                 });
             }
-            // 2. Edit Instance (Name, RAM, CPU Cores, Phone Model, Proxy)
+            // 2. Edit Instance
             else if (e.ColumnIndex == _grid.Columns["Edit"].Index)
             {
                 OpenEditDialogForInstance(inst);
@@ -945,7 +1091,7 @@ namespace DofusFarm.UI
                                 if (_isClosing) return;
                                 _engine.CloneInstance(srcName, targetSlot, cloneState, targetCustom);
                                 Thread.Sleep(800);
-                                RefreshGrid();
+                                RefreshGrid(true);
                             }
                             catch (Exception ex)
                             {
@@ -979,7 +1125,7 @@ namespace DofusFarm.UI
                             if (_isClosing) return;
                             _engine.DeleteInstance(nameToDelete);
                             Thread.Sleep(600);
-                            RefreshGrid();
+                            RefreshGrid(true);
                         }
                         catch (Exception ex)
                         {
@@ -1010,6 +1156,10 @@ namespace DofusFarm.UI
             _isClosing = true;
             _isFarmLaunching = false;
 
+            if (_syncTimer != null)
+            {
+                try { _syncTimer.Stop(); _syncTimer.Dispose(); } catch { }
+            }
             if (_engine != null) _engine.OnLog -= Log;
             if (_watchdog != null)
             {
@@ -1077,8 +1227,7 @@ namespace DofusFarm.UI
 
             int y = 20;
 
-            // 1. Instance Name
-            Label lblName = new Label { Text = "Instance Name:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(200, 205, 215) };
+            Label lblName = new Label { Text = "Instance Name:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
             _txtCustomName = new TextBox
             {
                 Text = currentCustomName ?? slotName,
@@ -1091,8 +1240,7 @@ namespace DofusFarm.UI
             };
             y += 45;
 
-            // 2. RAM & CPU Cores Allocation
-            Label lblRam = new Label { Text = "RAM Allocation:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(200, 205, 215) };
+            Label lblRam = new Label { Text = "RAM Allocation:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
             _cmbRam = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
@@ -1111,7 +1259,7 @@ namespace DofusFarm.UI
             }
             _cmbRam.SelectedIndex = ramIdx;
 
-            Label lblCores = new Label { Text = "CPU Cores:", Location = new Point(320, y + 3), AutoSize = true, ForeColor = Color.FromArgb(200, 205, 215) };
+            Label lblCores = new Label { Text = "CPU Cores:", Location = new Point(320, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
             _cmbCores = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
@@ -1131,8 +1279,7 @@ namespace DofusFarm.UI
             _cmbCores.SelectedIndex = coreIdx;
             y += 45;
 
-            // 3. Phone Identity Spoofing
-            Label lblPhone = new Label { Text = "Phone Identity:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(200, 205, 215) };
+            Label lblPhone = new Label { Text = "Device Profile:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
             _cmbProfiles = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
@@ -1153,10 +1300,10 @@ namespace DofusFarm.UI
 
             _btnRandomProfile = new Button
             {
-                Text = "🎲 Random",
+                Text = "Random",
                 Location = new Point(406, y - 1),
                 Size = new Size(74, 26),
-                BackColor = Color.FromArgb(124, 58, 237),
+                BackColor = Color.FromArgb(79, 70, 229),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
@@ -1173,8 +1320,7 @@ namespace DofusFarm.UI
             };
             y += 45;
 
-            // 4. Proxy / Network
-            Label lblProxy = new Label { Text = "Proxy (Optional):", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(200, 205, 215) };
+            Label lblProxy = new Label { Text = "Proxy (Optional):", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
             string cleanProxy = (currentProxy ?? "").Trim();
             if (cleanProxy.StartsWith("[🌐] ")) cleanProxy = cleanProxy.Substring(5).Trim();
             if (cleanProxy.StartsWith("[⚡]") || cleanProxy.Contains("127.0.0.1:8880") || cleanProxy.Contains("Accelerator")) cleanProxy = "";
@@ -1195,14 +1341,14 @@ namespace DofusFarm.UI
                 Text = "Format: IP:Port (leave blank to use the built-in high-speed network accelerator).",
                 Location = new Point(165, y + 28),
                 Size = new Size(320, 32),
-                ForeColor = Color.FromArgb(140, 145, 160),
+                ForeColor = Color.FromArgb(148, 163, 184),
                 Font = new Font("Segoe UI", 8.2f)
             };
             y += 75;
 
             _btnSave = new Button
             {
-                Text = isNew ? "➕ Create Instance" : "💾 Save Changes",
+                Text = isNew ? "Create Instance" : "Save Changes",
                 DialogResult = DialogResult.OK,
                 Location = new Point(235, y),
                 Size = new Size(145, 36),
@@ -1290,7 +1436,7 @@ namespace DofusFarm.UI
                 Text = string.Format("Clone '{0}' into slot {1} with a unique hardware identity:", sourceDisplayName, targetSlotName),
                 Location = new Point(20, 16),
                 Size = new Size(390, 28),
-                ForeColor = Color.FromArgb(200, 205, 215)
+                ForeColor = Color.FromArgb(203, 213, 225)
             };
 
             Label lblName = new Label { Text = "New Instance Name:", Location = new Point(20, 56), AutoSize = true };
@@ -1315,7 +1461,7 @@ namespace DofusFarm.UI
 
             _btnOk = new Button
             {
-                Text = "📋 Clone Now",
+                Text = "Clone Instance",
                 DialogResult = DialogResult.OK,
                 Location = new Point(195, 142),
                 Size = new Size(115, 34),
