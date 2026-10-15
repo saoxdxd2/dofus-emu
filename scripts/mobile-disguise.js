@@ -576,4 +576,46 @@
             }
         }
     } catch (e) {}
+
+    // 14. Dofus Touch WebGL Context Optimizer, Context-Loss Auto-Recovery & Always-Active Frame Booster
+    try {
+        if (typeof HTMLCanvasElement !== 'undefined' && HTMLCanvasElement.prototype && HTMLCanvasElement.prototype.getContext) {
+            var origCanvasGetCtx = HTMLCanvasElement.prototype.getContext;
+            var hookedCanvases = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+            HTMLCanvasElement.prototype.getContext = makeNative(function getContext(type, attrs) {
+                if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {
+                    var opts = (attrs && typeof attrs === 'object') ? Object.assign({}, attrs) : {};
+                    opts.powerPreference = 'high-performance';
+                    opts.failIfMajorPerformanceCaveat = false;
+                    if (opts.antialias === undefined) opts.antialias = false;
+                    if (hookedCanvases && !hookedCanvases.has(this)) {
+                        hookedCanvases.add(this);
+                        this.addEventListener('webglcontextlost', function(e) { if (e && e.preventDefault) e.preventDefault(); }, false);
+                    }
+                    var glCtx = origCanvasGetCtx.call(this, type, opts);
+                    if (glCtx) wrapContext(Object.getPrototypeOf(glCtx));
+                    return glCtx;
+                }
+                return origCanvasGetCtx.apply(this, arguments);
+            }, 'getContext');
+        }
+
+        if (typeof Document !== 'undefined' && Document.prototype) {
+            defineGetters(Document.prototype, {
+                hidden: function() { return false; },
+                webkitHidden: function() { return false; },
+                visibilityState: function() { return 'visible'; },
+                webkitVisibilityState: function() { return 'visible'; }
+            });
+            Document.prototype.hasFocus = makeNative(function hasFocus() { return true; }, 'hasFocus');
+        }
+
+        var suppressBgThrottle = function(e) {
+            if (e && (e.type === 'visibilitychange' || e.type === 'webkitvisibilitychange' || e.type === 'freeze' || e.type === 'pagehide')) {
+                e.stopImmediatePropagation();
+            }
+        };
+        document.addEventListener('visibilitychange', suppressBgThrottle, true);
+        window.addEventListener('pagehide', suppressBgThrottle, true);
+    } catch (e) {}
 })();

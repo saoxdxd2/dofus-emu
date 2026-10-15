@@ -186,7 +186,7 @@ if (Test-Path $qemuImg) {
             # from compressing the raw ext4 payload (~4.5:1), so the shipped archive
             # would GROW by ~300 MB (measured live). Uncompressed qcow2 is also
             # zero-overhead at runtime (no zlib inflate on the boot path).
-            & $qemuImg convert -c -O qcow2 -p $img $tmp 2>$null | Out-Null
+            & $qemuImg convert -O qcow2 -p $img $tmp 2>$null | Out-Null
             if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmp)) {
                 Write-Host " FAILED (keeping original image)" -ForegroundColor Red
                 if (Test-Path $tmp) { Remove-Item $tmp -Force }

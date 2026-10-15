@@ -430,10 +430,15 @@ namespace DofusFarm.UI
                         {
                             _specsLabel.Text = string.Format("PC: {0}  •  {1}  •  {2} GB RAM ({3} GB Free)  •  {4} Threads",
                                 _specs.CpuName, _specs.GpuName, _specs.HostRamGB, _specs.FreeRamGB, _specs.LogicalThreads);
-                            if (_specs.HostRamGB >= 15.5)
+                            if (_specs.HostRamGB < 8.0)
                             {
-                                _cmbRam.SelectedIndex = 3;
-                                _cmbCores.SelectedIndex = 1;
+                                _cmbRam.SelectedIndex = 0; // 512 MB ultra-light multi-instance mode
+                                _cmbCores.SelectedIndex = 0; // 1 Core
+                            }
+                            else
+                            {
+                                _cmbRam.SelectedIndex = 2; // 1024 MB recommended multi-instance sweet spot
+                                _cmbCores.SelectedIndex = 0; // 1 Core per instance for 4-16+ instances
                             }
                         }
                         RefreshGrid(true);

@@ -389,9 +389,18 @@ namespace DofusFarm.Engine
                     Log("Renderer check: no hardware GPU adapter usable - defaulting to SwiftShader (software) rendering.");
                     return "swiftshader_indirect";
                 }
-                bool ded = new[] { "nvidia", "geforce", "radeon", "amd", "arc " }.Any(adapters.Contains);
-                Log(string.Format("Renderer check: {0} GPU detected - using Host (DirectGL) rendering: {1}.", ded ? "dedicated" : "integrated", adapters));
-                return "host";
+                if (new[] { "nvidia", "geforce", "radeon", "amd", "arc " }.Any(adapters.Contains))
+                {
+                    Log("Renderer check: dedicated GPU detected - using Host (DirectGL) rendering: " + adapters + ".");
+                    return "host";
+                }
+                if (new[] { "intel", "uhd", "iris", "hd graphics" }.Any(adapters.Contains))
+                {
+                    Log("Renderer check: Intel integrated GPU detected - using ANGLE (Direct3D 11) to prevent WebGL buffer corruption: " + adapters + ".");
+                    return "angle_indirect";
+                }
+                Log("Renderer check: integrated GPU detected - using ANGLE (Direct3D 11) rendering: " + adapters + ".");
+                return "angle_indirect";
             }
             catch { return "host"; }
         }
@@ -823,7 +832,10 @@ namespace DofusFarm.Engine
                 "ro.build.fingerprint={10}\r\nro.system.build.fingerprint={10}\r\nro.vendor.build.fingerprint={10}\r\nro.bootimage.build.fingerprint={10}\r\n" +
                 "ro.build.display.id={11}\r\nro.build.description={3}-user {14} {11} release-keys\r\nro.system.build.type=user\r\nro.system.build.tags=release-keys\r\n" +
                 "qemu.hw.mainkeys=1\r\nro.serialno={12}\r\nro.boot.serialno={12}\r\ngsm.sim.state=READY\r\ngsm.sim.operator.numeric=20801\r\ngsm.sim.operator.alpha=Orange\r\ngsm.network.type=LTE\r\n" +
-                "config.disable_animations=1\r\npm.dexopt.boot=verify\r\npm.dexopt.first-boot=verify\r\npm.dexopt.install=quicken\r\ndalvik.vm.dex2oat-filter=verify\r\n" +
+                "config.disable_animations=1\r\nro.config.low_ram=false\r\nro.opengles.version=196608\r\ndebug.hwui.renderer=opengl\r\n" +
+                "debug.sf.hw=1\r\ndebug.egl.hw=1\r\ndebug.composition.type=gpu\r\ndebug.sf.latch_unsignaled=1\r\ndebug.sf.disable_backpressure=1\r\n" +
+                "pm.dexopt.boot=verify\r\npm.dexopt.first-boot=verify\r\npm.dexopt.install=speed-profile\r\n" +
+                "dalvik.vm.dex2oat-filter=speed-profile\r\ndalvik.vm.image-dex2oat-filter=verify\r\n" +
                 "dalvik.vm.dex2oat-threads={13}\r\ndalvik.vm.image-dex2oat-threads={13}\r\ndalvik.vm.boot-dex2oat-threads={13}\r\n" +
                 "persist.sys.strictmode.disable=true\r\npersist.sys.strictmode.visual=false\r\ndalvik.vm.checkjni=false\r\nro.config.hw_quickpoweron=true\r\nro.config.nocheckin=1\r\n" +
                 "persist.sys.disable_rescue=true\r\nsys.wifitracing.started=0\r\npersist.traced.enable=0\r\npersist.sys.timezone=Europe/Paris\r\npersist.sys.country=FR\r\npersist.sys.language=fr\r\npersist.sys.locale=fr-FR\r\n",
@@ -911,7 +923,7 @@ namespace DofusFarm.Engine
         private void UpdateConfigIni(string cfgFile, string name, int ramMb, int cores, DeviceProfile profile = null)
         {
             profile = profile ?? DeviceCatalog.GetProfile("galaxy-tab-s6");
-            int safeRam = Math.Max(1024, ramMb), safeCores = Math.Max(1, cores);
+            int safeRam = Math.Max(512, ramMb), safeCores = Math.Max(1, cores);
 
             var existing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (File.Exists(cfgFile))
@@ -1270,7 +1282,7 @@ namespace DofusFarm.Engine
 
         public void LaunchInstance(string name, int port, int ramMb, int cores, string proxy = null)
         {
-            int safeRam = Math.Max(1024, ramMb), safeCores = Math.Max(1, cores);
+            int safeRam = Math.Max(512, ramMb), safeCores = Math.Max(1, cores);
             string avdDir = Path.Combine(AvdHome, name + ".avd");
             int launchGen = BumpLaunchGen(port);
             if (TryAdoptRunningInstance(name, port)) return;
@@ -1308,7 +1320,7 @@ namespace DofusFarm.Engine
 
             string emuArgs = (instProfile != null && string.Equals(instProfile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
                 ? BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
                     name, port, gpuMode, safeRam, safeCores, proxyArg);
 
             Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / GPU: {4} / {5})...", name, port, safeRam, safeCores, gpuMode, instProfile.DisplayName));
@@ -1449,8 +1461,9 @@ namespace DofusFarm.Engine
             string zramPath = GetScriptPath("apply-zram.sh");
             if (!string.IsNullOrEmpty(zramPath) && File.Exists(zramPath) && !AdbShell(serial, "grep -q zram0 /proc/swaps && echo ACTIVE || echo NONE").Contains("ACTIVE"))
             {
+                int zramMb = ramMb <= 768 ? (ramMb * 3 / 4) : (ramMb / 2);
                 Adb(serial, string.Format("push \"{0}\" /data/local/tmp/apply-zram.sh", zramPath));
-                AdbShell(serial, "chmod 755 /data/local/tmp/apply-zram.sh && sh /data/local/tmp/apply-zram.sh >/dev/null 2>&1 || true");
+                AdbShell(serial, string.Format("chmod 755 /data/local/tmp/apply-zram.sh && sh /data/local/tmp/apply-zram.sh {0} >/dev/null 2>&1 || true", zramMb));
             }
 
             if (needsSanitize)
@@ -1473,10 +1486,16 @@ namespace DofusFarm.Engine
                 finally { SafeDeleteFile(tempDisguise); }
             }
 
-            string heapLimit = (ramMb >= 8192) ? "1024m" : (ramMb >= 4096) ? "512m" : (ramMb >= 2048) ? "384m" : (ramMb >= 1024) ? "256m" : "192m";
+            string heapLimit = (ramMb >= 8192) ? "1024m" : (ramMb >= 4096) ? "512m" : (ramMb >= 2048) ? "384m" : (ramMb >= 1024) ? "256m" : (ramMb >= 768) ? "192m" : "160m";
+            int rasterThreads = Math.Max(1, Math.Min(2, cores));
             string combinedSetupCmd =
-                "echo '_ --enable-devtools-experiments --remote-debugging-port=9222 --disable-background-timer-throttling' > /data/local/tmp/webview-command-line; " +
-                "chmod 644 /data/local/tmp/webview-command-line /data/local/tmp/mobile-disguise.js 2>/dev/null || true; " +
+                "setprop debug.hwui.renderer opengl; " +
+                "setprop debug.sf.hw 1; setprop debug.egl.hw 1; setprop debug.sf.latch_unsignaled 1; setprop debug.sf.disable_backpressure 1; " +
+                "sysctl -w vm.swappiness=80 vm.vfs_cache_pressure=150 vm.overcommit_memory=1 >/dev/null 2>&1 || true; " +
+                "WV_FLAGS='_ --ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --enable-webgl-draft-extensions --in-process-gpu --renderer-process-limit=1 --num-raster-threads=" + rasterThreads + " --gpu-rasterization-msaa-sample-count=0 --disable-gpu-vsync --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --max-untiled-layer-width=1024 --max-untiled-layer-height=1024 --enable-devtools-experiments --remote-debugging-port=9222'; " +
+                "echo \"$WV_FLAGS\" > /data/local/tmp/webview-command-line; " +
+                "echo \"$WV_FLAGS\" > /data/local/webview-command-line 2>/dev/null || true; " +
+                "chmod 644 /data/local/tmp/webview-command-line /data/local/webview-command-line /data/local/tmp/mobile-disguise.js 2>/dev/null || true; " +
                 "for dst in /data/user/0/com.ankama.dofustouch/files/files/js /data/data/com.ankama.dofustouch/files/files/js /data/user/0/com.ankama.dofustouch/files/js /data/data/com.ankama.dofustouch/files/js; do " +
                 "  mkdir -p $dst; cp -f /data/local/tmp/mobile-disguise.js $dst/mobile-disguise.js 2>/dev/null || true; " +
                 "done; " +
@@ -1501,7 +1520,12 @@ namespace DofusFarm.Engine
                 "  echo $DEBLOAT_V > /data/local/tmp/.dofus_debloat_ver; " +
                 "  echo \"debloat: v4 pass complete - $DISABLED package(s) disabled, $EN critical package(s) enabled\"; " +
                 "else echo 'debloat: instance already stripped'; fi; " +
-                "echo -n 'debloat: total disabled packages now = '; pm list packages -d 2>/dev/null | wc -l";
+                "echo -n 'debloat: total disabled packages now = '; pm list packages -d 2>/dev/null | wc -l; " +
+                "GLES_INFO=$(dumpsys SurfaceFlinger 2>/dev/null | grep 'GLES:' | head -n 1); " +
+                "WV_INFO=$(dumpsys webviewupdate 2>/dev/null | grep -E 'Current WebView package|Valid:' | tr '\n' ' '); " +
+                "EGL_OK=$(ls /vendor/lib64/egl/libGLESv2_emulation.so /system/fonts/Roboto-Regular.ttf 2>/dev/null | wc -l); " +
+                "echo \"debloat: webgl-stack EGL+Fonts=$EGL_OK/2 | $GLES_INFO | $WV_INFO\"; " +
+                "am force-stop com.ankama.dofustouch 2>/dev/null || true";
 
             string setupOut = AdbShell(serial, combinedSetupCmd) ?? "";
             string setupShort = setupOut.Replace("\r", " ").Replace("\n", " ").Trim();
@@ -1512,7 +1536,12 @@ namespace DofusFarm.Engine
             Adb(serial, "unroot", 6000);
             Thread.Sleep(250);
 
-            if (!shutdownAfterSnapshot) { AdbShell(serial, WakeAndStartCmd); Thread.Sleep(1500); }
+            if (!shutdownAfterSnapshot)
+            {
+                AdbShell(serial, WakeAndStartCmd);
+                Thread.Sleep(1500);
+                AdbShell(serial, "for p in $(pidof com.ankama.dofustouch webview_zygote 2>/dev/null); do echo -800 > /proc/$p/oom_score_adj 2>/dev/null || true; done");
+            }
 
             try
             {
@@ -1529,7 +1558,7 @@ namespace DofusFarm.Engine
 
         public void WarmInstanceColdRunSync(string name, int port, int ramMb, int cores)
         {
-            ramMb = Math.Max(1024, ramMb);
+            ramMb = Math.Max(512, ramMb);
             cores = Math.Max(1, cores);
             EnsureAdvancedFeatures();
             string avdDir = Path.Combine(AvdHome, name + ".avd");
@@ -2010,7 +2039,7 @@ namespace DofusFarm.Engine
                     Log(string.Format("Resuming active source instance '{0}' post-clone...", sourceName));
                     int srcRam = 1024, srcCores = 1;
                     ReadConfigRamCores(srcCfg, ref srcRam, ref srcCores);
-                    LaunchInstance(sourceName, srcPort, srcRam > 0 ? srcRam : 1536, srcCores > 0 ? srcCores : 2, GetProxy(sourceName));
+                    LaunchInstance(sourceName, srcPort, srcRam > 0 ? srcRam : 1024, srcCores > 0 ? srcCores : 1, GetProxy(sourceName));
                 }
             }
         }
@@ -2039,7 +2068,7 @@ namespace DofusFarm.Engine
             DeviceProfile profile = GetInstancePhoneModel(name);
             return (profile != null && string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
                 ? BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
                     name, port, gpuMode, ramMb, cores, proxyArg ?? "");
         }
 
