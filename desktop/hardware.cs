@@ -1,5 +1,6 @@
 using System;
-using System.Management;
+using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 namespace DofusFarm.Hardware
 {
@@ -14,96 +15,70 @@ namespace DofusFarm.Hardware
         public string GpuDriver = "Unknown";
         public string Recommendation = "";
 
+        // ------------------------------------------------------------------
+        // WMI-free detection (registry + kernel32 only).
+        // The previous implementation fired 4 WMI queries, each spawning a
+        // wmiprvse.exe host process with a 3s timeout (up to a 12s stall and
+        // handle churn on every Detect() call). These native calls return in
+        // ~1-5 ms total with zero child processes and zero WMI handles.
+        // ------------------------------------------------------------------
         public static HardwareSpecs Detect()
         {
             HardwareSpecs specs = new HardwareSpecs();
-            TimeSpan wmiTimeout = TimeSpan.FromSeconds(3);
+
+            // --- CPU: logical threads + physical cores ---
+            specs.LogicalThreads = Math.Max(1, Environment.ProcessorCount);
+            specs.PhysicalCores = Math.Max(1, CountPhysicalCores());
 
             try
             {
-                using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Name, NumberOfCores, NumberOfLogicalProcessors FROM Win32_Processor"))
+                // HKLM\HARDWARE is populated by the kernel at boot: instant read.
+                object cpuName = Registry.GetValue(
+                    @"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+                    "ProcessorNameString", null);
+                string cName = cpuName == null ? "" : cpuName.ToString().Trim();
+                if (cName.Length > 0) specs.CpuName = cName;
+            }
+            catch { }
+
+            try
+            {
+                MEMORYSTATUSEX mem = new MEMORYSTATUSEX();
+                mem.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
+                if (GlobalMemoryStatusEx(mem))
                 {
-                    s.Options.Timeout = wmiTimeout;
-                    using (ManagementObjectCollection coll = s.Get())
-                    {
-                        foreach (ManagementObject mo in coll)
-                        {
-                            using (mo)
-                            {
-                                string cName = (mo["Name"] ?? "").ToString().Trim();
-                                if (!string.IsNullOrEmpty(cName)) specs.CpuName = cName;
-                                specs.PhysicalCores = Math.Max(1, Convert.ToInt32(mo["NumberOfCores"] ?? specs.PhysicalCores));
-                                specs.LogicalThreads = Math.Max(1, Convert.ToInt32(mo["NumberOfLogicalProcessors"] ?? specs.LogicalThreads));
-                                break;
-                            }
-                        }
-                    }
+                    if (mem.ullTotalPhys > 0)
+                        specs.HostRamGB = Math.Round(mem.ullTotalPhys / (1024.0 * 1024.0 * 1024.0), 1);
+                    if (mem.ullAvailPhys > 0)
+                        specs.FreeRamGB = Math.Round(mem.ullAvailPhys / (1024.0 * 1024.0 * 1024.0), 1);
                 }
             }
             catch { }
 
             try
             {
-                using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT TotalPhysicalMemory FROM Win32_ComputerSystem"))
+                // The display-adapter class key is the exact registry source that
+                // Win32_VideoController reads from; querying it directly skips the
+                // WMI service hop entirely.
+                using (RegistryKey root = Registry.LocalMachine.OpenSubKey(
+                    @"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"))
                 {
-                    s.Options.Timeout = wmiTimeout;
-                    using (ManagementObjectCollection coll = s.Get())
+                    if (root != null)
                     {
-                        foreach (ManagementObject mo in coll)
+                        for (int i = 0; i < 16; i++)
                         {
-                            using (mo)
+                            using (RegistryKey sub = root.OpenSubKey(i.ToString("0000")))
                             {
-                                ulong bytes = Convert.ToUInt64(mo["TotalPhysicalMemory"] ?? 0);
-                                if (bytes > 0)
-                                    specs.HostRamGB = Math.Round(bytes / (1024.0 * 1024.0 * 1024.0), 1);
+                                if (sub == null) continue;
+                                object descObj = sub.GetValue("DriverDesc");
+                                string desc = descObj == null ? "" : descObj.ToString().Trim();
+                                if (desc.Length == 0) continue;
+                                string lower = desc.ToLower();
+                                if (lower.Contains("basic") || lower.Contains("remote")) continue;
+                                specs.GpuName = desc;
+                                object verObj = sub.GetValue("DriverVersion");
+                                specs.GpuDriver = verObj == null ? "" : verObj.ToString().Trim();
                                 break;
-                            }
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            try
-            {
-                using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT FreePhysicalMemory FROM Win32_OperatingSystem"))
-                {
-                    s.Options.Timeout = wmiTimeout;
-                    using (ManagementObjectCollection coll = s.Get())
-                    {
-                        foreach (ManagementObject mo in coll)
-                        {
-                            using (mo)
-                            {
-                                ulong kb = Convert.ToUInt64(mo["FreePhysicalMemory"] ?? 0);
-                                if (kb > 0)
-                                    specs.FreeRamGB = Math.Round(kb / (1024.0 * 1024.0), 1);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            try
-            {
-                using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Name, DriverVersion FROM Win32_VideoController"))
-                {
-                    s.Options.Timeout = wmiTimeout;
-                    using (ManagementObjectCollection coll = s.Get())
-                    {
-                        foreach (ManagementObject mo in coll)
-                        {
-                            using (mo)
-                            {
-                                string name = (mo["Name"] ?? "").ToString().Trim();
-                                if (!string.IsNullOrEmpty(name) && !name.ToLower().Contains("basic") && !name.ToLower().Contains("remote"))
-                                {
-                                    specs.GpuName = name;
-                                    specs.GpuDriver = (mo["DriverVersion"] ?? "").ToString().Trim();
-                                    break;
-                                }
                             }
                         }
                     }
@@ -132,5 +107,75 @@ namespace DofusFarm.Hardware
 
             return specs;
         }
+
+        // Counts physical (HT-ignoring) cores via GetLogicalProcessorInformation.
+        private static int CountPhysicalCores()
+        {
+            IntPtr buffer = IntPtr.Zero;
+            try
+            {
+                uint len = 0;
+                GetLogicalProcessorInformation(IntPtr.Zero, ref len);
+                if (len == 0) return Math.Max(1, Environment.ProcessorCount / 2);
+
+                buffer = Marshal.AllocHGlobal((int)len);
+                if (!GetLogicalProcessorInformation(buffer, ref len))
+                    return Math.Max(1, Environment.ProcessorCount / 2);
+
+                int stride = Marshal.SizeOf(typeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
+                int cores = 0;
+                long limit = (long)len - stride;
+                for (long off = 0; off <= limit; off += stride)
+                {
+                    SYSTEM_LOGICAL_PROCESSOR_INFORMATION info =
+                        (SYSTEM_LOGICAL_PROCESSOR_INFORMATION)Marshal.PtrToStructure(
+                            new IntPtr((long)buffer + off),
+                            typeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
+                    if (info.Relationship == 0) cores++; // RelationProcessorCore
+                }
+                return Math.Max(1, cores);
+            }
+            catch
+            {
+                return Math.Max(1, Environment.ProcessorCount / 2);
+            }
+            finally
+            {
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        #region Native interop (replaces System.Management / WMI)
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SYSTEM_LOGICAL_PROCESSOR_INFORMATION
+        {
+            public IntPtr ProcessorMask;
+            public int Relationship;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+            public byte[] Extra;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetLogicalProcessorInformation(IntPtr Buffer, ref uint ReturnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private class MEMORYSTATUSEX
+        {
+            public uint dwLength;
+            public uint dwMemoryLoad;
+            public ulong ullTotalPhys;
+            public ulong ullAvailPhys;
+            public ulong ullTotalPageFile;
+            public ulong ullAvailPageFile;
+            public ulong ullTotalVirtual;
+            public ulong ullAvailVirtual;
+            public ulong ullAvailExtendedVirtual;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GlobalMemoryStatusEx([In, Out] MEMORYSTATUSEX lpBuffer);
+
+        #endregion
     }
 }

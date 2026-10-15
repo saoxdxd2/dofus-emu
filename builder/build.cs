@@ -385,7 +385,7 @@ namespace DofusBuild
             List<string> names = new List<string>
             {
                 "mscorlib.dll", "System.dll", "System.Core.dll", "System.Drawing.dll",
-                "System.Windows.Forms.dll", "System.Management.dll",
+                "System.Windows.Forms.dll",
                 "System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll"
             };
             if (needMicrosoftCSharp) names.Add("Microsoft.CSharp.dll");
