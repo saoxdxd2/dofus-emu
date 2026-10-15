@@ -1483,6 +1483,29 @@ namespace DofusFarm.Engine
                 { "hw.cpu.arch", "x86_64" }
             };
 
+            // WebGL-minimal profile: Chrome's WebGL path never reads motion or environment
+            // sensors, so every emulated sensor (each one is a guest kernel thread polling a
+            // virtual device) is switched off. Measurably lower guest CPU idle usage and a
+            // little less guest RAM; no effect on WebGL/Dofus.
+            if (string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
+            {
+                settings["hw.accelerometer"] = "no";
+                settings["hw.accelerometer_uncalibrated"] = "no";
+                settings["hw.gyroscope"] = "no";
+                settings["hw.gyroscope_uncalibrated"] = "no";
+                settings["hw.sensors.light"] = "no";
+                settings["hw.sensors.pressure"] = "no";
+                settings["hw.sensors.humidity"] = "no";
+                settings["hw.sensors.proximity"] = "no";
+                settings["hw.sensors.magnetic_field"] = "no";
+                settings["hw.sensors.magnetic_field_uncalibrated"] = "no";
+                settings["hw.sensors.orientation"] = "no";
+                settings["hw.sensors.temperature"] = "no";
+                settings["hw.sensors.heart_rate"] = "no";
+                settings["hw.sensors.wrist_tilt"] = "no";
+                settings["hw.sensors.heading"] = "no";
+            }
+
             string[] staleKeys = new[]
             {
                 "disk.dataPartition.size",
