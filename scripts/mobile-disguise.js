@@ -2,173 +2,105 @@
     'use strict';
     if (typeof window === 'undefined') return;
 
-    var nativeToString = Function.prototype.toString;
+    function cfg(val, fallback) {
+        return (!val || val.indexOf('__' + 'DEVICE_') === 0) ? fallback : val;
+    }
+    function deriveFromPort(mult, prefix, fallback) {
+        try {
+            var p = (typeof location !== 'undefined' && location.port) ? parseInt(location.port, 10) : 0;
+            if (p > 0) return prefix + ((p * mult) >>> 0).toString(16).padStart(8, '0');
+        } catch (e) {}
+        return fallback;
+    }
+
+    var MOBILE_UA = cfg('__DEVICE_UA__', 'Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36');
+    var MOBILE_APP_VERSION = MOBILE_UA.replace(/^Mozilla\//, '');
+    var MOBILE_PLATFORM = 'Linux armv8l';
+    var _deviceModel = cfg('__DEVICE_MODEL__', 'SM-A515F');
+    var _deviceManufacturer = cfg('__DEVICE_MANUFACTURER__', 'samsung');
+    var GL_VENDOR = cfg('__DEVICE_GL_VENDOR__', 'ARM');
+    var GL_RENDERER = cfg('__DEVICE_GL_RENDERER__', 'Mali-G72 MP3');
+    var MAX_TEX_SIZE = parseInt(cfg('__DEVICE_MAX_TEXTURE_SIZE__', '8192'), 10) || 8192;
+    var _deviceUuid = cfg('__DEVICE_UUID__', '') || (window.device && window.device.uuid) || deriveFromPort(2654435761, 'ca8ea76b', 'ca8ea76b0fe32f85');
+    var _deviceSerial = cfg('__DEVICE_SERIAL__', '') || (window.device && window.device.serial) || deriveFromPort(1103515245, 'R58M', 'R58M45F41EFD').toUpperCase();
+
+    var _osVer = (MOBILE_UA.match(/Android\s+([0-9.]+)/) || [0, '10'])[1];
+    var _fullVer = (MOBILE_UA.match(/Chrome\/([0-9.]+)/) || [0, '83.0.4103.106'])[1];
+    var _majorVer = _fullVer.split('.')[0];
+
+    function applyDevProps(dev) {
+        if (!dev) return;
+        dev.model = _deviceModel; dev.manufacturer = _deviceManufacturer; dev.isVirtual = false;
+        dev.platform = 'Android'; dev.version = _osVer; dev.uuid = _deviceUuid; dev.serial = _deviceSerial;
+    }
+
     try {
-        if (Function.prototype.toString.toString() === 'function toString() { [native code] }' &&
-            Navigator.prototype.vibrate && Navigator.prototype.vibrate.toString() === 'function vibrate() { [native code] }' &&
-            window.matchMedia && window.matchMedia('(pointer: coarse)').matches === true &&
-            typeof window.matchMedia('(pointer: coarse)').onchange === 'object') {
+        if (navigator.platform === MOBILE_PLATFORM && navigator.userAgent === MOBILE_UA) {
+            if (window.device) applyDevProps(window.device);
             return;
         }
     } catch (e) {}
 
-    var hookedFunctions = new WeakMap();
-    var disguisedFrames = new WeakSet();
+    var nativeToString = Function.prototype.toString;
+    var hookedFunctions = new WeakMap(), disguisedFrames = new WeakSet(), wrappedGlProtos = new WeakSet();
 
     function makeNative(fn, name) {
         if (typeof fn !== 'function') return fn;
         var fnName = name || fn.name || '';
-        var methodObj = {
-            [fnName](...args) {
-                return fn.apply(this, args);
-            }
-        };
-        var nativeFn = methodObj[fnName];
-        try {
-            Object.defineProperty(nativeFn, 'length', { value: fn.length, configurable: true });
-        } catch (e) {}
+        var nativeFn = ({ [fnName](...args) { return fn.apply(this, args); } })[fnName];
+        try { Object.defineProperty(nativeFn, 'length', { value: fn.length, configurable: true }); } catch (e) {}
         hookedFunctions.set(nativeFn, 'function ' + fnName + '() { [native code] }');
         return nativeFn;
     }
 
     var customToString = makeNative(function toString() {
-        if (typeof this !== 'function') {
-            return nativeToString.apply(this, arguments);
-        }
-        if (hookedFunctions.has(this)) {
-            return hookedFunctions.get(this);
-        }
-        return nativeToString.apply(this, arguments);
+        return (typeof this === 'function' && hookedFunctions.has(this)) ? hookedFunctions.get(this) : nativeToString.apply(this, arguments);
     }, 'toString');
     Function.prototype.toString = customToString;
 
-    var MOBILE_UA = (function() {
-        var ua = '__DEVICE_UA__';
-        return (ua === '__' + 'DEVICE_UA__')
-            ? 'Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36'
-            : ua;
-    })();
-    var MOBILE_APP_VERSION = MOBILE_UA.replace(/^Mozilla\//, '');
-    var MOBILE_PLATFORM = 'Linux armv8l';
-
-    var _deviceModel = (function() {
-        var m = '__DEVICE_MODEL__';
-        return (m === '__' + 'DEVICE_MODEL__') ? 'SM-A515F' : m;
-    })();
-    var _deviceManufacturer = (function() {
-        var m = '__DEVICE_MANUFACTURER__';
-        return (m === '__' + 'DEVICE_MANUFACTURER__') ? 'samsung' : m;
-    })();
-    var GL_VENDOR = (function() {
-        var v = '__DEVICE_GL_VENDOR__';
-        return (v === '__' + 'DEVICE_GL_VENDOR__') ? 'ARM' : v;
-    })();
-    var GL_RENDERER = (function() {
-        var r = '__DEVICE_GL_RENDERER__';
-        return (r === '__' + 'DEVICE_GL_RENDERER__') ? 'Mali-G72 MP3' : r;
-    })();
-    var MAX_TEX_SIZE = (function() {
-        var s = '__DEVICE_MAX_TEXTURE_SIZE__';
-        var n = parseInt(s, 10);
-        return isNaN(n) ? 8192 : n;
-    })();
-
-    var _osVerMatch = MOBILE_UA.match(/Android\s+([0-9.]+)/);
-    var _chromeVerMatch = MOBILE_UA.match(/Chrome\/([0-9.]+)/);
-    var _majorVer = _chromeVerMatch ? _chromeVerMatch[1].split('.')[0] : '83';
-    var _fullVer = _chromeVerMatch ? _chromeVerMatch[1] : '83.0.4103.106';
-    var _osVer = _osVerMatch ? _osVerMatch[1] : '10';
-
-    var _deviceUuid = (function() {
-        var configured = '__DEVICE_UUID__';
-        if (configured && configured.indexOf('__') !== 0) return configured;
-        if (window.device && window.device.uuid) return window.device.uuid;
-        try {
-            var hostPort = (typeof location !== 'undefined' && location.port) ? parseInt(location.port, 10) : 0;
-            if (hostPort > 0) {
-                var hex = ((hostPort * 2654435761) >>> 0).toString(16);
-                return 'ca8ea76b' + hex.padStart(8, '0');
-            }
-        } catch (e) {}
-        return 'ca8ea76b0fe32f85';
-    })();
-
-    var _deviceSerial = (function() {
-        var configured = '__DEVICE_SERIAL__';
-        if (configured && configured.indexOf('__') !== 0) return configured;
-        if (window.device && window.device.serial) return window.device.serial;
-        try {
-            var hostPort = (typeof location !== 'undefined' && location.port) ? parseInt(location.port, 10) : 0;
-            if (hostPort > 0) {
-                var hex = ((hostPort * 1103515245) >>> 0).toString(16).toUpperCase();
-                return 'R58M' + hex.padStart(8, '0');
-            }
-        } catch (e) {}
-        return 'R58M45F41EFD';
-    })();
-
-    // Deterministic per-instance hash seeded from unique Serial + AndroidId
     var _instanceHash = (function() {
-        var seed = (_deviceSerial || 'R58M45F41EFD') + ':' + (_deviceUuid || 'ca8ea76b0fe32f85') + ':' + _deviceModel;
-        var hash = 2166136261;
-        for (var i = 0; i < seed.length; i++) {
-            hash ^= seed.charCodeAt(i);
-            hash = Math.imul(hash, 16777619);
-        }
-        return (hash >>> 0);
+        var seed = _deviceSerial + ':' + _deviceUuid + ':' + _deviceModel, h = 2166136261;
+        for (var i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
+        return h >>> 0;
     })();
-
-    var _fakeLocalIp = (function() {
-        var o2 = 64 + (_instanceHash % 64);         // 100.64.0.0/10 RFC 6598 CGNAT
-        var o3 = ((_instanceHash >>> 6) % 254) + 1;
-        var o4 = ((_instanceHash >>> 14) % 253) + 2;
-        return '100.' + o2 + '.' + o3 + '.' + o4;
-    })();
-
+    var _fakeLocalIp = '100.' + (64 + (_instanceHash % 64)) + '.' + (((_instanceHash >>> 6) % 254) + 1) + '.' + (((_instanceHash >>> 14) % 253) + 2);
     var _hwSpecs = (function() {
         var m = (_deviceModel || '').toUpperCase();
-        if (m.indexOf('SM-G998') !== -1 || m.indexOf('PIXEL 6') !== -1 || m.indexOf('LE2123') !== -1 || m.indexOf('XQ-BC52') !== -1 || m.indexOf('I005D') !== -1) {
-            return { cores: 8, ram: 8 };
-        }
-        if (m.indexOf('SM-T510') !== -1) {
-            return { cores: 8, ram: 3 };
-        }
-        if (m.indexOf('PIXEL 4A') !== -1 || m.indexOf('SM-T860') !== -1 || m.indexOf('M2007') !== -1 || m.indexOf('JOYEUSE') !== -1 || m.indexOf('NOTE 9') !== -1) {
-            return { cores: 8, ram: 6 };
-        }
-        return { cores: 8, ram: 4 };
+        if (/SM-G998|PIXEL 6|LE2123|XQ-BC52|I005D/.test(m)) return { cores: 8, ram: 8 };
+        if (m.indexOf('SM-T510') !== -1) return { cores: 8, ram: 3 };
+        return /PIXEL 4A|SM-T860|M2007|JOYEUSE|NOTE 9/.test(m) ? { cores: 8, ram: 6 } : { cores: 8, ram: 4 };
     })();
 
     var _VIEWPORT_DIMS = new Int32Array([MAX_TEX_SIZE, MAX_TEX_SIZE]);
     var _LINE_WIDTH_RANGE = new Float32Array([1, 7]);
     var _POINT_SIZE_RANGE = new Float32Array([1, 1024]);
 
-    function defineProp(obj, prop, valueGetter) {
+    function defineProp(obj, prop, valueOrGetter) {
         try {
-            var target = obj;
-            var brandCheck = null;
-            if (obj === navigator && typeof Navigator !== 'undefined' && Navigator.prototype) {
-                target = Navigator.prototype;
-                brandCheck = Navigator;
-            } else if (typeof Screen !== 'undefined' && obj === window.screen && Screen.prototype) {
-                target = Screen.prototype;
-                brandCheck = Screen;
-            } else if (obj === window && typeof Window !== 'undefined' && Window.prototype) {
-                target = Window.prototype;
-                brandCheck = Window;
-                try { delete obj[prop]; } catch (e) {}
-            }
+            var target = obj, brandCheck = null;
+            if (obj === navigator && typeof Navigator !== 'undefined' && Navigator.prototype) { target = Navigator.prototype; brandCheck = Navigator; }
+            else if (typeof Screen !== 'undefined' && obj === window.screen && Screen.prototype) { target = Screen.prototype; brandCheck = Screen; }
+            else if (obj === window && typeof Window !== 'undefined' && Window.prototype) { target = Window.prototype; brandCheck = Window; }
+            if (target !== obj) { try { delete obj[prop]; } catch (e) {} }
+            var isFn = typeof valueOrGetter === 'function';
             Object.defineProperty(target, prop, {
                 get: makeNative(function() {
-                    if (brandCheck && !(this instanceof brandCheck)) {
-                        throw new TypeError('Illegal invocation');
-                    }
-                    return typeof valueGetter === 'function' ? valueGetter() : valueGetter;
+                    if (brandCheck && !(this instanceof brandCheck)) throw new TypeError('Illegal invocation');
+                    return isFn ? valueOrGetter.call(this) : valueOrGetter;
                 }, 'get ' + prop),
-                configurable: true,
-                enumerable: true
+                configurable: true, enumerable: true
             });
         } catch (e) {}
+    }
+
+    function defineGetters(target, map) {
+        for (var k in map) {
+            if (Object.prototype.hasOwnProperty.call(map, k)) {
+                (function(prop, fn) {
+                    try { Object.defineProperty(target, prop, { get: makeNative(fn, 'get ' + prop), configurable: true, enumerable: true }); } catch (e) {}
+                })(k, map[k]);
+            }
+        }
     }
 
     // 1. Timezone coherence (Europe/Paris)
@@ -184,269 +116,164 @@
     } catch (e) {}
 
     // 2. Suppress transient proxy/network alert popups
+    function isTransientNetMsg(msg) { return typeof msg === 'string' && /server cannot be reached|check your internet/i.test(msg); }
     try {
         var winAlertProto = (typeof Window !== 'undefined' && Window.prototype) ? Window.prototype : window;
         var originalAlert = winAlertProto.alert || window.alert;
-        var wrappedAlert = makeNative(function(msg) {
-            if (msg && typeof msg === 'string') {
-                var lower = msg.toLowerCase();
-                if (lower.indexOf('server cannot be reached') !== -1 || lower.indexOf('check your internet') !== -1) {
-                    return;
-                }
-            }
-            if (originalAlert) return originalAlert.apply(this, arguments);
-        }, 'alert');
-        if (typeof Window !== 'undefined' && Window.prototype && Window.prototype.alert) {
-            Window.prototype.alert = wrappedAlert;
-        } else {
-            window.alert = wrappedAlert;
-        }
+        var wrappedAlert = makeNative(function alert(msg) { if (!isTransientNetMsg(msg) && originalAlert) return originalAlert.apply(this, arguments); }, 'alert');
+        if (typeof Window !== 'undefined' && Window.prototype && Window.prototype.alert) Window.prototype.alert = wrappedAlert;
+        else window.alert = wrappedAlert;
         document.addEventListener('deviceready', function() {
             if (navigator.notification && navigator.notification.alert) {
                 var origCdvAlert = navigator.notification.alert;
-                navigator.notification.alert = makeNative(function(msg, callback) {
-                    if (msg && typeof msg === 'string') {
-                        var lower = msg.toLowerCase();
-                        if (lower.indexOf('server cannot be reached') !== -1 || lower.indexOf('check your internet') !== -1) {
-                            if (typeof callback === 'function') callback();
-                            return;
-                        }
-                    }
+                navigator.notification.alert = makeNative(function alert(msg, cb) {
+                    if (isTransientNetMsg(msg)) { if (typeof cb === 'function') cb(); return; }
                     return origCdvAlert.apply(this, arguments);
                 }, 'alert');
             }
         }, false);
     } catch (e) {}
 
-    // 3. Navigator & PluginArray / NetworkInformation spoofing
-    defineProp(navigator, 'platform', MOBILE_PLATFORM);
-    defineProp(navigator, 'userAgent', MOBILE_UA);
-    defineProp(navigator, 'appVersion', MOBILE_APP_VERSION);
-    defineProp(navigator, 'maxTouchPoints', 5);
-    defineProp(navigator, 'hardwareConcurrency', _hwSpecs.cores);
-    defineProp(navigator, 'deviceMemory', _hwSpecs.ram);
-    defineProp(navigator, 'vendor', 'Google Inc.');
-    defineProp(navigator, 'webdriver', false);
-    defineProp(navigator, 'language', 'fr-FR');
-    defineProp(navigator, 'languages', ['fr-FR', 'fr', 'en-US', 'en']);
-    defineProp(navigator, 'onLine', true);
+    // 3 & 5. Navigator, PluginArray, NetworkInformation & BatteryManager
+    var falseNative = makeNative(function dispatchEvent() { return false; }, 'dispatchEvent');
+    function makeEmptyCollection(Ctor, tagName, withRefresh) {
+        var obj = Object.create((typeof Ctor !== 'undefined' && Ctor.prototype) ? Ctor.prototype : Object.prototype);
+        Object.defineProperty(obj, 'length', { value: 0, writable: false, enumerable: false, configurable: true });
+        obj.item = makeNative(function item() { return null; }, 'item');
+        obj.namedItem = makeNative(function namedItem() { return null; }, 'namedItem');
+        if (withRefresh) obj.refresh = makeNative(function refresh() {}, 'refresh');
+        if (typeof Symbol !== 'undefined' && Symbol.toStringTag) { try { Object.defineProperty(obj, Symbol.toStringTag, { value: tagName, configurable: true }); } catch (e) {} }
+        return obj;
+    }
+
+    var emptyPluginArray, emptyMimeTypeArray, connectionObj;
+    try {
+        emptyPluginArray = makeEmptyCollection(typeof PluginArray !== 'undefined' ? PluginArray : undefined, 'PluginArray', true);
+        emptyMimeTypeArray = makeEmptyCollection(typeof MimeTypeArray !== 'undefined' ? MimeTypeArray : undefined, 'MimeTypeArray', false);
+    } catch (e) {}
+
+    try {
+        connectionObj = Object.create((typeof NetworkInformation !== 'undefined' && NetworkInformation.prototype) ? NetworkInformation.prototype : ((typeof EventTarget !== 'undefined' && EventTarget.prototype) ? EventTarget.prototype : Object.prototype));
+        connectionObj.effectiveType = '4g'; connectionObj.type = 'cellular'; connectionObj.saveData = false; connectionObj.onchange = null;
+        if (!('addEventListener' in connectionObj)) {
+            connectionObj.addEventListener = makeNative(function addEventListener() {}, 'addEventListener');
+            connectionObj.removeEventListener = makeNative(function removeEventListener() {}, 'removeEventListener');
+            connectionObj.dispatchEvent = falseNative;
+        }
+        if (typeof Symbol !== 'undefined' && Symbol.toStringTag) { try { Object.defineProperty(connectionObj, Symbol.toStringTag, { value: 'NetworkInformation', configurable: true }); } catch (e) {} }
+        var baseRtt = 40 + (_instanceHash % 25), baseDownlink = 12.0 + ((_instanceHash >>> 4) % 80) * 0.1;
+        defineGetters(connectionObj, {
+            rtt: function() { return baseRtt + Math.floor((Math.random() - 0.5) * 6); },
+            downlink: function() { return +(baseDownlink + (Math.random() - 0.5) * 1.2).toFixed(1); }
+        });
+    } catch (e) {}
+
+    var battStartTime = Date.now(), initialBattPct = 72 + (_instanceHash % 23);
+    var battProto = (typeof BatteryManager !== 'undefined' && BatteryManager.prototype) ? BatteryManager.prototype : Object.create((typeof EventTarget !== 'undefined' && EventTarget.prototype) ? EventTarget.prototype : Object.prototype);
+    var fakeBattery = Object.create(battProto);
+    function getLazyBatteryLevel() { return Math.max(20, initialBattPct - Math.floor((Date.now() - battStartTime) / 360000)) / 100; }
+    defineGetters(battProto, {
+        charging: function() { return false; },
+        chargingTime: function() { return Infinity; },
+        dischargingTime: function() { return Math.round(getLazyBatteryLevel() * 14400); },
+        level: getLazyBatteryLevel
+    });
+
+    var FROZEN_LANGUAGES = Object.freeze ? Object.freeze(['fr-FR', 'fr', 'en-US', 'en']) : ['fr-FR', 'fr', 'en-US', 'en'];
+    var navOverrides = {
+        platform: MOBILE_PLATFORM, userAgent: MOBILE_UA, appVersion: MOBILE_APP_VERSION,
+        maxTouchPoints: 5, hardwareConcurrency: _hwSpecs.cores, deviceMemory: _hwSpecs.ram,
+        vendor: 'Google Inc.', webdriver: false, language: 'fr-FR', languages: FROZEN_LANGUAGES,
+        onLine: true, plugins: emptyPluginArray, mimeTypes: emptyMimeTypeArray,
+        connection: connectionObj, mozConnection: connectionObj, webkitConnection: connectionObj, battery: fakeBattery
+    };
+    for (var nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
 
     try {
         if (typeof Navigator !== 'undefined' && Navigator.prototype) {
             Navigator.prototype.vibrate = makeNative(function vibrate() { return true; }, 'vibrate');
-            if (navigator !== Navigator.prototype) {
-                try { navigator.vibrate = Navigator.prototype.vibrate; } catch (e) {}
-            }
+            if (navigator !== Navigator.prototype) { try { navigator.vibrate = Navigator.prototype.vibrate; } catch (e) {} }
+            Object.defineProperty(Navigator.prototype, 'getBattery', {
+                value: makeNative(function getBattery() { return Promise.resolve(fakeBattery); }, 'getBattery'),
+                writable: true, enumerable: true, configurable: true
+            });
         }
     } catch (e) {}
 
-    var emptyPluginArray, emptyMimeTypeArray;
-    try {
-        emptyPluginArray = (typeof PluginArray !== 'undefined' && PluginArray.prototype)
-            ? Object.create(PluginArray.prototype) : Object.create(Object.prototype);
-        Object.defineProperty(emptyPluginArray, 'length', { value: 0, writable: false, enumerable: false, configurable: true });
-        emptyPluginArray.item = makeNative(function item() { return null; }, 'item');
-        emptyPluginArray.namedItem = makeNative(function namedItem() { return null; }, 'namedItem');
-        emptyPluginArray.refresh = makeNative(function refresh() {}, 'refresh');
-        if (typeof Symbol !== 'undefined' && Symbol.toStringTag) {
-            try { Object.defineProperty(emptyPluginArray, Symbol.toStringTag, { value: 'PluginArray', configurable: true }); } catch (e) {}
-        }
-
-        emptyMimeTypeArray = (typeof MimeTypeArray !== 'undefined' && MimeTypeArray.prototype)
-            ? Object.create(MimeTypeArray.prototype) : Object.create(Object.prototype);
-        Object.defineProperty(emptyMimeTypeArray, 'length', { value: 0, writable: false, enumerable: false, configurable: true });
-        emptyMimeTypeArray.item = makeNative(function item() { return null; }, 'item');
-        emptyMimeTypeArray.namedItem = makeNative(function namedItem() { return null; }, 'namedItem');
-        if (typeof Symbol !== 'undefined' && Symbol.toStringTag) {
-            try { Object.defineProperty(emptyMimeTypeArray, Symbol.toStringTag, { value: 'MimeTypeArray', configurable: true }); } catch (e) {}
-        }
-
-        defineProp(navigator, 'plugins', emptyPluginArray);
-        defineProp(navigator, 'mimeTypes', emptyMimeTypeArray);
-    } catch (e) {}
-
-    var connectionObj;
-    try {
-        connectionObj = (typeof NetworkInformation !== 'undefined' && NetworkInformation.prototype)
-            ? Object.create(NetworkInformation.prototype)
-            : ((typeof EventTarget !== 'undefined' && EventTarget.prototype) ? Object.create(EventTarget.prototype) : Object.create(Object.prototype));
-        connectionObj.effectiveType = '4g';
-        connectionObj.type = 'cellular';
-        connectionObj.saveData = false;
-        connectionObj.onchange = null;
-        if (!('addEventListener' in connectionObj)) {
-            connectionObj.addEventListener = makeNative(function() {}, 'addEventListener');
-            connectionObj.removeEventListener = makeNative(function() {}, 'removeEventListener');
-            connectionObj.dispatchEvent = makeNative(function() { return false; }, 'dispatchEvent');
-        }
-        if (typeof Symbol !== 'undefined' && Symbol.toStringTag) {
-            try { Object.defineProperty(connectionObj, Symbol.toStringTag, { value: 'NetworkInformation', configurable: true }); } catch (e) {}
-        }
-        var baseRtt = 40 + (_instanceHash % 25);
-        var baseDownlink = 12.0 + ((_instanceHash >>> 4) % 80) * 0.1;
-        Object.defineProperty(connectionObj, 'rtt', {
-            get: makeNative(function() { return baseRtt + Math.floor((Math.random() - 0.5) * 6); }, 'get rtt'),
-            enumerable: true
-        });
-        Object.defineProperty(connectionObj, 'downlink', {
-            get: makeNative(function() { return +(baseDownlink + (Math.random() - 0.5) * 1.2).toFixed(1); }, 'get downlink'),
-            enumerable: true
-        });
-        defineProp(navigator, 'connection', connectionObj);
-        defineProp(navigator, 'mozConnection', connectionObj);
-        defineProp(navigator, 'webkitConnection', connectionObj);
-    } catch (e) {}
-
-    var suppressOffline = function(e) {
-        if (e && (e.type === 'offline' || e.type === 'error')) {
-            e.stopImmediatePropagation();
-            e.preventDefault();
-        }
-    };
-    try {
-        window.addEventListener('offline', suppressOffline, true);
-        document.addEventListener('offline', suppressOffline, true);
-    } catch (e) {}
+    var suppressOffline = function(e) { if (e && (e.type === 'offline' || e.type === 'error')) { e.stopImmediatePropagation(); e.preventDefault(); } };
+    try { window.addEventListener('offline', suppressOffline, true); document.addEventListener('offline', suppressOffline, true); } catch (e) {}
 
     if (navigator.userAgentData || window.NavigatorUAData) {
-        var uaData = {
-            brands: [
-                { brand: 'Android WebView', version: _majorVer },
-                { brand: 'Chromium', version: _majorVer },
-                { brand: 'Not(A:Brand', version: '99' }
-            ],
-            mobile: true,
-            platform: 'Android',
-            getHighEntropyValues: makeNative(function() {
-                return Promise.resolve({
-                    architecture: 'arm',
-                    bitness: '64',
-                    brands: uaData.brands,
-                    formFactor: 'mobile',
-                    mobile: true,
-                    model: _deviceModel,
-                    platform: 'Android',
-                    platformVersion: _osVer,
-                    uaFullVersion: _fullVer
-                });
+        var uaBrands = [{ brand: 'Android WebView', version: _majorVer }, { brand: 'Chromium', version: _majorVer }, { brand: 'Not(A:Brand', version: '99' }];
+        defineProp(navigator, 'userAgentData', {
+            brands: uaBrands, mobile: true, platform: 'Android',
+            getHighEntropyValues: makeNative(function getHighEntropyValues() {
+                return Promise.resolve({ architecture: 'arm', bitness: '64', brands: uaBrands, formFactor: 'mobile', mobile: true, model: _deviceModel, platform: 'Android', platformVersion: _osVer, uaFullVersion: _fullVer });
             }, 'getHighEntropyValues'),
-            toJSON: makeNative(function() {
-                return { brands: uaData.brands, mobile: true, platform: 'Android' };
-            }, 'toJSON')
-        };
-        defineProp(navigator, 'userAgentData', uaData);
+            toJSON: makeNative(function toJSON() { return { brands: uaBrands, mobile: true, platform: 'Android' }; }, 'toJSON')
+        });
     }
 
     // 4. WebGL, WebGL2 & OffscreenCanvas Vendor/Renderer/ASTC/Precision Disguise
-    var UNMASKED_VENDOR_WEBGL = 0x9245;
-    var UNMASKED_RENDERER_WEBGL = 0x9246;
+    var UNMASKED_VENDOR_WEBGL = 0x9245, UNMASKED_RENDERER_WEBGL = 0x9246;
+    var EXT_DEBUG_RENDERER = { UNMASKED_VENDOR_WEBGL: UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL: UNMASKED_RENDERER_WEBGL };
+    var EXT_ASTC = (function() {
+        var o = { getSupportedProfiles: makeNative(function getSupportedProfiles() { return ['ldr']; }, 'getSupportedProfiles') };
+        var dims = ['4x4', '5x4', '5x5', '6x5', '6x6', '8x5', '8x6', '8x8', '10x5', '10x6', '10x8', '10x10', '12x10', '12x12'];
+        for (var i = 0; i < dims.length; i++) { o['COMPRESSED_RGBA_ASTC_' + dims[i] + '_KHR'] = 0x93B0 + i; o['COMPRESSED_SRGB8_ALPHA8_ASTC_' + dims[i] + '_KHR'] = 0x93D0 + i; }
+        return o;
+    })();
+    var DESKTOP_GL_EXT_RX = /s3tc|bptc|rgtc|^webgl_polygon_mode$/i;
 
     function wrapContext(ctxProto) {
-        if (!ctxProto) return;
-        var origGetParameter = ctxProto.getParameter;
-        var origGetExtension = ctxProto.getExtension;
-        var origGetSupportedExtensions = ctxProto.getSupportedExtensions;
-        var origGetShaderPrecisionFormat = ctxProto.getShaderPrecisionFormat;
+        if (!ctxProto || wrappedGlProtos.has(ctxProto)) return;
+        wrappedGlProtos.add(ctxProto);
+        var origGetParam = ctxProto.getParameter, origGetExt = ctxProto.getExtension, origGetSup = ctxProto.getSupportedExtensions, origGetPrec = ctxProto.getShaderPrecisionFormat;
 
-        if (origGetParameter) {
-            ctxProto.getParameter = makeNative(function(param) {
-                if (param === UNMASKED_VENDOR_WEBGL || param === 0x1F00) return GL_VENDOR;
-                if (param === UNMASKED_RENDERER_WEBGL || param === 0x1F01) return GL_RENDERER;
-                if (param === 0x1F02) {
-                    var isGL2 = (typeof WebGL2RenderingContext !== 'undefined' && this instanceof WebGL2RenderingContext);
-                    return isGL2 ? 'WebGL 2.0 (OpenGL ES 3.0 Chromium)' : 'WebGL 1.0 (OpenGL ES 2.0 Chromium)';
-                }
-                if (param === 0x8B8C) {
-                    var isGL2Sh = (typeof WebGL2RenderingContext !== 'undefined' && this instanceof WebGL2RenderingContext);
-                    return isGL2Sh ? 'WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)' : 'WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)';
-                }
-                if (param === 0x0D33 || param === 0x851C || param === 0x84E8) return MAX_TEX_SIZE;
-                if (param === 0x0D3A) return _VIEWPORT_DIMS;
-                if (param === 0x846E) return _LINE_WIDTH_RANGE;
-                if (param === 0x846D) return _POINT_SIZE_RANGE;
-                if (param === 0x8869 || param === 0x8B4C || param === 0x8872) return 16;
-                if (param === 0x8DFB || param === 0x8DFD) return 1024;
-                if (param === 0x8DFC) return 30;
-                if (param === 0x8B4D) return 96;
-                return origGetParameter.apply(this, arguments);
+        if (origGetParam) {
+            ctxProto.getParameter = makeNative(function getParameter(p) {
+                if (p === UNMASKED_VENDOR_WEBGL || p === 0x1F00) return GL_VENDOR;
+                if (p === UNMASKED_RENDERER_WEBGL || p === 0x1F01) return GL_RENDERER;
+                if (p === 0x1F02) return (typeof WebGL2RenderingContext !== 'undefined' && this instanceof WebGL2RenderingContext) ? 'WebGL 2.0 (OpenGL ES 3.0 Chromium)' : 'WebGL 1.0 (OpenGL ES 2.0 Chromium)';
+                if (p === 0x8B8C) return (typeof WebGL2RenderingContext !== 'undefined' && this instanceof WebGL2RenderingContext) ? 'WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)' : 'WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)';
+                if (p === 0x0D33 || p === 0x851C || p === 0x84E8) return MAX_TEX_SIZE;
+                if (p === 0x0D3A) return _VIEWPORT_DIMS;
+                if (p === 0x846E) return _LINE_WIDTH_RANGE;
+                if (p === 0x846D) return _POINT_SIZE_RANGE;
+                if (p === 0x8869 || p === 0x8B4C || p === 0x8872) return 16;
+                if (p === 0x8DFB || p === 0x8DFD) return 1024;
+                if (p === 0x8DFC) return 30;
+                if (p === 0x8B4D) return 96;
+                return origGetParam.apply(this, arguments);
             }, 'getParameter');
         }
-
-        if (origGetExtension) {
-            ctxProto.getExtension = makeNative(function(name) {
-                if (name === 'WEBGL_debug_renderer_info') {
-                    return {
-                        UNMASKED_VENDOR_WEBGL: UNMASKED_VENDOR_WEBGL,
-                        UNMASKED_RENDERER_WEBGL: UNMASKED_RENDERER_WEBGL
-                    };
-                }
-                if (name === 'WEBGL_compressed_texture_astc') {
-                    var nativeAstc = origGetExtension.apply(this, arguments);
-                    if (nativeAstc) return nativeAstc;
-                    return {
-                        COMPRESSED_RGBA_ASTC_4x4_KHR: 0x93B0, COMPRESSED_RGBA_ASTC_5x4_KHR: 0x93B1,
-                        COMPRESSED_RGBA_ASTC_5x5_KHR: 0x93B2, COMPRESSED_RGBA_ASTC_6x5_KHR: 0x93B3,
-                        COMPRESSED_RGBA_ASTC_6x6_KHR: 0x93B4, COMPRESSED_RGBA_ASTC_8x5_KHR: 0x93B5,
-                        COMPRESSED_RGBA_ASTC_8x6_KHR: 0x93B6, COMPRESSED_RGBA_ASTC_8x8_KHR: 0x93B7,
-                        COMPRESSED_RGBA_ASTC_10x5_KHR: 0x93B8, COMPRESSED_RGBA_ASTC_10x6_KHR: 0x93B9,
-                        COMPRESSED_RGBA_ASTC_10x8_KHR: 0x93BA, COMPRESSED_RGBA_ASTC_10x10_KHR: 0x93BB,
-                        COMPRESSED_RGBA_ASTC_12x10_KHR: 0x93BC, COMPRESSED_RGBA_ASTC_12x12_KHR: 0x93BD,
-                        COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR: 0x93D0, COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR: 0x93D1,
-                        COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR: 0x93D2, COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR: 0x93D3,
-                        COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR: 0x93D4, COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR: 0x93D5,
-                        COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR: 0x93D6, COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR: 0x93D7,
-                        COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR: 0x93D8, COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR: 0x93D9,
-                        COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR: 0x93DA, COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR: 0x93DB,
-                        COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR: 0x93DC, COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR: 0x93DD,
-                        getSupportedProfiles: makeNative(function() { return ['ldr']; }, 'getSupportedProfiles')
-                    };
-                }
-                var lower = (name || '').toLowerCase();
-                if (lower.indexOf('s3tc') !== -1 || lower.indexOf('bptc') !== -1 || lower.indexOf('rgtc') !== -1 || lower === 'webgl_polygon_mode') {
-                    return null;
-                }
-                return origGetExtension.apply(this, arguments);
+        if (origGetExt) {
+            ctxProto.getExtension = makeNative(function getExtension(name) {
+                if (name === 'WEBGL_debug_renderer_info') return EXT_DEBUG_RENDERER;
+                if (name === 'WEBGL_compressed_texture_astc') return origGetExt.apply(this, arguments) || EXT_ASTC;
+                return (name && DESKTOP_GL_EXT_RX.test(name)) ? null : origGetExt.apply(this, arguments);
             }, 'getExtension');
         }
-
-        if (origGetSupportedExtensions) {
-            ctxProto.getSupportedExtensions = makeNative(function() {
-                var list = origGetSupportedExtensions.apply(this, arguments) || [];
-                var arr = Array.from(list).filter(function(ext) {
-                    var lower = (ext || '').toLowerCase();
-                    return lower.indexOf('s3tc') === -1 && lower.indexOf('bptc') === -1 && lower.indexOf('rgtc') === -1 && lower !== 'webgl_polygon_mode';
-                });
-                if (arr.indexOf('WEBGL_debug_renderer_info') === -1) arr.push('WEBGL_debug_renderer_info');
-                if (arr.indexOf('KHR_parallel_shader_compile') === -1) arr.push('KHR_parallel_shader_compile');
-                if (arr.indexOf('WEBGL_compressed_texture_astc') === -1) arr.push('WEBGL_compressed_texture_astc');
+        if (origGetSup) {
+            ctxProto.getSupportedExtensions = makeNative(function getSupportedExtensions() {
+                var arr = Array.from(origGetSup.apply(this, arguments) || []).filter(function(ext) { return !ext || !DESKTOP_GL_EXT_RX.test(ext); });
+                ['WEBGL_debug_renderer_info', 'KHR_parallel_shader_compile', 'WEBGL_compressed_texture_astc'].forEach(function(r) { if (arr.indexOf(r) === -1) arr.push(r); });
                 return arr;
             }, 'getSupportedExtensions');
         }
-
-        if (origGetShaderPrecisionFormat) {
-            ctxProto.getShaderPrecisionFormat = makeNative(function(shaderType, precisionType) {
-                if (precisionType < 0x8DF0 || precisionType > 0x8DF5) return null;
-                if (shaderType !== 0x8B30 && shaderType !== 0x8B31) return null;
+        if (origGetPrec) {
+            ctxProto.getShaderPrecisionFormat = makeNative(function getShaderPrecisionFormat(st, pt) {
+                if (pt < 0x8DF0 || pt > 0x8DF5 || (st !== 0x8B30 && st !== 0x8B31)) return null;
                 var rMin = 127, rMax = 127, prec = 23;
-                if (precisionType === 0x8DF1 || precisionType === 0x8DF0) { rMin = 15; rMax = 15; prec = 10; }
-                else if (precisionType === 0x8DF5) { rMin = 31; rMax = 30; prec = 0; }
-                else if (precisionType === 0x8DF4) { rMin = 15; rMax = 14; prec = 0; }
-                else if (precisionType === 0x8DF3) { rMin = 7; rMax = 6; prec = 0; }
-                var target = null;
-                try { target = origGetShaderPrecisionFormat.call(this, shaderType, precisionType); } catch (e) {}
-                if (!target) {
-                    var proto = (typeof WebGLShaderPrecisionFormat !== 'undefined' && WebGLShaderPrecisionFormat.prototype)
-                        ? WebGLShaderPrecisionFormat.prototype : Object.prototype;
-                    target = Object.create(proto);
-                }
-                try {
-                    Object.defineProperties(target, {
-                        rangeMin: { value: rMin, configurable: true, enumerable: true },
-                        rangeMax: { value: rMax, configurable: true, enumerable: true },
-                        precision: { value: prec, configurable: true, enumerable: true }
-                    });
-                } catch (e) {}
-                return target;
+                if (pt === 0x8DF1 || pt === 0x8DF0) { rMin = 15; rMax = 15; prec = 10; }
+                else if (pt === 0x8DF5) { rMin = 31; rMax = 30; prec = 0; }
+                else if (pt === 0x8DF4) { rMin = 15; rMax = 14; prec = 0; }
+                else if (pt === 0x8DF3) { rMin = 7; rMax = 6; prec = 0; }
+                var t = null;
+                try { t = origGetPrec.call(this, st, pt); } catch (e) {}
+                if (!t) t = Object.create((typeof WebGLShaderPrecisionFormat !== 'undefined' && WebGLShaderPrecisionFormat.prototype) ? WebGLShaderPrecisionFormat.prototype : Object.prototype);
+                try { Object.defineProperties(t, { rangeMin: { value: rMin, configurable: true, enumerable: true }, rangeMax: { value: rMax, configurable: true, enumerable: true }, precision: { value: prec, configurable: true, enumerable: true } }); } catch (e) {}
+                return t;
             }, 'getShaderPrecisionFormat');
         }
     }
@@ -455,391 +282,202 @@
     if (window.WebGL2RenderingContext) wrapContext(WebGL2RenderingContext.prototype);
     if (typeof OffscreenCanvas !== 'undefined' && OffscreenCanvas.prototype && OffscreenCanvas.prototype.getContext) {
         var origOffscreenGetContext = OffscreenCanvas.prototype.getContext;
-        OffscreenCanvas.prototype.getContext = makeNative(function(type) {
+        OffscreenCanvas.prototype.getContext = makeNative(function getContext(type) {
             var ctx = origOffscreenGetContext.apply(this, arguments);
-            if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) {
-                wrapContext(Object.getPrototypeOf(ctx));
-            }
+            if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) wrapContext(Object.getPrototypeOf(ctx));
             return ctx;
         }, 'getContext');
     }
 
-    // 5. Lazy, Per-Instance Seeded BatteryManager
-    var battStartTime = Date.now();
-    var initialBattPct = 72 + (_instanceHash % 23);
-    var battProto = (typeof BatteryManager !== 'undefined' && BatteryManager.prototype)
-        ? BatteryManager.prototype
-        : Object.create((typeof EventTarget !== 'undefined' && EventTarget.prototype) ? EventTarget.prototype : Object.prototype);
-    var fakeBattery = Object.create(battProto);
-
-    function getLazyBatteryLevel() {
-        var elapsedMin = (Date.now() - battStartTime) / 60000;
-        var dropSteps = Math.floor(elapsedMin / 6);
-        return Math.max(20, initialBattPct - dropSteps) / 100;
-    }
-
-    try {
-        Object.defineProperties(battProto, {
-            charging: { get: makeNative(function() { return false; }, 'get charging'), enumerable: true, configurable: true },
-            chargingTime: { get: makeNative(function() { return Infinity; }, 'get chargingTime'), enumerable: true, configurable: true },
-            dischargingTime: { get: makeNative(function() { return Math.round(getLazyBatteryLevel() * 4 * 3600); }, 'get dischargingTime'), enumerable: true, configurable: true },
-            level: { get: makeNative(function() { return getLazyBatteryLevel(); }, 'get level'), enumerable: true, configurable: true }
-        });
-    } catch (e) {}
-
-    var getBatteryMethod = makeNative(function getBattery() {
-        return Promise.resolve(fakeBattery);
-    }, 'getBattery');
-
-    try {
-        if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-            Object.defineProperty(Navigator.prototype, 'getBattery', {
-                value: getBatteryMethod, writable: true, enumerable: true, configurable: true
-            });
-        }
-        defineProp(navigator, 'battery', fakeBattery);
-    } catch (e) {}
-
     // 6. Coherent Touch & PointerEvent Disguise
     try {
-        if (!('ontouchstart' in window)) {
-            window.ontouchstart = null;
-            window.ontouchend = null;
-            window.ontouchmove = null;
-            window.ontouchcancel = null;
-        }
+        if (!('ontouchstart' in window)) window.ontouchstart = window.ontouchend = window.ontouchmove = window.ontouchcancel = null;
         var eventContactCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
         var baseTouchRadius = 14 + (_instanceHash % 4);
         function getEventContact(ev) {
-            if (eventContactCache && ev && typeof ev === 'object') {
-                var cached = eventContactCache.get(ev);
-                if (cached) return cached;
-            }
-            var r = baseTouchRadius + Math.round((Math.random() - 0.5) * 4);
-            var p = +(0.58 + (Math.random() - 0.5) * 0.14).toFixed(2);
-            var result = { radius: Math.max(11, Math.min(23, r)), pressure: p };
-            if (eventContactCache && ev && typeof ev === 'object') {
-                eventContactCache.set(ev, result);
-            }
-            return result;
+            if (eventContactCache && ev && typeof ev === 'object') { var c = eventContactCache.get(ev); if (c) return c; }
+            var res = { radius: Math.max(11, Math.min(23, baseTouchRadius + Math.round((Math.random() - 0.5) * 4))), pressure: +(0.58 + (Math.random() - 0.5) * 0.14).toFixed(2) };
+            if (eventContactCache && ev && typeof ev === 'object') eventContactCache.set(ev, res);
+            return res;
         }
-
         if (window.PointerEvent && PointerEvent.prototype) {
-            Object.defineProperty(PointerEvent.prototype, 'pointerType', {
-                get: makeNative(function() { return 'touch'; }, 'get pointerType'),
-                configurable: true, enumerable: true
-            });
-            Object.defineProperty(PointerEvent.prototype, 'width', {
-                get: makeNative(function() {
-                    if (this.buttons === 0 && this.type !== 'pointerdown') return 1;
-                    return getEventContact(this).radius * 2;
-                }, 'get width'),
-                configurable: true, enumerable: true
-            });
-            Object.defineProperty(PointerEvent.prototype, 'height', {
-                get: makeNative(function() {
-                    if (this.buttons === 0 && this.type !== 'pointerdown') return 1;
-                    return getEventContact(this).radius * 2;
-                }, 'get height'),
-                configurable: true, enumerable: true
-            });
-            Object.defineProperty(PointerEvent.prototype, 'pressure', {
-                get: makeNative(function() {
-                    if (this.type === 'pointerup' || this.type === 'pointercancel') return 0;
-                    if (this.buttons === 0 && this.type !== 'pointerdown') return 0;
-                    return getEventContact(this).pressure;
-                }, 'get pressure'),
-                configurable: true, enumerable: true
+            var ptrSz = function() { return (this.buttons === 0 && this.type !== 'pointerdown') ? 1 : getEventContact(this).radius * 2; };
+            defineGetters(PointerEvent.prototype, {
+                pointerType: function() { return 'touch'; }, width: ptrSz, height: ptrSz,
+                pressure: function() { return (this.type === 'pointerup' || this.type === 'pointercancel' || (this.buttons === 0 && this.type !== 'pointerdown')) ? 0 : getEventContact(this).pressure; }
             });
         }
-
         if (typeof Touch !== 'undefined' && Touch.prototype) {
-            Object.defineProperty(Touch.prototype, 'radiusX', {
-                get: makeNative(function() { return getEventContact(this).radius; }, 'get radiusX'),
-                configurable: true, enumerable: true
-            });
-            Object.defineProperty(Touch.prototype, 'radiusY', {
-                get: makeNative(function() { return getEventContact(this).radius + 1; }, 'get radiusY'),
-                configurable: true, enumerable: true
-            });
-            Object.defineProperty(Touch.prototype, 'force', {
-                get: makeNative(function() { return getEventContact(this).pressure; }, 'get force'),
-                configurable: true, enumerable: true
+            defineGetters(Touch.prototype, {
+                radiusX: function() { return getEventContact(this).radius; },
+                radiusY: function() { return getEventContact(this).radius + 1; },
+                force: function() { return getEventContact(this).pressure; }
             });
         }
-
         if (window.matchMedia) {
             var origMatchMedia = window.matchMedia;
-            window.matchMedia = makeNative(function(query) {
+            var mqlProto = (typeof MediaQueryList !== 'undefined' && MediaQueryList.prototype) ? MediaQueryList.prototype : Object.prototype;
+            var mqlAddL = makeNative(function addListener() {}, 'addListener'), mqlRemL = makeNative(function removeListener() {}, 'removeListener');
+            var mqlAddEL = makeNative(function addEventListener() {}, 'addEventListener'), mqlRemEL = makeNative(function removeEventListener() {}, 'removeEventListener');
+            var makeMql = function(query, matches) {
+                var mql = Object.create(mqlProto);
+                Object.defineProperties(mql, {
+                    matches: { value: matches, enumerable: true, configurable: true }, media: { value: String(query), enumerable: true, configurable: true }, onchange: { value: null, writable: true, enumerable: true, configurable: true },
+                    addListener: { value: mqlAddL, configurable: true }, removeListener: { value: mqlRemL, configurable: true }, addEventListener: { value: mqlAddEL, configurable: true }, removeEventListener: { value: mqlRemEL, configurable: true }, dispatchEvent: { value: falseNative, configurable: true }
+                });
+                return mql;
+            };
+            window.matchMedia = makeNative(function matchMedia(query) {
                 var q = (query || '').toLowerCase();
-                if (q.indexOf('hover: none') !== -1 || q.indexOf('any-hover: none') !== -1 ||
-                    q.indexOf('pointer: coarse') !== -1 || q.indexOf('any-pointer: coarse') !== -1) {
-                    return {
-                        matches: true, media: query, onchange: null,
-                        addListener: function() {}, removeListener: function() {},
-                        addEventListener: function() {}, removeEventListener: function() {},
-                        dispatchEvent: function() { return false; }
-                    };
-                }
-                if (q.indexOf('hover: hover') !== -1 || q.indexOf('any-hover: hover') !== -1 ||
-                    q.indexOf('pointer: fine') !== -1 || q.indexOf('any-pointer: fine') !== -1) {
-                    return {
-                        matches: false, media: query, onchange: null,
-                        addListener: function() {}, removeListener: function() {},
-                        addEventListener: function() {}, removeEventListener: function() {},
-                        dispatchEvent: function() { return false; }
-                    };
-                }
+                if (/(?:any-)?hover:\s*none|(?:any-)?pointer:\s*coarse/.test(q)) return makeMql(query, true);
+                if (/(?:any-)?hover:\s*hover|(?:any-)?pointer:\s*fine/.test(q)) return makeMql(query, false);
                 return origMatchMedia.apply(this, arguments);
             }, 'matchMedia');
         }
     } catch (e) {}
 
-    // 7. On-Demand Accelerometer & Gyroscope Sensor Spoofing
+    // 7 & 10. Sensors + Full WebRTC SDP & ICE Candidate QEMU 10.0.2.15 Scrubbing
+    var PeerConn = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+    var iceListenerMap = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+    function scrubCandidate(c) {
+        if (!c) return c;
+        if (c.candidate && c.candidate.indexOf('10.0.2.15') !== -1) c.candidate = c.candidate.replace(/10\.0\.2\.15/g, _fakeLocalIp);
+        if (c.address === '10.0.2.15') { try { Object.defineProperty(c, 'address', { value: _fakeLocalIp, configurable: true, enumerable: true }); } catch (e) {} }
+        return c;
+    }
+
     try {
-        var motionListeners = [];
-        var orientationListeners = [];
-        var onDeviceMotionHandler = null;
-        var onDeviceOrientationHandler = null;
-        var _sensorTimerId = null;
-
-        function createDeviceMotionEvent(acc, accG, rot, interval) {
+        var motionListeners = [], orientationListeners = [], onDeviceMotionHandler = null, onDeviceOrientationHandler = null, _sensorTimerId = null;
+        function makeSensorEvent(Ctor, type, props) {
             var evt = null;
-            if (typeof DeviceMotionEvent === 'function') {
-                try {
-                    evt = new DeviceMotionEvent('devicemotion', {
-                        acceleration: acc, accelerationIncludingGravity: accG, rotationRate: rot, interval: interval
-                    });
-                } catch (e) {}
-            }
-            if (!evt) evt = new Event('devicemotion');
-            try {
-                Object.defineProperty(evt, 'acceleration', { value: acc, configurable: true, enumerable: true });
-                Object.defineProperty(evt, 'accelerationIncludingGravity', { value: accG, configurable: true, enumerable: true });
-                Object.defineProperty(evt, 'rotationRate', { value: rot, configurable: true, enumerable: true });
-                Object.defineProperty(evt, 'interval', { value: interval, configurable: true, enumerable: true });
-            } catch (e) {}
+            if (typeof Ctor === 'function') { try { evt = new Ctor(type, props); } catch (e) {} }
+            if (!evt) evt = new Event(type);
+            try { for (var k in props) Object.defineProperty(evt, k, { value: props[k], configurable: true, enumerable: true }); } catch (e) {}
             return evt;
         }
-
-        function createDeviceOrientationEvent(alpha, beta, gamma, absolute) {
-            var evt = null;
-            if (typeof DeviceOrientationEvent === 'function') {
-                try {
-                    evt = new DeviceOrientationEvent('deviceorientation', {
-                        alpha: alpha, beta: beta, gamma: gamma, absolute: absolute
-                    });
-                } catch (e) {}
-            }
-            if (!evt) evt = new Event('deviceorientation');
-            try {
-                Object.defineProperty(evt, 'alpha', { value: alpha, configurable: true, enumerable: true });
-                Object.defineProperty(evt, 'beta', { value: beta, configurable: true, enumerable: true });
-                Object.defineProperty(evt, 'gamma', { value: gamma, configurable: true, enumerable: true });
-                Object.defineProperty(evt, 'absolute', { value: absolute, configurable: true, enumerable: true });
-            } catch (e) {}
-            return evt;
+        function dispatchSensor(list, handler, evt) {
+            for (var i = 0; i < list.length; i++) { try { list[i].call(window, evt); } catch (e) {} }
+            if (typeof handler === 'function') { try { handler.call(window, evt); } catch (e) {} }
         }
-
         function tickSensors() {
-            var hasMotion = motionListeners.length > 0 || typeof onDeviceMotionHandler === 'function';
-            var hasOrient = orientationListeners.length > 0 || typeof onDeviceOrientationHandler === 'function';
-            if (!hasMotion && !hasOrient) {
-                if (_sensorTimerId !== null) { clearInterval(_sensorTimerId); _sensorTimerId = null; }
-                return;
+            var hasM = motionListeners.length > 0 || typeof onDeviceMotionHandler === 'function';
+            var hasO = orientationListeners.length > 0 || typeof onDeviceOrientationHandler === 'function';
+            if (!hasM && !hasO) { if (_sensorTimerId !== null) { clearInterval(_sensorTimerId); _sensorTimerId = null; } return; }
+            if (hasM) {
+                dispatchSensor(motionListeners, onDeviceMotionHandler, makeSensorEvent(typeof DeviceMotionEvent !== 'undefined' ? DeviceMotionEvent : undefined, 'devicemotion', {
+                    acceleration: { x: (Math.random() - 0.5) * 0.02, y: (Math.random() - 0.5) * 0.02, z: (Math.random() - 0.5) * 0.02 },
+                    accelerationIncludingGravity: { x: 0.08 + (Math.random() - 0.5) * 0.04, y: 9.80 + (Math.random() - 0.5) * 0.06, z: 0.42 + (Math.random() - 0.5) * 0.04 },
+                    rotationRate: { alpha: (Math.random() - 0.5) * 0.1, beta: (Math.random() - 0.5) * 0.1, gamma: (Math.random() - 0.5) * 0.1 }, interval: 50
+                }));
             }
-            if (hasMotion) {
-                var acc = { x: (Math.random() - 0.5) * 0.02, y: (Math.random() - 0.5) * 0.02, z: (Math.random() - 0.5) * 0.02 };
-                var accG = { x: 0.08 + (Math.random() - 0.5) * 0.04, y: 9.80 + (Math.random() - 0.5) * 0.06, z: 0.42 + (Math.random() - 0.5) * 0.04 };
-                var rot = { alpha: (Math.random() - 0.5) * 0.1, beta: (Math.random() - 0.5) * 0.1, gamma: (Math.random() - 0.5) * 0.1 };
-                var motionEvt = createDeviceMotionEvent(acc, accG, rot, 50);
-                for (var m = 0; m < motionListeners.length; m++) {
-                    try { motionListeners[m].call(window, motionEvt); } catch (e) {}
-                }
-                if (typeof onDeviceMotionHandler === 'function') {
-                    try { onDeviceMotionHandler.call(window, motionEvt); } catch (e) {}
-                }
-            }
-            if (hasOrient) {
-                var alpha = +(180.2 + (Math.random() - 0.5) * 0.2).toFixed(2);
-                var beta = +(45.1 + (Math.random() - 0.5) * 0.2).toFixed(2);
-                var gamma = +((Math.random() - 0.5) * 0.2).toFixed(2);
-                var orientEvt = createDeviceOrientationEvent(alpha, beta, gamma, true);
-                for (var o = 0; o < orientationListeners.length; o++) {
-                    try { orientationListeners[o].call(window, orientEvt); } catch (e) {}
-                }
-                if (typeof onDeviceOrientationHandler === 'function') {
-                    try { onDeviceOrientationHandler.call(window, orientEvt); } catch (e) {}
-                }
+            if (hasO) {
+                dispatchSensor(orientationListeners, onDeviceOrientationHandler, makeSensorEvent(typeof DeviceOrientationEvent !== 'undefined' ? DeviceOrientationEvent : undefined, 'deviceorientation', {
+                    alpha: +(180.2 + (Math.random() - 0.5) * 0.2).toFixed(2), beta: +(45.1 + (Math.random() - 0.5) * 0.2).toFixed(2), gamma: +((Math.random() - 0.5) * 0.2).toFixed(2), absolute: true
+                }));
             }
         }
-
-        function ensureSensorTimer() {
-            if (_sensorTimerId === null) _sensorTimerId = setInterval(tickSensors, 50);
-        }
+        function ensureSensorTimer() { if (_sensorTimerId === null) _sensorTimerId = setInterval(tickSensors, 50); }
 
         var targetProto = (typeof EventTarget !== 'undefined' && EventTarget.prototype) ? EventTarget.prototype : window;
-        var origAddEL = targetProto.addEventListener || window.addEventListener;
-        var origRemEL = targetProto.removeEventListener || window.removeEventListener;
-
-        targetProto.addEventListener = makeNative(function(type, listener, options) {
-            if (this === window || (typeof Window !== 'undefined' && this instanceof Window)) {
-                if (type === 'devicemotion' && listener && motionListeners.indexOf(listener) === -1) {
-                    motionListeners.push(listener); ensureSensorTimer();
-                } else if (type === 'deviceorientation' && listener && orientationListeners.indexOf(listener) === -1) {
-                    orientationListeners.push(listener); ensureSensorTimer();
+        var origAddEL = targetProto.addEventListener || window.addEventListener, origRemEL = targetProto.removeEventListener || window.removeEventListener;
+        targetProto.addEventListener = makeNative(function addEventListener(type, listener, options) {
+            if (typeof listener === 'function') {
+                if (this === window || (typeof Window !== 'undefined' && this instanceof Window)) {
+                    var arr = type === 'devicemotion' ? motionListeners : (type === 'deviceorientation' ? orientationListeners : null);
+                    if (arr && arr.indexOf(listener) === -1) { arr.push(listener); ensureSensorTimer(); }
+                } else if (PeerConn && this instanceof PeerConn && type === 'icecandidate' && iceListenerMap) {
+                    var wrapped = iceListenerMap.get(listener);
+                    if (!wrapped) { wrapped = function(evt) { if (evt && evt.candidate) scrubCandidate(evt.candidate); return listener.apply(this, arguments); }; iceListenerMap.set(listener, wrapped); }
+                    return origAddEL.call(this, type, wrapped, options);
                 }
             }
             if (origAddEL) return origAddEL.apply(this, arguments);
         }, 'addEventListener');
-
-        targetProto.removeEventListener = makeNative(function(type, listener, options) {
-            if (this === window || (typeof Window !== 'undefined' && this instanceof Window)) {
-                if (type === 'devicemotion') {
-                    var idx = motionListeners.indexOf(listener);
-                    if (idx !== -1) motionListeners.splice(idx, 1);
-                } else if (type === 'deviceorientation') {
-                    var idxO = orientationListeners.indexOf(listener);
-                    if (idxO !== -1) orientationListeners.splice(idxO, 1);
+        targetProto.removeEventListener = makeNative(function removeEventListener(type, listener, options) {
+            if (listener) {
+                if (this === window || (typeof Window !== 'undefined' && this instanceof Window)) {
+                    var arr = type === 'devicemotion' ? motionListeners : (type === 'deviceorientation' ? orientationListeners : null);
+                    if (arr) { var idx = arr.indexOf(listener); if (idx !== -1) arr.splice(idx, 1); }
+                } else if (PeerConn && this instanceof PeerConn && type === 'icecandidate' && iceListenerMap && iceListenerMap.has(listener)) {
+                    return origRemEL.call(this, type, iceListenerMap.get(listener), options);
                 }
             }
             if (origRemEL) return origRemEL.apply(this, arguments);
         }, 'removeEventListener');
 
         var winProto = (typeof Window !== 'undefined' && Window.prototype) ? Window.prototype : window;
-        Object.defineProperty(winProto, 'ondevicemotion', {
-            get: makeNative(function() { return onDeviceMotionHandler; }, 'get ondevicemotion'),
-            set: makeNative(function(fn) { onDeviceMotionHandler = fn; if (typeof fn === 'function') ensureSensorTimer(); }, 'set ondevicemotion'),
-            configurable: true, enumerable: true
-        });
-        Object.defineProperty(winProto, 'ondeviceorientation', {
-            get: makeNative(function() { return onDeviceOrientationHandler; }, 'get ondeviceorientation'),
-            set: makeNative(function(fn) { onDeviceOrientationHandler = fn; if (typeof fn === 'function') ensureSensorTimer(); }, 'set ondeviceorientation'),
-            configurable: true, enumerable: true
-        });
+        Object.defineProperty(winProto, 'ondevicemotion', { get: makeNative(function() { return onDeviceMotionHandler; }, 'get ondevicemotion'), set: makeNative(function(fn) { onDeviceMotionHandler = fn; if (typeof fn === 'function') ensureSensorTimer(); }, 'set ondevicemotion'), configurable: true, enumerable: true });
+        Object.defineProperty(winProto, 'ondeviceorientation', { get: makeNative(function() { return onDeviceOrientationHandler; }, 'get ondeviceorientation'), set: makeNative(function(fn) { onDeviceOrientationHandler = fn; if (typeof fn === 'function') ensureSensorTimer(); }, 'set ondeviceorientation'), configurable: true, enumerable: true });
     } catch (e) {}
 
     // 8. Coherent Screen & Orientation
     try {
         if (window.screen) {
-            defineProp(window.screen, 'colorDepth', 24);
-            defineProp(window.screen, 'pixelDepth', 24);
-            defineProp(window.screen, 'width', function() { return window.innerWidth || 1280; });
-            defineProp(window.screen, 'height', function() { return window.innerHeight || 720; });
-            defineProp(window.screen, 'availWidth', function() { return window.innerWidth || 1280; });
-            defineProp(window.screen, 'availHeight', function() { return window.innerHeight || 720; });
-            if (window.screen.orientation) {
-                Object.defineProperty(window.screen.orientation, 'type', {
-                    get: makeNative(function() { return 'landscape-primary'; }, 'get type'),
-                    enumerable: true, configurable: true
-                });
-                Object.defineProperty(window.screen.orientation, 'angle', {
-                    get: makeNative(function() { return 90; }, 'get angle'),
-                    enumerable: true, configurable: true
-                });
-            }
+            var getW = function() { return window.innerWidth || 1280; }, getH = function() { return window.innerHeight || 720; };
+            defineProp(window.screen, 'colorDepth', 24); defineProp(window.screen, 'pixelDepth', 24);
+            defineProp(window.screen, 'width', getW); defineProp(window.screen, 'height', getH);
+            defineProp(window.screen, 'availWidth', getW); defineProp(window.screen, 'availHeight', getH);
+            if (window.screen.orientation) defineGetters(window.screen.orientation, { type: function() { return 'landscape-primary'; }, angle: function() { return 90; } });
         }
     } catch (e) {}
 
     // 9. Cordova Device Plugin Identity Synchronization
-    function applyDevProps(dev) {
-        if (!dev) return;
-        dev.model = _deviceModel;
-        dev.manufacturer = _deviceManufacturer;
-        dev.isVirtual = false;
-        dev.platform = 'Android';
-        dev.version = _osVer;
-        dev.uuid = _deviceUuid;
-        dev.serial = _deviceSerial;
-    }
-
-    function patchCordovaDevice() {
-        try { if (window.device) applyDevProps(window.device); } catch (e) {}
-    }
+    function patchCordovaDevice() { try { if (window.device) applyDevProps(window.device); } catch (e) {} }
     patchCordovaDevice();
-    if (typeof document !== 'undefined' && document.addEventListener) {
-        document.addEventListener('deviceready', patchCordovaDevice, false);
-    }
-
+    if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('deviceready', patchCordovaDevice, false);
     try {
         var _curDev = window.device;
         Object.defineProperty(window, 'device', {
-            get: makeNative(function() {
-                if (_curDev) applyDevProps(_curDev);
-                return _curDev;
-            }, 'get device'),
-            set: makeNative(function(val) {
-                _curDev = val;
-                if (_curDev) applyDevProps(_curDev);
-            }, 'set device'),
+            get: makeNative(function() { if (_curDev) applyDevProps(_curDev); return _curDev; }, 'get device'),
+            set: makeNative(function(val) { _curDev = val; if (_curDev) applyDevProps(_curDev); }, 'set device'),
             configurable: true, enumerable: true
         });
     } catch (e) {}
-
     if (window.cordova && window.cordova.define) {
         var origDefine = window.cordova.define;
-        window.cordova.define = makeNative(function(id, factory) {
+        window.cordova.define = makeNative(function define(id, factory) {
             if (id === 'cordova-plugin-device.device') {
-                var wrappedFactory = function(require, exports, module) {
+                return origDefine.call(window.cordova, id, function(require, exports, module) {
                     factory(require, exports, module);
                     var dev = module.exports;
                     if (dev) {
                         applyDevProps(dev);
                         if (dev.getInfo) {
                             var origGetInfo = dev.getInfo;
-                            dev.getInfo = makeNative(function(success, error) {
-                                origGetInfo.call(dev, function(info) {
-                                    applyDevProps(info);
-                                    success(info);
-                                }, error);
-                            }, 'getInfo');
+                            dev.getInfo = makeNative(function getInfo(success, error) { origGetInfo.call(dev, function(info) { applyDevProps(info); success(info); }, error); }, 'getInfo');
                         }
                     }
-                };
-                return origDefine.call(window.cordova, id, wrappedFactory);
+                });
             }
             return origDefine.apply(this, arguments);
         }, 'define');
     }
 
-    // 10. Full WebRTC SDP & ICE Candidate QEMU 10.0.2.15 Scrubbing
     try {
-        var PeerConn = window.RTCPeerConnection || window.webkitRTCPeerConnection;
         if (PeerConn && PeerConn.prototype) {
-            var origCreateOffer = PeerConn.prototype.createOffer;
-            if (origCreateOffer) {
-                PeerConn.prototype.createOffer = makeNative(function() {
-                    return origCreateOffer.apply(this, arguments).then(function(offer) {
-                        if (offer && offer.sdp) offer.sdp = offer.sdp.replace(/10\.0\.2\.15/g, _fakeLocalIp);
-                        return offer;
+            ['createOffer', 'createAnswer'].forEach(function(name) {
+                var origFn = PeerConn.prototype[name];
+                if (origFn) PeerConn.prototype[name] = makeNative(function() {
+                    return origFn.apply(this, arguments).then(function(desc) { if (desc && desc.sdp) desc.sdp = desc.sdp.replace(/10\.0\.2\.15/g, _fakeLocalIp); return desc; });
+                }, name);
+            });
+            ['localDescription', 'currentLocalDescription', 'pendingLocalDescription'].forEach(function(prop) {
+                var desc = Object.getOwnPropertyDescriptor(PeerConn.prototype, prop);
+                if (desc && desc.get) {
+                    Object.defineProperty(PeerConn.prototype, prop, {
+                        get: makeNative(function() {
+                            var val = desc.get.apply(this, arguments);
+                            if (val && val.sdp && val.sdp.indexOf('10.0.2.15') !== -1) {
+                                try { Object.defineProperty(val, 'sdp', { value: val.sdp.replace(/10\.0\.2\.15/g, _fakeLocalIp), configurable: true, enumerable: true }); } catch (e) {}
+                            }
+                            return val;
+                        }, 'get ' + prop), configurable: true, enumerable: true
                     });
-                }, 'createOffer');
-            }
-            var origCreateAnswer = PeerConn.prototype.createAnswer;
-            if (origCreateAnswer) {
-                PeerConn.prototype.createAnswer = makeNative(function() {
-                    return origCreateAnswer.apply(this, arguments).then(function(answer) {
-                        if (answer && answer.sdp) answer.sdp = answer.sdp.replace(/10\.0\.2\.15/g, _fakeLocalIp);
-                        return answer;
-                    });
-                }, 'createAnswer');
-            }
-            function scrubCandidate(candidate) {
-                if (!candidate) return candidate;
-                if (candidate.candidate && candidate.candidate.indexOf('10.0.2.15') !== -1) {
-                    candidate.candidate = candidate.candidate.replace(/10\.0\.2\.15/g, _fakeLocalIp);
                 }
-                if (candidate.address === '10.0.2.15') {
-                    try { Object.defineProperty(candidate, 'address', { value: _fakeLocalIp, configurable: true, enumerable: true }); } catch (e) {}
-                }
-                return candidate;
-            }
-            var origAddIceCandidate = PeerConn.prototype.addIceCandidate;
-            if (origAddIceCandidate) {
-                PeerConn.prototype.addIceCandidate = makeNative(function(candidate) {
-                    scrubCandidate(candidate);
-                    return origAddIceCandidate.apply(this, arguments);
-                }, 'addIceCandidate');
+            });
+            if (PeerConn.prototype.addIceCandidate) {
+                var origAddIce = PeerConn.prototype.addIceCandidate;
+                PeerConn.prototype.addIceCandidate = makeNative(function addIceCandidate(c) { scrubCandidate(c); return origAddIce.apply(this, arguments); }, 'addIceCandidate');
             }
             var origOnIceDesc = Object.getOwnPropertyDescriptor(PeerConn.prototype, 'onicecandidate');
             if (origOnIceDesc && origOnIceDesc.set) {
@@ -848,18 +486,10 @@
                     get: makeNative(function() { return iceHandlerMap.get(this) || null; }, 'get onicecandidate'),
                     set: makeNative(function(fn) {
                         if (typeof fn === 'function') {
-                            iceHandlerMap.set(this, fn);
-                            var self = this;
-                            origOnIceDesc.set.call(this, function(evt) {
-                                if (evt && evt.candidate) scrubCandidate(evt.candidate);
-                                return fn.call(self, evt);
-                            });
-                        } else {
-                            iceHandlerMap.delete(this);
-                            origOnIceDesc.set.call(this, null);
-                        }
-                    }, 'set onicecandidate'),
-                    configurable: true, enumerable: true
+                            iceHandlerMap.set(this, fn); var self = this;
+                            origOnIceDesc.set.call(this, function(evt) { if (evt && evt.candidate) scrubCandidate(evt.candidate); return fn.call(self, evt); });
+                        } else { iceHandlerMap.delete(this); origOnIceDesc.set.call(this, null); }
+                    }, 'set onicecandidate'), configurable: true, enumerable: true
                 });
             }
         }
@@ -867,87 +497,52 @@
 
     // 11. Per-Instance Deterministic Audio & Font Coherence
     try {
-        if (window.AudioContext || window.webkitAudioContext) {
-            var Actx = window.AudioContext || window.webkitAudioContext;
-            Object.defineProperty(Actx.prototype, 'sampleRate', {
-                get: makeNative(function() { return 48000; }, 'get sampleRate'),
-                enumerable: true, configurable: true
-            });
-        }
+        var Actx = window.AudioContext || window.webkitAudioContext;
+        if (Actx && Actx.prototype) defineGetters(Actx.prototype, { sampleRate: function() { return 48000; } });
         if (window.OfflineAudioContext && OfflineAudioContext.prototype.startRendering) {
-            var origStartRendering = OfflineAudioContext.prototype.startRendering;
-            var audioSeedJitter = ((_instanceHash % 97) + 1) * 1e-8;
-            OfflineAudioContext.prototype.startRendering = makeNative(function() {
+            var origStartRendering = OfflineAudioContext.prototype.startRendering, audioSeedJitter = ((_instanceHash % 97) + 1) * 1e-8;
+            OfflineAudioContext.prototype.startRendering = makeNative(function startRendering() {
                 return origStartRendering.apply(this, arguments).then(function(buffer) {
                     if (buffer && buffer.getChannelData) {
                         var chan = buffer.getChannelData(0);
-                        if (chan && chan.length > 10) {
-                            for (var j = (_instanceHash % 7); j < chan.length; j += 128) {
-                                chan[j] += audioSeedJitter;
-                            }
-                        }
+                        if (chan && chan.length > 10) for (var j = (_instanceHash % 7); j < chan.length; j += 128) chan[j] += audioSeedJitter;
                     }
                     return buffer;
                 });
             }, 'startRendering');
         }
         if (document.fonts && document.fonts.check) {
-            var origFontsCheck = document.fonts.check;
-            var desktopFonts = ['segoe ui', 'calibri', 'consolas', 'cambria', 'ms gothic', 'arial black', 'tahoma', 'lucida console', 'comic sans ms'];
-            document.fonts.check = makeNative(function(font) {
-                var fLower = (font || '').toLowerCase();
-                for (var df = 0; df < desktopFonts.length; df++) {
-                    if (fLower.indexOf(desktopFonts[df]) !== -1) return false;
-                }
-                return origFontsCheck.apply(this, arguments);
-            }, 'check');
+            var origFontsCheck = document.fonts.check, desktopFontsRx = /segoe ui|calibri|consolas|cambria|ms gothic|arial black|tahoma|lucida console|comic sans ms/i;
+            document.fonts.check = makeNative(function check(font) { return (font && desktopFontsRx.test(font)) ? false : origFontsCheck.apply(this, arguments); }, 'check');
         }
     } catch (e) {}
 
-    // 12. Outbound HTTPS XHR & Fetch Payload/Header Sanitizer (scrubs x86/QEMU/10.0.2.15 before TLS encryption)
+    // 12. Outbound HTTPS XHR & Fetch Payload/Header Sanitizer
     try {
-        function scrubNetworkString(str) {
-            if (typeof str !== 'string' || str.length === 0) return str;
-            if (str.indexOf('10.0.2.15') === -1 && str.indexOf('x86') === -1 && str.indexOf('goldfish') === -1 && str.indexOf('ranchu') === -1 && str.indexOf('sdk_gphone') === -1) {
-                return str;
-            }
-            return str
-                .replace(/10\.0\.2\.15/g, _fakeLocalIp)
-                .replace(/x86_64/gi, 'arm64-v8a')
-                .replace(/sdk_gphone_x86_64|Android SDK built for x86_64|sdk_gphone_x86/gi, _deviceModel)
-                .replace(/goldfish|ranchu/gi, 'qcom');
-        }
-
+        var leakCheckRx = /10\.0\.2\.15|x86|goldfish|ranchu|sdk_gphone/i;
+        var scrubNetworkString = function(str) {
+            if (typeof str !== 'string' || str.length === 0 || !leakCheckRx.test(str)) return str;
+            return str.replace(/10\.0\.2\.15/g, _fakeLocalIp).replace(/x86_64/gi, 'arm64-v8a').replace(/sdk_gphone_x86_64|Android SDK built for x86_64|sdk_gphone_x86/gi, _deviceModel).replace(/goldfish|ranchu/gi, 'qcom');
+        };
         if (window.XMLHttpRequest && XMLHttpRequest.prototype) {
-            var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+            var origSetHeader = XMLHttpRequest.prototype.setRequestHeader, origXhrSend = XMLHttpRequest.prototype.send;
             if (origSetHeader) {
-                XMLHttpRequest.prototype.setRequestHeader = makeNative(function(header, value) {
-                    var hLower = (header || '').toLowerCase();
-                    if (hLower === 'user-agent') value = MOBILE_UA;
-                    else if (hLower === 'sec-ch-ua-arch') value = '"arm"';
-                    else if (hLower === 'sec-ch-ua-platform') value = '"Android"';
-                    else if (hLower === 'sec-ch-ua-model') value = '"' + _deviceModel + '"';
-                    else if (typeof value === 'string') value = scrubNetworkString(value);
-                    return origSetHeader.call(this, header, value);
+                var hdrMap = { 'user-agent': MOBILE_UA, 'sec-ch-ua-arch': '"arm"', 'sec-ch-ua-platform': '"Android"', 'sec-ch-ua-model': '"' + _deviceModel + '"' };
+                XMLHttpRequest.prototype.setRequestHeader = makeNative(function setRequestHeader(h, v) {
+                    var hL = (h || '').toLowerCase();
+                    if (Object.prototype.hasOwnProperty.call(hdrMap, hL)) v = hdrMap[hL];
+                    else if (typeof v === 'string') v = scrubNetworkString(v);
+                    return origSetHeader.call(this, h, v);
                 }, 'setRequestHeader');
             }
-            var origXhrSend = XMLHttpRequest.prototype.send;
-            if (origXhrSend) {
-                XMLHttpRequest.prototype.send = makeNative(function(body) {
-                    if (typeof body === 'string') {
-                        body = scrubNetworkString(body);
-                    }
-                    return origXhrSend.call(this, body);
-                }, 'send');
-            }
+            if (origXhrSend) XMLHttpRequest.prototype.send = makeNative(function send(b) { return origXhrSend.call(this, typeof b === 'string' ? scrubNetworkString(b) : b); }, 'send');
         }
         if (typeof window.fetch === 'function') {
             var origFetch = window.fetch;
-            window.fetch = makeNative(function(input, init) {
-                if (init && typeof init === 'object' && typeof init.body === 'string') {
-                    init.body = scrubNetworkString(init.body);
-                }
-                return origFetch.apply(this, arguments);
+            window.fetch = makeNative(function fetch(input, init) {
+                if (typeof input === 'string') input = scrubNetworkString(input);
+                if (init && typeof init === 'object' && typeof init.body === 'string') init.body = scrubNetworkString(init.body);
+                return origFetch.call(this, input, init);
             }, 'fetch');
         }
     } catch (e) {}
@@ -957,42 +552,25 @@
         if (!targetWin || targetWin === window || disguisedFrames.has(targetWin)) return;
         try {
             disguisedFrames.add(targetWin);
-            if (targetWin.Function && targetWin.Function.prototype) {
-                targetWin.Function.prototype.toString = customToString;
-            }
+            if (targetWin.Function && targetWin.Function.prototype) targetWin.Function.prototype.toString = customToString;
             var tNavProto = (targetWin.Navigator && targetWin.Navigator.prototype) ? targetWin.Navigator.prototype : targetWin.navigator;
             if (tNavProto) {
-                var props = {
-                    platform: MOBILE_PLATFORM, userAgent: MOBILE_UA, appVersion: MOBILE_APP_VERSION,
-                    maxTouchPoints: 5, hardwareConcurrency: _hwSpecs.cores, deviceMemory: _hwSpecs.ram,
-                    vendor: 'Google Inc.', webdriver: false, onLine: true
-                };
-                for (var k in props) {
-                    (function(p, val) {
-                        try {
-                            Object.defineProperty(tNavProto, p, {
-                                get: makeNative(function() { return val; }, 'get ' + p),
-                                configurable: true, enumerable: true
-                            });
-                        } catch (e) {}
-                    })(k, props[k]);
+                for (var k in navOverrides) {
+                    if (Object.prototype.hasOwnProperty.call(navOverrides, k) && navOverrides[k] !== undefined) {
+                        (function(p, val) { try { Object.defineProperty(tNavProto, p, { get: makeNative(function() { return val; }, 'get ' + p), configurable: true, enumerable: true }); } catch (e) {} })(k, navOverrides[k]);
+                    }
                 }
             }
             if (targetWin.WebGLRenderingContext) wrapContext(targetWin.WebGLRenderingContext.prototype);
             if (targetWin.WebGL2RenderingContext) wrapContext(targetWin.WebGL2RenderingContext.prototype);
         } catch (e) {}
     }
-
     try {
         if (typeof HTMLIFrameElement !== 'undefined' && HTMLIFrameElement.prototype) {
             var origCWDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
             if (origCWDesc && origCWDesc.get) {
                 Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
-                    get: makeNative(function() {
-                        var cw = origCWDesc.get.apply(this, arguments);
-                        if (cw) disguiseFrameWindow(cw);
-                        return cw;
-                    }, 'get contentWindow'),
+                    get: makeNative(function() { var cw = origCWDesc.get.apply(this, arguments); if (cw) disguiseFrameWindow(cw); return cw; }, 'get contentWindow'),
                     set: origCWDesc.set, configurable: true, enumerable: true
                 });
             }
