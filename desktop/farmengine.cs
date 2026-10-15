@@ -563,7 +563,7 @@ namespace DofusFarm.Engine
                 // returns to the shell immediately (the old Process.Start leaked adb.exe so
                 // adb root / unroot could block 120s while the device waited for the shell).
                 PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
-                NativeMethods.STARTUPINFOW si = new NativeMethods.STARTUPINFOW();
+                STARTUPINFOW si = new STARTUPINFOW();
                 si.cb = 68;
                 si.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
                 si.wShowWindow = 0x00000004; // SW_HIDE
@@ -1732,25 +1732,6 @@ namespace DofusFarm.Engine
 
             // Make Golden Master immutable (read-only) to prevent accidental modification
             try { File.SetAttributes(GoldenMasterPath, FileAttributes.ReadOnly); } catch { }
-
-            // One-time v2.3 migration: purge any broken v2.2 black-screen snapshots, bad window.scale=-1, and mismatched encryptionkey overlays
-            string v23Flag = Path.Combine(avdDir, "v23_blackscreen_fixed.flag");
-            bool isV23Migrated = File.Exists(v23Flag);
-            if (!isV23Migrated)
-            {
-                try
-                {
-                    string snapDirOld = Path.Combine(avdDir, "snapshots");
-                    if (Directory.Exists(snapDirOld)) ForceDeleteDirectory(snapDirOld);
-                    foreach (string staleFile in new[] { "cold_run_completed.flag", "emulator-user.ini", "encryptionkey.img.qcow2", "cache.img.qcow2" })
-                    {
-                        string sf = Path.Combine(avdDir, staleFile);
-                        if (File.Exists(sf)) { try { File.SetAttributes(sf, FileAttributes.Normal); File.Delete(sf); } catch { } }
-                    }
-                    File.WriteAllText(v23Flag, "ok", Encoding.ASCII);
-                }
-                catch { }
-            }
 
             // Copy auxiliary partition images (encryptionkey.img, cache.img, sdcard.img) from template or system-images
             // IMPORTANT: encryptionkey.img MUST match dofus-template.avd\encryptionkey.img so Android 10 vold can decrypt userdata-golden.img!

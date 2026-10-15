@@ -107,7 +107,6 @@ namespace DofusFarm.Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    [StructLayout(LayoutKind.Sequential)]
     public struct SECURITY_ATTRIBUTES
     {
         public int nLength;
