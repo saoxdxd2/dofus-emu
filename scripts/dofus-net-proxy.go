@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,24 +29,63 @@ import (
 
 var (
 	bufPool = sync.Pool{
-		New: func() interface{} {
-			return make([]byte, 32*1024)
-		},
+		New: func() interface{} { return make([]byte, 32*1024) },
 	}
-	reHeadOpen  = regexp.MustCompile(`(?i)<head[^>]*>`)
-	reHeadClose = regexp.MustCompile(`(?i)</head>`)
-	reHtmlOpen  = regexp.MustCompile(`(?i)<html[^>]*>`)
-	reOsVer     = regexp.MustCompile(`Android\s+([0-9.]+)`)
-	reBuildId   = regexp.MustCompile(`Build/([^\s;)]+)`)
+	reHeadOpen   = regexp.MustCompile(`(?i)<head[^>]*>`)
+	reHeadClose  = regexp.MustCompile(`(?i)</head>`)
+	reHtmlOpen   = regexp.MustCompile(`(?i)<html[^>]*>`)
+	reOsVer      = regexp.MustCompile(`Android\s+([0-9.]+)`)
+	reBuildId    = regexp.MustCompile(`Build/([^\s;)]+)`)
+	reLeakUA     = regexp.MustCompile(`(?i)x86|sdk|emulator|goldfish|ranchu|mozilla/`)
+	reCacheAsset = regexp.MustCompile(`(?i)\.(?:png|jpe?g|webp|mp3|ogg|wasm|zip|pak|dat)$|/assets/`)
+
+	tunnelEstablished = []byte("HTTP/1.1 200 Connection Established\r\n\r\n")
+
+	stripReqHeaders = []string{
+		"Proxy-Connection", "Proxy-Authenticate", "Proxy-Authorization",
+		"Via", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
+		"Forwarded", "X-Real-IP", "Client-IP",
+	}
+	hopReqHeaders = map[string]struct{}{
+		"connection": {}, "keep-alive": {}, "te": {}, "trailers": {}, "transfer-encoding": {}, "upgrade": {},
+	}
+	hopRespHeaders = map[string]struct{}{
+		"connection": {}, "keep-alive": {}, "proxy-authenticate": {}, "proxy-authorization": {},
+		"te": {}, "trailers": {}, "transfer-encoding": {}, "upgrade": {},
+		"content-security-policy": {}, "content-security-policy-report-only": {},
+	}
+	extMimeMap = map[string]string{
+		".wasm": "application/wasm",
+		".json": "application/json; charset=utf-8",
+		".png":  "image/png",
+		".jpg":  "image/jpeg",
+		".jpeg": "image/jpeg",
+		".webp": "image/webp",
+		".mp3":  "audio/mpeg",
+		".ogg":  "audio/ogg",
+		".js":   "application/javascript; charset=utf-8",
+		".css":  "text/css; charset=utf-8",
+		".html": "text/html; charset=utf-8",
+		".htm":  "text/html; charset=utf-8",
+	}
 )
 
-// DNSCacheEntry holds cached IP addresses and expiry time
+type closeWriter interface {
+	CloseWrite() error
+}
+
+type bufferedConn struct {
+	io.Reader
+	net.Conn
+}
+
+func (b *bufferedConn) Read(p []byte) (int, error) { return b.Reader.Read(p) }
+
 type DNSCacheEntry struct {
 	IPs       []net.IP
 	ExpiresAt time.Time
 }
 
-// FastDNSResolver provides in-memory thread-safe DNS caching
 type FastDNSResolver struct {
 	mu         sync.RWMutex
 	cache      map[string]DNSCacheEntry
@@ -54,104 +96,77 @@ type FastDNSResolver struct {
 
 func NewFastDNSResolver(customDNS string, ttl time.Duration) *FastDNSResolver {
 	r := &FastDNSResolver{
-		cache:     make(map[string]DNSCacheEntry),
-		ttl:       ttl,
-		customDNS: customDNS,
+		cache:      make(map[string]DNSCacheEntry, 128),
+		ttl:        ttl,
+		customDNS:  customDNS,
+		netResolve: net.DefaultResolver,
 	}
-
 	if customDNS != "" {
 		if !strings.Contains(customDNS, ":") {
 			customDNS += ":53"
 		}
+		d := net.Dialer{Timeout: 3 * time.Second}
 		r.netResolve = &net.Resolver{
 			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 3 * time.Second}
+			Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return d.DialContext(ctx, "udp", customDNS)
 			},
 		}
-	} else {
-		r.netResolve = net.DefaultResolver
 	}
 	return r
 }
 
 func (r *FastDNSResolver) Lookup(ctx context.Context, host string) ([]net.IP, error) {
-	h, _, err := net.SplitHostPort(host)
-	if err == nil {
+	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-
 	if ip := net.ParseIP(host); ip != nil {
 		return []net.IP{ip}, nil
 	}
 
+	now := time.Now()
 	r.mu.RLock()
 	entry, found := r.cache[host]
 	r.mu.RUnlock()
-
-	if found && time.Now().Before(entry.ExpiresAt) {
+	if found && now.Before(entry.ExpiresAt) {
 		return entry.IPs, nil
 	}
 
 	ips, err := r.netResolve.LookupIP(ctx, "ip4", host)
+	if err != nil && r.netResolve != net.DefaultResolver {
+		ips, err = net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	}
 	if err != nil {
-		if r.netResolve != net.DefaultResolver {
-			ips, err = net.DefaultResolver.LookupIP(ctx, "ip4", host)
-		}
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	r.mu.Lock()
 	if len(r.cache) >= 1024 {
-		now := time.Now()
 		for k, v := range r.cache {
 			if now.After(v.ExpiresAt) {
 				delete(r.cache, k)
 			}
 		}
 		if len(r.cache) >= 1024 {
-			r.cache = make(map[string]DNSCacheEntry)
+			r.cache = make(map[string]DNSCacheEntry, 128)
 		}
 	}
-	r.cache[host] = DNSCacheEntry{
-		IPs:       ips,
-		ExpiresAt: time.Now().Add(r.ttl),
-	}
+	r.cache[host] = DNSCacheEntry{IPs: ips, ExpiresAt: now.Add(r.ttl)}
 	r.mu.Unlock()
-
 	return ips, nil
 }
 
-// parseUpstreamProxy normalizes any proxy string format:
-// - host:port:user:pass
-// - socks5://host:port:user:pass
-// - user:pass@host:port
-// - http://user:pass@host:port
-// - socks5://user:pass@host:port
 func parseUpstreamProxy(raw string) *url.URL {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if raw = strings.TrimSpace(raw); raw == "" {
 		return nil
 	}
-	scheme := "http"
-	rest := raw
+	scheme, rest := "http", raw
 	if idx := strings.Index(raw, "://"); idx != -1 {
-		scheme = strings.ToLower(raw[:idx])
-		rest = raw[idx+3:]
+		scheme, rest = strings.ToLower(raw[:idx]), raw[idx+3:]
 	}
 	if !strings.Contains(rest, "@") {
-		parts := strings.Split(rest, ":")
-		if len(parts) == 4 {
-			// host:port:user:pass -> scheme://user:pass@host:port
-			u := &url.URL{
-				Scheme: scheme,
-				Host:   parts[0] + ":" + parts[1],
-				User:   url.UserPassword(parts[2], parts[3]),
-			}
-			return u
+		if p := strings.Split(rest, ":"); len(p) == 4 {
+			return &url.URL{Scheme: scheme, Host: p[0] + ":" + p[1], User: url.UserPassword(p[2], p[3])}
 		}
 	}
 	u, err := url.Parse(scheme + "://" + rest)
@@ -161,20 +176,21 @@ func parseUpstreamProxy(raw string) *url.URL {
 	return u
 }
 
-// dialUpstreamSocks5 performs an RFC 1928 / RFC 1929 SOCKS5 handshake (with domain-name resolution on the proxy to prevent DNS leaks)
-func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.Duration) (net.Conn, error) {
-	proxyAddr := proxyURL.Host
-	if !strings.Contains(proxyAddr, ":") {
-		proxyAddr += ":1080"
+func ensureHostPort(addr, defPort string) string {
+	if !strings.Contains(addr, ":") {
+		return addr + ":" + defPort
 	}
+	return addr
+}
+
+func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.Duration) (net.Conn, error) {
+	proxyAddr := ensureHostPort(proxyURL.Host, "1080")
 	targetHost, targetPortStr, err := net.SplitHostPort(targetHostPort)
 	if err != nil {
-		targetHost = targetHostPort
-		targetPortStr = "443"
+		targetHost, targetPortStr = targetHostPort, "443"
 	}
-	var targetPort int
-	_, _ = fmt.Sscanf(targetPortStr, "%d", &targetPort)
-	if targetPort <= 0 || targetPort > 65535 {
+	targetPort, err := strconv.Atoi(targetPortStr)
+	if err != nil || targetPort <= 0 || targetPort > 65535 {
 		targetPort = 443
 	}
 
@@ -185,64 +201,49 @@ func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.D
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 
 	var user, pass string
-	hasAuth := false
 	if proxyURL.User != nil {
 		user = proxyURL.User.Username()
 		pass, _ = proxyURL.User.Password()
-		if user != "" {
-			hasAuth = true
-		}
 	}
 
-	if hasAuth {
-		_, err = conn.Write([]byte{0x05, 0x02, 0x00, 0x02})
-	} else {
-		_, err = conn.Write([]byte{0x05, 0x01, 0x00})
+	greet := []byte{0x05, 0x01, 0x00}
+	if user != "" {
+		greet = []byte{0x05, 0x02, 0x00, 0x02}
 	}
-	if err != nil {
+	if _, err = conn.Write(greet); err != nil {
 		conn.Close()
 		return nil, err
 	}
 
-	resp := make([]byte, 2)
-	if _, err = io.ReadFull(conn, resp); err != nil {
+	var buf [4]byte
+	if _, err = io.ReadFull(conn, buf[:2]); err != nil || buf[0] != 0x05 {
 		conn.Close()
-		return nil, err
-	}
-	if resp[0] != 0x05 {
-		conn.Close()
-		return nil, errors.New("invalid SOCKS5 version")
+		return nil, errors.New("invalid SOCKS5 greeting")
 	}
 
-	if resp[1] == 0x02 {
+	if buf[1] == 0x02 {
 		if len(user) > 255 || len(pass) > 255 {
 			conn.Close()
 			return nil, errors.New("SOCKS5 credentials too long")
 		}
 		authReq := make([]byte, 0, 3+len(user)+len(pass))
 		authReq = append(authReq, 0x01, byte(len(user)))
-		authReq = append(authReq, []byte(user)...)
+		authReq = append(authReq, user...)
 		authReq = append(authReq, byte(len(pass)))
-		authReq = append(authReq, []byte(pass)...)
+		authReq = append(authReq, pass...)
 		if _, err = conn.Write(authReq); err != nil {
 			conn.Close()
 			return nil, err
 		}
-		authResp := make([]byte, 2)
-		if _, err = io.ReadFull(conn, authResp); err != nil {
-			conn.Close()
-			return nil, err
-		}
-		if authResp[1] != 0x00 {
+		if _, err = io.ReadFull(conn, buf[:2]); err != nil || buf[1] != 0x00 {
 			conn.Close()
 			return nil, errors.New("SOCKS5 authentication rejected")
 		}
-	} else if resp[1] != 0x00 {
+	} else if buf[1] != 0x00 {
 		conn.Close()
 		return nil, errors.New("SOCKS5 auth method unsupported")
 	}
 
-	// Send CONNECT request using domain name (0x03) so DNS resolves remotely on the proxy
 	req := make([]byte, 0, 7+len(targetHost))
 	req = append(req, 0x05, 0x01, 0x00)
 	if ip := net.ParseIP(targetHost); ip != nil && ip.To4() != nil {
@@ -250,7 +251,7 @@ func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.D
 		req = append(req, ip.To4()...)
 	} else {
 		req = append(req, 0x03, byte(len(targetHost)))
-		req = append(req, []byte(targetHost)...)
+		req = append(req, targetHost...)
 	}
 	req = append(req, byte(targetPort>>8), byte(targetPort&0xFF))
 
@@ -258,34 +259,26 @@ func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.D
 		conn.Close()
 		return nil, err
 	}
-
-	head := make([]byte, 4)
-	if _, err = io.ReadFull(conn, head); err != nil {
+	if _, err = io.ReadFull(conn, buf[:4]); err != nil || buf[1] != 0x00 {
 		conn.Close()
-		return nil, err
-	}
-	if head[1] != 0x00 {
-		conn.Close()
-		return nil, fmt.Errorf("SOCKS5 connect failed (code %d)", head[1])
+		return nil, fmt.Errorf("SOCKS5 connect failed (code %d)", buf[1])
 	}
 
 	var discardLen int
-	switch head[3] {
+	switch buf[3] {
 	case 0x01:
-		discardLen = 4 + 2
+		discardLen = 6
 	case 0x03:
-		lenByte := make([]byte, 1)
-		if _, err = io.ReadFull(conn, lenByte); err != nil {
+		if _, err = io.ReadFull(conn, buf[:1]); err != nil {
 			conn.Close()
 			return nil, err
 		}
-		discardLen = int(lenByte[0]) + 2
+		discardLen = int(buf[0]) + 2
 	case 0x04:
-		discardLen = 16 + 2
+		discardLen = 18
 	}
 	if discardLen > 0 {
-		trash := make([]byte, discardLen)
-		if _, err = io.ReadFull(conn, trash); err != nil {
+		if _, err = io.CopyN(io.Discard, conn, int64(discardLen)); err != nil {
 			conn.Close()
 			return nil, err
 		}
@@ -295,7 +288,6 @@ func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.D
 	return conn, nil
 }
 
-// ProxyServer handles HTTP, WebSocket, and HTTPS CONNECT proxy requests with full network spoofing
 type ProxyServer struct {
 	resolver       *FastDNSResolver
 	upstreamURL    *url.URL
@@ -308,6 +300,7 @@ type ProxyServer struct {
 	model          string
 	manufacturer   string
 	ua             string
+	dalvikUA       string
 	osVer          string
 	buildId        string
 	glVendor       string
@@ -315,10 +308,11 @@ type ProxyServer struct {
 	maxTextureSize string
 	disguiseOnce   sync.Once
 	cachedDisguise string
+	disguiseBytes  []byte
 	client         *http.Client
 }
 
-func NewProxyServer(resolver *FastDNSResolver, upstream string, cacheDir string, quiet bool, port int, authToken string, serial string, uuid string, model string, manufacturer string, ua string, glVendor string, glRenderer string, maxTextureSize string) *ProxyServer {
+func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet bool, port int, authToken, serial, uuid, model, manufacturer, ua, glVendor, glRenderer, maxTextureSize string) *ProxyServer {
 	if model == "" {
 		model = "SM-A515F"
 	}
@@ -328,11 +322,10 @@ func NewProxyServer(resolver *FastDNSResolver, upstream string, cacheDir string,
 	if ua == "" {
 		ua = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36"
 	}
-	osVer := "10"
+	osVer, buildId := "10", "QP1A.190711.020"
 	if m := reOsVer.FindStringSubmatch(ua); len(m) > 1 {
 		osVer = m[1]
 	}
-	buildId := "QP1A.190711.020"
 	if m := reBuildId.FindStringSubmatch(ua); len(m) > 1 {
 		buildId = m[1]
 	}
@@ -348,19 +341,21 @@ func NewProxyServer(resolver *FastDNSResolver, upstream string, cacheDir string,
 		model:          model,
 		manufacturer:   manufacturer,
 		ua:             ua,
+		dalvikUA:       fmt.Sprintf("Dalvik/2.1.0 (Linux; U; Android %s; %s Build/%s)", osVer, model, buildId),
 		osVer:          osVer,
 		buildId:        buildId,
 		glVendor:       glVendor,
 		glRenderer:     glRenderer,
 		maxTextureSize: maxTextureSize,
+		upstreamURL:    parseUpstreamProxy(upstream),
 	}
 
 	if cacheDir != "" {
 		_ = os.MkdirAll(cacheDir, 0755)
 	}
 
-	p.upstreamURL = parseUpstreamProxy(upstream)
 	isSocks := p.upstreamURL != nil && strings.HasPrefix(strings.ToLower(p.upstreamURL.Scheme), "socks5")
+	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 
 	transport := &http.Transport{
 		MaxIdleConns:        200,
@@ -372,18 +367,14 @@ func NewProxyServer(resolver *FastDNSResolver, upstream string, cacheDir string,
 			}
 			host, portStr, err := net.SplitHostPort(addr)
 			if err != nil {
-				host = addr
-				portStr = "80"
+				host, portStr = addr, "80"
 			}
-			ips, err := resolver.Lookup(ctx, host)
-			if err != nil || len(ips) == 0 {
-				return (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, network, addr)
+			if ips, err := resolver.Lookup(ctx, host); err == nil && len(ips) > 0 {
+				addr = net.JoinHostPort(ips[0].String(), portStr)
 			}
-			targetAddr := net.JoinHostPort(ips[0].String(), portStr)
-			return (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, network, targetAddr)
+			return dialer.DialContext(ctx, network, addr)
 		},
 	}
-
 	if p.upstreamURL != nil && !isSocks {
 		transport.Proxy = http.ProxyURL(p.upstreamURL)
 	}
@@ -391,35 +382,24 @@ func NewProxyServer(resolver *FastDNSResolver, upstream string, cacheDir string,
 	p.client = &http.Client{
 		Transport: transport,
 		Timeout:   60 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-
 	return p
 }
 
-// sanitizeRequestHeaders spoofs User-Agent, mobile Client Hints, and strips proxy/emulator leak headers
 func (p *ProxyServer) sanitizeRequestHeaders(h http.Header) {
-	// Strip proxy-revealing headers
-	for _, k := range []string{
-		"Proxy-Connection", "Proxy-Authenticate", "Proxy-Authorization",
-		"Via", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
-		"Forwarded", "X-Real-IP", "Client-IP",
-	} {
+	for _, k := range stripReqHeaders {
 		h.Del(k)
 	}
-
-	// Spoof User-Agent for both native Dalvik HTTP clients and WebView
 	curUA := h.Get("User-Agent")
-	lowerUA := strings.ToLower(curUA)
 	if strings.HasPrefix(curUA, "Dalvik/") {
-		h.Set("User-Agent", fmt.Sprintf("Dalvik/2.1.0 (Linux; U; Android %s; %s Build/%s)", p.osVer, p.model, p.buildId))
-	} else if curUA == "" || strings.Contains(lowerUA, "x86") || strings.Contains(lowerUA, "sdk") || strings.Contains(lowerUA, "emulator") || strings.Contains(lowerUA, "goldfish") || strings.Contains(lowerUA, "ranchu") || strings.Contains(lowerUA, "mozilla/") {
+		h.Set("User-Agent", p.dalvikUA)
+	} else if curUA == "" || reLeakUA.MatchString(curUA) {
 		h.Set("User-Agent", p.ua)
 	}
 
-	// Normalize Chromium Client Hints if present so x86 architecture never leaks over HTTP
 	if h.Get("Sec-CH-UA-Arch") != "" {
 		h.Set("Sec-CH-UA-Arch", `"arm"`)
 	}
@@ -430,7 +410,7 @@ func (p *ProxyServer) sanitizeRequestHeaders(h http.Header) {
 		h.Set("Sec-CH-UA-Mobile", "?1")
 	}
 	if h.Get("Sec-CH-UA-Model") != "" {
-		h.Set("Sec-CH-UA-Model", fmt.Sprintf(`"%s"`, p.model))
+		h.Set("Sec-CH-UA-Model", `"`+p.model+`"`)
 	}
 	if h.Get("Accept-Language") == "" {
 		h.Set("Accept-Language", "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7")
@@ -443,56 +423,48 @@ func (p *ProxyServer) dialUpstreamOrDirect(ctx context.Context, dest string) (ne
 		if strings.HasPrefix(scheme, "socks5") {
 			return dialUpstreamSocks5(p.upstreamURL, dest, 6*time.Second)
 		}
-		upstreamHost := p.upstreamURL.Host
-		if !strings.Contains(upstreamHost, ":") {
-			if scheme == "https" {
-				upstreamHost += ":443"
-			} else {
-				upstreamHost += ":80"
-			}
+		defPort := "80"
+		if scheme == "https" {
+			defPort = "443"
 		}
-		destConn, err := net.DialTimeout("tcp", upstreamHost, 5*time.Second)
+		destConn, err := net.DialTimeout("tcp", ensureHostPort(p.upstreamURL.Host, defPort), 5*time.Second)
 		if err != nil {
 			return nil, err
 		}
 		authHeader := ""
 		if p.upstreamURL.User != nil {
-			auth := base64.StdEncoding.EncodeToString([]byte(p.upstreamURL.User.String()))
-			authHeader = fmt.Sprintf("Proxy-Authorization: Basic %s\r\n", auth)
+			authHeader = "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(p.upstreamURL.User.String())) + "\r\n"
 		}
 		connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n%s\r\n", dest, dest, p.ua, authHeader)
-		if _, err = destConn.Write([]byte(connectReq)); err != nil {
+		if _, err = io.WriteString(destConn, connectReq); err != nil {
 			destConn.Close()
 			return nil, err
 		}
 		br := bufio.NewReader(destConn)
-		resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+		resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
 		if err != nil {
 			destConn.Close()
 			return nil, err
 		}
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != http.StatusOK {
 			destConn.Close()
 			return nil, fmt.Errorf("upstream rejected CONNECT: %s", resp.Status)
 		}
 		if br.Buffered() > 0 {
-			_, _ = br.Discard(br.Buffered())
+			return &bufferedConn{Reader: io.MultiReader(br, destConn), Conn: destConn}, nil
 		}
 		return destConn, nil
 	}
 
 	host, portStr, err := net.SplitHostPort(dest)
 	if err != nil {
-		host = dest
-		portStr = "443"
+		host, portStr = dest, "443"
 	}
-	ips, err := p.resolver.Lookup(ctx, host)
 	target := dest
-	if err == nil && len(ips) > 0 {
+	if ips, err := p.resolver.Lookup(ctx, host); err == nil && len(ips) > 0 {
 		target = net.JoinHostPort(ips[0].String(), portStr)
 	}
-	dialer := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
-	return dialer.DialContext(ctx, "tcp", target)
+	return (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", target)
 }
 
 func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -504,8 +476,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if auth == "" {
 			auth = r.Header.Get("X-Proxy-Token")
 		}
-		expected := "Bearer " + p.authToken
-		if auth != p.authToken && auth != expected {
+		if auth != p.authToken && auth != "Bearer "+p.authToken {
 			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
 			return
 		}
@@ -514,103 +485,58 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && r.URL.Path == "/__health" && (r.Host == "" || strings.HasPrefix(r.Host, "127.0.0.1") || strings.HasPrefix(r.Host, "localhost")) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status":"ok","port":%d,"model":"%s"}`, p.port, p.model)
+		_, _ = fmt.Fprintf(w, `{"status":"ok","port":%d,"model":"%s"}`, p.port, p.model)
 		return
 	}
 
-	if r.Method == http.MethodConnect {
+	switch {
+	case r.Method == http.MethodConnect:
 		p.handleConnect(w, r)
-	} else if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+	case strings.EqualFold(r.Header.Get("Upgrade"), "websocket"):
 		p.handleWebSocket(w, r)
-	} else {
+	default:
 		p.handleHTTP(w, r)
 	}
 }
 
-func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
-	dest := r.Host
-	if !strings.Contains(dest, ":") {
-		dest += ":443"
-	}
-
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 7*time.Second)
-	defer dialCancel()
-
-	destConn, err := p.dialUpstreamOrDirect(dialCtx, dest)
-	if err != nil {
-		http.Error(w, "Connection Failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		destConn.Close()
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
-		return
-	}
-
-	clientConn, clientBuf, err := hijacker.Hijack()
-	if err != nil {
-		destConn.Close()
-		http.Error(w, "Hijack failed: "+err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-
-	_ = clientConn.SetDeadline(time.Time{})
-	_ = destConn.SetDeadline(time.Time{})
-
-	if tc, ok := clientConn.(*net.TCPConn); ok {
+func tuneTCPConn(c net.Conn) {
+	_ = c.SetDeadline(time.Time{})
+	if tc, ok := c.(*net.TCPConn); ok {
 		_ = tc.SetKeepAlive(true)
 		_ = tc.SetKeepAlivePeriod(30 * time.Second)
 		_ = tc.SetNoDelay(true)
 	}
-	if tc, ok := destConn.(*net.TCPConn); ok {
-		_ = tc.SetKeepAlive(true)
-		_ = tc.SetKeepAlivePeriod(30 * time.Second)
-		_ = tc.SetNoDelay(true)
-	}
+}
 
-	_, err = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-	if err != nil {
-		destConn.Close()
-		clientConn.Close()
-		return
+func halfCloseOrClose(c net.Conn) {
+	if cw, ok := c.(closeWriter); ok {
+		_ = cw.CloseWrite()
+	} else {
+		_ = c.Close()
 	}
+}
 
-	if !p.quiet && strings.Contains(dest, "ankama") {
-		log.Printf("[TUNNEL] CONNECT -> %s (%s)", dest, p.model)
-	}
-
-	type closeWriter interface {
-		CloseWrite() error
-	}
+func pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn) {
+	tuneTCPConn(clientConn)
+	tuneTCPConn(destConn)
 
 	done := make(chan struct{}, 2)
 	go func() {
+		if clientBuf != nil && clientBuf.Reader.Buffered() > 0 {
+			_, _ = io.CopyN(destConn, clientBuf, int64(clientBuf.Reader.Buffered()))
+		}
 		buf := bufPool.Get().([]byte)
-		defer bufPool.Put(buf)
-		var clientReader io.Reader = clientConn
-		if clientBuf != nil {
-			clientReader = clientBuf
-		}
-		_, _ = io.CopyBuffer(destConn, clientReader, buf)
-		if cw, ok := destConn.(closeWriter); ok {
-			_ = cw.CloseWrite()
-		} else {
-			_ = destConn.Close()
-		}
+		_, _ = io.CopyBuffer(destConn, clientConn, buf)
+		bufPool.Put(buf)
+		halfCloseOrClose(destConn)
 		done <- struct{}{}
 	}()
 
 	go func() {
 		buf := bufPool.Get().([]byte)
-		defer bufPool.Put(buf)
 		_, _ = io.CopyBuffer(clientConn, destConn, buf)
-		if cw, ok := clientConn.(closeWriter); ok {
-			_ = cw.CloseWrite()
-		} else {
-			_ = clientConn.Close()
-		}
+		bufPool.Put(buf)
+		halfCloseOrClose(clientConn)
 		done <- struct{}{}
 	}()
 
@@ -625,6 +551,40 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	_ = clientConn.Close()
 }
 
+func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
+	dest := ensureHostPort(r.Host, "443")
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 7*time.Second)
+	destConn, err := p.dialUpstreamOrDirect(dialCtx, dest)
+	dialCancel()
+	if err != nil {
+		http.Error(w, "Connection Failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		destConn.Close()
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+	clientConn, clientBuf, err := hijacker.Hijack()
+	if err != nil {
+		destConn.Close()
+		http.Error(w, "Hijack failed: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	if _, err = clientConn.Write(tunnelEstablished); err != nil {
+		destConn.Close()
+		clientConn.Close()
+		return
+	}
+	if !p.quiet && strings.Contains(dest, "ankama") {
+		log.Printf("[TUNNEL] CONNECT -> %s (%s)", dest, p.model)
+	}
+	pipeTunnel(clientConn, clientBuf, destConn)
+}
+
 func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	hj, ok := w.(http.Hijacker)
 	if !ok {
@@ -636,80 +596,34 @@ func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	defer clientConn.Close()
 
-	dest := r.Host
-	if !strings.Contains(dest, ":") {
-		dest += ":80"
-	}
-
+	dest := ensureHostPort(r.Host, "80")
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), 7*time.Second)
-	defer dialCancel()
-
 	destConn, err := p.dialUpstreamOrDirect(dialCtx, dest)
+	dialCancel()
 	if err != nil {
+		clientConn.Close()
 		return
 	}
-	defer destConn.Close()
-
-	_ = clientConn.SetDeadline(time.Time{})
-	_ = destConn.SetDeadline(time.Time{})
 
 	p.sanitizeRequestHeaders(r.Header)
 	r.RequestURI = ""
 	if r.URL != nil {
-		r.URL.Scheme = ""
-		r.URL.Host = ""
+		r.URL.Scheme, r.URL.Host = "", ""
 	}
-
 	if err := r.Write(destConn); err != nil {
+		destConn.Close()
+		clientConn.Close()
 		return
 	}
-
-	type closeWriter interface {
-		CloseWrite() error
-	}
-	done := make(chan struct{}, 2)
-	go func() {
-		buf := bufPool.Get().([]byte)
-		defer bufPool.Put(buf)
-		var clientReader io.Reader = clientConn
-		if clientBuf != nil {
-			clientReader = clientBuf
-		}
-		_, _ = io.CopyBuffer(destConn, clientReader, buf)
-		if cw, ok := destConn.(closeWriter); ok {
-			_ = cw.CloseWrite()
-		} else {
-			_ = destConn.Close()
-		}
-		done <- struct{}{}
-	}()
-	go func() {
-		buf := bufPool.Get().([]byte)
-		defer bufPool.Put(buf)
-		_, _ = io.CopyBuffer(clientConn, destConn, buf)
-		if cw, ok := clientConn.(closeWriter); ok {
-			_ = cw.CloseWrite()
-		} else {
-			_ = clientConn.Close()
-		}
-		done <- struct{}{}
-	}()
-	<-done
-	drainTimer := time.NewTimer(4 * time.Second)
-	select {
-	case <-done:
-		drainTimer.Stop()
-	case <-drainTimer.C:
-	}
+	pipeTunnel(clientConn, clientBuf, destConn)
 }
 
 func atomicReplaceFile(src, dst string) error {
-	err := os.Rename(src, dst)
-	if err == nil {
+	if err := os.Rename(src, dst); err == nil {
 		return nil
 	}
+	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		time.Sleep(20 * time.Millisecond)
 		_ = os.Remove(dst)
@@ -717,10 +631,10 @@ func atomicReplaceFile(src, dst string) error {
 			return nil
 		}
 	}
-	oldPath := fmt.Sprintf("%s.old.%d", dst, time.Now().UnixNano())
-	if moveErr := os.Rename(dst, oldPath); moveErr == nil {
+	oldPath := dst + ".old." + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if os.Rename(dst, oldPath) == nil {
 		_ = os.Remove(oldPath)
-		if renErr := os.Rename(src, dst); renErr == nil {
+		if os.Rename(src, dst) == nil {
 			return nil
 		}
 	}
@@ -728,76 +642,50 @@ func atomicReplaceFile(src, dst string) error {
 }
 
 func detectMimeType(path string) string {
-	lower := strings.ToLower(path)
-	switch {
-	case strings.HasSuffix(lower, ".wasm"):
-		return "application/wasm"
-	case strings.HasSuffix(lower, ".json"):
-		return "application/json; charset=utf-8"
-	case strings.HasSuffix(lower, ".png"):
-		return "image/png"
-	case strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"):
-		return "image/jpeg"
-	case strings.HasSuffix(lower, ".webp"):
-		return "image/webp"
-	case strings.HasSuffix(lower, ".mp3"):
-		return "audio/mpeg"
-	case strings.HasSuffix(lower, ".ogg"):
-		return "audio/ogg"
-	case strings.HasSuffix(lower, ".js"):
-		return "application/javascript; charset=utf-8"
-	case strings.HasSuffix(lower, ".css"):
-		return "text/css; charset=utf-8"
-	case strings.HasSuffix(lower, ".html"), strings.HasSuffix(lower, ".htm"):
-		return "text/html; charset=utf-8"
-	default:
-		return "application/octet-stream"
+	if m, ok := extMimeMap[strings.ToLower(filepath.Ext(path))]; ok {
+		return m
 	}
+	return "application/octet-stream"
 }
 
 func (p *ProxyServer) getDisguiseContent() string {
 	p.disguiseOnce.Do(func() {
 		p.cachedDisguise = p.loadDisguiseFromDisk()
+		p.disguiseBytes = []byte(p.cachedDisguise)
 	})
 	return p.cachedDisguise
 }
 
 func (p *ProxyServer) loadDisguiseFromDisk() string {
+	exeDir := filepath.Dir(os.Args[0])
 	candidates := []string{
 		filepath.Join("scripts", "mobile-disguise.js"),
 		"mobile-disguise.js",
 		filepath.Join(os.Getenv("DOFUS_FARM_HOME"), "scripts", "mobile-disguise.js"),
-		filepath.Join(filepath.Dir(os.Args[0]), "scripts", "mobile-disguise.js"),
-		filepath.Join(filepath.Dir(os.Args[0]), "mobile-disguise.js"),
+		filepath.Join(exeDir, "scripts", "mobile-disguise.js"),
+		filepath.Join(exeDir, "mobile-disguise.js"),
 	}
 	for _, c := range candidates {
 		if b, err := os.ReadFile(c); err == nil && len(b) > 0 {
-			content := string(b)
-			if p.serial != "" {
-				content = strings.ReplaceAll(content, "__DEVICE_SERIAL__", p.serial)
+			var pairs []string
+			for _, kv := range [][2]string{
+				{"__DEVICE_SERIAL__", p.serial},
+				{"__DEVICE_UUID__", p.uuid},
+				{"__DEVICE_MODEL__", p.model},
+				{"__DEVICE_MANUFACTURER__", p.manufacturer},
+				{"__DEVICE_UA__", p.ua},
+				{"__DEVICE_GL_VENDOR__", p.glVendor},
+				{"__DEVICE_GL_RENDERER__", p.glRenderer},
+				{"__DEVICE_MAX_TEXTURE_SIZE__", p.maxTextureSize},
+			} {
+				if kv[1] != "" {
+					pairs = append(pairs, kv[0], kv[1])
+				}
 			}
-			if p.uuid != "" {
-				content = strings.ReplaceAll(content, "__DEVICE_UUID__", p.uuid)
+			if len(pairs) > 0 {
+				return strings.NewReplacer(pairs...).Replace(string(b))
 			}
-			if p.model != "" {
-				content = strings.ReplaceAll(content, "__DEVICE_MODEL__", p.model)
-			}
-			if p.manufacturer != "" {
-				content = strings.ReplaceAll(content, "__DEVICE_MANUFACTURER__", p.manufacturer)
-			}
-			if p.ua != "" {
-				content = strings.ReplaceAll(content, "__DEVICE_UA__", p.ua)
-			}
-			if p.glVendor != "" {
-				content = strings.ReplaceAll(content, "__DEVICE_GL_VENDOR__", p.glVendor)
-			}
-			if p.glRenderer != "" {
-				content = strings.ReplaceAll(content, "__DEVICE_GL_RENDERER__", p.glRenderer)
-			}
-			if p.maxTextureSize != "" {
-				content = strings.ReplaceAll(content, "__DEVICE_MAX_TEXTURE_SIZE__", p.maxTextureSize)
-			}
-			return content
+			return string(b)
 		}
 	}
 	return ""
@@ -816,103 +704,74 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Direct serve of local stealth disguise script
-	if strings.HasSuffix(targetURL.Path, "/__disguise.js") ||
-		strings.HasSuffix(targetURL.Path, "/mobile-disguise.js") {
-		code := p.getDisguiseContent()
-		if code != "" {
-			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(code)))
+	if strings.HasSuffix(targetURL.Path, "/__disguise.js") || strings.HasSuffix(targetURL.Path, "/mobile-disguise.js") {
+		if p.getDisguiseContent() != "" {
+			h := w.Header()
+			h.Set("Content-Type", "application/javascript; charset=utf-8")
+			h.Set("Access-Control-Allow-Origin", "*")
+			h.Set("Cache-Control", "no-cache")
+			h.Set("Content-Length", strconv.Itoa(len(p.disguiseBytes)))
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(code))
+			_, _ = w.Write(p.disguiseBytes)
 			return
 		}
 	}
 
-	// 2. High-speed local disk cache for static Ankama assets (without any X-Cache header leak)
+	targetStr := targetURL.String()
 	var cacheFilePath string
-	if p.cacheDir != "" && r.Method == http.MethodGet {
-		lowerURL := strings.ToLower(targetURL.String())
-		if strings.HasSuffix(lowerURL, ".png") ||
-			strings.HasSuffix(lowerURL, ".jpg") ||
-			strings.HasSuffix(lowerURL, ".jpeg") ||
-			strings.HasSuffix(lowerURL, ".webp") ||
-			strings.HasSuffix(lowerURL, ".mp3") ||
-			strings.HasSuffix(lowerURL, ".ogg") ||
-			strings.HasSuffix(lowerURL, ".wasm") ||
-			strings.HasSuffix(lowerURL, ".zip") ||
-			strings.HasSuffix(lowerURL, ".pak") ||
-			strings.HasSuffix(lowerURL, ".dat") ||
-			strings.Contains(lowerURL, "/assets/") {
-			h := sha256.Sum256([]byte(targetURL.String()))
-			cacheFilePath = filepath.Join(p.cacheDir, fmt.Sprintf("%x", h[:16]))
-			if fi, err := os.Stat(cacheFilePath); err == nil {
-				if time.Since(fi.ModTime()) > 7*24*time.Hour {
-					_ = os.Remove(cacheFilePath)
-					_ = os.Remove(cacheFilePath + ".meta")
-				} else {
-					if f, err := os.Open(cacheFilePath); err == nil {
-						defer f.Close()
-						w.Header().Set("Access-Control-Allow-Origin", "*")
-						w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
-						w.Header().Set("Access-Control-Allow-Headers", "*")
-						mimeType := ""
-						if metaBytes, metaErr := os.ReadFile(cacheFilePath + ".meta"); metaErr == nil {
-							mimeType = strings.TrimSpace(string(metaBytes))
-						}
-						if mimeType == "" {
-							mimeType = detectMimeType(targetURL.Path)
-						}
-						if mimeType != "" {
-							w.Header().Set("Content-Type", mimeType)
-						}
-						w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
-						w.WriteHeader(http.StatusOK)
-						buf := bufPool.Get().([]byte)
-						defer bufPool.Put(buf)
-						_, _ = io.CopyBuffer(w, f, buf)
-						return
-					}
+	if p.cacheDir != "" && r.Method == http.MethodGet && reCacheAsset.MatchString(targetStr) {
+		sum := sha256.Sum256([]byte(targetStr))
+		cacheFilePath = filepath.Join(p.cacheDir, hex.EncodeToString(sum[:16]))
+		if fi, err := os.Stat(cacheFilePath); err == nil {
+			if time.Since(fi.ModTime()) > 7*24*time.Hour {
+				_ = os.Remove(cacheFilePath)
+				_ = os.Remove(cacheFilePath + ".meta")
+			} else if f, err := os.Open(cacheFilePath); err == nil {
+				defer f.Close()
+				h := w.Header()
+				h.Set("Access-Control-Allow-Origin", "*")
+				h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+				h.Set("Access-Control-Allow-Headers", "*")
+				mimeType := ""
+				if metaBytes, metaErr := os.ReadFile(cacheFilePath + ".meta"); metaErr == nil {
+					mimeType = strings.TrimSpace(string(metaBytes))
 				}
+				if mimeType == "" {
+					mimeType = detectMimeType(targetURL.Path)
+				}
+				if mimeType != "" {
+					h.Set("Content-Type", mimeType)
+				}
+				h.Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
+				w.WriteHeader(http.StatusOK)
+				buf := bufPool.Get().([]byte)
+				_, _ = io.CopyBuffer(w, f, buf)
+				bufPool.Put(buf)
+				return
 			}
 		}
 	}
 
-	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), r.Body)
+	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetStr, r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	for k, vv := range r.Header {
-		if strings.EqualFold(k, "Connection") ||
-			strings.EqualFold(k, "Keep-Alive") ||
-			strings.EqualFold(k, "TE") ||
-			strings.EqualFold(k, "Trailers") ||
-			strings.EqualFold(k, "Transfer-Encoding") ||
-			strings.EqualFold(k, "Upgrade") {
-			continue
-		}
-		for _, v := range vv {
-			outReq.Header.Add(k, v)
+		if _, skip := hopReqHeaders[strings.ToLower(k)]; !skip {
+			outReq.Header[k] = append([]string(nil), vv...)
 		}
 	}
-
 	p.sanitizeRequestHeaders(outReq.Header)
 
 	if ae := outReq.Header.Get("Accept-Encoding"); ae != "" {
-		parts := strings.Split(ae, ",")
 		var kept []string
-		for _, part := range parts {
-			trimmed := strings.TrimSpace(part)
-			lower := strings.ToLower(trimmed)
-			if lower == "br" || strings.HasPrefix(lower, "br;") || strings.HasPrefix(lower, "br ") {
-				continue
-			}
-			if trimmed != "" {
-				kept = append(kept, trimmed)
+		for _, part := range strings.Split(ae, ",") {
+			t := strings.TrimSpace(part)
+			l := strings.ToLower(t)
+			if t != "" && l != "br" && !strings.HasPrefix(l, "br;") && !strings.HasPrefix(l, "br ") {
+				kept = append(kept, t)
 			}
 		}
 		if len(kept) == 0 {
@@ -929,49 +788,40 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	wh := w.Header()
 	for k, vv := range resp.Header {
-		if strings.EqualFold(k, "Connection") ||
-			strings.EqualFold(k, "Keep-Alive") ||
-			strings.EqualFold(k, "Proxy-Authenticate") ||
-			strings.EqualFold(k, "Proxy-Authorization") ||
-			strings.EqualFold(k, "TE") ||
-			strings.EqualFold(k, "Trailers") ||
-			strings.EqualFold(k, "Transfer-Encoding") ||
-			strings.EqualFold(k, "Upgrade") ||
-			strings.EqualFold(k, "Content-Security-Policy") ||
-			strings.EqualFold(k, "Content-Security-Policy-Report-Only") {
-			continue
-		}
-		for _, v := range vv {
-			w.Header().Add(k, v)
+		if _, skip := hopRespHeaders[strings.ToLower(k)]; !skip {
+			wh[k] = append([]string(nil), vv...)
 		}
 	}
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	var bodyReader io.Reader = resp.Body
-	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
-		gzReader, gzErr := gzip.NewReader(resp.Body)
-		if gzErr == nil {
-			defer gzReader.Close()
-			bodyReader = gzReader
-			w.Header().Del("Content-Encoding")
-			w.Header().Del("Content-Length")
-		}
-	}
+	wh.Set("Access-Control-Allow-Origin", "*")
 
 	ct := resp.Header.Get("Content-Type")
-	if (strings.Contains(ct, "text/html") || strings.HasSuffix(strings.ToLower(targetURL.Path), ".html")) && resp.StatusCode == http.StatusOK {
-		w.Header().Del("Content-Security-Policy")
-		w.Header().Del("Content-Security-Policy-Report-Only")
+	isHTML := (strings.Contains(ct, "text/html") || strings.HasSuffix(strings.ToLower(targetURL.Path), ".html")) && resp.StatusCode == http.StatusOK
 
-		bodyBytes, readErr := io.ReadAll(bodyReader)
-		if readErr == nil {
-			bodyStr := string(bodyBytes)
-			if !strings.Contains(bodyStr, "mobile-disguise.js") && !strings.Contains(bodyStr, "__disguise.js") {
+	var bodyReader io.Reader = resp.Body
+	isGzip := strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip")
+	if isGzip && (isHTML || cacheFilePath != "") {
+		if gzReader, gzErr := gzip.NewReader(resp.Body); gzErr == nil {
+			defer gzReader.Close()
+			bodyReader = gzReader
+			wh.Del("Content-Encoding")
+			wh.Del("Content-Length")
+			isGzip = false
+		}
+	}
+
+	if isHTML {
+		wh.Del("Content-Security-Policy")
+		wh.Del("Content-Security-Policy-Report-Only")
+
+		if bodyBytes, readErr := io.ReadAll(bodyReader); readErr == nil {
+			if !bytes.Contains(bodyBytes, []byte("mobile-disguise.js")) && !bytes.Contains(bodyBytes, []byte("__disguise.js")) {
+				bodyStr := string(bodyBytes)
 				disguiseCode := p.getDisguiseContent()
 				var injection string
 				if disguiseCode != "" {
-					injection = fmt.Sprintf("\n\t\t<script type=\"text/javascript\">\n%s\n\t\t</script>\n", disguiseCode)
+					injection = "\n\t\t<script type=\"text/javascript\">\n" + disguiseCode + "\n\t\t</script>\n"
 				} else {
 					injection = fmt.Sprintf("\n\t\t<script type=\"text/javascript\" src=\"http://10.0.2.2:%d/__disguise.js\"></script>\n", p.port)
 				}
@@ -987,7 +837,7 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				bodyBytes = []byte(bodyStr)
 			}
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(bodyBytes)))
+			wh.Set("Content-Length", strconv.Itoa(len(bodyBytes)))
 			w.WriteHeader(resp.StatusCode)
 			_, _ = w.Write(bodyBytes)
 			return
@@ -999,21 +849,18 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	buf := bufPool.Get().([]byte)
 	defer bufPool.Put(buf)
 
-	if cacheFilePath != "" && resp.StatusCode == http.StatusOK {
+	if cacheFilePath != "" && resp.StatusCode == http.StatusOK && !isGzip {
 		tmpPath := fmt.Sprintf("%s.%d.%d.tmp", cacheFilePath, os.Getpid(), time.Now().UnixNano())
 		if tf, err := os.Create(tmpPath); err == nil {
-			mw := io.MultiWriter(w, tf)
-			written, copyErr := io.CopyBuffer(mw, bodyReader, buf)
+			written, copyErr := io.CopyBuffer(io.MultiWriter(w, tf), bodyReader, buf)
 			_ = tf.Close()
 
-			isTruncated := (resp.ContentLength > 0 && written < resp.ContentLength)
-			if copyErr != nil || isTruncated {
+			if copyErr != nil || (resp.ContentLength > 0 && resp.Header.Get("Content-Encoding") == "" && written < resp.ContentLength) {
 				_ = os.Remove(tmpPath)
 				return
 			}
-
-			if repErr := atomicReplaceFile(tmpPath, cacheFilePath); repErr == nil {
-				if ct := resp.Header.Get("Content-Type"); ct != "" {
+			if atomicReplaceFile(tmpPath, cacheFilePath) == nil {
+				if ct != "" {
 					_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
 				}
 			} else {
@@ -1048,9 +895,8 @@ func main() {
 	resolver := NewFastDNSResolver(*dnsServer, 10*time.Minute)
 	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, *token, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize)
 
-	// No 120s ReadTimeout/WriteTimeout so long-lived streams and large asset downloads never drop at 120s
 	server := &http.Server{
-		Addr:              fmt.Sprintf("%s:%d", *host, *port),
+		Addr:              net.JoinHostPort(*host, strconv.Itoa(*port)),
 		Handler:           proxy,
 		ReadHeaderTimeout: 30 * time.Second,
 		IdleTimeout:       300 * time.Second,
