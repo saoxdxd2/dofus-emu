@@ -5,12 +5,22 @@ using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace DofusBuild
 {
     class Program
     {
-        static string Csc = @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe";
+        // Compiler resolution - no hardcoded tool paths:
+        //   1. Preferred: modern Roslyn csc.dll from any installed .NET SDK
+        //      (dotnet.exe found on PATH or %ProgramFiles%\dotnet; the "sdk"
+        //      folder is scanned by wildcard and the newest version wins).
+        //      Required because the desktop sources use C# 6+ syntax.
+        //   2. Fallback: legacy .NET Framework 4.x csc.exe (C# 5 only).
+        static string DotNetHost;   // dotnet.exe when Roslyn is used, else null
+        static string CscDll;       // Roslyn csc.dll when used, else null
+        static string Csc;           // legacy csc.exe (FrameworkDir\csc.exe)
+        static string FrameworkDir;  // folder holding mscorlib.dll, System.dll, ...
         static string RepoRoot;
 
         static int Main(string[] args)
@@ -22,11 +32,18 @@ namespace DofusBuild
             Console.WriteLine("==========================================================");
             Console.ResetColor();
 
-            if (!File.Exists(Csc))
+            ResolveCompiler();
+            if (DotNetHost == null && (Csc == null || !File.Exists(Csc)))
             {
-                string altCsc = @"C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe";
-                if (File.Exists(altCsc)) Csc = altCsc;
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[ERROR] No C# compiler found (no .NET SDK Roslyn csc.dll, no .NET Framework csc.exe).");
+                Console.ResetColor();
+                return 1;
             }
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            if (DotNetHost != null) Console.WriteLine("Compiler: Roslyn csc.dll ({0})", CscDll);
+            else Console.WriteLine("Compiler: legacy Framework csc.exe (C# 5 only - install a .NET SDK for modern syntax)");
+            Console.ResetColor();
 
             RepoRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
             if (!File.Exists(Path.Combine(RepoRoot, "builder", "Build.cs")) &&
@@ -64,10 +81,10 @@ namespace DofusBuild
             // compiled with the .NET Framework 4.x csc.exe, which supports at most C# 5.
             string iconArg = File.Exists(ico) ? string.Format("\"/win32icon:{0}\" ", ico) : "";
             string farmArgs = string.Format(
-                "/nologo /target:winexe /optimize+ {0}\"/out:{1}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll \"{2}\"",
-                iconArg, outFarm, string.Join("\" \"", farmSources));
+                "/nologo /target:winexe /optimize+ {0}\"/out:{1}\" {2}\"{3}\"",
+                iconArg, outFarm, RefArgs(), string.Join("\" \"", farmSources));
 
-            if (Run(Csc, farmArgs) != 0)
+            if (RunCsc(farmArgs) != 0)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine("Failed to compile DofusFarm.exe");
@@ -84,10 +101,10 @@ namespace DofusBuild
             Console.ResetColor();
             string uninstallerCs = Path.Combine(desktopDir, "Uninstaller.cs");
             string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
-            string uninstArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll \"{2}\"",
-                setupIconArg, outUninstall, uninstallerCs);
+            string uninstArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" {2}\"{3}\"",
+                setupIconArg, outUninstall, RefArgs(), uninstallerCs);
 
-            if (Run(Csc, uninstArgs) != 0)
+            if (RunCsc(uninstArgs) != 0)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine("Failed to compile uninstall.exe");
@@ -120,20 +137,25 @@ namespace DofusBuild
             string proxySrc = Path.Combine(RepoRoot, @"scripts\dofus-net-proxy.go");
             if (!File.Exists(proxySrc)) return;
 
-            string[] goCandidates = new[] { @"C:\Program Files\Go\bin\go.exe", @"C:\Go\bin\go.exe" };
-            string goExe = null;
-            foreach (string c in goCandidates)
-            {
-                if (File.Exists(c)) { goExe = c; break; }
-            }
+            // Locate go.exe without hardcoded install paths:
+            //   1. PATH (via where-like scan)
+            //   2. GOROOT\bin (set by the Go installer)
+            //   3. %ProgramFiles%\Go\bin and GOPATH\bin (standard install locations)
+            string goExe = FindOnPath("go.exe");
             if (goExe == null)
             {
-                string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
-                foreach (string dir in pathEnv.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                List<string> goEnvCandidates = new List<string>();
+                string goroot = Environment.GetEnvironmentVariable("GOROOT");
+                if (!string.IsNullOrEmpty(goroot)) goEnvCandidates.Add(Path.Combine(goroot, "bin"));
+                string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                if (!string.IsNullOrEmpty(pf)) goEnvCandidates.Add(Path.Combine(pf, "Go", "bin"));
+                string gopath = Environment.GetEnvironmentVariable("GOPATH");
+                if (!string.IsNullOrEmpty(gopath)) goEnvCandidates.Add(Path.Combine(gopath, "bin"));
+                foreach (string dir in goEnvCandidates)
                 {
                     try
                     {
-                        string p = Path.Combine(dir.Trim(), "go.exe");
+                        string p = Path.Combine(dir, "go.exe");
                         if (File.Exists(p)) { goExe = p; break; }
                     }
                     catch { }
@@ -238,10 +260,10 @@ namespace DofusBuild
                 string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
                 string setupArgs = string.Format(
                     "/nologo /target:winexe /platform:anycpu /optimize+ {0}\"/win32manifest:{1}\" {2}" +
-                    "/r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:Microsoft.CSharp.dll \"/out:{3}\" \"{4}\"",
-                    setupIconArg, manifestFile, resourceArgs.ToString(), outSetup, string.Join("\" \"", setupSources));
+                    "{3}\"/out:{4}\" \"{5}\"",
+                    setupIconArg, manifestFile, resourceArgs.ToString(), RefArgs(true), outSetup, string.Join("\" \"", setupSources));
 
-                int sec = Run(Csc, setupArgs);
+                int sec = RunCsc(setupArgs);
                 try { File.Delete(manifestFile); } catch { }
 
                 if (sec == 0)
@@ -266,6 +288,161 @@ namespace DofusBuild
             }
         }
 
+        // Locate dotnet.exe / csc.exe without hardcoded paths.
+        static void ResolveCompiler()
+        {
+            // --- Preferred: Roslyn csc.dll from any installed .NET SDK (newest wins) ---
+            string dotnet = FindOnPath("dotnet.exe");
+            if (dotnet == null)
+            {
+                string candidate = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                    "dotnet", "dotnet.exe");
+                if (File.Exists(candidate)) dotnet = candidate;
+            }
+            if (dotnet != null)
+            {
+                string sdkRoot = Path.Combine(Path.GetDirectoryName(dotnet), "sdk");
+                if (Directory.Exists(sdkRoot))
+                {
+                    string bestVer = null, bestCsc = null;
+                    foreach (string verDir in Directory.GetDirectories(sdkRoot))
+                    {
+                        string cscdll = Path.Combine(verDir, "Roslyn", "bincore", "csc.dll");
+                        if (!File.Exists(cscdll)) continue;
+                        if (bestVer == null || string.CompareOrdinal(Path.GetFileName(verDir), bestVer) > 0)
+                        { bestVer = Path.GetFileName(verDir); bestCsc = cscdll; }
+                    }
+                    if (bestCsc != null) { DotNetHost = dotnet; CscDll = bestCsc; }
+                }
+            }
+
+            // --- Fallback: legacy .NET Framework csc.exe (highest version found) ---
+            if (DotNetHost == null)
+            {
+                string fwRoot = FrameworkCandidatesRoot();
+                if (fwRoot != null)
+                {
+                    string best = null;
+                    foreach (string v in Directory.GetDirectories(fwRoot))
+                    {
+                        if (!File.Exists(Path.Combine(v, "csc.exe"))) continue;
+                        if (best == null || string.CompareOrdinal(v, best) > 0) best = v;
+                    }
+                    if (best != null) Csc = Path.Combine(best, "csc.exe");
+                }
+            }
+            FrameworkDir = FindFrameworkDir();
+        }
+
+        // Candidate roots for the .NET Framework install (64-bit preferred).
+        static string FrameworkCandidatesRoot()
+        {
+            string windir = Environment.GetEnvironmentVariable("windir");
+            if (string.IsNullOrEmpty(windir)) windir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            string f64 = Path.Combine(windir, "Microsoft.NET", "Framework64");
+            if (Directory.Exists(f64)) return f64;
+            string f32 = Path.Combine(windir, "Microsoft.NET", "Framework");
+            if (Directory.Exists(f32)) return f32;
+            return null;
+        }
+
+        static string FindOnPath(string exe)
+        {
+            string pathVar = Environment.GetEnvironmentVariable("PATH");
+            if (string.IsNullOrEmpty(pathVar)) return null;
+            foreach (string dir in pathVar.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                try
+                {
+                    string candidate = Path.Combine(dir.Trim(), exe);
+                    if (File.Exists(candidate)) return candidate;
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        // Highest-version .NET Framework 4.x directory (holds mscorlib.dll, System.dll, ...).
+        static string FindFrameworkDir()
+        {
+            string root = FrameworkCandidatesRoot();
+            if (root == null) return null;
+            string best = null;
+            foreach (string v in Directory.GetDirectories(root))
+            {
+                if (!File.Exists(Path.Combine(v, "mscorlib.dll"))) continue;
+                if (best == null || string.CompareOrdinal(v, best) > 0) best = v;
+            }
+            return best;
+        }
+
+        // Reference-assembly argument list shared by every compile step.
+        // Roslyn needs explicit full paths (it does not search the legacy GAC),
+        // so each name is resolved from the Framework dir or the GAC at runtime.
+        static string RefArgs(bool needMicrosoftCSharp = false)
+        {
+            List<string> names = new List<string>
+            {
+                "mscorlib.dll", "System.dll", "System.Core.dll", "System.Drawing.dll",
+                "System.Windows.Forms.dll", "System.Management.dll",
+                "System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll"
+            };
+            if (needMicrosoftCSharp) names.Add("Microsoft.CSharp.dll");
+
+            List<string> parts = new List<string>();
+            if (DotNetHost != null)
+            {
+                // Roslyn: reference the .NET Framework runtime assemblies explicitly
+                // so the produced binaries still target .NET Framework 4.x.
+                parts.Add("/nostdlib+");
+                foreach (string n in names)
+                {
+                    string p = ResolveFrameworkAssembly(n);
+                    if (p != null) parts.Add(string.Format("\"/r:{0}\"", p));
+                }
+            }
+            else
+            {
+                // Legacy csc: framework dir is already on the default search path.
+                foreach (string n in names)
+                    parts.Add(string.Format("/r:{0}", n));
+            }
+            return string.Join(" ", parts.ToArray()) + " ";
+        }
+
+        static string ResolveFrameworkAssembly(string name)
+        {
+            // 1. Framework dir (...\v4.0.30319\<name>)
+            if (FrameworkDir != null)
+            {
+                string p = Path.Combine(FrameworkDir, name);
+                if (File.Exists(p)) return p;
+            }
+            // 2. GAC_MSIL (...\assembly\GAC_MSIL\<Name>\<ver>\<Name>.dll)
+            string windir = Environment.GetEnvironmentVariable("windir");
+            if (string.IsNullOrEmpty(windir)) windir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            string gac = Path.Combine(windir, "Microsoft.NET", "assembly", "GAC_MSIL",
+                Path.GetFileNameWithoutExtension(name));
+            if (Directory.Exists(gac))
+            {
+                foreach (string v in Directory.GetDirectories(gac))
+                {
+                    string p = Path.Combine(v, name);
+                    if (File.Exists(p)) return p;
+                }
+            }
+            return null;
+        }
+
+        // Route a compile through whichever compiler was resolved.
+        static int RunCsc(string args)
+        {
+            if (DotNetHost != null)
+                return Run(DotNetHost, string.Format("\"{0}\" {1}", CscDll, args));
+            return Run(Csc, args);
+        }
+
         static int Run(string exe, string args, string workingDir = null)
         {
             ProcessStartInfo psi = new ProcessStartInfo
@@ -280,11 +457,16 @@ namespace DofusBuild
             };
             using (Process p = Process.Start(psi))
             {
-                string outText = p.StandardOutput.ReadToEnd();
-                string errText = p.StandardError.ReadToEnd();
+                // Async reads prevent pipe-buffer deadlock on large compiler output.
+                Task<string> outTask = Task<string>.Factory.StartNew(
+                    delegate (object o) { return ((Process)o).StandardOutput.ReadToEnd(); }, p);
+                Task<string> errTask = Task<string>.Factory.StartNew(
+                    delegate (object o) { return ((Process)o).StandardError.ReadToEnd(); }, p);
                 p.WaitForExit();
                 if (p.ExitCode != 0)
                 {
+                    string outText = outTask.Result;
+                    string errText = errTask.Result;
                     if (!string.IsNullOrEmpty(outText)) Console.WriteLine(outText);
                     if (!string.IsNullOrEmpty(errText)) Console.WriteLine(errText);
                 }

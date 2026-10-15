@@ -1,9 +1,14 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
@@ -15,6 +20,36 @@ namespace DofusFarm.UI
 {
     public class MainForm : Form
     {
+        internal static readonly Regex RxDigits = new Regex(@"(\d+)", RegexOptions.Compiled);
+        private static readonly Regex RxTrailingDigits = new Regex(@"(\d+)$", RegexOptions.Compiled);
+        private static readonly Regex RxLogPrefix = new Regex(@"^\[\d{2}:\d{2}:\d{2}\]\s*", RegexOptions.Compiled);
+
+        // Pre-cached GDI+ brushes and pens to eliminate per-frame allocations in OnGridCellPainting
+        private static readonly SolidBrush BrushPillRunBg = new SolidBrush(Color.FromArgb(16, 52, 42));
+        private static readonly SolidBrush BrushPillStopBg = new SolidBrush(Color.FromArgb(30, 33, 44));
+        private static readonly SolidBrush BrushBtnDefaultBg = new SolidBrush(Color.FromArgb(38, 42, 56));
+        private static readonly SolidBrush BrushBtnStopBg = new SolidBrush(Color.FromArgb(153, 27, 27));
+        private static readonly SolidBrush BrushBtnLaunchBg = new SolidBrush(Color.FromArgb(29, 78, 216));
+        private static readonly SolidBrush BrushBtnEditCloneBg = new SolidBrush(Color.FromArgb(30, 41, 59));
+        private static readonly SolidBrush BrushBtnDeleteBg = new SolidBrush(Color.FromArgb(45, 26, 34));
+
+        private static readonly Pen PenBtnDefault = new Pen(Color.FromArgb(55, 62, 82), 1f);
+        private static readonly Pen PenBtnStop = new Pen(Color.FromArgb(220, 38, 38), 1f);
+        private static readonly Pen PenBtnLaunch = new Pen(Color.FromArgb(59, 130, 246), 1f);
+        private static readonly Pen PenBtnEditClone = new Pen(Color.FromArgb(71, 85, 105), 1f);
+        private static readonly Pen PenBtnDelete = new Pen(Color.FromArgb(127, 29, 29), 1f);
+
+        private static readonly Color ColGreen = Color.FromArgb(52, 211, 153);
+        private static readonly Color ColMuted = Color.FromArgb(148, 163, 184);
+        private static readonly Color ColBlueText = Color.FromArgb(147, 197, 253);
+        private static readonly Color ColAmberText = Color.FromArgb(251, 191, 36);
+        private static readonly Color ColRedText = Color.FromArgb(248, 113, 113);
+        private static readonly Font FontBtnBold = new Font("Segoe UI", 9f, FontStyle.Bold);
+        private static readonly Font FontBtnReg = new Font("Segoe UI", 9f, FontStyle.Regular);
+
+        internal static readonly int[] RamChoices = { 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384 };
+        internal static readonly int[] CoreChoices = { 1, 2, 3, 4, 6, 8 };
+
         private FarmEngine _engine;
         private FarmWatchdog _watchdog;
         private PriorityGovernor _governor;
@@ -62,55 +97,36 @@ namespace DofusFarm.UI
 
         private volatile bool _isClosing = false;
         private volatile bool _isFarmLaunching = false;
-        private readonly HashSet<string> _inFlightOps = new HashSet<string>();
+        private readonly ConcurrentDictionary<string, byte> _inFlightOps = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         private readonly object _opsLock = new object();
         private readonly object _logFileLock = new object();
+        private static readonly string LogFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DofusFarm.log");
 
-        private bool TryBeginOp(string key)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static int ParseFirstInt(object val, int fallback)
         {
-            lock (_opsLock)
-            {
-                if (_inFlightOps.Contains(key)) return false;
-                _inFlightOps.Add(key);
-                return true;
-            }
+            if (val == null) return fallback;
+            Match m = RxDigits.Match(val.ToString());
+            int parsed;
+            return (m.Success && int.TryParse(m.Groups[1].Value, out parsed)) ? parsed : fallback;
         }
 
-        private void EndOp(string key)
-        {
-            lock (_opsLock)
-            {
-                _inFlightOps.Remove(key);
-            }
-        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool TryBeginOp(string key) { return !string.IsNullOrEmpty(key) && _inFlightOps.TryAdd(key, 0); }
 
-        private void SafeInvoke(Action action)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void EndOp(string key) { byte b; if (!string.IsNullOrEmpty(key)) _inFlightOps.TryRemove(key, out b); }
+
+        private void SafeUi(Action action, bool async)
         {
-            if (this.IsDisposed) return;
-            try
-            {
-                if (this.IsHandleCreated && !this.IsDisposed)
-                {
-                    this.Invoke(action);
-                }
-            }
+            if (IsDisposed || !IsHandleCreated) return;
+            try { if (async) BeginInvoke(action); else Invoke(action); }
             catch (ObjectDisposedException) { }
             catch (InvalidOperationException) { }
         }
 
-        private void SafeBeginInvoke(Action action)
-        {
-            if (this.IsDisposed) return;
-            try
-            {
-                if (this.IsHandleCreated && !this.IsDisposed)
-                {
-                    this.BeginInvoke(action);
-                }
-            }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
-        }
+        private void SafeInvoke(Action action) { SafeUi(action, false); }
+        private void SafeBeginInvoke(Action action) { SafeUi(action, true); }
 
         public MainForm()
         {
@@ -118,175 +134,84 @@ namespace DofusFarm.UI
             InitializeEngine();
         }
 
+        private static ComboBox CreateCombo(int x, int y, int width, object[] items, int selectedIndex)
+        {
+            var cmb = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(28, 30, 40),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Width = width,
+                Location = new Point(x, y)
+            };
+            cmb.Items.AddRange(items);
+            if (selectedIndex >= 0 && selectedIndex < items.Length) cmb.SelectedIndex = selectedIndex;
+            return cmb;
+        }
+
+        private static DataGridViewButtonColumn CreateBtnCol(string name, string header, string text, int width, bool useColText = true)
+        {
+            return new DataGridViewButtonColumn
+            {
+                Name = name, HeaderText = header, Text = text,
+                UseColumnTextForButtonValue = useColText, FlatStyle = FlatStyle.Flat, Width = width
+            };
+        }
+
         private void InitializeComponent()
         {
-            this.Text = "Dofus Touch Farm Manager v2.3";
-            this.Size = new Size(1220, 680);
-            this.MinimumSize = new Size(1060, 520);
-            this.StartPosition = FormStartPosition.CenterScreen;
-            this.BackColor = Color.FromArgb(18, 19, 24);
-            this.ForeColor = Color.FromArgb(235, 235, 240);
-            this.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
-            this.DoubleBuffered = true;
+            Text = "Dofus Touch Farm Manager v2.3";
+            Size = new Size(1220, 680);
+            MinimumSize = new Size(1060, 520);
+            StartPosition = FormStartPosition.CenterScreen;
+            BackColor = Color.FromArgb(18, 19, 24);
+            ForeColor = Color.FromArgb(235, 235, 240);
+            Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
+            DoubleBuffered = true;
 
             _cellBadgeFont = new Font("Segoe UI", 8.5f, FontStyle.Bold);
             _customNameFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
 
             string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_icon.ico");
-            if (File.Exists(iconPath))
-            {
-                try { this.Icon = new Icon(iconPath); } catch { }
-            }
+            if (File.Exists(iconPath)) { try { Icon = new Icon(iconPath); } catch { } }
 
-            // Top Header Panel
-            _headerPanel = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 68,
-                BackColor = Color.FromArgb(24, 26, 34),
-                Padding = new Padding(18, 8, 18, 8)
-            };
+            _headerPanel = new Panel { Dock = DockStyle.Top, Height = 68, BackColor = Color.FromArgb(24, 26, 34), Padding = new Padding(18, 8, 18, 8) };
+            _titleLabel = new Label { Text = "DOFUS TOUCH FARM MANAGER", Font = new Font("Segoe UI", 13f, FontStyle.Bold), ForeColor = Color.White, AutoSize = true, Location = new Point(18, 10) };
+            _specsLabel = new Label { Text = "Checking PC hardware configuration...", Font = new Font("Segoe UI", 9f), ForeColor = ColMuted, AutoSize = true, Location = new Point(19, 38) };
+            _lblActiveBadge = new Label { Text = "● 0 / 4 Running", Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), ForeColor = ColMuted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right, Location = new Point(_headerPanel.Width - 175, 22) };
+            _headerPanel.Controls.AddRange(new Control[] { _titleLabel, _specsLabel, _lblActiveBadge });
 
-            _titleLabel = new Label
-            {
-                Text = "DOFUS TOUCH FARM MANAGER",
-                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-                ForeColor = Color.White,
-                AutoSize = true,
-                Location = new Point(18, 10)
-            };
+            _toolbarPanel = new Panel { Dock = DockStyle.Top, Height = 54, BackColor = Color.FromArgb(21, 22, 29), Padding = new Padding(18, 8, 18, 8) };
+            const int btnY = 10, btnH = 34;
 
-            _specsLabel = new Label
-            {
-                Text = "Checking PC hardware configuration...",
-                Font = new Font("Segoe UI", 9f),
-                ForeColor = Color.FromArgb(148, 163, 184),
-                AutoSize = true,
-                Location = new Point(19, 38)
-            };
+            _btnLaunchFarm = CreateButton("Launch All", Color.FromArgb(37, 99, 235), Color.FromArgb(59, 130, 246), Color.White, 112, btnH, true, 16, btnY, OnLaunchFarmClick);
+            _btnStopAll = CreateButton("Stop All", Color.FromArgb(185, 28, 28), Color.FromArgb(220, 38, 38), Color.White, 80, btnH, true, 134, btnY, OnStopAllClick);
+            _btnAddSlot = CreateButton("+ Add", Color.FromArgb(16, 150, 108), Color.FromArgb(16, 185, 129), Color.White, 76, btnH, true, 220, btnY, OnAddSlotClick);
+            _btnEditSelected = CreateButton("Edit", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 62, btnH, false, 302, btnY, OnEditSelectedClick);
+            _btnDeleteSelected = CreateButton("Delete", Color.FromArgb(153, 27, 27), Color.FromArgb(220, 38, 38), Color.White, 72, btnH, true, 370, btnY, OnDeleteSelectedClick);
+            _btnRelayout = CreateButton("Tile", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 56, btnH, false, 448, btnY, OnRelayoutClick);
+            _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 68, btnH, false, 510, btnY, OnCascadeClick);
 
-            _lblActiveBadge = new Label
-            {
-                Text = "● 0 / 4 Running",
-                Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
-                ForeColor = Color.FromArgb(148, 163, 184),
-                AutoSize = true,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Location = new Point(_headerPanel.Width - 175, 22)
-            };
-
-            _headerPanel.Controls.Add(_titleLabel);
-            _headerPanel.Controls.Add(_specsLabel);
-            _headerPanel.Controls.Add(_lblActiveBadge);
-
-            // Clean Single-Row Toolbar Panel
-            _toolbarPanel = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 54,
-                BackColor = Color.FromArgb(21, 22, 29),
-                Padding = new Padding(18, 8, 18, 8)
-            };
-
-            int btnY = 10;
-            int btnH = 34;
-
-            _btnLaunchFarm = CreateButton("Launch All", Color.FromArgb(37, 99, 235), Color.FromArgb(59, 130, 246), Color.White, 112, btnH, true);
-            _btnLaunchFarm.Location = new Point(16, btnY);
-            _btnLaunchFarm.Click += OnLaunchFarmClick;
-
-            _btnStopAll = CreateButton("Stop All", Color.FromArgb(185, 28, 28), Color.FromArgb(220, 38, 38), Color.White, 80, btnH, true);
-            _btnStopAll.Location = new Point(134, btnY);
-            _btnStopAll.Click += OnStopAllClick;
-
-            _btnAddSlot = CreateButton("+ Add", Color.FromArgb(16, 150, 108), Color.FromArgb(16, 185, 129), Color.White, 76, btnH, true);
-            _btnAddSlot.Location = new Point(220, btnY);
-            _btnAddSlot.Click += OnAddSlotClick;
-
-            _btnEditSelected = CreateButton("Edit", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 62, btnH, false);
-            _btnEditSelected.Location = new Point(302, btnY);
-            _btnEditSelected.Click += OnEditSelectedClick;
-
-            _btnDeleteSelected = CreateButton("Delete", Color.FromArgb(153, 27, 27), Color.FromArgb(220, 38, 38), Color.White, 72, btnH, true);
-            _btnDeleteSelected.Location = new Point(370, btnY);
-            _btnDeleteSelected.Click += OnDeleteSelectedClick;
-
-            _btnRelayout = CreateButton("Tile", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 56, btnH, false);
-            _btnRelayout.Location = new Point(448, btnY);
-            _btnRelayout.Click += OnRelayoutClick;
-
-            _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 68, btnH, false);
-            _btnCascade.Location = new Point(510, btnY);
-            _btnCascade.Click += OnCascadeClick;
-
-            // Global GPU, RAM & CPU Allocation Controls on Right
-            _lblGpu = new Label { Text = "GPU:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(716, 17) };
-            _cmbGpu = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 40),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Width = 108,
-                Location = new Point(750, 14)
-            };
-            _cmbGpu.Items.AddRange(new object[] {
-                "Host (OpenGL)",
-                "ANGLE (D3D11)",
-                "SwiftShader"
-            });
-            _cmbGpu.SelectedIndex = 0;
+            Color lblCol = Color.FromArgb(180, 185, 195);
+            _lblGpu = new Label { Text = "GPU:", ForeColor = lblCol, AutoSize = true, Location = new Point(716, 17) };
+            _cmbGpu = CreateCombo(750, 14, 108, new object[] { "Host (OpenGL)", "ANGLE (D3D11)", "SwiftShader" }, 0);
             _cmbGpu.SelectedIndexChanged += OnGpuModeChanged;
 
-            _lblRam = new Label { Text = "RAM:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(866, 17) };
-            _cmbRam = new ComboBox
+            _lblRam = new Label { Text = "RAM:", ForeColor = lblCol, AutoSize = true, Location = new Point(866, 17) };
+            _cmbRam = CreateCombo(904, 14, 90, RamChoices.Select(r => (object)(r + " MB")).ToArray(), 2);
+
+            _lblCores = new Label { Text = "CPU:", ForeColor = lblCol, AutoSize = true, Location = new Point(1000, 17) };
+            _cmbCores = CreateCombo(1034, 14, 76, CoreChoices.Select(c => (object)(c + (c == 1 ? " Core" : " Cores"))).ToArray(), 0);
+
+            _btnApplyAllHw = CreateButton("Apply All", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 84, btnH, true, 1116, btnY, OnApplyAllHardwareClick);
+
+            _toolbarPanel.Controls.AddRange(new Control[]
             {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 40),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Width = 90,
-                Location = new Point(904, 14)
-            };
-            _cmbRam.Items.AddRange(new object[] {
-                "512 MB", "768 MB", "1024 MB", "1536 MB", "2048 MB",
-                "3072 MB", "4096 MB", "6144 MB", "8192 MB", "12288 MB", "16384 MB"
+                _btnLaunchFarm, _btnStopAll, _btnAddSlot, _btnEditSelected, _btnDeleteSelected,
+                _btnRelayout, _btnCascade, _lblGpu, _cmbGpu, _lblRam, _cmbRam, _lblCores, _cmbCores, _btnApplyAllHw
             });
-            _cmbRam.SelectedIndex = 2; // 1024 MB
 
-            _lblCores = new Label { Text = "CPU:", ForeColor = Color.FromArgb(180, 185, 195), AutoSize = true, Location = new Point(1000, 17) };
-            _cmbCores = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 40),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Width = 76,
-                Location = new Point(1034, 14)
-            };
-            _cmbCores.Items.AddRange(new object[] { "1 Core", "2 Cores", "3 Cores", "4 Cores", "6 Cores", "8 Cores" });
-            _cmbCores.SelectedIndex = 0; // 1 Core
-
-            _btnApplyAllHw = CreateButton("Apply All", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 84, btnH, true);
-            _btnApplyAllHw.Location = new Point(1116, btnY);
-            _btnApplyAllHw.Click += OnApplyAllHardwareClick;
-
-            _toolbarPanel.Controls.Add(_btnLaunchFarm);
-            _toolbarPanel.Controls.Add(_btnStopAll);
-            _toolbarPanel.Controls.Add(_btnAddSlot);
-            _toolbarPanel.Controls.Add(_btnEditSelected);
-            _toolbarPanel.Controls.Add(_btnDeleteSelected);
-            _toolbarPanel.Controls.Add(_btnRelayout);
-            _toolbarPanel.Controls.Add(_btnCascade);
-            _toolbarPanel.Controls.Add(_lblGpu);
-            _toolbarPanel.Controls.Add(_cmbGpu);
-            _toolbarPanel.Controls.Add(_lblRam);
-            _toolbarPanel.Controls.Add(_cmbRam);
-            _toolbarPanel.Controls.Add(_lblCores);
-            _toolbarPanel.Controls.Add(_cmbCores);
-            _toolbarPanel.Controls.Add(_btnApplyAllHw);
-
-            // DataGridView for Instances
             _grid = new DataGridView
             {
                 Dock = DockStyle.Fill,
@@ -309,7 +234,7 @@ namespace DofusFarm.UI
             };
 
             _grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(26, 28, 37);
-            _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(148, 163, 184);
+            _grid.ColumnHeadersDefaultCellStyle.ForeColor = ColMuted;
             _grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
             _grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(8, 4, 8, 4);
             _grid.DefaultCellStyle.BackColor = Color.FromArgb(18, 19, 25);
@@ -319,81 +244,27 @@ namespace DofusFarm.UI
             _grid.DefaultCellStyle.Padding = new Padding(8, 4, 8, 4);
             _grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(22, 24, 32);
 
-            _grid.Columns.Add("Status", "STATUS");
-            _grid.Columns.Add("CustomName", "INSTANCE NAME");
-            _grid.Columns.Add("Name", "SLOT");
-            _grid.Columns.Add("Ram", "RAM");
-            _grid.Columns.Add("Cores", "CPU CORES");
-            _grid.Columns.Add("Device", "DEVICE PROFILE");
-            _grid.Columns.Add("Proxy", "NETWORK");
+            _grid.Columns.AddRange(
+                new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "STATUS", Width = 100 },
+                new DataGridViewTextBoxColumn { Name = "CustomName", HeaderText = "INSTANCE NAME", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 115, MinimumWidth = 110 },
+                new DataGridViewTextBoxColumn { Name = "Name", HeaderText = "SLOT", Width = 78 },
+                new DataGridViewTextBoxColumn { Name = "Ram", HeaderText = "RAM", Width = 76 },
+                new DataGridViewTextBoxColumn { Name = "Cores", HeaderText = "CPU CORES", Width = 80 },
+                new DataGridViewTextBoxColumn { Name = "Device", HeaderText = "DEVICE PROFILE", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 135, MinimumWidth = 125 },
+                new DataGridViewTextBoxColumn { Name = "Proxy", HeaderText = "NETWORK", Width = 138 },
+                CreateBtnCol("Action", "ACTION", "Launch", 78, false),
+                CreateBtnCol("Edit", "EDIT", "Edit", 66),
+                CreateBtnCol("Clone", "CLONE", "Clone", 66),
+                CreateBtnCol("Delete", "DELETE", "Delete", 72)
+            );
 
-            DataGridViewButtonColumn btnAction = new DataGridViewButtonColumn
-            {
-                Name = "Action",
-                HeaderText = "ACTION",
-                Text = "Launch",
-                UseColumnTextForButtonValue = false,
-                FlatStyle = FlatStyle.Flat
-            };
-            _grid.Columns.Add(btnAction);
-
-            DataGridViewButtonColumn btnEdit = new DataGridViewButtonColumn
-            {
-                Name = "Edit",
-                HeaderText = "EDIT",
-                Text = "Edit",
-                UseColumnTextForButtonValue = true,
-                FlatStyle = FlatStyle.Flat
-            };
-            _grid.Columns.Add(btnEdit);
-
-            DataGridViewButtonColumn btnClone = new DataGridViewButtonColumn
-            {
-                Name = "Clone",
-                HeaderText = "CLONE",
-                Text = "Clone",
-                UseColumnTextForButtonValue = true,
-                FlatStyle = FlatStyle.Flat
-            };
-            _grid.Columns.Add(btnClone);
-
-            DataGridViewButtonColumn btnDelete = new DataGridViewButtonColumn
-            {
-                Name = "Delete",
-                HeaderText = "DELETE",
-                Text = "Delete",
-                UseColumnTextForButtonValue = true,
-                FlatStyle = FlatStyle.Flat
-            };
-            _grid.Columns.Add(btnDelete);
-
-            _grid.Columns["Status"].Width = 100;
-            _grid.Columns["CustomName"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-            _grid.Columns["CustomName"].FillWeight = 115;
-            _grid.Columns["CustomName"].MinimumWidth = 110;
-            _grid.Columns["Name"].Width = 78;
-            _grid.Columns["Ram"].Width = 76;
-            _grid.Columns["Cores"].Width = 80;
-            _grid.Columns["Device"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-            _grid.Columns["Device"].FillWeight = 135;
-            _grid.Columns["Device"].MinimumWidth = 125;
-            _grid.Columns["Proxy"].Width = 138;
-            _grid.Columns["Action"].Width = 78;
-            _grid.Columns["Edit"].Width = 66;
-            _grid.Columns["Clone"].Width = 66;
-            _grid.Columns["Delete"].Width = 72;
-
-            _rowMenu = new ContextMenuStrip();
-            _rowMenu.BackColor = Color.FromArgb(26, 28, 37);
-            _rowMenu.ForeColor = Color.White;
+            _rowMenu = new ContextMenuStrip { BackColor = Color.FromArgb(26, 28, 37), ForeColor = Color.White };
             _rowMenu.Items.Add("Launch / Stop Instance", null, delegate { TriggerSelectedRowAction("Action"); });
             _rowMenu.Items.Add("Edit Instance...", null, delegate { OnEditSelectedClick(null, EventArgs.Empty); });
             _rowMenu.Items.Add("Clone Instance...", null, delegate { TriggerSelectedRowAction("Clone"); });
             _rowMenu.Items.Add(new ToolStripSeparator());
-            ToolStripItem delItem = _rowMenu.Items.Add("Delete Selected Instance", null, delegate { OnDeleteSelectedClick(null, EventArgs.Empty); });
-            delItem.ForeColor = Color.FromArgb(248, 113, 113);
-            ToolStripItem delAllItem = _rowMenu.Items.Add("Delete ALL Instances...", null, delegate { PromptAndDeleteAllInstances(); });
-            delAllItem.ForeColor = Color.FromArgb(248, 113, 113);
+            _rowMenu.Items.Add("Delete Selected Instance", null, delegate { OnDeleteSelectedClick(null, EventArgs.Empty); }).ForeColor = ColRedText;
+            _rowMenu.Items.Add("Delete ALL Instances...", null, delegate { PromptAndDeleteAllInstances(); }).ForeColor = ColRedText;
 
             _grid.CellPainting += OnGridCellPainting;
             _grid.CellMouseClick += OnGridCellMouseClick;
@@ -402,92 +273,43 @@ namespace DofusFarm.UI
             _grid.CellMouseEnter += OnGridCellMouseEnter;
             _grid.CellMouseLeave += delegate { _grid.Cursor = Cursors.Default; };
 
-            // Clean Bottom Status Bar
-            _statusPanel = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 36,
-                BackColor = Color.FromArgb(24, 26, 34),
-                Padding = new Padding(18, 6, 18, 6)
-            };
-
+            _statusPanel = new Panel { Dock = DockStyle.Bottom, Height = 36, BackColor = Color.FromArgb(24, 26, 34), Padding = new Padding(18, 6, 18, 6) };
             _lblStatusText = new Label
             {
                 Text = "Ready — Double-click any instance or click 'Edit' to customize its Name, RAM, or CPU Cores.",
-                Font = new Font("Segoe UI", 9f),
-                ForeColor = Color.FromArgb(148, 163, 184),
-                AutoSize = true,
-                Location = new Point(18, 9)
+                Font = new Font("Segoe UI", 9f), ForeColor = ColMuted, AutoSize = true, Location = new Point(18, 9)
             };
+            var lblFocus = new Label { Text = "Quick Focus:", ForeColor = ColMuted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right, Location = new Point(_statusPanel.Width - 260, 9) };
 
-            Label lblFocus = new Label
-            {
-                Text = "Quick Focus:",
-                ForeColor = Color.FromArgb(148, 163, 184),
-                AutoSize = true,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Location = new Point(_statusPanel.Width - 260, 9)
-            };
+            _btnFocus1 = CreateFocusButton("#1", _statusPanel.Width - 175, 0);
+            _btnFocus2 = CreateFocusButton("#2", _statusPanel.Width - 133, 1);
+            _btnFocus3 = CreateFocusButton("#3", _statusPanel.Width - 91, 2);
+            _btnFocus4 = CreateFocusButton("#4", _statusPanel.Width - 49, 3);
 
-            _btnFocus1 = CreateButton("#1", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
-            _btnFocus1.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            _btnFocus1.Location = new Point(_statusPanel.Width - 175, 6);
-            _btnFocus1.Click += delegate { FocusSlotByIndex(0); };
+            _statusPanel.Controls.AddRange(new Control[] { _lblStatusText, lblFocus, _btnFocus1, _btnFocus2, _btnFocus3, _btnFocus4 });
+            Controls.AddRange(new Control[] { _grid, _statusPanel, _toolbarPanel, _headerPanel });
 
-            _btnFocus2 = CreateButton("#2", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
-            _btnFocus2.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            _btnFocus2.Location = new Point(_statusPanel.Width - 133, 6);
-            _btnFocus2.Click += delegate { FocusSlotByIndex(1); };
-
-            _btnFocus3 = CreateButton("#3", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
-            _btnFocus3.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            _btnFocus3.Location = new Point(_statusPanel.Width - 91, 6);
-            _btnFocus3.Click += delegate { FocusSlotByIndex(2); };
-
-            _btnFocus4 = CreateButton("#4", Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), Color.FromArgb(147, 197, 253), 38, 24, false);
-            _btnFocus4.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            _btnFocus4.Location = new Point(_statusPanel.Width - 49, 6);
-            _btnFocus4.Click += delegate { FocusSlotByIndex(3); };
-
-            _statusPanel.Controls.Add(_lblStatusText);
-            _statusPanel.Controls.Add(lblFocus);
-            _statusPanel.Controls.Add(_btnFocus1);
-            _statusPanel.Controls.Add(_btnFocus2);
-            _statusPanel.Controls.Add(_btnFocus3);
-            _statusPanel.Controls.Add(_btnFocus4);
-
-            this.Controls.Add(_grid);
-            this.Controls.Add(_statusPanel);
-            this.Controls.Add(_toolbarPanel);
-            this.Controls.Add(_headerPanel);
-
-            // Real-time background status sync timer (4s interval, only redraws when state changes)
             _syncTimer = new System.Windows.Forms.Timer { Interval = 4000 };
             _syncTimer.Tick += OnSyncTimerTick;
             _syncTimer.Start();
         }
 
+        private Button CreateFocusButton(string text, int x, int slotIdx)
+        {
+            Button b = CreateButton(text, Color.FromArgb(34, 38, 50), Color.FromArgb(51, 65, 85), ColBlueText, 38, 24, false, x, 6, delegate { FocusSlotByIndex(slotIdx); });
+            b.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            return b;
+        }
+
         private void FocusSlotByIndex(int rowIndex)
         {
-            if (rowIndex >= 0 && rowIndex < _grid.Rows.Count)
-            {
-                InstanceModel inst = _grid.Rows[rowIndex].Tag as InstanceModel;
-                if (inst != null)
-                {
-                    _engine.FocusInstance(inst.Port);
-                    return;
-                }
-            }
-            _engine.FocusInstance(5554 + (rowIndex * 2));
+            InstanceModel inst = (rowIndex >= 0 && rowIndex < _grid.Rows.Count) ? _grid.Rows[rowIndex].Tag as InstanceModel : null;
+            _engine.FocusInstance(inst != null ? inst.Port : (5554 + (rowIndex * 2)));
         }
 
         private void OnGridCellMouseEnter(object sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0)
-            {
-                _grid.Cursor = Cursors.Default;
-                return;
-            }
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) { _grid.Cursor = Cursors.Default; return; }
             string colName = _grid.Columns[e.ColumnIndex].Name;
             if (colName == "Action" || colName == "Edit" || colName == "Clone" || colName == "Delete")
             {
@@ -496,121 +318,82 @@ namespace DofusFarm.UI
             }
             if (colName == "Status")
             {
-                InstanceModel inst = _grid.Rows[e.RowIndex].Tag as InstanceModel;
+                var inst = _grid.Rows[e.RowIndex].Tag as InstanceModel;
                 _grid.Cursor = (inst != null && inst.IsRunning) ? Cursors.Hand : Cursors.Default;
                 return;
             }
             _grid.Cursor = Cursors.Default;
         }
 
-        private Button CreateButton(string text, Color baseColor, Color hoverColor, Color foreColor, int width, int height, bool bold)
+        private Button CreateButton(string text, Color baseColor, Color hoverColor, Color foreColor, int width, int height, bool bold, int x = 0, int y = 0, EventHandler onClick = null)
         {
-            Button btn = new Button
+            var btn = new Button
             {
-                Text = text,
-                BackColor = baseColor,
-                ForeColor = foreColor,
-                FlatStyle = FlatStyle.Flat,
-                Width = width,
-                Height = height,
-                Font = new Font("Segoe UI", 9f, bold ? FontStyle.Bold : FontStyle.Regular),
-                Cursor = Cursors.Hand
+                Text = text, BackColor = baseColor, ForeColor = foreColor, FlatStyle = FlatStyle.Flat,
+                Width = width, Height = height, Location = new Point(x, y),
+                Font = bold ? FontBtnBold : FontBtnReg, Cursor = Cursors.Hand
             };
             btn.FlatAppearance.BorderSize = 0;
             btn.MouseEnter += delegate { if (btn.Enabled) btn.BackColor = hoverColor; };
             btn.MouseLeave += delegate { if (btn.Enabled) btn.BackColor = baseColor; };
+            if (onClick != null) btn.Click += onClick;
             return btn;
         }
 
-        /// <summary>
-        /// Custom GDI+ renderer for commercial-grade pill status badges and action buttons in the DataGridView.
-        /// Uses cached Font instances (_cellBadgeFont) to guarantee zero GDI handle leaks.
-        /// </summary>
         private void OnGridCellPainting(object sender, DataGridViewCellPaintingEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
             string colName = _grid.Columns[e.ColumnIndex].Name;
-            if (colName != "Status" && colName != "Action" && colName != "Edit" && colName != "Clone" && colName != "Delete")
-                return;
+            if (colName != "Status" && colName != "Action" && colName != "Edit" && colName != "Clone" && colName != "Delete") return;
 
             e.PaintBackground(e.ClipBounds, true);
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            DataGridViewRow row = _grid.Rows[e.RowIndex];
-            InstanceModel inst = row.Tag as InstanceModel;
+            var inst = _grid.Rows[e.RowIndex].Tag as InstanceModel;
             bool isRunning = inst != null && inst.IsRunning;
 
             if (colName == "Status")
             {
-                Rectangle pillRect = new Rectangle(e.CellBounds.X + 8, e.CellBounds.Y + 9, e.CellBounds.Width - 16, e.CellBounds.Height - 18);
-                Color pillBg = isRunning ? Color.FromArgb(16, 52, 42) : Color.FromArgb(30, 33, 44);
-                Color pillText = isRunning ? Color.FromArgb(52, 211, 153) : Color.FromArgb(148, 163, 184);
-                string label = isRunning ? "● Running" : "● Stopped";
-
-                using (SolidBrush bg = new SolidBrush(pillBg))
-                {
-                    g.FillRectangle(bg, pillRect);
-                }
-                TextRenderer.DrawText(g, label, _cellBadgeFont, pillRect, pillText,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                var pillRect = new Rectangle(e.CellBounds.X + 8, e.CellBounds.Y + 9, e.CellBounds.Width - 16, e.CellBounds.Height - 18);
+                g.FillRectangle(isRunning ? BrushPillRunBg : BrushPillStopBg, pillRect);
+                TextRenderer.DrawText(g, isRunning ? "● Running" : "● Stopped", _cellBadgeFont, pillRect,
+                    isRunning ? ColGreen : ColMuted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 e.Handled = true;
                 return;
             }
 
-            // Action / Edit / Clone / Delete buttons
-            Rectangle btnRect = new Rectangle(e.CellBounds.X + 6, e.CellBounds.Y + 8, e.CellBounds.Width - 12, e.CellBounds.Height - 16);
-            Color btnBg = Color.FromArgb(38, 42, 56);
-            Color btnBorder = Color.FromArgb(55, 62, 82);
-            Color btnFg = Color.White;
-            string btnText = (e.Value ?? "").ToString();
+            var btnRect = new Rectangle(e.CellBounds.X + 6, e.CellBounds.Y + 8, e.CellBounds.Width - 12, e.CellBounds.Height - 16);
+            SolidBrush bg = BrushBtnDefaultBg;
+            Pen pen = PenBtnDefault;
+            Color fg = Color.White;
+            string btnText;
 
-            if (colName == "Action")
+            switch (colName)
             {
-                if (isRunning)
-                {
-                    btnBg = Color.FromArgb(153, 27, 27);
-                    btnBorder = Color.FromArgb(220, 38, 38);
-                    btnText = "Stop";
-                }
-                else
-                {
-                    btnBg = Color.FromArgb(29, 78, 216);
-                    btnBorder = Color.FromArgb(59, 130, 246);
-                    btnText = "Launch";
-                }
-            }
-            else if (colName == "Edit")
-            {
-                btnBg = Color.FromArgb(30, 41, 59);
-                btnBorder = Color.FromArgb(71, 85, 105);
-                btnFg = Color.FromArgb(147, 197, 253);
-                btnText = "Edit";
-            }
-            else if (colName == "Clone")
-            {
-                btnBg = Color.FromArgb(30, 41, 59);
-                btnBorder = Color.FromArgb(71, 85, 105);
-                btnFg = Color.FromArgb(251, 191, 36);
-                btnText = "Clone";
-            }
-            else if (colName == "Delete")
-            {
-                btnBg = Color.FromArgb(45, 26, 34);
-                btnBorder = Color.FromArgb(127, 29, 29);
-                btnFg = Color.FromArgb(248, 113, 113);
-                btnText = "Delete";
+                case "Action":
+                    bg = isRunning ? BrushBtnStopBg : BrushBtnLaunchBg;
+                    pen = isRunning ? PenBtnStop : PenBtnLaunch;
+                    btnText = isRunning ? "Stop" : "Launch";
+                    break;
+                case "Edit":
+                    bg = BrushBtnEditCloneBg; pen = PenBtnEditClone; fg = ColBlueText; btnText = "Edit";
+                    break;
+                case "Clone":
+                    bg = BrushBtnEditCloneBg; pen = PenBtnEditClone; fg = ColAmberText; btnText = "Clone";
+                    break;
+                case "Delete":
+                    bg = BrushBtnDeleteBg; pen = PenBtnDelete; fg = ColRedText; btnText = "Delete";
+                    break;
+                default:
+                    btnText = (e.Value ?? "").ToString();
+                    break;
             }
 
-            using (SolidBrush bg = new SolidBrush(btnBg))
-            using (Pen pen = new Pen(btnBorder, 1f))
-            {
-                g.FillRectangle(bg, btnRect);
-                g.DrawRectangle(pen, btnRect);
-            }
-            TextRenderer.DrawText(g, btnText, _cellBadgeFont, btnRect, btnFg,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            g.FillRectangle(bg, btnRect);
+            g.DrawRectangle(pen, btnRect);
+            TextRenderer.DrawText(g, btnText, _cellBadgeFont, btnRect, fg, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             e.Handled = true;
         }
 
@@ -623,9 +406,7 @@ namespace DofusFarm.UI
             {
                 _suppressGpuEvent = true;
                 string gpu = _engine.GetConfiguredGpuMode();
-                if (gpu == "angle_indirect") _cmbGpu.SelectedIndex = 1;
-                else if (gpu == "swiftshader_indirect") _cmbGpu.SelectedIndex = 2;
-                else _cmbGpu.SelectedIndex = 0;
+                _cmbGpu.SelectedIndex = gpu == "angle_indirect" ? 1 : (gpu == "swiftshader_indirect" ? 2 : 0);
             }
             catch { }
             finally { _suppressGpuEvent = false; }
@@ -651,8 +432,8 @@ namespace DofusFarm.UI
                                 _specs.CpuName, _specs.GpuName, _specs.HostRamGB, _specs.FreeRamGB, _specs.LogicalThreads);
                             if (_specs.HostRamGB >= 15.5)
                             {
-                                _cmbRam.SelectedIndex = 3; // 1536 MB
-                                _cmbCores.SelectedIndex = 1; // 2 Cores
+                                _cmbRam.SelectedIndex = 3;
+                                _cmbCores.SelectedIndex = 1;
                             }
                         }
                         RefreshGrid(true);
@@ -670,50 +451,27 @@ namespace DofusFarm.UI
 
         private void OnSyncTimerTick(object sender, EventArgs e)
         {
-            if (_isClosing || _isFarmLaunching) return;
-            RefreshGrid(false);
+            if (!_isClosing && !_isFarmLaunching) RefreshGrid(false);
         }
 
         private void Log(string msg)
         {
             if (string.IsNullOrEmpty(msg)) return;
-            try
-            {
-                lock (_logFileLock)
-                {
-                    string logFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DofusFarm.log");
-                    File.AppendAllText(logFile, msg + "\r\n");
-                }
-            }
-            catch { }
+            try { lock (_logFileLock) File.AppendAllText(LogFilePath, msg + "\r\n"); } catch { }
 
-            if (this.IsDisposed || _isClosing || !this.IsHandleCreated) return;
+            if (IsDisposed || _isClosing || !IsHandleCreated) return;
             if (!msg.Contains("[GOVERNOR]") && !msg.Contains("[SECURITY]"))
             {
                 SafeBeginInvoke(delegate
                 {
-                    if (_lblStatusText != null && !this.IsDisposed)
-                    {
-                        string clean = Regex.Replace(msg, @"^\[\d{2}:\d{2}:\d{2}\]\s*", "");
-                        _lblStatusText.Text = clean;
-                    }
+                    if (_lblStatusText != null && !IsDisposed)
+                        _lblStatusText.Text = RxLogPrefix.Replace(msg, "");
                 });
             }
         }
 
-        private int GetSelectedRam()
-        {
-            string s = _cmbRam.SelectedItem != null ? _cmbRam.SelectedItem.ToString() : "1024 MB";
-            Match m = Regex.Match(s, @"(\d+)");
-            return m.Success ? int.Parse(m.Groups[1].Value) : 1024;
-        }
-
-        private int GetSelectedCores()
-        {
-            string s = _cmbCores.SelectedItem != null ? _cmbCores.SelectedItem.ToString() : "1 Core";
-            Match m = Regex.Match(s, @"(\d+)");
-            return m.Success ? int.Parse(m.Groups[1].Value) : 1;
-        }
+        private int GetSelectedRam() { return ParseFirstInt(_cmbRam.SelectedItem, 1024); }
+        private int GetSelectedCores() { return ParseFirstInt(_cmbCores.SelectedItem, 1); }
 
         private void RefreshGrid(bool forceRedraw = true)
         {
@@ -726,104 +484,73 @@ namespace DofusFarm.UI
                     if (_isClosing) return;
                     List<InstanceModel> list = _engine.GetInstances();
 
-                    // Build lightweight state signature so periodic timer only redraws when state actually changes
-                    System.Text.StringBuilder sigBuilder = new System.Text.StringBuilder();
+                    var sigBuilder = new StringBuilder(list.Count * 48);
                     foreach (InstanceModel im in list)
                     {
-                        sigBuilder.Append(im.Name).Append(':')
-                                  .Append(im.CustomName).Append(':')
-                                  .Append(im.IsRunning ? '1' : '0').Append(':')
-                                  .Append(im.RamMb).Append(':')
-                                  .Append(im.Cores).Append(':')
-                                  .Append(im.PhoneModelId).Append(':')
-                                  .Append(im.Proxy).Append(';');
+                        sigBuilder.Append(im.Name).Append(':').Append(im.CustomName).Append(':')
+                                  .Append(im.IsRunning ? '1' : '0').Append(':').Append(im.RamMb).Append(':')
+                                  .Append(im.Cores).Append(':').Append(im.PhoneModelId).Append(':').Append(im.Proxy).Append(';');
                     }
                     string newSig = sigBuilder.ToString();
-                    if (!forceRedraw && string.Equals(newSig, _lastStateSignature, StringComparison.Ordinal))
-                    {
-                        return;
-                    }
+                    if (!forceRedraw && string.Equals(newSig, _lastStateSignature, StringComparison.Ordinal)) return;
                     _lastStateSignature = newSig;
 
                     SafeInvoke(delegate
                     {
-                        string selectedName = null;
-                        if (_grid.SelectedRows.Count > 0 && _grid.SelectedRows[0].Tag is InstanceModel)
+                        string selectedName = (_grid.SelectedRows.Count > 0 && _grid.SelectedRows[0].Tag is InstanceModel)
+                            ? ((InstanceModel)_grid.SelectedRows[0].Tag).Name : null;
+
+                        _grid.SuspendLayout();
+                        try
                         {
-                            selectedName = ((InstanceModel)_grid.SelectedRows[0].Tag).Name;
-                        }
-
-                        _grid.Rows.Clear();
-                        int runningCount = 0;
-                        foreach (InstanceModel inst in list)
-                        {
-                            if (inst.IsRunning) runningCount++;
-                            string proxyDisplay = inst.Proxy ?? "127.0.0.1:8880";
-                            if (proxyDisplay.Contains("127.0.0.1") || proxyDisplay.Contains("Accelerator"))
-                                proxyDisplay = "Built-in Accelerator";
-                            else
-                                proxyDisplay = proxyDisplay.Replace("[🌐] ", "");
-
-                            int rowIdx = _grid.Rows.Add(
-                                inst.IsRunning ? "Running" : "Stopped",
-                                inst.CustomName ?? inst.DisplayName,
-                                inst.Name,
-                                inst.RamMb + " MB",
-                                inst.Cores + (inst.Cores == 1 ? " Core" : " Cores"),
-                                inst.PhoneModelName ?? "Galaxy Tab S6",
-                                proxyDisplay,
-                                inst.IsRunning ? "Stop" : "Launch",
-                                "Edit",
-                                "Clone",
-                                "Delete"
-                            );
-
-                            DataGridViewRow row = _grid.Rows[rowIdx];
-                            row.Tag = inst;
-                            row.Cells["CustomName"].Style.Font = _customNameFont;
-                            row.Cells["CustomName"].Style.ForeColor = Color.White;
-                            row.Cells["Name"].Style.ForeColor = Color.FromArgb(148, 163, 184);
-                            row.Cells["Device"].Style.ForeColor = Color.FromArgb(226, 232, 240);
-                            row.Cells["Proxy"].Style.ForeColor = Color.FromArgb(148, 163, 184);
-                            if (inst.IsRunning)
+                            _grid.Rows.Clear();
+                            int runningCount = 0;
+                            foreach (InstanceModel inst in list)
                             {
-                                row.Cells["Status"].ToolTipText = "Click to bring this running instance window to front";
+                                if (inst.IsRunning) runningCount++;
+                                string proxyDisplay = inst.Proxy ?? "127.0.0.1:8880";
+                                proxyDisplay = (proxyDisplay.Contains("127.0.0.1") || proxyDisplay.Contains("Accelerator"))
+                                    ? "Built-in Accelerator"
+                                    : proxyDisplay.Replace("[🌐] ", "");
+
+                                int rowIdx = _grid.Rows.Add(
+                                    inst.IsRunning ? "Running" : "Stopped",
+                                    inst.CustomName ?? inst.DisplayName,
+                                    inst.Name,
+                                    inst.RamMb + " MB",
+                                    inst.Cores + (inst.Cores == 1 ? " Core" : " Cores"),
+                                    inst.PhoneModelName ?? "Galaxy Tab S6",
+                                    proxyDisplay,
+                                    inst.IsRunning ? "Stop" : "Launch",
+                                    "Edit", "Clone", "Delete");
+
+                                DataGridViewRow row = _grid.Rows[rowIdx];
+                                row.Tag = inst;
+                                row.Cells["CustomName"].Style.Font = _customNameFont;
+                                row.Cells["CustomName"].Style.ForeColor = Color.White;
+                                row.Cells["Name"].Style.ForeColor = ColMuted;
+                                row.Cells["Device"].Style.ForeColor = Color.FromArgb(226, 232, 240);
+                                row.Cells["Proxy"].Style.ForeColor = ColMuted;
+                                if (inst.IsRunning) row.Cells["Status"].ToolTipText = "Click to bring this running instance window to front";
+                                if (!string.IsNullOrEmpty(selectedName) && string.Equals(inst.Name, selectedName, StringComparison.OrdinalIgnoreCase))
+                                    row.Selected = true;
                             }
 
-                            if (!string.IsNullOrEmpty(selectedName) && string.Equals(inst.Name, selectedName, StringComparison.OrdinalIgnoreCase))
-                            {
-                                row.Selected = true;
-                            }
-                        }
-
-                        int count = list.Count > 0 ? list.Count : 4;
-                        _btnLaunchFarm.Text = string.Format("Launch All ({0}x)", count);
-
-                        if (runningCount > 0)
-                        {
+                            _btnLaunchFarm.Text = string.Format("Launch All ({0}x)", list.Count > 0 ? list.Count : 4);
                             _lblActiveBadge.Text = string.Format("● {0} / {1} Running", runningCount, list.Count);
-                            _lblActiveBadge.ForeColor = Color.FromArgb(52, 211, 153);
+                            _lblActiveBadge.ForeColor = runningCount > 0 ? ColGreen : ColMuted;
                         }
-                        else
-                        {
-                            _lblActiveBadge.Text = string.Format("● 0 / {0} Running", list.Count);
-                            _lblActiveBadge.ForeColor = Color.FromArgb(148, 163, 184);
-                        }
+                        finally { _grid.ResumeLayout(); }
                     });
                 }
                 catch { }
-                finally
-                {
-                    Interlocked.Exchange(ref _isSyncing, 0);
-                }
+                finally { Interlocked.Exchange(ref _isSyncing, 0); }
             });
         }
 
         private void OnApplyAllHardwareClick(object sender, EventArgs e)
         {
-            int ram = GetSelectedRam();
-            int cores = GetSelectedCores();
-
+            int ram = GetSelectedRam(), cores = GetSelectedCores();
             _btnApplyAllHw.Enabled = false;
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -833,14 +560,8 @@ namespace DofusFarm.UI
                     Log(string.Format("Applied {0} MB RAM and {1} CPU Core(s) across {2} stopped instance(s).", ram, cores, updated));
                     RefreshGrid(true);
                 }
-                catch (Exception ex)
-                {
-                    Log("Error applying hardware settings: " + ex.Message);
-                }
-                finally
-                {
-                    SafeBeginInvoke(delegate { _btnApplyAllHw.Enabled = true; });
-                }
+                catch (Exception ex) { Log("Error applying hardware settings: " + ex.Message); }
+                finally { SafeBeginInvoke(delegate { _btnApplyAllHw.Enabled = true; }); }
             });
         }
 
@@ -850,9 +571,7 @@ namespace DofusFarm.UI
             _isFarmLaunching = true;
             _btnLaunchFarm.Enabled = false;
 
-            int defaultRam = GetSelectedRam();
-            int defaultCores = GetSelectedCores();
-
+            int defaultRam = GetSelectedRam(), defaultCores = GetSelectedCores();
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
@@ -863,8 +582,7 @@ namespace DofusFarm.UI
                         for (int i = 1; i <= 4; i++)
                         {
                             if (_isClosing || !_isFarmLaunching) return;
-                            string slotName = string.Format("dofus-{0:D2}", i);
-                            _engine.ProvisionInstance(slotName, defaultRam, defaultCores, null, "Instance #" + i, "");
+                            _engine.ProvisionInstance(string.Format("dofus-{0:D2}", i), defaultRam, defaultCores, null, "Instance #" + i, "");
                         }
                         existingInsts = _engine.GetInstances();
                     }
@@ -872,46 +590,25 @@ namespace DofusFarm.UI
                     Log(string.Format("Launching {0} instance(s)...", existingInsts.Count));
                     try { _engine.Adb("", "start-server", 6000); } catch { }
 
-                    foreach (InstanceModel im in existingInsts)
+                    foreach (InstanceModel im in existingInsts.Where(x => !x.IsRunning))
                     {
                         if (_isClosing || !_isFarmLaunching) return;
-                        if (im.IsRunning) continue;
-                        _engine.LaunchInstance(
-                            im.Name,
-                            im.Port,
-                            im.RamMb > 0 ? im.RamMb : defaultRam,
-                            im.Cores > 0 ? im.Cores : defaultCores,
-                            im.Proxy);
+                        _engine.LaunchInstance(im.Name, im.Port, im.RamMb > 0 ? im.RamMb : defaultRam, im.Cores > 0 ? im.Cores : defaultCores, im.Proxy);
                         Thread.Sleep(1500);
                     }
 
-                    Thread.Sleep(2500);
-                    if (_isClosing || !_isFarmLaunching) return;
-                    SafeInvoke(delegate
+                    foreach (int delay in new[] { 2500, 4000 })
                     {
-                        RefreshGrid(true);
-                        OnRelayoutClick(null, null);
-                    });
-
-                    Thread.Sleep(4000);
-                    if (_isClosing || !_isFarmLaunching) return;
-                    SafeInvoke(delegate
-                    {
-                        RefreshGrid(true);
-                        OnRelayoutClick(null, null);
-                    });
+                        Thread.Sleep(delay);
+                        if (_isClosing || !_isFarmLaunching) return;
+                        SafeInvoke(delegate { RefreshGrid(true); OnRelayoutClick(null, null); });
+                    }
                 }
-                catch (Exception ex)
-                {
-                    Log("Launch error: " + ex.Message);
-                }
+                catch (Exception ex) { Log("Launch error: " + ex.Message); }
                 finally
                 {
                     _isFarmLaunching = false;
-                    SafeBeginInvoke(delegate
-                    {
-                        _btnLaunchFarm.Enabled = true;
-                    });
+                    SafeBeginInvoke(delegate { _btnLaunchFarm.Enabled = true; });
                 }
             });
         }
@@ -927,128 +624,57 @@ namespace DofusFarm.UI
                 {
                     _engine.StopAll();
                     Thread.Sleep(500);
-                    SafeInvoke(delegate
-                    {
-                        RefreshGrid(true);
-                    });
+                    SafeInvoke(delegate { RefreshGrid(true); });
                 }
-                catch (Exception ex)
-                {
-                    Log("Error stopping instances: " + ex.Message);
-                }
-                finally
-                {
-                    SafeBeginInvoke(delegate
-                    {
-                        _btnStopAll.Enabled = true;
-                    });
-                }
+                catch (Exception ex) { Log("Error stopping instances: " + ex.Message); }
+                finally { SafeBeginInvoke(delegate { _btnStopAll.Enabled = true; }); }
             });
         }
 
-        private void OnRelayoutClick(object sender, EventArgs e)
+        private void ApplyWindowLayout(bool tile)
         {
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
-                    List<int> pids = new List<int>();
-                    foreach (InstanceModel inst in _engine.GetInstances())
-                    {
-                        if (inst.IsRunning && inst.Pid > 0) pids.Add(inst.Pid);
-                    }
-
+                    List<int> pids = _engine.GetInstances().Where(i => i.IsRunning && i.Pid > 0).Select(i => i.Pid).ToList();
                     if (pids.Count == 0)
                     {
                         Process[] procs = Process.GetProcessesByName("qemu-system-x86_64");
-                        try
-                        {
-                            foreach (Process p in procs) pids.Add(p.Id);
-                        }
-                        finally
-                        {
-                            foreach (Process p in procs) p.Dispose();
-                        }
+                        try { foreach (Process p in procs) pids.Add(p.Id); }
+                        finally { foreach (Process p in procs) p.Dispose(); }
                     }
-
                     if (pids.Count > 0)
                     {
-                        Win32.ApplyFarmLayout(pids, true);
-                        Log(string.Format("Tiled {0} active window(s).", pids.Count));
+                        if (tile) Win32.ApplyFarmLayout(pids, true);
+                        else Win32.ApplyCascadeLayout(pids);
+                        Log(string.Format("{0} {1} active window(s).", tile ? "Tiled" : "Cascaded", pids.Count));
                     }
                 }
                 catch { }
             });
         }
 
-        private void OnCascadeClick(object sender, EventArgs e)
-        {
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                try
-                {
-                    List<int> pids = new List<int>();
-                    foreach (InstanceModel inst in _engine.GetInstances())
-                    {
-                        if (inst.IsRunning && inst.Pid > 0) pids.Add(inst.Pid);
-                    }
-
-                    if (pids.Count == 0)
-                    {
-                        Process[] procs = Process.GetProcessesByName("qemu-system-x86_64");
-                        try
-                        {
-                            foreach (Process p in procs) pids.Add(p.Id);
-                        }
-                        finally
-                        {
-                            foreach (Process p in procs) p.Dispose();
-                        }
-                    }
-
-                    if (pids.Count > 0)
-                    {
-                        Win32.ApplyCascadeLayout(pids);
-                        Log(string.Format("Cascaded {0} active window(s).", pids.Count));
-                    }
-                }
-                catch { }
-            });
-        }
+        private void OnRelayoutClick(object sender, EventArgs e) { ApplyWindowLayout(true); }
+        private void OnCascadeClick(object sender, EventArgs e) { ApplyWindowLayout(false); }
 
         private void OnAddSlotClick(object sender, EventArgs e)
         {
             string nextSlot = _engine.GetNextAvailableSlot();
             int slotNum = 1;
-            Match m = Regex.Match(nextSlot, @"(\d+)$");
+            Match m = RxTrailingDigits.Match(nextSlot);
             if (m.Success) int.TryParse(m.Groups[1].Value, out slotNum);
 
-            string defaultCustomName = "Instance #" + slotNum;
-            int defaultRam = GetSelectedRam();
-            int defaultCores = GetSelectedCores();
-            DeviceProfile defProfile = DeviceCatalog.GetDefaultProfileForIndex(slotNum);
-
-            using (InstanceEditorDialog dlg = new InstanceEditorDialog(true, nextSlot, defaultCustomName, defaultRam, defaultCores, defProfile.Id, ""))
+            using (var dlg = new InstanceEditorDialog(true, nextSlot, "Instance #" + slotNum, GetSelectedRam(), GetSelectedCores(), DeviceCatalog.GetDefaultProfileForIndex(slotNum).Id, ""))
             {
                 if (dlg.ShowDialog(this) == DialogResult.OK)
                 {
-                    string customName = dlg.InstanceCustomName;
-                    int ram = dlg.SelectedRamMb;
-                    int cores = dlg.SelectedCores;
-                    string profileId = dlg.SelectedProfileId;
-                    string proxy = dlg.SelectedProxy;
-
+                    string customName = dlg.InstanceCustomName, profileId = dlg.SelectedProfileId, proxy = dlg.SelectedProxy;
+                    int ram = dlg.SelectedRamMb, cores = dlg.SelectedCores;
                     ThreadPool.QueueUserWorkItem(delegate
                     {
-                        try
-                        {
-                            _engine.ProvisionInstance(nextSlot, ram, cores, profileId, customName, proxy);
-                            RefreshGrid(true);
-                        }
-                        catch (Exception ex)
-                        {
-                            Log("Error adding instance: " + ex.Message);
-                        }
+                        try { _engine.ProvisionInstance(nextSlot, ram, cores, profileId, customName, proxy); RefreshGrid(true); }
+                        catch (Exception ex) { Log("Error adding instance: " + ex.Message); }
                     });
                 }
             }
@@ -1061,131 +687,81 @@ namespace DofusFarm.UI
                 MessageBox.Show("Select an instance in the table first to edit its settings.", "Edit Instance", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            InstanceModel inst = _grid.SelectedRows[0].Tag as InstanceModel;
-            if (inst != null)
-            {
-                OpenEditDialogForInstance(inst);
-            }
+            OpenEditDialogForInstance(_grid.SelectedRows[0].Tag as InstanceModel);
         }
 
-        private static string NormalizeProxyForComparison(string raw)
+        internal static string NormalizeProxyForComparison(string raw)
         {
             string s = (raw ?? "").Trim();
             if (s.StartsWith("[🌐] ")) s = s.Substring(5).Trim();
-            if (s.StartsWith("[⚡]") || s.Contains("127.0.0.1:8880") || s.Contains("Accelerator")) return "";
-            return s;
+            return (s.StartsWith("[⚡]") || s.Contains("127.0.0.1:8880") || s.Contains("Accelerator")) ? "" : s;
         }
 
         private void OnGpuModeChanged(object sender, EventArgs e)
         {
             if (_suppressGpuEvent || _engine == null) return;
             int idx = _cmbGpu.SelectedIndex;
-            string mode = (idx == 1) ? "angle_indirect" : (idx == 2 ? "swiftshader_indirect" : "host");
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                try
-                {
-                    _engine.SetConfiguredGpuMode(mode);
-                }
-                catch { }
-            });
+            string mode = idx == 1 ? "angle_indirect" : (idx == 2 ? "swiftshader_indirect" : "host");
+            ThreadPool.QueueUserWorkItem(delegate { try { _engine.SetConfiguredGpuMode(mode); } catch { } });
         }
 
         private void OnDeleteSelectedClick(object sender, EventArgs e)
         {
             if (_grid.SelectedRows.Count == 0)
             {
-                DialogResult drAll = MessageBox.Show(
-                    "No single row is selected.\n\nWould you like to delete ALL instances and reset the farm?",
-                    "Delete Instances",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
-                if (drAll == DialogResult.Yes)
-                {
+                if (MessageBox.Show("No single row is selected.\n\nWould you like to delete ALL instances and reset the farm?",
+                    "Delete Instances", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
                     PromptAndDeleteAllInstances();
-                }
                 return;
             }
-
-            InstanceModel inst = _grid.SelectedRows[0].Tag as InstanceModel;
-            if (inst != null)
-            {
-                PromptAndDeleteInstance(inst);
-            }
+            PromptAndDeleteInstance(_grid.SelectedRows[0].Tag as InstanceModel);
         }
 
         private void PromptAndDeleteInstance(InstanceModel inst)
         {
             if (inst == null) return;
-            DialogResult confirm = MessageBox.Show(
-                string.Format("Delete instance '{0}' ({1}) and permanently remove its virtual disk?", inst.CustomName ?? inst.Name, inst.Name),
-                "Confirm Delete Instance",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
+            if (MessageBox.Show(string.Format("Delete instance '{0}' ({1}) and permanently remove its virtual disk?", inst.CustomName ?? inst.Name, inst.Name),
+                "Confirm Delete Instance", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
-            if (confirm == DialogResult.Yes)
+            if (!TryBeginOp(inst.Name)) return;
+            string nameToDelete = inst.Name;
+            ThreadPool.QueueUserWorkItem(delegate
             {
-                if (!TryBeginOp(inst.Name)) return;
-                string nameToDelete = inst.Name;
-                ThreadPool.QueueUserWorkItem(delegate
+                try
                 {
-                    try
-                    {
-                        if (_isClosing) return;
-                        _engine.DeleteInstance(nameToDelete);
-                        Thread.Sleep(400);
-                        RefreshGrid(true);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log(string.Format("Error deleting {0}: {1}", nameToDelete, ex.Message));
-                    }
-                    finally
-                    {
-                        EndOp(nameToDelete);
-                    }
-                });
-            }
+                    if (_isClosing) return;
+                    _engine.DeleteInstance(nameToDelete);
+                    Thread.Sleep(400);
+                    RefreshGrid(true);
+                }
+                catch (Exception ex) { Log(string.Format("Error deleting {0}: {1}", nameToDelete, ex.Message)); }
+                finally { EndOp(nameToDelete); }
+            });
         }
 
         private void PromptAndDeleteAllInstances()
         {
-            DialogResult confirm = MessageBox.Show(
-                "Are you sure you want to stop and DELETE ALL instances (dofus-01..N)?\n\nYour Golden Master template is preserved so you can re-add clean instances anytime.",
-                "Confirm Delete All Instances",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
+            if (MessageBox.Show("Are you sure you want to stop and DELETE ALL instances (dofus-01..N)?\n\nYour Golden Master template is preserved so you can re-add clean instances anytime.",
+                "Confirm Delete All Instances", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
-            if (confirm == DialogResult.Yes)
+            _btnDeleteSelected.Enabled = false;
+            ThreadPool.QueueUserWorkItem(delegate
             {
-                _btnDeleteSelected.Enabled = false;
-                ThreadPool.QueueUserWorkItem(delegate
+                try
                 {
-                    try
-                    {
-                        int count = _engine.DeleteAllInstances();
-                        Log(string.Format("Deleted {0} instance(s).", count));
-                        Thread.Sleep(400);
-                        RefreshGrid(true);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log("Error deleting all instances: " + ex.Message);
-                    }
-                    finally
-                    {
-                        SafeBeginInvoke(delegate { _btnDeleteSelected.Enabled = true; });
-                    }
-                });
-            }
+                    Log(string.Format("Deleted {0} instance(s).", _engine.DeleteAllInstances()));
+                    Thread.Sleep(400);
+                    RefreshGrid(true);
+                }
+                catch (Exception ex) { Log("Error deleting all instances: " + ex.Message); }
+                finally { SafeBeginInvoke(delegate { _btnDeleteSelected.Enabled = true; }); }
+            });
         }
 
         private void TriggerSelectedRowAction(string colName)
         {
-            if (_grid.SelectedRows.Count == 0) return;
-            int rowIdx = _grid.SelectedRows[0].Index;
-            int colIdx = _grid.Columns[colName].Index;
-            HandleGridAction(rowIdx, colIdx);
+            if (_grid.SelectedRows.Count > 0)
+                HandleGridAction(_grid.SelectedRows[0].Index, _grid.Columns[colName].Index);
         }
 
         private void OnGridKeyDown(object sender, KeyEventArgs e)
@@ -1193,84 +769,40 @@ namespace DofusFarm.UI
             if (e.KeyCode == Keys.Delete && _grid.SelectedRows.Count > 0)
             {
                 e.Handled = true;
-                InstanceModel inst = _grid.SelectedRows[0].Tag as InstanceModel;
-                if (inst != null)
-                {
-                    PromptAndDeleteInstance(inst);
-                }
+                PromptAndDeleteInstance(_grid.SelectedRows[0].Tag as InstanceModel);
             }
         }
 
         private void OpenEditDialogForInstance(InstanceModel inst)
         {
             if (inst == null) return;
-            using (InstanceEditorDialog dlg = new InstanceEditorDialog(
-                false,
-                inst.Name,
-                inst.CustomName ?? inst.DisplayName,
-                inst.RamMb,
-                inst.Cores,
-                inst.PhoneModelId,
-                inst.Proxy))
+            using (var dlg = new InstanceEditorDialog(false, inst.Name, inst.CustomName ?? inst.DisplayName, inst.RamMb, inst.Cores, inst.PhoneModelId, inst.Proxy))
             {
                 DialogResult result = dlg.ShowDialog(this);
-                if (dlg.DeleteRequested || result == DialogResult.Abort)
+                if (dlg.DeleteRequested || result == DialogResult.Abort) { PromptAndDeleteInstance(inst); return; }
+                if (result != DialogResult.OK) return;
+
+                string slotName = inst.Name, slotSerial = inst.Serial, customName = dlg.InstanceCustomName, profileId = dlg.SelectedProfileId, proxy = dlg.SelectedProxy;
+                int slotPort = inst.Port, ram = dlg.SelectedRamMb, cores = dlg.SelectedCores;
+                bool hwOrNetChanged = ram != inst.RamMb || cores != inst.Cores ||
+                                      !string.Equals(profileId, inst.PhoneModelId, StringComparison.OrdinalIgnoreCase) ||
+                                      !string.Equals(NormalizeProxyForComparison(proxy), NormalizeProxyForComparison(inst.Proxy), StringComparison.OrdinalIgnoreCase);
+
+                bool restartNow = inst.IsRunning && hwOrNetChanged && MessageBox.Show(
+                    string.Format("'{0}' is currently running.\n\nWould you like to restart it now so the new RAM / CPU / device / network settings take effect immediately?", customName),
+                    "Apply Changes Now?", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+
+                ThreadPool.QueueUserWorkItem(delegate
                 {
-                    PromptAndDeleteInstance(inst);
-                    return;
-                }
-                if (result == DialogResult.OK)
-                {
-                    string slotName = inst.Name;
-                    string slotSerial = inst.Serial;
-                    int slotPort = inst.Port;
-                    bool wasRunning = inst.IsRunning;
-
-                    string customName = dlg.InstanceCustomName;
-                    int ram = dlg.SelectedRamMb;
-                    int cores = dlg.SelectedCores;
-                    string profileId = dlg.SelectedProfileId;
-                    string proxy = dlg.SelectedProxy;
-
-                    bool hwOrNetChanged = (ram != inst.RamMb) ||
-                                          (cores != inst.Cores) ||
-                                          !string.Equals(profileId, inst.PhoneModelId, StringComparison.OrdinalIgnoreCase) ||
-                                          !string.Equals(NormalizeProxyForComparison(proxy), NormalizeProxyForComparison(inst.Proxy), StringComparison.OrdinalIgnoreCase);
-
-                    bool restartNow = false;
-                    if (wasRunning && hwOrNetChanged)
+                    try
                     {
-                        DialogResult dr = MessageBox.Show(
-                            string.Format("'{0}' is currently running.\n\nWould you like to restart it now so the new RAM / CPU / device / network settings take effect immediately?", customName),
-                            "Apply Changes Now?",
-                            MessageBoxButtons.YesNo,
-                            MessageBoxIcon.Question);
-                        restartNow = (dr == DialogResult.Yes);
+                        if (restartNow) { _engine.StopInstance(slotSerial, slotName); Thread.Sleep(800); }
+                        _engine.UpdateInstanceConfig(slotName, customName, ram, cores, profileId, proxy);
+                        if (restartNow) { _engine.LaunchInstance(slotName, slotPort, ram, cores, proxy); Thread.Sleep(1500); }
+                        RefreshGrid(true);
                     }
-
-                    ThreadPool.QueueUserWorkItem(delegate
-                    {
-                        try
-                        {
-                            if (restartNow)
-                            {
-                                _engine.StopInstance(slotSerial, slotName);
-                                Thread.Sleep(800);
-                            }
-                            _engine.UpdateInstanceConfig(slotName, customName, ram, cores, profileId, proxy);
-                            if (restartNow)
-                            {
-                                _engine.LaunchInstance(slotName, slotPort, ram, cores, proxy);
-                                Thread.Sleep(1500);
-                            }
-                            RefreshGrid(true);
-                        }
-                        catch (Exception ex)
-                        {
-                            Log("Error updating instance: " + ex.Message);
-                        }
-                    });
-                }
+                    catch (Exception ex) { Log("Error updating instance: " + ex.Message); }
+                });
             }
         }
 
@@ -1281,143 +813,90 @@ namespace DofusFarm.UI
             {
                 _grid.ClearSelection();
                 _grid.Rows[e.RowIndex].Selected = true;
-                if (_rowMenu != null)
-                {
-                    _rowMenu.Show(Cursor.Position);
-                }
+                if (_rowMenu != null) _rowMenu.Show(Cursor.Position);
                 return;
             }
-            if (e.Button != MouseButtons.Left || e.ColumnIndex < 0) return;
-            HandleGridAction(e.RowIndex, e.ColumnIndex);
+            if (e.Button == MouseButtons.Left && e.ColumnIndex >= 0)
+                HandleGridAction(e.RowIndex, e.ColumnIndex);
         }
 
         private void HandleGridAction(int rowIndex, int columnIndex)
         {
             if (rowIndex < 0 || rowIndex >= _grid.Rows.Count || columnIndex < 0) return;
-            DataGridViewRow row = _grid.Rows[rowIndex];
-            if (row == null) return;
-            InstanceModel inst = row.Tag as InstanceModel;
+            var inst = _grid.Rows[rowIndex].Tag as InstanceModel;
             if (inst == null) return;
-            DataGridViewCellEventArgs e = new DataGridViewCellEventArgs(columnIndex, rowIndex);
 
-            // 0. Click on Running Status pill -> Bring emulator window to front
-            if (e.ColumnIndex == _grid.Columns["Status"].Index)
+            string colName = _grid.Columns[columnIndex].Name;
+            switch (colName)
             {
-                if (inst.IsRunning)
-                {
-                    _engine.FocusInstance(inst.Port);
-                }
-                return;
-            }
-
-            // 1. Launch / Stop
-            if (e.ColumnIndex == _grid.Columns["Action"].Index)
-            {
-                if (!TryBeginOp(inst.Name)) return;
-                ThreadPool.QueueUserWorkItem(delegate
-                {
-                    try
+                case "Status":
+                    if (inst.IsRunning) _engine.FocusInstance(inst.Port);
+                    break;
+                case "Action":
+                    if (!TryBeginOp(inst.Name)) return;
+                    ThreadPool.QueueUserWorkItem(delegate
                     {
-                        if (_isClosing) return;
-                        if (inst.IsRunning)
+                        try
                         {
-                            _engine.StopInstance(inst.Serial, inst.Name);
+                            if (_isClosing) return;
+                            if (inst.IsRunning) _engine.StopInstance(inst.Serial, inst.Name);
+                            else _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, inst.Proxy);
+                            Thread.Sleep(800);
+                            RefreshGrid(true);
                         }
-                        else
+                        catch (Exception ex) { Log(string.Format("Error toggling {0}: {1}", inst.Name, ex.Message)); }
+                        finally { EndOp(inst.Name); }
+                    });
+                    break;
+                case "Edit":
+                    OpenEditDialogForInstance(inst);
+                    break;
+                case "Clone":
+                    string nextSlot = _engine.GetNextAvailableSlot();
+                    using (var dlg = new CloneDialog(inst.CustomName ?? inst.Name, nextSlot, (inst.CustomName ?? inst.Name) + " (Copy)"))
+                    {
+                        if (dlg.ShowDialog(this) == DialogResult.OK && !string.IsNullOrEmpty(dlg.TargetSlotName))
                         {
-                            _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, inst.Proxy);
+                            string srcName = inst.Name, targetSlot = dlg.TargetSlotName, targetCustom = dlg.TargetCustomName;
+                            bool cloneState = dlg.CloneState;
+                            if (!TryBeginOp(targetSlot)) return;
+                            ThreadPool.QueueUserWorkItem(delegate
+                            {
+                                try
+                                {
+                                    if (_isClosing) return;
+                                    _engine.CloneInstance(srcName, targetSlot, cloneState, targetCustom);
+                                    Thread.Sleep(800);
+                                    RefreshGrid(true);
+                                }
+                                catch (Exception ex) { Log(string.Format("Error cloning {0}: {1}", srcName, ex.Message)); }
+                                finally { EndOp(targetSlot); }
+                            });
                         }
-                        Thread.Sleep(800);
-                        RefreshGrid(true);
                     }
-                    catch (Exception ex)
-                    {
-                        Log(string.Format("Error toggling {0}: {1}", inst.Name, ex.Message));
-                    }
-                    finally
-                    {
-                        EndOp(inst.Name);
-                    }
-                });
-            }
-            // 2. Edit Instance
-            else if (e.ColumnIndex == _grid.Columns["Edit"].Index)
-            {
-                OpenEditDialogForInstance(inst);
-            }
-            // 3. Clone Instance
-            else if (e.ColumnIndex == _grid.Columns["Clone"].Index)
-            {
-                string nextSlot = _engine.GetNextAvailableSlot();
-                string suggestedCustom = (inst.CustomName ?? inst.Name) + " (Copy)";
-                using (CloneDialog dlg = new CloneDialog(inst.CustomName ?? inst.Name, nextSlot, suggestedCustom))
-                {
-                    if (dlg.ShowDialog(this) == DialogResult.OK && !string.IsNullOrEmpty(dlg.TargetSlotName))
-                    {
-                        string srcName = inst.Name;
-                        string targetSlot = dlg.TargetSlotName;
-                        string targetCustom = dlg.TargetCustomName;
-                        bool cloneState = dlg.CloneState;
-
-                        if (!TryBeginOp(targetSlot)) return;
-                        ThreadPool.QueueUserWorkItem(delegate
-                        {
-                            try
-                            {
-                                if (_isClosing) return;
-                                _engine.CloneInstance(srcName, targetSlot, cloneState, targetCustom);
-                                Thread.Sleep(800);
-                                RefreshGrid(true);
-                            }
-                            catch (Exception ex)
-                            {
-                                Log(string.Format("Error cloning {0}: {1}", srcName, ex.Message));
-                            }
-                            finally
-                            {
-                                EndOp(targetSlot);
-                            }
-                        });
-                    }
-                }
-            }
-            // 4. Delete Instance
-            else if (e.ColumnIndex == _grid.Columns["Delete"].Index)
-            {
-                PromptAndDeleteInstance(inst);
+                    break;
+                case "Delete":
+                    PromptAndDeleteInstance(inst);
+                    break;
             }
         }
 
         private void OnGridCellDoubleClick(object sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex < 0 || e.RowIndex >= _grid.Rows.Count) return;
-            DataGridViewRow row = _grid.Rows[e.RowIndex];
-            if (row == null) return;
-            InstanceModel inst = row.Tag as InstanceModel;
-            if (inst == null) return;
-
-            OpenEditDialogForInstance(inst);
+            if (e.RowIndex >= 0 && e.RowIndex < _grid.Rows.Count)
+                OpenEditDialogForInstance(_grid.Rows[e.RowIndex].Tag as InstanceModel);
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (e.CloseReason == CloseReason.UserClosing && !_isClosing)
             {
-                int activeCount = 0;
-                foreach (DataGridViewRow r in _grid.Rows)
-                {
-                    InstanceModel im = r.Tag as InstanceModel;
-                    if (im != null && im.IsRunning) activeCount++;
-                }
-
+                int activeCount = _grid.Rows.Cast<DataGridViewRow>().Select(r => r.Tag as InstanceModel).Count(im => im != null && im.IsRunning);
                 if (activeCount > 0)
                 {
-                    DialogResult dr = MessageBox.Show(
+                    _keepInstancesOnExit = MessageBox.Show(
                         string.Format("You have {0} game instance(s) running.\n\nYES - keep them running in the background (recommended): the next Launch attaches instantly, no 60-80s reboot.\nNO  - shut every instance down now.", activeCount),
-                        "Keep Instances Running?",
-                        MessageBoxButtons.YesNo,
-                        MessageBoxIcon.Question);
-                    _keepInstancesOnExit = (dr == DialogResult.Yes);
+                        "Keep Instances Running?", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
                 }
             }
 
@@ -1432,31 +911,14 @@ namespace DofusFarm.UI
                 Application.DoEvents();
             }
 
-            if (_syncTimer != null)
-            {
-                try { _syncTimer.Stop(); _syncTimer.Dispose(); } catch { }
-            }
+            if (_syncTimer != null) { try { _syncTimer.Stop(); _syncTimer.Dispose(); } catch { } }
             if (_engine != null) _engine.OnLog -= Log;
-            if (_watchdog != null)
-            {
-                _watchdog.OnLog -= Log;
-                _watchdog.Stop();
-            }
-            if (_governor != null)
-            {
-                _governor.OnLog -= Log;
-                _governor.Stop();
-            }
+            if (_watchdog != null) { _watchdog.OnLog -= Log; _watchdog.Stop(); }
+            if (_governor != null) { _governor.OnLog -= Log; _governor.Stop(); }
             if (_engine != null)
             {
-                if (_keepInstancesOnExit)
-                {
-                    Log("Instances left running on purpose - next Launch will attach to them instantly.");
-                }
-                else
-                {
-                    _engine.StopAll();
-                }
+                if (_keepInstancesOnExit) Log("Instances left running on purpose - next Launch will attach to them instantly.");
+                else _engine.StopAll();
             }
             base.OnFormClosing(e);
         }
@@ -1466,20 +928,9 @@ namespace DofusFarm.UI
             if (disposing)
             {
                 _isClosing = true;
-                if (_cellBadgeFont != null)
-                {
-                    try { _cellBadgeFont.Dispose(); } catch { }
-                    _cellBadgeFont = null;
-                }
-                if (_customNameFont != null)
-                {
-                    try { _customNameFont.Dispose(); } catch { }
-                    _customNameFont = null;
-                }
-                if (this.Icon != null)
-                {
-                    try { this.Icon.Dispose(); } catch { }
-                }
+                if (_cellBadgeFont != null) { try { _cellBadgeFont.Dispose(); } catch { } _cellBadgeFont = null; }
+                if (_customNameFont != null) { try { _customNameFont.Dispose(); } catch { } _customNameFont = null; }
+                if (Icon != null) { try { Icon.Dispose(); } catch { } }
             }
             base.Dispose(disposing);
         }
@@ -1487,6 +938,8 @@ namespace DofusFarm.UI
 
     public class InstanceEditorDialog : Form
     {
+        private static readonly Random Rng = new Random();
+
         public string InstanceCustomName { get; private set; }
         public int SelectedRamMb { get; private set; }
         public int SelectedCores { get; private set; }
@@ -1507,163 +960,82 @@ namespace DofusFarm.UI
 
         public InstanceEditorDialog(bool isNew, string slotName, string currentCustomName, int currentRamMb, int currentCores, string currentProfileId, string currentProxy)
         {
-            this.Text = isNew ? ("Add New Instance (" + slotName + ")") : ("Edit Instance — " + currentCustomName + " (" + slotName + ")");
-            this.Size = new Size(520, 385);
-            this.StartPosition = FormStartPosition.CenterParent;
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
-            this.MinimizeBox = false;
-            this.BackColor = Color.FromArgb(22, 23, 30);
-            this.ForeColor = Color.White;
-            this.Font = new Font("Segoe UI", 9.5f);
+            Text = isNew ? ("Add New Instance (" + slotName + ")") : ("Edit Instance — " + currentCustomName + " (" + slotName + ")");
+            Size = new Size(520, 385);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = MinimizeBox = false;
+            BackColor = Color.FromArgb(22, 23, 30);
+            ForeColor = Color.White;
+            Font = new Font("Segoe UI", 9.5f);
 
             _profiles = DeviceCatalog.GetAllProfiles();
-
+            Color lblColor = Color.FromArgb(203, 213, 225), inputBg = Color.FromArgb(32, 34, 44);
             int y = 20;
 
-            Label lblName = new Label { Text = "Instance Name:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
+            var lblName = new Label { Text = "Instance Name:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = lblColor };
             _txtCustomName = new TextBox
             {
-                Text = currentCustomName ?? slotName,
-                Location = new Point(165, y),
-                Width = 315,
-                BackColor = Color.FromArgb(32, 34, 44),
-                ForeColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold)
+                Text = currentCustomName ?? slotName, Location = new Point(165, y), Width = 315,
+                BackColor = inputBg, ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10f, FontStyle.Bold)
             };
             y += 45;
 
-            Label lblRam = new Label { Text = "RAM Allocation:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
-            _cmbRam = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(165, y),
-                Width = 140,
-                BackColor = Color.FromArgb(32, 34, 44),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            int[] ramOptions = new[] { 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384 };
-            int ramIdx = 2;
-            for (int i = 0; i < ramOptions.Length; i++)
-            {
-                _cmbRam.Items.Add(ramOptions[i] + " MB");
-                if (ramOptions[i] == currentRamMb) ramIdx = i;
-            }
-            _cmbRam.SelectedIndex = ramIdx;
+            var lblRam = new Label { Text = "RAM Allocation:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = lblColor };
+            _cmbRam = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(165, y), Width = 140, BackColor = inputBg, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+            _cmbRam.Items.AddRange(MainForm.RamChoices.Select(r => (object)(r + " MB")).ToArray());
+            int ramIdx = Array.IndexOf(MainForm.RamChoices, currentRamMb);
+            _cmbRam.SelectedIndex = ramIdx >= 0 ? ramIdx : 2;
 
-            Label lblCores = new Label { Text = "CPU Cores:", Location = new Point(320, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
-            _cmbCores = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(395, y),
-                Width = 85,
-                BackColor = Color.FromArgb(32, 34, 44),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            int[] coreOptions = new[] { 1, 2, 3, 4, 6, 8 };
-            int coreIdx = 0;
-            for (int i = 0; i < coreOptions.Length; i++)
-            {
-                _cmbCores.Items.Add(coreOptions[i] + (coreOptions[i] == 1 ? " Core" : " Cores"));
-                if (coreOptions[i] == currentCores) coreIdx = i;
-            }
-            _cmbCores.SelectedIndex = coreIdx;
+            var lblCores = new Label { Text = "CPU Cores:", Location = new Point(320, y + 3), AutoSize = true, ForeColor = lblColor };
+            _cmbCores = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(395, y), Width = 85, BackColor = inputBg, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+            _cmbCores.Items.AddRange(MainForm.CoreChoices.Select(c => (object)(c + (c == 1 ? " Core" : " Cores"))).ToArray());
+            int coreIdx = Array.IndexOf(MainForm.CoreChoices, currentCores);
+            _cmbCores.SelectedIndex = coreIdx >= 0 ? coreIdx : 0;
             y += 45;
 
-            Label lblPhone = new Label { Text = "Device Profile:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
-            _cmbProfiles = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(165, y),
-                Width = 235,
-                BackColor = Color.FromArgb(32, 34, 44),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            int profIdx = 0;
-            for (int i = 0; i < _profiles.Count; i++)
-            {
-                _cmbProfiles.Items.Add(_profiles[i].DisplayName);
-                if (!string.IsNullOrEmpty(currentProfileId) && string.Equals(_profiles[i].Id, currentProfileId, StringComparison.OrdinalIgnoreCase))
-                    profIdx = i;
-            }
-            if (_cmbProfiles.Items.Count > 0) _cmbProfiles.SelectedIndex = profIdx;
+            var lblPhone = new Label { Text = "Device Profile:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = lblColor };
+            _cmbProfiles = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(165, y), Width = 235, BackColor = inputBg, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+            _cmbProfiles.Items.AddRange(_profiles.Select(p => (object)p.DisplayName).ToArray());
+            int profIdx = _profiles.FindIndex(p => string.Equals(p.Id, currentProfileId, StringComparison.OrdinalIgnoreCase));
+            if (_cmbProfiles.Items.Count > 0) _cmbProfiles.SelectedIndex = Math.Max(0, profIdx);
 
             _btnRandomProfile = new Button
             {
-                Text = "Random",
-                Location = new Point(406, y - 1),
-                Size = new Size(74, 26),
-                BackColor = Color.FromArgb(79, 70, 229),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-                Cursor = Cursors.Hand
+                Text = "Random", Location = new Point(406, y - 1), Size = new Size(74, 26),
+                BackColor = Color.FromArgb(79, 70, 229), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), Cursor = Cursors.Hand
             };
             _btnRandomProfile.FlatAppearance.BorderSize = 0;
-            _btnRandomProfile.Click += delegate
-            {
-                if (_profiles.Count > 0)
-                {
-                    Random rng = new Random();
-                    _cmbProfiles.SelectedIndex = rng.Next(_profiles.Count);
-                }
-            };
+            _btnRandomProfile.Click += delegate { if (_profiles.Count > 0) lock (Rng) _cmbProfiles.SelectedIndex = Rng.Next(_profiles.Count); };
             y += 45;
 
-            Label lblProxy = new Label { Text = "Proxy (Optional):", Location = new Point(22, y + 3), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
-            string cleanProxy = (currentProxy ?? "").Trim();
-            if (cleanProxy.StartsWith("[🌐] ")) cleanProxy = cleanProxy.Substring(5).Trim();
-            if (cleanProxy.StartsWith("[⚡]") || cleanProxy.Contains("127.0.0.1:8880") || cleanProxy.Contains("Accelerator")) cleanProxy = "";
-
+            var lblProxy = new Label { Text = "Proxy (Optional):", Location = new Point(22, y + 3), AutoSize = true, ForeColor = lblColor };
             _txtProxy = new TextBox
             {
-                Text = cleanProxy,
-                Location = new Point(165, y),
-                Width = 315,
-                BackColor = Color.FromArgb(32, 34, 44),
-                ForeColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Consolas", 9.5f)
+                Text = MainForm.NormalizeProxyForComparison(currentProxy), Location = new Point(165, y), Width = 315,
+                BackColor = inputBg, ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Consolas", 9.5f)
             };
-
-            Label lblProxyHint = new Label
+            var lblProxyHint = new Label
             {
                 Text = "Format: IP:Port (leave blank to use the built-in high-speed network accelerator).",
-                Location = new Point(165, y + 28),
-                Size = new Size(320, 32),
-                ForeColor = Color.FromArgb(148, 163, 184),
-                Font = new Font("Segoe UI", 8.2f)
+                Location = new Point(165, y + 28), Size = new Size(320, 32), ForeColor = Color.FromArgb(148, 163, 184), Font = new Font("Segoe UI", 8.2f)
             };
             y += 75;
 
             _btnSave = new Button
             {
-                Text = isNew ? "Create Instance" : "Save Changes",
-                DialogResult = DialogResult.OK,
-                Location = new Point(235, y),
-                Size = new Size(145, 36),
-                BackColor = Color.FromArgb(37, 99, 235),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Cursor = Cursors.Hand
+                Text = isNew ? "Create Instance" : "Save Changes", DialogResult = DialogResult.OK, Location = new Point(235, y),
+                Size = new Size(145, 36), BackColor = Color.FromArgb(37, 99, 235), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), Cursor = Cursors.Hand
             };
             _btnSave.FlatAppearance.BorderSize = 0;
             _btnSave.Click += delegate
             {
-                InstanceCustomName = _txtCustomName.Text.Trim();
-                if (string.IsNullOrEmpty(InstanceCustomName)) InstanceCustomName = slotName;
-
-                Match mR = Regex.Match(_cmbRam.SelectedItem != null ? _cmbRam.SelectedItem.ToString() : "1024", @"(\d+)");
-                SelectedRamMb = mR.Success ? int.Parse(mR.Groups[1].Value) : 1024;
-
-                Match mC = Regex.Match(_cmbCores.SelectedItem != null ? _cmbCores.SelectedItem.ToString() : "1", @"(\d+)");
-                SelectedCores = mC.Success ? int.Parse(mC.Groups[1].Value) : 1;
-
+                string cn = _txtCustomName.Text.Trim();
+                InstanceCustomName = string.IsNullOrEmpty(cn) ? slotName : cn;
+                SelectedRamMb = MainForm.ParseFirstInt(_cmbRam.SelectedItem, 1024);
+                SelectedCores = MainForm.ParseFirstInt(_cmbCores.SelectedItem, 1);
                 int pIdx = _cmbProfiles.SelectedIndex;
                 SelectedProfileId = (pIdx >= 0 && pIdx < _profiles.Count) ? _profiles[pIdx].Id : "galaxy-tab-s6";
                 SelectedProxy = _txtProxy.Text.Trim();
@@ -1671,56 +1043,32 @@ namespace DofusFarm.UI
 
             _btnCancel = new Button
             {
-                Text = "Cancel",
-                DialogResult = DialogResult.Cancel,
-                Location = new Point(390, y),
-                Size = new Size(90, 36),
-                BackColor = Color.FromArgb(45, 48, 60),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(390, y),
+                Size = new Size(90, 36), BackColor = Color.FromArgb(45, 48, 60), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand
             };
             _btnCancel.FlatAppearance.BorderSize = 0;
 
             if (!isNew)
             {
-                Button btnDeleteInDlg = new Button
+                var btnDeleteInDlg = new Button
                 {
-                    Text = "Delete Instance",
-                    Location = new Point(22, y),
-                    Size = new Size(130, 36),
-                    BackColor = Color.FromArgb(153, 27, 27),
-                    ForeColor = Color.White,
-                    FlatStyle = FlatStyle.Flat,
-                    Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-                    Cursor = Cursors.Hand
+                    Text = "Delete Instance", Location = new Point(22, y), Size = new Size(130, 36),
+                    BackColor = Color.FromArgb(153, 27, 27), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
+                    Font = new Font("Segoe UI", 9f, FontStyle.Bold), Cursor = Cursors.Hand
                 };
                 btnDeleteInDlg.FlatAppearance.BorderSize = 0;
-                btnDeleteInDlg.Click += delegate
-                {
-                    DeleteRequested = true;
-                    this.DialogResult = DialogResult.Abort;
-                    this.Close();
-                };
-                this.Controls.Add(btnDeleteInDlg);
+                btnDeleteInDlg.Click += delegate { DeleteRequested = true; DialogResult = DialogResult.Abort; Close(); };
+                Controls.Add(btnDeleteInDlg);
             }
 
-            this.Controls.Add(lblName);
-            this.Controls.Add(_txtCustomName);
-            this.Controls.Add(lblRam);
-            this.Controls.Add(_cmbRam);
-            this.Controls.Add(lblCores);
-            this.Controls.Add(_cmbCores);
-            this.Controls.Add(lblPhone);
-            this.Controls.Add(_cmbProfiles);
-            this.Controls.Add(_btnRandomProfile);
-            this.Controls.Add(lblProxy);
-            this.Controls.Add(_txtProxy);
-            this.Controls.Add(lblProxyHint);
-            this.Controls.Add(_btnSave);
-            this.Controls.Add(_btnCancel);
-            this.AcceptButton = _btnSave;
-            this.CancelButton = _btnCancel;
+            Controls.AddRange(new Control[]
+            {
+                lblName, _txtCustomName, lblRam, _cmbRam, lblCores, _cmbCores,
+                lblPhone, _cmbProfiles, _btnRandomProfile, lblProxy, _txtProxy, lblProxyHint, _btnSave, _btnCancel
+            });
+            AcceptButton = _btnSave;
+            CancelButton = _btnCancel;
         }
     }
 
@@ -1738,85 +1086,57 @@ namespace DofusFarm.UI
         public CloneDialog(string sourceDisplayName, string targetSlotName, string suggestedCustomName)
         {
             TargetSlotName = targetSlotName;
-            this.Text = "Clone Instance — " + sourceDisplayName;
-            this.Size = new Size(440, 235);
-            this.StartPosition = FormStartPosition.CenterParent;
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
-            this.MinimizeBox = false;
-            this.BackColor = Color.FromArgb(22, 23, 30);
-            this.ForeColor = Color.White;
-            this.Font = new Font("Segoe UI", 9.5f);
+            Text = "Clone Instance — " + sourceDisplayName;
+            Size = new Size(440, 235);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = MinimizeBox = false;
+            BackColor = Color.FromArgb(22, 23, 30);
+            ForeColor = Color.White;
+            Font = new Font("Segoe UI", 9.5f);
 
-            Label lbl = new Label
+            var lbl = new Label
             {
                 Text = string.Format("Clone '{0}' into slot {1} with a unique hardware identity:", sourceDisplayName, targetSlotName),
-                Location = new Point(20, 16),
-                Size = new Size(390, 28),
-                ForeColor = Color.FromArgb(203, 213, 225)
+                Location = new Point(20, 16), Size = new Size(390, 28), ForeColor = Color.FromArgb(203, 213, 225)
             };
-
-            Label lblName = new Label { Text = "New Instance Name:", Location = new Point(20, 56), AutoSize = true };
+            var lblName = new Label { Text = "New Instance Name:", Location = new Point(20, 56), AutoSize = true };
             _txtCustomName = new TextBox
             {
-                Text = suggestedCustomName,
-                Location = new Point(160, 53),
-                Width = 240,
-                BackColor = Color.FromArgb(32, 34, 44),
-                ForeColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle
+                Text = suggestedCustomName, Location = new Point(160, 53), Width = 240,
+                BackColor = Color.FromArgb(32, 34, 44), ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle
             };
-
             _chkState = new CheckBox
             {
-                Text = "Keep downloaded game files & map cache (Instant copy)",
-                Checked = true,
-                Location = new Point(20, 95),
-                Size = new Size(390, 30),
-                ForeColor = Color.FromArgb(52, 211, 153)
+                Text = "Keep downloaded game files & map cache (Instant copy)", Checked = true,
+                Location = new Point(20, 95), Size = new Size(390, 30), ForeColor = Color.FromArgb(52, 211, 153)
             };
 
             _btnOk = new Button
             {
-                Text = "Clone Instance",
-                DialogResult = DialogResult.OK,
-                Location = new Point(195, 142),
-                Size = new Size(115, 34),
-                BackColor = Color.FromArgb(37, 99, 235),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-                Cursor = Cursors.Hand
+                Text = "Clone Instance", DialogResult = DialogResult.OK, Location = new Point(195, 142),
+                Size = new Size(115, 34), BackColor = Color.FromArgb(37, 99, 235), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f, FontStyle.Bold), Cursor = Cursors.Hand
             };
             _btnOk.FlatAppearance.BorderSize = 0;
             _btnOk.Click += delegate
             {
-                TargetCustomName = _txtCustomName.Text.Trim();
-                if (string.IsNullOrEmpty(TargetCustomName)) TargetCustomName = targetSlotName;
+                string cn = _txtCustomName.Text.Trim();
+                TargetCustomName = string.IsNullOrEmpty(cn) ? targetSlotName : cn;
                 CloneState = _chkState.Checked;
             };
 
             _btnCancel = new Button
             {
-                Text = "Cancel",
-                DialogResult = DialogResult.Cancel,
-                Location = new Point(320, 142),
-                Size = new Size(80, 34),
-                BackColor = Color.FromArgb(45, 48, 60),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(320, 142),
+                Size = new Size(80, 34), BackColor = Color.FromArgb(45, 48, 60), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand
             };
             _btnCancel.FlatAppearance.BorderSize = 0;
 
-            this.Controls.Add(lbl);
-            this.Controls.Add(lblName);
-            this.Controls.Add(_txtCustomName);
-            this.Controls.Add(_chkState);
-            this.Controls.Add(_btnOk);
-            this.Controls.Add(_btnCancel);
-            this.AcceptButton = _btnOk;
-            this.CancelButton = _btnCancel;
+            Controls.AddRange(new Control[] { lbl, lblName, _txtCustomName, _chkState, _btnOk, _btnCancel });
+            AcceptButton = _btnOk;
+            CancelButton = _btnCancel;
         }
     }
 }
