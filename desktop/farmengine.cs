@@ -136,6 +136,7 @@ namespace DofusFarm.Engine
         public string AppBaseDir { get; private set; }
         public string ProxyExePath { get; private set; }
         public string GoldenMasterPath { get; private set; }
+        public string GoldenOverlayPath { get; private set; }
 
         public event Action<string> OnLog;
 
@@ -360,6 +361,8 @@ namespace DofusFarm.Engine
                     catch { }
                 }
             }
+            EnsureGoldenTemplate();
+            GoldenOverlayPath = GetGoldenOverlayPath();
             EnsureAdvancedFeatures();
         }
 
@@ -402,7 +405,16 @@ namespace DofusFarm.Engine
         {
             if (string.IsNullOrEmpty(name)) return false;
             string avdDir = Path.Combine(AvdHome, name + ".avd");
-            return Directory.Exists(avdDir) && (File.Exists(Path.Combine(avdDir, "cold_run_completed.flag")) || File.Exists(Path.Combine(avdDir, @"snapshots\default_boot\snapshot.pb")));
+            if (!Directory.Exists(avdDir)) return false;
+            string snapDir = Path.Combine(avdDir, @"snapshots\default_boot");
+            if (File.Exists(Path.Combine(snapDir, "ram.img.dirty"))) return false;
+            string snapPb = Path.Combine(snapDir, "snapshot.pb");
+            if (File.Exists(snapPb))
+            {
+                try { if (new FileInfo(snapPb).Length < 512) return false; } catch { return false; }
+                return true;
+            }
+            return File.Exists(Path.Combine(avdDir, "cold_run_completed.flag"));
         }
 
         // Order matters: 'host' is the only mode that needs no extra translation layer, so it is
@@ -535,7 +547,7 @@ namespace DofusFarm.Engine
                     "VirtioInput = on\r\nVirtioMouse = off\r\nVirtioTablet = on\r\nVirtioDualModeMouse = off\r\nDualModeMouseDisplayHostCursor = off\r\n" +
                     "EncryptUserData = off\r\nIntelPerformanceMonitoringUnit = off\r\n" +
                     "Wifi = on\r\nHostComposition = on\r\nRefCountPipe = on\r\nDynamicPartition = on\r\nHardwareDecoder = on\r\n" +
-                    "WindowsHypervisorPlatform = on\r\nWindowsOnDemandSnapshotLoad = on\r\n";
+                    "WindowsHypervisorPlatform = on\r\nWindowsOnDemandSnapshotLoad = off\r\n";
 
                 File.WriteAllText(Path.Combine(dotAndroid, "advancedFeatures.ini"), content, Encoding.ASCII);
                 WriteAdvancedFeaturesToSdk(content);
@@ -849,30 +861,14 @@ namespace DofusFarm.Engine
         // what makes instance #3 and #4 stutter.
         public int GetDynamicCores()
         {
-            int physical = Math.Max(1, GetHostPhysicalCores());
-            int running = Math.Max(1, ActiveInstanceCount());
-
-            // Even split of the real cores over the instances that will be alive at once.
-            int even = physical / running;
-
-            // Cap by what one instance can usefully consume on this host.
-            int perInstanceCap;
-            if (physical <= 2) perInstanceCap = 1;
-            else if (physical <= 4) perInstanceCap = 2;
-            else if (physical <= 8) perInstanceCap = 2;
-            else perInstanceCap = 3;
-
-            return Math.Max(1, Math.Min(perInstanceCap, even));
+            return 1;
         }
 
         // How many cores this host gives each instance once the farm is fully up.
         // Shown in the grid so a 4-instances-on-a-4-core box visibly reads "1 Core" for every slot.
         public int RecommendedCoresPerInstance(int plannedInstances)
         {
-            int physical = Math.Max(1, GetHostPhysicalCores());
-            int n = Math.Max(1, Math.Max(plannedInstances, ActiveInstanceCount()));
-            int perInstanceCap = physical <= 2 ? 1 : 2;
-            return Math.Max(1, Math.Min(perInstanceCap, physical / n));
+            return 1;
         }
 
         private static int _hostPhysicalCores;
@@ -1044,7 +1040,7 @@ namespace DofusFarm.Engine
                         portToPid[pNum] = qPid;
                         live.Add("emulator-" + pNum);
                         lock (_pidCacheLock) _cachedPortToPid[pNum] = qPid;
-                        PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2));
+                        PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2), 1);
                     }
                 });
             }
@@ -1060,7 +1056,7 @@ namespace DofusFarm.Engine
                 ReadConfigRamCores(Path.Combine(d, "config.ini"), ref ram, ref cores);
 
                 bool isRunning = live.Contains(serial);
-                if (isRunning) portToPid.TryGetValue(port, out pid);
+                if (isRunning) { portToPid.TryGetValue(port, out pid); if (pid > 0) PriorityGovernor.RegisterInstancePid(pid, idx - 1, cores); }
 
                 string customName = "Instance #" + idx, sNo = null, aId = null, mac = null, rawProxy = null, phoneModelId = "";
                 ReadIdentity(d, ref customName, ref sNo, ref aId, ref mac, ref rawProxy, ref phoneModelId);
@@ -1140,7 +1136,7 @@ namespace DofusFarm.Engine
                 "ro.build.fingerprint={10}\r\nro.system.build.fingerprint={10}\r\nro.vendor.build.fingerprint={10}\r\nro.bootimage.build.fingerprint={10}\r\n" +
                 "ro.build.display.id={11}\r\nro.build.description={3}-user {14} {11} release-keys\r\nro.system.build.type=user\r\nro.system.build.tags=release-keys\r\n" +
                 "qemu.hw.mainkeys=1\r\nro.serialno={12}\r\nro.boot.serialno={12}\r\ngsm.sim.state=READY\r\ngsm.sim.operator.numeric=60401\r\ngsm.sim.operator.alpha=Maroc Telecom\r\ngsm.network.type=LTE\r\n" +
-                "config.disable_animations=1\r\nro.config.low_ram=false\r\nro.opengles.version=196608\r\ndebug.hwui.renderer=opengl\r\n" +
+                "config.disable_animations=1\r\ndebug.sf.nobootanimation=1\r\nro.config.low_ram=false\r\nro.opengles.version=196608\r\ndebug.hwui.renderer=opengl\r\n" +
                 "debug.sf.hw=1\r\ndebug.egl.hw=1\r\ndebug.composition.type=gpu\r\ndebug.sf.latch_unsignaled=1\r\ndebug.sf.disable_backpressure=1\r\n" +
                 "pm.dexopt.boot=verify\r\npm.dexopt.first-boot=verify\r\npm.dexopt.install=speed-profile\r\n" +
                 "dalvik.vm.dex2oat-filter=speed-profile\r\ndalvik.vm.image-dex2oat-filter=verify\r\n" +
@@ -1222,10 +1218,37 @@ namespace DofusFarm.Engine
 
             WriteIdentity(avdDir, resolvedCustomName, serialNo, androidId, mac, proxy, activeProfile.Id);
             File.WriteAllText(Path.Combine(avdDir, "system.prop"), GenerateSystemProp(activeProfile, serialNo, cores), Encoding.ASCII);
+
+            CleanLocks(avdDir);
+            string tgtRaw = Path.Combine(avdDir, "userdata-qemu.img");
+            if (File.Exists(GoldenMasterPath))
+            {
+                if (!File.Exists(tgtRaw) || new FileInfo(tgtRaw).Length != new FileInfo(GoldenMasterPath).Length)
+                    LinkOrCopyFile(GoldenMasterPath, tgtRaw);
+            }
+
+            string tgtQcow2 = Path.Combine(avdDir, "userdata-qemu.img.qcow2");
+            if (!File.Exists(tgtQcow2) || new FileInfo(tgtQcow2).Length < 1024 * 1024)
+            {
+                string goldenQcow2 = GetGoldenOverlayPath();
+                if (!string.IsNullOrEmpty(goldenQcow2) && File.Exists(goldenQcow2) && new FileInfo(goldenQcow2).Length > 1024 * 1024)
+                {
+                    SafeDeleteFile(tgtQcow2);
+                    File.Copy(goldenQcow2, tgtQcow2, true);
+                    try { File.WriteAllText(Path.Combine(avdDir, "sanitize_session.flag"), "1", Encoding.UTF8); } catch { }
+                    if (File.Exists(QemuImgPath))
+                    {
+                        string backingFile = File.Exists(tgtRaw) ? tgtRaw : GoldenMasterPath;
+                        RunCommand(QemuImgPath, string.Format("rebase -u -b \"{0}\" -F {1} \"{2}\"", backingFile, DetectDiskFormat(backingFile), tgtQcow2), 30000, avdDir);
+                        RunCommand(QemuImgPath, "check \"userdata-qemu.img.qcow2\"", 30000, avdDir);
+                    }
+                }
+            }
+
             EnsureOverlay(avdDir);
             UpdateConfigIni(cfgDest, name, ramMb, cores, activeProfile);
 
-            Log(string.Format("Provisioned {0} with {1} MB RAM, {2} Core(s), spoofing {3} ({4}).", name, ramMb, cores, activeProfile.DisplayName, activeProfile.Model));
+            Log(string.Format("Provisioned {0} with {1} MB RAM, {2} Core(s), spoofing {3} ({4}) from golden debloated template.", name, ramMb, cores, activeProfile.DisplayName, activeProfile.Model));
         }
 
         private void UpdateConfigIni(string cfgFile, string name, int ramMb, int cores, DeviceProfile profile = null)
@@ -1331,6 +1354,60 @@ namespace DofusFarm.Engine
             }
         }
 
+        public string GetGoldenOverlayPath()
+        {
+            return new[]
+            {
+                Path.Combine(AvdHome, @"dofus-template.avd\userdata-golden.qcow2"),
+                Path.Combine(AvdHome, @"dofus-01.avd\userdata-qemu.img.qcow2"),
+                Path.Combine(AppBaseDir, "userdata-golden.qcow2")
+            }.FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p) && new FileInfo(p).Length > 1024 * 1024);
+        }
+
+        public void EnsureGoldenTemplate()
+        {
+            try
+            {
+                string tplDir = Path.Combine(AvdHome, "dofus-template.avd");
+                if (!Directory.Exists(tplDir)) Directory.CreateDirectory(tplDir);
+
+                string tplGoldenImg = Path.Combine(tplDir, "userdata-golden.img");
+                if (!File.Exists(tplGoldenImg))
+                {
+                    string candGolden = new[]
+                    {
+                        GoldenMasterPath,
+                        Path.Combine(AppBaseDir, "userdata-golden.img"),
+                        Path.Combine(AvdHome, @"dofus-01.avd\userdata-qemu.img"),
+                        !string.IsNullOrEmpty(SdkRoot) ? Path.Combine(SdkRoot, SysImgSubPath, "userdata.img") : null
+                    }.FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p));
+
+                    if (candGolden != null) LinkOrCopyFile(candGolden, tplGoldenImg);
+                }
+
+                string tplGoldenQcow2 = Path.Combine(tplDir, "userdata-golden.qcow2");
+                if (!File.Exists(tplGoldenQcow2) || new FileInfo(tplGoldenQcow2).Length < 1024 * 1024)
+                {
+                    string candOverlay = new[]
+                    {
+                        Path.Combine(AvdHome, @"dofus-01.avd\userdata-qemu.img.qcow2"),
+                        Path.Combine(AppBaseDir, "userdata-golden.qcow2")
+                    }.FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p) && new FileInfo(p).Length > 1024 * 1024);
+
+                    if (candOverlay != null && File.Exists(tplGoldenImg))
+                    {
+                        File.Copy(candOverlay, tplGoldenQcow2, true);
+                        if (File.Exists(QemuImgPath))
+                        {
+                            RunCommand(QemuImgPath, string.Format("rebase -u -b \"{0}\" -F {1} \"{2}\"", tplGoldenImg, DetectDiskFormat(tplGoldenImg), tplGoldenQcow2), 30000, tplDir);
+                            RunCommand(QemuImgPath, "check \"userdata-golden.qcow2\"", 30000, tplDir);
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
         public void EnsureOverlay(string avdDir)
         {
             Directory.CreateDirectory(avdDir);
@@ -1433,7 +1510,7 @@ namespace DofusFarm.Engine
                         if (!string.IsNullOrEmpty(infoOut))
                         {
                             string infoLower = infoOut.ToLowerInvariant();
-                            if (infoLower.Contains("error") || infoLower.Contains("corrupt") || !infoLower.Contains(GoldenMasterPath.ToLowerInvariant().Replace('\\', '/')))
+                            if (infoLower.Contains("error") || infoLower.Contains("corrupt"))
                                 needQcow2 = true;
                         }
                     }
@@ -1444,9 +1521,30 @@ namespace DofusFarm.Engine
                 {
                     try
                     {
-                        DeleteFiles(avdDir, "userdata-qemu.img.qcow2", "encryptionkey.img.qcow2", "cache.img.qcow2", "cold_run_completed.flag");
+                        DeleteFiles(avdDir, "userdata-qemu.img.qcow2", "userdata-qemu.img.qcow2.qcow2", "encryptionkey.img.qcow2", "cache.img.qcow2", "cold_run_completed.flag");
                         ForceDeleteDirectory(Path.Combine(avdDir, "snapshots"));
-                        CreateQcow2Overlay(avdDir, GoldenMasterPath, "userdata-qemu.img.qcow2", 30000, true);
+
+                        string tgtRaw = Path.Combine(avdDir, "userdata-qemu.img");
+                        if (!File.Exists(tgtRaw) && File.Exists(GoldenMasterPath))
+                        {
+                            LinkOrCopyFile(GoldenMasterPath, tgtRaw);
+                        }
+
+                        string goldenQcow2 = GetGoldenOverlayPath();
+                        string backingFile = File.Exists(tgtRaw) ? tgtRaw : GoldenMasterPath;
+
+                        if (!string.IsNullOrEmpty(goldenQcow2) && File.Exists(goldenQcow2) && new FileInfo(goldenQcow2).Length > 1024 * 1024)
+                        {
+                            File.Copy(goldenQcow2, emuQcow2, true);
+                            try { File.WriteAllText(Path.Combine(avdDir, "sanitize_session.flag"), "1", Encoding.UTF8); } catch { }
+                            RunCommand(QemuImgPath, string.Format("rebase -u -b \"{0}\" -F {1} \"{2}\"", backingFile, DetectDiskFormat(backingFile), emuQcow2), 30000, avdDir);
+                            RunCommand(QemuImgPath, "check \"userdata-qemu.img.qcow2\"", 30000, avdDir);
+                        }
+                        else
+                        {
+                            CreateQcow2Overlay(avdDir, backingFile, "userdata-qemu.img.qcow2", 30000, true);
+                        }
+
                         foreach (string aux in new[] { "encryptionkey.img", "cache.img" })
                         {
                             string auxSrc = Path.Combine(avdDir, aux);
@@ -1465,8 +1563,16 @@ namespace DofusFarm.Engine
                 if (!Directory.Exists(avdDir)) return;
                 foreach (string f in Directory.EnumerateFiles(avdDir, "*.lock")) SafeDeleteFile(f);
                 foreach (string d in Directory.EnumerateDirectories(avdDir, "*.lock")) ForceDeleteDirectory(d);
+                foreach (string f in Directory.EnumerateFiles(avdDir, "*.qcow2.qcow2")) SafeDeleteFile(f);
                 SafeDeleteFile(Path.Combine(avdDir, "multiinstance.lock"));
                 SafeDeleteFile(Path.Combine(avdDir, "hardware-qemu.ini"));
+                string snapDir = Path.Combine(avdDir, @"snapshots\default_boot");
+                string ramDirty = Path.Combine(snapDir, "ram.img.dirty");
+                string snapPb = Path.Combine(snapDir, "snapshot.pb");
+                if (File.Exists(ramDirty) || (File.Exists(snapPb) && new FileInfo(snapPb).Length < 512))
+                {
+                    ForceDeleteDirectory(Path.Combine(avdDir, "snapshots"));
+                }
             }
             catch { }
         }
@@ -1628,15 +1734,18 @@ namespace DofusFarm.Engine
             string proxyArg = proxyActive ? string.Format("-http-proxy http://127.0.0.1:{0} ", localProxyPort) : "";
             string gpuMode = GetConfiguredGpuMode();
 
+            bool warmReady = IsInstanceWarmReady(name);
+            string snapshotArg = warmReady ? "" : "-no-snapshot-load ";
             string emuArgs = (instProfile != null && string.Equals(instProfile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
-                ? BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
-                    name, port, gpuMode, safeRam, safeCores, proxyArg);
+                ? BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, avdDir, cfgFile) + (warmReady ? "" : " -no-snapshot-load")
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} {6}-no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
+                    name, port, gpuMode, safeRam, safeCores, proxyArg, snapshotArg);
 
             Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / GPU: {4} / {5})...", name, port, safeRam, safeCores, gpuMode, instProfile.DisplayName));
             try { Adb("", "start-server", 6000); } catch { }
 
             Process proc = StartEmulatorProcess(emuArgs, false);
+            if (proc != null) PriorityGovernor.RegisterInstancePid(proc.Id, slot, safeCores);
             string serial = "emulator-" + port;
 
             // Affinity is deliberately NOT set here. The PriorityGovernor owns CPU pinning for every
@@ -1685,10 +1794,10 @@ namespace DofusFarm.Engine
                 {
                     proc = AutoHealStuckBoot(name, port, avdDir, ramMb, cores, proxyArg, ++bootHealAttempt == 2, shutdownAfterSnapshot);
                     sw.Restart();
-                    Thread.Sleep(800);
+                    Thread.Sleep(500);
                     continue;
                 }
-                Thread.Sleep(500);
+                Thread.Sleep(250);
             }
 
             if (!adbReady)
@@ -1739,10 +1848,10 @@ namespace DofusFarm.Engine
                     healAttempt = 1;
                     proc = AutoHealStuckBoot(name, port, avdDir, ramMb, cores, proxyArg, false, shutdownAfterSnapshot);
                     bootSw.Restart();
-                    Thread.Sleep(2000);
+                    Thread.Sleep(1000);
                     continue;
                 }
-                Thread.Sleep(1000);
+                Thread.Sleep(250);
             }
 
             if (!bootCompleted)
@@ -1752,9 +1861,7 @@ namespace DofusFarm.Engine
                 return;
             }
 
-            Thread.Sleep(1500);
             Adb(serial, "root", 8000);
-            Thread.Sleep(400);
 
             ApplyNativeHardwareCoherence(serial, serialNo, name, mac);
             AdbShell(serial, string.Format(
@@ -1819,22 +1926,16 @@ namespace DofusFarm.Engine
                 "if [ \"$(cat /data/local/tmp/.dofus_debloat_ver 2>/dev/null)\" != \"$DEBLOAT_V\" ]; then " +
                 "  DISABLED=0; " +
                 "  for pkg in com.android.cts.priv.ctsshim com.android.cts.ctsshim org.chromium.webview_shell com.android.statementservice com.android.printspooler com.android.bips com.android.camera2 com.android.music com.android.musicfx com.android.deskclock com.android.gallery3d com.android.dreams.basic com.android.dreams.phototable com.android.wallpaper.livepicker com.android.wallpaperbackup com.android.wallpapercropper com.android.calllogbackup com.android.quicksearchbox com.android.htmlviewer com.android.bookmarkprovider com.android.providers.downloads.ui com.android.providers.partnerbookmarks com.android.smspush com.android.stk com.android.calendar com.android.providers.calendar com.android.se com.android.service.ims com.android.dialer com.android.carrierdefaultapp com.android.cellbroadcastreceiver com.android.emergency com.android.traceur com.android.printservice.recommendation com.android.bluetooth com.android.bluetoothmidiservice com.android.email; do " +
-                "    if pm disable-user --user 0 $pkg >/dev/null 2>&1; then DISABLED=$((DISABLED+1)); fi; " +
+                "    if cmd package disable-user --user 0 $pkg >/dev/null 2>&1; then DISABLED=$((DISABLED+1)); fi; " +
                 "  done; " +
                 "  EN=0; " +
                 "  for pkg in com.android.systemui com.android.inputmethod.latin com.android.keychain com.android.documentsui com.android.webview com.android.webview.apkoverlay; do " +
-                "    if pm enable --user 0 $pkg >/dev/null 2>&1; then EN=$((EN+1)); fi; " +
+                "    if cmd package enable --user 0 $pkg >/dev/null 2>&1; then EN=$((EN+1)); fi; " +
                 "  done; " +
                 "  echo $DEBLOAT_V > /data/local/tmp/.dofus_debloat_ver; " +
                 "  echo \"debloat: v5 pass complete - $DISABLED packages disabled, $EN critical packages enabled\"; " +
                 "else echo 'debloat: instance already stripped'; fi; " +
-                "echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true; " +
-                "echo -n 'debloat: total disabled packages now = '; pm list packages -d 2>/dev/null | wc -l; " +
-                "GLES_INFO=$(dumpsys SurfaceFlinger 2>/dev/null | grep GLES: | head -n 1); " +
-                "WV_INFO=$(dumpsys webviewupdate 2>/dev/null | grep -E 'Current WebView package|Valid:' | tr '\n' ' '); " +
-                "EGL_OK=$(ls /vendor/lib64/egl/libGLESv2_emulation.so /system/fonts/Roboto-Regular.ttf 2>/dev/null | wc -l); " +
-                "echo \"debloat: webgl-stack EGL+Fonts=$EGL_OK/2 | $GLES_INFO | $WV_INFO\"; " +
-                "am force-stop com.ankama.dofustouch 2>/dev/null || true";
+                "echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true";
 
             string setupOut = AdbShell(serial, combinedSetupCmd) ?? "";
             string setupShort = setupOut.Replace("\r", " ").Replace("\n", " ").Trim();
@@ -1843,12 +1944,11 @@ namespace DofusFarm.Engine
             foreach (Match dLine in RxDebloatLine.Matches(setupOut)) Log(string.Format("{0} | {1}", name, dLine.Value.Trim()));
 
             Adb(serial, "unroot", 6000);
-            Thread.Sleep(250);
 
             if (!shutdownAfterSnapshot)
             {
                 AdbShell(serial, WakeAndStartCmd);
-                Thread.Sleep(1500);
+                Thread.Sleep(100);
                 AdbShell(serial, "for p in $(pidof com.ankama.dofustouch webview_zygote 2>/dev/null); do echo -800 > /proc/$p/oom_score_adj 2>/dev/null || true; done");
             }
 
@@ -2145,7 +2245,7 @@ namespace DofusFarm.Engine
                 {
                     using (Process p = Process.GetProcessById(qemuPid))
                     {
-                        if (!p.WaitForExit(6000))
+                        if (!p.WaitForExit(12000))
                         {
                             KillProcessForInstanceFast(name, pNum);
                         }
@@ -2396,13 +2496,13 @@ namespace DofusFarm.Engine
             DeviceProfile profile = GetInstancePhoneModel(name);
             return (profile != null && string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
                 ? BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, avdDir, cfgFile) + " -no-snapshot-load"
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
                     name, port, gpuMode, ramMb, cores, proxyArg ?? "");
         }
 
         private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string avdDir, string cfgFile)
         {
-            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
                 name, port, GetConfiguredGpuMode(), ramMb, cores, proxyArg ?? "");
         }
 
