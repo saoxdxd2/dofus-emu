@@ -103,13 +103,13 @@
         }
     }
 
-    // 1. Timezone coherence (Europe/Paris)
+    // 1. Timezone coherence (Africa/Casablanca)
     try {
         if (typeof Intl !== 'undefined' && Intl.DateTimeFormat && Intl.DateTimeFormat.prototype) {
             var origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
             Intl.DateTimeFormat.prototype.resolvedOptions = makeNative(function resolvedOptions() {
                 var res = origResolved.apply(this, arguments);
-                try { res.timeZone = 'Europe/Paris'; } catch (e) {}
+                try { res.timeZone = 'Africa/Casablanca'; } catch (e) {}
                 return res;
             }, 'resolvedOptions');
         }
@@ -599,23 +599,5 @@
                 return origCanvasGetCtx.apply(this, arguments);
             }, 'getContext');
         }
-
-        if (typeof Document !== 'undefined' && Document.prototype) {
-            defineGetters(Document.prototype, {
-                hidden: function() { return false; },
-                webkitHidden: function() { return false; },
-                visibilityState: function() { return 'visible'; },
-                webkitVisibilityState: function() { return 'visible'; }
-            });
-            Document.prototype.hasFocus = makeNative(function hasFocus() { return true; }, 'hasFocus');
-        }
-
-        var suppressBgThrottle = function(e) {
-            if (e && (e.type === 'visibilitychange' || e.type === 'webkitvisibilitychange' || e.type === 'freeze' || e.type === 'pagehide')) {
-                e.stopImmediatePropagation();
-            }
-        };
-        document.addEventListener('visibilitychange', suppressBgThrottle, true);
-        window.addEventListener('pagehide', suppressBgThrottle, true);
     } catch (e) {}
 })();

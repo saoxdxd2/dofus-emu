@@ -11,6 +11,10 @@ namespace DofusFarm.Engine
         private readonly FarmEngine _engine;
         private readonly Dictionary<string, int> _consecutiveFailures = new Dictionary<string, int>();
         private readonly Dictionary<string, int> _gameDownCount = new Dictionary<string, int>();
+        private readonly Dictionary<string, List<DateTime>> _restartHistory = new Dictionary<string, List<DateTime>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, DateTime> _lastRestartTime = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private const int MaxRestartsPerHour = 3;
+        private const int RestartCooldownSeconds = 60;
         private readonly object _syncLock = new object();
         private Timer _timer;
         private int _runningState = 0;
@@ -22,6 +26,42 @@ namespace DofusFarm.Engine
         {
             _engine = engine;
             Enabled = true;
+        }
+
+        private bool CanRestart(string serial)
+        {
+            DateTime now = DateTime.UtcNow;
+            lock (_syncLock)
+            {
+                DateTime last;
+                if (_lastRestartTime.TryGetValue(serial, out last) && (now - last).TotalSeconds < RestartCooldownSeconds)
+                    return false;
+
+                List<DateTime> history;
+                if (!_restartHistory.TryGetValue(serial, out history))
+                {
+                    history = new List<DateTime>();
+                    _restartHistory[serial] = history;
+                }
+                history.RemoveAll(t => (now - t).TotalHours >= 1.0);
+                return history.Count < MaxRestartsPerHour;
+            }
+        }
+
+        private void RecordRestart(string serial)
+        {
+            DateTime now = DateTime.UtcNow;
+            lock (_syncLock)
+            {
+                _lastRestartTime[serial] = now;
+                List<DateTime> history;
+                if (!_restartHistory.TryGetValue(serial, out history))
+                {
+                    history = new List<DateTime>();
+                    _restartHistory[serial] = history;
+                }
+                history.Add(now);
+            }
         }
 
         private void Log(string msg)
@@ -164,6 +204,13 @@ namespace DofusFarm.Engine
                     }
                     if (!Enabled) break;
 
+                    if (!CanRestart(inst.Serial))
+                    {
+                        Log(string.Format("RESTART THROTTLED: {0} ({1}) reached limit ({2} restarts/hr) or cooldown. Pausing auto-restart.", inst.Name, inst.Serial, MaxRestartsPerHour));
+                        continue;
+                    }
+
+                    RecordRestart(inst.Serial);
                     Log(string.Format("HEAL TRIGGERED: {0} ({1}) is frozen. Restarting instance...", inst.Name, inst.Serial));
                     RestartInstanceAndTile(inst);
                     Log(string.Format("Self-heal completed for {0}!", inst.Name));
@@ -206,8 +253,16 @@ namespace DofusFarm.Engine
                         {
                             // Escalate to full instance restart after 3 failed activity relaunches
                             lock (_syncLock) { _gameDownCount.Remove(inst.Serial); }
-                            Log(string.Format("Activity failed to recover in {0} after 3 attempts; restarting instance...", inst.Name));
-                            RestartInstanceAndTile(inst);
+                            if (!CanRestart(inst.Serial))
+                            {
+                                Log(string.Format("RESTART THROTTLED: {0} ({1}) reached limit ({2} restarts/hr) or cooldown.", inst.Name, inst.Serial, MaxRestartsPerHour));
+                            }
+                            else
+                            {
+                                RecordRestart(inst.Serial);
+                                Log(string.Format("Activity failed to recover in {0} after 3 attempts; restarting instance...", inst.Name));
+                                RestartInstanceAndTile(inst);
+                            }
                         }
                     }
                     else

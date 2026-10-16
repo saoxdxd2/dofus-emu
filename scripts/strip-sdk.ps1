@@ -117,10 +117,10 @@ $total += Move-DirToBackup    'emulator\bin64'
 $total += Move-DirToBackup    'emulator\lib64\vulkan'
 
 # --- libandroid-emu-metrics.dll : usage metrics / crash upload library.
-# The farm always launches with -no-metrics. (11.7 MB) MUST be verified with a
-# live cold boot after stripping - if emulator.exe fails to start, run with
-# -Restore and remove this line.
-$total += Move-FileToBackup 'emulator\libandroid-emu-metrics.dll'
+# NOTE: Cannot be stripped! emulator.exe / qemu-system-x86_64.exe statically link
+# this library in their PE Import Address Table (IAT). If stripped, Windows halts
+# process startup with STATUS_DLL_NOT_FOUND (0xC0000135).
+# $total += Move-FileToBackup 'emulator\libandroid-emu-metrics.dll'
 
 # --- Qt : keep only the en-US locale (QtWebEngine falls back to en-US; the farm
 # UI is English-only).

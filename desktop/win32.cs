@@ -80,7 +80,7 @@ namespace DofusFarm.Native
             out uint lpBytesRead, out uint lpTotalBytesAvail, IntPtr lpReserved);
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern IntPtr CreateDirectoryW(string lpPathName, IntPtr lpSecurityAttributes);
+        public static extern bool CreateDirectoryW(string lpPathName, IntPtr lpSecurityAttributes);
     }
 
     public struct STARTUPINFOW

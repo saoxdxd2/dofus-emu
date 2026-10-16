@@ -432,7 +432,7 @@ namespace DofusFarm.UI
                                 _specs.CpuName, _specs.GpuName, _specs.HostRamGB, _specs.FreeRamGB, _specs.LogicalThreads);
                             if (_specs.HostRamGB < 8.0)
                             {
-                                _cmbRam.SelectedIndex = 0; // 512 MB ultra-light multi-instance mode
+                                _cmbRam.SelectedIndex = 2; // 1024 MB safe multi-instance minimum
                                 _cmbCores.SelectedIndex = 0; // 1 Core
                             }
                             else

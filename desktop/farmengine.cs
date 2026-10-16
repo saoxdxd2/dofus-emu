@@ -839,14 +839,14 @@ namespace DofusFarm.Engine
                 "ro.soc.manufacturer={8}\r\nro.soc.model={9}\r\nro.build.flavor={3}-user\r\nro.build.type=user\r\nro.build.tags=release-keys\r\n" +
                 "ro.build.fingerprint={10}\r\nro.system.build.fingerprint={10}\r\nro.vendor.build.fingerprint={10}\r\nro.bootimage.build.fingerprint={10}\r\n" +
                 "ro.build.display.id={11}\r\nro.build.description={3}-user {14} {11} release-keys\r\nro.system.build.type=user\r\nro.system.build.tags=release-keys\r\n" +
-                "qemu.hw.mainkeys=1\r\nro.serialno={12}\r\nro.boot.serialno={12}\r\ngsm.sim.state=READY\r\ngsm.sim.operator.numeric=20801\r\ngsm.sim.operator.alpha=Orange\r\ngsm.network.type=LTE\r\n" +
+                "qemu.hw.mainkeys=1\r\nro.serialno={12}\r\nro.boot.serialno={12}\r\ngsm.sim.state=READY\r\ngsm.sim.operator.numeric=60401\r\ngsm.sim.operator.alpha=Maroc Telecom\r\ngsm.network.type=LTE\r\n" +
                 "config.disable_animations=1\r\nro.config.low_ram=false\r\nro.opengles.version=196608\r\ndebug.hwui.renderer=opengl\r\n" +
                 "debug.sf.hw=1\r\ndebug.egl.hw=1\r\ndebug.composition.type=gpu\r\ndebug.sf.latch_unsignaled=1\r\ndebug.sf.disable_backpressure=1\r\n" +
                 "pm.dexopt.boot=verify\r\npm.dexopt.first-boot=verify\r\npm.dexopt.install=speed-profile\r\n" +
                 "dalvik.vm.dex2oat-filter=speed-profile\r\ndalvik.vm.image-dex2oat-filter=verify\r\n" +
                 "dalvik.vm.dex2oat-threads={13}\r\ndalvik.vm.image-dex2oat-threads={13}\r\ndalvik.vm.boot-dex2oat-threads={13}\r\n" +
                 "persist.sys.strictmode.disable=true\r\npersist.sys.strictmode.visual=false\r\ndalvik.vm.checkjni=false\r\nro.config.hw_quickpoweron=true\r\nro.config.nocheckin=1\r\n" +
-                "persist.sys.disable_rescue=true\r\nsys.wifitracing.started=0\r\npersist.traced.enable=0\r\npersist.sys.timezone=Europe/Paris\r\npersist.sys.country=FR\r\npersist.sys.language=fr\r\npersist.sys.locale=fr-FR\r\n",
+                "persist.sys.disable_rescue=true\r\nsys.wifitracing.started=0\r\npersist.traced.enable=0\r\npersist.sys.timezone=Africa/Casablanca\r\npersist.sys.country=MA\r\npersist.sys.language=fr\r\npersist.sys.locale=fr-MA\r\n",
                 profile.Brand, profile.Manufacturer, profile.Model, profile.ProductName, profile.ProductDevice,
                 profile.Board, profile.Hardware, profile.Platform, profile.SocManufacturer, profile.SocModel,
                 profile.BuildFingerprint, profile.BuildId, serialNo, cores, releaseVer);
@@ -931,7 +931,7 @@ namespace DofusFarm.Engine
         private void UpdateConfigIni(string cfgFile, string name, int ramMb, int cores, DeviceProfile profile = null)
         {
             profile = profile ?? DeviceCatalog.GetProfile("galaxy-tab-s6");
-            int safeRam = Math.Max(512, ramMb), safeCores = Math.Max(1, cores);
+            int safeRam = Math.Max(1024, ramMb), safeCores = Math.Max(1, cores);
 
             var existing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (File.Exists(cfgFile))
@@ -1290,7 +1290,7 @@ namespace DofusFarm.Engine
 
         public void LaunchInstance(string name, int port, int ramMb, int cores, string proxy = null)
         {
-            int safeRam = Math.Max(512, ramMb), safeCores = Math.Max(1, cores);
+            int safeRam = Math.Max(1024, ramMb), safeCores = Math.Max(1, cores);
             string avdDir = Path.Combine(AvdHome, name + ".avd");
             int launchGen = BumpLaunchGen(port);
             if (TryAdoptRunningInstance(name, port)) return;
@@ -1566,7 +1566,7 @@ namespace DofusFarm.Engine
 
         public void WarmInstanceColdRunSync(string name, int port, int ramMb, int cores)
         {
-            ramMb = Math.Max(512, ramMb);
+            ramMb = Math.Max(1024, ramMb);
             cores = Math.Max(1, cores);
             EnsureAdvancedFeatures();
             string avdDir = Path.Combine(AvdHome, name + ".avd");
@@ -1620,7 +1620,7 @@ namespace DofusFarm.Engine
                         ? string.Format("Linux version 5.10.43-android12-9-00001 (android-build@google.com) (Android clang version 12.0.5) #1 SMP PREEMPT {0}\n", nowUtc)
                         : "Linux version 4.14.113-18116515 (dpi@SWDG4908) (Android (5484270 based on r353983c) clang version 9.0.3) #1 SMP PREEMPT Thu Jan 9 20:01:14 KST 2020\n");
 
-                string[] carrierCodes = { "20801", "20810", "20820", "20815" }, carrierNames = { "Orange F", "SFR", "Bouygues Telecom", "Free" };
+                string[] carrierCodes = { "60401", "60400", "60402" }, carrierNames = { "Maroc Telecom", "Orange", "inwi" };
                 int cIdx = Math.Abs((slotSerial ?? "R58M").GetHashCode()) % carrierCodes.Length;
                 string cCode = carrierCodes[cIdx], cName = carrierNames[cIdx];
                 string routerMac = string.Format("dc:00:b0:{0:x2}:{1:x2}:fe", (cIdx * 37 + 19) & 0xFF, ((slotSerial ?? "").Length * 53) & 0xFF);
@@ -1666,7 +1666,7 @@ namespace DofusFarm.Engine
                     "setprop debug.choreographer.skipwarning 30\nsetprop gsm.sim.state READY\n" +
                     "setprop gsm.sim.operator.numeric {8}\nsetprop gsm.operator.numeric {8}\n" +
                     "setprop gsm.sim.operator.alpha \"{9}\"\nsetprop gsm.operator.alpha \"{9}\"\n" +
-                    "setprop gsm.sim.operator.iso-country fr\nsetprop gsm.operator.iso-country fr\n" +
+                    "setprop gsm.sim.operator.iso-country ma\nsetprop gsm.operator.iso-country ma\n" +
                     "setprop gsm.network.type LTE\nsetprop wifi.interface wlan0\nsetenforce 1 2>/dev/null || true\n",
                     cpuinfo, version, fakeArp, lowerMac, socId, socFamily, socMachine, socRawId, cCode, cName);
 
