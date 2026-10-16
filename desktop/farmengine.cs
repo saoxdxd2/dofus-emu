@@ -2502,8 +2502,8 @@ namespace DofusFarm.Engine
 
         private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string avdDir, string cfgFile)
         {
-            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
-                name, port, GetConfiguredGpuMode(), ramMb, cores, proxyArg ?? "");
+            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-window -no-skin -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
+                name, port, "swiftshader_indirect", ramMb, cores, proxyArg ?? "");
         }
 
         private void LogEmulatorConsoleTail(string name, string avdDir)
