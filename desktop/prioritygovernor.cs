@@ -229,9 +229,16 @@ namespace DofusFarm.Engine
             return null;
         }
 
+        // The farm engine pins each emulator at launch time. When the governor also
+        // re-pins the same qemu process to a different mask, Windows migrates the
+        // threads across cores and the guest loses its cached TCG blocks - that is
+        // what makes boot slow and the device feel unresponsive to mouse input.
+        // One owner only: when the engine handles affinity, the governor stays out.
+        public bool EngineOwnsAffinity { get; set; }
+
         private void Tick(object state)
         {
-            if (!Enabled || Interlocked.CompareExchange(ref _runningState, 1, 0) != 0) return;
+            if (!Enabled || EngineOwnsAffinity || Interlocked.CompareExchange(ref _runningState, 1, 0) != 0) return;
 
             Process[] qemuProcs = null;
             try

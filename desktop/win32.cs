@@ -348,6 +348,36 @@ namespace DofusFarm.Native
             }
         }
 
+        public const int GWL_STYLE = -16;
+        public const int GWL_EXSTYLE = -20;
+        public const int WS_DISABLED = 0x08000000;
+        public const int WS_EX_TRANSPARENT = 0x00000020;
+        public const int WS_EX_NOACTIVATE = 0x08000000;
+
+        // The emulator's Qt window can come up with WS_DISABLED or a click-through
+        // extended style, which makes the whole device window ignore mouse clicks.
+        public static void EnsureDeviceWindowInteractive(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero) return;
+            try
+            {
+                long style = GetWindowLong(hWnd, GWL_STYLE).ToInt64();
+                long cleanStyle = style & ~(long)WS_DISABLED;
+                if (cleanStyle != style) SetWindowLong(hWnd, GWL_STYLE, new IntPtr(cleanStyle));
+
+                long ex = GetWindowLong(hWnd, GWL_EXSTYLE).ToInt64();
+                long cleanEx = ex & ~((long)WS_EX_TRANSPARENT | (long)WS_EX_NOACTIVATE);
+                if (cleanEx != ex) SetWindowLong(hWnd, GWL_EXSTYLE, new IntPtr(cleanEx));
+
+                if (cleanStyle != style || cleanEx != ex)
+                {
+                    SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                }
+            }
+            catch { }
+        }
+
         public static void HideEmulatorConsole(IEnumerable<int> launcherPids)
         {
             foreach (WindowInfo w in GetEmulatorWindows(launcherPids))
@@ -471,6 +501,7 @@ namespace DofusFarm.Native
                     ShowWindow(hWnd, SW_RESTORE);
                     MoveWindow(hWnd, rects[i].X, rects[i].Y, rects[i].Width, rects[i].Height, true);
                     SetWindowPos(hWnd, IntPtr.Zero, rects[i].X, rects[i].Y, rects[i].Width, rects[i].Height, 0x0040);
+                    EnsureDeviceWindowInteractive(hWnd);
                 }
             }
         }
@@ -498,6 +529,7 @@ namespace DofusFarm.Native
                     int y = wa.Y + (i * stepY);
                     MoveWindow(hWnd, x, y, width, height, true);
                     SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x0040);
+                    EnsureDeviceWindowInteractive(hWnd);
                 }
             }
         }

@@ -366,6 +366,12 @@ namespace DofusFarm.Engine
             return Directory.Exists(avdDir) && (File.Exists(Path.Combine(avdDir, "cold_run_completed.flag")) || File.Exists(Path.Combine(avdDir, @"snapshots\default_boot\snapshot.pb")));
         }
 
+        // Order matters: 'host' is the only mode that needs no extra translation layer, so it is
+        // always tried first. If the host driver turns out to be unusable (the emulator logs a
+        // failed OpenGL initialisation), ConfigureGuestAndLaunchGame falls back to angle_indirect
+        // and then to swiftshader_indirect, and SetConfiguredGpuMode persists whatever worked.
+        private static readonly string[] GpuModeProbeOrder = { "host", "angle_indirect", "swiftshader_indirect" };
+
         public string DetectBestGpuMode()
         {
             try
@@ -380,16 +386,11 @@ namespace DofusFarm.Engine
                 }
                 if (new[] { "nvidia", "geforce", "radeon", "amd", "arc " }.Any(adapters.Contains))
                 {
-                    Log("Renderer check: dedicated GPU detected - using Host (DirectGL) rendering: " + adapters + ".");
+                    Log("Renderer check: dedicated GPU detected - starting with Host (DirectGL) rendering: " + adapters + ".");
                     return "host";
                 }
-                if (new[] { "intel", "uhd", "iris", "hd graphics" }.Any(adapters.Contains))
-                {
-                    Log("Renderer check: Intel integrated GPU detected - using ANGLE (Direct3D 11) to prevent WebGL buffer corruption: " + adapters + ".");
-                    return "angle_indirect";
-                }
-                Log("Renderer check: integrated GPU detected - using ANGLE (Direct3D 11) rendering: " + adapters + ".");
-                return "angle_indirect";
+                Log("Renderer check: integrated GPU detected - starting with Host (DirectGL) rendering: " + adapters + ".");
+                return "host";
             }
             catch { return "host"; }
         }
@@ -450,20 +451,35 @@ namespace DofusFarm.Engine
             try
             {
                 string dotAndroid = Directory.CreateDirectory(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".android")).FullName;
+                // Performance-critical feature flags for a Dofus-Touch style OpenGL workload:
+                //  * Vulkan must stay OFF. Dofus Touch renders with GLES; Vulkan here only makes the
+                //    emulator pick the host Vulkan driver, which on a fallback/software Vulkan ICD
+                //    (swiftshader / lavapipe) costs seconds per frame and leaves the guest at 100%
+                //    CPU. That is the main "boots but the screen ignores the mouse" symptom.
+                //  * GLPipeChecksum must stay OFF. It reads the framebuffer back to the CPU on every
+                //    frame to validate the GL pipe - pure overhead for a game that just draws.
+                //  * GLDirectMem + GLAsyncSwap + HostComposition keep the GL path zero-copy.
+                //  * GLESDynamicVersion keeps the GLES 3.x path instead of silently dropping to GLES 2.
+                //  * RefCountPipe / GLDMA / VirtioInput avoid guest<->host round trips in the pipe.
+                //  * LogcatPipe OFF: we keep stdout for the console/UI but skip the guest logcat pipe.
+                //  * IntelPerformanceMonitoringUnit only adds overhead when present.
                 const string content =
-                    "GrallocSync = off\r\nGLPipeChecksum = on\r\nLogcatPipe = on\r\nGLAsyncSwap = on\r\n" +
-                    "GLESDynamicVersion = on\r\nGLDMA = on\r\nGLDirectMem = on\r\nVulkan = on\r\n" +
-                    "VirtioInput = on\r\nEncryptUserData = off\r\nIntelPerformanceMonitoringUnit = on\r\n" +
+                    "GrallocSync = on\r\nGLPipeChecksum = off\r\nLogcatPipe = off\r\nGLAsyncSwap = on\r\n" +
+                    "GLESDynamicVersion = on\r\nGLDMA = on\r\nGLDirectMem = on\r\nVulkan = off\r\n" +
+                    "VirtioInput = on\r\nEncryptUserData = off\r\nIntelPerformanceMonitoringUnit = off\r\n" +
                     "Wifi = on\r\nHostComposition = on\r\nRefCountPipe = on\r\nDynamicPartition = on\r\nHardwareDecoder = on\r\n";
 
                 File.WriteAllText(Path.Combine(dotAndroid, "advancedFeatures.ini"), content, Encoding.ASCII);
-                if (!string.IsNullOrEmpty(SdkRoot))
-                {
-                    string sdkSysDir = Path.Combine(SdkRoot, SysImgSubPath);
-                    if (Directory.Exists(sdkSysDir)) File.WriteAllText(Path.Combine(sdkSysDir, "advancedFeatures.ini"), content, Encoding.ASCII);
-                }
+                WriteAdvancedFeaturesToSdk(content);
             }
             catch { }
+        }
+
+        private void WriteAdvancedFeaturesToSdk(string content)
+        {
+            if (string.IsNullOrEmpty(SdkRoot)) return;
+            string sdkSysDir = Path.Combine(SdkRoot, SysImgSubPath);
+            if (Directory.Exists(sdkSysDir)) File.WriteAllText(Path.Combine(sdkSysDir, "advancedFeatures.ini"), content, Encoding.ASCII);
         }
 
         private string GetRegistrySdkPath()
