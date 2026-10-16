@@ -153,7 +153,13 @@ namespace DofusFarm.Engine
                 if (!Enabled) break;
                 if (!inst.IsRunning || inst.Pid <= 0) continue;
 
-                // 1. Check process uptime (90-second initial boot grace period) and PID validation
+                // 1. Check process uptime and PID validation.
+                // The grace period must sit ABOVE the launch flow's own boot budget (the engine gives
+                // a cold boot up to 130s and its ADB wait up to 110s). At 90s the watchdog fired while
+                // a healthy instance was still booting, killed it and started over - the log showed a
+                // restart every ~2.5 minutes, so the guest never finished booting and the screen
+                // stayed unresponsive. Keep this comfortably above that budget.
+                const double BootGraceSec = 180.0;
                 double procAgeSec = 999;
                 try
                 {
@@ -172,7 +178,7 @@ namespace DofusFarm.Engine
                     continue;
                 }
 
-                if (procAgeSec < 90)
+                if (procAgeSec < BootGraceSec)
                 {
                     continue;
                 }

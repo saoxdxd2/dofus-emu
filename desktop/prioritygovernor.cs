@@ -253,7 +253,7 @@ namespace DofusFarm.Engine
 
                 // Dynamic CPU core affinity assignment respecting user's configured core count per instance
                 int totalCores = Environment.ProcessorCount;
-                if (totalCores >= 4)
+                if (totalCores >= 4 && !EngineOwnsAffinity)
                 {
                     lock (_pinnedPids)
                     {

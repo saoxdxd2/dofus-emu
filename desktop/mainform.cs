@@ -417,6 +417,11 @@ namespace DofusFarm.UI
 
             _governor = new PriorityGovernor();
             _governor.OnLog += Log;
+            // The engine assigns each instance its own CPU affinity at launch. If the governor also
+            // re-pinned the same qemu processes, Windows would keep migrating their threads between
+            // cores and the guest would lose its cached translation blocks - slow boot and a device
+            // that ignores mouse input. The governor still handles priorities, just not affinity.
+            _governor.EngineOwnsAffinity = true;
             _governor.Start();
 
             ThreadPool.QueueUserWorkItem(delegate
@@ -430,16 +435,7 @@ namespace DofusFarm.UI
                         {
                             _specsLabel.Text = string.Format("PC: {0}  •  {1}  •  {2} GB RAM ({3} GB Free)  •  {4} Threads",
                                 _specs.CpuName, _specs.GpuName, _specs.HostRamGB, _specs.FreeRamGB, _specs.LogicalThreads);
-                            if (_specs.HostRamGB < 8.0)
-                            {
-                                _cmbRam.SelectedIndex = 2; // 1024 MB safe multi-instance minimum
-                                _cmbCores.SelectedIndex = 0; // 1 Core
-                            }
-                            else
-                            {
-                                _cmbRam.SelectedIndex = 2; // 1024 MB recommended multi-instance sweet spot
-                                _cmbCores.SelectedIndex = 0; // 1 Core per instance for 4-16+ instances
-                            }
+                            ApplyHardwareDefaults(_specs);
                         }
                         RefreshGrid(true);
                     });
@@ -477,6 +473,25 @@ namespace DofusFarm.UI
 
         private int GetSelectedRam() { return ParseFirstInt(_cmbRam.SelectedItem, 1024); }
         private int GetSelectedCores() { return ParseFirstInt(_cmbCores.SelectedItem, 1); }
+
+        // Derives per-instance defaults from whatever machine the farm happens to run on, so the
+        // same build behaves sensibly on a 4-thread laptop and on a 32-thread farm server.
+        //  * RAM: never below 1024 MB (Android 29 + WebView + the game need it); the old 512 MB
+        //    floor made the guest swap constantly, which is what made everything feel frozen.
+        //  * CPU: each instance needs at least 2 logical CPUs. With only 1 the emulator's UI
+        //    thread competes with the guest renderer and the screen stops reacting to clicks.
+        private void ApplyHardwareDefaults(HardwareSpecs specs)
+        {
+            if (specs == null) return;
+            int logical = Math.Max(1, specs.LogicalThreads);
+            int index = 2; // 1024 MB
+            if (specs.HostRamGB >= 12.0) index = 3;      // 1536 MB
+            if (specs.HostRamGB >= 20.0) index = 4;      // 2048 MB
+            _cmbRam.SelectedIndex = Math.Min(index, RamChoices.Length - 1);
+
+            int coreIdx = logical >= 4 ? Array.IndexOf(CoreChoices, 2) : Array.IndexOf(CoreChoices, 1);
+            _cmbCores.SelectedIndex = coreIdx >= 0 ? coreIdx : 0;
+        }
 
         private void RefreshGrid(bool forceRedraw = true)
         {

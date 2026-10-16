@@ -446,6 +446,33 @@ namespace DofusFarm.Engine
             ForceDeleteDirectory(Path.Combine(avdDir, "snapshots"));
         }
 
+        private static bool _vulkanProbeChecked;
+        private static bool _vulkanProbeAvailable;
+
+        // Only turn Vulkan on when the host really has a driver. The registry entry is the same on
+        // every Windows machine, so probing is the only reliable way; when no driver is present the
+        // emulator would waste a full initialisation attempt and fall back to GL anyway.
+        private bool IsHostVulkanAvailable()
+        {
+            if (_vulkanProbeChecked) return _vulkanProbeAvailable;
+            _vulkanProbeChecked = true;
+            try
+            {
+                object val = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers", "", null)
+                    ?? Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\ImplicitLayers", "", null);
+                if (val != null && val.ToString().Trim().Length > 0)
+                {
+                    _vulkanProbeAvailable = true;
+                    return true;
+                }
+
+                string root = Environment.GetFolderPath(Environment.SpecialFolder.System);
+                _vulkanProbeAvailable = !string.IsNullOrEmpty(root) && File.Exists(Path.Combine(root, "vulkan-1.dll"));
+            }
+            catch { _vulkanProbeAvailable = false; }
+            return _vulkanProbeAvailable;
+        }
+
         public void EnsureAdvancedFeatures()
         {
             try
@@ -465,12 +492,13 @@ namespace DofusFarm.Engine
                 //  * IntelPerformanceMonitoringUnit only adds overhead when present.
                 const string content =
                     "GrallocSync = on\r\nGLPipeChecksum = off\r\nLogcatPipe = off\r\nGLAsyncSwap = on\r\n" +
-                    "GLESDynamicVersion = on\r\nGLDMA = on\r\nGLDirectMem = on\r\nVulkan = off\r\n" +
+                    "GLESDynamicVersion = on\r\nGLDMA = on\r\nGLDirectMem = on\r\nVulkan = auto\r\n" +
                     "VirtioInput = on\r\nEncryptUserData = off\r\nIntelPerformanceMonitoringUnit = off\r\n" +
                     "Wifi = on\r\nHostComposition = on\r\nRefCountPipe = on\r\nDynamicPartition = on\r\nHardwareDecoder = on\r\n";
 
-                File.WriteAllText(Path.Combine(dotAndroid, "advancedFeatures.ini"), content, Encoding.ASCII);
-                WriteAdvancedFeaturesToSdk(content);
+                string resolved = content.Replace("Vulkan = auto", "Vulkan = " + (IsHostVulkanAvailable() ? "on" : "off"));
+                File.WriteAllText(Path.Combine(dotAndroid, "advancedFeatures.ini"), resolved, Encoding.ASCII);
+                WriteAdvancedFeaturesToSdk(resolved);
             }
             catch { }
         }
@@ -1353,17 +1381,10 @@ namespace DofusFarm.Engine
             Process proc = StartEmulatorProcess(emuArgs, false);
             string serial = "emulator-" + port;
 
-            try
-            {
-                int totalCores = Environment.ProcessorCount;
-                if (totalCores >= 4 && proc != null && !proc.HasExited)
-                {
-                    long mask = PriorityGovernor.ComputeAffinityMask(slot, safeCores, totalCores);
-                    proc.ProcessorAffinity = IntPtr.Size == 8 ? new IntPtr(mask) : new IntPtr(unchecked((int)mask));
-                    Log(string.Format("Pinned {0} (PID: {1}, {2} Core(s)) to Host CPU Affinity 0x{3:X}.", name, proc.Id, safeCores, mask));
-                }
-            }
-            catch { }
+            // Affinity is deliberately NOT set here. The PriorityGovernor owns CPU pinning for every
+            // qemu process and re-applies the mask as slots come and go; setting it in both places
+            // made Windows migrate the emulator's threads between cores, which is exactly what made
+            // the guest slow to boot and unresponsive to mouse input.
 
             ThreadPool.QueueUserWorkItem(delegate { ConfigureGuestAndLaunchGame(name, serial, port, safeRam, safeCores, avdDir, serialNo, androidId, mac, proxyArg, proc, false, launchGen); });
         }
@@ -1514,8 +1535,11 @@ namespace DofusFarm.Engine
             int rasterThreads = Math.Max(1, Math.Min(2, cores));
             string combinedSetupCmd =
                 "setprop debug.hwui.renderer opengl; " +
-                "setprop debug.sf.hw 1; setprop debug.egl.hw 1; setprop debug.sf.latch_unsignaled 1; setprop debug.sf.disable_backpressure 1; " +
-                "sysctl -w vm.swappiness=80 vm.vfs_cache_pressure=150 vm.overcommit_memory=1 >/dev/null 2>&1 || true; " +
+                "setprop debug.sf.hw 1; setprop debug.egl.hw 1; setprop debug.sf.latch_unsignaled 1; " +
+                // vm.overcommit_memory is not a valid Android knob - the guest sysctl rejected it and
+                // the shell aborted the rest of the setup pass with "unexpected (" before the
+                // debloat and WebView flags ran. Kept only the settings that exist in Android 29.
+                "sysctl -w vm.swappiness=80 vm.vfs_cache_pressure=150 >/dev/null 2>&1 || true; " +
                 "WV_FLAGS='_ --ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy --enable-accelerated-2d-canvas --enable-webgl --enable-webgl-draft-extensions --in-process-gpu --renderer-process-limit=1 --num-raster-threads=" + rasterThreads + " --gpu-rasterization-msaa-sample-count=0 --disable-gpu-vsync --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --max-untiled-layer-width=1024 --max-untiled-layer-height=1024 --enable-devtools-experiments --remote-debugging-port=9222'; " +
                 "echo \"$WV_FLAGS\" > /data/local/tmp/webview-command-line; " +
                 "echo \"$WV_FLAGS\" > /data/local/webview-command-line 2>/dev/null || true; " +
@@ -1545,7 +1569,7 @@ namespace DofusFarm.Engine
                 "  echo \"debloat: v4 pass complete - $DISABLED package(s) disabled, $EN critical package(s) enabled\"; " +
                 "else echo 'debloat: instance already stripped'; fi; " +
                 "echo -n 'debloat: total disabled packages now = '; pm list packages -d 2>/dev/null | wc -l; " +
-                "GLES_INFO=$(dumpsys SurfaceFlinger 2>/dev/null | grep 'GLES:' | head -n 1); " +
+                "GLES_INFO=$(dumpsys SurfaceFlinger 2>/dev/null | grep GLES: | head -n 1); " +
                 "WV_INFO=$(dumpsys webviewupdate 2>/dev/null | grep -E 'Current WebView package|Valid:' | tr '\n' ' '); " +
                 "EGL_OK=$(ls /vendor/lib64/egl/libGLESv2_emulation.so /system/fonts/Roboto-Regular.ttf 2>/dev/null | wc -l); " +
                 "echo \"debloat: webgl-stack EGL+Fonts=$EGL_OK/2 | $GLES_INFO | $WV_INFO\"; " +
