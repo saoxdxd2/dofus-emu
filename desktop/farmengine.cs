@@ -532,7 +532,8 @@ namespace DofusFarm.Engine
                 const string content =
                     "GrallocSync = on\r\nGLPipeChecksum = off\r\nLogcatPipe = off\r\nGLAsyncSwap = on\r\n" +
                     "GLESDynamicVersion = on\r\nGLDMA = on\r\nGLDirectMem = on\r\nVulkan = auto\r\n" +
-                    "VirtioInput = on\r\nEncryptUserData = off\r\nIntelPerformanceMonitoringUnit = off\r\n" +
+                    "VirtioInput = on\r\nVirtioMouse = off\r\nVirtioTablet = off\r\nVirtioDualModeMouse = off\r\nDualModeMouseDisplayHostCursor = off\r\n" +
+                    "EncryptUserData = off\r\nIntelPerformanceMonitoringUnit = off\r\n" +
                     "Wifi = on\r\nHostComposition = on\r\nRefCountPipe = on\r\nDynamicPartition = on\r\nHardwareDecoder = on\r\n";
 
                 string resolved = content.Replace("Vulkan = auto", "Vulkan = " + (IsHostVulkanAvailable() ? "on" : "off"));
@@ -1070,14 +1071,8 @@ namespace DofusFarm.Engine
 
                 DeviceProfile prof = string.IsNullOrEmpty(phoneModelId) ? DeviceCatalog.GetDefaultProfileForIndex(idx) : DeviceCatalog.GetProfile(phoneModelId);
 
-                // The UI shows the live split for running instances and the saved setting for stopped
-                // ones, so the numbers in the grid always describe what the emulator is really using.
+                // The UI shows the instance's configured settings
                 int shownRam = ram, shownCores = cores;
-                if (isRunning)
-                {
-                    shownCores = GetDynamicCores();
-                    shownRam = Math.Min(ram, GetDynamicRamMb(ram));
-                }
 
                 list.Add(new InstanceModel
                 {
@@ -1268,7 +1263,7 @@ namespace DofusFarm.Engine
                 { "hw.keyboard", "yes" }, { "hw.mainKeys", "yes" }, { "qemu.hw.mainkeys", "1" }, { "qemu.vsync", "60" },
                 { "showDeviceFrame", "no" }, { "skin.name", "1280x720" }, { "skin.path", "_no_skin" }, { "skin.dynamic", "yes" },
                 { "disk.dataPartition.path", "userdata-qemu.img" }, { "disk.encryptionKeyPartition.path", "encryptionkey.img" },
-                { "disk.cachePartition", "no" }, { "disk.cachePartition.path", Path.Combine(Path.GetDirectoryName(cfgFile), "cache.img") },
+                { "disk.cachePartition", "yes" }, { "disk.cachePartition.path", Path.Combine(Path.GetDirectoryName(cfgFile), "cache.img") },
                 { "image.sysdir.1", @"system-images\android-29\default\x86_64\" }, { "abi.type", "x86_64" }, { "hw.cpu.arch", "x86_64" }
             };
 
@@ -1597,7 +1592,7 @@ namespace DofusFarm.Engine
 
         public void LaunchInstance(string name, int port, int ramMb, int cores, string proxy = null)
         {
-            int safeRam = GetDynamicRamMb(ramMb), safeCores = GetDynamicCores();
+            int safeRam = ramMb > 0 ? ramMb : GetDynamicRamMb(ramMb), safeCores = cores > 0 ? cores : GetDynamicCores();
             string avdDir = Path.Combine(AvdHome, name + ".avd");
             int launchGen = BumpLaunchGen(port);
             if (TryAdoptRunningInstance(name, port)) return;
@@ -1635,7 +1630,7 @@ namespace DofusFarm.Engine
 
             string emuArgs = (instProfile != null && string.Equals(instProfile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
                 ? BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
                     name, port, gpuMode, safeRam, safeCores, proxyArg);
 
             Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / GPU: {4} / {5})...", name, port, safeRam, safeCores, gpuMode, instProfile.DisplayName));
@@ -2380,13 +2375,13 @@ namespace DofusFarm.Engine
             DeviceProfile profile = GetInstancePhoneModel(name);
             return (profile != null && string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
                 ? BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
                     name, port, gpuMode, ramMb, cores, proxyArg ?? "");
         }
 
         private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string avdDir, string cfgFile)
         {
-            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
+            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
                 name, port, GetConfiguredGpuMode(), ramMb, cores, proxyArg ?? "");
         }
 

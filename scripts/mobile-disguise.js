@@ -303,7 +303,7 @@
         if (window.PointerEvent && PointerEvent.prototype) {
             var ptrSz = function() { return (this.buttons === 0 && this.type !== 'pointerdown') ? 1 : getEventContact(this).radius * 2; };
             defineGetters(PointerEvent.prototype, {
-                pointerType: function() { return 'touch'; }, width: ptrSz, height: ptrSz,
+                width: ptrSz, height: ptrSz,
                 pressure: function() { return (this.type === 'pointerup' || this.type === 'pointercancel' || (this.buttons === 0 && this.type !== 'pointerdown')) ? 0 : getEventContact(this).pressure; }
             });
         }
