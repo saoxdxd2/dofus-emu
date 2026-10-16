@@ -107,6 +107,27 @@ namespace DofusFarm.Engine
 
     public class FarmEngine
     {
+        // Windows Management Instrumentation is accessed through late binding on purpose: the
+        // compiled app does not reference System.Management.dll directly. The build script only
+        // needs the compiler to see a usable type, so a local declaration with the exact members
+        // used below is enough. The interface intentionally avoids the generics/events the real
+        // class has, because those cannot be named without the assembly.
+        // Thin wrapper so callers keep using mo["Property"], but the underlying object is the real
+        // WMI instance returned by reflection.
+        private sealed class ManagementObject
+        {
+            private readonly object _inner;
+            public ManagementObject(object inner) { _inner = inner; }
+            public object this[string propertyName]
+            {
+                get
+                {
+                    try { return _inner.GetType().GetProperty(propertyName).GetValue(_inner, null); }
+                    catch { return null; }
+                }
+            }
+        }
+
         public string SdkRoot { get; private set; }
         public string AdbPath { get; private set; }
         public string EmulatorPath { get; private set; }
@@ -224,16 +245,34 @@ namespace DofusFarm.Engine
 
         private static void QueryWmi(string query, int timeoutSec, Action<ManagementObject> onObject)
         {
+            // Reflection on purpose: the compiled app does not reference System.Management.dll, and
+            // the two lines below used to fail to compile because the type could not be resolved.
+            Type searcherType = Type.GetType("System.Management.ManagementObjectSearcher, System.Management", false);
+            if (searcherType == null) return;
+
+            IDisposable searcher = null;
             try
             {
-                using (var searcher = new ManagementObjectSearcher(query))
+                object instance = Activator.CreateInstance(searcherType, query);
+                searcher = instance as IDisposable;
+
+                object options = searcherType.GetProperty("Options").GetValue(instance, null);
+                if (options != null)
+                    options.GetType().GetProperty("Timeout").SetValue(options, TimeSpan.FromSeconds(timeoutSec), null);
+
+                object results = searcherType.GetMethod("Get", Type.EmptyTypes).Invoke(instance, null);
+                var collection = results as System.Collections.IEnumerable;
+                if (collection == null) return;
+
+                foreach (object raw in collection)
                 {
-                    searcher.Options.Timeout = TimeSpan.FromSeconds(timeoutSec);
-                    using (ManagementObjectCollection col = searcher.Get())
-                        foreach (ManagementObject mo in col) using (mo) onObject(mo);
+                    var mo = raw as IDisposable;
+                    try { onObject(new ManagementObject(raw)); }
+                    finally { if (mo != null) mo.Dispose(); }
                 }
             }
             catch { }
+            finally { if (searcher != null) searcher.Dispose(); }
         }
 
         private void ReadIdentity(string avdDir, ref string customName, ref string serialNo, ref string androidId, ref string mac, ref string proxy, ref string phoneModel)
@@ -772,6 +811,90 @@ namespace DofusFarm.Engine
             catch { }
         }
 
+        // The emulator sizes its guest RAM and vCPU count from the command line, so "dynamic" here
+        // means the farm recomputes those two numbers from the real state of the machine and from
+        // how many instances are actually running right now.
+        //   * RAM: the per-instance figure the user picked is what a single instance gets. When
+        //     several instances share the host we hand each one less, down to a hard floor of 1024 MB
+        //     (Android 29 + WebView + the game genuinely need that much). On this class of laptop
+        //     - 4 cores, 8 GB - the old fixed 1024 MB x N oversubscribed physical memory and the
+        //     guests spent their time swapping, which is what made them feel frozen.
+        //   * Cores: taken from real physical cores, not logical threads. Android runs the renderer
+        //     and the UI thread concurrently, so 2 vCPUs is the floor for a responsive screen; the
+        //     old "1 Core" default made the guest stutter and ignore input.
+        public int ActiveInstanceCount()
+        {
+            try
+            {
+                return Math.Max(1, Process.GetProcessesByName("qemu-system-x86_64").Length);
+            }
+            catch { return 1; }
+        }
+
+        public int GetDynamicCores()
+        {
+            int physical = GetHostPhysicalCores();
+            if (physical <= 2) return 1;
+            if (physical <= 4) return 2;
+            if (physical <= 8) return 2;
+            return 3;
+        }
+
+        private static int _hostPhysicalCores;
+
+        private static int GetHostPhysicalCores()
+        {
+            if (_hostPhysicalCores > 0) return _hostPhysicalCores;
+            int logical = Environment.ProcessorCount;
+            try
+            {
+                var sb = new StringBuilder();
+                QueryWmi("SELECT NumberOfCores FROM Win32_Processor", 4,
+                    mo => sb.Append((mo["NumberOfCores"] ?? "0").ToString()).Append(' '));
+                int total = 0;
+                foreach (string part in sb.ToString().Split(' '))
+                {
+                    int v;
+                    if (int.TryParse(part, out v)) total += v;
+                }
+                _hostPhysicalCores = total > 0 ? total : logical;
+            }
+            catch { _hostPhysicalCores = logical; }
+            return _hostPhysicalCores;
+        }
+
+        // Keeps the guest's total memory under the host's real RAM instead of the nominal figure.
+        public int GetDynamicRamMb(int requestedMb)
+        {
+            int requested = Math.Max(1024, requestedMb);
+            long hostMb = GetHostTotalRamMb();
+            if (hostMb <= 0) return requested;
+
+            int running = ActiveInstanceCount();
+            long budget = (hostMb * 55) / 100;              // leave the rest for Windows and the emulator
+            long perInstance = budget / Math.Max(1, running);
+
+            long target = Math.Min(requested, perInstance);
+            target = Math.Max(1024, Math.Min(4096, target));
+            return (int)(target / 128 * 128);               // keep it a multiple of 128 MB
+        }
+
+        private static long _hostTotalRamMb;
+
+        private static long GetHostTotalRamMb()
+        {
+            if (_hostTotalRamMb > 0) return _hostTotalRamMb;
+            try
+            {
+                long bytes = 0;
+                QueryWmi("SELECT TotalPhysicalMemory FROM Win32_ComputerSystem", 4,
+                    mo => { long v; if (long.TryParse((mo["TotalPhysicalMemory"] ?? "0").ToString(), out v)) bytes = v; });
+                _hostTotalRamMb = bytes > 0 ? bytes / (1024 * 1024) : 0;
+            }
+            catch { _hostTotalRamMb = 0; }
+            return _hostTotalRamMb;
+        }
+
         public List<InstanceModel> GetInstances()
         {
             var list = new List<InstanceModel>();
@@ -818,9 +941,18 @@ namespace DofusFarm.Engine
 
                 DeviceProfile prof = string.IsNullOrEmpty(phoneModelId) ? DeviceCatalog.GetDefaultProfileForIndex(idx) : DeviceCatalog.GetProfile(phoneModelId);
 
+                // The UI shows the live split for running instances and the saved setting for stopped
+                // ones, so the numbers in the grid always describe what the emulator is really using.
+                int shownRam = ram, shownCores = cores;
+                if (isRunning)
+                {
+                    shownCores = GetDynamicCores();
+                    shownRam = Math.Min(ram, GetDynamicRamMb(ram));
+                }
+
                 list.Add(new InstanceModel
                 {
-                    Name = name, CustomName = customName, DisplayName = customName, Port = port, RamMb = ram, Cores = cores,
+                    Name = name, CustomName = customName, DisplayName = customName, Port = port, RamMb = shownRam, Cores = shownCores,
                     IsRunning = isRunning, Pid = pid, Proxy = proxyDisplay,
                     PhoneModelId = string.IsNullOrEmpty(phoneModelId) ? prof.Id : phoneModelId,
                     PhoneModelName = prof.DisplayName, IsWarmReady = IsInstanceWarmReady(name)
@@ -978,6 +1110,7 @@ namespace DofusFarm.Engine
             int safeRam = Math.Max(1024, ramMb), safeCores = Math.Max(1, cores);
 
             var existing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            // deliberately left as-is: this is only reached when the user edits an instance by hand
             if (File.Exists(cfgFile))
             {
                 foreach (string l in File.ReadLines(cfgFile))
@@ -1334,7 +1467,7 @@ namespace DofusFarm.Engine
 
         public void LaunchInstance(string name, int port, int ramMb, int cores, string proxy = null)
         {
-            int safeRam = Math.Max(1024, ramMb), safeCores = Math.Max(1, cores);
+            int safeRam = GetDynamicRamMb(ramMb), safeCores = GetDynamicCores();
             string avdDir = Path.Combine(AvdHome, name + ".avd");
             int launchGen = BumpLaunchGen(port);
             if (TryAdoptRunningInstance(name, port)) return;

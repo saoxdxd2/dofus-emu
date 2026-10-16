@@ -11,6 +11,7 @@ namespace DofusFarm.Engine
     public class PriorityGovernor
     {
         private Timer _timer;
+        public FarmEngine Engine { get; set; }          // optional: lets the governor size instances from live state
         private int _lastForegroundPid = -1;
         private readonly HashSet<int> _pinnedPids = new HashSet<int>();
         private int _runningState = 0;
@@ -74,6 +75,24 @@ namespace DofusFarm.Engine
                     _slotCoresCache[slot] = cores;
                 }
             }
+        }
+
+        // totalCores / runningInstances, clamped to [2, 8]. Computed on every tick so the split
+        // follows instances as they start and stop (dynamic re-partitioning).
+        private int _liveCoresPerInstance = 2;
+
+        public int LiveCoresPerInstance(int requestedCores, int totalCores)
+        {
+            int running = 1;
+            try
+            {
+                if (Engine != null) running = Math.Max(1, Engine.ActiveInstanceCount());
+                else running = Math.Max(1, Process.GetProcessesByName("qemu-system-x86_64").Length);
+            }
+            catch { }
+
+            int share = Math.Max(1, totalCores) / Math.Max(1, running);
+            return Math.Max(2, Math.Min(8, Math.Min(share, Math.Max(2, requestedCores))));
         }
 
         public static long ComputeAffinityMask(int slot, int cores, int totalCores)
@@ -269,7 +288,14 @@ namespace DofusFarm.Engine
                                     int instCores;
                                     int slot = GetInstanceSlot(p.Id, out instCores);
                                     if (slot < 0) slot = i;
-                                    long mask = ComputeAffinityMask(slot, instCores, totalCores);
+                                    // Size the slice from how many instances are actually running instead of
+                                    // from the per-instance figure the user picked. On a 4-core laptop that
+                                    // is the difference between "each farm slot gets a core" and "four slots
+                                    // fight over one core each": with N running instances everyone gets
+                                    // totalCores/N, but never less than 2, because a single logical CPU
+                                    // cannot run the guest's UI and renderer threads at once - that is what
+                                    // makes the screen stop reacting to mouse input.
+                                    long mask = ComputeAffinityMask(slot, LiveCoresPerInstance(instCores, totalCores), totalCores);
                                     if (IntPtr.Size == 8)
                                         p.ProcessorAffinity = new IntPtr(mask);
                                     else

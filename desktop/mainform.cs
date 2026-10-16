@@ -416,6 +416,7 @@ namespace DofusFarm.UI
             _watchdog.Start();
 
             _governor = new PriorityGovernor();
+            _governor.Engine = _engine;
             _governor.OnLog += Log;
             // The engine assigns each instance its own CPU affinity at launch. If the governor also
             // re-pinned the same qemu processes, Windows would keep migrating their threads between
