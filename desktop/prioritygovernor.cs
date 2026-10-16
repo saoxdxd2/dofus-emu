@@ -65,7 +65,7 @@ namespace DofusFarm.Engine
         private static readonly Dictionary<int, int> _slotCache = new Dictionary<int, int>();
         private static readonly Dictionary<int, int> _slotCoresCache = new Dictionary<int, int>();
 
-        public static void RegisterInstancePid(int pid, int slot, int cores = 1)
+        public static void RegisterInstancePid(int pid, int slot, int cores = 2)
         {
             lock (_slotCache)
             {
@@ -123,7 +123,7 @@ namespace DofusFarm.Engine
 
         private static int GetInstanceSlot(int pid, out int assignedCores)
         {
-            assignedCores = 1;
+            assignedCores = 2;
             lock (_slotCache)
             {
                 int cached;
@@ -137,7 +137,7 @@ namespace DofusFarm.Engine
             }
 
             int resolved = -1;
-            int parsedCores = 1;
+            int parsedCores = 2;
             try
             {
                 // Use CreateToolhelp32Snapshot + command-line cache to avoid WMI.
@@ -169,7 +169,7 @@ namespace DofusFarm.Engine
                         assignedCores = cCores;
                     else
                     {
-                        assignedCores = Math.Max(1, parsedCores);
+                        assignedCores = Math.Max(2, parsedCores);
                         _slotCoresCache[resolved] = assignedCores;
                     }
                 }
@@ -309,7 +309,7 @@ namespace DofusFarm.Engine
                                         p.ProcessorAffinity = new IntPtr(unchecked((int)mask));
 
                                     _pinnedPids.Add(p.Id);
-                                    Log(string.Format("Governor pinned PID {0} (Slot #{1}, {2} threads) to Affinity Mask 0x{3:X}.", p.Id, slot + 1, Math.Max(1, instCores), mask));
+                                    Log(string.Format("Governor pinned PID {0} (Slot #{1}, {2} threads) to Affinity Mask 0x{3:X}.", p.Id, slot + 1, Math.Max(2, instCores), mask));
                                 }
                                 catch { }
                             }
