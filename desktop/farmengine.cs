@@ -1235,7 +1235,7 @@ namespace DofusFarm.Engine
 
         private void UpdateConfigIni(string cfgFile, string name, int ramMb, int cores, DeviceProfile profile = null)
         {
-            profile = profile ?? DeviceCatalog.GetProfile("galaxy-tab-s6");
+            profile = profile ?? DeviceCatalog.GetProfile("galaxy-a51");
             int safeRam = Math.Max(1024, ramMb), safeCores = Math.Max(1, cores);
 
             var existing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1268,21 +1268,21 @@ namespace DofusFarm.Engine
                 { "hw.keyboard", "yes" }, { "hw.mainKeys", "yes" }, { "qemu.hw.mainkeys", "1" }, { "qemu.vsync", "60" },
                 { "showDeviceFrame", "no" }, { "skin.name", "1280x720" }, { "skin.path", "_no_skin" }, { "skin.dynamic", "yes" },
                 { "disk.dataPartition.path", "userdata-qemu.img" }, { "disk.encryptionKeyPartition.path", "encryptionkey.img" },
-                { "disk.cachePartition", "no" }, { "disk.cachePartition.path", "cache.img" },
+                { "disk.cachePartition", "no" }, { "disk.cachePartition.path", Path.Combine(Path.GetDirectoryName(cfgFile), "cache.img") },
                 { "image.sysdir.1", @"system-images\android-29\default\x86_64\" }, { "abi.type", "x86_64" }, { "hw.cpu.arch", "x86_64" }
             };
 
-            if (string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
-            {
-                foreach (string sk in new[] { "hw.accelerometer", "hw.accelerometer_uncalibrated", "hw.gyroscope", "hw.gyroscope_uncalibrated", "hw.sensors.light", "hw.sensors.pressure", "hw.sensors.humidity", "hw.sensors.proximity", "hw.sensors.magnetic_field", "hw.sensors.magnetic_field_uncalibrated", "hw.sensors.orientation", "hw.sensors.temperature", "hw.sensors.heart_rate", "hw.sensors.wrist_tilt", "hw.sensors.heading" })
-                    settings[sk] = "no";
-            }
+            // Turn off emulated hardware sensors (each sensor runs a guest kernel polling thread).
+            // WebGL / Dofus never reads ambient, pressure, magnetic, or motion sensors.
+            foreach (string sk in new[] { "hw.accelerometer", "hw.accelerometer_uncalibrated", "hw.gyroscope", "hw.gyroscope_uncalibrated", "hw.sensors.light", "hw.sensors.pressure", "hw.sensors.humidity", "hw.sensors.proximity", "hw.sensors.magnetic_field", "hw.sensors.magnetic_field_uncalibrated", "hw.sensors.orientation", "hw.sensors.temperature", "hw.sensors.heart_rate", "hw.sensors.wrist_tilt", "hw.sensors.heading" })
+                settings[sk] = "no";
 
             foreach (var kvp in settings) existing[kvp.Key] = kvp.Value;
 
             var sb = new StringBuilder(existing.Count * 32);
             foreach (var kvp in existing) sb.Append(kvp.Key).Append(" = ").AppendLine(kvp.Value);
             File.WriteAllText(cfgFile, sb.ToString(), Encoding.UTF8);
+            try { SafeDeleteFile(Path.Combine(Path.GetDirectoryName(cfgFile), "hardware-qemu.ini")); } catch { }
         }
 
         public static void ForceDeleteDirectory(string dirPath)
@@ -1471,6 +1471,7 @@ namespace DofusFarm.Engine
                 foreach (string f in Directory.EnumerateFiles(avdDir, "*.lock")) SafeDeleteFile(f);
                 foreach (string d in Directory.EnumerateDirectories(avdDir, "*.lock")) ForceDeleteDirectory(d);
                 SafeDeleteFile(Path.Combine(avdDir, "multiinstance.lock"));
+                SafeDeleteFile(Path.Combine(avdDir, "hardware-qemu.ini"));
             }
             catch { }
         }
@@ -1634,7 +1635,7 @@ namespace DofusFarm.Engine
 
             string emuArgs = (instProfile != null && string.Equals(instProfile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
                 ? BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
                     name, port, gpuMode, safeRam, safeCores, proxyArg);
 
             Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / GPU: {4} / {5})...", name, port, safeRam, safeCores, gpuMode, instProfile.DisplayName));
@@ -1814,13 +1815,13 @@ namespace DofusFarm.Engine
                 "chmod -R 755 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null; " +
                 "chcon -R u:object_r:app_data_file:s0 /data/data/com.ankama.dofustouch/files /data/user/0/com.ankama.dofustouch/files 2>/dev/null || true; " +
                 "setprop dalvik.vm.heapgrowthlimit " + heapLimit + "; " +
-                "for svc in cameraserver vendor.camera-provider-2-4 drmserver vendor.drm-hal-1-0 vendor.drm-clearkey-hal-1-2 vendor.drm-widevine-hal-1-2 mediadrmserver traced traced_probes statsd incidentd tombstoned llkd-1 mdnsd goldfish-logcat vendor.fps_hal broadcastradio-hal vendor.cas-hal-1-1 vendor.gnss_service hostapd; do " +
+                "for svc in cameraserver vendor.camera-provider-2-4 drmserver vendor.drm-hal-1-0 vendor.drm-clearkey-hal-1-2 vendor.drm-widevine-hal-1-2 mediadrm mediadrmserver traced traced_probes statsd incidentd tombstoned llkd llkd-1 mdnsd goldfish-logcat vendor.fps_hal broadcastradio-hal vendor.cas-hal-1-1 hostapd audioserver vendor.audio-hal-2-0 rild vendor.ril-daemon vendor.thermal-hal-2-0-mock media mediametrics; do " +
                 "  setprop ctl.stop $svc 2>/dev/null || true; " +
                 "done; " +
-                "DEBLOAT_V='v4'; " +
+                "DEBLOAT_V='v5'; " +
                 "if [ \"$(cat /data/local/tmp/.dofus_debloat_ver 2>/dev/null)\" != \"$DEBLOAT_V\" ]; then " +
                 "  DISABLED=0; " +
-                "  for pkg in com.android.cts.priv.ctsshim com.android.cts.ctsshim org.chromium.webview_shell com.android.statementservice com.android.printspooler com.android.bips com.android.camera2 com.android.music com.android.deskclock com.android.gallery3d com.android.dreams.basic com.android.dreams.phototable com.android.wallpaper.livepicker com.android.wallpaperbackup com.android.wallpapercropper com.android.calllogbackup com.android.quicksearchbox com.android.htmlviewer com.android.bookmarkprovider com.android.providers.downloads.ui com.android.providers.partnerbookmarks com.android.smspush com.android.stk com.android.calendar com.android.providers.calendar; do " +
+                "  for pkg in com.android.cts.priv.ctsshim com.android.cts.ctsshim org.chromium.webview_shell com.android.statementservice com.android.printspooler com.android.bips com.android.camera2 com.android.music com.android.musicfx com.android.deskclock com.android.gallery3d com.android.dreams.basic com.android.dreams.phototable com.android.wallpaper.livepicker com.android.wallpaperbackup com.android.wallpapercropper com.android.calllogbackup com.android.quicksearchbox com.android.htmlviewer com.android.bookmarkprovider com.android.providers.downloads.ui com.android.providers.partnerbookmarks com.android.smspush com.android.stk com.android.calendar com.android.providers.calendar com.android.se com.android.service.ims com.android.dialer com.android.carrierdefaultapp com.android.cellbroadcastreceiver com.android.emergency com.android.traceur com.android.printservice.recommendation com.android.bluetooth com.android.bluetoothmidiservice com.android.email; do " +
                 "    if pm disable-user --user 0 $pkg >/dev/null 2>&1; then DISABLED=$((DISABLED+1)); fi; " +
                 "  done; " +
                 "  EN=0; " +
@@ -1828,8 +1829,9 @@ namespace DofusFarm.Engine
                 "    if pm enable --user 0 $pkg >/dev/null 2>&1; then EN=$((EN+1)); fi; " +
                 "  done; " +
                 "  echo $DEBLOAT_V > /data/local/tmp/.dofus_debloat_ver; " +
-                "  echo \"debloat: v4 pass complete - $DISABLED package(s) disabled, $EN critical package(s) enabled\"; " +
+                "  echo \"debloat: v5 pass complete - $DISABLED packages disabled, $EN critical packages enabled\"; " +
                 "else echo 'debloat: instance already stripped'; fi; " +
+                "echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true; " +
                 "echo -n 'debloat: total disabled packages now = '; pm list packages -d 2>/dev/null | wc -l; " +
                 "GLES_INFO=$(dumpsys SurfaceFlinger 2>/dev/null | grep GLES: | head -n 1); " +
                 "WV_INFO=$(dumpsys webviewupdate 2>/dev/null | grep -E 'Current WebView package|Valid:' | tr '\n' ' '); " +
@@ -2378,13 +2380,13 @@ namespace DofusFarm.Engine
             DeviceProfile profile = GetInstancePhoneModel(name);
             return (profile != null && string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
                 ? BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
                     name, port, gpuMode, ramMb, cores, proxyArg ?? "");
         }
 
         private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string avdDir, string cfgFile)
         {
-            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics -no-boot-anim -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
+            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
                 name, port, GetConfiguredGpuMode(), ramMb, cores, proxyArg ?? "");
         }
 
