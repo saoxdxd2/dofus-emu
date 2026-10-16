@@ -70,25 +70,15 @@ namespace DofusFarm.Engine
 
         private static readonly List<DeviceProfile> _profiles = new List<DeviceProfile>
         {
-            Make("webgl-minimal", "WebGL Minimal (Chrome Dofus)", "generic", "generic", "WebGLMinimal", "webgl_minimal", "webgl_minimal", "ranchu", "ranchu", "ranchu", "Google", "virgl", "QSR1.210820.001", "generic/webgl_minimal/webgl_minimal:10/QSR1.210820.001/7663313:userdebug/test-keys", 1280, 720, 240, "Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0)", 16384, "Mozilla/5.0 (Linux; Android 10; WebGLMinimal Build/QSR1.210820.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/112.0.5615.137 Mobile Safari/537.36", "WGLM"),
-            Make("galaxy-tab-s6", "Samsung Galaxy Tab S6 (16:9 Farm HD)", "samsung", "samsung", "SM-T860", "gts6lwifixx", "gts6l", "msmnile", "qcom", "msmnile", "Qualcomm", "Snapdragon 855", "QP1A.190711.020.T860XXU1BTJ2", "samsung/gts6lwifixx/gts6l:10/QP1A.190711.020/T860XXU1BTJ2:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 640", 16384, "Mozilla/5.0 (Linux; Android 10; SM-T860 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52M"),
-            Make("galaxy-tab-a", "Samsung Galaxy Tab A (4:3 Tablet Mode)", "samsung", "samsung", "SM-T510", "gta3xlwifixx", "gta3xlwifi", "universal7904", "samsungexynos7904", "exynos5", "Samsung", "Exynos 7904", "QP1A.190711.020.T510XXU3BTE1", "samsung/gta3xlwifixx/gta3xlwifi:10/QP1A.190711.020/T510XXU3BTE1:user/release-keys", 1024, 768, 213, "ARM", "Mali-G71 MP2", 8192, "Mozilla/5.0 (Linux; Android 10; SM-T510 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52N"),
             Make("galaxy-a51", "Samsung Galaxy A51", "samsung", "samsung", "SM-A515F", "a51nsxx", "a51", "exynos9611", "exynos9611", "exynos9611", "Samsung", "Exynos 9611", "QP1A.190711.020.A515FXXU1ATA7", "samsung/a51nsxx/a51:10/QP1A.190711.020/A515FXXU1ATA7:user/release-keys", 1280, 720, 240, "ARM", "Mali-G72 MP3", 8192, "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36", "R58M"),
-            Make("pixel-4a", "Google Pixel 4a", "google", "Google", "Pixel 4a", "sunfish", "sunfish", "sunfish", "sunfish", "sm6150", "Qualcomm", "Snapdragon 730G", "RQ3A.211001.001", "google/sunfish/sunfish:11/RQ3A.211001.001/7641976:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 618", 16384, "Mozilla/5.0 (Linux; Android 11; Pixel 4a Build/RQ3A.211001.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/94.0.4606.85 Mobile Safari/537.36", "0A23"),
-            Make("redmi-note-9-pro", "Xiaomi Redmi Note 9 Pro", "Redmi", "Xiaomi", "Redmi Note 9 Pro", "joyeuse_eea", "joyeuse", "atoll", "qcom", "atoll", "Qualcomm", "Snapdragon 720G", "QKQ1.191215.002", "Redmi/joyeuse_eea/joyeuse:10/QKQ1.191215.002/V11.0.4.0.QJZEUXM:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 618", 16384, "Mozilla/5.0 (Linux; Android 10; Redmi Note 9 Pro Build/QKQ1.191215.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/88.0.4324.152 Mobile Safari/537.36", "8F1B"),
+            Make("galaxy-s10", "Samsung Galaxy S10", "samsung", "samsung", "SM-G973F", "beyond1lte", "beyond1", "exynos9820", "exynos9820", "exynos9820", "Samsung", "Exynos 9820", "QP1A.190711.020.G973FXXS4BTB3", "samsung/beyond1lte/beyond1:10/QP1A.190711.020/G973FXXS4BTB3:user/release-keys", 1280, 720, 240, "ARM", "Mali-G76 MP12", 8192, "Mozilla/5.0 (Linux; Android 10; SM-G973F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/81.0.4044.138 Mobile Safari/537.36", "RZ8M"),
             Make("galaxy-s20", "Samsung Galaxy S20", "samsung", "samsung", "SM-G980F", "hubblenadx", "hubble", "exynos990", "exynos990", "exynos990", "Samsung", "Exynos 990", "QP1A.190711.020.G980FXXU1ATCT", "samsung/hubblenadx/hubble:10/QP1A.190711.020/G980FXXU1ATCT:user/release-keys", 1280, 720, 240, "ARM", "Mali-G77 MP11", 8192, "Mozilla/5.0 (Linux; Android 10; SM-G980F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36", "RF8M"),
             Make("oneplus-8", "OnePlus 8", "OnePlus", "OnePlus", "IN2013", "OnePlus8_EEA", "OnePlus8", "kona", "qcom", "kona", "Qualcomm", "Snapdragon 865", "QKQ1.200114.002", "OnePlus/OnePlus8_EEA/OnePlus8:10/QKQ1.200114.002/2004111400:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 650", 16384, "Mozilla/5.0 (Linux; Android 10; IN2013 Build/QKQ1.200114.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/85.0.4183.127 Mobile Safari/537.36", "1F7E"),
             Make("poco-x3", "Xiaomi POCO X3 NFC", "POCO", "Xiaomi", "M2007J20CG", "surya_eea", "surya", "surya", "qcom", "sm7150", "Qualcomm", "Snapdragon 732G", "QKQ1.200512.002", "POCO/surya_eea/surya:10/QKQ1.200512.002/V12.0.4.0.QJGEUXM:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 618", 16384, "Mozilla/5.0 (Linux; Android 10; M2007J20CG Build/QKQ1.200512.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/88.0.4324.152 Mobile Safari/537.36", "9B4C"),
-            Make("galaxy-s10", "Samsung Galaxy S10", "samsung", "samsung", "SM-G973F", "beyond1lte", "beyond1", "exynos9820", "exynos9820", "exynos9820", "Samsung", "Exynos 9820", "QP1A.190711.020.G973FXXS4BTB3", "samsung/beyond1lte/beyond1:10/QP1A.190711.020/G973FXXS4BTB3:user/release-keys", 1280, 720, 240, "ARM", "Mali-G76 MP12", 8192, "Mozilla/5.0 (Linux; Android 10; SM-G973F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/81.0.4044.138 Mobile Safari/537.36", "RZ8M"),
-            Make("pixel-5", "Google Pixel 5", "google", "Google", "Pixel 5", "redfin", "redfin", "redfin", "redfin", "lito", "Qualcomm", "Snapdragon 765G", "RD2A.211001.002", "google/redfin/redfin:11/RD2A.211001.002/7644766:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 620", 16384, "Mozilla/5.0 (Linux; Android 11; Pixel 5 Build/RD2A.211001.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/95.0.4638.74 Mobile Safari/537.36", "0B14"),
-            Make("galaxy-s21-ultra", "Samsung Galaxy S21 Ultra", "samsung", "samsung", "SM-G998B", "p3sxxx", "p3s", "exynos2100", "exynos2100", "exynos2100", "Samsung", "Exynos 2100", "RP1A.200720.012.G998BXXU1AUB6", "samsung/p3sxxx/p3s:11/RP1A.200720.012/G998BXXU1AUB6:user/release-keys", 1280, 720, 240, "ARM", "Mali-G78 MP14", 8192, "Mozilla/5.0 (Linux; Android 11; SM-G998B Build/RP1A.200720.012; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/89.0.4389.105 Mobile Safari/537.36", "R5CR"),
-            Make("pixel-6-pro", "Google Pixel 6 Pro", "google", "Google", "Pixel 6 Pro", "raven", "raven", "raven", "raven", "gs101", "Google", "Google Tensor", "SD1A.210817.036", "google/raven/raven:12/SD1A.210817.036/7805190:user/release-keys", 1280, 720, 240, "ARM", "Mali-G78 MP20", 8192, "Mozilla/5.0 (Linux; Android 12; Pixel 6 Pro Build/SD1A.210817.036; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/96.0.4664.45 Mobile Safari/537.36", "1815"),
-            Make("xiaomi-11t-pro", "Xiaomi 11T Pro", "Xiaomi", "Xiaomi", "2107113SG", "vili_global", "vili", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 888", "RKQ1.201112.002", "Xiaomi/vili_global/vili:11/RKQ1.201112.002/V12.5.7.0.RKDMIXM:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 660", 16384, "Mozilla/5.0 (Linux; Android 11; 2107113SG Build/RKQ1.201112.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/93.0.4577.82 Mobile Safari/537.36", "8C2F"),
-            Make("oneplus-9-pro", "OnePlus 9 Pro", "OnePlus", "OnePlus", "LE2123", "OnePlus9Pro_EEA", "OnePlus9Pro", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 888", "RKQ1.201105.002", "OnePlus/OnePlus9Pro_EEA/OnePlus9Pro:11/RKQ1.201105.002/2103242200:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 660", 16384, "Mozilla/5.0 (Linux; Android 11; LE2123 Build/RKQ1.201105.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/90.0.4430.210 Mobile Safari/537.36", "2B3A"),
-            Make("xperia-1-iii", "Sony Xperia 1 III", "Sony", "Sony", "XQ-BC52", "XQ-BC52_EEA", "pdx215", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 888", "61.0.A.11.31", "Sony/XQ-BC52_EEA/pdx215:11/61.0.A.11.31/1:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 660", 16384, "Mozilla/5.0 (Linux; Android 11; XQ-BC52 Build/61.0.A.11.31; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/92.0.4515.159 Mobile Safari/537.36", "CQ30"),
-            Make("moto-edge-20-pro", "Motorola Edge 20 Pro", "motorola", "motorola", "XT2153-1", "pstar_reteu", "pstar", "kona", "qcom", "kona", "Qualcomm", "Snapdragon 870", "RRA31.Q3-19-50", "motorola/pstar_reteu/pstar:11/RRA31.Q3-19-50/789a2:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 650", 16384, "Mozilla/5.0 (Linux; Android 11; XT2153-1 Build/RRA31.Q3-19-50; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/94.0.4606.85 Mobile Safari/537.36", "ZY22"),
-            Make("realme-gt-master", "Realme GT Master Edition", "realme", "realme", "RMX3363", "RMX3363EEA", "RE5473", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 778G", "RKQ1.201217.002", "realme/RMX3363EEA/RE5473:11/RKQ1.201217.002/1628169123:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 642L", 16384, "Mozilla/5.0 (Linux; Android 11; RMX3363 Build/RKQ1.201217.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/92.0.4515.131 Mobile Safari/537.36", "RM33"),
-            Make("rog-phone-5", "ASUS ROG Phone 5", "asus", "asus", "ASUS_I005D", "WW_I005D", "ASUS_I005D", "lahaina", "qcom", "lahaina", "Qualcomm", "Snapdragon 888", "RKQ1.201022.002", "asus/WW_I005D/ASUS_I005D:11/RKQ1.201022.002/18.0840.2103.26-0:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 660", 16384, "Mozilla/5.0 (Linux; Android 11; ASUS_I005D Build/RKQ1.201022.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/90.0.4430.91 Mobile Safari/537.36", "M6AI")
+            Make("redmi-note-9-pro", "Xiaomi Redmi Note 9 Pro", "Redmi", "Xiaomi", "Redmi Note 9 Pro", "joyeuse_eea", "joyeuse", "atoll", "qcom", "atoll", "Qualcomm", "Snapdragon 720G", "QKQ1.191215.002", "Redmi/joyeuse_eea/joyeuse:10/QKQ1.191215.002/V11.0.4.0.QJZEUXM:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 618", 16384, "Mozilla/5.0 (Linux; Android 10; Redmi Note 9 Pro Build/QKQ1.191215.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/88.0.4324.152 Mobile Safari/537.36", "8F1B"),
+            Make("galaxy-tab-s6", "Samsung Galaxy Tab S6 (16:9 Farm HD)", "samsung", "samsung", "SM-T860", "gts6lwifixx", "gts6l", "msmnile", "qcom", "msmnile", "Qualcomm", "Snapdragon 855", "QP1A.190711.020.T860XXU1BTJ2", "samsung/gts6lwifixx/gts6l:10/QP1A.190711.020/T860XXU1BTJ2:user/release-keys", 1280, 720, 240, "Qualcomm", "Adreno (TM) 640", 16384, "Mozilla/5.0 (Linux; Android 10; SM-T860 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52M"),
+            Make("galaxy-tab-a", "Samsung Galaxy Tab A (4:3 Tablet Mode)", "samsung", "samsung", "SM-T510", "gta3xlwifixx", "gta3xlwifi", "universal7904", "samsungexynos7904", "exynos5", "Samsung", "Exynos 7904", "QP1A.190711.020.T510XXU3BTE1", "samsung/gta3xlwifixx/gta3xlwifi:10/QP1A.190711.020/T510XXU3BTE1:user/release-keys", 1024, 768, 213, "ARM", "Mali-G71 MP2", 8192, "Mozilla/5.0 (Linux; Android 10; SM-T510 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Safari/537.36", "R52N"),
+            Make("webgl-minimal", "WebGL Minimal (Chrome Dofus)", "generic", "generic", "WebGLMinimal", "webgl_minimal", "webgl_minimal", "ranchu", "ranchu", "ranchu", "Google", "virgl", "QSR1.210820.001", "generic/webgl_minimal/webgl_minimal:10/QSR1.210820.001/7663313:userdebug/test-keys", 1280, 720, 240, "Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0)", 16384, "Mozilla/5.0 (Linux; Android 10; WebGLMinimal Build/QSR1.210820.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/112.0.5615.137 Mobile Safari/537.36", "WGLM")
         };
 
         private static readonly Dictionary<string, DeviceProfile> _byId = _profiles.ToDictionary(p => p.Id, StringComparer.OrdinalIgnoreCase);
@@ -497,34 +487,53 @@ namespace DofusFarm.Engine
         {
             try
             {
-                var pi = new PROCESS_INFORMATION();
-                var si = new STARTUPINFOW { cb = 68, dwFlags = 0x00000001, wShowWindow = 0x00000004 };
-                string cmdLine = string.IsNullOrEmpty(args) ? exe : (exe + " " + args);
-                string wDir = string.IsNullOrEmpty(workingDir) ? AppBaseDir : workingDir;
-
-                IntPtr dirH = NativeMethods.CreateDirectoryW(wDir, IntPtr.Zero);
-                IntPtr dirUsed = dirH != IntPtr.Zero ? dirH : NativeMethods.CreateDirectoryW(AppBaseDir, IntPtr.Zero);
-                if (dirUsed == IntPtr.Zero) dirUsed = NativeMethods.CreateDirectoryW(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), IntPtr.Zero);
-
-                bool ok = NativeMethods.CreateProcessW("", cmdLine, IntPtr.Zero, IntPtr.Zero, true, 0x00000004 | 0x00000002, IntPtr.Zero, null, ref si, out pi);
-                try
+                string targetDir = string.IsNullOrEmpty(workingDir) ? AppBaseDir : workingDir;
+                if (!Directory.Exists(targetDir))
                 {
-                    if (!ok) return "ERROR: CreateProcess failed for " + exe;
-                    try
+                    try { Directory.CreateDirectory(targetDir); } catch { }
+                }
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = args ?? "",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    WorkingDirectory = Directory.Exists(targetDir) ? targetDir : AppBaseDir,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
+                };
+
+                using (var p = new Process { StartInfo = psi })
+                {
+                    var sb = new StringBuilder();
+                    var syncLock = new object();
+
+                    p.OutputDataReceived += (s, e) => { if (e.Data != null) lock (syncLock) { sb.AppendLine(e.Data); } };
+                    p.ErrorDataReceived += (s, e) => { if (e.Data != null) lock (syncLock) { sb.AppendLine(e.Data); } };
+
+                    if (!p.Start()) return "ERROR: Failed to start process " + exe;
+
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
+
+                    if (!p.WaitForExit(timeoutMs))
                     {
-                        if (NativeMethods.WaitForSingleObject(pi.hProcess, (uint)timeoutMs) == 0) NativeMethods.TerminateProcess(pi.hProcess, 1);
-                        else NativeMethods.WaitForSingleObject(pi.hProcess, 5000);
+                        try { p.Kill(); } catch { }
+                        return "ERROR: Command timed out after " + timeoutMs + "ms";
                     }
-                    finally { NativeMethods.CloseHandle(pi.hThread); NativeMethods.CloseHandle(pi.hProcess); }
+
+                    p.WaitForExit();
+                    lock (syncLock) { return sb.ToString().Trim(); }
                 }
-                finally
-                {
-                    if (dirH != IntPtr.Zero) NativeMethods.CloseHandle(dirH);
-                    if (dirUsed != IntPtr.Zero && dirUsed != dirH) NativeMethods.CloseHandle(dirUsed);
-                }
-                return "";
             }
-            catch (Exception ex) { return "ERROR: " + ex.Message; }
+            catch (Exception ex)
+            {
+                return "ERROR: " + ex.Message;
+            }
         }
 
         public string RunCommandCapture(string exe, string args, int timeoutMs = 30000, string workingDir = null) { return RunCommand(exe, args, timeoutMs, workingDir); }
