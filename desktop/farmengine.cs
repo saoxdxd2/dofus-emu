@@ -530,15 +530,15 @@ namespace DofusFarm.Engine
                 //  * LogcatPipe OFF: we keep stdout for the console/UI but skip the guest logcat pipe.
                 //  * IntelPerformanceMonitoringUnit only adds overhead when present.
                 const string content =
-                    "GrallocSync = on\r\nGLPipeChecksum = off\r\nLogcatPipe = off\r\nGLAsyncSwap = on\r\n" +
-                    "GLESDynamicVersion = on\r\nGLDMA = on\r\nGLDirectMem = on\r\nVulkan = auto\r\n" +
-                    "VirtioInput = on\r\nVirtioMouse = off\r\nVirtioTablet = off\r\nVirtioDualModeMouse = off\r\nDualModeMouseDisplayHostCursor = off\r\n" +
+                    "GrallocSync = off\r\nGLPipeChecksum = off\r\nLogcatPipe = off\r\nGLAsyncSwap = on\r\n" +
+                    "GLESDynamicVersion = on\r\nGLDMA = on\r\nGLDirectMem = on\r\nVulkan = off\r\n" +
+                    "VirtioInput = on\r\nVirtioMouse = off\r\nVirtioTablet = on\r\nVirtioDualModeMouse = off\r\nDualModeMouseDisplayHostCursor = off\r\n" +
                     "EncryptUserData = off\r\nIntelPerformanceMonitoringUnit = off\r\n" +
-                    "Wifi = on\r\nHostComposition = on\r\nRefCountPipe = on\r\nDynamicPartition = on\r\nHardwareDecoder = on\r\n";
+                    "Wifi = on\r\nHostComposition = on\r\nRefCountPipe = on\r\nDynamicPartition = on\r\nHardwareDecoder = on\r\n" +
+                    "WindowsHypervisorPlatform = on\r\nWindowsOnDemandSnapshotLoad = on\r\n";
 
-                string resolved = content.Replace("Vulkan = auto", "Vulkan = " + (IsHostVulkanAvailable() ? "on" : "off"));
-                File.WriteAllText(Path.Combine(dotAndroid, "advancedFeatures.ini"), resolved, Encoding.ASCII);
-                WriteAdvancedFeaturesToSdk(resolved);
+                File.WriteAllText(Path.Combine(dotAndroid, "advancedFeatures.ini"), content, Encoding.ASCII);
+                WriteAdvancedFeaturesToSdk(content);
             }
             catch { }
         }
@@ -1388,7 +1388,7 @@ namespace DofusFarm.Engine
                 catch { }
             }
 
-            try { File.WriteAllText(Path.Combine(avdDir, "quickbootChoice.ini"), "saveOnExit = false\r\n", Encoding.ASCII); } catch { }
+            try { File.WriteAllText(Path.Combine(avdDir, "quickbootChoice.ini"), "saveOnExit = true\r\n", Encoding.ASCII); } catch { }
 
             try
             {
@@ -1630,7 +1630,7 @@ namespace DofusFarm.Engine
 
             string emuArgs = (instProfile != null && string.Equals(instProfile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
                 ? BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
                     name, port, gpuMode, safeRam, safeCores, proxyArg);
 
             Log(string.Format("Starting {0} on port {1} ({2} MB RAM / {3} Core(s) / GPU: {4} / {5})...", name, port, safeRam, safeCores, gpuMode, instProfile.DisplayName));
@@ -1709,12 +1709,14 @@ namespace DofusFarm.Engine
 
             if (!shutdownAfterSnapshot && !needsSanitize && hadWarmSnapshot)
             {
-                string warmState = AdbShell(serial, "test -f /data/local/tmp/fake_cpuinfo && grep -q fake_cpuinfo /proc/mounts && getprop sys.boot_completed");
-                if (!string.IsNullOrEmpty(warmState) && warmState.Trim().EndsWith("1"))
+                string bootDone = AdbShell(serial, "getprop sys.boot_completed");
+                if (!string.IsNullOrEmpty(bootDone) && bootDone.Trim() == "1")
                 {
+                    ApplyNativeHardwareCoherence(serial, serialNo, name, mac);
                     AdbShell(serial, WakeAndStartCmd);
                     ThreadPool.QueueUserWorkItem(delegate { InjectDisguiseViaCdp(serial, port, name); });
                     try { File.WriteAllText(Path.Combine(avdDir, "cold_run_completed.flag"), DateTime.UtcNow.ToString("o"), Encoding.UTF8); } catch { }
+                    try { IntPtr hWnd = Win32.FindDeviceWindow(proc != null ? proc.Id : 0); if (hWnd != IntPtr.Zero) Win32.EnsureDeviceWindowInteractive(hWnd); } catch { }
                     Log(string.Format("⚡ Instant QuickBoot restored for {0} ({1}) in {2:F1}s! Dofus Touch active in foreground.", name, serial, sw.Elapsed.TotalSeconds));
                     return;
                 }
@@ -1820,7 +1822,7 @@ namespace DofusFarm.Engine
                 "    if pm disable-user --user 0 $pkg >/dev/null 2>&1; then DISABLED=$((DISABLED+1)); fi; " +
                 "  done; " +
                 "  EN=0; " +
-                "  for pkg in com.android.inputmethod.latin com.android.keychain com.android.documentsui com.android.webview com.android.webview.apkoverlay; do " +
+                "  for pkg in com.android.systemui com.android.inputmethod.latin com.android.keychain com.android.documentsui com.android.webview com.android.webview.apkoverlay; do " +
                 "    if pm enable --user 0 $pkg >/dev/null 2>&1; then EN=$((EN+1)); fi; " +
                 "  done; " +
                 "  echo $DEBLOAT_V > /data/local/tmp/.dofus_debloat_ver; " +
@@ -1860,6 +1862,7 @@ namespace DofusFarm.Engine
             if (shutdownAfterSnapshot) return;
 
             ThreadPool.QueueUserWorkItem(delegate { InjectDisguiseViaCdp(serial, port, name); });
+            try { IntPtr hWnd = Win32.FindDeviceWindow(proc != null ? proc.Id : 0); if (hWnd != IntPtr.Zero) Win32.EnsureDeviceWindowInteractive(hWnd); } catch { }
             Log(string.Format("{0} ({1}) is ready! Dofus Touch running in foreground (Boot: {2:F1}s).", name, serial, sw.Elapsed.TotalSeconds));
         }
 
@@ -2135,7 +2138,25 @@ namespace DofusFarm.Engine
             try { AdbShell(serial, "sync"); } catch { }
             try { Adb(serial, "emu kill"); } catch { }
 
-            KillProcessForInstanceFast(name, pNum);
+            int qemuPid = FindEmuPidForInstance(name, pNum);
+            if (qemuPid > 0)
+            {
+                try
+                {
+                    using (Process p = Process.GetProcessById(qemuPid))
+                    {
+                        if (!p.WaitForExit(6000))
+                        {
+                            KillProcessForInstanceFast(name, pNum);
+                        }
+                    }
+                }
+                catch { KillProcessForInstanceFast(name, pNum); }
+            }
+            else
+            {
+                KillProcessForInstanceFast(name, pNum);
+            }
             CleanLocks(Path.Combine(AvdHome, name + ".avd"));
         }
 
@@ -2374,14 +2395,14 @@ namespace DofusFarm.Engine
             string avdDir = Path.Combine(AvdHome, name + ".avd"), cfgFile = Path.Combine(avdDir, "config.ini");
             DeviceProfile profile = GetInstancePhoneModel(name);
             return (profile != null && string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
-                ? BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, avdDir, cfgFile)
-                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
+                ? BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, avdDir, cfgFile) + " -no-snapshot-load"
+                : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
                     name, port, gpuMode, ramMb, cores, proxyArg ?? "");
         }
 
         private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string avdDir, string cfgFile)
         {
-            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -m {3}",
+            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1",
                 name, port, GetConfiguredGpuMode(), ramMb, cores, proxyArg ?? "");
         }
 
@@ -2513,7 +2534,12 @@ namespace DofusFarm.Engine
             if (pid > 0)
             {
                 IntPtr hWnd = Win32.FindDeviceWindow(pid);
-                if (hWnd != IntPtr.Zero) { Win32.ShowWindow(hWnd, Win32.SW_RESTORE); Win32.SetForegroundWindow(hWnd); }
+                if (hWnd != IntPtr.Zero)
+                {
+                    Win32.ShowWindow(hWnd, Win32.SW_RESTORE);
+                    Win32.SetForegroundWindow(hWnd);
+                    Win32.EnsureDeviceWindowInteractive(hWnd);
+                }
             }
         }
     }

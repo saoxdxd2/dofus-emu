@@ -517,33 +517,18 @@
         }
     } catch (e) {}
 
-    // 12. Outbound HTTPS XHR & Fetch Payload/Header Sanitizer
+    // 12. Outbound HTTPS XHR & Fetch Header Sanitizer
     try {
-        var leakCheckRx = /10\.0\.2\.15|x86|goldfish|ranchu|sdk_gphone/i;
-        var scrubNetworkString = function(str) {
-            if (typeof str !== 'string' || str.length === 0 || !leakCheckRx.test(str)) return str;
-            return str.replace(/10\.0\.2\.15/g, _fakeLocalIp).replace(/x86_64/gi, 'arm64-v8a').replace(/sdk_gphone_x86_64|Android SDK built for x86_64|sdk_gphone_x86/gi, _deviceModel).replace(/goldfish|ranchu/gi, 'qcom');
-        };
         if (window.XMLHttpRequest && XMLHttpRequest.prototype) {
-            var origSetHeader = XMLHttpRequest.prototype.setRequestHeader, origXhrSend = XMLHttpRequest.prototype.send;
+            var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
             if (origSetHeader) {
                 var hdrMap = { 'user-agent': MOBILE_UA, 'sec-ch-ua-arch': '"arm"', 'sec-ch-ua-platform': '"Android"', 'sec-ch-ua-model': '"' + _deviceModel + '"' };
                 XMLHttpRequest.prototype.setRequestHeader = makeNative(function setRequestHeader(h, v) {
                     var hL = (h || '').toLowerCase();
                     if (Object.prototype.hasOwnProperty.call(hdrMap, hL)) v = hdrMap[hL];
-                    else if (typeof v === 'string') v = scrubNetworkString(v);
                     return origSetHeader.call(this, h, v);
                 }, 'setRequestHeader');
             }
-            if (origXhrSend) XMLHttpRequest.prototype.send = makeNative(function send(b) { return origXhrSend.call(this, typeof b === 'string' ? scrubNetworkString(b) : b); }, 'send');
-        }
-        if (typeof window.fetch === 'function') {
-            var origFetch = window.fetch;
-            window.fetch = makeNative(function fetch(input, init) {
-                if (typeof input === 'string') input = scrubNetworkString(input);
-                if (init && typeof init === 'object' && typeof init.body === 'string') init.body = scrubNetworkString(init.body);
-                return origFetch.call(this, input, init);
-            }, 'fetch');
         }
     } catch (e) {}
 
