@@ -490,7 +490,9 @@ namespace DofusFarm.UI
             if (specs.HostRamGB >= 20.0) index = 4;      // 2048 MB
             _cmbRam.SelectedIndex = Math.Min(index, RamChoices.Length - 1);
 
-            int coreIdx = logical >= 4 ? Array.IndexOf(CoreChoices, 2) : Array.IndexOf(CoreChoices, 1);
+            // Default to what each instance will actually get once the farm is up. On a 4-core host
+            // that is 1 Core, so 4 instances fit exactly on 4 physical cores - the target config.
+            int coreIdx = Array.IndexOf(CoreChoices, _engine.RecommendedCoresPerInstance(4));
             _cmbCores.SelectedIndex = coreIdx >= 0 ? coreIdx : 0;
         }
 
@@ -600,10 +602,16 @@ namespace DofusFarm.UI
                     List<InstanceModel> existingInsts = _engine.GetInstances();
                     if (existingInsts.Count == 0)
                     {
-                        for (int i = 1; i <= 4; i++)
+                        // Provision exactly as many instances as this host can actually run - 4 on the
+                        // 8 GB / 4-core target box - and give each one the even-split core count up
+                        // front. Provisioning more slots than the host can feed just multiplies the
+                        // stutter; the user can always add more by hand.
+                        int planned = _engine.RecommendedInstanceCount();
+                        int plannedCores = _engine.RecommendedCoresPerInstance(planned);
+                        for (int i = 1; i <= planned; i++)
                         {
                             if (_isClosing || !_isFarmLaunching) return;
-                            _engine.ProvisionInstance(string.Format("dofus-{0:D2}", i), defaultRam, defaultCores, null, "Instance #" + i, "");
+                            _engine.ProvisionInstance(string.Format("dofus-{0:D2}", i), defaultRam, plannedCores, null, "Instance #" + i, "");
                         }
                         existingInsts = _engine.GetInstances();
                     }

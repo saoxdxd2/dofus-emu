@@ -820,8 +820,10 @@ namespace DofusFarm.Engine
         //     - 4 cores, 8 GB - the old fixed 1024 MB x N oversubscribed physical memory and the
         //     guests spent their time swapping, which is what made them feel frozen.
         //   * Cores: taken from real physical cores, not logical threads. Android runs the renderer
-        //     and the UI thread concurrently, so 2 vCPUs is the floor for a responsive screen; the
-        //     old "1 Core" default made the guest stutter and ignore input.
+        //     and the UI thread concurrently, so 2 vCPUs is the best choice when the host has cores
+        //     to spare; on a 4-physical-core host the 4th instance cannot have 2 without every
+        //     instance time-slicing. In that case 1 vCPU per instance is correct - 4 guests on 4
+        //     physical cores, each guest getting a dedicated core.
         public int ActiveInstanceCount()
         {
             try
@@ -831,16 +833,99 @@ namespace DofusFarm.Engine
             catch { return 1; }
         }
 
+        // Guest vCPU count for the *next* instance that boots.
+        //
+        // The rule is: the guests' total vCPU count must never exceed the host's physical cores,
+        // because QEMU has no idea how many guests are running - each emulator runs as if it owned
+        // the machine. Give 4 guests 2 vCPUs each on a 4-core host and you get 8 busy guest threads
+        // on 4 real cores: every instance gets descheduled mid-frame and the screens stutter. Give
+        // them 1 vCPU each and each guest owns a physical core end to end.
+        //
+        // So the count is derived from physical cores AND from how many instances are running right
+        // now. The budget is split as evenly as the cores allow, because an even split is what keeps
+        // the *worst* instance smooth - the 4-instances-on-4-cores requirement only holds if all
+        // four get 1 vCPU. Handing 2 vCPUs to the first instances and starving the later ones is
+        // what makes instance #3 and #4 stutter.
         public int GetDynamicCores()
         {
-            int physical = GetHostPhysicalCores();
-            if (physical <= 2) return 1;
-            if (physical <= 4) return 2;
-            if (physical <= 8) return 2;
-            return 3;
+            int physical = Math.Max(1, GetHostPhysicalCores());
+            int running = Math.Max(1, ActiveInstanceCount());
+
+            // Even split of the real cores over the instances that will be alive at once.
+            int even = physical / running;
+
+            // Cap by what one instance can usefully consume on this host.
+            int perInstanceCap;
+            if (physical <= 2) perInstanceCap = 1;
+            else if (physical <= 4) perInstanceCap = 2;
+            else if (physical <= 8) perInstanceCap = 2;
+            else perInstanceCap = 3;
+
+            return Math.Max(1, Math.Min(perInstanceCap, even));
+        }
+
+        // How many cores this host gives each instance once the farm is fully up.
+        // Shown in the grid so a 4-instances-on-a-4-core box visibly reads "1 Core" for every slot.
+        public int RecommendedCoresPerInstance(int plannedInstances)
+        {
+            int physical = Math.Max(1, GetHostPhysicalCores());
+            int n = Math.Max(1, Math.Max(plannedInstances, ActiveInstanceCount()));
+            int perInstanceCap = physical <= 2 ? 1 : 2;
+            return Math.Max(1, Math.Min(perInstanceCap, physical / n));
         }
 
         private static int _hostPhysicalCores;
+
+        // Physical core count via GetLogicalProcessorInformationEx.
+        //
+        // The previous implementation issued a WMI query, which spawns a wmiprvse.exe host process
+        // and takes 100 ms - 3 s to answer. This runs at every farm start and it matters now that
+        // the vCPU count is computed from the number of running instances: the first instance asks
+        // for its cores while the other launches are still coming up. The native call resolves in
+        // well under a millisecond, with no child process and no WMI handle.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESSOR_RELATIONSHIP
+        {
+            public byte Flags;
+            public byte EfficiencyClass;
+            public byte Reserved0;
+            public byte Reserved1;
+            public byte Reserved2;
+            public byte Reserved3;
+            public byte Reserved4;
+            public byte Reserved5;
+            public byte Reserved6;
+            public byte Reserved7;
+            public byte Reserved8;
+            public byte Reserved9;
+            public byte Reserved10;
+            public byte Reserved11;
+            public byte Reserved12;
+            public byte Reserved13;
+            public byte Reserved14;
+            public byte Reserved15;
+            public byte Reserved16;
+            public byte Reserved17;
+            public byte Reserved18;
+            public byte Reserved19;
+            public byte Reserved20;
+            public ushort GroupCount;
+            public uint Reserved21;
+            public ulong GroupMask;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX
+        {
+            public int Relationship;    // RelationProcessorCore == 0
+            public int Size;
+            public PROCESSOR_RELATIONSHIP Processor;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetLogicalProcessorInformationEx(
+            int relationshipType, IntPtr buffer, ref int returnedLength);
 
         private static int GetHostPhysicalCores()
         {
@@ -848,19 +933,39 @@ namespace DofusFarm.Engine
             int logical = Environment.ProcessorCount;
             try
             {
-                var sb = new StringBuilder();
-                QueryWmi("SELECT NumberOfCores FROM Win32_Processor", 4,
-                    mo => sb.Append((mo["NumberOfCores"] ?? "0").ToString()).Append(' '));
-                int total = 0;
-                foreach (string part in sb.ToString().Split(' '))
-                {
-                    int v;
-                    if (int.TryParse(part, out v)) total += v;
-                }
-                _hostPhysicalCores = total > 0 ? total : logical;
+                _hostPhysicalCores = QueryPhysicalCoreCount();
+                if (_hostPhysicalCores <= 0) _hostPhysicalCores = logical;
             }
             catch { _hostPhysicalCores = logical; }
             return _hostPhysicalCores;
+        }
+
+        private static int QueryPhysicalCoreCount()
+        {
+            int len = 0;
+            GetLogicalProcessorInformationEx(0, IntPtr.Zero, ref len);
+            if (len <= 0) return 0;
+
+            IntPtr buf = Marshal.AllocHGlobal(len);
+            try
+            {
+                if (!GetLogicalProcessorInformationEx(0, buf, ref len)) return 0;
+
+                int structSize = Marshal.SizeOf(typeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX));
+                if (structSize <= 0) return 0;
+
+                int cores = 0, offset = 0;
+                while (offset + structSize <= len)
+                {
+                    var entry = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)
+                        Marshal.PtrToStructure(buf + offset, typeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX));
+                    if (entry.Size <= 0) break;                 // malformed record - stop rather than spin
+                    if (entry.Relationship == 0) cores++;       // RelationProcessorCore
+                    offset += entry.Size;
+                }
+                return cores;
+            }
+            finally { Marshal.FreeHGlobal(buf); }
         }
 
         // Keeps the guest's total memory under the host's real RAM instead of the nominal figure.
@@ -875,8 +980,32 @@ namespace DofusFarm.Engine
             long perInstance = budget / Math.Max(1, running);
 
             long target = Math.Min(requested, perInstance);
-            target = Math.Max(1024, Math.Min(4096, target));
+            target = Math.Min(4096, target);
+            // 640 MB floor, not 1024: the real 4-instances-on-8 GB target cannot afford 1 GB each.
+            // 8 GB host -> 55% budget = ~4.5 GB, so 4 instances get ~1152 MB apiece and 8+ instances
+            // still get 640 MB each instead of being refused. The value is a guideline, not a
+            // hardware signature, and each emulator is launched with the same figure as its siblings,
+            // so the RAM figure leaks nothing that could tie the instances together.
+            target = Math.Max(640, target);
             return (int)(target / 128 * 128);               // keep it a multiple of 128 MB
+        }
+
+        // How many Dofus Touch instances this host can actually feed at once, from the same two
+        // budgets the per-instance tuning already uses: one physical core per instance, and 768 MB
+        // of the 55% RAM budget per instance. The 8 GB / 4-core target box lands on 4. A host with
+        // 4 cores but only 4 GB of RAM lands on 3 rather than being over-provisioned and thrashing.
+        // This is deliberately computed from host hardware only - it never reads anything about the
+        // running instances, so it cannot correlate them and cannot weaken the spoofing.
+        public int RecommendedInstanceCount()
+        {
+            int byCores = Math.Max(1, GetHostPhysicalCores());
+
+            long hostMb = GetHostTotalRamMb();
+            if (hostMb <= 0) return byCores;
+            long ramBudget = (hostMb * 55) / 100;           // same budget as GetDynamicRamMb
+            int byRam = (int)Math.Max(1, ramBudget / 768);  // 768 MB per instance, with headroom
+
+            return Math.Max(1, Math.Min(byCores, byRam));
         }
 
         private static long _hostTotalRamMb;

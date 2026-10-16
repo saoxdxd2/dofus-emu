@@ -77,10 +77,17 @@ namespace DofusFarm.Engine
             }
         }
 
-        // totalCores / runningInstances, clamped to [2, 8]. Computed on every tick so the split
-        // follows instances as they start and stop (dynamic re-partitioning).
-        private int _liveCoresPerInstance = 2;
-
+        // How many logical CPUs each running instance gets: totalCores / runningInstances, clamped
+        // to [1, 4]. Recomputed on every tick, so instances that start or stop re-partition the host
+        // without a restart (a new slot takes its share instead of everyone keeping stale masks).
+        //
+        // One CPU per instance is allowed here on purpose. The guest's vCPU count (how many cores
+        // Android thinks it has) is a separate number set at launch - this only controls how the
+        // host schedules the emulator's threads. With 4 instances on 4 physical cores each instance
+        // owns its own physical core, which is the strongest split available: no two instances share
+        // a core, so nothing gets descheduled mid-frame. Asking for 2 logical CPUs per instance on
+        // that host would put 8 emulator threads on 8 logical CPUs that are really only 4 cores, so
+        // every instance would end up time-slicing and the screen would stutter.
         public int LiveCoresPerInstance(int requestedCores, int totalCores)
         {
             int running = 1;
@@ -92,7 +99,7 @@ namespace DofusFarm.Engine
             catch { }
 
             int share = Math.Max(1, totalCores) / Math.Max(1, running);
-            return Math.Max(2, Math.Min(8, Math.Min(share, Math.Max(2, requestedCores))));
+            return Math.Max(1, Math.Min(4, share));
         }
 
         public static long ComputeAffinityMask(int slot, int cores, int totalCores)
