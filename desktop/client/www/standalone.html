@@ -10,23 +10,80 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="transparent" />
     <meta name="msapplication-tap-highlight" content="no">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: wss: ws: gap: cdvfile: http: 'unsafe-eval' 'unsafe-inline';">
-    <link rel="stylesheet" href="build/styles-native.css">
+    <link rel="stylesheet" href="build/styles-native.css?v=3.14.2_mapfix7">
+    <style>
+        html, body {
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            background-color: #000 !important;
+        }
+    </style>
     <script type="text/javascript">
         (function() {
-            var params = new URLSearchParams(window.location.search);
-            var v = params.get('appVersion') || (window.appInfo && window.appInfo.version) || '3.14.2';
-            var b = params.get('buildVersion') || window.buildVersion || '1.74.8';
-            var c = params.get('versionCode') || (window.appInfo && window.appInfo.versionCode) || '3014002';
+            var rawSearch = (window.location.search || '').replace(/;/g, '&');
+            var params = new URLSearchParams(rawSearch);
+            var clean = function(val, fallback) {
+                if (!val) return fallback;
+                var s = val.split(/[;&]/)[0].trim();
+                return s || fallback;
+            };
+            var v = clean(params.get('appVersion'), (window.appInfo && window.appInfo.version) || '3.14.2');
+            var b = clean(params.get('buildVersion'), window.buildVersion || '1.74.8');
+            var c = clean(params.get('versionCode'), (window.appInfo && window.appInfo.versionCode) || '3014002');
             window.appInfo = { version: v, identifier: 'com.ankama.dofustouch', build: v, versionCode: c };
             window.buildVersion = b;
         })();
     </script>
-    <script type="text/javascript" src="js/mobile-disguise.js"></script>
+    <script type="text/javascript" src="js/mobile-disguise.js?v=3.14.2_mapfix7"></script>
     <script type="text/javascript" src="js/cordova-standalone-shim.js"></script>
     <script type="text/javascript" src="js/polyfill/fetch.js"></script>
     <script type="text/javascript" src="js/polyfill/promise.js"></script>
 </head>
 <body class="dofusBody">
-    <script type="text/javascript" src="build/script.js"></script>
+    <script type="text/javascript" src="build/script.js?v=3.14.2_mapfix7"></script>
+    <script type="text/javascript">
+        (function() {
+            function syncDimensions() {
+                try {
+                    if (window.gui && typeof window.gui._resizeUi === 'function') {
+                        window.gui._resizeUi();
+                    }
+                    if (window.isoEngine && window.isoEngine.mapScene && typeof window.isoEngine.mapScene.requireCompleteRefresh === 'function') {
+                        window.isoEngine.mapScene.requireCompleteRefresh();
+                    }
+                } catch(e) {
+                    console.warn('[Standalone] Viewport sync notice:', e.message);
+                }
+            }
+
+            window.addEventListener('resize', syncDimensions);
+            window.addEventListener('orientationchange', syncDimensions);
+
+            var attempts = 0;
+            var bootInterval = setInterval(function() {
+                attempts++;
+                if (window.gui && window.isoEngine) {
+                    clearInterval(bootInterval);
+                    syncDimensions();
+                } else if (attempts >= 50) {
+                    clearInterval(bootInterval);
+                }
+            }, 200);
+
+            window.addEventListener('error', function(evt) {
+                if (evt && evt.message) {
+                    console.error('[Browser Error]', evt.message, 'at', evt.filename + ':' + evt.lineno);
+                }
+            });
+            window.addEventListener('unhandledrejection', function(evt) {
+                if (evt && evt.reason) {
+                    console.error('[Unhandled Rejection]', evt.reason);
+                }
+            });
+        })();
+    </script>
 </body>
 </html>

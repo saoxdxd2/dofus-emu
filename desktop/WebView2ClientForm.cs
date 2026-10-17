@@ -381,7 +381,14 @@ namespace DofusFarm.Engine
                 Cursor = Cursors.Hand
             };
             _btnReload.FlatAppearance.BorderSize = 0;
-            _btnReload.Click += (s, e) => { if (IsReady && _webView != null && _webView.CoreWebView2 != null) _webView.Reload(); };
+            _btnReload.Click += async (s, e) =>
+            {
+                if (IsReady && _webView != null && _webView.CoreWebView2 != null)
+                {
+                    try { await _webView.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache | CoreWebView2BrowsingDataKinds.CacheStorage); } catch { }
+                    _webView.Reload();
+                }
+            };
             _toolbarPanel.Controls.Add(_btnReload);
 
             Controls.Add(_toolbarPanel);
@@ -430,7 +437,34 @@ namespace DofusFarm.Engine
                 }
                 else if (!string.IsNullOrEmpty(_options.Proxy) && !_options.Proxy.Contains("DIRECT"))
                 {
-                    args.AppendFormat("--proxy-server=\"{0}\" ", _options.Proxy);
+                    string rawProxy = _options.Proxy.Trim();
+                    if (rawProxy.StartsWith("[🌐]")) rawProxy = rawProxy.Substring(4).Trim();
+                    if (rawProxy.StartsWith("[⚡]") || rawProxy.Contains("Accelerator") || rawProxy.Contains("127.0.0.1:8880"))
+                    {
+                        bool isAccLive = false;
+                        try
+                        {
+                            using (var tcp = new System.Net.Sockets.TcpClient())
+                            {
+                                var ar = tcp.BeginConnect("127.0.0.1", 8880, null, null);
+                                if (ar.AsyncWaitHandle.WaitOne(100))
+                                {
+                                    tcp.EndConnect(ar);
+                                    isAccLive = true;
+                                }
+                            }
+                        }
+                        catch { }
+                        if (isAccLive) args.Append("--proxy-server=\"http://127.0.0.1:8880\" ");
+                    }
+                    else
+                    {
+                        var m = Regex.Match(rawProxy, @"(?:https?://)?([0-9a-zA-Z.-]+:[0-9]+)");
+                        if (m.Success)
+                        {
+                            args.AppendFormat("--proxy-server=\"http://{0}\" ", m.Groups[1].Value);
+                        }
+                    }
                 }
 
                 // Performance & GPU rendering flags
@@ -453,6 +487,18 @@ namespace DofusFarm.Engine
                 var env = await CoreWebView2Environment.CreateAsync(null, _userDataDir, envOptions);
                 await _webView.EnsureCoreWebView2Async(env);
                 _env = env;
+
+                // Enable native desktop mouse-to-touch emulation so drag/slide/drawers and map panning work seamlessly
+                try
+                {
+                    await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setTouchEmulationEnabled", "{\"enabled\":true,\"maxTouchPoints\":5}");
+                    await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setEmitTouchEventsForMouse", "{\"enabled\":true,\"configuration\":\"desktop\"}");
+                    _logCallback?.Invoke(string.Format("[{0}] Enabled native desktop touch emulation for mouse drag/swipe gestures.", _instanceId));
+                }
+                catch (Exception ex)
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] Touch emulation setup warning: {1}", _instanceId, ex.Message));
+                }
 
                 BrowserProcessId = (int)_webView.CoreWebView2.BrowserProcessId;
 
@@ -510,6 +556,11 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.ProcessFailed += OnProcessFailed;
                 _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
+
+                // Wire WebResourceRequested filters for Ankama CDN / API and tactical map mocks
+                _webView.CoreWebView2.AddWebResourceRequestedFilter("*ankama*", CoreWebView2WebResourceContext.All);
+                _webView.CoreWebView2.AddWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All);
+                _webView.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
 
                 IsReady = true;
                 _lblStatus.Text = string.Format("⚡ WebView2 Engine Active ({0})", _options.Profile != null ? _options.Profile.DisplayName : "Direct");
@@ -577,6 +628,35 @@ namespace DofusFarm.Engine
             }
         }
 
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            if (IsReady && _webView != null && _webView.CoreWebView2 != null)
+            {
+                try
+                {
+                    _webView.CoreWebView2.ExecuteScriptAsync(
+                        "if(window.gui&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}else{window.dispatchEvent(new Event('resize'));}if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}"
+                    );
+                    BeginInvoke(new Action(async () =>
+                    {
+                        await Task.Delay(150);
+                        if (IsReady && _webView != null && _webView.CoreWebView2 != null)
+                        {
+                            try
+                            {
+                                await _webView.CoreWebView2.ExecuteScriptAsync(
+                                    "if(window.gui&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}"
+                                );
+                            }
+                            catch { }
+                        }
+                    }));
+                }
+                catch { }
+            }
+        }
+
         private void OnNavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs e)
         {
             if (e.Uri.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase) ||
@@ -602,6 +682,13 @@ namespace DofusFarm.Engine
             if (e.IsSuccess)
             {
                 _logCallback?.Invoke(string.Format("[{0}] Navigation completed successfully (Status: {1})", _instanceId, e.HttpStatusCode));
+                try
+                {
+                    _webView.CoreWebView2.ExecuteScriptAsync(
+                        "setTimeout(function(){ if(window.gui&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}window.dispatchEvent(new Event('resize')); }, 1500);"
+                    );
+                }
+                catch { }
             }
             else
             {
@@ -640,14 +727,11 @@ namespace DofusFarm.Engine
 
                 if (json.Contains("\"type\":\"CONSOLE_LOG\""))
                 {
-                    Match mText = Regex.Match(json, "\"text\"\\s*:\\s*\"([^\"]+)\"");
+                    Match mText = Regex.Match(json, "\"text\"\\s*:\\s*\"((?:\\\\\"|[^\"])*)\"");
                     Match mLvl = Regex.Match(json, "\"level\"\\s*:\\s*\"([^\"]+)\"");
-                    if (mText.Success)
-                    {
-                        string text = Regex.Unescape(mText.Groups[1].Value);
-                        string lvl = mLvl.Success ? mLvl.Groups[1].Value.ToUpper() : "JS";
-                        _logCallback?.Invoke(string.Format("[{0}] [WEB-{1}] {2}", _instanceId, lvl, text));
-                    }
+                    string text = mText.Success ? Regex.Unescape(mText.Groups[1].Value) : json;
+                    string lvl = mLvl.Success ? mLvl.Groups[1].Value.ToUpper() : "JS";
+                    _logCallback?.Invoke(string.Format("[{0}] [WEB-{1}] {2}", _instanceId, lvl, text));
                 }
                 else if (json.Contains("\"type\":\"ping\""))
                 {
@@ -909,6 +993,83 @@ namespace DofusFarm.Engine
             OpenOAuthDialog(targetUrl);
         }
 
+        private void OnWebResourceRequested(object sender, CoreWebView2WebResourceRequestedEventArgs e)
+        {
+            try
+            {
+                string uri = e.Request.Uri;
+
+                // 1. Intercept tactical theme 4624.json fallback to avoid 403 stall
+                if (uri.IndexOf("4624.json", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    byte[] mockBytes = Encoding.UTF8.GetBytes(
+                        "{\"id\":4624,\"cells\":[],\"midgroundLayer\":{},\"atlasLayout\":{\"useUiPath\":true,\"width\":1024,\"height\":1024,\"graphicsPositions\":{}}}"
+                    );
+                    var ms = new MemoryStream(mockBytes);
+                    e.Response = _env.CreateWebResourceResponse(
+                        ms, 200, "OK",
+                        "Content-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\n"
+                    );
+                    return;
+                }
+
+                // 2. Outbound User-Agent enforcement for Ankama API / CDN endpoints
+                if (uri.IndexOf("ankama", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    string ua = (_options.Profile != null && !string.IsNullOrEmpty(_options.Profile.UserAgent))
+                        ? _options.Profile.UserAgent
+                        : "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
+                    ua = Regex.Replace(ua, @";\s*wv\b", "", RegexOptions.IgnoreCase);
+                    ua = Regex.Replace(ua, @"Version/[0-9.]+\s*", "", RegexOptions.IgnoreCase).Trim();
+                    e.Request.Headers.SetHeader("User-Agent", ua);
+                }
+
+                // 3. Intercept static.ankama.com image assets to bypass missing CORS headers
+                if (uri.IndexOf("static.ankama.com", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    uri.IndexOf("s.ankama.com", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    var deferral = e.GetDeferral();
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            var req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(uri);
+                            req.Method = "GET";
+                            req.UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
+                            req.Timeout = 8000;
+                            using (var resp = (System.Net.HttpWebResponse)req.GetResponse())
+                            {
+                                var mem = new MemoryStream();
+                                using (var s = resp.GetResponseStream())
+                                {
+                                    s.CopyTo(mem);
+                                }
+                                mem.Position = 0;
+                                string ct = resp.ContentType ?? "image/png";
+                                string headers = string.Format(
+                                    "Content-Type: {0}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\n",
+                                    ct);
+                                e.Response = _env.CreateWebResourceResponse(mem, (int)resp.StatusCode, resp.StatusDescription, headers);
+                            }
+                        }
+                        catch
+                        {
+                            // Fall back to natural browser request
+                        }
+                        finally
+                        {
+                            deferral.Complete();
+                        }
+                    });
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] WebResourceRequested error: {1}", _instanceId, ex.Message));
+            }
+        }
+
         public void HandleDeepLinkUri(string uri)
         {
             if (string.IsNullOrEmpty(uri)) return;
@@ -1051,6 +1212,9 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.ProcessFailed -= OnProcessFailed;
                 _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
+                _webView.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("*ankama*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All); } catch { }
             }
 
             base.OnFormClosing(e);

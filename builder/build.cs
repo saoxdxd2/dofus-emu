@@ -60,6 +60,8 @@ namespace DofusBuild
             string outUninstall = Path.Combine(RepoRoot, "uninstall.exe");
             string outSetup = Path.Combine(RepoRoot, "setup.exe");
 
+            PreBuildClean(RepoRoot);
+
             // 0. Compile Go Network Proxy if go.exe is available
             TryBuildGoProxy();
 
@@ -238,16 +240,32 @@ namespace DofusBuild
                         File.Copy(af, Path.Combine(stageAssets, Path.GetFileName(af)), true);
                 }
 
-                // Stage native loader runtimes
+                // Stage native loader runtimes & clean python embed
                 string repoRuntimes = Path.Combine(RepoRoot, "runtimes");
                 if (Directory.Exists(repoRuntimes))
                 {
                     string stageRuntimes = Path.Combine(stageDir, "runtimes");
                     Directory.CreateDirectory(stageRuntimes);
                     foreach (string dir in Directory.GetDirectories(repoRuntimes, "*", SearchOption.AllDirectories))
+                    {
+                        if (dir.IndexOf("site-packages", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            dir.IndexOf("__pycache__", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            dir.IndexOf(".dist-info", StringComparison.OrdinalIgnoreCase) >= 0)
+                            continue;
                         Directory.CreateDirectory(dir.Replace(repoRuntimes, stageRuntimes));
+                    }
                     foreach (string file in Directory.GetFiles(repoRuntimes, "*", SearchOption.AllDirectories))
-                        File.Copy(file, file.Replace(repoRuntimes, stageRuntimes), true);
+                    {
+                        if (file.IndexOf("site-packages", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            file.IndexOf("__pycache__", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            file.IndexOf(".dist-info", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            file.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        string destFile = file.Replace(repoRuntimes, stageRuntimes);
+                        string parent = Path.GetDirectoryName(destFile);
+                        if (!Directory.Exists(parent)) Directory.CreateDirectory(parent);
+                        File.Copy(file, destFile, true);
+                    }
                 }
 
                 // Stage standalone Dofus Touch client bundle
@@ -270,12 +288,19 @@ namespace DofusBuild
                     Directory.CreateDirectory(stageNetwork);
                     foreach (string dir in Directory.GetDirectories(repoNetwork, "*", SearchOption.AllDirectories))
                     {
-                        if (dir.Contains("__pycache__") || dir.Contains(".git") || dir.Contains(".pytest_cache")) continue;
+                        if (dir.IndexOf("__pycache__", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            dir.IndexOf(".git", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            dir.IndexOf(".pytest_cache", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            dir.IndexOf("networkhealth_artifacts", StringComparison.OrdinalIgnoreCase) >= 0)
+                            continue;
                         Directory.CreateDirectory(dir.Replace(repoNetwork, stageNetwork));
                     }
                     foreach (string file in Directory.GetFiles(repoNetwork, "*", SearchOption.AllDirectories))
                     {
-                        if (file.EndsWith(".pyc") || file.Contains("__pycache__")) continue;
+                        if (file.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase) ||
+                            file.IndexOf("__pycache__", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            file.IndexOf("networkhealth_artifacts", StringComparison.OrdinalIgnoreCase) >= 0)
+                            continue;
                         string destFile = file.Replace(repoNetwork, stageNetwork);
                         string parent = Path.GetDirectoryName(destFile);
                         if (!Directory.Exists(parent)) Directory.CreateDirectory(parent);
@@ -582,6 +607,43 @@ namespace DofusBuild
                 }
                 return p.ExitCode;
             }
+        }
+
+        static void PreBuildClean(string repoRoot)
+        {
+            // 1. Terminate any running instances so Roslyn compiler can write to binaries without locks
+            foreach (string name in new[] { "DofusFarm", "dofus-net-proxy", "setup", "uninstall" })
+            {
+                try
+                {
+                    foreach (Process p in Process.GetProcessesByName(name))
+                    {
+                        using (p)
+                        {
+                            try { p.Kill(); p.WaitForExit(3000); } catch { }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // 2. Clean up any stale hidden Roslyn compiler temporary files (*_DofusFarm.exe, etc.)
+            try
+            {
+                foreach (string file in Directory.GetFiles(repoRoot, "*_DofusFarm.exe"))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); File.Delete(file); } catch { }
+                }
+                foreach (string file in Directory.GetFiles(repoRoot, "*_setup.exe"))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); File.Delete(file); } catch { }
+                }
+                foreach (string file in Directory.GetFiles(repoRoot, "*_uninstall.exe"))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); File.Delete(file); } catch { }
+                }
+            }
+            catch { }
         }
     }
 }
