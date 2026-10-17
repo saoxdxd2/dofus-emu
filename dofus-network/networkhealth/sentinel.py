@@ -44,10 +44,10 @@ SUGGESTED_REPLIES = [
 ]
 
 
-class SingletonLayaAgent:
-    """Manages a single shared instance of the Laya decision model."""
+class SingletonDecisionAgent:
+    """Manages a single shared instance of the THX-01 calibrated decision model."""
 
-    _instance: SingletonLayaAgent | None = None
+    _instance: SingletonDecisionAgent | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -57,7 +57,7 @@ class SingletonLayaAgent:
         self._init_decision_agent()
 
     @classmethod
-    def get_instance(cls) -> SingletonLayaAgent:
+    def get_instance(cls) -> SingletonDecisionAgent:
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls()
@@ -69,31 +69,18 @@ class SingletonLayaAgent:
         self._load_attempted = True
 
         def _loader() -> None:
-            # 1. Try THX-01 first (ultra-fast 10ms calibrated decision agent)
             try:
                 import thx01
-                logger.info("Background loading shared Singleton THX-01 Model (doofz/THX-01)...")
-                agent = thx01.load("doofz/THX-01", device="cpu")
+                custom_model = Path(__file__).resolve().parent.parent / "models" / "dofus-thx01"
+                target_model = str(custom_model) if custom_model.exists() else "doofz/THX-01"
+                logger.info(f"Background loading shared Singleton THX-01 Model ({target_model})...")
+                agent = thx01.load(target_model, device="cpu")
                 with self._lock:
                     self.agent = agent
-                    self.model_name = "doofz/THX-01"
-                logger.info("Singleton THX-01 model ready in RAM.")
-                return
+                    self.model_name = target_model
+                logger.info(f"Singleton THX-01 model ({target_model}) ready in RAM.")
             except Exception as ex:
-                logger.debug(f"THX-01 load notice: {ex}")
-
-            # 2. Try Laya
-            try:
-                import laya
-                logger.info("Background loading shared Singleton Laya Decision Model...")
-                agent = laya.load("convaiinnovations/laya", device="cpu", fast=True)
-                with self._lock:
-                    self.agent = agent
-                    self.model_name = "convaiinnovations/laya"
-                logger.info("Singleton Laya model ready in RAM.")
-                return
-            except Exception as ex:
-                logger.warning(f"AI background weight loading deferred or offline: {ex}. Calibrated heuristics active.")
+                logger.warning(f"THX-01 background loading deferred or offline: {ex}. Calibrated heuristics active.")
 
         threading.Thread(target=_loader, daemon=True, name="DecisionAgentLoader").start()
 
@@ -182,6 +169,9 @@ class SingletonLayaAgent:
             "reason": "Standard player interaction or whisper",
             "suggested_replies": [],
         }
+
+
+SingletonLayaAgent = SingletonDecisionAgent
 
 
 class SingletonVisionInspector:

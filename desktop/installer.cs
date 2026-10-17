@@ -742,7 +742,7 @@ namespace DofusStandaloneSetup
                         catch { }
                     }
 
-                    Report(88, "Configuring Python AI dependencies (torch, transformers, laya)...");
+                    Report(88, "Configuring Python AI dependencies (torch, transformers, thx01)...");
                     ProcessStartInfo psi = new ProcessStartInfo
                     {
                         FileName = pyExe,

@@ -843,29 +843,68 @@
     try {
         var _activeDirectives = {};
 
-        var triggerNaturalClick = function(targetEl, offsetX, offsetY) {
+        var triggerNaturalClick = function(targetEl, offsetX, offsetY, onComplete) {
             if (!targetEl) return;
             var rect = targetEl.getBoundingClientRect();
             var cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
             var cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
 
-            // Apply Section 18 Spatial Gaussian Jitter
+            // Apply Section 18 Spatial Gaussian Jitter (+- 2..4 px)
             var jitterX = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
             var jitterY = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
 
             // Natural human dwell time: 65 - 125 ms
             var dwellMs = 65 + (Math.random() * 60 | 0);
 
-            var downEvt = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY });
+            var downEvt = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
             targetEl.dispatchEvent(downEvt);
 
             setTimeout(function() {
-                var upEvt = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY });
-                var clickEvt = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY });
+                var upEvt = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
+                var clickEvt = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
                 targetEl.dispatchEvent(upEvt);
                 targetEl.dispatchEvent(clickEvt);
+                if (typeof onComplete === 'function') onComplete();
             }, dwellMs);
         };
+
+        var triggerNaturalDoubleClick = function(targetEl, offsetX, offsetY, onComplete) {
+            if (!targetEl) return;
+            var rect = targetEl.getBoundingClientRect();
+            var cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
+            var cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
+
+            // 1st Click Spatial Jitter
+            var j1x = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
+            var j1y = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
+            var dwell1 = 60 + (Math.random() * 55 | 0);
+
+            targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: j1x, clientY: j1y, detail: 1 }));
+            setTimeout(function() {
+                targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: j1x, clientY: j1y, detail: 1 }));
+                targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: j1x, clientY: j1y, detail: 1 }));
+
+                // Human inter-click delay (95 - 175 ms)
+                var interClickDelay = 95 + (Math.random() * 80 | 0);
+                setTimeout(function() {
+                    // 2nd Click Finger Micro-Shift (+- 1 px drift)
+                    var j2x = j1x + (Math.random() * 2 - 1);
+                    var j2y = j1y + (Math.random() * 2 - 1);
+                    var dwell2 = 60 + (Math.random() * 55 | 0);
+
+                    targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
+                    setTimeout(function() {
+                        targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
+                        targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
+                        targetEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
+                        if (typeof onComplete === 'function') onComplete();
+                    }, dwell2);
+                }, interClickDelay);
+            }, dwell1);
+        };
+
+        window.__triggerNaturalClick = triggerNaturalClick;
+        window.__triggerNaturalDoubleClick = triggerNaturalDoubleClick;
 
         window.__executeCommanderDirective = function(directive) {
             try {
@@ -887,6 +926,12 @@
                             triggerNaturalClick(joinBtn);
                         }, 600 + (Math.random() * 800 | 0));
                     }
+                } else if (action === 'CLICK' && directive.selector) {
+                    var targetEl = document.querySelector(directive.selector);
+                    if (targetEl) triggerNaturalClick(targetEl, directive.x, directive.y);
+                } else if (action === 'DBLCLICK' && directive.selector) {
+                    var targetDbl = document.querySelector(directive.selector);
+                    if (targetDbl) triggerNaturalDoubleClick(targetDbl, directive.x, directive.y);
                 } else if (action === 'FOLLOW') {
                     _activeDirectives['follow'] = true;
                 } else if (action === 'STOP') {

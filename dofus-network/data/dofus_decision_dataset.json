@@ -1,0 +1,567 @@
+[
+  {
+    "lang": "fr",
+    "category": "moderation_threat",
+    "text": "[Mod]Ankama: Bonjour, répondez dans les 60 secondes svp.",
+    "is_threat": "yes",
+    "threat_level": "CRITICAL_MODERATOR",
+    "urgency": "CRITICAL",
+    "action": "NONE",
+    "suggested_replies": ["Bonjour, oui je suis là !", "Bonjour ?", "Oui bonsoir"]
+  },
+  {
+    "lang": "fr",
+    "category": "moderation_threat",
+    "text": "[Admin]Otomai: Êtes-vous actif devant votre écran ?",
+    "is_threat": "yes",
+    "threat_level": "CRITICAL_MODERATOR",
+    "urgency": "CRITICAL",
+    "action": "NONE",
+    "suggested_replies": ["Oui je suis actif !", "Oui présent", "Oui bonjour"]
+  },
+  {
+    "lang": "fr",
+    "category": "bot_check",
+    "text": "t'es un bot ou quoi ?",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["Non mdr pourquoi ?", "Non je farm juste", "Pas du tout"]
+  },
+  {
+    "lang": "fr",
+    "category": "bot_check",
+    "text": "es tu la ? reponds vite stp",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["Oui salut 2sec j'farm", "Oui dis moi ?", "Oui là"]
+  },
+  {
+    "lang": "fr",
+    "category": "bot_check",
+    "text": "signalé pour botting enjoy ton ban mec",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["N'importe quoi je suis sur mobile", "Vas-y signale mdr", "??"]
+  },
+  {
+    "lang": "fr",
+    "category": "bot_check",
+    "text": "recopie le code 4821 dans le chat pour vérifier",
+    "is_threat": "yes",
+    "threat_level": "CRITICAL_MODERATOR",
+    "urgency": "CRITICAL",
+    "action": "NONE",
+    "suggested_replies": ["4821", "Pourquoi 4821 ?", "Oui 4821"]
+  },
+  {
+    "lang": "es",
+    "category": "moderation_threat",
+    "text": "[Mod]HispaniA: Buenas tardes, responde en 60 segundos por favor.",
+    "is_threat": "yes",
+    "threat_level": "CRITICAL_MODERATOR",
+    "urgency": "CRITICAL",
+    "action": "NONE",
+    "suggested_replies": ["Hola, sí aquí estoy !", "¿Hola qué tal?", "Buenas tardes"]
+  },
+  {
+    "lang": "es",
+    "category": "moderation_threat",
+    "text": "[Admin]Tinieblas: ¿Estas activo frente a la pantalla?",
+    "is_threat": "yes",
+    "threat_level": "CRITICAL_MODERATOR",
+    "urgency": "CRITICAL",
+    "action": "NONE",
+    "suggested_replies": ["Sí estoy aquí", "Hola, sí claro", "Presente"]
+  },
+  {
+    "lang": "es",
+    "category": "bot_check",
+    "text": "eres un bot o que ?",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["No jaja por qué ?", "No, solo estoy farmeando", "Que va, soy humano"]
+  },
+  {
+    "lang": "es",
+    "category": "bot_check",
+    "text": "estas ahi ? responde rapido",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["Si dime ?", "Aqui estoy farmeando", "Que paso ?"]
+  },
+  {
+    "lang": "es",
+    "category": "bot_check",
+    "text": "reportado por bot suerte con el baneo",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["Reporta lo que quieras juego en tablet", "Jaja qué dices", "??"]
+  },
+  {
+    "lang": "en",
+    "category": "moderation_threat",
+    "text": "[Mod]Echo: Hello, please respond within 60 seconds.",
+    "is_threat": "yes",
+    "threat_level": "CRITICAL_MODERATOR",
+    "urgency": "CRITICAL",
+    "action": "NONE",
+    "suggested_replies": ["Hello, yes I am here!", "Hi, what's up?", "Hello!"]
+  },
+  {
+    "lang": "en",
+    "category": "moderation_threat",
+    "text": "[Admin]Grandapan: Are you currently at your screen?",
+    "is_threat": "yes",
+    "threat_level": "CRITICAL_MODERATOR",
+    "urgency": "CRITICAL",
+    "action": "NONE",
+    "suggested_replies": ["Yes I am active here", "Yes present", "Hello!"]
+  },
+  {
+    "lang": "en",
+    "category": "bot_check",
+    "text": "are you a bot or real player?",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["Real player farming here", "Not a bot lol", "Just farming"]
+  },
+  {
+    "lang": "en",
+    "category": "bot_check",
+    "text": "u there? answer fast please",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["Yes here!", "1sec in combat", "What's up?"]
+  },
+  {
+    "lang": "en",
+    "category": "bot_check",
+    "text": "reported for botting enjoy your ban mate",
+    "is_threat": "yes",
+    "threat_level": "SUSPECTED_BOT_CHECK",
+    "urgency": "HIGH",
+    "action": "NONE",
+    "suggested_replies": ["Whatever playing on iPad", "Lmao report what you want", "??"]
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "suis moi stp",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "FOLLOW"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "suis le chef de groupe",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "FOLLOW"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "rejoins le combat vite",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "AUTO_JOIN_COMBAT"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "clique sur l'épée et rejoins le combat",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "AUTO_JOIN_COMBAT"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "passe ton tour rapidement",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "PASS_TURN"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "fin de tour svp",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "PASS_TURN"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "arrête tout le farm",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "STOP"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "pause bot et stop",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "STOP"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "va faucher le blé sur la map",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "mine le fer dans la grotte",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "fr",
+    "category": "commander_directive",
+    "text": "farm les pious d'astrub",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "sigueme por favor",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "FOLLOW"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "sigue al lider de grupo",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "FOLLOW"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "unete al combate rapido",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "AUTO_JOIN_COMBAT"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "dale a la espada de pelea",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "AUTO_JOIN_COMBAT"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "pasa tu turno",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "PASS_TURN"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "pasar turno por favor",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "PASS_TURN"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "detener todas las acciones",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "STOP"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "para el bot ahora",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "STOP"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "segar trigo en este mapa",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "minar hierro en la mina",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "es",
+    "category": "commander_directive",
+    "text": "farmear jalatos en tainela",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "follow me please",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "FOLLOW"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "follow slot 1 leader",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "FOLLOW"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "join the fight right now",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "AUTO_JOIN_COMBAT"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "click the sword to join battle",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "AUTO_JOIN_COMBAT"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "pass turn quickly",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "PASS_TURN"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "skip your combat turn",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "MEDIUM",
+    "action": "PASS_TURN"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "stop all farming operations",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "STOP"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "pause bot execution",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "STOP"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "can you farm this mobs ?",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "harvest wheat on current map",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "en",
+    "category": "commander_directive",
+    "text": "mine iron ore in cave",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "AUTO_FARM"
+  },
+  {
+    "lang": "fr",
+    "category": "clean_chat",
+    "text": "Salut tu me vends 500 bois de chêne stp ?",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "fr",
+    "category": "clean_chat",
+    "text": "Combien pour le gélano PA ?",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "fr",
+    "category": "clean_chat",
+    "text": "Recrute pour donjon bouftou lvl 30+",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "fr",
+    "category": "clean_chat",
+    "text": "gg pour ton up niveau 100 !",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "es",
+    "category": "clean_chat",
+    "text": "Hola me vendes 500 madera de roble porfa ?",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "es",
+    "category": "clean_chat",
+    "text": "Cuanto por el gelanillo PA ?",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "es",
+    "category": "clean_chat",
+    "text": "Recluto para mazmorra jalato nivel 30+",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "es",
+    "category": "clean_chat",
+    "text": "Felicidades por subir de nivel !",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "en",
+    "category": "clean_chat",
+    "text": "Hello are you selling 500 oak wood ?",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "en",
+    "category": "clean_chat",
+    "text": "How much for the AP Gelano ?",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "en",
+    "category": "clean_chat",
+    "text": "LFG Gobball dungeon lvl 30+ need 2 players",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  },
+  {
+    "lang": "en",
+    "category": "clean_chat",
+    "text": "Gratz on level 100 mate !",
+    "is_threat": "no",
+    "threat_level": "NORMAL_CHAT",
+    "urgency": "LOW",
+    "action": "NONE"
+  }
+]

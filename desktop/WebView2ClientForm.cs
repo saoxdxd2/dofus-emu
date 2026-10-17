@@ -617,7 +617,7 @@ namespace DofusFarm.Engine
                     Task.Run(() => DispatchDiscordAlert(webhookUrl, _instanceId, _displayName, sender, text, isMod));
                 }
 
-                // Query central AI Sentinel (singleton Laya) for threat triage
+                // Query central AI Sentinel (singleton THX-01) for threat triage
                 Task.Run(() => QueryCentralSentinel(sender, text, isMod));
             }
             catch { }
@@ -639,7 +639,7 @@ namespace DofusFarm.Engine
                     {
                         Match mUrgency = Regex.Match(response, "\"urgency\"\\s*:\\s*\"([^\"]+)\"");
                         string urgency = mUrgency.Success ? mUrgency.Groups[1].Value : "HIGH";
-                        _logCallback?.Invoke(string.Format("🧠 [{0}] Central Laya Sentinel flagged threat ({1}): \"{2}\"", _instanceId, urgency, text));
+                        _logCallback?.Invoke(string.Format("🧠 [{0}] Central THX-01 Sentinel flagged threat ({1}): \"{2}\"", _instanceId, urgency, text));
                     }
                 }
             }

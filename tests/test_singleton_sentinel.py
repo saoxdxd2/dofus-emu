@@ -22,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "dofus-network"))
 
 from networkhealth.sentinel import (
-    SingletonLayaAgent,
+    SingletonDecisionAgent,
     SingletonVisionInspector,
     ThreadedHTTPServer,
     SentinelHTTPHandler,
@@ -34,15 +34,15 @@ def test_singleton_in_memory() -> None:
     print("STEP 1: Verifying Single Shared Model Instance in Memory (Zero RAM Duplication)")
     print("=" * 70)
 
-    laya1 = SingletonLayaAgent.get_instance()
-    laya2 = SingletonLayaAgent.get_instance()
-    assert laya1 is laya2, "FATAL: Singleton Laya created duplicate instances in RAM!"
+    agent1 = SingletonDecisionAgent.get_instance()
+    agent2 = SingletonDecisionAgent.get_instance()
+    assert agent1 is agent2, "FATAL: Singleton Decision Agent created duplicate instances in RAM!"
 
     vis1 = SingletonVisionInspector.get_instance()
     vis2 = SingletonVisionInspector.get_instance()
     assert vis1 is vis2, "FATAL: Singleton Vision created duplicate instances in RAM!"
 
-    print("  [PASS] Singleton guarantee verified: Exactly 1 Laya & 1 Vision instance in RAM.")
+    print("  [PASS] Singleton guarantee verified: Exactly 1 THX-01 Decision & 1 Vision instance in RAM.")
 
 
 def test_sentinel_http_service() -> None:
