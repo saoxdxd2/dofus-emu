@@ -71,3 +71,4 @@ alias.json
 # Embedded Python dynamic site-packages & pip artifacts
 runtimes/python/Lib/
 runtimes/python/Scripts/
+runtimes/python/share/

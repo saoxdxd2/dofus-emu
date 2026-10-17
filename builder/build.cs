@@ -284,7 +284,7 @@ namespace DofusBuild
 
                 // Write requirements.txt and helper scripts
                 string reqPath = Path.Combine(stageDir, "requirements.txt");
-                File.WriteAllText(reqPath, "torch>=2.0.0\r\ntransformers>=4.48.0\r\nlaya>=0.4.0\r\nsafetensors>=0.4.0\r\n");
+                File.WriteAllText(reqPath, "torch>=2.0.0\r\ntransformers>=4.48.0\r\nthx01>=1.0.0\r\nlaya>=0.4.0\r\nsafetensors>=0.4.0\r\n");
 
                 string sentinelBat = Path.Combine(stageDir, "start-sentinel.bat");
                 File.WriteAllText(sentinelBat, "@echo off\r\ncd /d \"%~dp0\"\r\ntitle Dofus Farm AI Sentinel Daemon\r\nset \"PY_EXE=\"\r\nif exist runtimes\\python\\python.exe set \"PY_EXE=runtimes\\python\\python.exe\"\r\nif not defined PY_EXE if exist python\\python.exe set \"PY_EXE=python\\python.exe\"\r\nif not defined PY_EXE set \"PY_EXE=python\"\r\necho Starting Singleton AI Sentinel on http://127.0.0.1:8890 using %PY_EXE%...\r\n\"%PY_EXE%\" dofus-network\\networkhealth\\sentinel.py\r\npause\r\n");
