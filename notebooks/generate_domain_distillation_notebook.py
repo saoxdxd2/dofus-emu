@@ -387,7 +387,7 @@ notebook = {
     "            loss_stance = crit_ce_stance(out[\"policy_logits\"], l_st)\n",
     "            combat_mask = (l_st != -100).float().unsqueeze(-1)\n",
     "            loss_val = (F.mse_loss(out[\"value_pred\"], v_tgt, reduction=\"none\") * combat_mask).sum() / combat_mask.sum()\n",
-    "            loss = loss + 0.5 * loss_stance + 0.05 * loss_val\n",
+    "            loss = loss + 1.0 * loss_stance + 0.05 * loss_val\n",
     "            st_mask = (l_st != -100)\n",
     "            st_preds = torch.argmax(out[\"policy_logits\"][st_mask], dim=-1)\n",
     "            correct_st += (st_preds == l_st[st_mask]).sum().item()\n",
