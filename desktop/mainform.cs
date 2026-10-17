@@ -11,6 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using DofusFarm.Engine;
 using DofusFarm.Hardware;
@@ -63,6 +64,7 @@ namespace DofusFarm.UI
         private Label _titleLabel;
         private Label _specsLabel;
         private Label _lblActiveBadge;
+        private Label _lblVersionBadge;
 
         private Panel _toolbarPanel;
         private Button _btnLaunchFarm;
@@ -260,7 +262,9 @@ namespace DofusFarm.UI
             _titleLabel = new Label { Text = "DOFUS TOUCH FARM MANAGER", Font = new Font("Segoe UI", 13f, FontStyle.Bold), ForeColor = Color.White, AutoSize = true, Location = new Point(18, 10) };
             _specsLabel = new Label { Text = "Checking PC hardware configuration...", Font = new Font("Segoe UI", 9f), ForeColor = ColMuted, AutoSize = true, Location = new Point(19, 38) };
             _lblActiveBadge = new Label { Text = "● 0 / 4 Running", Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), ForeColor = ColMuted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right, Location = new Point(_headerPanel.Width - 175, 22) };
-            _headerPanel.Controls.AddRange(new Control[] { _titleLabel, _specsLabel, _lblActiveBadge });
+            _lblVersionBadge = new Label { Text = "⚡ Version: resolving...", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), ForeColor = ColBlueText, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right, Location = new Point(_headerPanel.Width - 365, 23), Cursor = Cursors.Hand };
+            _lblVersionBadge.Click += delegate { RefreshDofusVersion(true); };
+            _headerPanel.Controls.AddRange(new Control[] { _titleLabel, _specsLabel, _lblVersionBadge, _lblActiveBadge });
 
             _toolbarPanel = new Panel { Dock = DockStyle.Top, Height = 88, BackColor = Color.FromArgb(21, 22, 29), Padding = new Padding(18, 6, 18, 6) };
             const int btnY = 8, btnH = 32;
@@ -436,6 +440,44 @@ namespace DofusFarm.UI
             _syncTimer = new System.Windows.Forms.Timer { Interval = 4000 };
             _syncTimer.Tick += OnSyncTimerTick;
             _syncTimer.Start();
+
+            RefreshDofusVersion(false);
+        }
+
+        private void RefreshDofusVersion(bool forceRefresh)
+        {
+            if (_lblVersionBadge != null)
+            {
+                _lblVersionBadge.Text = "⚡ Checking version...";
+                _lblVersionBadge.ForeColor = ColAmberText;
+            }
+
+            DynamicVersionResolver.ResolveVersionAsync(null, forceRefresh, delegate(string msg) { Log(msg); }).ContinueWith(delegate(Task<DofusVersionInfo> t)
+            {
+                if (t.IsCompleted && !t.IsFaulted && t.Result != null)
+                {
+                    SafeBeginInvoke(delegate
+                    {
+                        var v = t.Result;
+                        if (_lblVersionBadge != null && !IsDisposed)
+                        {
+                            _lblVersionBadge.Text = string.Format("⚡ v{0} ({1})", v.AppVersion, v.Source == "GooglePlayStore" ? "Live" : "Cached");
+                            _lblVersionBadge.ForeColor = ColGreen;
+                        }
+                    });
+                }
+                else
+                {
+                    SafeBeginInvoke(delegate
+                    {
+                        if (_lblVersionBadge != null && !IsDisposed)
+                        {
+                            _lblVersionBadge.Text = "⚡ v3.14.2 (Default)";
+                            _lblVersionBadge.ForeColor = ColRedText;
+                        }
+                    });
+                }
+            });
         }
 
         private string GetInstanceIdFromSlot(int slotIndex)

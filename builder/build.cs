@@ -67,10 +67,11 @@ namespace DofusBuild
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n[1/3] Compiling native C# DofusFarm.exe...");
             Console.ResetColor();
-            var farmSources = new List<string>(11)
+            var farmSources = new List<string>(12)
             {
                 Path.Combine(desktopDir, "Win32.cs"),
                 Path.Combine(desktopDir, "Hardware.cs"),
+                Path.Combine(desktopDir, "DynamicVersionResolver.cs"),
                 Path.Combine(desktopDir, "IClientBackend.cs"),
                 Path.Combine(desktopDir, "EmulatorBackend.cs"),
                 Path.Combine(desktopDir, "WebView2ClientForm.cs"),
@@ -350,6 +351,7 @@ namespace DofusBuild
                 {
                     Path.Combine(desktopDir, "Win32.cs"),
                     Path.Combine(desktopDir, "Hardware.cs"),
+                    Path.Combine(desktopDir, "DynamicVersionResolver.cs"),
                     Path.Combine(desktopDir, "IClientBackend.cs"),
                     Path.Combine(desktopDir, "PriorityGovernor.cs"),
                     Path.Combine(desktopDir, "FarmEngine.cs"),

@@ -300,9 +300,13 @@ namespace DofusFarm.Engine
                 EscapeJson(customName), EscapeJson(serialNo), EscapeJson(androidId), EscapeJson(mac), EscapeJson(proxy), EscapeJson(phoneModelId)), Encoding.UTF8);
         }
 
-        internal static string InterpolateDisguise(string rawJs, string uuid, string serial, DeviceProfile p, string defaultUa = "")
+        internal static string InterpolateDisguise(string rawJs, string uuid, string serial, DeviceProfile p, string defaultUa = "", string appVersion = null, string versionCode = null, string buildVersion = null)
         {
             if (string.IsNullOrEmpty(rawJs)) return "";
+            string av = !string.IsNullOrEmpty(appVersion) ? appVersion : "3.14.2";
+            string vc = !string.IsNullOrEmpty(versionCode) ? versionCode : "3014002";
+            string bv = !string.IsNullOrEmpty(buildVersion) ? buildVersion : "1.74.8";
+
             return new StringBuilder(rawJs, rawJs.Length + 256)
                 .Replace("__DEVICE_UUID__", uuid ?? "ca8ea76b0fe32f85")
                 .Replace("__DEVICE_SERIAL__", serial ?? "R58M45F41EFD")
@@ -312,6 +316,9 @@ namespace DofusFarm.Engine
                 .Replace("__DEVICE_GL_VENDOR__", (p != null && !string.IsNullOrEmpty(p.GlVendor)) ? p.GlVendor : "ARM")
                 .Replace("__DEVICE_GL_RENDERER__", (p != null && !string.IsNullOrEmpty(p.GlRenderer)) ? p.GlRenderer : "Mali-G72 MP3")
                 .Replace("__DEVICE_MAX_TEXTURE_SIZE__", ((p != null && p.MaxTextureSize > 0) ? p.MaxTextureSize : 8192).ToString())
+                .Replace("__DEVICE_APP_VERSION__", av)
+                .Replace("__DEVICE_VERSION_CODE__", vc)
+                .Replace("__DEVICE_BUILD_VERSION__", bv)
                 .ToString();
         }
 
