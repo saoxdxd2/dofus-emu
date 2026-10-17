@@ -267,9 +267,11 @@ def train_on_gpu(features_path: Path, config: GpuTrainConfig,
             scaler.scale(loss).backward()
             scaler.unscale_(optimiser)
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+            scale_before = scaler.get_scale()
             scaler.step(optimiser)
             scaler.update()
-            scheduler.step()
+            if scale_before <= scaler.get_scale():
+                scheduler.step()
             running += float(loss.detach())
             seen += xb.shape[0]
             if config.log_every and step % config.log_every == 0:
