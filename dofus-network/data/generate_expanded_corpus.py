@@ -100,7 +100,15 @@ QUESTS = [
     ("skeunk", "Repaire du Skeunk", "Forêt des Masques", "Panoplie Skeunk"),
 ]
 
-def generate_natural_dataset() -> List[Dict[str, Any]]:
+def generate_natural_dataset(seed: int = 42) -> List[Dict[str, Any]]:
+    """Build the full corpus deterministically.
+
+    ``seed`` is applied at the very top so *every* randomised block (coordinates,
+    zaap phrasings, combat scenarios) is reproducible. Previously the seed was
+    set only after the NLP samples had already been generated, so two runs
+    produced different navigation corpora and the split was not reproducible.
+    """
+    random.seed(seed)
     samples: List[Dict[str, Any]] = []
 
     # 1. NAVIGATE_COORDS (600+ unique)
@@ -344,8 +352,7 @@ def generate_natural_dataset() -> List[Dict[str, Any]]:
         for prefix in ["[LOG] ", "[SNIFFER] ", "[TRACE] ", ""]:
             samples.append({"type": "CHAT_SENTINEL", "text": prefix + cle, "label": "NONE"})
 
-    # Shuffle NLP and Chat samples
-    random.seed(42)
+    # Shuffle NLP and Chat samples (seed already set at function entry)
     random.shuffle(samples)
 
     # 13. Generate 5,000 perfectly balanced, physically grounded TACTICAL_COMBAT samples (1,250 per stance)
@@ -488,6 +495,15 @@ def generate_natural_dataset() -> List[Dict[str, Any]]:
     return final_samples
 
 if __name__ == "__main__":
-    dataset = generate_natural_dataset()
-    OUTPUT_FILE.write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"✅ Successfully wrote {len(dataset)} unique samples to: {OUTPUT_FILE}")
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate the expanded Dofus training corpus.")
+    parser.add_argument("--seed", type=int, default=42, help="Deterministic generation seed")
+    parser.add_argument("--output", default=str(OUTPUT_FILE))
+    args = parser.parse_args()
+
+    dataset = generate_natural_dataset(seed=args.seed)
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"✅ Successfully wrote {len(dataset)} unique samples to: {out_path}")

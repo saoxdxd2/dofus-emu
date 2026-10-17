@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
+import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -18,6 +21,9 @@ logger = logging.getLogger("dofus.episodic_memory")
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "cache"
 MEMORY_FILE = CACHE_DIR / "episodic_skills.json"
+
+# Hard cap on the number of stored skills so the cache file cannot grow forever.
+MAX_SKILLS = 512
 
 
 @dataclass
@@ -35,15 +41,20 @@ class EpisodicSkillMemory:
     """Fast in-memory key-value store for proven combat tactics."""
 
     _instance: Optional[EpisodicSkillMemory] = None
+    _instance_lock = threading.Lock()
 
     def __init__(self) -> None:
         self.skills: Dict[str, EpisodicSkill] = {}
+        # Re-entrant because seeding calls _save_to_disk while already holding it.
+        self._lock = threading.RLock()
         self._load_from_disk()
 
     @classmethod
     def get_instance(cls) -> EpisodicSkillMemory:
         if cls._instance is None:
-            cls._instance = cls()
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     def _make_key(self, breed_id: int, target_name: str, distance_tier: str, is_low_hp: bool) -> str:
@@ -70,13 +81,14 @@ class EpisodicSkillMemory:
         is_low_hp = char_hp_percent < 0.35
         key = self._make_key(breed_id, target_name, dist_tier, is_low_hp)
 
-        skill = self.skills.get(key)
-        if skill and skill.reward_achieved >= 8.0:
-            return skill
+        with self._lock:
+            skill = self.skills.get(key)
+            if skill and skill.reward_achieved >= 8.0:
+                return skill
 
-        # Fallback to general mob pattern without distance constraint
-        fallback_key = f"{breed_id}:{target_name.lower().strip().replace(' ', '_')}:any:{'lowhp' if is_low_hp else 'healthy'}"
-        return self.skills.get(fallback_key)
+            # Fallback to the distance-agnostic ("any" tier) pattern for this mob.
+            fallback_key = self._make_key(breed_id, target_name, "any", is_low_hp)
+            return self.skills.get(fallback_key)
 
     def record_outcome(
         self,
@@ -95,7 +107,27 @@ class EpisodicSkillMemory:
         dist_tier = self._get_distance_tier(distance_cells)
         is_low_hp = char_hp_percent < 0.35
         key = self._make_key(breed_id, target_name, dist_tier, is_low_hp)
+        any_key = self._make_key(breed_id, target_name, "any", is_low_hp)
 
+        with self._lock:
+            # Distance-specific entry plus the distance-agnostic fallback tier
+            # queried by query_skill() when no tier-specific skill is known.
+            self._upsert_skill(key, breed_id, target_name, stance, action_sequence, reward)
+            if any_key != key:
+                self._upsert_skill(any_key, breed_id, target_name, stance, action_sequence, reward)
+            self._evict_to_cap()
+            self._save_to_disk()
+
+    def _upsert_skill(
+        self,
+        key: str,
+        breed_id: int,
+        target_name: str,
+        stance: str,
+        action_sequence: List[str],
+        reward: float,
+    ) -> None:
+        """Insert or update one entry; caller must hold self._lock."""
         existing = self.skills.get(key)
         if existing:
             if reward >= existing.reward_achieved:
@@ -113,15 +145,39 @@ class EpisodicSkillMemory:
                 success_count=1,
             )
 
-        self._save_to_disk()
+    def _evict_to_cap(self) -> None:
+        """Evict lowest-reward (oldest on ties) entries beyond MAX_SKILLS.
+
+        Caller must hold self._lock. ``sorted`` is stable and the dict preserves
+        insertion order, so ties evict the oldest entries first.
+        """
+        while len(self.skills) > MAX_SKILLS:
+            victim_key = min(self.skills, key=lambda k: self.skills[k].reward_achieved)
+            del self.skills[victim_key]
 
     def _save_to_disk(self) -> None:
-        try:
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            payload = {k: asdict(v) for k, v in self.skills.items()}
-            MEMORY_FILE.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        except Exception as e:
-            logger.warning(f"Failed to persist episodic memory: {e}")
+        """Atomically persist the memory (temp file + os.replace)."""
+        with self._lock:
+            try:
+                CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                payload = {k: asdict(v) for k, v in self.skills.items()}
+                fd, tmp_name = tempfile.mkstemp(
+                    dir=str(CACHE_DIR), prefix=".episodic_skills_", suffix=".tmp"
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        json.dump(payload, fh, indent=2, ensure_ascii=False)
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    os.replace(tmp_name, MEMORY_FILE)
+                except BaseException:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
+            except Exception as e:
+                logger.warning(f"Failed to persist episodic memory: {e}")
 
     def _load_from_disk(self) -> None:
         if not MEMORY_FILE.exists():
@@ -131,8 +187,12 @@ class EpisodicSkillMemory:
 
         try:
             raw = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                self.skills[k] = EpisodicSkill(**v)
+            with self._lock:
+                for k, v in raw.items():
+                    self.skills[k] = EpisodicSkill(**v)
+                if len(self.skills) > MAX_SKILLS:
+                    self._evict_to_cap()
+                    self._save_to_disk()
             logger.info(f"Loaded {len(self.skills)} episodic tactical skills from cache.")
         except Exception as e:
             logger.warning(f"Error reading episodic memory: {e}")

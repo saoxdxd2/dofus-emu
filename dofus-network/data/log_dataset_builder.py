@@ -139,13 +139,13 @@ class OnlineCorpusBuilder:
     """Builds a rich, multi-thousand sample training corpus from DofusDB and community knowledge."""
 
     @classmethod
-    def generate_encyclopedia_corpus(cls, count: int = 10000) -> List[Dict[str, Any]]:
+    def generate_encyclopedia_corpus(cls, count: int = 10000, seed: int = 42) -> List[Dict[str, Any]]:
         """Generates paired reasoning samples for every monster, spell synergy, and threat scenario."""
         logger.info(f"Building massive online-grounded corpus with {count} samples...")
         from data.generate_combat_policy_dataset import generate_scenarios
 
-        # 1. Base tactical scenarios from the 1,500 dataset
-        scenarios = generate_scenarios(min(count // 2, 5000))
+        # 1. Base tactical scenarios from the combat dataset (deterministic)
+        scenarios = generate_scenarios(min(count // 2, 5000), seed=seed)
         samples: List[Dict[str, Any]] = []
 
         # Convert tactical scenarios into multi-task training records

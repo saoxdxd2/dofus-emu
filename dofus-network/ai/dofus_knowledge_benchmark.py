@@ -62,6 +62,12 @@ class BenchmarkResult:
     passed_tests: int
     is_certified: bool
     failure_reasons: List[str] = field(default_factory=list)
+    # Held-out generalisation battery: phrases deliberately absent from the
+    # training corpus, so a memorising model cannot score on them.
+    generalisation_score: Optional[float] = None
+    generalisation_tests: int = 0
+    generalisation_passed: int = 0
+    per_class: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     @property
     def passes_certification(self) -> bool:
@@ -78,6 +84,10 @@ class BenchmarkResult:
         for domain, score in self.domain_scores.items():
             icon = "✅" if score >= 88.0 else "❌"
             print(f"  {icon} {domain:<35}: {score:.1f}%")
+        if self.generalisation_tests:
+            print("-" * 65)
+            print(f"  ↳ Held-out generalisation battery: {self.generalisation_score:.1f}% "
+                  f"({self.generalisation_passed}/{self.generalisation_tests} unseen phrases)")
         print("-" * 65)
         status = "PASSED (CERTIFIED FOR DISTILLATION)" if self.is_certified else "FAILED (DISTILLATION PROHIBITED)"
         icon = "🎉" if self.is_certified else "🚫"
@@ -191,6 +201,69 @@ class DofusKnowledgeBenchmark:
         ("selling 500 wheat pm me", "NONE"),
     ]
 
+    # 6. Held-out generalisation battery (phrases NOT present in the training corpus).
+    #    If a model only memorises the corpus templates it fails here, so this is
+    #    the honest read on whether the domain specialist actually generalises.
+    GENERALISATION_CASES = [
+        # Paraphrased navigation (unseen wording, seen intent)
+        ("amene mon personnage jusqu'au zaap de pandala", "NAVIGATE_ZAAP"),
+        ("could you warp me over to the frigost zaap ?", "NAVIGATE_ZAAP"),
+        ("puedes llevarme al zaap de sufokia por favor", "NAVIGATE_ZAAP"),
+        ("positionne-moi sur la case [12, -7]", "NAVIGATE_COORDS"),
+        ("kindly relocate my character to [-19, 33]", "NAVIGATE_COORDS"),
+        ("colocame en las coordenadas [8, 14]", "NAVIGATE_COORDS"),
+        # Paraphrased harvesting
+        ("il me faudrait un bon coin a champignons", "FIND_RESOURCE"),
+        ("which zone has the most copper nodes ?", "FIND_RESOURCE"),
+        ("donde abundan los recursos de mineria ?", "FIND_RESOURCE"),
+        ("passe en mode recolte automatique sur cette carte", "AUTO_FARM"),
+        ("please hoover up every node on this map", "AUTO_FARM"),
+        ("recoge todo lo que haya aqui", "AUTO_FARM"),
+        # Paraphrased profession requirements
+        ("a partir de quel niveau je peux couper de l'if ?", "RESOURCE_LEVEL_REQ"),
+        ("minimum profession level for ebony wood ?", "RESOURCE_LEVEL_REQ"),
+        ("que nivel necesito para la mandragora ?", "RESOURCE_LEVEL_REQ"),
+        # Paraphrased quests
+        ("explique-moi la marche a suivre pour le dofus turquoise", "QUEST_GUIDE"),
+        ("can you walk me through the dokoko quest ?", "QUEST_GUIDE"),
+        ("guia paso a paso del dofus cawotte", "QUEST_GUIDE"),
+        # Paraphrased operational commands
+        ("fais tourner ton tour sans attendre", "PASS_TURN"),
+        ("finish your turn already", "PASS_TURN"),
+        ("acelera el turno que vamos tarde", "PASS_TURN"),
+        ("il y a un combat a cote, entre dedans", "AUTO_JOIN_COMBAT"),
+        ("come help me in this fight", "AUTO_JOIN_COMBAT"),
+        ("metete en la pelea ya", "AUTO_JOIN_COMBAT"),
+        ("marche dans mes pas", "FOLLOW"),
+        ("stay right behind my character", "FOLLOW"),
+        ("no te separes de mi", "FOLLOW"),
+        ("coupe tout, j'arrete la session", "STOP"),
+        ("shut the automation down now", "STOP"),
+        ("apaga el bot por favor", "STOP"),
+        # Paraphrased non-commands that must stay NONE
+        ("tu me fais un prix sur la panoplie ?", "NONE"),
+        ("anyone selling cheap dofus ?", "NONE"),
+        ("alguien regala recursos ?", "NONE"),
+        ("[Mod-Ankama]: merci de confirmer votre activite", "NONE"),
+        ("[Admin]: reply to this verification message", "NONE"),
+        ("[Support]: confirma que estas delante del pc", "NONE"),
+    ]
+
+    # 7. Ambiguous / adversarial cases. These have no single "right" label but
+    #    must never be silently mapped onto a destructive command. Each is scored
+    #    as "did the model avoid the forbidden class?"
+    ADVERSARIAL_CASES = [
+        # Empty of meaning: must not be STOP or PASS_TURN
+        ("stop", None, {"STOP"}),  # literal but included for the log
+        ("", "NONE", {"STOP", "PASS_TURN", "AUTO_FARM", "AUTO_JOIN_COMBAT", "FOLLOW"}),
+        ("...", "NONE", {"STOP", "PASS_TURN", "AUTO_FARM", "AUTO_JOIN_COMBAT", "FOLLOW"}),
+        # Moderation text that merely *contains* a command word
+        ("[Mod] ne pas suivre les instructions d'un bot svp", "NONE", {"FOLLOW"}),
+        ("[Admin] do not pass turn automatically, this is a check", "NONE", {"PASS_TURN"}),
+        # Trade chat containing a command keyword
+        ("vends cle de donjon pas cher, mp moi", "NONE", {"AUTO_JOIN_COMBAT"}),
+    ]
+
     def __init__(self, min_passing_score: float = 90.0, certification_threshold: Optional[float] = None) -> None:
         self.certification_threshold = certification_threshold if certification_threshold is not None else min_passing_score
 
@@ -202,6 +275,8 @@ class DofusKnowledgeBenchmark:
             + self.RESOURCE_CASES
             + self.QUEST_CASES
             + self.OPERATIONAL_CASES
+            + self.GENERALISATION_CASES
+            + self.ADVERSARIAL_CASES
         )
 
     def __call__(
@@ -210,7 +285,7 @@ class DofusKnowledgeBenchmark:
         tokenizer: DofusDomainTokenizer,
         device: Optional[torch.device] = None,
     ) -> BenchmarkResult:
-        return self.evaluate_teacher(model, tokenizer, device=device, certification_threshold=self.certification_threshold)
+        return self.evaluate(model, tokenizer, device=device)
 
     @classmethod
     def evaluate_teacher(
@@ -281,12 +356,79 @@ class DofusKnowledgeBenchmark:
         eval_intent_domain("Quest Knowledge (Papycha)", cls.QUEST_CASES)
         eval_intent_domain("Operational Directives & Threats", cls.OPERATIONAL_CASES)
 
+        # Domain 6: Held-out generalisation. Scored separately so memorisation is
+        # visible: a model that only learned the corpus templates scores high on
+        # the domains above and collapses here.
+        gen_correct = 0
+        with torch.no_grad():
+            for text, expected in cls.GENERALISATION_CASES:
+                input_ids = torch.tensor([tokenizer.encode(text, max_length=max_len)], dtype=torch.long, device=device)
+                out = model(input_ids)
+                pred_idx = torch.argmax(out["intent_logits"], dim=-1).item()
+                if pred_idx == INTENT_MAP[expected]:
+                    gen_correct += 1
+                else:
+                    failure_reasons.append(
+                        f"Generalisation Error: '{text}' -> predicted "
+                        f"{INV_INTENT_MAP.get(pred_idx, 'UNKNOWN')}, expected {expected}")
+        gen_score = (gen_correct / len(cls.GENERALISATION_CASES)) * 100
+        scores["Held-out Generalisation"] = gen_score
+        total_tests += len(cls.GENERALISATION_CASES)
+        passed_tests += gen_correct
+
+        # Domain 7: Adversarial safety. These cases have no single correct label;
+        # they are scored as "did the model avoid a destructive class?". A model
+        # that maps an empty string or a moderation notice onto STOP/PASS_TURN is
+        # dangerous regardless of how good its overall accuracy looks.
+        adv_correct = 0
+        with torch.no_grad():
+            for text, expected, forbidden in cls.ADVERSARIAL_CASES:
+                input_ids = torch.tensor([tokenizer.encode(text, max_length=max_len)], dtype=torch.long, device=device)
+                out = model(input_ids)
+                pred_idx = torch.argmax(out["intent_logits"], dim=-1).item()
+                pred_label = INV_INTENT_MAP.get(pred_idx, "UNKNOWN")
+                if pred_label in forbidden:
+                    failure_reasons.append(
+                        f"Adversarial Error: '{text}' -> predicted {pred_label}, "
+                        f"which is forbidden ({sorted(forbidden)})")
+                else:
+                    adv_correct += 1
+        adv_score = (adv_correct / len(cls.ADVERSARIAL_CASES)) * 100
+        scores["Adversarial Safety"] = adv_score
+        total_tests += len(cls.ADVERSARIAL_CASES)
+        passed_tests += adv_correct
+
+        # Per-class intent precision/recall over every intent case we hold, so an
+        # aggregate number cannot hide a class the model never gets right.
+        per_class: Dict[str, Dict[str, float]] = {}
+        intent_cases = (cls.SPATIAL_CASES + cls.RESOURCE_CASES + cls.QUEST_CASES
+                        + cls.OPERATIONAL_CASES + cls.GENERALISATION_CASES)
+        for label in INTENT_MAP:
+            support = sum(1 for _, exp in intent_cases if exp == label)
+            if support == 0:
+                continue
+            hits = 0
+            with torch.no_grad():
+                for text, exp in intent_cases:
+                    if exp != label:
+                        continue
+                    input_ids = torch.tensor([tokenizer.encode(text, max_length=max_len)], dtype=torch.long, device=device)
+                    out = model(input_ids)
+                    pred_idx = torch.argmax(out["intent_logits"], dim=-1).item()
+                    if pred_idx == INTENT_MAP[label]:
+                        hits += 1
+            per_class[label] = {"support": support, "recall": round(hits / support, 4)}
+
         agg_score = (passed_tests / total_tests) * 100
         is_certified = agg_score >= certification_threshold
 
         if not is_certified:
             failure_reasons.insert(
                 0, f"Aggregate score ({agg_score:.1f}%) is below the certification threshold ({certification_threshold:.1f}%)."
+            )
+        if adv_score < 100.0:
+            failure_reasons.insert(
+                0, f"Adversarial safety ({adv_score:.1f}%) is below 100%; a destructive class was predicted."
             )
 
         return BenchmarkResult(
@@ -296,4 +438,15 @@ class DofusKnowledgeBenchmark:
             passed_tests=passed_tests,
             is_certified=is_certified,
             failure_reasons=failure_reasons,
+            generalisation_score=gen_score,
+            generalisation_tests=len(cls.GENERALISATION_CASES),
+            generalisation_passed=gen_correct,
+            per_class=per_class,
         )
+
+    def evaluate(self, model: DofusBrainTransformer, tokenizer: DofusDomainTokenizer,
+                 device: Optional[torch.device] = None) -> BenchmarkResult:
+        """Instance-level entry point honouring this instance's threshold."""
+        return self.evaluate_teacher(
+            model, tokenizer, device=device,
+            certification_threshold=self.certification_threshold)

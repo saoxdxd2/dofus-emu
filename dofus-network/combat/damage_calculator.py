@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import itertools
 import math
-from dataclasses import dataclass, field
+import threading
+from dataclasses import astuple, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from data.game_data_extractor import (
@@ -228,6 +229,12 @@ class DofusDamageCalculator:
                     crit_final_min=ch_min, crit_final_max=ch_max, crit_final_avg=(ch_min + ch_max) / 2.0
                 )
                 breakdowns.append(b)
+                tot_min += h_min
+                tot_max += h_max
+                tot_avg += (h_min + h_max) / 2.0
+                c_tot_min += ch_min
+                c_tot_max += ch_max
+                c_tot_avg += (ch_min + ch_max) / 2.0
                 continue
 
             stat = char.get_stat_for_element(elem)
@@ -347,6 +354,16 @@ class OptimalRotationResult:
 class SpellRotationOptimizer:
     """Finds the optimal spell sequence to kill or maximize damage in a combat turn."""
 
+    # Hard bound on candidate combinations evaluated per call so a large spell
+    # pool cannot explode combinatorially (DoS). Iteration order is
+    # deterministic, so a capped search is reproducible.
+    MAX_COMBINATIONS = 50000
+    # Memoized rotations (bounded) for repeated identical searches, e.g. the
+    # tactical engine re-running the same turn plan with unchanged stats.
+    _CACHE_MAXSIZE = 256
+    _rotation_cache: Dict[Tuple[Any, ...], "OptimalRotationResult"] = {}
+    _rotation_cache_lock = threading.Lock()
+
     @classmethod
     def optimize_turn(
         cls,
@@ -355,6 +372,16 @@ class SpellRotationOptimizer:
         target: TargetStats,
     ) -> OptimalRotationResult:
         """Exhaustively evaluates all legal spell combinations within AP budget."""
+        cache_key = (
+            astuple(char),
+            tuple(sp.id for sp in available_spells),
+            astuple(target),
+        )
+        with cls._rotation_cache_lock:
+            cached = cls._rotation_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         # 1. Precalculate damage for each spell against target
         calc_results: Dict[int, SpellDamageResult] = {}
         for sp in available_spells:

@@ -113,7 +113,16 @@ MOBS = [
 ]
 
 
-def generate_scenarios(count: int = 1200) -> List[Dict[str, Any]]:
+def generate_scenarios(count: int = 1200, seed: int = 42) -> List[Dict[str, Any]]:
+    """Generate tactical combat scenarios deterministically.
+
+    ``seed`` makes the dataset reproducible so a train/validation split is stable
+    across runs. The ``BURST_ATTACK`` fallback is normalised to ``BURST_LETHAL``:
+    the transformer's policy head has no BURST_ATTACK class, so leaving it in
+    produced samples the trainer silently mislabelled as class 0 anyway — better
+    to emit the label we actually intend to supervise.
+    """
+    random.seed(seed)
     samples: List[Dict[str, Any]] = []
 
     for i in range(count):
@@ -192,7 +201,7 @@ def generate_scenarios(count: int = 1200) -> List[Dict[str, Any]]:
 
         # Scenario 5: Standard Direct Elemental Burst
         else:
-            stance = "BURST_ATTACK"
+            stance = "BURST_LETHAL"
             weak_elem = mob_info["weakness"]
             attacks_matching = [a for a in cls_info["direct_attacks"] if a["element"] == weak_elem]
             chosen = attacks_matching[0] if attacks_matching else cls_info["direct_attacks"][0]
@@ -238,4 +247,10 @@ def generate_scenarios(count: int = 1200) -> List[Dict[str, Any]]:
 
 
 if __name__ == "__main__":
-    generate_scenarios(1500)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate the Dofus combat policy dataset.")
+    parser.add_argument("--count", type=int, default=1500)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+    generate_scenarios(args.count, seed=args.seed)
