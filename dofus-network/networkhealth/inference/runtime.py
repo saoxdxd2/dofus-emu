@@ -181,10 +181,10 @@ class NetworkHealthInference:
         if threads is not None:
             torch.set_num_threads(int(threads))
         self.bundle: ModelBundle = load_checkpoint(checkpoint)
-        from ..model import ModelConfig, NetworkHealthTCN
+        from ..model import ModelConfig, build_model
 
         config = ModelConfig(**self.bundle.model_config)
-        self.model = NetworkHealthTCN(config)
+        self.model = build_model(config)
         self.model.load_state_dict(self.bundle.state_dict)
         self.model.eval()
         self.torch = torch

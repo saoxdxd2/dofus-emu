@@ -32,7 +32,7 @@ import numpy as np
 
 from networkhealth.evaluation import compute_head_metrics, measure_cost, write_json
 from networkhealth.features import FEATURE_NAMES, HORIZONS, TARGET_BLOCK, Normaliser
-from networkhealth.model import ModelConfig, NetworkHealthTCN, multi_task_loss
+from networkhealth.model import ModelConfig, NetworkHealthTCN, build_model, multi_task_loss
 from networkhealth.splits import SplitConfig, build_split, describe_split
 
 
@@ -59,6 +59,10 @@ class GpuTrainConfig:
     grad_clip: float = 1.0
     log_every: int = 25
     use_identity_mask: bool = True
+    architecture: str = "trm_moe"   # "trm_moe" (Dual-Cycle MoE) or "tcn"
+    num_experts: int = 4
+    top_k: int = 2
+    aux_loss_weight: float = 0.01
 
     def as_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items()}
@@ -217,10 +221,16 @@ def train_on_gpu(features_path: Path, config: GpuTrainConfig,
     x_valid = normaliser.transform(x_valid)
 
     device = torch.device("cuda")
-    model_config = ModelConfig(hidden=config.hidden, levels=config.levels,
-                               dropout=config.dropout, horizons=HORIZONS,
-                               use_identity_mask=config.use_identity_mask)
-    model = NetworkHealthTCN(model_config).to(device)
+    model_config = ModelConfig(
+        hidden=config.hidden, levels=config.levels,
+        dropout=config.dropout, horizons=HORIZONS,
+        use_identity_mask=config.use_identity_mask,
+        architecture=config.architecture,
+        num_experts=config.num_experts,
+        top_k=config.top_k,
+        aux_loss_weight=config.aux_loss_weight,
+    )
+    model = build_model(model_config).to(device)
 
     # Batch-size sweep on the real model before committing.
     throughput = probe_batch_sizes(model, x_train, amp=config.amp)
@@ -328,7 +338,7 @@ def train_on_gpu(features_path: Path, config: GpuTrainConfig,
         horizons=HORIZONS)
 
     # Cost is measured on CPU, because that is where inference will actually run.
-    cpu_model = NetworkHealthTCN(model_config)
+    cpu_model = build_model(model_config)
     cpu_model.load_state_dict(model.state_dict())
     example = torch.from_numpy(x_valid[:1]).float()
     cost = measure_cost(cpu_model, example)

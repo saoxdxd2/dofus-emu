@@ -50,12 +50,16 @@ class CausalBlock(nn.Module):
 @dataclass
 class ModelConfig:
     features: int = len(FEATURE_NAMES)
-    hidden: int = 64
-    levels: int = 4
+    hidden: int = 96
+    levels: int = 5
     kernel_size: int = 3
     dropout: float = 0.1
     horizons: tuple[int, ...] = HORIZONS
     use_identity_mask: bool = True
+    architecture: str = "tcn"  # "tcn" or "trm_moe"
+    num_experts: int = 4
+    top_k: int = 2
+    aux_loss_weight: float = 0.01
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +70,10 @@ class ModelConfig:
             "dropout": self.dropout,
             "horizons": list(self.horizons),
             "use_identity_mask": self.use_identity_mask,
+            "architecture": self.architecture,
+            "num_experts": self.num_experts,
+            "top_k": self.top_k,
+            "aux_loss_weight": self.aux_loss_weight,
         }
 
 
@@ -120,8 +128,23 @@ class NetworkHealthTCN(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
-def build_model(**kwargs: Any) -> NetworkHealthTCN:
-    return NetworkHealthTCN(ModelConfig(**kwargs))
+def build_model(config: ModelConfig | None = None, **kwargs: Any) -> nn.Module:
+    cfg = config or ModelConfig(**kwargs)
+    if getattr(cfg, "architecture", "tcn") == "trm_moe":
+        from .trm_moe import NetworkHealthTRMMoE, TRMMoEConfig
+        trm_cfg = TRMMoEConfig(
+            in_features=cfg.features,
+            hidden=cfg.hidden,
+            num_experts=getattr(cfg, "num_experts", 4),
+            top_k=getattr(cfg, "top_k", 2),
+            dropout=cfg.dropout,
+            kernel_size=cfg.kernel_size,
+            horizons=cfg.horizons,
+            use_identity_mask=cfg.use_identity_mask,
+            aux_loss_weight=getattr(cfg, "aux_loss_weight", 0.01),
+        )
+        return NetworkHealthTRMMoE(trm_cfg)
+    return NetworkHealthTCN(cfg)
 
 
 def _split_targets(targets: torch.Tensor, n_horizons: int) -> dict[str, torch.Tensor]:
@@ -177,12 +200,16 @@ def multi_task_loss(outputs: dict[str, torch.Tensor], targets: torch.Tensor,
     total = (cfg["rtt"] * rtt_loss + cfg["jitter"] * jitter_loss
              + cfg["loss"] * loss_loss + cfg["degradation"] * degradation_loss
              + cfg["anomaly"] * anomaly_loss)
+    aux_loss = outputs.get("aux_loss")
+    if aux_loss is not None and torch.is_tensor(aux_loss) and aux_loss.numel() > 0:
+        total = total + aux_loss
     parts = {
         "rtt_nll": float(rtt_loss.detach()),
         "jitter_mse": float(jitter_loss.detach()),
         "loss_bce": float(loss_loss.detach()),
         "degradation_bce": float(degradation_loss.detach()),
         "anomaly_mse": float(anomaly_loss.detach()),
+        "aux_loss": float(aux_loss.detach()) if (aux_loss is not None and torch.is_tensor(aux_loss)) else 0.0,
         "total": float(total.detach()),
     }
     return total, parts
