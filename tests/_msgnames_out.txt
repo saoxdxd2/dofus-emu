@@ -1,0 +1,5 @@
+=== Message-like literals WITH non-ASCII chars: 1 unique ===
+@5087991 'GameMapMovementConfirmMessagе' -> [('е', 'U+0435', 'CYRILLIC SMALL LETTER IE')]
+
+(ascii message literals total: 1914)
+CONFIRM @5087992: 'GameMapMovementConfirmMessagе",null),thi'
