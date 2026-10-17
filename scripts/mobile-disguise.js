@@ -932,6 +932,42 @@
                 } else if (action === 'DBLCLICK' && directive.selector) {
                     var targetDbl = document.querySelector(directive.selector);
                     if (targetDbl) triggerNaturalDoubleClick(targetDbl, directive.x, directive.y);
+                } else if (action === 'EXECUTE_OPTIMAL_ROTATION' || action === 'ATTACK') {
+                    var meta = directive.metadata || directive;
+                    var rotation = meta.rotation || [];
+                    console.log('[AI Commander] Executing optimal rotation with ' + rotation.length + ' spells against ' + (meta.target_name || 'target'));
+
+                    var executeStep = function(stepIndex) {
+                        if (stepIndex >= rotation.length) {
+                            console.log('[AI Commander] Completed rotation execution.');
+                            return;
+                        }
+                        var step = rotation[stepIndex];
+                        var spellEl = document.querySelector('[data-spell-id="' + step.spell_id + '"], .spell-' + step.spell_id + ', [title*="' + step.spell_name + '"]');
+                        if (!spellEl) {
+                            var hotbarSlots = document.querySelectorAll('.hotbar-slot, .spell-slot, .slot-spell');
+                            if (hotbarSlots && hotbarSlots[stepIndex]) spellEl = hotbarSlots[stepIndex];
+                        }
+
+                        if (spellEl) {
+                            triggerNaturalClick(spellEl, undefined, undefined, function() {
+                                var targetPause = 250 + (Math.random() * 200 | 0);
+                                setTimeout(function() {
+                                    var enemyEl = document.querySelector('.fighter-enemy, .target-cell, [data-cell-id]');
+                                    if (enemyEl) triggerNaturalClick(enemyEl);
+
+                                    var interSpellDelay = 400 + (Math.random() * 400 | 0);
+                                    setTimeout(function() {
+                                        executeStep(stepIndex + 1);
+                                    }, interSpellDelay);
+                                }, targetPause);
+                            });
+                        } else {
+                            executeStep(stepIndex + 1);
+                        }
+                    };
+
+                    setTimeout(function() { executeStep(0); }, 300 + (Math.random() * 300 | 0));
                 } else if (action === 'FOLLOW') {
                     _activeDirectives['follow'] = true;
                 } else if (action === 'STOP') {
