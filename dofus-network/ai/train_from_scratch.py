@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 
@@ -58,15 +59,22 @@ STANCE_MAP = {
 
 
 class DofusNativeDataset(Dataset):
-    """PyTorch Dataset for domain-native multi-task training."""
+    """PyTorch Dataset for domain-native multi-task training with cross-task masking."""
 
     def __init__(self, samples: List[Dict[str, Any]], tokenizer: DofusDomainTokenizer, max_len: int = 64):
         self.data = []
         for s in samples:
             text = s.get("text", "").strip()
-            lbl_intent = INTENT_MAP.get(s.get("label", "NONE"), 0)
-            lbl_stance = STANCE_MAP.get(s.get("stance", "BURST_LETHAL"), 0)
-            val_target = 15.0 if s.get("stance") == "BURST_LETHAL" else 10.0
+            s_type = s.get("type", "")
+
+            if s_type == "TACTICAL_COMBAT":
+                lbl_intent = -100  # Mask out combat states from intent classification
+                lbl_stance = STANCE_MAP.get(s.get("stance", "BURST_LETHAL"), 0)
+                val_target = 15.0 if s.get("stance") == "BURST_LETHAL" else 10.0
+            else:
+                lbl_intent = INTENT_MAP.get(s.get("label", "NONE"), 0)
+                lbl_stance = -100  # Mask out chat commands from combat policy
+                val_target = 0.0
 
             vec = s.get("state_vector", [])
             while len(vec) < 24:
@@ -118,7 +126,7 @@ def train_dofus_ai_from_scratch(
 
     # 4. Initialize Domain Specialist Transformer (From Scratch!)
     model = DofusBrainTransformer(
-        vocab_size=len(tokenizer.vocab) + 10,
+        vocab_size=len(tokenizer.vocab) + 16,
         d_model=256,
         nhead=8,
         num_layers=6,
@@ -131,16 +139,17 @@ def train_dofus_ai_from_scratch(
     total_params = sum(p.numel() for p in model.parameters())
     logger.info(f"Initialized DofusBrainTransformer from scratch ({total_params:,} parameters).")
 
-    # 5. Multi-task Training Loop
+    # 5. Multi-task Training Loop with Ignore Index Masking
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
-    crit_ce = nn.CrossEntropyLoss()
-    crit_mse = nn.MSELoss()
+    crit_ce_intent = nn.CrossEntropyLoss(ignore_index=-100)
+    crit_ce_stance = nn.CrossEntropyLoss(ignore_index=-100)
 
     model.train()
     for epoch in range(1, epochs + 1):
         total_loss = 0.0
-        correct_intents = 0
+        correct_intents, total_intents = 0, 0
+        correct_stances, total_stances = 0, 0
         total_items = 0
 
         for batch in dataloader:
@@ -152,23 +161,37 @@ def train_dofus_ai_from_scratch(
             optimizer.zero_grad()
             out = model(input_ids)
 
-            loss_intent = crit_ce(out["intent_logits"], intent_lbl)
-            loss_stance = crit_ce(out["policy_logits"], stance_lbl)
-            loss_val = crit_mse(out["value_pred"], val_target)
+            loss = torch.tensor(0.0, device=device_obj)
+            if (intent_lbl != -100).sum() > 0:
+                loss_intent = crit_ce_intent(out["intent_logits"], intent_lbl)
+                loss = loss + loss_intent
+                intent_mask = (intent_lbl != -100)
+                preds = torch.argmax(out["intent_logits"][intent_mask], dim=-1)
+                correct_intents += (preds == intent_lbl[intent_mask]).sum().item()
+                total_intents += intent_mask.sum().item()
 
-            loss = loss_intent + 0.5 * loss_stance + 0.05 * loss_val
+            if (stance_lbl != -100).sum() > 0:
+                loss_stance = crit_ce_stance(out["policy_logits"], stance_lbl)
+                combat_mask = (stance_lbl != -100).float().unsqueeze(-1)
+                loss_val = (F.mse_loss(out["value_pred"], val_target, reduction="none") * combat_mask).sum() / combat_mask.sum()
+                loss = loss + 0.5 * loss_stance + 0.05 * loss_val
+
+                stance_mask = (stance_lbl != -100)
+                st_preds = torch.argmax(out["policy_logits"][stance_mask], dim=-1)
+                correct_stances += (st_preds == stance_lbl[stance_mask]).sum().item()
+                total_stances += stance_mask.sum().item()
+
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item() * len(input_ids)
-            preds = torch.argmax(out["intent_logits"], dim=-1)
-            correct_intents += (preds == intent_lbl).sum().item()
             total_items += len(input_ids)
 
         scheduler.step()
         avg_loss = total_loss / max(total_items, 1)
-        acc = (correct_intents / max(total_items, 1)) * 100
-        logger.info(f"Epoch {epoch:02d}/{epochs:02d} | Loss: {avg_loss:.4f} | Intent Acc: {acc:.1f}%")
+        acc_int = (correct_intents / max(total_intents, 1)) * 100
+        acc_st = (correct_stances / max(total_stances, 1)) * 100
+        logger.info(f"Epoch {epoch:02d}/{epochs:02d} | Loss: {avg_loss:.4f} | Intent Acc: {acc_int:.1f}% | Stance Acc: {acc_st:.1f}%")
 
     # 6. Save Model Checkpoint
     torch.save(model.state_dict(), OUTPUT_DIR / "dofus_brain.pt")
@@ -184,6 +207,16 @@ def train_dofus_ai_from_scratch(
         }, f, indent=2)
 
     logger.info(f"Model trained from scratch and saved to: {OUTPUT_DIR}")
+
+    # 7. Evaluate on Dofus Knowledge Certification Benchmark
+    from .dofus_knowledge_benchmark import DofusKnowledgeBenchmark
+    bench_result = DofusKnowledgeBenchmark.evaluate_teacher(model, tokenizer, device=device_obj)
+    bench_result.print_summary()
+    if not bench_result.is_certified:
+        logger.warning(f"Certification failed ({bench_result.aggregate_score:.1f}%). Model weights saved but distillation restricted.")
+    else:
+        logger.info(f"Certification passed ({bench_result.aggregate_score:.1f}%). Model certified for distillation.")
+
     return model, tokenizer
 
 

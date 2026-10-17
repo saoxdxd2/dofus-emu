@@ -48,15 +48,18 @@ class DofusDomainTokenizer:
 
     @staticmethod
     def normalize_text(text: str) -> str:
-        """Strips accents and diacritics for uniform multilingual token matching."""
+        """Strips accents and diacritics, and collapses 3+ repeated characters for uniform token matching."""
         nfkd = unicodedata.normalize("NFKD", text.lower())
-        return "".join([c for c in nfkd if not unicodedata.combining(c)])
+        norm = "".join([c for c in nfkd if not unicodedata.combining(c)])
+        # Collapse 3+ repeated characters (e.g., 'stopppp' -> 'stop', 'paaaasse' -> 'passe')
+        norm = re.sub(r"([a-zA-Z])\1{2,}", r"\1", norm)
+        return norm
 
     def _init_default_vocab(self) -> None:
         for idx, tok in enumerate(self.SPECIAL_TOKENS):
             self.vocab[tok] = idx
 
-        # Seed high-frequency keywords
+        # Seed high-frequency keywords across French, Spanish, and English (including gamer slang)
         seed_words = [
             # Combat & Stats
             "pa", "pm", "hp", "pv", "degats", "damage", "feu", "terre", "eau", "air", "neutre",
@@ -66,14 +69,25 @@ class DofusDomainTokenizer:
             # Spatial & Navigation
             "zaap", "astrub", "amakna", "bonta", "brakmar", "otomai", "moon", "frigost", "wabbit",
             "madrestam", "pandala", "cania", "marche", "teleporte", "carte", "cellule", "nord", "sud",
+            "va", "go", "ves", "ir", "muevete", "vers", "en",
             # Resources & Professions
             "ble", "orge", "fer", "cuivre", "frene", "chene", "ortie", "trefle", "goujon", "paysan",
             "mineur", "bucheron", "alchimiste", "pecheur", "farm", "recolte", "boucle", "spot",
+            "minerai", "arbre", "bois", "plante", "poisson", "champs", "foret", "mine",
             # Quests & Papycha
             "quete", "succes", "dofus", "cawotte", "ocre", "argente", "koulosse", "skeunk", "panoplie",
-            "capitaine", "kradoc", "lily", "wanald", "terrier", "donjon",
+            "capitaine", "kradoc", "lily", "wanald", "terrier", "donjon", "etapes", "guia", "guide",
+            # Level inquiries
+            "niveau", "lvl", "level", "req", "requis", "trouver", "donde", "where", "ou",
             # Commands & Control
             "suis", "passe", "tour", "arrete", "stop", "rejoins", "combat", "oui", "salut", "merci",
+            "follow", "skip", "pass", "turn", "join", "fight", "sigueme", "pasa", "turno", "para",
+            # Slang & Contractions
+            "stp", "svp", "plz", "pls", "porfa", "porfavor", "xfa", "tkt", "jpp", "mdr", "lol", "xd",
+            "viens", "ven", "rapido", "vite", "fast", "dale", "aggro", "unete", "entra", "pelea",
+            # Moderator & System
+            "mp", "whisper", "groupe", "guilde", "modo", "mod", "ankama", "ban", "sanction",
+            "reponds", "responde", "verification", "bot", "presence", "urgent", "urgente", "alerte", "danger",
         ]
         for w in seed_words:
             norm_w = self.normalize_text(w)
@@ -86,8 +100,10 @@ class DofusDomainTokenizer:
         word_freq: Dict[str, int] = {}
         for t in texts:
             clean = self.normalize_text(t)
-            tokens = re.findall(r"\[-?\d+,\s*-?\d+\]|[a-zA-Z0-9_]+", clean)
+            tokens = re.findall(r"\[\s*-?\d+\s*,\s*-?\d+\s*\]|[a-zA-Z0-9_]+", clean)
             for tok in tokens:
+                if re.match(r"^\[\s*-?\d+\s*,\s*-?\d+\s*\]$", tok):
+                    continue  # Handled by [COORD] special token
                 word_freq[tok] = word_freq.get(tok, 0) + 1
 
         sorted_words = sorted(word_freq.items(), key=lambda x: -x[1])
@@ -102,20 +118,13 @@ class DofusDomainTokenizer:
     def encode(self, text: str, max_length: int = 64) -> List[int]:
         """Encodes string into token IDs with [CLS] and [SEP] padding/truncation."""
         clean = self.normalize_text(text)
-        tokens = re.findall(r"\[-?\d+,\s*-?\d+\]|[a-zA-Z0-9_]+", clean)
+        tokens = re.findall(r"\[\s*-?\d+\s*,\s*-?\d+\s*\]|[a-zA-Z0-9_]+", clean)
         ids = [self.vocab["[CLS]"]]
         for tok in tokens:
-            ids.append(self.vocab.get(tok, self.vocab["[UNK]"]))
-        ids.append(self.vocab["[SEP]"])
-
-        if len(ids) > max_length:
-            ids = ids[:max_length - 1] + [self.vocab["[SEP]"]]
-        else:
-            ids = ids + [self.vocab["[PAD]"]] * (max_length - len(ids))
-        return ids
-        ids = [self.vocab["[CLS]"]]
-        for tok in tokens:
-            ids.append(self.vocab.get(tok, self.vocab["[UNK]"]))
+            if re.match(r"^\[\s*-?\d+\s*,\s*-?\d+\s*\]$", tok):
+                ids.append(self.vocab.get("[COORD]", self.vocab["[UNK]"]))
+            else:
+                ids.append(self.vocab.get(tok, self.vocab["[UNK]"]))
         ids.append(self.vocab["[SEP]"])
 
         if len(ids) > max_length:
@@ -238,12 +247,50 @@ class DofusBrainTransformer(nn.Module):
 
 
 class DofusDomainDistiller:
-    """Self-distills domain representations from DofusBrainTransformer into THX-01 and TRM-ACT.
+    """Modern Domain Self-Distillation Engine for THX-01 and TRM-ACT.
 
-    1. THX-01 Distillation: Transfers deep linguistic, quest, and navigation intent knowledge
-       from the domain-native teacher into THX-01 for peak client inference performance.
-    2. TRM-ACT Distillation: Transfers tactical combat stance and continuous value representations.
+    Implements State-of-the-Art Distillation:
+    1. Decoupled Knowledge Distillation (DKD): Decouples target-class certainty (TCKD)
+       from non-target semantic dark knowledge (NCKD) for maximum student fidelity.
+    2. Intermediate Representation Alignment: Matches pooled sentence embeddings via
+       cosine similarity loss to ensure semantic alignment before the decision head.
+    3. Multi-Task Combat Stance & Value Transfer into TRM-ACT.
     """
+
+    @staticmethod
+    def dkd_loss(
+        logits_student: torch.Tensor,
+        logits_teacher: torch.Tensor,
+        target: torch.Tensor,
+        alpha: float = 1.0,
+        beta: float = 2.0,
+        temperature: float = 2.5,
+    ) -> torch.Tensor:
+        """Decoupled Knowledge Distillation (DKD) loss."""
+        num_classes = logits_student.size(-1)
+        gt_mask = F.one_hot(target, num_classes=num_classes).bool()
+        other_mask = ~gt_mask
+
+        pred_student = F.softmax(logits_student / temperature, dim=-1)
+        pred_teacher = F.softmax(logits_teacher / temperature, dim=-1)
+
+        # 1. Target Class Knowledge Distillation (TCKD)
+        p_s_gt = pred_student.gather(1, target.unsqueeze(1))
+        p_t_gt = pred_teacher.gather(1, target.unsqueeze(1))
+        b_s = torch.cat([p_s_gt, 1.0 - p_s_gt + 1e-7], dim=1)
+        b_t = torch.cat([p_t_gt, 1.0 - p_t_gt + 1e-7], dim=1)
+        log_b_s = torch.log(b_s + 1e-7)
+        tckd_loss = F.kl_div(log_b_s, b_t, reduction="batchmean") * (temperature ** 2)
+
+        # 2. Non-Target Class Knowledge Distillation (NCKD)
+        p_s_others = pred_student.masked_select(other_mask).view(logits_student.size(0), -1)
+        p_t_others = pred_teacher.masked_select(other_mask).view(logits_teacher.size(0), -1)
+        p_s_norm = p_s_others / (p_s_others.sum(dim=1, keepdim=True) + 1e-7)
+        p_t_norm = p_t_others / (p_t_others.sum(dim=1, keepdim=True) + 1e-7)
+        log_p_s_norm = torch.log(p_s_norm + 1e-7)
+        nckd_loss = F.kl_div(log_p_s_norm, p_t_norm, reduction="batchmean") * (temperature ** 2)
+
+        return alpha * tckd_loss + beta * nckd_loss
 
     @classmethod
     def distill_to_thx01(
@@ -254,13 +301,18 @@ class DofusDomainDistiller:
         student_inputs: Dict[str, torch.Tensor],
         labels: torch.Tensor,
         temperature: float = 2.5,
-        alpha: float = 0.65,
+        alpha_dkd: float = 1.0,
+        beta_dkd: float = 2.0,
+        weight_ce: float = 0.5,
+        weight_dkd: float = 0.5,
+        alpha: Optional[float] = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
-        """Distills domain-native Dofus knowledge into THX-01 for fast, zero-lag inference.
+        """Distills domain-native Dofus knowledge into THX-01 using Decoupled KD."""
+        if alpha is not None:
+            weight_dkd = alpha
+            weight_ce = 1.0 - alpha
 
-        Computes:
-        L_total = (1 - alpha) * CE(student_logits, labels) + alpha * (T^2) * KL(student/T, teacher/T)
-        """
         teacher_model.eval()
         with torch.no_grad():
             t_out = teacher_model(teacher_tokens)
@@ -269,15 +321,20 @@ class DofusDomainDistiller:
         s_out = student_model(**student_inputs)
         s_logits = s_out.logits
 
-        # Hard supervised loss
+        # 1. Hard cross-entropy supervised loss
         loss_ce = F.cross_entropy(s_logits, labels)
 
-        # Soft teacher distribution matching (dark knowledge)
-        p_teacher = F.softmax(t_logits / temperature, dim=-1)
-        log_p_student = F.log_softmax(s_logits / temperature, dim=-1)
-        loss_kl = F.kl_div(log_p_student, p_teacher, reduction="batchmean") * (temperature ** 2)
+        # 2. Modern Decoupled KD (TCKD + NCKD)
+        loss_dkd = cls.dkd_loss(
+            s_logits,
+            t_logits,
+            labels,
+            alpha=alpha_dkd,
+            beta=beta_dkd,
+            temperature=temperature,
+        )
 
-        return (1.0 - alpha) * loss_ce + alpha * loss_kl
+        return weight_ce * loss_ce + weight_dkd * loss_dkd
 
     @classmethod
     def distill_to_trm_combat(
@@ -289,16 +346,17 @@ class DofusDomainDistiller:
         policy_labels: torch.Tensor,
         value_targets: torch.Tensor,
         temperature: float = 2.0,
-        alpha: float = 0.6,
+        alpha: Optional[float] = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
-        """Transfers domain knowledge from DofusBrainTransformer to TRM-ACT."""
+        """Transfers tactical stance and continuous value representations to TRM-ACT using DKD."""
         teacher_model.eval()
         with torch.no_grad():
             t_out = teacher_model(token_inputs)
             t_policy_logits = t_out["policy_logits"]
             t_val_pred = t_out["value_pred"]
 
-        # Student TRM-ACT batch forward pass
+        # Student TRM-ACT forward pass
         if hasattr(student_model, "in_proj") and hasattr(student_model, "gru"):
             h = student_model.ln_in(F.gelu(student_model.in_proj(state_vectors)))
             for _ in range(2):
@@ -308,16 +366,24 @@ class DofusDomainDistiller:
         else:
             s_logits, _, s_val_pred = student_model(state_vectors)
 
-        # Hard loss
+        # 1. Hard supervised losses
         loss_ce = F.cross_entropy(s_logits, policy_labels)
-        loss_mse = F.mse_loss(s_val_pred, value_targets)
+        loss_mse = F.smooth_l1_loss(s_val_pred, value_targets)
 
-        # Soft distillation loss
-        p_teacher = F.softmax(t_policy_logits / temperature, dim=-1)
-        log_p_student = F.log_softmax(s_logits / temperature, dim=-1)
-        loss_kl = F.kl_div(log_p_student, p_teacher, reduction="batchmean") * (temperature ** 2)
+        # 2. Decoupled Knowledge Distillation for stances
+        loss_dkd = cls.dkd_loss(
+            s_logits,
+            t_policy_logits,
+            policy_labels,
+            alpha=1.0,
+            beta=2.0,
+            temperature=temperature,
+        )
 
-        total_loss = (1.0 - alpha) * (loss_ce + 0.05 * loss_mse) + alpha * loss_kl
+        # 3. Soft value distillation
+        loss_val_distill = F.smooth_l1_loss(s_val_pred, t_val_pred)
+
+        total_loss = 0.4 * loss_ce + 0.4 * loss_dkd + 0.1 * loss_mse + 0.1 * loss_val_distill
         return total_loss
 
     # Backward compatibility alias
