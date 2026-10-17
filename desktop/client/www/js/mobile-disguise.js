@@ -329,84 +329,6 @@
                 return origMatchMedia.apply(this, arguments);
             }, 'matchMedia');
         }
-
-        // Universal Mouse-to-Touch Bridge: translates desktop mouse drag and slide into native TouchEvents
-        try {
-            var isMouseDown = false, touchIdSeq = 1, currentTarget = null;
-            function makeFakeTouch(e, target) {
-                var radius = 14;
-                var touchProps = {
-                    identifier: touchIdSeq,
-                    target: target || e.target,
-                    screenX: e.screenX,
-                    screenY: e.screenY,
-                    clientX: e.clientX,
-                    clientY: e.clientY,
-                    pageX: e.pageX,
-                    pageY: e.pageY,
-                    radiusX: radius,
-                    radiusY: radius,
-                    rotationAngle: 0,
-                    force: 1
-                };
-                if (typeof Touch === 'function') {
-                    try { return new Touch(touchProps); } catch (err) {}
-                }
-                return touchProps;
-            }
-
-            function dispatchTouchEvent(type, mouseEvt, touches, targetTouches, changedTouches, target) {
-                var touchEvt;
-                var eventInit = {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    touches: touches,
-                    targetTouches: targetTouches,
-                    changedTouches: changedTouches,
-                    shiftKey: mouseEvt.shiftKey,
-                    altKey: mouseEvt.altKey,
-                    ctrlKey: mouseEvt.ctrlKey,
-                    metaKey: mouseEvt.metaKey
-                };
-                if (typeof TouchEvent === 'function') {
-                    try {
-                        touchEvt = new TouchEvent(type, eventInit);
-                    } catch (err) {}
-                }
-                if (!touchEvt) {
-                    touchEvt = document.createEvent('UIEvent');
-                    touchEvt.initUIEvent(type, true, true, window, 1);
-                    for (var k in eventInit) {
-                        try { Object.defineProperty(touchEvt, k, { value: eventInit[k] }); } catch (ex) {}
-                    }
-                }
-                (target || mouseEvt.target).dispatchEvent(touchEvt);
-            }
-
-            window.addEventListener('mousedown', function(e) {
-                if (e.which !== 1) return;
-                isMouseDown = true;
-                currentTarget = e.target;
-                touchIdSeq++;
-                var t = makeFakeTouch(e, currentTarget);
-                dispatchTouchEvent('touchstart', e, [t], [t], [t], currentTarget);
-            }, true);
-
-            window.addEventListener('mousemove', function(e) {
-                if (!isMouseDown || !currentTarget) return;
-                var t = makeFakeTouch(e, currentTarget);
-                dispatchTouchEvent('touchmove', e, [t], [t], [t], currentTarget);
-            }, true);
-
-            window.addEventListener('mouseup', function(e) {
-                if (!isMouseDown || !currentTarget) return;
-                var t = makeFakeTouch(e, currentTarget);
-                dispatchTouchEvent('touchend', e, [], [], [t], currentTarget);
-                isMouseDown = false;
-                currentTarget = null;
-            }, true);
-        } catch (e) {}
     } catch (e) {}
 
     // 7 & 10. Sensors & EventTarget - Untouched native browser implementations
@@ -876,13 +798,13 @@
             try {
                 if (window.isoEngine) {
                     var ie = window.isoEngine;
-                    var eggAlpha = (ie._loadingProgress && ie._loadingProgress.progressEgg) ? ie._loadingProgress.progressEgg.alpha : 0;
+                    var eggAlpha = (ie._loadingProgress && ie._loadingProgress.progressEgg && ie._loadingProgress.progressEgg.visible) ? ie._loadingProgress.progressEgg.alpha : 0;
                     var isTransitionActive = ie._isMapLoading || ie._loadingFadeInTransitionRunning || (eggAlpha > 0.1);
                     if (isTransitionActive) {
                         if (!_mapStallStart) {
                             _mapStallStart = Date.now();
-                        } else if (Date.now() - _mapStallStart > 3500) {
-                            console.warn('[MapWatchdog] Map transition exceeded 3.5s safeguard. Forcing display fade-out and scene refresh...');
+                        } else if (Date.now() - _mapStallStart > 10000) {
+                            console.warn('[MapWatchdog] Map transition exceeded 10s safeguard. Forcing display fade-out and scene refresh...');
                             _mapStallStart = 0;
                             if (typeof ie._runLoadingFadeOutTransition === 'function') {
                                 ie._runLoadingFadeOutTransition();
@@ -899,6 +821,8 @@
                             }
                             if (window.foreground && typeof window.foreground.unlock === 'function') {
                                 try { window.foreground.unlock('loadMap'); } catch(e){}
+                                try { window.foreground.unlock('quickReconnection'); } catch(e){}
+                                window.foreground.locked = false;
                             }
                             if (window.dofus && window.dofus.connectionManager && typeof window.dofus.connectionManager.unlockMessages === 'function') {
                                 try { window.dofus.connectionManager.unlockMessages(); } catch(e){}

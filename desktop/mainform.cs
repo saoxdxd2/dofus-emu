@@ -897,9 +897,8 @@ namespace DofusFarm.UI
                 lock (_logFileLock)
                 {
                     if (_logWriter == null)
-                        _logWriter = new StreamWriter(new FileStream(LogFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = false };
+                        _logWriter = new StreamWriter(new FileStream(LogFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
                     _logWriter.WriteLine(msg);
-                    if (++_logWritesSinceFlush >= 32) { _logWriter.Flush(); _logWritesSinceFlush = 0; }
                 }
             }
             catch { try { if (_logWriter != null) { _logWriter.Dispose(); _logWriter = null; } } catch { } }

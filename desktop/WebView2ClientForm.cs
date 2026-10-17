@@ -169,6 +169,37 @@ namespace DofusFarm.Engine
                 try { window.chrome.webview.postMessage({ type: 'CONSOLE_LOG', level: 'error', text: Array.prototype.slice.call(arguments).join(' ') }); } catch(e){}
             }
         };
+
+        window.addEventListener('error', function(evt) {
+            if (window.chrome && window.chrome.webview) {
+                var msg = evt.message || (evt.error && evt.error.message) || 'Unknown JS Error';
+                var src = evt.filename || '';
+                var line = evt.lineno || 0;
+                var col = evt.colno || 0;
+                var stack = (evt.error && evt.error.stack) ? ('\n' + evt.error.stack) : '';
+                try {
+                    window.chrome.webview.postMessage({
+                        type: 'CONSOLE_LOG',
+                        level: 'error',
+                        text: '[UNCAUGHT-JS-ERROR] ' + msg + ' (' + src + ':' + line + ':' + col + ')' + stack
+                    });
+                } catch(e){}
+            }
+        });
+
+        window.addEventListener('unhandledrejection', function(evt) {
+            if (window.chrome && window.chrome.webview) {
+                var reason = evt.reason;
+                var msg = reason ? (reason.stack || reason.message || reason) : 'Unhandled rejection';
+                try {
+                    window.chrome.webview.postMessage({
+                        type: 'CONSOLE_LOG',
+                        level: 'error',
+                        text: '[UNHANDLED-PROMISE-REJECTION] ' + msg
+                    });
+                } catch(e){}
+            }
+        });
     } catch(e) {}
 
     if (!window.__executeCommanderDirective) {
@@ -496,8 +527,9 @@ namespace DofusFarm.Engine
                 try
                 {
                     await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setTouchEmulationEnabled", "{\"enabled\":true,\"maxTouchPoints\":5}");
-                    await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setEmitTouchEventsForMouse", "{\"enabled\":true,\"configuration\":\"desktop\"}");
-                    _logCallback?.Invoke(string.Format("[{0}] Enabled native desktop touch emulation for mouse drag/swipe gestures.", _instanceId));
+                    await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setEmitTouchEventsForMouse", "{\"enabled\":true,\"configuration\":\"mobile\"}");
+                    await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.setCacheDisabled", "{\"cacheDisabled\":true}");
+                    _logCallback?.Invoke(string.Format("[{0}] Enabled native mobile touch emulation and disabled HTTP cache for fresh assets.", _instanceId));
                 }
                 catch (Exception ex)
                 {

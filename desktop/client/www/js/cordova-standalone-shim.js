@@ -113,7 +113,10 @@
     window.cordova.plugins = window.cordova.plugins || {};
     window.cordova.plugins.Keyboard = window.cordova.plugins.Keyboard || {
         hideKeyboardAccessoryBar: function () {},
-        close: function () {}
+        close: function () {},
+        disableScroll: function () {},
+        show: function () {},
+        isVisible: false
     };
 
     window.cordova.plugins.screenorientation = window.cordova.plugins.screenorientation || {
