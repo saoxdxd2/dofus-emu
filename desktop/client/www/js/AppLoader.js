@@ -20,7 +20,7 @@ window.AppLoader = (function (Promise) {
 				str += '@' + files[key].version;
 			}
 		});
-		return String(window.CordovaFileCache.hash(str));
+		return String(CordovaFileCache.hash(str));
 	}
 
 	/**
@@ -30,7 +30,7 @@ window.AppLoader = (function (Promise) {
 	var BUNDLE_ROOT = location.href.replace(location.hash, '');
 	BUNDLE_ROOT = BUNDLE_ROOT.substr(0, BUNDLE_ROOT.lastIndexOf('/') + 1);
 
-	if (/ip(?:hone|ad|od)/iu.test(navigator.userAgent)) {
+	if (/ip(hone|ad|od)/i.test(navigator.userAgent)) {
 		BUNDLE_ROOT = location.pathname.substr(location.pathname.indexOf('/www/'));
 		BUNDLE_ROOT = BUNDLE_ROOT.substr(0, BUNDLE_ROOT.lastIndexOf('/') + 1);
 		BUNDLE_ROOT = 'cdvfile://localhost/bundle' + BUNDLE_ROOT;
@@ -38,17 +38,12 @@ window.AppLoader = (function (Promise) {
 
 	var loaderIds = {};
 
-	/**
-	 * @param id
-	 * @param options
-	 * @constructor
-	 */
 	function AppLoader(id, options) {
 		if (!options) {
 			throw new Error('CordovaAppLoader has no options!');
 		}
 		if (!options.fs) {
-			options.fs = new window.CordovaFileSystem(/* { concurrency: 10 } */);
+			options.fs = new CordovaFileSystem();
 		}
 		if (!options.serverRoot) {
 			throw new Error('CordovaAppLoader has no "serverRoot" option.');
@@ -60,7 +55,6 @@ window.AppLoader = (function (Promise) {
 		loaderIds[id] = true;
 
 		this.allowServerRootFromManifest = options.allowServerRootFromManifest === true;
-		this.cacheBuster = Boolean(options.cacheBuster);
 
 		// initialize variables
 		this.manifest = JSON.parse(localStorage.getItem(this._id + '_manifest')) || { files: {}, load: [] };
@@ -69,7 +63,7 @@ window.AppLoader = (function (Promise) {
 
 		// normalize serverRoot and set remote manifest url
 		options.serverRoot = options.serverRoot || '';
-		if (Boolean(options.serverRoot) && options.serverRoot[options.serverRoot.length - 1] !== '/') {
+		if (!!options.serverRoot && options.serverRoot[options.serverRoot.length - 1] !== '/') {
 			options.serverRoot += '/';
 		}
 		this.newManifestUrl = options.manifestUrl || options.serverRoot + (options.manifest || 'manifest.json');
@@ -77,9 +71,7 @@ window.AppLoader = (function (Promise) {
 		if (options.mode) {
 			options.mode = 'mirror';
 		}
-
-		/** @type {FileCache} */
-		this.cache = new window.CordovaFileCache(options);
+		this.cache = new CordovaFileCache(options);
 
 		// private stuff
 		this.corruptNewManifest = false;
@@ -101,10 +93,9 @@ window.AppLoader = (function (Promise) {
 	};
 
 	AppLoader.prototype.check = function (newManifest) {
-		var that = this,
-			manifest = this.manifest;
+		var self = this, manifest = this.manifest;
 		if (typeof newManifest === 'string') {
-			that.newManifestUrl = newManifest;
+			self.newManifestUrl = newManifest;
 			newManifest = undefined;
 		}
 
@@ -112,9 +103,8 @@ window.AppLoader = (function (Promise) {
 			if (typeof newManifest === 'object') {
 				resolve(newManifest);
 			} else {
-				var url = that.newManifestUrl + (that.cacheBuster ? '?' + Date.now() : '');
-				window
-					.fetch(url)
+				var url = self.newManifestUrl + (self._cacheBuster ? ('?' + Date.now()) : '');
+				window.fetch(url)
 					.then(checkHttpStatus)
 					.then(function (res) {
 						return res.json();
@@ -125,8 +115,8 @@ window.AppLoader = (function (Promise) {
 		});
 
 		return new Promise(function (resolve, reject) {
-			Promise.all([gotNewManifest, that.cache.list()]).then(
-				function (values) {
+			Promise.all([gotNewManifest, self.cache.list()])
+				.then(function (values) {
 					var newManifest = values[0];
 					var newFilesHash = hash(newManifest.files);
 
@@ -134,17 +124,15 @@ window.AppLoader = (function (Promise) {
 					// has been downloaded before (but fails)
 
 					// Check if the newFiles match the previous files (last_update_files)
-					if (newFilesHash === that._lastUpdateFiles) {
+					if (newFilesHash === self._lastUpdateFiles) {
 						// YES! So we're doing the same update again!
 
 						// Check if our current Manifest has indeed the "last_update_files"
-						var currentFiles = hash(that.manifest.files);
-						if (that._lastUpdateFiles !== currentFiles) {
+						var currentFiles = hash(self.manifest.files);
+						if (self._lastUpdateFiles !== currentFiles) {
 							// No! So we've updated, yet they don't appear in our manifest. This means:
-							console.warn(
-								'New manifest available, but an earlier update attempt failed. Will not download.'
-							);
-							that.corruptNewManifest = true;
+							console.warn('New manifest available, but an earlier update attempt failed. Will not download.');
+							self.corruptNewManifest = true;
 							return resolve(null);
 						}
 						// Yes, we've updated and we've succeeded.
@@ -153,73 +141,67 @@ window.AppLoader = (function (Promise) {
 
 					// Check if new manifest is valid
 					if (!newManifest.files) {
-						reject(new Error('Downloaded Manifest has no "files" attribute.'));
+						reject('Downloaded Manifest has no "files" attribute.');
 						return;
 					}
 
 					// We're good to go check! Get all the files we need
 					var cachedFiles = values[1]; // files in cache
-					var oldFiles = that._createFilemap(manifest.files); // files in current manifest
-					var newFiles = that._createFilemap(newManifest.files); // files in new manifest
+					var oldFiles = self._createFilemap(manifest.files); // files in current manifest
+					var newFiles = self._createFilemap(newManifest.files); // files in new manifest
 					// Create COPY and DOWNLOAD lists
-					that._toBeDownloaded = [];
-					that._toBeCopied = [];
-					that._toBeDeleted = [];
+					self._toBeDownloaded = [];
+					self._toBeCopied = [];
+					self._toBeDeleted = [];
 
 					Object.keys(newFiles)
 						// Find files that have changed version or are missing
 						.filter(function (file) {
 							// if new file, or...
-							return (
-								!oldFiles[file] ||
-								// version has changed, or...
+							return !oldFiles[file] ||
+									// version has changed, or...
 								oldFiles[file].version !== newFiles[file].version ||
-								// not in cache for some reason
-								!that.cache.isCached(file)
-							);
+									// not in cache for some reason
+								!self.cache.isCached(file);
 						})
 						// Add them to the correct list
 						.forEach(function (file) {
-							that._toBeDownloaded.push(file);
+							self._toBeDownloaded.push(file);
 						});
 
 					// Delete files
-					that._toBeDeleted = cachedFiles
+					self._toBeDeleted = cachedFiles
 						.map(function (file) {
-							return file.substr(that.cache.localRoot.length);
+							return file.substr(self.cache.localRoot.length);
 						})
 						.filter(function (file) {
 							// Everything that is not in new manifest, or....
-							return (
-								!newFiles[file] ||
-								// Files that will be downloaded, or...
-								that._toBeDownloaded.indexOf(file) >= 0 ||
-								// Files that will be copied
-								that._toBeCopied.indexOf(file) >= 0
-							);
+							return !newFiles[file] ||
+									// Files that will be downloaded, or...
+								self._toBeDownloaded.indexOf(file) >= 0 ||
+									// Files that will be copied
+								self._toBeCopied.indexOf(file) >= 0;
 						});
 
-					var changes = that._toBeDeleted.length + that._toBeDownloaded.length;
+					var changes = self._toBeDeleted.length + self._toBeDownloaded.length;
 					// Note: if we only need to copy files, we can keep serving from bundle!
 					// So no update is needed!
 					if (changes > 0) {
 						// Save the new Manifest
-						that.newManifest = newManifest;
-						that.newManifest.root = that.cache.localInternalURL;
+						self.newManifest = newManifest;
+						self.newManifest.root = self.cache.localInternalURL;
 						resolve(true);
 					} else {
 						resolve(false);
 					}
-				},
-				function (err) {
+				}, function (err) {
 					reject(err);
-				}
-			); // end of .then
+				}); // end of .then
 		}); // end of new Promise
 	};
 
 	AppLoader.prototype.canDownload = function () {
-		return Boolean(this.newManifest) && !this._updateReady;
+		return !!this.newManifest && !this._updateReady;
 	};
 
 	AppLoader.prototype.canUpdate = function () {
@@ -227,8 +209,8 @@ window.AppLoader = (function (Promise) {
 	};
 
 	AppLoader.prototype.download = function (onProgress) {
-		var that = this;
-		if (!that.canDownload()) {
+		var self = this;
+		if (!self.canDownload()) {
 			return new Promise(function (resolve) {
 				resolve(null);
 			});
@@ -238,52 +220,39 @@ window.AppLoader = (function (Promise) {
 		// only attempt this once - set 'last_update_files'
 		localStorage.setItem(this._id + '_last_update_files', hash(this.newManifest.files));
 		this.manifest.files = {};
-		return that.cache
-			.remove(that._toBeDeleted, true)
+		return self.cache.remove(self._toBeDeleted, true)
 			.then(function () {
-				// TODO: when we copy?
-				return Promise.all(
-					that._toBeCopied.map(function (file) {
-						// return that.cache._fs.download(BUNDLE_ROOT + file, that.cache.localRoot + file);
-						return window
-							.fetch(BUNDLE_ROOT + file)
-							.then(checkHttpStatus)
-							.then(function (response) {
-								return response.text();
-							})
-							.then(function (body) {
-								return that.cache._fs.write(that.cache.localRoot + file, body, '', function (error) {
-									if (error) {
-										console.error(error);
-									}
-								});
-							});
-					})
-				);
+				//TODO: when we copy?
+				return Promise.all(self._toBeCopied.map(function (file) {
+					//return self.cache._fs.download(BUNDLE_ROOT + file, self.cache.localRoot + file);
+					return window.fetch(BUNDLE_ROOT + file)
+						.then(checkHttpStatus)
+						.then(function (response) {
+							return response.text();
+						}).then(function (body) {
+							return self.cache._fs.write(self.cache.localRoot + file, body);
+						});
+				}));
 			})
 			.then(function () {
-				if (that.allowServerRootFromManifest && that.newManifest.serverRoot) {
-					that.cache.serverRoot = that.newManifest.serverRoot;
+				if (self.allowServerRootFromManifest && self.newManifest.serverRoot) {
+					self.cache.serverRoot = self.newManifest.serverRoot;
 				}
-				that.cache.add(that._toBeDownloaded);
-				return that.cache.download(onProgress);
-			})
-			.then(
-				function () {
-					that._toBeDeleted = [];
-					that._toBeDownloaded = [];
-					that._updateReady = true;
-					return that.newManifest;
-				},
-				function onRejected(files, err) {
-					// on download error, remove files...
-					console.error('download Error', files, err);
-					if (Boolean(files) && files.length) {
-						that.cache.remove(files);
-					}
-					return files;
+				self.cache.add(self._toBeDownloaded);
+				return self.cache.download(onProgress);
+			}).then(function () {
+				self._toBeDeleted = [];
+				self._toBeDownloaded = [];
+				self._updateReady = true;
+				return self.newManifest;
+			}, function onRejected(files, err) {
+				// on download error, remove files...
+				console.error('Error', files, err);
+				if (!!files && files.length) {
+					self.cache.remove(files);
 				}
-			);
+				return files;
+			});
 	};
 
 	AppLoader.prototype.update = function (reload) {
@@ -308,14 +277,11 @@ window.AppLoader = (function (Promise) {
 	};
 
 	AppLoader.prototype.reset = function () {
-		return this.clear().then(
-			function () {
-				location.reload();
-			},
-			function () {
-				location.reload();
-			}
-		);
+		return this.clear().then(function () {
+			location.reload();
+		}, function () {
+			location.reload();
+		});
 	};
 
 	return AppLoader;

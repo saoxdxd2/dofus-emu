@@ -1,5 +1,5 @@
-// Platform: cordova-android
-// cordova-js 6.1.0
+// Platform: android
+// cordova-js rel/6.0.0-10-g07379820
 /*
  Licensed to the Apache Software Foundation (ASF) under one
  or more contributor license agreements.  See the NOTICE file
@@ -19,7 +19,7 @@
  under the License.
 */
 ;(function() {
-var PLATFORM_VERSION_BUILD_LABEL = '14.0.1';
+var PLATFORM_VERSION_BUILD_LABEL = '9.1.0';
 // file: src/scripts/require.js
 var require;
 var define;
@@ -330,7 +330,7 @@ module.exports = cordova;
 
 });
 
-// file: ../../cordova-js-src/android/nativeapiprovider.js
+// file: ../cordova-android/cordova-js-src/android/nativeapiprovider.js
 define("cordova/android/nativeapiprovider", function(require, exports, module) {
 
 /**
@@ -353,7 +353,7 @@ module.exports = {
 
 });
 
-// file: ../../cordova-js-src/android/promptbasednativeapi.js
+// file: ../cordova-android/cordova-js-src/android/promptbasednativeapi.js
 define("cordova/android/promptbasednativeapi", function(require, exports, module) {
 
 /**
@@ -911,7 +911,7 @@ module.exports = channel;
 
 });
 
-// file: ../../cordova-js-src/exec.js
+// file: ../cordova-android/cordova-js-src/exec.js
 define("cordova/exec", function(require, exports, module) {
 
 /**
@@ -1406,7 +1406,7 @@ exports.reset();
 
 });
 
-// file: ../../cordova-js-src/platform.js
+// file: ../cordova-android/cordova-js-src/platform.js
 define("cordova/platform", function(require, exports, module) {
 
 // The last resume event that was received that had the result of a plugin call.
@@ -1425,9 +1425,6 @@ module.exports = {
 
         // TODO: Extract this as a proper plugin.
         modulemapper.clobbers('cordova/plugin/android/app', 'navigator.app');
-
-        // Core Splash Screen
-        modulemapper.clobbers('cordova/plugin/android/splashscreen', 'navigator.splashscreen');
 
         var APP_PLUGIN_NAME = Number(cordova.platformVersion.split('.')[0]) >= 4 ? 'CoreAndroid' : 'App';
 
@@ -1516,7 +1513,7 @@ function onMessageFromNative (msg) {
 
 });
 
-// file: ../../cordova-js-src/plugin/android/app.js
+// file: ../cordova-android/cordova-js-src/plugin/android/app.js
 define("cordova/plugin/android/app", function(require, exports, module) {
 
 var exec = require('cordova/exec');
@@ -1531,14 +1528,14 @@ module.exports = {
     },
 
     /**
-    * Load the url into the WebView or into new browser instance.
+    * Load the url into the webview or into new browser instance.
     *
     * @param url           The URL to load
     * @param props         Properties that can be passed in to the activity:
     *      wait: int                           => wait msec before loading URL
     *      loadingDialog: "Title,Message"      => display a native loading dialog
     *      loadUrlTimeoutValue: int            => time in msec to wait before triggering a timeout error
-    *      clearHistory: boolean              => clear WebView history (default=false)
+    *      clearHistory: boolean              => clear webview history (default=false)
     *      openExternal: boolean              => open in a new browser (default=false)
     *
     * Example:
@@ -1606,24 +1603,6 @@ module.exports = {
         return exec(null, null, APP_PLUGIN_NAME, 'exitApp', []);
     }
 };
-
-});
-
-// file: ../../cordova-js-src/plugin/android/splashscreen.js
-define("cordova/plugin/android/splashscreen", function(require, exports, module) {
-
-var exec = require('cordova/exec');
-
-var splashscreen = {
-    show: function () {
-        console.log('"navigator.splashscreen.show()" is unsupported on Android.');
-    },
-    hide: function () {
-        exec(null, null, 'CordovaSplashScreenPlugin', 'hide', []);
-    }
-};
-
-module.exports = splashscreen;
 
 });
 

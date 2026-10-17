@@ -12,7 +12,6 @@ function callCordova(action) {
 }
 
 function callCordovaStringify(action) {
-    console.log(action);
     var args = Array.prototype.slice.call(arguments, 1);
 
     cordova.exec(
@@ -27,24 +26,11 @@ function callCordovaStringify(action) {
 function callCordovaCallback(action, callback) {
     var args = Array.prototype.slice.call(arguments, 2);
 
-    cordova.exec(
-        callback,
+    cordova.exec(callback,
         function errorHandler(err) { },
         'Adjust',
         action,
         args
-    );
-}
-
-function callCordovaStringifyCallback(action, data, callback) {
-    var args = Array.prototype.slice.call(arguments, 1);
-
-    cordova.exec(
-        callback,
-        function errorHandler(err) { },
-        'Adjust',
-        action,
-        [JSON.stringify(args)]
     );
 }
 
@@ -57,26 +43,30 @@ var Adjust = {
         if (adjustConfig.hasAttributionListener()) {
             callCordovaCallback('setAttributionCallback', adjustConfig.getAttributionCallback());
         }
+
         if (adjustConfig.hasEventTrackingSucceededListener()) {
             callCordovaCallback('setEventTrackingSucceededCallback', adjustConfig.getEventTrackingSucceededCallback());
         }
+
         if (adjustConfig.hasEventTrackingFailedListener()) {
             callCordovaCallback('setEventTrackingFailedCallback', adjustConfig.getEventTrackingFailedCallback());
         }
+
         if (adjustConfig.hasSessionTrackingSucceededListener()) {
             callCordovaCallback('setSessionTrackingSucceededCallback', adjustConfig.getSessionTrackingSucceededCallback());
         }
+
         if (adjustConfig.hasSessionTrackingFailedListener()) {
             callCordovaCallback('setSessionTrackingFailedCallback', adjustConfig.getSessionTrackingFailedCallback());
         }
+
         if (adjustConfig.hasDeferredDeeplinkCallbackListener()) {
             callCordovaCallback('setDeferredDeeplinkCallback', adjustConfig.getDeferredDeeplinkCallback());
         }
-        if (adjustConfig.hasConversionValueUpdatedCallbackListener()) {
-            callCordovaCallback('setConversionValueUpdatedCallback', adjustConfig.getConversionValueUpdatedCallback());
-        }
-        if (adjustConfig.hasSkad4ConversionValueUpdatedCallbackListener()) {
-            callCordovaCallback('setSkad4ConversionValueUpdatedCallback', adjustConfig.getSkad4ConversionValueUpdatedCallback());
+
+        if (adjustConfig.hasObservationPackageCallbackListener()) {
+            console.log('About to call this crap');
+            callCordovaCallback('setObservationPackageCallback', adjustConfig.getObservationPackageCallback());
         }
 
         callCordovaStringify('create', adjustConfig);
@@ -118,30 +108,8 @@ var Adjust = {
         callCordova('disableThirdPartySharing');
     },
 
-    trackAdRevenue: function(source, payload = undefined) {
-        if (payload === undefined) {
-            // new API
-            callCordovaStringify('trackAdRevenue', source);
-        } else {
-            // old API
-            callCordova('trackAdRevenue', source, payload);
-        }
-    },
-
-    trackAppStoreSubscription: function(subscription) {
-        callCordovaStringify('trackAppStoreSubscription', subscription);
-    },
-
-    trackPlayStoreSubscription: function(subscription) {
-        callCordovaStringify('trackPlayStoreSubscription', subscription);
-    },
-
-    verifyAppStorePurchase: function(purchase, callback) {
-        callCordovaStringifyCallback('verifyAppStorePurchase', purchase, callback);
-    },
-
-    verifyPlayStorePurchase: function(purchase, callback) {
-        callCordovaStringifyCallback('verifyPlayStorePurchase', purchase, callback);
+    trackAdRevenue: function(source, payload) {
+        callCordova('trackAdRevenue', source, payload);
     },
 
     getGoogleAdId: function(callback) {
@@ -172,7 +140,7 @@ var Adjust = {
     },
 
     getSdkPrefix: function () {
-        return 'cordova4.38.1';
+        return 'cordova4.22.1';
     },
 
     addSessionCallbackParameter: function(key, value) {
@@ -203,46 +171,6 @@ var Adjust = {
         callCordova('sendFirstPackages');
     },
 
-    requestTrackingAuthorizationWithCompletionHandler: function(callback) {
-        callCordovaCallback('requestTrackingAuthorizationWithCompletionHandler', callback);
-    },
-
-    updateConversionValue: function(conversionValue) {
-        callCordova('updateConversionValue', conversionValue);
-    },
-
-    updateConversionValueWithErrorCallback: function(callback, conversionValue) {
-        callCordovaCallback('updateConversionValueWithErrorCallback', callback, conversionValue);
-    },
-
-    updateSkad4ConversionValueWithErrorCallback: function(callback, fineValue, coarseValue, lockWindow) {
-        callCordovaCallback('updateSkad4ConversionValueWithErrorCallback', callback, fineValue, coarseValue, lockWindow);
-    },
-
-    getAppTrackingAuthorizationStatus: function(callback) {
-        callCordovaCallback('getAppTrackingAuthorizationStatus', callback);
-    },
-
-    trackThirdPartySharing: function(adjustThirdPartySharing) {
-        callCordovaStringify('trackThirdPartySharing', adjustThirdPartySharing);
-    },
-
-    trackMeasurementConsent: function(measurementConsent) {
-        callCordova('trackMeasurementConsent', measurementConsent);
-    },
-
-    getLastDeeplink: function(callback) {
-        callCordovaCallback('getLastDeeplink', callback);
-    },
-
-    getIdfv: function(callback) {
-        callCordovaCallback('getIdfv', callback);
-    },
-
-    processDeeplink: function(deeplink, callback) {
-        callCordovaCallback('processDeeplink', callback, deeplink);
-    },
-
     setTestOptions: function(testOptions) {
         callCordova('setTestOptions', testOptions);
     },
@@ -268,8 +196,24 @@ var Adjust = {
         callCordova('onPause');
     },
 
-    checkForNewAttStatus: function() {
-        callCordova('checkForNewAttStatus');
+    sendUnbotifyCustomEvent: function(unbotifyCustomEvent) {
+        callCordova('sendUnbotifyCustomEvent', unbotifyCustomEvent);
+    },
+
+    setUnbotifyParameter: function(key, value) {
+        callCordova('setUnbotifyParameter', key, value);
+    },
+
+    setUnbotifyCorrelationId: function(unbotifyCorrelationId) {
+        callCordova('setUnbotifyCorrelationId', unbotifyCorrelationId);
+    },
+
+    startContext: function(contextName) {
+        callCordova('startContext', contextName);
+    },
+
+    endContext: function() {
+        callCordova('endContext');
     }
 };
 

@@ -55,15 +55,33 @@ userdata*.img
 # Android Launcher build outputs
 launcher/build/
 launcher/.gradle/
+# Android & Mobile Packages (Keep local only, never commit/upload)
 *.apk
 *.apks
+*.xapk
 *.dex
 *.class
 *.jar
 
-# Local runtime state
+# Local runtime state, credentials, logins and account stats (Strict Privacy)
 identity.json
 alias.json
+account*.json
+accounts*.json
+credentials*.json
+auth*.json
+session*.json
+login*.json
+stats*.json
+token*.json
+*.token
+*.session
+*.credential
+webview2_profiles/
+user_profiles/
+user_data/
+dofus-network/data/credentials/
+dofus-network/data/logs/
 *.bak
 *.orig
 *.rej

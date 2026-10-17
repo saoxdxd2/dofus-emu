@@ -7,19 +7,14 @@ window.CordovaFileSystem = (function () {
 
 	/* createDir, recursively */
 	function __createDir(rootDirEntry, folders, success, error) {
-		rootDirEntry.getDirectory(
-			folders[0],
-			{ create: true },
-			function (dirEntry) {
-				// Recursively add the new subfolder (if we still have another to create).
-				if (folders.length > 1) {
-					__createDir(dirEntry, folders.slice(1), success, error);
-				} else {
-					success(dirEntry);
-				}
-			},
-			error
-		);
+		rootDirEntry.getDirectory(folders[0], { create: true }, function (dirEntry) {
+			// Recursively add the new subfolder (if we still have another to create).
+			if (folders.length > 1) {
+				__createDir(dirEntry, folders.slice(1), success, error);
+			} else {
+				success(dirEntry);
+			}
+		}, error);
 	}
 
 	function dirname(str) {
@@ -34,16 +29,12 @@ window.CordovaFileSystem = (function () {
 		return str.substr(str.lastIndexOf('/') + 1);
 	}
 
-	/**
-	 * @param {string} str
-	 * @returns {string}
-	 */
 	function normalize(str) {
 		str = str || '';
 		if (str[0] === '/') {
 			str = str.substr(1);
 		}
-		if (Boolean(str) && str.indexOf('.') < 0 && str[str.length - 1] !== '/') {
+		if (!!str && str.indexOf('.') < 0 && str[str.length - 1] !== '/') {
 			str += '/';
 		}
 		if (str === './') {
@@ -53,13 +44,10 @@ window.CordovaFileSystem = (function () {
 	}
 
 	var transferQueue = [], // queued fileTransfers
-		inprogress = 0; // currently active filetransfers
+		inprogress = 0;     // currently active filetransfers
 
 	/**
 	 * Factory function: Create a single instance (based on single FileSystem)
-	 *
-	 * @param {object} options
-	 * @constructor
 	 */
 	function FileSystem(options) {
 		/* Promise implementation */
@@ -70,9 +58,8 @@ window.CordovaFileSystem = (function () {
 		}
 
 		/* default options */
-		options = options || {};
-		this.options = options;
-		options.persistent = options.persistent === undefined ? true : options.persistent;
+		this.options = options = options || {};
+		options.persistent = options.persistent !== undefined ? options.persistent : true;
 		options.storageSize = options.storageSize || 20 * 1024 * 1024;
 		options.concurrency = options.concurrency || 3;
 		options.retry = options.retry || [];
@@ -84,6 +71,7 @@ window.CordovaFileSystem = (function () {
 				reject(new Error('deviceready has not fired after 5 seconds.'));
 			}, 5100);
 		});
+
 
 		/* Promise resolve helper */
 		function resolvedPromise(value) {
@@ -107,32 +95,25 @@ window.CordovaFileSystem = (function () {
 		});
 
 		/* debug */
-		// fs.then(
-		// 	function (fs) {
-		// 		window.__fs = fs;
-		// 	},
-		// 	function (err) {
-		// 		console.error('Could not get Cordova FileSystem:', err);
-		// 	}
-		// );
+		fs.then(function (fs) {
+			window.__fs = fs;
+		}, function (err) {
+			console.error('Could not get Cordova FileSystem:', err);
+		});
 
 		/* ensure directory exists */
 		function ensure(folders) {
 			return new Promise(function (resolve, reject) {
-				return fs
-					.then(function (fs) {
-						if (folders) {
-							folders = folders.split('/').filter(function (folder) {
-								return folder && folder.length > 0 && folder !== '.' && folder !== '..';
-							});
-							__createDir(fs.root, folders, resolve, reject);
-						} else {
-							resolve(fs.root);
-						}
-					}, reject)
-					.catch(function (err) {
-						console.error('ensure err', err);
-					});
+				return fs.then(function (fs) {
+					if (!folders) {
+						resolve(fs.root);
+					} else {
+						folders = folders.split('/').filter(function (folder) {
+							return folder && folder.length > 0 && folder !== '.' && folder !== '..';
+						});
+						__createDir(fs.root, folders, resolve, reject);
+					}
+				}, reject);
 			});
 		}
 
@@ -260,6 +241,7 @@ window.CordovaFileSystem = (function () {
 			});
 		}
 
+
 		/* return contents of a file */
 		function read(path, method) {
 			method = method || 'readAsText';
@@ -281,58 +263,55 @@ window.CordovaFileSystem = (function () {
 			return read(path, 'readAsDataURL');
 		}
 
+
 		function readJSON(path) {
 			return read(path).then(JSON.parse);
 		}
 
 		/* write contents to a file */
-		function write(path, blob, mimeType, cb) {
-			ensure(dirname(path))
+		function write(path, blob, mimeType) {
+			return ensure(dirname(path))
 				.then(function () {
 					return file(path, { create: true });
 				})
 				.then(function (fileEntry) {
-					fileEntry.createWriter(function (writer) {
-						writer.onwriteend = function () {
-							return cb();
-						};
-						writer.onerror = function (err) {
-							return cb(err);
-						};
-						if (typeof blob === 'string') {
-							blob = new Blob([blob], { type: mimeType || 'text/plain' });
-						} else if (!(blob instanceof Blob)) {
-							blob = new Blob([JSON.stringify(blob)], { type: mimeType || 'application/json' });
-						}
-						writer.write(blob);
-					}, cb);
-				})
-				.catch(function (err) {
-					console.error('write err', err);
-					cb(err);
+					return new Promise(function (resolve, reject) {
+						fileEntry.createWriter(function (writer) {
+							writer.onwriteend = resolve;
+							writer.onerror = reject;
+							if (typeof blob === 'string') {
+								blob = new Blob([blob], { type: mimeType || 'text/plain' });
+							} else if (blob instanceof Blob !== true) {
+								blob = new Blob([JSON.stringify(blob)], { type: mimeType || 'application/json' });
+							}
+							writer.write(blob);
+						}, reject);
+					});
 				});
 		}
 
 		/* move a file */
 		function move(src, dest) {
-			return ensure(dirname(dest)).then(function (dir) {
-				return file(src).then(function (fileEntry) {
-					return new Promise(function (resolve, reject) {
-						fileEntry.moveTo(dir, filename(dest), resolve, reject);
+			return ensure(dirname(dest))
+				.then(function (dir) {
+					return file(src).then(function (fileEntry) {
+						return new Promise(function (resolve, reject) {
+							fileEntry.moveTo(dir, filename(dest), resolve, reject);
+						});
 					});
 				});
-			});
 		}
 
 		/* copy a file */
 		function copy(src, dest) {
-			return ensure(dirname(dest)).then(function (dir) {
-				return file(src).then(function (fileEntry) {
-					return new Promise(function (resolve, reject) {
-						fileEntry.copyTo(dir, filename(dest), resolve, reject);
+			return ensure(dirname(dest))
+				.then(function (dir) {
+					return file(src).then(function (fileEntry) {
+						return new Promise(function (resolve, reject) {
+							fileEntry.copyTo(dir, filename(dest), resolve, reject);
+						});
 					});
 				});
-			});
 		}
 
 		/* delete a file */
@@ -340,15 +319,15 @@ window.CordovaFileSystem = (function () {
 			var method = mustExist ? file : exists;
 			return new Promise(function (resolve, reject) {
 				method(path).then(function (fileEntry) {
-					if (fileEntry === false) {
-						resolve(1);
-					} else {
+					if (fileEntry !== false) {
 						fileEntry.remove(resolve, reject);
+					} else {
+						resolve(1);
 					}
 				}, reject);
 			}).then(function (val) {
-				return val !== 1;
-			});
+					return val === 1 ? false : true;
+				});
 		}
 
 		/* delete a directory */
@@ -360,22 +339,19 @@ window.CordovaFileSystem = (function () {
 			});
 		}
 
-		/**
-		 * Whenever we want to start a transfer, we call popTransferQueue
-		 *
-		 * @param {FileTransfer} fileTransfer
-		 * @param {string} serverUrl
-		 * @param {Function} win
-		 * @param {Function} fail
-		 */
-		function popTransferQueue(fileTransfer, serverUrl, win, fail) {
-			if (fileTransfer.isAborted()) {
+		// Whenever we want to start a transfer, we call popTransferQueue
+		function popTransferQueue(ft, isDownload, serverUrl, localPath, win, fail, trustAllHosts, transferOptions) {
+			trustAllHosts = trustAllHosts || false;
+
+			if (ft._aborted) {
 				inprogress--;
-			} else {
-				fileTransfer.download(serverUrl, win, fail);
-				if (fileTransfer.onprogress) {
-					fileTransfer.onprogress(new ProgressEvent());
+			} else if (isDownload) {
+				ft.download.call(ft, serverUrl, localPath, win, fail, trustAllHosts, transferOptions);
+				if (ft.onprogress) {
+					ft.onprogress(new ProgressEvent());
 				}
+			} else {
+				ft.upload.call(ft, localPath, serverUrl, win, fail, transferOptions, trustAllHosts);
 			}
 		}
 
@@ -396,57 +372,54 @@ window.CordovaFileSystem = (function () {
 			return result;
 		}
 
-		/**
-		 * @param {string} serverUrl
-		 * @param {string} localPath - e.g. "js/build/styles-native.css" or "data/assets/ui/icons/modeSell.png"
-		 * @param {TransferOptions} transferOptions
-		 * @param {Function} onprogress
-		 */
-		function download(serverUrl, localPath, transferOptions, onprogress) {
+		function filetransfer(isDownload, serverUrl, localPath, transferOptions, onprogress) {
+			if (typeof transferOptions === 'function') {
+				onprogress = transferOptions;
+				transferOptions = {};
+			}
+			if (localPath.indexOf('://') < 0) {
+				localPath = toInternalURLSync(localPath);
+			}
+
 			transferOptions = transferOptions || {};
 			if (!transferOptions.retry || !transferOptions.retry.length) {
 				transferOptions.retry = options.retry;
 			}
 			transferOptions.retry = transferOptions.retry.concat();
+			if (!transferOptions.file && !isDownload) {
+				transferOptions.fileName = filename(localPath);
+			}
 
-			/** @type {FileTransfer} */
-			var ft = new window.FileTransferClass();
+			var ft = new FileTransfer();
 			onprogress = onprogress || transferOptions.onprogress;
 			if (typeof onprogress === 'function') {
 				ft.onprogress = onprogress;
 			}
 			var promise = new Promise(function (resolve, reject) {
-				function attempt(err) {
+				var attempt = function (err) {
 					if (transferOptions.retry.length === 0) {
-						console.error('attempt err', err);
 						reject(err);
 					} else {
 						transferQueue.reverse();
 						transferQueue.push([
 							ft,
+							isDownload,
 							serverUrl,
-							function success(blob) {
-								blob.then(function (body) {
-									write(localPath, body, '', function (error) {
-										if (error) {
-											return attempt(error);
-										}
-										resolve(null);
-									});
-								}).catch(attempt);
-							},
-							attempt
+							localPath,
+							resolve,
+							attempt,
+							transferOptions.trustAllHosts,
+							transferOptions
 						]);
 						transferQueue.reverse();
 						var timeout = transferOptions.retry.shift();
 						if (timeout > 0) {
-							console.warn('Retry ' + serverUrl + ' in ' + timeout / 1000 + 's');
 							setTimeout(nextTransfer, timeout);
 						} else {
 							nextTransfer();
 						}
 					}
-				}
+				};
 				transferOptions.retry.unshift(0);
 				inprogress++;
 				attempt();
@@ -457,10 +430,19 @@ window.CordovaFileSystem = (function () {
 				return promise;
 			};
 			promise.abort = function () {
+				ft._aborted = true;
 				ft.abort();
 				return promise;
 			};
 			return promise;
+		}
+
+		function download(url, dest, options, onprogress) {
+			return filetransfer(true, url, dest, options, onprogress);
+		}
+
+		function upload(source, dest, options, onprogress) {
+			return filetransfer(false, dest, source, options, onprogress);
 		}
 
 		return {
@@ -473,6 +455,7 @@ window.CordovaFileSystem = (function () {
 			create: create,
 			read: read,
 			readJSON: readJSON,
+			write: write,
 			move: move,
 			copy: copy,
 			remove: remove,
@@ -481,6 +464,7 @@ window.CordovaFileSystem = (function () {
 			ensure: ensure,
 			exists: exists,
 			download: download,
+			upload: upload,
 			toURL: toURL,
 			toInternalURLSync: toInternalURLSync,
 			toInternalURL: toInternalURL,

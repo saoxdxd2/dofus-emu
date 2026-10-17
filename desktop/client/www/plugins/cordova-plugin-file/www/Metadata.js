@@ -25,7 +25,7 @@ cordova.define("cordova-plugin-file.Metadata", function(require, exports, module
  *
  * {Date} modificationTime (readonly)
  */
-const Metadata = function (metadata) {
+var Metadata = function (metadata) {
     if (typeof metadata === 'object') {
         this.modificationTime = new Date(metadata.modificationTime);
         this.size = metadata.size || 0;
