@@ -129,6 +129,49 @@ namespace DofusFarm.Engine
         };
     }
 
+    if (!window.__executeCommanderDirective) {
+        window.__executeCommanderDirective = function(directiveData) {
+            try {
+                console.log('[AI Commander] Received directive:', directiveData);
+                var evt = new CustomEvent('dofus_commander_action', { detail: directiveData });
+                window.dispatchEvent(evt);
+                if (window.dofus && window.dofus.commander && typeof window.dofus.commander.handleDirective === 'function') {
+                    window.dofus.commander.handleDirective(directiveData);
+                }
+            } catch (e) {
+                console.error('[AI Commander] Directive error:', e);
+            }
+        };
+    }
+
+    if (!window.__onCommanderReply) {
+        window.__onCommanderReply = function(replyData) {
+            try {
+                console.log('[AI Commander] Received reply:', replyData);
+                var evt = new CustomEvent('dofus_commander_reply', { detail: replyData });
+                window.dispatchEvent(evt);
+            } catch (e) {
+                console.error('[AI Commander] Reply error:', e);
+            }
+        };
+    }
+
+    if (!window.__queryNLP) {
+        window.__queryNLP = function(queryText) {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ type: 'NLP_QUERY', text: queryText });
+            }
+        };
+    }
+
+    if (!window.__sendChatMessageToSentinel) {
+        window.__sendChatMessageToSentinel = function(sender, text, isMod) {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ type: 'CHAT_MESSAGE', sender: sender, text: text, isMod: !!isMod });
+            }
+        };
+    }
+
     if (window.cordova) return;
 
     window.cordova = {
@@ -552,6 +595,14 @@ namespace DofusFarm.Engine
                 {
                     HandleModWhisperAlert(json);
                 }
+                else if (json.Contains("\"type\":\"NLP_QUERY\"") || json.Contains("\"type\":\"CHAT_DIRECTIVE\""))
+                {
+                    HandleNlpQueryMessage(json);
+                }
+                else if (json.Contains("\"type\":\"CHAT_MESSAGE\""))
+                {
+                    HandleInGameChatMessage(json);
+                }
             }
             catch (Exception ex)
             {
@@ -664,6 +715,111 @@ namespace DofusFarm.Engine
                 }
             }
             catch { }
+        }
+
+        private void SafeUiInvoke(Action action)
+        {
+            if (IsDisposed) return;
+            try
+            {
+                if (InvokeRequired) BeginInvoke(action);
+                else action();
+            }
+            catch { }
+        }
+
+        private void HandleNlpQueryMessage(string json)
+        {
+            try
+            {
+                Match mText = Regex.Match(json, "\"text\"\\s*:\\s*\"([^\"]+)\"");
+                string queryText = mText.Success ? Regex.Unescape(mText.Groups[1].Value) : "";
+                if (string.IsNullOrWhiteSpace(queryText)) return;
+
+                _logCallback?.Invoke(string.Format("🤖 [{0}] In-Game NLP Query: \"{1}\"", _instanceId, queryText));
+
+                System.Threading.ThreadPool.QueueUserWorkItem(delegate
+                {
+                    try
+                    {
+                        using (var client = new System.Net.WebClient())
+                        {
+                            client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
+                            client.Encoding = Encoding.UTF8;
+                            string escapedText = queryText.Replace("\"", "\\\"");
+                            string payload = string.Format("{{\"command\":\"{0}\",\"target_slot\":\"{1}\"}}", escapedText, _instanceId);
+                            string response = client.UploadString("http://127.0.0.1:8890/sentinel/parse_command", "POST", payload);
+
+                            if (!string.IsNullOrEmpty(response))
+                            {
+                                SafeUiInvoke(() =>
+                                {
+                                    Match mDir = Regex.Match(response, "\"directive\"\\s*:\\s*\"([^\"]+)\"");
+                                    string directive = mDir.Success ? mDir.Groups[1].Value : "ACTION";
+                                    Match mExp = Regex.Match(response, "\"explanation\"\\s*:\\s*\"([^\"]+)\"");
+                                    string exp = mExp.Success ? Regex.Unescape(mExp.Groups[1].Value) : queryText;
+
+                                    if (_lblStatus != null && !IsDisposed)
+                                    {
+                                        _lblStatus.Text = string.Format("🤖 [{0}] {1}", directive, exp.Length > 40 ? exp.Substring(0, 40) + "..." : exp);
+                                        _lblStatus.ForeColor = Color.FromArgb(168, 85, 247);
+                                    }
+
+                                    if (_webView != null && _webView.CoreWebView2 != null)
+                                    {
+                                        _webView.CoreWebView2.PostWebMessageAsJson(string.Format(
+                                            "{{\"type\":\"NLP_RESPONSE\",\"instance_id\":\"{0}\",\"response\":{1}}}",
+                                            _instanceId, response));
+
+                                        _webView.CoreWebView2.ExecuteScriptAsync(string.Format(
+                                            "window.__onCommanderReply && window.__onCommanderReply({0});", response));
+                                    }
+
+                                    _logCallback?.Invoke(string.Format("🤖 [{0}] AI Commander reply: [{1}] {2}", _instanceId, directive, exp));
+                                });
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logCallback?.Invoke(string.Format("[{0}] NLP query failed: {1}", _instanceId, ex.Message));
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] Error in HandleNlpQueryMessage: {1}", _instanceId, ex.Message));
+            }
+        }
+
+        private void HandleInGameChatMessage(string json)
+        {
+            try
+            {
+                Match mSender = Regex.Match(json, "\"sender\"\\s*:\\s*\"([^\"]+)\"");
+                Match mText = Regex.Match(json, "\"text\"\\s*:\\s*\"([^\"]+)\"");
+                bool isMod = json.Contains("\"isMod\":true") || json.Contains("\"is_mod\":true");
+                string sender = mSender.Success ? Regex.Unescape(mSender.Groups[1].Value) : "Unknown";
+                string text = mText.Success ? Regex.Unescape(mText.Groups[1].Value) : "";
+
+                if (isMod)
+                {
+                    HandleModWhisperAlert(json);
+                }
+                else
+                {
+                    _logCallback?.Invoke(string.Format("💬 [{0}] In-game message from '{1}': \"{2}\"", _instanceId, sender, text));
+                    string low = text.ToLowerInvariant();
+                    if (low.StartsWith("!") || low.StartsWith("/") || low.Contains("va en") || low.Contains("suis") || low.Contains("passe") || low.Contains("farm") || low.Contains("join") || low.Contains("stop"))
+                    {
+                        HandleNlpQueryMessage(string.Format("{{\"text\":\"{0}\"}}", text.Replace("\"", "\\\"")));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] Error in HandleInGameChatMessage: {1}", _instanceId, ex.Message));
+            }
         }
 
         private void OnNewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
