@@ -248,27 +248,34 @@ class ResourceKnowledgeGraph:
         self.resources = list(self.ALL_RESOURCES)
         self.by_id: Dict[int, ResourceNode] = {r.id: r for r in self.resources}
         self.world_graph = DofusWorldGraph()
+        # Precompute the lowercase name variants (plus the wood-prefix
+        # aliases) once. The old find_resource_by_name() re-lowercased and
+        # re-stripped these prefixes for every resource on every query,
+        # which dominated the NLP resource lookup path.
+        self._resource_aliases: List[Tuple[ResourceNode, Tuple[str, ...]]] = [
+            (
+                r,
+                (
+                    r.name_fr.lower(),
+                    r.name_en.lower(),
+                    r.name_es.lower(),
+                    # Wood-prefix aliases (e.g. "Bois de Chêne" -> "chêne")
+                    r.name_fr.lower().replace("bois de ", "").replace("bois d'", ""),
+                    r.name_en.lower().replace(" wood", ""),
+                    r.name_es.lower().replace("madera de ", ""),
+                ),
+            )
+            for r in self.resources
+        ]
 
     def find_resource_by_name(self, name_query: str) -> Optional[ResourceNode]:
         """Fuzzy trilingual matching for resource name (e.g. 'fer', 'iron', 'hierro', 'blé', 'wheat')."""
         q = name_query.strip().lower()
-        # Direct exact or substring match
-        for r in self.resources:
-            fr = r.name_fr.lower()
-            en = r.name_en.lower()
-            es = r.name_es.lower()
-            if (
-                q == fr
-                or q == en
-                or q == es
-                or q in fr
-                or q in en
-                or q in es
-                or q in fr.replace("bois de ", "").replace("bois d'", "")
-                or q in en.replace(" wood", "")
-                or q in es.replace("madera de ", "")
-            ):
-                return r
+        # Direct exact or substring match against precomputed lowercase names
+        for r, aliases in self._resource_aliases:
+            for name in aliases:
+                if q == name or q in name:
+                    return r
         return None
 
     def search_spots(
@@ -329,13 +336,20 @@ class ResourceKnowledgeGraph:
         curr = start_coord
 
         while unvisited:
-            # find closest unvisited
-            closest = min(
-                unvisited,
-                key=lambda c: abs(c[0] - curr[0]) + abs(c[1] - curr[1]),
-            )
+            # Inline the argmin instead of min(..., key=lambda): avoids a
+            # Python-level call per candidate. Ties still resolve to the
+            # first-listed candidate, matching min()'s behaviour.
+            cx, cy = curr
+            best_i = 0
+            best_d = abs(unvisited[0][0] - cx) + abs(unvisited[0][1] - cy)
+            for i in range(1, len(unvisited)):
+                c = unvisited[i]
+                d = abs(c[0] - cx) + abs(c[1] - cy)
+                if d < best_d:
+                    best_d = d
+                    best_i = i
+            closest = unvisited.pop(best_i)
             ordered_maps.append(closest)
-            unvisited.remove(closest)
             curr = closest
 
         # Generate step-by-step navigation for the cycle

@@ -1,0 +1,8 @@
+2026-10-17 16:56:42,496 [INFO] dofus.data_extractor: Loaded 34 built-in spells and 8 built-in monsters.
+2026-10-17 16:56:42,511 [INFO] dofus.data_extractor: Loaded 100 full official monsters from cache.
+2026-10-17 16:56:42,512 [INFO] dofus.episodic_memory: Loaded 5 episodic tactical skills from cache.
+................
+----------------------------------------------------------------------
+Ran 16 tests in 0.954s
+
+OK
