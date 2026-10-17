@@ -132,7 +132,9 @@ def discover_measurements(session: requests.Session, limit: int,
     params: dict | None = {
         "type": "ping",
         "is_public": "true",
-        "is_active": "true",
+        "status": 2,
+        "is_oneoff": "false",
+        "sort": "-id",
         "page_size": 500,
         "format": "json",
     }

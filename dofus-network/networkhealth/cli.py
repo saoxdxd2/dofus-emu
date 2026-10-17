@@ -40,16 +40,21 @@ def _parse_ids(value: str) -> list[int]:
 
 
 def cmd_collect(args: argparse.Namespace) -> Path:
+    from .collectors.atlas import CollectorConfig, collect_ripe_atlas
+
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    rows, provenance = download_data(
+    cfg = CollectorConfig(
         days=args.days,
         max_measurements=args.measurements,
-        max_results=args.max_results,
-        measurement_ids=_parse_ids(args.measurement_ids),
+        max_results_per_measurement=args.max_results,
+        measurement_ids=tuple(_parse_ids(args.measurement_ids)),
         skip_empty=args.skip_empty,
         request_qps=args.request_qps,
-        probe_timeout=(5.0, args.probe_timeout),
+        workers=getattr(args, "workers", 8),
+        probe_timeout=(3.0, getattr(args, "probe_timeout", 8.0)),
     )
+    cache_dir = ARTIFACTS / "cache"
+    rows, provenance = collect_ripe_atlas(cfg, cache_dir)
     raw_path = ARTIFACTS / "raw.jsonl"
     save_jsonl(rows, raw_path)
     provenance_path = ARTIFACTS / "raw_provenance.json"
@@ -59,9 +64,10 @@ def cmd_collect(args: argparse.Namespace) -> Path:
         stage="collect",
         parameters={"days": args.days, "measurements": args.measurements,
                     "max_results": args.max_results,
+                    "workers": getattr(args, "workers", 8),
                     "skip_empty": bool(args.skip_empty),
                     "request_qps": args.request_qps,
-                    "probe_timeout_seconds": args.probe_timeout},
+                    "probe_timeout_seconds": getattr(args, "probe_timeout", 8.0)},
         inputs=[],
         outputs={"raw": raw_path, "provenance": provenance_path},
         extra={"unique_rows": len(rows), "source": provenance.get("source")},
@@ -103,10 +109,11 @@ def cmd_prepare(args: argparse.Namespace) -> Path:
         rows = masker.mask_series(rows)
         log(f"Applied per-instance identity mask across {len(rows):,} observations.")
 
+    seq_len = getattr(args, "seq_len", SEQ_LEN)
     series_map = build_series_features(rows)
-    examples = build_examples(series_map)
+    examples = build_examples(series_map, seq_len=seq_len)
     if not examples:
-        raise SystemExit("No training windows were produced. Collect more data or lower SEQ_LEN.")
+        raise SystemExit(f"No training windows produced for seq_len={seq_len}. Collect more data or lower seq_len.")
 
     x = np.stack([e["x"] for e in examples]).astype(np.float32)
     y = np.stack([e["targets"] for e in examples]).astype(np.float32)
@@ -123,13 +130,13 @@ def cmd_prepare(args: argparse.Namespace) -> Path:
         horizon_seconds=np.stack([e["horizon_seconds"] for e in examples]).astype(np.float32),
         last_rtt=np.asarray([e["last_rtt"] if e["last_rtt"] is not None else -1.0
                              for e in examples], dtype=np.float32),
-        seq_len=np.asarray([SEQ_LEN]),
+        seq_len=np.asarray([seq_len]),
         horizons=np.asarray(HORIZONS),
     )
     write_manifest(
         ARTIFACTS / "manifest_prepare.json",
         stage="prepare",
-        parameters={"seq_len": SEQ_LEN, "horizons": list(HORIZONS)},
+        parameters={"seq_len": seq_len, "horizons": list(HORIZONS)},
         inputs=[Path(args.input)],
         outputs={"features": features_path},
         extra={"examples": len(examples),
@@ -412,16 +419,17 @@ def build_parser() -> argparse.ArgumentParser:
     collect = sub.add_parser("collect", help="Download public RIPE Atlas ping data")
     collect.add_argument("--days", type=int, default=7)
     collect.add_argument("--measurements", type=int, default=25)
-    collect.add_argument("--max-results", type=int, default=2000)
+    collect.add_argument("--max-results", type=int, default=50000)
+    collect.add_argument("--workers", type=int, default=8, help="Parallel download workers")
     collect.add_argument("--measurement-ids", default="",
                          help="Comma-separated explicit ids; skips discovery")
-    collect.add_argument("--request-qps", type=float, default=2.0,
+    collect.add_argument("--request-qps", type=float, default=10.0,
                          help="Client-side request pacing (0 disables pacing)")
     collect.add_argument("--no-skip-empty", dest="skip_empty", action="store_false",
                          default=True,
                          help="Query every id with the full read timeout instead of "
                               "skipping ids that have no results in the window")
-    collect.add_argument("--probe-timeout", type=float, default=15.0,
+    collect.add_argument("--probe-timeout", type=float, default=8.0,
                          help="Read timeout in seconds for the bounded activity probe")
     collect.set_defaults(func=cmd_collect)
 
@@ -431,6 +439,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare = sub.add_parser("prepare", help="Build causal feature windows")
     prepare.add_argument("--input", default=str(ARTIFACTS / "clean.jsonl"))
+    prepare.add_argument("--seq-len", type=int, default=128,
+                         help="Context length (number of historical observations per window)")
     prepare.add_argument("--mask-identity", action="store_true", default=True,
                          help="Apply per-instance identity masking (pseudonymization, desynchronization)")
     prepare.add_argument("--no-mask-identity", dest="mask_identity", action="store_false",
@@ -478,7 +488,8 @@ def build_parser() -> argparse.ArgumentParser:
     everything = sub.add_parser("all", help="Run collect -> clean -> prepare -> baselines -> train")
     everything.add_argument("--days", type=int, default=7)
     everything.add_argument("--measurements", type=int, default=25)
-    everything.add_argument("--max-results", type=int, default=2000)
+    everything.add_argument("--max-results", type=int, default=50000)
+    everything.add_argument("--workers", type=int, default=8, help="Parallel download workers")
     everything.add_argument("--measurement-ids", default="")
     everything.add_argument("--mask-identity", action="store_true", default=True)
     everything.add_argument("--no-mask-identity", dest="mask_identity", action="store_false")

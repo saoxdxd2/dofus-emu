@@ -18,6 +18,7 @@ Design rules that matter for Phase 1:
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import math
 import time
@@ -44,11 +45,12 @@ def log(message: str) -> None:
 class CollectorConfig:
     """Tunables for a collection run; all recorded in the run manifest."""
 
-    days: int = 30
-    max_measurements: int = 100
-    max_results_per_measurement: int = 20000
-    request_qps: float = 2.0
-    timeout: tuple[float, float] = (5.0, 25.0)
+    days: int = 7
+    max_measurements: int = 25
+    max_results_per_measurement: int = 50000
+    request_qps: float = 10.0
+    workers: int = 8
+    timeout: tuple[float, float] = (5.0, 30.0)
     # Tight timeouts for the cheap "does this id have data?" pre-check. A dead
     # or hanging results endpoint must not cost a full read timeout per try.
     probe_timeout: tuple[float, float] = (3.0, 8.0)
@@ -65,6 +67,7 @@ class CollectorConfig:
             "max_measurements": self.max_measurements,
             "max_results_per_measurement": self.max_results_per_measurement,
             "request_qps": self.request_qps,
+            "workers": self.workers,
             "probe_timeout": list(self.probe_timeout),
             "page_size": self.page_size,
             "resume": self.resume,
@@ -158,18 +161,22 @@ def get_json(session: requests.Session, url: str, *, limiter: RateLimiter | None
 def discover_measurements(session: requests.Session, limit: int,
                           limiter: RateLimiter | None = None,
                           page_size: int = 500,
-                          timeout: tuple[float, float] = (10.0, 60.0),
-                          retries: int = 5) -> list[int]:
+                          days: int = 7,
+                          timeout: tuple[float, float] = (10.0, 30.0),
+                          retries: int = 3) -> list[int]:
     """Walk the paginated measurement index until ``limit`` ping ids are found.
 
     Uses a smaller page size than the API maximum so the first page returns
     quickly and we can stop early when only a few ids are wanted.
     """
+    start_threshold = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
     url: str | None = f"{API}/measurements/"
     params: dict | None = {
         "type": "ping",
         "is_public": "true",
-        "is_active": "true",
+        "status": 2,
+        "is_oneoff": "false",
+        "start_time__lte": start_threshold,
         "sort": "-id",
         "page_size": max(20, min(500, page_size)),
         "format": "json",
@@ -428,8 +435,8 @@ def collect_ripe_atlas(config: CollectorConfig, cache_dir: Path) -> tuple[list[d
     else:
         log(f"Discovering up to {config.max_measurements} public active ping measurements")
         ids = discover_measurements(session, config.max_measurements, limiter=limiter,
-                                    page_size=config.page_size, timeout=config.timeout,
-                                    retries=config.retries)
+                                    page_size=config.page_size, days=config.days,
+                                    timeout=config.timeout, retries=config.retries)
     if not ids:
         raise RuntimeError("No measurements discovered. Pass --measurement-ids with known public ids.")
 
@@ -437,35 +444,46 @@ def collect_ripe_atlas(config: CollectorConfig, cache_dir: Path) -> tuple[list[d
     all_rows: list[dict] = []
     per_measurement_rows: dict[str, int] = {}
 
-    for index, mid in enumerate(ids, 1):
+    def fetch_worker(item: tuple[int, int]) -> tuple[int, list[dict], str | None]:
+        index, mid = item
         cache_file = _cache_path(cache_dir, mid, start, now)
         cached = _read_cache(cache_file) if config.resume else []
         if cached:
             log(f"[{index}/{len(ids)}] measurement {mid}: {len(cached):,} rows from cache")
-            all_rows.extend(cached)
-            per_measurement_rows[str(mid)] = len(cached)
-            stats.measurements_fetched += 1
-            continue
+            return mid, cached, None
+
+        worker_session = new_session()
         try:
-            # Skip ids with no results in the window before paying for a full
-            # paginated fetch. Public discovery returns long-lived ids, many of
-            # which are dead or empty; the results endpoint can hang on those.
             if not config.skip_empty and not probe_recent_activity(
-                    session, mid, start, now, limiter=limiter, timeout=config.probe_timeout):
-                stats.measurements_empty += 1
+                    worker_session, mid, start, now, limiter=limiter, timeout=config.probe_timeout):
                 log(f"[{index}/{len(ids)}] measurement {mid}: no results in window, skipped")
-                continue
-            before = len(all_rows)
-            download_measurement_window(all_rows, stats, session, mid, start, now, config, limiter)
-            fetched = all_rows[before:]
-            _write_cache(cache_file, fetched)
-            per_measurement_rows[str(mid)] = len(fetched)
-            stats.measurements_fetched += 1
-            log(f"[{index}/{len(ids)}] measurement {mid}: {len(fetched):,} rows")
+                return mid, [], "no_results"
+
+            worker_rows: list[dict] = []
+            worker_stats = CollectionStats()
+            download_measurement_window(worker_rows, worker_stats, worker_session, mid, start, now, config, limiter)
+            _write_cache(cache_file, worker_rows)
+            log(f"[{index}/{len(ids)}] measurement {mid}: {len(worker_rows):,} rows fetched")
+            return mid, worker_rows, None
         except Exception as exc:
-            stats.measurements_failed += 1
-            stats.errors.append(f"measurement {mid}: {exc}")
             log(f"[{index}/{len(ids)}] skipping measurement {mid}: {exc}")
+            return mid, [], str(exc)
+
+    indexed = list(enumerate(ids, 1))
+    max_workers = max(1, min(config.workers, len(ids)))
+    log(f"Downloading {len(ids)} measurements concurrently using {max_workers} worker threads...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for mid, m_rows, err in executor.map(fetch_worker, indexed):
+            if err == "no_results":
+                stats.measurements_empty += 1
+            elif err is not None:
+                stats.measurements_failed += 1
+                stats.errors.append(f"measurement {mid}: {err}")
+            else:
+                stats.measurements_fetched += 1
+                if m_rows:
+                    per_measurement_rows[str(mid)] = len(m_rows)
+                    all_rows.extend(m_rows)
 
     unique_rows, removed = deduplicate(all_rows)
     stats.duplicates_collapsed = removed
