@@ -38,6 +38,7 @@ from combat.damage_calculator import (
     TargetStats,
 )
 from combat.tactical_engine import TacticalCombatEngine, TacticalStance, TacticalTurnPlan
+from combat.episodic_memory import EpisodicSkillMemory
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("sentinel.daemon")
@@ -244,6 +245,7 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
     vision = SingletonVisionInspector.get_instance()
     network_engine = MultiInstanceNetworkHealth(CHECKPOINT_PATH) if CHECKPOINT_PATH.exists() else None
     repo = GameDataRepository.get_instance()
+    memory = EpisodicSkillMemory.get_instance()
 
     def log_message(self, format: str, *args: Any) -> None:
         # Suppress noisy standard HTTP access logs
@@ -471,9 +473,40 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             breed_id = char_dict.get("breed_id", 8) if char_dict else 8
             available = self.repo.get_breed_spells(breed_id)
 
+            # 1. Fast episodic skill memory recall (<0.05ms)
+            cached_skill = self.memory.query_skill(breed_id, mob.name_fr, dist, hp_pct)
+            if cached_skill and cached_skill.reward_achieved >= 10.0:
+                self._send_json(200, {
+                    "status": "ok",
+                    "source": "EPISODIC_MEMORY",
+                    "stance": cached_skill.stance,
+                    "target_name": mob.name_fr,
+                    "target_hp": target.current_hp,
+                    "estimated_damage": 0.0,
+                    "multi_turn_projected_damage": 0.0,
+                    "action_sequence": [{"spell_name": s, "type": "EPISODIC_SKILL"} for s in cached_skill.proven_sequence],
+                    "explanation": f"Retrieved proven tactical skill from Episodic Memory (reward: {cached_skill.reward_achieved}).",
+                    "value_score": 0.99,
+                })
+                return
+
+            # 2. Otherwise run multi-turn tactical engine and record outcome
             plan = TacticalCombatEngine.plan_tactical_turn(char, target, available, distance_cells=dist, char_hp_percent=hp_pct)
+            if plan.value_score >= 0.85:
+                spell_names = [a.get("spell_name", "") for a in plan.action_sequence if a.get("spell_name")]
+                self.memory.record_outcome(
+                    breed_id=breed_id,
+                    target_name=mob.name_fr,
+                    distance_cells=dist,
+                    char_hp_percent=hp_pct,
+                    stance=plan.stance.value,
+                    action_sequence=spell_names,
+                    reward=plan.value_score * 15.0,
+                )
+
             self._send_json(200, {
                 "status": "ok",
+                "source": "TACTICAL_WORLD_MODEL",
                 "stance": plan.stance.value,
                 "target_name": plan.target_name,
                 "target_hp": plan.target_hp,

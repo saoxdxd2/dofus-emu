@@ -1,0 +1,64 @@
+{
+  "8:chef_de_guerre_bouftou:mid:healthy": {
+    "breed_id": 8,
+    "target_pattern": "Chef de Guerre Bouftou",
+    "stance": "BUFF_AND_ENGAGE",
+    "proven_sequence": [
+      "Puissance",
+      "Épée d'Iop",
+      "Pression"
+    ],
+    "reward_achieved": 14.5,
+    "success_count": 1,
+    "notes": ""
+  },
+  "9:craqueleur_des_plaines:range:healthy": {
+    "breed_id": 9,
+    "target_pattern": "Craqueleur des Plaines",
+    "stance": "BUFF_AND_ENGAGE",
+    "proven_sequence": [
+      "Tir Puissant",
+      "Flèche d'Expiation",
+      "Flèche Glacée"
+    ],
+    "reward_achieved": 15.0,
+    "success_count": 1,
+    "notes": ""
+  },
+  "7:any_mob:melee:lowhp": {
+    "breed_id": 7,
+    "target_pattern": "any_mob",
+    "stance": "SHIELD_DEFENSE",
+    "proven_sequence": [
+      "Mot Reconstituant",
+      "Mot de Frayeur"
+    ],
+    "reward_achieved": 12.0,
+    "success_count": 1,
+    "notes": ""
+  },
+  "8:testboss:mid:healthy": {
+    "breed_id": 8,
+    "target_pattern": "TestBoss",
+    "stance": "BURST_LETHAL",
+    "proven_sequence": [
+      "Pression",
+      "Concentration"
+    ],
+    "reward_achieved": 18.5,
+    "success_count": 2,
+    "notes": ""
+  },
+  "8:craqueleur:mid:healthy": {
+    "breed_id": 8,
+    "target_pattern": "Craqueleur",
+    "stance": "BUFF_AND_ENGAGE",
+    "proven_sequence": [
+      "Épée Divine",
+      "Colère d'Iop"
+    ],
+    "reward_achieved": 14.25,
+    "success_count": 1,
+    "notes": ""
+  }
+}
