@@ -108,6 +108,10 @@ namespace DofusFarm.UI
         private System.Windows.Forms.Timer _syncTimer;
         private string _lastStateSignature = "";
         private int _isSyncing = 0;
+        private int _refreshPendingForce = 0;
+        private int _shutdownStarted = 0;
+        private int _shutdownComplete = 0;
+        private static readonly Random Rng = new Random();
 
         private volatile bool _isClosing = false;
         private volatile bool _isFarmLaunching = false;
@@ -115,6 +119,10 @@ namespace DofusFarm.UI
         private readonly object _opsLock = new object();
         private readonly object _logFileLock = new object();
         private static readonly string LogFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DofusFarm.log");
+        private StreamWriter _logWriter;
+        private int _logWritesSinceFlush = 0;
+        private volatile string _pendingStatusText;
+        private int _statusTextPending = 0;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static int ParseFirstInt(object val, int fallback)
@@ -174,10 +182,56 @@ namespace DofusFarm.UI
                         WindowStyle = ProcessWindowStyle.Hidden
                     };
                     _sentinelProcess = Process.Start(psi);
-                    Log("🧠 Singleton AI Sentinel daemon auto-started (Port 8890).");
+                    Thread.Sleep(900);
+                    if (_sentinelProcess != null && _sentinelProcess.HasExited)
+                    {
+                        if (IsLocalPortListening(8890))
+                        {
+                            try { _sentinelProcess.Dispose(); } catch { }
+                            _sentinelProcess = null;
+                            Log("🧠 Singleton AI Sentinel already running on port 8890 - reusing it.");
+                        }
+                        else Log("⚠ Singleton AI Sentinel exited immediately - check the dofus-network logs.");
+                    }
+                    else Log("🧠 Singleton AI Sentinel daemon auto-started (Port 8890).");
                 }
                 catch { }
             });
+        }
+
+        private static bool IsLocalPortListening(int port)
+        {
+            try
+            {
+                using (var c = new System.Net.Sockets.TcpClient())
+                {
+                    IAsyncResult ar = c.BeginConnect("127.0.0.1", port, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(300)) return false;
+                    try { c.EndConnect(ar); return true; } catch { return false; }
+                }
+            }
+            catch { return false; }
+        }
+
+        private static string JsonEscape(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            var sb = new StringBuilder(s.Length + 16);
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default: if (c < 32) sb.AppendFormat("\\u{0:X4}", (int)c); else sb.Append(c); break;
+                }
+            }
+            return sb.ToString();
         }
 
         private static string FindPythonExecutable()
@@ -521,8 +575,7 @@ namespace DofusFarm.UI
                     using (var client = new System.Net.WebClient())
                     {
                         client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
-                        string escapedText = orderText.Replace("\"", "\\\"");
-                        string payload = string.Format("{{\"command\":\"{0}\",\"target_slot\":\"{1}\"}}", escapedText, targetId);
+                        string payload = string.Format("{{\"command\":\"{0}\",\"target_slot\":\"{1}\"}}", JsonEscape(orderText), JsonEscape(targetId));
                         string res = client.UploadString("http://127.0.0.1:8890/sentinel/parse_command", "POST", payload);
                         if (!string.IsNullOrEmpty(res))
                         {
@@ -559,8 +612,8 @@ namespace DofusFarm.UI
         {
             if (string.IsNullOrEmpty(action)) return;
 
-            string escapedAction = action.Replace("\"", "\\\"");
-            string js = string.Format("window.__executeCommanderDirective && window.__executeCommanderDirective({{\"action\":\"{0}\",\"target\":\"{1}\"}});", escapedAction, targetId);
+            string escapedAction = JsonEscape(action), escapedTarget = JsonEscape(targetId);
+            string js = string.Format("window.__executeCommanderDirective && window.__executeCommanderDirective({{\"action\":\"{0}\",\"target\":\"{1}\"}});", escapedAction, escapedTarget);
 
             if (_webViewBackend != null)
             {
@@ -832,22 +885,51 @@ namespace DofusFarm.UI
 
         private void OnSyncTimerTick(object sender, EventArgs e)
         {
+            FlushLog();
             if (!_isClosing && !_isFarmLaunching) RefreshGrid(false);
         }
 
         private void Log(string msg)
         {
             if (string.IsNullOrEmpty(msg)) return;
-            try { lock (_logFileLock) File.AppendAllText(LogFilePath, msg + "\r\n"); } catch { }
+            try
+            {
+                lock (_logFileLock)
+                {
+                    if (_logWriter == null)
+                        _logWriter = new StreamWriter(new FileStream(LogFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = false };
+                    _logWriter.WriteLine(msg);
+                    if (++_logWritesSinceFlush >= 32) { _logWriter.Flush(); _logWritesSinceFlush = 0; }
+                }
+            }
+            catch { try { if (_logWriter != null) { _logWriter.Dispose(); _logWriter = null; } } catch { } }
 
             if (IsDisposed || _isClosing || !IsHandleCreated) return;
             if (!msg.Contains("[GOVERNOR]") && !msg.Contains("[SECURITY]"))
             {
-                SafeBeginInvoke(delegate
+                // Coalesce status-label updates: during log floods only the newest message is
+                // rendered, and at most one UI callback is queued at any time.
+                _pendingStatusText = msg;
+                if (Interlocked.CompareExchange(ref _statusTextPending, 1, 0) == 0)
                 {
-                    if (_lblStatusText != null && !IsDisposed)
-                        _lblStatusText.Text = RxLogPrefix.Replace(msg, "");
-                });
+                    SafeBeginInvoke(delegate
+                    {
+                        try
+                        {
+                            if (_lblStatusText != null && !IsDisposed)
+                                _lblStatusText.Text = RxLogPrefix.Replace(_pendingStatusText ?? "", "");
+                        }
+                        finally { Interlocked.Exchange(ref _statusTextPending, 0); }
+                    });
+                }
+            }
+        }
+
+        private void FlushLog()
+        {
+            lock (_logFileLock)
+            {
+                try { if (_logWriter != null) { _logWriter.Flush(); _logWritesSinceFlush = 0; } } catch { }
             }
         }
 
@@ -877,7 +959,11 @@ namespace DofusFarm.UI
 
         private void RefreshGrid(bool forceRedraw = true)
         {
-            if (Interlocked.CompareExchange(ref _isSyncing, 1, 0) != 0 && !forceRedraw) return;
+            if (Interlocked.CompareExchange(ref _isSyncing, 1, 0) != 0)
+            {
+                if (forceRedraw) Interlocked.Exchange(ref _refreshPendingForce, 1);
+                return;
+            }
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -952,7 +1038,12 @@ namespace DofusFarm.UI
                     });
                 }
                 catch { }
-                finally { Interlocked.Exchange(ref _isSyncing, 0); }
+                finally
+                {
+                    Interlocked.Exchange(ref _isSyncing, 0);
+                    if (Interlocked.Exchange(ref _refreshPendingForce, 0) != 0)
+                        ThreadPool.QueueUserWorkItem(delegate { RefreshGrid(true); });
+                }
             });
         }
 
@@ -1017,7 +1108,7 @@ namespace DofusFarm.UI
                                 };
                                 _webViewBackend.Start(opts);
                                 // Natural human stagger: 2.5s - 3.8s between client connection handshakes
-                                int naturalStaggerMs = 2500 + new Random().Next(1300);
+                                int naturalStaggerMs = 2500 + Rng.Next(1300);
                                 Thread.Sleep(naturalStaggerMs);
                             }
                         }
@@ -1066,7 +1157,7 @@ namespace DofusFarm.UI
                         {
                             _webViewBackend.Stop(im.Name);
                         }
-                        _webViewBackend.Stop("probe-test");
+                        if (_webViewBackend.GetState("probe-test") == ClientInstanceState.Running) _webViewBackend.Stop("probe-test");
                     }
                     _engine.StopAll();
                     Thread.Sleep(500);
@@ -1397,31 +1488,55 @@ namespace DofusFarm.UI
                 _lblStatusText.Text = _keepInstancesOnExit
                     ? "Detaching from running instances (they keep playing in the background)..."
                     : "Saving instance snapshots and shutting down cleanly...";
-                Application.DoEvents();
             }
 
-            if (_syncTimer != null) { try { _syncTimer.Stop(); _syncTimer.Dispose(); } catch { } }
+            if (Interlocked.CompareExchange(ref _shutdownStarted, 1, 0) != 0)
+            {
+                if (Interlocked.CompareExchange(ref _shutdownComplete, 0, 0) == 0) { e.Cancel = true; return; }
+                FlushLog();
+                base.OnFormClosing(e);
+                return;
+            }
+
+            if (_syncTimer != null) { try { _syncTimer.Stop(); _syncTimer.Dispose(); } catch { } _syncTimer = null; }
             if (_engine != null) _engine.OnLog -= Log;
             if (_watchdog != null) { _watchdog.OnLog -= Log; _watchdog.Stop(); }
             if (_governor != null) { _governor.OnLog -= Log; _governor.Stop(); }
             if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch { } }
-            if (_engine != null)
-            {
-                if (_keepInstancesOnExit) Log("Instances left running on purpose - next Launch will attach to them instantly.");
-                else _engine.StopAll();
-            }
 
-            if (_sentinelProcess != null)
+            // Instance/process teardown used to run synchronously on the UI thread while pumping
+            // messages with DoEvents. It now runs on a worker; the window stays up with the status
+            // message until teardown finishes, then closes for real.
+            e.Cancel = true;
+            ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
-                    if (!_sentinelProcess.HasExited) _sentinelProcess.Kill();
-                    _sentinelProcess.Dispose();
+                    if (_engine != null)
+                    {
+                        if (_keepInstancesOnExit) Log("Instances left running on purpose - next Launch will attach to them instantly.");
+                        else _engine.StopAll();
+                    }
+
+                    if (_sentinelProcess != null)
+                    {
+                        try
+                        {
+                            if (!_sentinelProcess.HasExited) _sentinelProcess.Kill();
+                            _sentinelProcess.Dispose();
+                        }
+                        catch { }
+                        finally { _sentinelProcess = null; }
+                    }
                 }
                 catch { }
-                finally { _sentinelProcess = null; }
-            }
-
+                finally
+                {
+                    FlushLog();
+                    Interlocked.Exchange(ref _shutdownComplete, 1);
+                    try { BeginInvoke(new Action(Close)); } catch { }
+                }
+            });
             base.OnFormClosing(e);
         }
 

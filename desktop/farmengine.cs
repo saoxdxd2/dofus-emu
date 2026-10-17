@@ -144,6 +144,9 @@ namespace DofusFarm.Engine
         private readonly object _cdpLock = new object();
         private static readonly ConcurrentDictionary<int, int> _cachedPortToPid = new ConcurrentDictionary<int, int>();
         private static readonly object _pidCacheLock = new object();
+        private static readonly object _qemuScanLock = new object();
+        private static Dictionary<int, int> _qemuScanCache;
+        private static DateTime _qemuScanCacheUtc = DateTime.MinValue;
         private static readonly Dictionary<int, Process> _proxyProcesses = new Dictionary<int, Process>();
         private static readonly Dictionary<int, InProcessProxyServer> _inProcProxies = new Dictionary<int, InProcessProxyServer>();
         private static readonly object _proxyLock = new object();
@@ -728,8 +731,20 @@ namespace DofusFarm.Engine
                     try
                     {
                         var tracked = new HashSet<int>(_proxyProcesses.Values.Where(p => { try { return !p.HasExited; } catch { return false; } }).Select(p => p.Id));
+                        var blocking = new HashSet<int>();
+                        QueryWmi("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='dofus-net-proxy.exe'", 2, mo =>
+                        {
+                            string cl = (mo["CommandLine"] ?? "").ToString();
+                            if (cl.Length == 0 || cl.IndexOf("-port " + port, StringComparison.OrdinalIgnoreCase) >= 0)
+                                blocking.Add(Convert.ToInt32(mo["ProcessId"]));
+                        });
                         foreach (var p in Process.GetProcessesByName("dofus-net-proxy"))
-                            using (p) { if (!tracked.Contains(p.Id)) { try { if (!p.HasExited) p.Kill(); } catch { } } }
+                            using (p)
+                            {
+                                if (tracked.Contains(p.Id)) continue;
+                                if (blocking.Count > 0 && !blocking.Contains(p.Id)) continue;
+                                try { if (!p.HasExited) p.Kill(); } catch { }
+                            }
                         Thread.Sleep(200);
                     }
                     catch { }
@@ -848,7 +863,15 @@ namespace DofusFarm.Engine
         {
             try
             {
-                return Math.Max(1, Process.GetProcessesByName("qemu-system-x86_64").Length);
+                if (!HasRunningProcess("qemu-system-x86_64")) return 1;
+                int farm = 0, total = 0;
+                QueryWmi("SELECT CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'", 2, mo =>
+                {
+                    total++;
+                    string cmd = (mo["CommandLine"] ?? "").ToString();
+                    if (cmd.IndexOf("-avd dofus-", StringComparison.OrdinalIgnoreCase) >= 0) farm++;
+                });
+                return Math.Max(1, farm > 0 ? farm : total);
             }
             catch { return 1; }
         }
@@ -1038,20 +1061,43 @@ namespace DofusFarm.Engine
 
             if (HasRunningProcess("qemu-system-x86_64") || live.Count > 0)
             {
-                QueryWmi("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'", 2, mo =>
+                // Only qemu processes that booted one of our own dofus-*.avd AVDs count as farm
+                // instances; foreign emulators listening on the same ports must not mark farm slots
+                // as running or register their PID with the governor. The scan is a WMI query that
+                // spawns a wmiprvse host and GetInstances() runs on the UI refresh loop, so the
+                // farm-filtered result is cached for 2 s.
+                Dictionary<int, int> scan = null;
+                lock (_qemuScanLock)
                 {
-                    Match mp = RxQemuPort.Match((mo["CommandLine"] ?? "").ToString());
-                    if (mp.Success)
+                    if (_qemuScanCache != null && (DateTime.UtcNow - _qemuScanCacheUtc).TotalMilliseconds < 2000) scan = _qemuScanCache;
+                }
+                if (scan == null)
+                {
+                    var fresh = new Dictionary<int, int>();
+                    QueryWmi("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe'", 2, mo =>
                     {
-                        int pNum = int.Parse(mp.Groups[1].Value), qPid = Convert.ToInt32(mo["ProcessId"]);
-                        portToPid[pNum] = qPid;
-                        live.Add("emulator-" + pNum);
-                        lock (_pidCacheLock) _cachedPortToPid[pNum] = qPid;
-                        PriorityGovernor.RegisterInstancePid(qPid, Math.Max(0, (pNum - 5554) / 2), 1);
-                    }
-                });
+                        string cmd = (mo["CommandLine"] ?? "").ToString();
+                        if (cmd.IndexOf("-avd dofus-", StringComparison.OrdinalIgnoreCase) < 0) return;
+                        Match mp = RxQemuPort.Match(cmd);
+                        if (mp.Success) fresh[int.Parse(mp.Groups[1].Value)] = Convert.ToInt32(mo["ProcessId"]);
+                    });
+                    scan = fresh;
+                    lock (_qemuScanLock) { _qemuScanCache = fresh; _qemuScanCacheUtc = DateTime.UtcNow; }
+                }
+
+                foreach (var kv in scan)
+                {
+                    portToPid[kv.Key] = kv.Value;
+                    live.Add("emulator-" + kv.Key);
+                    lock (_pidCacheLock) _cachedPortToPid[kv.Key] = kv.Value;
+                    PriorityGovernor.RegisterInstancePid(kv.Value, Math.Max(0, (kv.Key - 5554) / 2), 1);
+                }
             }
-            else { lock (_pidCacheLock) _cachedPortToPid.Clear(); }
+            else
+            {
+                lock (_pidCacheLock) _cachedPortToPid.Clear();
+                lock (_qemuScanLock) { _qemuScanCache = null; }
+            }
 
             foreach (string d in Directory.GetDirectories(AvdHome, "dofus-*.avd").OrderBy(x => x, StringComparer.Ordinal))
             {
@@ -1432,7 +1478,11 @@ namespace DofusFarm.Engine
                         {
                             foreach (ZipArchiveEntry e in za.Entries.Where(x => !string.IsNullOrEmpty(x.Name)))
                             {
-                                string dest = Path.Combine(tplDir, e.FullName.Replace('/', '\\')), parent = Path.GetDirectoryName(dest);
+                                string dest;
+                                try { dest = Path.GetFullPath(Path.Combine(tplDir, e.FullName.Replace('/', '\\'))); }
+                                catch { continue; }
+                                if (!dest.StartsWith(tplDir + "\\", StringComparison.OrdinalIgnoreCase)) continue;
+                                string parent = Path.GetDirectoryName(dest);
                                 if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
                                 e.ExtractToFile(dest, true);
                             }
@@ -1647,16 +1697,27 @@ namespace DofusFarm.Engine
                     string logDir = Path.Combine(AvdHome, avdName + ".avd");
                     if (Directory.Exists(logDir))
                     {
+                        string logFile = Path.Combine(logDir, "emulator-console.log");
+                        try { var fi = new FileInfo(logFile); if (fi.Exists && fi.Length > 8L * 1024 * 1024) fi.Delete(); } catch { }
                         psi.RedirectStandardOutput = psi.RedirectStandardError = true;
                         var logged = new Process { StartInfo = psi };
-                        var writer = new StreamWriter(Path.Combine(logDir, "emulator-console.log"), false, Encoding.UTF8) { AutoFlush = true };
-                        DataReceivedEventHandler onData = delegate(object s, DataReceivedEventArgs e)
+                        StreamWriter writer = null;
+                        try
                         {
-                            if (e.Data != null) { try { lock (writer) writer.WriteLine(e.Data); } catch { } }
-                        };
-                        logged.OutputDataReceived += onData;
-                        logged.ErrorDataReceived += onData;
-                        if (logged.Start()) { logged.BeginOutputReadLine(); logged.BeginErrorReadLine(); return logged; }
+                            writer = new StreamWriter(logFile, true, Encoding.UTF8) { AutoFlush = true };
+                            StreamWriter w = writer;
+                            DataReceivedEventHandler onData = delegate(object s, DataReceivedEventArgs e)
+                            {
+                                if (e.Data != null) { try { lock (w) w.WriteLine(e.Data); } catch { } }
+                            };
+                            logged.OutputDataReceived += onData;
+                            logged.ErrorDataReceived += onData;
+                            logged.EnableRaisingEvents = true;
+                            logged.Exited += delegate { try { w.Dispose(); } catch { } };
+                            if (logged.Start()) { logged.BeginOutputReadLine(); logged.BeginErrorReadLine(); return logged; }
+                            try { writer.Dispose(); } catch { }
+                        }
+                        catch { if (writer != null) { try { writer.Dispose(); } catch { } } }
                     }
                 }
             }
@@ -2133,10 +2194,20 @@ namespace DofusFarm.Engine
                 int cdpPort = port + 4000;
                 string cdpJsonUrl = string.Format("http://127.0.0.1:{0}/json", cdpPort);
 
+                int idleMisses = 0;
                 while (!token.IsCancellationRequested)
                 {
                     string pidOut = AdbShell(serial, "pidof com.ankama.dofustouch").Trim();
-                    if (string.IsNullOrEmpty(pidOut)) { token.WaitHandle.WaitOne(3000); continue; }
+                    if (string.IsNullOrEmpty(pidOut))
+                    {
+                        // The game app is not up (yet). Poll every 3 s while it is expected to launch
+                        // any moment, then back off to 10 s: each poll spawns an adb process, and
+                        // keeping one per 3 s per instance running for hours is pure churn.
+                        idleMisses++;
+                        token.WaitHandle.WaitOne(idleMisses > 20 ? 10000 : 3000);
+                        continue;
+                    }
+                    idleMisses = 0;
 
                     string socketName = MatchVal(RxUnixSocket, AdbShell(serial, "cat /proc/net/unix"));
                     if (string.IsNullOrEmpty(socketName))
@@ -2309,22 +2380,19 @@ namespace DofusFarm.Engine
             int found = -1;
             try
             {
-                ForEachToolhelpProcess(pe =>
+                QueryWmi("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe' OR Name='emulator.exe'", 2, mo =>
                 {
                     if (found > 0) return;
-                    if (pe.szExeFile == "qemu-system-x86_64.exe" || pe.szExeFile == "emulator.exe")
-                    {
-                        int pid = (int)pe.th32ProcessID, cachedVal;
-                        lock (_pidCacheLock)
-                        {
-                            if ((_cachedPortToPid.TryGetValue(port, out cachedVal) && cachedVal == pid) ||
-                                (_cachedPortToPid.TryGetValue(pid, out cachedVal) && cachedVal == port))
-                                found = pid;
-                        }
-                    }
+                    if (MatchesInstanceCmdLine((mo["CommandLine"] ?? "").ToString(), name, port))
+                        found = Convert.ToInt32(mo["ProcessId"]);
                 });
             }
             catch { }
+            if (found <= 0)
+            {
+                int cachedVal;
+                lock (_pidCacheLock) { if (_cachedPortToPid.TryGetValue(port, out cachedVal)) found = cachedVal; }
+            }
             return found;
         }
 
@@ -2338,13 +2406,25 @@ namespace DofusFarm.Engine
             StopAllProxies();
             try { Adb("", "forward --remove-all"); } catch { }
 
-            HashSet<string> live = GetLiveSerials();
-            Log(string.Format("Stopping all active instances ({0} running)...", live.Count));
-            if (live.Count > 0)
+            var farmSerials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (Directory.Exists(AvdHome))
             {
-                using (var countdown = new CountdownEvent(live.Count))
+                foreach (string d in Directory.EnumerateDirectories(AvdHome, "dofus-*.avd"))
                 {
-                    foreach (string s in live)
+                    string n = Path.GetFileNameWithoutExtension(d);
+                    if (n.Equals("dofus-template", StringComparison.OrdinalIgnoreCase)) continue;
+                    farmSerials.Add("emulator-" + (5554 + 2 * (ParseSlotIdx(n) - 1)));
+                }
+            }
+
+            HashSet<string> live = GetLiveSerials();
+            var toStop = live.Where(farmSerials.Contains).ToList();
+            Log(string.Format("Stopping all active instances ({0} running)...", toStop.Count));
+            if (toStop.Count > 0)
+            {
+                using (var countdown = new CountdownEvent(toStop.Count))
+                {
+                    foreach (string s in toStop)
                     {
                         string serialCopy = s;
                         ThreadPool.QueueUserWorkItem(delegate
@@ -2358,15 +2438,34 @@ namespace DofusFarm.Engine
                 }
             }
 
-            foreach (string pName in new[] { "qemu-system-x86_64", "emulator", "dofus-net-proxy" })
+            // Only qemu/emulator processes that booted one of our dofus-*.avd slots are killed;
+            // foreign emulators running on the same machine must survive Stop All. The
+            // dofus-net-proxy binary belongs to this app and is always stopped.
+            bool wmiOk = Type.GetType("System.Management.ManagementObjectSearcher, System.Management", false) != null;
+            var farmPids = new HashSet<int>();
+            if (wmiOk)
+                QueryWmi("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='qemu-system-x86_64.exe' OR Name='emulator.exe'", 2, mo =>
+                {
+                    if (((mo["CommandLine"] ?? "").ToString()).IndexOf("-avd dofus-", StringComparison.OrdinalIgnoreCase) >= 0)
+                        farmPids.Add(Convert.ToInt32(mo["ProcessId"]));
+                });
+
+            foreach (string pName in new[] { "qemu-system-x86_64", "emulator" })
             {
                 try
                 {
                     foreach (Process p in Process.GetProcessesByName(pName))
-                        using (p) { try { if (pName == "dofus-net-proxy" || !p.WaitForExit(4500)) { p.Kill(); p.WaitForExit(1000); } } catch { } }
+                        using (p) { try { if (wmiOk && !farmPids.Contains(p.Id)) continue; if (!p.WaitForExit(4500)) { p.Kill(); p.WaitForExit(1000); } } catch { } }
                 }
                 catch { }
             }
+
+            try
+            {
+                foreach (Process p in Process.GetProcessesByName("dofus-net-proxy"))
+                    using (p) { try { p.Kill(); p.WaitForExit(1000); } catch { } }
+            }
+            catch { }
 
             try { if (Directory.Exists(AvdHome)) foreach (string d in Directory.EnumerateDirectories(AvdHome, "*.avd")) CleanLocks(d); } catch { }
             Log("All instances and emulator processes have been completely stopped.");
@@ -2378,8 +2477,12 @@ namespace DofusFarm.Engine
                 Directory.Exists(AvdHome) ? Directory.EnumerateDirectories(AvdHome, "dofus-*.avd").Select(Path.GetFileNameWithoutExtension) : Enumerable.Empty<string>(),
                 StringComparer.OrdinalIgnoreCase);
 
-            return Enumerable.Range(1, 32).Select(i => string.Format("dofus-{0:D2}", i)).FirstOrDefault(c => !existing.Contains(c))
-                   ?? ("dofus-" + (existing.Count + 1));
+            for (int i = 1; i < 1000; i++)
+            {
+                string cand = string.Format("dofus-{0:D2}", i);
+                if (!existing.Contains(cand)) return cand;
+            }
+            return "dofus-" + DateTime.UtcNow.Ticks.ToString();
         }
 
         private static void LinkOrCopyFile(string src, string dst)
@@ -2670,6 +2773,10 @@ namespace DofusFarm.Engine
         private readonly string _disguiseContent;
         private TcpListener _listener;
         private volatile bool _running;
+        private readonly object _telemetryLock = new object();
+        private double _lastRttMs, _rttSumMs;
+        private int _rttCount;
+        private long _connsTotal, _connsFailed, _connsActive, _sentBytes, _recvBytes;
 
         public bool IsRunning { get { return _running; } }
 
@@ -2736,12 +2843,39 @@ namespace DofusFarm.Engine
             return client;
         }
 
+        private string BuildTelemetryJson()
+        {
+            double last, avg;
+            lock (_telemetryLock) { last = _lastRttMs; avg = _rttCount > 0 ? _rttSumMs / _rttCount : 0; }
+            return string.Format(CultureInfo.InvariantCulture,
+                "{{\"status\":\"ok\",\"port\":{0},\"model\":\"{1}\",\"rtt_ms\":{2:F2},\"rtt_avg_ms\":{3:F2},\"sent_bytes\":{4},\"recv_bytes\":{5},\"conns_total\":{6},\"conns_failed\":{7},\"conns_active\":{8},\"timestamp\":{9}}}",
+                _port, (_model ?? "").Replace("\\", "\\\\").Replace("\"", "\\\""), last, avg,
+                Interlocked.Read(ref _sentBytes), Interlocked.Read(ref _recvBytes),
+                Interlocked.Read(ref _connsTotal), Interlocked.Read(ref _connsFailed), Interlocked.Read(ref _connsActive),
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        }
+
+        private void RecordRtt(double ms)
+        {
+            lock (_telemetryLock) { _lastRttMs = ms; _rttSumMs += ms; _rttCount++; }
+        }
+
         private TcpClient ConnectTarget(string host, int port)
         {
-            if (_upstreamUri == null) return ConnectWithTimeout(host, port, 5000, "Direct connect timeout");
+            if (_upstreamUri == null)
+            {
+                var sw = Stopwatch.StartNew();
+                TcpClient direct = ConnectWithTimeout(host, port, 5000, "Direct connect timeout");
+                sw.Stop();
+                RecordRtt(sw.Elapsed.TotalMilliseconds);
+                return direct;
+            }
 
             int upPort = _upstreamUri.Port > 0 ? _upstreamUri.Port : (_isSocks5 ? 1080 : 8080);
+            var upSw = Stopwatch.StartNew();
             TcpClient upClient = ConnectWithTimeout(_upstreamUri.Host, upPort, 6000, "Upstream proxy timeout");
+            upSw.Stop();
+            RecordRtt(upSw.Elapsed.TotalMilliseconds);
             NetworkStream ns = upClient.GetStream();
             ns.ReadTimeout = ns.WriteTimeout = 8000;
 
@@ -2822,16 +2956,23 @@ namespace DofusFarm.Engine
         private void HandleClient(object obj)
         {
             var client = (TcpClient)obj;
+            Interlocked.Increment(ref _connsTotal);
+            Interlocked.Increment(ref _connsActive);
             try
             {
                 client.NoDelay = true;
                 NetworkStream cStream = client.GetStream();
-                string reqLine = ReadAsciiLine(cStream);
+                // Buffered request-header reads: ReadByte() on a raw NetworkStream is one syscall
+                // per byte and every request carries a request line plus ~30 headers. Bytes read
+                // past the header block stay buffered and are forwarded before splicing, so
+                // request bodies and post-CONNECT tunnel data are not lost.
+                var cr = new ClientReadBuffer(cStream);
+                string reqLine = ReadAsciiLine(cr);
                 if (string.IsNullOrEmpty(reqLine)) { client.Close(); return; }
 
                 var headers = new List<string>();
                 string hostHeader = "";
-                for (string hLine; !string.IsNullOrEmpty(hLine = ReadAsciiLine(cStream));)
+                for (string hLine; !string.IsNullOrEmpty(hLine = ReadAsciiLine(cr));)
                 {
                     if (hLine.StartsWith("Host:", StringComparison.OrdinalIgnoreCase)) hostHeader = hLine.Substring(5).Trim();
                     headers.Add(hLine);
@@ -2841,13 +2982,14 @@ namespace DofusFarm.Engine
                 if (parts.Length < 2) { client.Close(); return; }
                 string method = parts[0].ToUpperInvariant(), rawTarget = parts[1];
 
-                if (method == "GET" && (rawTarget.EndsWith("/__health") || rawTarget.EndsWith("/__disguise.js") || rawTarget.EndsWith("/mobile-disguise.js")))
+                if (method == "GET" && (rawTarget.EndsWith("/__health") || rawTarget.EndsWith("/__telemetry") || rawTarget.EndsWith("/__disguise.js") || rawTarget.EndsWith("/mobile-disguise.js")))
                 {
-                    bool isHealth = rawTarget.EndsWith("/__health");
-                    byte[] bodyBytes = Encoding.UTF8.GetBytes(isHealth ? "{\"status\":\"ok\"}" : (_disguiseContent ?? ""));
+                    bool isHealth = rawTarget.EndsWith("/__health"), isTelemetry = rawTarget.EndsWith("/__telemetry");
+                    string bodyText = isTelemetry ? BuildTelemetryJson() : (isHealth ? "{\"status\":\"ok\"}" : (_disguiseContent ?? ""));
+                    byte[] bodyBytes = Encoding.UTF8.GetBytes(bodyText);
                     byte[] respHdr = Encoding.ASCII.GetBytes(string.Format(
                         "HTTP/1.1 200 OK\r\nContent-Type: {0}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n",
-                        isHealth ? "application/json" : "application/javascript; charset=utf-8", bodyBytes.Length));
+                        (isTelemetry || isHealth) ? "application/json" : "application/javascript; charset=utf-8", bodyBytes.Length));
                     cStream.Write(respHdr, 0, respHdr.Length);
                     cStream.Write(bodyBytes, 0, bodyBytes.Length);
                     client.Close();
@@ -2861,6 +3003,11 @@ namespace DofusFarm.Engine
                     if (colon > 0) { tHost = rawTarget.Substring(0, colon); int.TryParse(rawTarget.Substring(colon + 1), out tPort); }
                     TcpClient remote = ConnectTarget(tHost, tPort);
                     cStream.Write(ConnectOkBytes, 0, ConnectOkBytes.Length);
+                    byte[] connLeftover = cr.TakeLeftover();
+                    if (connLeftover != null && connLeftover.Length > 0)
+                    {
+                        try { NetworkStream rns = remote.GetStream(); rns.Write(connLeftover, 0, connLeftover.Length); } catch { }
+                    }
                     SpliceStreams(client, cStream, remote, remote.GetStream());
                     return;
                 }
@@ -2910,21 +3057,76 @@ namespace DofusFarm.Engine
 
                 byte[] reqBytes = Encoding.ASCII.GetBytes(outReq.ToString());
                 httpRStream.Write(reqBytes, 0, reqBytes.Length);
+                byte[] httpLeftover = cr.TakeLeftover();
+                if (httpLeftover != null && httpLeftover.Length > 0) httpRStream.Write(httpLeftover, 0, httpLeftover.Length);
                 SpliceStreams(client, cStream, httpRemote, httpRStream);
             }
-            catch { try { client.Close(); } catch { } }
+            catch { Interlocked.Increment(ref _connsFailed); try { client.Close(); } catch { } }
+            finally { Interlocked.Decrement(ref _connsActive); }
         }
 
-        private static void SpliceStreams(TcpClient c1, Stream s1, TcpClient c2, Stream s2)
+        private sealed class ClientReadBuffer
+        {
+            private readonly Stream _stream;
+            private readonly byte[] _buf = new byte[8192];
+            private int _pos, _len;
+
+            public ClientReadBuffer(Stream stream) { _stream = stream; }
+
+            public int ReadByte()
+            {
+                if (_pos >= _len)
+                {
+                    _len = _stream.Read(_buf, 0, _buf.Length);
+                    _pos = 0;
+                    if (_len <= 0) return -1;
+                }
+                return _buf[_pos++];
+            }
+
+            public byte[] TakeLeftover()
+            {
+                if (_len <= _pos) return null;
+                var left = new byte[_len - _pos];
+                Buffer.BlockCopy(_buf, _pos, left, 0, left.Length);
+                _pos = _len = 0;
+                return left;
+            }
+        }
+
+        private static string ReadAsciiLine(ClientReadBuffer s)
+        {
+            var sb = new StringBuilder(128);
+            while (true)
+            {
+                int b = s.ReadByte();
+                if (b < 0) return sb.Length > 0 ? sb.ToString() : null;
+                if (b == '\n') break;
+                if (b != '\r') sb.Append((char)b);
+            }
+            return sb.ToString();
+        }
+
+        private void SpliceStreams(TcpClient c1, Stream s1, TcpClient c2, Stream s2)
         {
             ThreadPool.QueueUserWorkItem(delegate
             {
-                try { s1.CopyTo(s2, 16384); } catch { }
+                try { CopyCounted(s1, s2, true); } catch { }
                 try { c2.Client.Shutdown(SocketShutdown.Send); } catch { try { c2.Close(); } catch { } }
             });
-            try { s2.CopyTo(s1, 16384); } catch { }
+            try { CopyCounted(s2, s1, false); } catch { }
             try { c1.Close(); } catch { }
             try { c2.Close(); } catch { }
+        }
+
+        private void CopyCounted(Stream from, Stream to, bool sent)
+        {
+            var buf = new byte[16384];
+            for (int n; (n = from.Read(buf, 0, buf.Length)) > 0; )
+            {
+                to.Write(buf, 0, n);
+                if (sent) Interlocked.Add(ref _sentBytes, n); else Interlocked.Add(ref _recvBytes, n);
+            }
         }
     }
 }

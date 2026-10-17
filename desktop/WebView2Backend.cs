@@ -202,6 +202,11 @@ namespace DofusFarm.Engine
                     };
                     form.OnFormClosedByUser += instId =>
                     {
+                        // The form can be closed long after a newer form replaced it in
+                        // _activeForms (relaunch); only the currently registered form may clear
+                        // the slot and flip the state to Stopped.
+                        WebView2ClientForm current;
+                        if (_activeForms.TryGetValue(instId, out current) && !ReferenceEquals(current, form)) return;
                         WebView2ClientForm removed;
                         _activeForms.TryRemove(instId, out removed);
                         SetState(instId, ClientInstanceState.Stopped);
@@ -232,13 +237,16 @@ namespace DofusFarm.Engine
                 }
             };
 
-            if (Application.OpenForms.Count > 0 && Application.OpenForms[0].InvokeRequired)
+            if (Application.OpenForms.Count > 0)
             {
-                Application.OpenForms[0].BeginInvoke(launchAction);
+                Control ui = Application.OpenForms[0];
+                if (ui.InvokeRequired) ui.BeginInvoke(launchAction);
+                else launchAction();
             }
             else
             {
-                launchAction();
+                SetState(id, ClientInstanceState.Faulted);
+                OnLog?.Invoke("[WEBVIEW2-BACKEND] No UI thread available to host the client window.");
             }
         }
 
@@ -278,29 +286,33 @@ namespace DofusFarm.Engine
         }
 
         private System.Threading.Timer _autoTileDebounceTimer;
+        private readonly object _autoTileLock = new object();
 
         public void ScheduleAutoTile(int delayMs = 350)
         {
-            try
+            lock (_autoTileLock)
             {
-                if (_autoTileDebounceTimer != null)
+                try
                 {
-                    _autoTileDebounceTimer.Dispose();
-                    _autoTileDebounceTimer = null;
-                }
-                _autoTileDebounceTimer = new System.Threading.Timer(_ =>
-                {
-                    if (Application.OpenForms.Count > 0)
+                    if (_autoTileDebounceTimer != null)
                     {
-                        var main = Application.OpenForms[0];
-                        if (main != null && !main.IsDisposed)
-                        {
-                            SafeUiInvoke(main, () => TileWindows(false));
-                        }
+                        _autoTileDebounceTimer.Dispose();
+                        _autoTileDebounceTimer = null;
                     }
-                }, null, delayMs, Timeout.Infinite);
+                    _autoTileDebounceTimer = new System.Threading.Timer(_ =>
+                    {
+                        if (Application.OpenForms.Count > 0)
+                        {
+                            var main = Application.OpenForms[0];
+                            if (main != null && !main.IsDisposed)
+                            {
+                                SafeUiInvoke(main, () => TileWindows(false));
+                            }
+                        }
+                    }, null, delayMs, Timeout.Infinite);
+                }
+                catch { }
             }
-            catch { }
         }
 
         public void TileWindows(bool edgeToEdge)
@@ -414,10 +426,9 @@ namespace DofusFarm.Engine
             {
                 foreach (var kvp in _activeForms)
                 {
-                    if (kvp.Value != null && !kvp.Value.IsDisposed)
-                    {
-                        kvp.Value.ExecuteScriptAsync(script);
-                    }
+                    WebView2ClientForm f = kvp.Value;
+                    if (f != null && !f.IsDisposed)
+                        SafeUiInvoke(f, () => { _ = f.ExecuteScriptAsync(script); });
                 }
                 return;
             }
@@ -425,7 +436,7 @@ namespace DofusFarm.Engine
             WebView2ClientForm form;
             if (_activeForms.TryGetValue(instanceId, out form) && form != null && !form.IsDisposed)
             {
-                form.ExecuteScriptAsync(script);
+                SafeUiInvoke(form, () => { _ = form.ExecuteScriptAsync(script); });
             }
         }
 
@@ -440,7 +451,7 @@ namespace DofusFarm.Engine
             if (c == null || c.IsDisposed) return;
             try
             {
-                if (c.InvokeRequired) c.BeginInvoke(action);
+                if (c.InvokeRequired && c.IsHandleCreated) c.BeginInvoke(action);
                 else action();
             }
             catch { }
@@ -448,6 +459,10 @@ namespace DofusFarm.Engine
 
         public void Dispose()
         {
+            lock (_autoTileLock)
+            {
+                if (_autoTileDebounceTimer != null) { try { _autoTileDebounceTimer.Dispose(); } catch { } _autoTileDebounceTimer = null; }
+            }
             foreach (var kvp in _activeForms)
             {
                 try

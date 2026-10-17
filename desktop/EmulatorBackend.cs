@@ -11,6 +11,8 @@ namespace DofusFarm.Engine
     {
         private readonly FarmEngine _engine;
         private readonly ConcurrentDictionary<string, ClientInstanceState> _states = new ConcurrentDictionary<string, ClientInstanceState>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, byte> _startsInFlight = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        private readonly Action<string> _logForwarder;
 
         public string Name { get { return "Android AOSP Ranchu Emulator"; } }
         public BackendType Type { get { return BackendType.AndroidEmulator; } }
@@ -21,7 +23,8 @@ namespace DofusFarm.Engine
         public EmulatorBackend(FarmEngine engine)
         {
             _engine = engine ?? new FarmEngine();
-            _engine.OnLog += msg => OnLog?.Invoke(msg);
+            _logForwarder = msg => OnLog?.Invoke(msg);
+            _engine.OnLog += _logForwarder;
         }
 
         public bool IsSupported(out string failureReason)
@@ -44,18 +47,22 @@ namespace DofusFarm.Engine
         {
             if (options == null || string.IsNullOrEmpty(options.InstanceId)) return;
             string id = options.InstanceId;
+            if (!_startsInFlight.TryAdd(id, 0)) return;
             SetState(id, ClientInstanceState.Starting);
 
             try
             {
                 _engine.LaunchInstance(id, options.SlotPort, options.RamMb, options.Cores, options.Proxy);
-                SetState(id, ClientInstanceState.Running);
+                bool running = _engine.GetInstances().Any(i => string.Equals(i.Name, id, StringComparison.OrdinalIgnoreCase) && i.IsRunning);
+                SetState(id, running ? ClientInstanceState.Running : ClientInstanceState.Faulted);
+                if (!running) OnLog?.Invoke(string.Format("[EMULATOR-BACKEND] {0} did not reach the running state after launch.", id));
             }
             catch (Exception ex)
             {
                 SetState(id, ClientInstanceState.Faulted);
                 OnLog?.Invoke(string.Format("[EMULATOR-BACKEND] Failed to launch {0}: {1}", id, ex.Message));
             }
+            finally { byte b; _startsInFlight.TryRemove(id, out b); }
         }
 
         public void Stop(string instanceId)
@@ -67,8 +74,14 @@ namespace DofusFarm.Engine
             {
                 var instances = _engine.GetInstances();
                 var target = instances.FirstOrDefault(i => string.Equals(i.Name, instanceId, StringComparison.OrdinalIgnoreCase));
-                string serial = target != null ? target.Serial : "emulator-5554";
-                _engine.StopInstance(serial, instanceId);
+                if (target == null)
+                {
+                    // Unknown id: never fall back to a guessed serial - that used to stop whatever
+                    // happened to run on emulator-5554.
+                    OnLog?.Invoke(string.Format("[EMULATOR-BACKEND] Stop ignored: unknown instance '{0}'.", instanceId));
+                    return;
+                }
+                _engine.StopInstance(target.Serial, instanceId);
             }
             finally
             {
@@ -90,12 +103,6 @@ namespace DofusFarm.Engine
         public void TileWindows(bool edgeToEdge)
         {
             var pids = _engine.GetInstances().Where(i => i.IsRunning && i.Pid > 0).Select(i => i.Pid).ToList();
-            if (pids.Count == 0)
-            {
-                Process[] procs = Process.GetProcessesByName("qemu-system-x86_64");
-                try { foreach (Process p in procs) pids.Add(p.Id); }
-                finally { foreach (Process p in procs) p.Dispose(); }
-            }
             if (pids.Count > 0)
             {
                 DofusFarm.Native.Win32.ApplyFarmLayout(pids, edgeToEdge);
@@ -105,12 +112,6 @@ namespace DofusFarm.Engine
         public void CascadeWindows()
         {
             var pids = _engine.GetInstances().Where(i => i.IsRunning && i.Pid > 0).Select(i => i.Pid).ToList();
-            if (pids.Count == 0)
-            {
-                Process[] procs = Process.GetProcessesByName("qemu-system-x86_64");
-                try { foreach (Process p in procs) pids.Add(p.Id); }
-                finally { foreach (Process p in procs) p.Dispose(); }
-            }
             if (pids.Count > 0)
             {
                 DofusFarm.Native.Win32.ApplyCascadeLayout(pids);
@@ -121,11 +122,29 @@ namespace DofusFarm.Engine
         {
             if (string.IsNullOrEmpty(instanceId)) return ClientInstanceState.Stopped;
             ClientInstanceState state;
-            if (_states.TryGetValue(instanceId, out state)) return state;
+            if (!_states.TryGetValue(instanceId, out state))
+            {
+                try
+                {
+                    return _engine.GetInstances().Any(i => string.Equals(i.Name, instanceId, StringComparison.OrdinalIgnoreCase) && i.IsRunning)
+                        ? ClientInstanceState.Running : ClientInstanceState.Stopped;
+                }
+                catch { return ClientInstanceState.Stopped; }
+            }
 
-            var instances = _engine.GetInstances();
-            var target = instances.FirstOrDefault(i => string.Equals(i.Name, instanceId, StringComparison.OrdinalIgnoreCase));
-            if (target != null && target.IsRunning) return ClientInstanceState.Running;
+            if (state != ClientInstanceState.Running) return state;
+
+            // A cached Running entry is only trusted while the engine still sees the instance.
+            // Stop All or an external emulator kill used to leave the grid showing "Running"
+            // forever because nothing invalidated the cache.
+            try
+            {
+                if (_engine.GetInstances().Any(i => string.Equals(i.Name, instanceId, StringComparison.OrdinalIgnoreCase) && i.IsRunning))
+                    return ClientInstanceState.Running;
+            }
+            catch { return state; }
+
+            _states[instanceId] = ClientInstanceState.Stopped;
             return ClientInstanceState.Stopped;
         }
 
@@ -184,6 +203,7 @@ namespace DofusFarm.Engine
 
         public void Dispose()
         {
+            try { _engine.OnLog -= _logForwarder; } catch { }
             _states.Clear();
         }
     }

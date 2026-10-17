@@ -108,9 +108,46 @@ namespace DofusFarm.Hardware
             return specs;
         }
 
-        // Counts physical (HT-ignoring) cores via GetLogicalProcessorInformation.
+        // Counts physical (HT-ignoring) cores via GetLogicalProcessorInformationEx first: the
+        // legacy single-group API below fails outright on machines with >64 logical processors
+        // (big farm servers), where ProcessorCount/2 was a wrong guess rather than a count.
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetLogicalProcessorInformationEx(int relationshipType, IntPtr buffer, ref int returnedLength);
+
+        private static int CountPhysicalCoresEx()
+        {
+            int len = 0;
+            GetLogicalProcessorInformationEx(0, IntPtr.Zero, ref len);
+            if (len <= 0) return 0;
+
+            IntPtr buf = Marshal.AllocHGlobal(len);
+            try
+            {
+                if (!GetLogicalProcessorInformationEx(0, buf, ref len)) return 0;
+                int cores = 0, offset = 0;
+                while (offset < len)
+                {
+                    int relationship = Marshal.ReadInt32(buf, offset);
+                    int size = Marshal.ReadInt32(buf, offset + 4);
+                    if (size <= 0) break;
+                    if (relationship == 0) cores++; // RelationProcessorCore
+                    offset += size;
+                }
+                return cores;
+            }
+            finally { Marshal.FreeHGlobal(buf); }
+        }
+
         private static int CountPhysicalCores()
         {
+            try
+            {
+                int ex = CountPhysicalCoresEx();
+                if (ex > 0) return ex;
+            }
+            catch { }
+
             IntPtr buffer = IntPtr.Zero;
             try
             {
