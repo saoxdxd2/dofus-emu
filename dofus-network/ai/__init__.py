@@ -9,6 +9,9 @@ from .dofus_native_model import (
 )
 from .train_from_scratch import (
     DofusNativeDataset,
+    TrainReport,
+    evaluate,
+    split_samples,
     train_dofus_ai_from_scratch,
 )
 
@@ -18,5 +21,8 @@ __all__ = [
     "DofusDomainTokenizer",
     "DofusTransformerBlock",
     "DofusNativeDataset",
+    "TrainReport",
+    "evaluate",
+    "split_samples",
     "train_dofus_ai_from_scratch",
 ]

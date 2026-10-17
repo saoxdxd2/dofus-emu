@@ -227,22 +227,38 @@ class DofusBrainTransformer(nn.Module):
 
         x = self.token_emb(input_ids) + self.pos_emb(pos)
 
-        key_padding_mask = (input_ids == 0) if attention_mask is None else (attention_mask == 0)
+        # ``[PAD]`` is id 0. If the caller supplies an explicit attention mask we
+        # honour it; otherwise we derive it from the padding id. The mask must
+        # never be "all padded" for a row, because a fully-masked row would make
+        # every attention weight NaN.
+        if attention_mask is None:
+            attention_mask = (input_ids != 0).long()
+        attention_mask = attention_mask.to(dtype=torch.bool)
+        all_pad = ~attention_mask.any(dim=1)
+        if all_pad.any():
+            attention_mask = attention_mask.clone()
+            attention_mask[all_pad, 0] = True
+        key_padding_mask = ~attention_mask
 
         for blk in self.blocks:
             x = blk(x, key_padding_mask=key_padding_mask)
 
         x = self.ln_f(x)
 
-        # Pooled representation from [CLS] token at position 0
-        cls_rep = x[:, 0, :]
+        # Mean-pool over real tokens only. Pooling the [CLS] position (or a naive
+        # mean) is wrong here: ``encode`` *right*-pads, so the padding always
+        # occupies the tail of the sequence and a naive mean would dilute the
+        # representation in proportion to how short the sentence was.
+        mask = attention_mask.unsqueeze(-1).to(x.dtype)
+        pooled = (x * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
 
         return {
             "mlm_logits": self.mlm_head(x),
-            "policy_logits": self.policy_head(cls_rep),
-            "intent_logits": self.intent_head(cls_rep),
-            "value_pred": self.value_head(cls_rep),
-            "cls_embedding": cls_rep,
+            "policy_logits": self.policy_head(pooled),
+            "intent_logits": self.intent_head(pooled),
+            "value_pred": self.value_head(pooled),
+            "cls_embedding": pooled,
+            "attention_mask": attention_mask,
         }
 
 
@@ -356,7 +372,10 @@ class DofusDomainDistiller:
             t_policy_logits = t_out["policy_logits"]
             t_val_pred = t_out["value_pred"]
 
-        # Student TRM-ACT forward pass
+        # Student TRM-ACT forward pass.
+        # NOTE: the teacher consumes token ids, the student consumes the 24-dim
+        # state vector. They are deliberately different inputs; passing one tensor
+        # to both (as an earlier version did) could only ever work by accident.
         if hasattr(student_model, "in_proj") and hasattr(student_model, "gru"):
             h = student_model.ln_in(F.gelu(student_model.in_proj(state_vectors)))
             for _ in range(2):
@@ -364,7 +383,12 @@ class DofusDomainDistiller:
             s_logits = student_model.stance_head(h)
             s_val_pred = student_model.value_head(h)
         else:
-            s_logits, _, s_val_pred = student_model(state_vectors)
+            student_out = student_model(state_vectors)
+            if isinstance(student_out, tuple):
+                s_logits, _, s_val_pred = student_out
+            else:
+                s_logits = student_out
+                s_val_pred = getattr(student_model, "last_value", s_logits.new_zeros(s_logits.shape[0], 1))
 
         # 1. Hard supervised losses
         loss_ce = F.cross_entropy(s_logits, policy_labels)

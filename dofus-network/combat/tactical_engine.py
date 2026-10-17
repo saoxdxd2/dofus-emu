@@ -11,7 +11,7 @@ Handles advanced game mechanics beyond single-turn greedy damage:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -59,6 +59,25 @@ class TacticalCombatEngine:
     """Evaluates multi-turn mechanics, buffs, and tactical policies."""
 
     @staticmethod
+    def _buff_flat_bonus(buff_spell: SpellInfo) -> int:
+        """Flat bonus modelled for a buff spell, derived from its effect data.
+
+        The data model exposes effect rolls only; the buff magnitude is the
+        average of the spell's non-heal rolls (no hard-coded numbers).
+        """
+        bonus = 0
+        for eff in buff_spell.effects:
+            if eff.element.upper() == "HEAL":
+                continue
+            bonus += int(round((eff.min_roll + eff.max_roll) / 2.0))
+        return bonus
+
+    @classmethod
+    def _buff_boosted_stats(cls, char: CharacterStats, buff_spell: SpellInfo) -> CharacterStats:
+        """CharacterStats after applying the buff, shared by ROI and planning."""
+        return replace(char, damage=char.damage + cls._buff_flat_bonus(buff_spell))
+
+    @staticmethod
     def evaluate_buff_roi(
         buff_spell: SpellInfo,
         char: CharacterStats,
@@ -73,16 +92,7 @@ class TacticalCombatEngine:
         Returns: (should_buff, immediate_damage, boosted_cumulative_damage)
         """
         # Baseline damage without buff across full turn AP
-        baseline_char = CharacterStats(
-            level=char.level,
-            action_points=char.action_points,
-            strength=char.strength,
-            intelligence=char.intelligence,
-            chance=char.chance,
-            agility=char.agility,
-            power=char.power,
-            damage=char.damage,
-        )
+        baseline_char = replace(char)
 
         # Baseline turn damage
         base_dmg = 0.0
@@ -100,25 +110,7 @@ class TacticalCombatEngine:
         if ap_after_buff < 0:
             return False, base_dmg, total_baseline
 
-        # Extract buff values (e.g. Divine Sword = +20 damage; Power = +200 power)
-        power_boost = 0
-        flat_boost = 0
-        for eff in buff_spell.effects:
-            if eff.element.upper() == "AIR":  # Divine Sword
-                flat_boost = 20
-            elif "POWER" in buff_spell.name_fr.upper() or "PUISSANCE" in buff_spell.name_fr.upper():
-                power_boost = 200
-
-        boosted_char = CharacterStats(
-            level=char.level,
-            action_points=char.action_points,
-            strength=char.strength,
-            intelligence=char.intelligence,
-            chance=char.chance,
-            agility=char.agility,
-            power=char.power + power_boost,
-            damage=char.damage + flat_boost,
-        )
+        boosted_char = TacticalCombatEngine._buff_boosted_stats(char, buff_spell)
 
         # Turn 1 remaining AP damage
         t1_dmg = 0.0
@@ -217,15 +209,11 @@ class TacticalCombatEngine:
                     "ap_cost": buff.ap_cost,
                     "reason": f"Multi-turn buff synergy: increases 3-turn damage from {base_dmg*3:.0f} to {boosted_proj:.0f}",
                 })
-                # Add remaining AP attacks
-                rem_char = CharacterStats(
+                # Add remaining AP attacks using the exact same post-buff stats
+                # that evaluate_buff_roi projected with.
+                rem_char = replace(
+                    cls._buff_boosted_stats(char, buff),
                     action_points=char.action_points - buff.ap_cost,
-                    strength=char.strength,
-                    intelligence=char.intelligence,
-                    chance=char.chance,
-                    agility=char.agility,
-                    power=char.power + 30,
-                    damage=char.damage + 15,
                 )
                 sub_rot = SpellRotationOptimizer.optimize_turn(rem_char, attack_spells, target)
                 for s in sub_rot.rotation:

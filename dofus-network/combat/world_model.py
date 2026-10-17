@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -22,6 +23,25 @@ from combat.damage_calculator import (
     TargetStats,
 )
 from data.game_data_extractor import SpellInfo
+
+_DAMAGE_ELEMENTS = {"NEUTRAL", "EARTH", "FIRE", "WATER", "AIR"}
+_BUFF_NAME_KEYWORDS = (
+    "puissance",
+    "tir puissant",
+    "divine",
+    "roue de la fortune",
+    "bouclier",
+    "châtiment",
+)
+_BUFF_NAME_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _BUFF_NAME_KEYWORDS) + r")\b"
+)
+
+# Stat deltas applied by each modelled buff: name -> (attribute, magnitude).
+_BUFF_STAT_DELTAS: Dict[str, Tuple[str, int]] = {
+    "power": ("power", 200),
+    "divine": ("flat_damage", 20),
+}
 
 
 @dataclass
@@ -135,6 +155,36 @@ class DofusWorldModel:
 
         return reward
 
+    @staticmethod
+    def _tick_buffs(state: CombatState) -> None:
+        """Decrement active buff durations and revert bonuses when they expire."""
+        for name in list(state.active_buffs):
+            remaining = state.active_buffs[name] - 1
+            if remaining > 0:
+                state.active_buffs[name] = remaining
+                continue
+            del state.active_buffs[name]
+            delta = _BUFF_STAT_DELTAS.get(name)
+            if delta is not None:
+                attr, magnitude = delta
+                setattr(state, attr, max(0, getattr(state, attr) - magnitude))
+
+    @staticmethod
+    def _apply_buff(
+        state: CombatState,
+        name: str,
+        duration: int,
+    ) -> None:
+        """Apply a buff, reverting any still-active application first (no stacking)."""
+        delta = _BUFF_STAT_DELTAS.get(name)
+        if delta is not None and name in state.active_buffs:
+            attr, magnitude = delta
+            setattr(state, attr, max(0, getattr(state, attr) - magnitude))
+        state.active_buffs[name] = duration
+        if delta is not None:
+            attr, magnitude = delta
+            setattr(state, attr, getattr(state, attr) + magnitude)
+
     @classmethod
     def step(cls, state: CombatState, spell: SpellInfo) -> StepResult:
         """Transitions state s_t -> s_{t+1} applying spell effects, buffs, or damage."""
@@ -144,21 +194,24 @@ class DofusWorldModel:
 
         next_s = copy.deepcopy(state)
         next_s.action_points -= spell.ap_cost
+        cls._tick_buffs(next_s)
 
         damage_dealt = 0.0
+        name_lower = spell.name_fr.lower()
+        damage_elements = [e for e in spell.effects if e.element.upper() in _DAMAGE_ELEMENTS]
         is_heal = any(e.element == "HEAL" for e in spell.effects)
-        is_buff = any(w in spell.name_fr.lower() for w in ["puissance", "divine", "tir puissant", "roue de la fortune", "bouclier", "châtiment"])
+        # A spell that deals damage is never a buff, regardless of its name:
+        # e.g. "Épée Divine" is an AIR damage spell, not a buff.
+        is_buff = not damage_elements and bool(_BUFF_NAME_RE.search(name_lower)) and not is_heal
 
         # 1. Buff Handling
         if is_buff:
-            if "puissance" in spell.name_fr.lower() or "tir puissant" in spell.name_fr.lower():
-                next_s.power += 200
-                next_s.active_buffs["power"] = 2
-            elif "divine" in spell.name_fr.lower():
-                next_s.flat_damage += 20
-                next_s.active_buffs["divine"] = 3
-            elif "bouclier" in spell.name_fr.lower():
-                next_s.active_buffs["shield"] = 2
+            if "puissance" in name_lower or "tir puissant" in name_lower:
+                cls._apply_buff(next_s, "power", duration=2)
+            elif re.search(r"\bdivine\b", name_lower):
+                cls._apply_buff(next_s, "divine", duration=3)
+            elif "bouclier" in name_lower:
+                cls._apply_buff(next_s, "shield", duration=2)
 
         # 2. Healing Handling
         elif is_heal:
