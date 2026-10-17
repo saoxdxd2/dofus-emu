@@ -186,7 +186,7 @@
         vendor: 'Google Inc.', webdriver: false, pdfViewerEnabled: false, language: 'fr-FR', languages: FROZEN_LANGUAGES,
         onLine: true, plugins: emptyPluginArray, mimeTypes: emptyMimeTypeArray,
         connection: connectionObj, mozConnection: connectionObj, webkitConnection: connectionObj, battery: fakeBattery,
-        appInfo: { build: '4.3.15', version: '3.14.2', identifier: 'com.ankama.dofustouch' }
+        appInfo: { build: '3.2.7', version: '3.2.7', identifier: 'com.ankama.dofustouch', versionCode: '3002007' }
     };
     for (var nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
 

@@ -22,7 +22,7 @@ cordova.define("cordova-plugin-file.resolveLocalFileSystemURI", function(require
 (function () {
     // For browser platform: not all browsers use overrided `resolveLocalFileSystemURL`.
     function checkBrowser () {
-        if (cordova.platformId === 'browser' && require('./isChrome')()) {
+        if (cordova.platformId === 'browser' && require('./isChrome')()) { // eslint-disable-line no-undef
             module.exports.resolveLocalFileSystemURL = window.resolveLocalFileSystemURL || window.webkitResolveLocalFileSystemURL;
             return true;
         }
@@ -32,12 +32,12 @@ cordova.define("cordova-plugin-file.resolveLocalFileSystemURI", function(require
         return;
     }
 
-    const argscheck = require('cordova/argscheck');
-    const DirectoryEntry = require('./DirectoryEntry');
-    const FileEntry = require('./FileEntry');
-    const FileError = require('./FileError');
-    const exec = require('cordova/exec');
-    const fileSystems = require('./fileSystems');
+    var argscheck = require('cordova/argscheck');
+    var DirectoryEntry = require('./DirectoryEntry');
+    var FileEntry = require('./FileEntry');
+    var FileError = require('./FileError');
+    var exec = require('cordova/exec');
+    var fileSystems = require('./fileSystems');
 
     /**
      * Look up file system Entry referred to by local URI.
@@ -48,7 +48,7 @@ cordova.define("cordova-plugin-file.resolveLocalFileSystemURI", function(require
     module.exports.resolveLocalFileSystemURL = module.exports.resolveLocalFileSystemURL || function (uri, successCallback, errorCallback) {
         argscheck.checkArgs('sFF', 'resolveLocalFileSystemURI', arguments);
         // error callback
-        const fail = function (error) {
+        var fail = function (error) {
             if (errorCallback) {
                 errorCallback(new FileError(error));
             }
@@ -62,17 +62,17 @@ cordova.define("cordova-plugin-file.resolveLocalFileSystemURI", function(require
             return;
         }
         // if successful, return either a file or directory entry
-        const success = function (entry) {
+        var success = function (entry) {
             if (entry) {
                 if (successCallback) {
                     // create appropriate Entry object
-                    const fsName = entry.filesystemName || (entry.filesystem && entry.filesystem.name) || (entry.filesystem === window.PERSISTENT ? 'persistent' : 'temporary');
+                    var fsName = entry.filesystemName || (entry.filesystem && entry.filesystem.name) || (entry.filesystem === window.PERSISTENT ? 'persistent' : 'temporary'); // eslint-disable-line no-undef
                     fileSystems.getFs(fsName, function (fs) {
                         // This should happen only on platforms that haven't implemented requestAllFileSystems (windows)
                         if (!fs) {
-                            fs = new FileSystem(fsName, { name: '', fullPath: '/' });
+                            fs = new FileSystem(fsName, {name: '', fullPath: '/'}); // eslint-disable-line no-undef
                         }
-                        const result = (entry.isDirectory) ? new DirectoryEntry(entry.name, entry.fullPath, fs, entry.nativeURL) : new FileEntry(entry.name, entry.fullPath, fs, entry.nativeURL);
+                        var result = (entry.isDirectory) ? new DirectoryEntry(entry.name, entry.fullPath, fs, entry.nativeURL) : new FileEntry(entry.name, entry.fullPath, fs, entry.nativeURL);
                         successCallback(result);
                     });
                 }

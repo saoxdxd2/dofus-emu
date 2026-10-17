@@ -25,20 +25,20 @@ window.CordovaFileCache = (function () {
 
 		while (i < bytes) {
 			k1 =
-				(key.charCodeAt(i) & 0xff) |
+				((key.charCodeAt(i) & 0xff)) |
 				((key.charCodeAt(++i) & 0xff) << 8) |
 				((key.charCodeAt(++i) & 0xff) << 16) |
 				((key.charCodeAt(++i) & 0xff) << 24);
 			++i;
 
-			k1 = ((k1 & 0xffff) * c1 + ((((k1 >>> 16) * c1) & 0xffff) << 16)) & 0xffffffff;
+			k1 = ((((k1 & 0xffff) * c1) + ((((k1 >>> 16) * c1) & 0xffff) << 16))) & 0xffffffff;
 			k1 = (k1 << 15) | (k1 >>> 17);
-			k1 = ((k1 & 0xffff) * c2 + ((((k1 >>> 16) * c2) & 0xffff) << 16)) & 0xffffffff;
+			k1 = ((((k1 & 0xffff) * c2) + ((((k1 >>> 16) * c2) & 0xffff) << 16))) & 0xffffffff;
 
 			h1 ^= k1;
 			h1 = (h1 << 13) | (h1 >>> 19);
-			h1b = ((h1 & 0xffff) * 5 + ((((h1 >>> 16) * 5) & 0xffff) << 16)) & 0xffffffff;
-			h1 = (h1b & 0xffff) + 0x6b64 + ((((h1b >>> 16) + 0xe654) & 0xffff) << 16);
+			h1b = ((((h1 & 0xffff) * 5) + ((((h1 >>> 16) * 5) & 0xffff) << 16))) & 0xffffffff;
+			h1 = (((h1b & 0xffff) + 0x6b64) + ((((h1b >>> 16) + 0xe654) & 0xffff) << 16));
 		}
 
 		k1 = 0;
@@ -49,38 +49,30 @@ window.CordovaFileCache = (function () {
 			case 2:
 				k1 ^= (key.charCodeAt(i + 1) & 0xff) << 8;
 			case 1:
-				k1 ^= key.charCodeAt(i) & 0xff;
+				k1 ^= (key.charCodeAt(i) & 0xff);
 
-				k1 = ((k1 & 0xffff) * c1 + ((((k1 >>> 16) * c1) & 0xffff) << 16)) & 0xffffffff;
+				k1 = (((k1 & 0xffff) * c1) + ((((k1 >>> 16) * c1) & 0xffff) << 16)) & 0xffffffff;
 				k1 = (k1 << 15) | (k1 >>> 17);
-				k1 = ((k1 & 0xffff) * c2 + ((((k1 >>> 16) * c2) & 0xffff) << 16)) & 0xffffffff;
+				k1 = (((k1 & 0xffff) * c2) + ((((k1 >>> 16) * c2) & 0xffff) << 16)) & 0xffffffff;
 				h1 ^= k1;
 		}
 		/* jshint +W086 */
 		h1 ^= key.length;
 
 		h1 ^= h1 >>> 16;
-		h1 = ((h1 & 0xffff) * 0x85ebca6b + ((((h1 >>> 16) * 0x85ebca6b) & 0xffff) << 16)) & 0xffffffff;
+		h1 = (((h1 & 0xffff) * 0x85ebca6b) + ((((h1 >>> 16) * 0x85ebca6b) & 0xffff) << 16)) & 0xffffffff;
 		h1 ^= h1 >>> 13;
-		h1 = ((h1 & 0xffff) * 0xc2b2ae35 + ((((h1 >>> 16) * 0xc2b2ae35) & 0xffff) << 16)) & 0xffffffff;
+		h1 = ((((h1 & 0xffff) * 0xc2b2ae35) + ((((h1 >>> 16) * 0xc2b2ae35) & 0xffff) << 16))) & 0xffffffff;
 		h1 ^= h1 >>> 16;
 
 		return h1 >>> 0;
 	}
 
-	/**
-	 * Cordova File Cache x
-	 * @param {object} options
-	 * @constructor
-	 */
-	function FileCache(options) {
-		var that = this;
 
-		/**
-		 * cordova-promise-fs
-		 * @type {FileSystem}
-		 * @private
-		 */
+	/* Cordova File Cache x */
+	function FileCache(options) {
+		var self = this;
+		// cordova-promise-fs
 		this._fs = options.fs;
 		if (!this._fs) {
 			throw new Error('Missing required option "fs". Add an instance of cordova-promise-fs.');
@@ -102,23 +94,24 @@ window.CordovaFileCache = (function () {
 		// 'hash' creates a 1-deep filestructure, where the filenames are hashed server urls (with extension)
 		this._mirrorMode = options.mode !== 'hash';
 		this._retry = options.retry || [500, 1500, 8000];
-		this._cacheBuster = Boolean(options.cacheBuster);
+		this._cacheBuster = !!options.cacheBuster;
 
 		// normalize path
 		this.localRoot = this._fs.normalize(options.localRoot || 'data');
 		this.serverRoot = this._fs.normalize(options.serverRoot || '');
 
 		// set internal variables
-		this._downloading = []; // download promises
-		this._added = []; // added files
-		this._cached = {}; // cached files
+		this._downloading = [];    // download promises
+		this._added = [];          // added files
+		this._cached = {};         // cached files
 
 		// list existing cache contents
-		this.ready = this._fs.ensure(this.localRoot).then(function (entry) {
-			that.localInternalURL = entry.toInternalURL();
-			that.localUrl = entry.toURL();
-			return that.list();
-		});
+		this.ready = this._fs.ensure(this.localRoot)
+			.then(function (entry) {
+				self.localInternalURL = entry.toInternalURL();
+				self.localUrl = entry.toURL();
+				return self.list();
+			});
 	}
 
 	FileCache.hash = murmurhash3;
@@ -128,54 +121,40 @@ window.CordovaFileCache = (function () {
 	 * to the cached files.
 	 */
 	FileCache.prototype.list = function list() {
-		var that = this;
+		var self = this;
 		return new Promise(function (resolve) {
-			that._fs.list(that.localRoot, 'rfe').then(
-				function (entries) {
-					that._cached = {};
-					entries = entries.map(function (entry) {
-						var fullPath = that._fs.normalize(entry.fullPath);
-						that._cached[fullPath] = {
-							toInternalURL: entry.toInternalURL(),
-							toURL: entry.toURL()
-						};
-						// fullPath data/assets/ui/mount/stamina.png
-						// toInternalURL: "file:///__cdvfile_persistent__/data/assets/ui/mount/stamina.png"
-						// toURL: "file:///data/user/0/com.ankama.dofustouchnext/files/files/data/assets/ui/mount/stamina.png"
-						//
-						// fullPath js/build/script.js
-						// toInternalURL: "file:///__cdvfile_persistent__/js/build/script.js"
-						// toURL: "file:///data/user/0/com.ankama.dofustouchnext/files/files/js/build/script.js"
-						return fullPath;
-					});
-					resolve(entries);
-				},
-				function () {
-					resolve([]);
-				}
-			);
+			self._fs.list(self.localRoot, 'rfe').then(function (entries) {
+				self._cached = {};
+				entries = entries.map(function (entry) {
+					var fullPath = self._fs.normalize(entry.fullPath);
+					self._cached[fullPath] = {
+						toInternalURL: entry.toInternalURL(),
+						toURL: entry.toURL()
+					};
+					return fullPath;
+				});
+				resolve(entries);
+			}, function () {
+				resolve([]);
+			});
 		});
 	};
 
-	/**
-	 * @param {string[]|string} [urls]
-	 * @returns {boolean}
-	 */
-	FileCache.prototype.add = function (urls) {
+	FileCache.prototype.add = function add(urls) {
 		if (!urls) {
 			urls = [];
 		}
 		if (typeof urls === 'string') {
 			urls = [urls];
 		}
-		var that = this;
+		var self = this;
 		urls.forEach(function (url) {
-			url = that.toServerURL(url);
-			if (that._added.indexOf(url) === -1) {
-				that._added.push(url);
+			url = self.toServerURL(url);
+			if (self._added.indexOf(url) === -1) {
+				self._added.push(url);
 			}
 		});
-		return that.isDirty();
+		return self.isDirty();
 	};
 
 	FileCache.prototype.remove = function remove(urls, returnPromises) {
@@ -186,24 +165,25 @@ window.CordovaFileCache = (function () {
 		if (typeof urls === 'string') {
 			urls = [urls];
 		}
-		var that = this;
+		var self = this;
 		urls.forEach(function (url) {
-			var index = that._added.indexOf(that.toServerURL(url));
+			var index = self._added.indexOf(self.toServerURL(url));
 			if (index >= 0) {
-				that._added.splice(index, 1);
+				self._added.splice(index, 1);
 			}
-			var path = that.toPath(url);
-			promises.push(that._fs.remove(path));
-			delete that._cached[path];
+			var path = self.toPath(url);
+			promises.push(self._fs.remove(path));
+			delete self._cached[path];
 		});
-		return returnPromises ? Promise.all(promises) : that.isDirty();
+		return returnPromises ? Promise.all(promises) : self.isDirty();
 	};
 
 	FileCache.prototype.getDownloadQueue = function () {
-		var that = this;
-		return that._added.filter(function (url) {
-			return !that.isCached(url);
+		var self = this;
+		var queue = self._added.filter(function (url) {
+			return !self.isCached(url);
 		});
+		return queue;
 	};
 
 	FileCache.prototype.getAdded = function () {
@@ -214,102 +194,86 @@ window.CordovaFileCache = (function () {
 		return this.getDownloadQueue().length > 0;
 	};
 
-	/**
-	 * @param {Function} onprogress
-	 * @returns {Promise}
-	 */
 	FileCache.prototype.download = function download(onprogress) {
-		/** @type {FileSystem} */
 		var fs = this._fs;
-		var that = this;
-		that.abort();
+		var self = this;
+		self.abort();
 
 		return new Promise(function (resolve, reject) {
 			// make sure cache directory exists and that
 			// we have retrieved the latest cache contents
 			// to avoid downloading files we already have!
-			fs.ensure(that.localRoot)
-				.then(function () {
-					return that.list();
-				})
-				.then(function () {
-					// no downloads needed, resolve
-					if (!that.isDirty()) {
-						resolve(that);
-						return;
+			fs.ensure(self.localRoot).then(function () {
+				return self.list();
+			}).then(function () {
+				// no downloads needed, resolve
+				if (!self.isDirty()) {
+					resolve(self);
+					return;
+				}
+
+				// keep track of number of downloads!
+				var queue = self.getDownloadQueue();
+				var started = [];
+				var index = self._downloading.length;
+				var done = self._downloading.length;
+				var total = self._downloading.length + queue.length;
+
+				// download every file in the queue (which is the diff from _added with _cached)
+				queue.forEach(function (url) {
+					var path = self.toPath(url);
+					// augment progress event with index/total stats
+					var onSingleDownloadProgress;
+					if (typeof onprogress === 'function') {
+						onSingleDownloadProgress = function (ev) {
+							ev.queueIndex = index;
+							ev.queueSize = total;
+							ev.url = url;
+							ev.path = path;
+							ev.percentage = index / total;
+							if (ev.loaded > 0 && ev.total > 0 && index !== total) {
+								ev.percentage += (ev.loaded / ev.total) / total;
+							}
+							if (started.indexOf(url) < 0) {
+								started.push(url);
+								index++;
+							}
+							onprogress(ev);
+						};
 					}
 
-					// keep track of number of downloads!
-					var queue = that.getDownloadQueue();
-					var started = [];
-					var index = that._downloading.length;
-					var done = that._downloading.length;
-					var total = that._downloading.length + queue.length;
-
-					// download every file in the queue (which is the diff from _added with _cached)
-					queue.forEach(function (url) {
-						var path = that.toPath(url);
-						// augment progress event with index/total stats
-						var onSingleDownloadProgress;
-						if (typeof onprogress === 'function') {
-							/** @param {ProgressEvent} ev - from ProgressEvent() */
-							onSingleDownloadProgress = function (ev) {
-								ev.queueIndex = index;
-								ev.queueSize = total;
-								ev.url = url;
-								ev.path = path;
-								ev.percentage = index / total;
-								if (ev.loaded > 0 && ev.total > 0 && index !== total) {
-									ev.percentage += ev.loaded / ev.total / total;
+					// callback
+					var onDone = function (/*data*/) {
+						done++;
+						// when we're done
+						if (done === total) {
+							// reset downloads
+							self._downloading = [];
+							// check if we got everything
+							self.list().then(function () {
+								// final progress event!
+								if (onSingleDownloadProgress) {
+									onSingleDownloadProgress(new ProgressEvent());
 								}
-								if (started.indexOf(url) < 0) {
-									started.push(url);
-									index++;
+								// Yes, we're not dirty anymore!
+								if (!self.isDirty()) {
+									resolve(self);
+									// Aye, some files got left behind!
+								} else {
+									reject(self.getDownloadQueue());
 								}
-								onprogress(ev);
-							};
+							}, reject);
 						}
-
-						// callback
-						function onDone(err) {
-							if (err) {
-								console.error('onDone err', err);
-							}
-							done++;
-							// when we're done
-							if (done === total) {
-								// reset downloads
-								that._downloading = [];
-								// check if we got everything
-								that.list().then(function () {
-									// final progress event!
-									if (onSingleDownloadProgress) {
-										onSingleDownloadProgress(new ProgressEvent());
-									}
-									// Yes, we're not dirty anymore!
-									if (that.isDirty()) {
-										reject(that.getDownloadQueue());
-									} else {
-										resolve(that);
-										// Aye, some files got left behind!
-									}
-								}, reject);
-							}
-						}
-						var downloadUrl = url;
-						if (that._cacheBuster) {
-							downloadUrl += '?' + Date.now();
-						}
-						var download = fs.download(
-							downloadUrl,
-							path,
-							{ retry: that._retry },
-							onSingleDownloadProgress
-						);
-						download.then(onDone, onDone);
-						that._downloading.push(download);
-					});
-				}, reject);
+					};
+					var downloadUrl = url;
+					if (self._cacheBuster) {
+						downloadUrl += '?' + Date.now();
+					}
+					var download = fs.download(downloadUrl, path, { retry: self._retry }, onSingleDownloadProgress);
+					download.then(onDone, onDone);
+					self._downloading.push(download);
+				});
+			}, reject);
 		});
 	};
 
@@ -322,14 +286,14 @@ window.CordovaFileCache = (function () {
 
 	FileCache.prototype.isCached = function isCached(url) {
 		url = this.toPath(url);
-		return Boolean(this._cached[url]);
+		return !!this._cached[url];
 	};
 
 	FileCache.prototype.clear = function clear() {
-		var that = this;
+		var self = this;
 		this._cached = {};
 		return this._fs.removeDir(this.localRoot).then(function () {
-			return that._fs.ensure(that.localRoot);
+			return self._fs.ensure(self.localRoot);
 		});
 	};
 
@@ -361,10 +325,6 @@ window.CordovaFileCache = (function () {
 		return this._cached[path] ? this._cached[path].toURL : url;
 	};
 
-	/**
-	 * @param {string} path
-	 * @returns {string}
-	 */
 	FileCache.prototype.toServerURL = function toServerURL(path) {
 		path = this._fs.normalize(path);
 		return path.indexOf('://') < 0 ? this.serverRoot + path : path;
@@ -379,14 +339,16 @@ window.CordovaFileCache = (function () {
 			if (query > -1) {
 				url = url.substr(0, query);
 			}
-			url = this._fs.normalize(url || '');
+			url = url = this._fs.normalize(url || '');
 			var len = this.serverRoot.length;
-			if (url.substr(0, len) === this.serverRoot) {
+			if (url.substr(0, len) !== this.serverRoot) {
+				return this.localRoot + url;
+			} else {
 				return this.localRoot + url.substr(len);
 			}
-			return this.localRoot + url;
+		} else {
+			return this.localRoot + this.hash(url) + url.substr(url.lastIndexOf('.'));
 		}
-		return this.localRoot + this.hash(url) + url.substr(url.lastIndexOf('.'));
 	};
 
 	return FileCache;

@@ -1,6 +1,14 @@
 cordova.define('cordova/plugin_list', function(require, exports, module) {
   module.exports = [
     {
+      "id": "cordova-plugin-splashscreen.SplashScreen",
+      "file": "plugins/cordova-plugin-splashscreen/www/splashscreen.js",
+      "pluginId": "cordova-plugin-splashscreen",
+      "clobbers": [
+        "navigator.splashscreen"
+      ]
+    },
+    {
       "id": "ionic-plugin-keyboard.keyboard",
       "file": "plugins/ionic-plugin-keyboard/www/android/keyboard.js",
       "pluginId": "ionic-plugin-keyboard",
@@ -168,14 +176,6 @@ cordova.define('cordova/plugin_list', function(require, exports, module) {
       "runs": true
     },
     {
-      "id": "cordova-plugin-file.androidEntry",
-      "file": "plugins/cordova-plugin-file/www/android/Entry.js",
-      "pluginId": "cordova-plugin-file",
-      "merges": [
-        "Entry"
-      ]
-    },
-    {
       "id": "cordova-plugin-file.androidFileSystem",
       "file": "plugins/cordova-plugin-file/www/android/FileSystem.js",
       "pluginId": "cordova-plugin-file",
@@ -229,6 +229,22 @@ cordova.define('cordova/plugin_list', function(require, exports, module) {
       "pluginId": "cordova-plugin-dialogs",
       "merges": [
         "navigator.notification"
+      ]
+    },
+    {
+      "id": "cordova-plugin-file-transfer.FileTransferError",
+      "file": "plugins/cordova-plugin-file-transfer/www/FileTransferError.js",
+      "pluginId": "cordova-plugin-file-transfer",
+      "clobbers": [
+        "window.FileTransferError"
+      ]
+    },
+    {
+      "id": "cordova-plugin-file-transfer.FileTransfer",
+      "file": "plugins/cordova-plugin-file-transfer/www/FileTransfer.js",
+      "pluginId": "cordova-plugin-file-transfer",
+      "clobbers": [
+        "window.FileTransfer"
       ]
     },
     {
@@ -344,6 +360,14 @@ cordova.define('cordova/plugin_list', function(require, exports, module) {
       ]
     },
     {
+      "id": "cordova-launch-review.LaunchReview",
+      "file": "plugins/cordova-launch-review/www/launchreview.js",
+      "pluginId": "cordova-launch-review",
+      "clobbers": [
+        "LaunchReview"
+      ]
+    },
+    {
       "id": "com.adjust.sdk.Adjust",
       "file": "plugins/com.adjust.sdk/www/adjust.js",
       "pluginId": "com.adjust.sdk",
@@ -368,54 +392,6 @@ cordova.define('cordova/plugin_list', function(require, exports, module) {
       ]
     },
     {
-      "id": "com.adjust.sdk.AdjustAppStoreSubscription",
-      "file": "plugins/com.adjust.sdk/www/adjust_app_store_subscription.js",
-      "pluginId": "com.adjust.sdk",
-      "clobbers": [
-        "AdjustAppStoreSubscription"
-      ]
-    },
-    {
-      "id": "com.adjust.sdk.AdjustPlayStoreSubscription",
-      "file": "plugins/com.adjust.sdk/www/adjust_play_store_subscription.js",
-      "pluginId": "com.adjust.sdk",
-      "clobbers": [
-        "AdjustPlayStoreSubscription"
-      ]
-    },
-    {
-      "id": "com.adjust.sdk.AdjustThirdPartySharing",
-      "file": "plugins/com.adjust.sdk/www/adjust_third_party_sharing.js",
-      "pluginId": "com.adjust.sdk",
-      "clobbers": [
-        "AdjustThirdPartySharing"
-      ]
-    },
-    {
-      "id": "com.adjust.sdk.AdjustAdRevenue",
-      "file": "plugins/com.adjust.sdk/www/adjust_ad_revenue.js",
-      "pluginId": "com.adjust.sdk",
-      "clobbers": [
-        "AdjustAdRevenue"
-      ]
-    },
-    {
-      "id": "com.adjust.sdk.AdjustAppStorePurchase",
-      "file": "plugins/com.adjust.sdk/www/adjust_app_store_purchase.js",
-      "pluginId": "com.adjust.sdk",
-      "clobbers": [
-        "AdjustAppStorePurchase"
-      ]
-    },
-    {
-      "id": "com.adjust.sdk.AdjustPlayStorePurchase",
-      "file": "plugins/com.adjust.sdk/www/adjust_play_store_purchase.js",
-      "pluginId": "com.adjust.sdk",
-      "clobbers": [
-        "AdjustPlayStorePurchase"
-      ]
-    },
-    {
       "id": "cordova-plugin-appsettings.AppSettings",
       "file": "plugins/cordova-plugin-appsettings/www/appsettings.js",
       "pluginId": "cordova-plugin-appsettings",
@@ -432,91 +408,58 @@ cordova.define('cordova/plugin_list', function(require, exports, module) {
       ]
     },
     {
-      "id": "cordova-plugin-purchase.CdvPurchase",
-      "file": "plugins/cordova-plugin-purchase/www/store.js",
+      "id": "cordova-plugin-wizpurchase.WizPurchase",
+      "file": "plugins/cordova-plugin-wizpurchase/www/WizPurchase.js",
+      "pluginId": "cordova-plugin-wizpurchase",
+      "clobbers": [
+        "window.wizPurchase"
+      ]
+    },
+    {
+      "id": "cordova-plugin-wizpurchase.WizPurchaseError",
+      "file": "plugins/cordova-plugin-wizpurchase/www/WizPurchaseError.js",
+      "pluginId": "cordova-plugin-wizpurchase",
+      "clobbers": [
+        "window.WizPurchaseError"
+      ]
+    },
+    {
+      "id": "cordova-plugin-purchase.InAppBillingPlugin",
+      "file": "plugins/cordova-plugin-purchase/www/store-android.js",
       "pluginId": "cordova-plugin-purchase",
       "clobbers": [
-        "store",
-        "CdvPurchase"
-      ]
-    },
-    {
-      "id": "ionic-plugin-deeplinks.deeplink",
-      "file": "plugins/ionic-plugin-deeplinks/www/deeplink.js",
-      "pluginId": "ionic-plugin-deeplinks",
-      "clobbers": [
-        "IonicDeeplink"
-      ],
-      "runs": true
-    },
-    {
-      "id": "cordova-plugin-browsertab.BrowserTab",
-      "file": "plugins/cordova-plugin-browsertab/www/browsertab.js",
-      "pluginId": "cordova-plugin-browsertab",
-      "clobbers": [
-        "cordova.plugins.browsertab"
-      ]
-    },
-    {
-      "id": "es6-promise-plugin.Promise",
-      "file": "plugins/es6-promise-plugin/www/promise.js",
-      "pluginId": "es6-promise-plugin",
-      "runs": true
-    },
-    {
-      "id": "cordova-plugin-screen-orientation.screenorientation",
-      "file": "plugins/cordova-plugin-screen-orientation/www/screenorientation.js",
-      "pluginId": "cordova-plugin-screen-orientation",
-      "clobbers": [
-        "cordova.plugins.screenorientation",
-        "screen.orientation"
-      ]
-    },
-    {
-      "id": "cordova-launch-review.LaunchReview",
-      "file": "plugins/cordova-launch-review/www/launchreview.js",
-      "pluginId": "cordova-launch-review",
-      "clobbers": [
-        "LaunchReview"
-      ]
-    },
-    {
-      "id": "cordova-plugin-game-center.GameCenter",
-      "file": "plugins/cordova-plugin-game-center/www/gamecenter.js",
-      "pluginId": "cordova-plugin-game-center",
-      "clobbers": [
-        "gamecenter"
+        "store"
       ]
     }
   ];
   module.exports.metadata = {
+    "cordova-plugin-whitelist": "1.3.5",
+    "cordova-plugin-splashscreen": "6.0.0",
     "ionic-plugin-keyboard": "1.0.9",
-    "cordova-plugin-statusbar": "4.0.0",
-    "cordova-plugin-file": "8.0.1",
+    "cordova-plugin-statusbar": "2.4.3",
+    "cordova-plugin-file": "6.0.2",
     "cordova-plugin-network-information": "2.0.2",
     "cordova-plugin-dialogs": "2.0.2",
+    "cordova-plugin-file-transfer": "1.7.2-dev",
     "cordova-plugin-navigationbar": "1.0.31",
     "cordova-plugin-chrome-apps-system-memory": "1.1.1",
     "cordova-plugin-appavailability": "0.4.2",
-    "cordova-plugin-media": "7.0.0",
+    "cordova-plugin-media": "5.0.3",
     "jp.wizcorp.phonegap.plugin.wizAssetsPlugin": "6.1.1",
     "at.gofg.sportscomputer.powermanagement": "1.1.2",
-    "cordova-plugin-device": "3.0.1-dev",
+    "cordova-plugin-device": "2.1.1-dev",
     "phonegap-plugin-mobile-accessibility": "1.0.5-dev",
     "cordova-plugin-yanap": "0.8.9",
     "cordova-custom-config": "5.1.0",
     "cordova-plugin-inappbrowser": "4.0.0",
-    "pushwoosh-cordova-plugin": "8.3.24",
-    "com.adjust.sdk": "4.38.1",
+    "pushwoosh-cordova-plugin": "8.1.1",
+    "cordova-launch-review": "3.1.1",
+    "com.adjust.sdk": "4.22.1",
     "cordova-plugin-wkwebview-file-xhr": "3.0.0",
     "cordova-plugin-appsettings": "1.0.2",
+    "cordova-plugin-androidx-adapter": "1.1.3",
     "cordova-plugin-appinfo": "2.1.2",
-    "cordova-plugin-purchase": "13.16.1",
-    "ionic-plugin-deeplinks": "1.0.22",
-    "cordova-plugin-browsertab": "0.2.2",
-    "es6-promise-plugin": "4.2.2",
-    "cordova-plugin-screen-orientation": "3.0.4",
-    "cordova-launch-review": "4.1.3",
-    "cordova-plugin-game-center": "0.4.2"
+    "cordova-plugin-wizpurchase": "2.2.0",
+    "cordova-plugin-purchase": "10.6.1"
   };
 });

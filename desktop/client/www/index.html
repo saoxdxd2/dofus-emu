@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <!--
     Licensed to the Apache Software Foundation (ASF) under one
     or more contributor license agreements.  See the NOTICE file
@@ -19,7 +19,6 @@
 -->
 <html>
 	<head>
-		<script type="text/javascript" src="js/mobile-disguise.js"></script>
 		<meta charset="utf-8">
 		<title>Dofus Touch</title>
 
@@ -33,7 +32,7 @@
 			if (screenHeight < MIN_SUPPORTED_HEIGHT) {
 				var screenRatio = screenWidth / screenHeight;
 				var width = window.parseInt(MIN_SUPPORTED_HEIGHT * screenRatio, 10);
-				document.write('<meta name="viewport" content="width=' + width + ', maximum-scale=1, user-scalable=no, viewport-fit=cover" />');
+                document.write('<meta name="viewport" content="width=' + width + ', maximum-scale=1, user-scalable=no, viewport-fit=cover" />');
 			} else {
 				document.write('<meta name="viewport" content="width=device-width, maximum-scale=1, user-scalable=no, viewport-fit=cover" />');
 			}
@@ -57,9 +56,8 @@
 
 		<script type="text/javascript" src="cordova.js"></script>
 		<script type="text/javascript" src="js/init.js"></script>
-		<script type="text/javascript" src="js/polyfill/fetch.js"></script>
-		<script type="text/javascript" src="js/polyfill/promise.js"></script>
-		<script type="text/javascript" src="js/FileTransfer.js"></script>
+		<script type="text/javascript" src="js/fetch.js"></script>
+		<script type="text/javascript" src="js/promise.js"></script>
 		<script type="text/javascript" src="js/CordovaFileSystem.js"></script>
 		<script type="text/javascript" src="js/CordovaFileCache.js"></script>
 		<script type="text/javascript" src="js/AppLoader.js"></script>

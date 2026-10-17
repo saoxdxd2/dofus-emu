@@ -1,10 +1,8 @@
 'use strict';
 
-var CDV_PATH_IN_CSS = 'cdvfile://localhost/persistent/data/';
-var CDV_PATH_IOS = 'cdvfile://localhost/persistent/data/';
-var CDV_PATH_ANDROID = 'file:///__cdvfile_persistent__/data/';
+var CDV_PATH = 'cdvfile://localhost/persistent/data/';
 
-function autoUpdate(cordova) {
+(function (cordova) {
 	var head = document.getElementsByTagName('head')[0];
 	var now = Date.now();
 
@@ -17,21 +15,13 @@ function autoUpdate(cordova) {
 		};
 	}
 
-	/**
-	 * @type {AppLoader}
-	 */
 	var loader;
-
-	/**
-	 * @type {AppLoader}
-	 */
 	var assetLoader;
 	var isLoaded = false;
 	var splashscreen;
 
-	function resetServer(err) {
-		console.error(new Error('resetServer ' + err));
-		// TODO: show a proper page (html or image)
+	function resetServer() {
+		//TODO: show a proper page (html or image)
 		var errorMsg = 'Server cannot be reached.';
 		// window.Connection is provided by cordova-plugin-network-information.
 		if (window.navigator.connection.type === window.Connection.NONE || !window.navigator.onLine) {
@@ -42,34 +32,20 @@ function autoUpdate(cordova) {
 		}
 		setTimeout(function () {
 			// window.navigator.notification is provided by cordova-plugin-dialogs.
-			window.navigator.notification.alert(
-				errorMsg,
-				function () {
-					loader.reset();
-				},
-				window.APPLICATION_NAME_DISPLAY,
-				'Ok'
-			);
+			window.navigator.notification.alert(errorMsg, function () {
+				loader.reset();
+			}, window.APPLICATION_NAME_DISPLAY, 'Ok');
 		}, 0);
 	}
 
 	function getNativePath(cb) {
-		if (window.WkWebView) {
-			// iOS
-			return window.resolveLocalFileSystemURL(
-				CDV_PATH_IOS,
-				function successCb(entry) {
-					var nativePath = window.WkWebView.convertFilePath(entry.toURL());
-					return cb(null, nativePath);
-				},
-				cb
-			);
+		if (!window.WkWebView) {
+			return cb(null, CDV_PATH);
 		}
-		// Android
 		return window.resolveLocalFileSystemURL(
-			CDV_PATH_ANDROID,
+			CDV_PATH,
 			function successCb(entry) {
-				var nativePath = entry.toURL();
+				var nativePath = window.WkWebView.convertFilePath(entry.toURL());
 				return cb(null, nativePath);
 			},
 			cb
@@ -143,7 +119,6 @@ function autoUpdate(cordova) {
 		if (url.substr(-4) !== '.css') {
 			return url;
 		}
-		// the link will become "styles-native.app_file.css"
 		var split = url.split('.');
 		split.pop();
 		split.push('app_file');
@@ -152,10 +127,12 @@ function autoUpdate(cordova) {
 	}
 
 	function replacePathInCss(url, cb) {
+		if (!window.WkWebView) {
+			return cb(null, url);
+		}
 		if (url.substr(-4) !== '.css') {
 			return cb(null, url);
 		}
-		// window.CDV_ASSETS_URL is only iOS
 		var urlFile = url.replace(window.CDV_ASSETS_URL + '/_app_file_', 'file://');
 		var newUrlFile = getNewCssUrl(urlFile);
 		return getNativePath(function (error, nativePath) {
@@ -166,7 +143,7 @@ function autoUpdate(cordova) {
 				if (error) {
 					return cb(error);
 				}
-				var newCss = fileStr.replace(new RegExp(CDV_PATH_IN_CSS, 'gu'), nativePath);
+				var newCss = fileStr.replace(new RegExp(CDV_PATH, 'g'), nativePath);
 				return writeFile(newUrlFile, newCss, function (error) {
 					if (error) {
 						return cb(error);
@@ -180,7 +157,6 @@ function autoUpdate(cordova) {
 	// Load Files
 	function loadFile(src, id) {
 		if (!src) {
-			console.error('loadFile source missing.');
 			return;
 		}
 		id = 'source_' + id;
@@ -192,7 +168,7 @@ function autoUpdate(cordova) {
 		}
 		replacePathInCss(src, function (error, fileUrl) {
 			if (error) {
-				console.error(new Error('Cannot replace: code ' + error.code));
+				console.error(new Error('Cannot replace: ' + error.code));
 			}
 			// Load javascript
 			if (fileUrl.substr(-3) === '.js') {
@@ -214,29 +190,28 @@ function autoUpdate(cordova) {
 		});
 	}
 
+
 	function check() {
 		console.log('Looking for update');
 		// Check if there is an update compared to the manifest in cache
-		return loader
-			.check()
-			.then(function () {
-				if (loader.corruptNewManifest) {
-					return loader.reset();
+		return loader.check().then(function () {
+			if (loader.corruptNewManifest) {
+				return loader.reset();
+			}
+			return loader.download();
+		}).then(function () {
+			var hasUpdate = loader.update(false);
+			console.log('Update available:', hasUpdate);
+			if (isLoaded) {
+				// If update detected while in game
+				if (hasUpdate) {
+					window.cordova.fireDocumentEvent('sourceUpdated');
 				}
-				return loader.download();
-			})
-			.then(function () {
-				var hasUpdate = loader.update(false);
-				console.log('Update available:', hasUpdate);
-				if (isLoaded) {
-					// If update detected while in game
-					if (hasUpdate) {
-						window.cordova.fireDocumentEvent('sourceUpdated');
-					}
-				}
-				isLoaded = true;
-			});
+			}
+			isLoaded = true;
+		});
 	}
+
 
 	function setupLoader(serverURL) {
 		var currentServer = serverURL;
@@ -245,14 +220,13 @@ function autoUpdate(cordova) {
 			currentServer = cServer;
 		}
 		window.appInfo.server = currentServer;
-		loader = new window.AppLoader('source', {
+		loader = window.loader = new AppLoader('source', {
 			localRoot: 'js/',
 			serverRoot: currentServer,
 			mode: 'mirror',
 			cacheBuster: true
 		});
-		window.loader = loader;
-		assetLoader = new window.AppLoader('ui', {
+		assetLoader = new AppLoader('ui', {
 			localRoot: '',
 			serverRoot: currentServer,
 			mode: 'mirror',
@@ -273,25 +247,20 @@ function autoUpdate(cordova) {
 		check()
 			.then(function () {
 				splashscreen.hide();
-				return assetLoader
-					.check()
-					.then(function (needUpdate) {
-						if (assetLoader.corruptNewManifest) {
-							return assetLoader.reset();
-						}
-						if (!needUpdate) {
-							return;
-						}
-						loadingProgress.show('Downloading User Interface');
-						return assetLoader.download(onProgress);
-					})
-					.then(function () {
-						assetLoader.update(false);
-						loadingProgress.destroy();
-					})
-					.catch(loadingProgress.destroy);
-			})
-			.then(function () {
+				return assetLoader.check().then(function (needUpdate) {
+					if (assetLoader.corruptNewManifest) {
+						return assetLoader.reset();
+					}
+					if (!needUpdate) {
+						return;
+					}
+					loadingProgress.show('Downloading User Interface');
+					return assetLoader.download(onProgress);
+				}).then(function () {
+					assetLoader.update(false);
+					loadingProgress.destroy();
+				}).catch(loadingProgress.destroy);
+			}).then(function () {
 				// Load the files from the server's manifest
 
 				for (var fileId in loader.manifest.files) {
@@ -304,9 +273,9 @@ function autoUpdate(cordova) {
 							uri = window.WkWebView.convertFilePath(uri);
 						} else {
 							// The Android case.
-							uri = loader.cache.toURL(file.filename);
-							if (uri.indexOf('file://') !== 0) {
-								throw new Error('File not local: ' + uri);
+							uri = loader.cache.toInternalURL(file.filename);
+							if (uri.indexOf('cdvfile://') !== 0) {
+								throw(new Error('File not local' + uri));
 							}
 						}
 						console.log('Loading file:', file.filename, uri);
@@ -317,7 +286,9 @@ function autoUpdate(cordova) {
 			.catch(resetServer);
 
 		document.addEventListener('resume', function () {
-			check().then(splashscreen.hide).catch(resetServer);
+			check()
+				.then(splashscreen.hide)
+				.catch(resetServer);
 		});
 	}
 
@@ -350,17 +321,12 @@ function autoUpdate(cordova) {
 
 		window.navigator.appInfo.getAppInfo(function (appInfo) {
 			window.appInfo = appInfo;
-			window.AppSettings.get(
-				function (settings) {
-					setupLoader(settings.server);
-				},
-				function (e) {
-					console.error(e);
-					// eslint-disable-next-line no-alert
-					window.alert('Could not load local settings');
-				},
-				['server']
-			);
+			window.AppSettings.get(function (settings) {
+				setupLoader(settings.server);
+			}, function (e) {
+				console.error(e);
+				window.alert('Could not load local settings');
+			}, ['server']);
 		});
 		document.addEventListener('pause', splashscreen.show);
 	}
@@ -370,5 +336,4 @@ function autoUpdate(cordova) {
 	// window.addEventListener('cordovacallbackerror', function (msg) {
 	// 	console.error('cordovacallbackerror: ' + msg.message);
 	// }, false);
-}
-autoUpdate(window.cordova);
+})(window.cordova);

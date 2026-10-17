@@ -26,7 +26,7 @@ cordova.define("cordova-plugin-file.ProgressEvent", function(require, exports, m
 // otherwise fill-in with our own implementation.
 //
 // NOTE: right now we always fill in with our own. Down the road would be nice if we can use whatever is native in the webview.
-const ProgressEvent = (function () {
+var ProgressEvent = (function () {
     /*
     var createEvent = function(data) {
         var event = document.createEvent('Events');

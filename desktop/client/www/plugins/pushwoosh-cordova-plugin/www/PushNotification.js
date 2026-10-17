@@ -10,7 +10,7 @@ cordova.define("pushwoosh-cordova-plugin.PushNotification", function(require, ex
 //
 // MIT Licensed
 
-var exec = window.cordova.exec;
+var exec = require('cordova/exec');
 
 //Class: PushNotification
 //Class to interact with Pushwoosh Push Notifications plugin
@@ -79,26 +79,6 @@ PushNotification.prototype.onAppActivated = function (args) {
 PushNotification.prototype.registerDevice = function(success, fail) {
 	exec(success, fail, "PushNotification", "registerDevice", []);
 };
-
-//Function: additionalAuthorizationOptions
-//[ios] Authorization options in addition to UNAuthorizationOptionBadge | UNAuthorizationOptionSound | UNAuthorizationOptionAlert | UNAuthorizationOptionCarPlay. 
-//Should be called before registering for pushes
-//
-//Parameters:
-// "options.UNAuthorizationOptionCriticalAlert" - adds UNAuthorizationOptionCriticalAlert option
-// "options.UNAuthorizationOptionProvisional" - adds UNAuthorizationOptionProvisional option
-// "options.UNAuthorizationOptionProvidesAppNotificationSettings" - adds UNAuthorizationOptionProvidesAppNotificationSettings option
-//
-//Example:
-//(start code)
-//	pushwoosh.additionalAuthorizationOptions({ 
-//		"UNAuthorizationOptionCriticalAlert" : 1,
-//		"UNAuthorizationOptionProvisional": 0 // set 0 or don't specify the option if you don't want to add it to your app. 
-//	});
-//(end)
-PushNotification.prototype.additionalAuthorizationOptions = function(options) {
-	exec(null, null, "PushNotification", "additionalAuthorizationOptions", options ? [options] : []);
-}
 
 //Function: unregisterDevice
 //[android, ios, wp8, windows] Unregister device form receiving push notifications
@@ -272,29 +252,6 @@ PushNotification.prototype.getLaunchNotification = function(callback) {
 //[android, ios] Clears launch notifiation, getLaunchNotification() will return null after this call.
 PushNotification.prototype.clearLaunchNotification = function(callback) {
 	exec(callback, callback, "PushNotification", "clearLaunchNotification", []);
-};
-
-//Function: setLanguage
-//[android, ios] Set custom application language (as opposed to the default system language).
-//This allows sending localized push messages
-//
-//Parameters:
-// "language" - string containing language code, i.e. "en", "fr"
-//
-PushNotification.prototype.setLanguage = function(language) {
-	exec(null, null, "PushNotification", "setLanguage", [language]);
-};
-
-//Function: setShowPushnotificationAlert
-//[android, ios] Configure custom foreground push notification settings distinct from the default system configuration.
-//This allows show foreground push notifications
-//
-//Parameters:
-// "showPushnotificationAlert" - bool value
-//
-
-PushNotification.prototype.setShowPushnotificationAlert = function(showPushnotificationAlert) {
-	exec(null, null, "PushNotification", "setShowPushnotificationAlert", [showPushnotificationAlert]);
 };
 
 //Function: setUserId
@@ -565,41 +522,6 @@ PushNotification.prototype.presentInboxUI = function(params) {
 	exec(null, null, "PushNotification", "presentInboxUI", [ params ]);
 }
 
-// Load an array of InboxNotification objects
-PushNotification.prototype.loadMessages = function(success, fail) {
-	exec(success, fail, "PushNotification", "loadMessages", []);
-}
-
-// Get number of inbox messages with no action performed
-PushNotification.prototype.messagesWithNoActionPerformedCount = function(success) {
-	exec(success, null, "PushNotification", "messagesWithNoActionPerformedCount", []);
-}
-
-// Get number of unread inbox messages
-PushNotification.prototype.unreadMessagesCount = function(success) {
-	exec(success, null,"PushNotification", "unreadMessagesCount", []);
-}
-
-// Get total number of inbox messages
-PushNotification.prototype.messagesCount = function(success) {
-	exec(success, null,"PushNotification", "messagesCount", []);
-}
-
-// Mark inbox message as read
-PushNotification.prototype.readMessage = function(number) {
-	exec(null, null, "PushNotification", "readMessage", [number]);
-}
-
-// Delete message from inbox
-PushNotification.prototype.deleteMessage = function(number) {
-	exec(null, null, "PushNotification", "deleteMessage", [number]);
-}
-
-// Perform action for specified inbox message (i.e. open URL)
-PushNotification.prototype.performAction = function(number) {
-	exec(null, null, "PushNotification", "performAction", [number]);
-}
-
 // Show inApp for change setting Enable/disable all communication with Pushwoosh
 PushNotification.prototype.showGDPRConsentUI = function() {
 	exec(null, null, "PushNotification", "showGDPRConsentUI", []);
@@ -632,11 +554,6 @@ PushNotification.prototype.isDeviceDataRemoved = function(success) {
 PushNotification.prototype.isAvailableGDPR = function(success) {
 	return exec(success, null, "PushNotification", "isAvailableGDPR", []);
 };
-
-// Enable Huawei push notifications in Android
-PushNotification.prototype.enableHuaweiPushNotifications = function() {
-	exec(null, null, "PushNotification", "enableHuaweiPushNotifications", []);
-}
 
 module.exports = new PushNotification();
 
