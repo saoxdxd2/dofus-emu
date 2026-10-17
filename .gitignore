@@ -72,3 +72,5 @@ alias.json
 runtimes/python/Lib/
 runtimes/python/Scripts/
 runtimes/python/share/
+__pycache__/
+*.pyc

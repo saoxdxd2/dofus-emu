@@ -39,6 +39,10 @@ from combat.damage_calculator import (
 )
 from combat.tactical_engine import TacticalCombatEngine, TacticalStance, TacticalTurnPlan
 from combat.episodic_memory import EpisodicSkillMemory
+from navigation.world_graph import DofusWorldGraph, CellPathfinder
+from navigation.resource_graph import ResourceKnowledgeGraph
+from navigation.quest_graph import QuestKnowledgeGraph
+from navigation.nlp_intent_engine import DofusNLPEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("sentinel.daemon")
@@ -246,6 +250,10 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
     network_engine = MultiInstanceNetworkHealth(CHECKPOINT_PATH) if CHECKPOINT_PATH.exists() else None
     repo = GameDataRepository.get_instance()
     memory = EpisodicSkillMemory.get_instance()
+    world_graph = DofusWorldGraph()
+    resource_graph = ResourceKnowledgeGraph()
+    quest_graph = QuestKnowledgeGraph()
+    nlp_engine = DofusNLPEngine()
 
     def log_message(self, format: str, *args: Any) -> None:
         # Suppress noisy standard HTTP access logs
@@ -353,6 +361,41 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
                     ]
                 })
             self._send_json(200, {"status": "ok", "breed_id": breed_id, "spells": res_spells})
+
+        elif path == "/sentinel/navigation/zaaps":
+            self._send_json(200, {"status": "ok", "zaaps": self.world_graph.get_all_zaaps()})
+
+        elif path == "/sentinel/resources/all":
+            self._send_json(200, {
+                "status": "ok",
+                "total_resources": len(self.resource_graph.resources),
+                "resources": [
+                    {
+                        "id": r.id,
+                        "name_fr": r.name_fr,
+                        "name_en": r.name_en,
+                        "name_es": r.name_es,
+                        "profession": r.profession,
+                        "level_req": r.level_req,
+                    }
+                    for r in self.resource_graph.resources
+                ],
+            })
+
+        elif path == "/sentinel/quests/all":
+            self._send_json(200, {
+                "status": "ok",
+                "total_quests": len(self.quest_graph.guides),
+                "quests": [g.to_dict() for g in self.quest_graph.guides],
+            })
+
+        elif path == "/sentinel/quests/guide":
+            q_id = qs.get("id", [""])[0] or qs.get("q", [""])[0]
+            guides = self.quest_graph.search_guides(q_id)
+            if guides:
+                self._send_json(200, {"status": "ok", "guide": guides[0].to_dict()})
+            else:
+                self._send_json(404, {"error": "guide_not_found", "query": q_id})
 
         else:
             self._send_json(404, {"error": "not_found"})
@@ -517,10 +560,48 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
                 "value_score": plan.value_score,
             })
 
+        elif self.path == "/sentinel/navigation/path":
+            c_from = req.get("from", [4, -19])
+            c_to = req.get("to", [4, -18])
+            allow_zaap = bool(req.get("allow_zaap", True))
+            lang = req.get("lang", "fr")
+            path = self.world_graph.find_path(tuple(c_from), tuple(c_to), allow_zaap=allow_zaap, lang=lang)
+            self._send_json(200, {"status": "ok", "path": path.to_dict()})
+
+        elif self.path == "/sentinel/resources/search":
+            query = req.get("query", "fer")
+            near = req.get("near")
+            near_tuple = tuple(near) if near else None
+            max_r = int(req.get("max_results", 8))
+            spots = self.resource_graph.search_spots(query, near_pos=near_tuple, max_results=max_r)
+            self._send_json(200, {
+                "status": "ok",
+                "query": query,
+                "total_spots": len(spots),
+                "spots": [s.to_dict() for s in spots],
+            })
+
+        elif self.path == "/sentinel/resources/farm_loop":
+            res_q = req.get("resource", "blé")
+            start = tuple(req.get("start", [4, -19]))
+            max_maps = int(req.get("max_maps", 6))
+            loop = self.resource_graph.generate_farm_loop(res_q, start_coord=start, max_maps=max_maps)
+            if loop:
+                self._send_json(200, {"status": "ok", "farm_loop": loop.to_dict()})
+            else:
+                self._send_json(404, {"error": "no_spots_found_for_resource", "resource": res_q})
+
+        elif self.path == "/sentinel/nlp/query":
+            text = req.get("text", "")
+            curr_pos = tuple(req.get("current_pos", [4, -19]))
+            result = self.nlp_engine.process_query(text, current_pos=curr_pos)
+            self._send_json(200, {"status": "ok", "result": result.to_dict()})
+
         elif self.path == "/sentinel/parse_command":
             cmd_text = req.get("command", "").strip()
             target_slot = req.get("target_slot", "all")
             char_dict = req.get("character")
+            curr_pos = tuple(req.get("current_pos", [4, -19]))
 
             directive = None
             confidence = 0.85
@@ -560,7 +641,20 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
                     }
 
             if not directive:
-                # 1. Neural calibrated decision classification if THX-01 / Decision Agent is loaded
+                # 1. Semantic NLP Analysis for Navigation, Resources, Quests & Bot Orders
+                nlp_res = self.nlp_engine.process_query(cmd_text, current_pos=curr_pos)
+                if nlp_res.intent.value != "UNKNOWN":
+                    directive = nlp_res.execution_payload.get("action") or nlp_res.intent.value
+                    confidence = nlp_res.confidence
+                    explanation = nlp_res.message_reply
+                    metadata = {
+                        "nlp_reply": nlp_res.message_reply,
+                        "detected_lang": nlp_res.detected_lang,
+                        **nlp_res.execution_payload,
+                    }
+
+            if not directive:
+                # 2. Neural calibrated decision classification if THX-01 / Decision Agent is loaded
                 if self.laya.agent is not None and hasattr(self.laya.agent, "decide"):
                     try:
                         q = {

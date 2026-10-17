@@ -67,5 +67,57 @@ class TestCommanderPipeline(unittest.TestCase):
         res = self._send_cmd("stop all operations", "all")
         self.assertEqual(res.get("directive"), "STOP")
 
+    def test_navigation_path_http(self):
+        req = urllib.request.Request(
+            "http://127.0.0.1:8890/sentinel/navigation/path",
+            data=json.dumps({"from": [4, -19], "to": [4, -18], "allow_zaap": False}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(data.get("status"), "ok")
+            self.assertEqual(data.get("path", {}).get("total_steps"), 1)
+
+    def test_resource_search_http(self):
+        req = urllib.request.Request(
+            "http://127.0.0.1:8890/sentinel/resources/search",
+            data=json.dumps({"query": "fer", "near": [4, -19]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(data.get("status"), "ok")
+            self.assertGreater(data.get("total_spots", 0), 0)
+
+    def test_farm_loop_http(self):
+        req = urllib.request.Request(
+            "http://127.0.0.1:8890/sentinel/resources/farm_loop",
+            data=json.dumps({"resource": "blé", "start": [4, -19], "max_maps": 4}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(data.get("status"), "ok")
+            self.assertIn("farm_loop", data)
+
+    def test_quest_guide_http(self):
+        with urllib.request.urlopen("http://127.0.0.1:8890/sentinel/quests/guide?id=dofus_cawotte", timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(data.get("status"), "ok")
+            self.assertEqual(data.get("guide", {}).get("id"), "dofus_cawotte")
+
+    def test_nlp_query_http(self):
+        req = urllib.request.Request(
+            "http://127.0.0.1:8890/sentinel/nlp/query",
+            data=json.dumps({"text": "comment aller sur l'île d'otomaï ?", "current_pos": [4, -19]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(data.get("status"), "ok")
+            self.assertEqual(data.get("result", {}).get("intent"), "QUEST_GUIDE")
+            self.assertIn("Capitaine Kradoc", data.get("result", {}).get("message_reply", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
