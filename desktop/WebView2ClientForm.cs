@@ -74,6 +74,18 @@ namespace DofusFarm.Engine
     'use strict';
     if (typeof window === 'undefined') return;
 
+    if (!window.appInfo) {
+        window.appInfo = {
+            version: '3.14.2',
+            identifier: 'com.ankama.dofustouch',
+            build: '3.14.2',
+            versionCode: '3014002'
+        };
+    }
+    if (!window.buildVersion) {
+        window.buildVersion = '1.74.8';
+    }
+
     if (!window.IonicDeeplink) {
         window.IonicDeeplink = {
             _callbacks: [],
@@ -401,6 +413,9 @@ namespace DofusFarm.Engine
 
                 // Native mobile touch and automation suppression switches
                 args.Append("--touch-events=enabled --disable-blink-features=AutomationControlled ");
+
+                // Allow cross-origin requests from virtual host https://dofus.local to Ankama Auth & CDN
+                args.Append("--disable-web-security --allow-running-insecure-content ");
 
                 // Background CPU optimization: throttle background window timers to preserve host CPU
                 if (_options.EnableBackgroundThrottling)
@@ -1121,7 +1136,7 @@ namespace DofusFarm.Engine
                         args.AppendFormat("--proxy-server=\"{0}\" ", _options.Proxy);
                     }
 
-                    args.Append("--enable-gpu-rasterization --touch-events=enabled --disable-blink-features=AutomationControlled ");
+                    args.Append("--enable-gpu-rasterization --touch-events=enabled --disable-blink-features=AutomationControlled --disable-web-security --allow-running-insecure-content ");
                     envOptions.AdditionalBrowserArguments = args.ToString().Trim();
 
                     string oauthDataDir = Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));

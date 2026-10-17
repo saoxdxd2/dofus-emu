@@ -186,9 +186,13 @@
         vendor: 'Google Inc.', webdriver: false, pdfViewerEnabled: false, language: 'fr-FR', languages: FROZEN_LANGUAGES,
         onLine: true, plugins: emptyPluginArray, mimeTypes: emptyMimeTypeArray,
         connection: connectionObj, mozConnection: connectionObj, webkitConnection: connectionObj, battery: fakeBattery,
-        appInfo: { build: '3.2.7', version: '3.2.7', identifier: 'com.ankama.dofustouch', versionCode: '3002007' }
+        appInfo: { build: '3.14.2', version: '3.14.2', identifier: 'com.ankama.dofustouch', versionCode: '3014002' }
     };
     for (var nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
+    try {
+        window.appInfo = { build: '3.14.2', version: '3.14.2', identifier: 'com.ankama.dofustouch', versionCode: '3014002' };
+        window.buildVersion = '1.74.8';
+    } catch (e) {}
 
     try {
         if (typeof Navigator !== 'undefined' && Navigator.prototype) {

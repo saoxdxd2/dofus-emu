@@ -186,9 +186,13 @@
         vendor: 'Google Inc.', webdriver: false, pdfViewerEnabled: false, language: 'fr-FR', languages: FROZEN_LANGUAGES,
         onLine: true, plugins: emptyPluginArray, mimeTypes: emptyMimeTypeArray,
         connection: connectionObj, mozConnection: connectionObj, webkitConnection: connectionObj, battery: fakeBattery,
-        appInfo: { build: '3.2.7', version: '3.2.7', identifier: 'com.ankama.dofustouch', versionCode: '3002007' }
+        appInfo: { build: '3.14.2', version: '3.14.2', identifier: 'com.ankama.dofustouch', versionCode: '3014002' }
     };
     for (var nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
+    try {
+        window.appInfo = { build: '3.14.2', version: '3.14.2', identifier: 'com.ankama.dofustouch', versionCode: '3014002' };
+        window.buildVersion = '1.74.8';
+    } catch (e) {}
 
     try {
         if (typeof Navigator !== 'undefined' && Navigator.prototype) {
@@ -585,5 +589,398 @@
                 return origCanvasGetCtx.apply(this, arguments);
             }, 'getContext');
         }
+    } catch (e) {}
+
+    // 15. Per-Instance Deterministic 2D Canvas Fingerprint Jitter
+    try {
+        if (typeof HTMLCanvasElement !== 'undefined' && HTMLCanvasElement.prototype) {
+            var applyCanvasMicroNoise = function(canvas) {
+                try {
+                    if (canvas.width > 4 && canvas.height > 4) {
+                        var ctx2d = canvas.getContext('2d');
+                        if (ctx2d) {
+                            var px = (_instanceHash % (canvas.width - 2)) + 1;
+                            var py = ((_instanceHash >>> 16) % (canvas.height - 2)) + 1;
+                            var img = ctx2d.getImageData(px, py, 1, 1);
+                            if (img && img.data && img.data.length >= 4) {
+                                img.data[0] ^= ((_instanceHash & 1) ? 1 : 2);
+                                img.data[1] ^= (((_instanceHash >>> 3) & 1) ? 1 : 2);
+                                img.data[2] ^= (((_instanceHash >>> 7) & 1) ? 1 : 2);
+                                ctx2d.putImageData(img, px, py);
+                            }
+                        }
+                    }
+                } catch (e) {}
+            };
+
+            var origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            if (origToDataURL) {
+                HTMLCanvasElement.prototype.toDataURL = makeNative(function toDataURL(type, quality) {
+                    applyCanvasMicroNoise(this);
+                    return origToDataURL.apply(this, arguments);
+                }, 'toDataURL');
+            }
+
+            var origToBlob = HTMLCanvasElement.prototype.toBlob;
+            if (origToBlob) {
+                HTMLCanvasElement.prototype.toBlob = makeNative(function toBlob(callback, type, quality) {
+                    applyCanvasMicroNoise(this);
+                    return origToBlob.apply(this, arguments);
+                }, 'toBlob');
+            }
+        }
+
+        if (typeof CanvasRenderingContext2D !== 'undefined' && CanvasRenderingContext2D.prototype.getImageData) {
+            var origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+            CanvasRenderingContext2D.prototype.getImageData = makeNative(function getImageData(sx, sy, sw, sh) {
+                var res = origGetImageData.apply(this, arguments);
+                if (res && res.data && res.data.length >= 16) {
+                    var p1 = ((_instanceHash >>> 0) % (res.data.length / 4 | 0)) * 4;
+                    var p2 = ((_instanceHash >>> 16) % (res.data.length / 4 | 0)) * 4;
+                    res.data[p1] ^= ((_instanceHash & 1) ? 1 : 2);
+                    res.data[p2 + 1] ^= (((_instanceHash >>> 3) & 1) ? 1 : 2);
+                    res.data[p1 + 2] ^= (((_instanceHash >>> 7) & 1) ? 1 : 2);
+                }
+                return res;
+            }, 'getImageData');
+        }
+    } catch (e) {}
+
+    // 16. Natural Behavioral Desynchronization (~20ms Input & Touch Micro-Jitter)
+    try {
+        var baseInputJitter = ((_instanceHash % 11) + 1); // 1..11ms deterministic instance base
+        if (typeof Event !== 'undefined' && Event.prototype) {
+            var origTimeStampDesc = Object.getOwnPropertyDescriptor(Event.prototype, 'timeStamp');
+            if (origTimeStampDesc && origTimeStampDesc.get) {
+                var origGetTs = origTimeStampDesc.get;
+                var jitteredEvents = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+                Object.defineProperty(Event.prototype, 'timeStamp', {
+                    get: makeNative(function() {
+                        var raw = origGetTs.call(this);
+                        if (jitteredEvents && (this.type && /touch|pointer|mouse|click/i.test(this.type))) {
+                            var cached = jitteredEvents.get(this);
+                            if (cached !== undefined) return cached;
+                            // Add 15..25ms (mean ~20ms) subtle desynchronization
+                            var j = raw + baseInputJitter + (Math.random() * 10 - 5) + 10;
+                            jitteredEvents.set(this, j);
+                            return j;
+                        }
+                        return raw;
+                    }, 'get timeStamp'),
+                    configurable: true,
+                    enumerable: true
+                });
+            }
+        }
+    } catch (e) {}
+
+    // 17. In-Game Moderator & Private Message Sentinel
+    try {
+        var _recentAlerts = new Set();
+        var triggerWhisperAlert = function(sender, text, isMod, channel) {
+            try {
+                var key = (sender || '') + ':' + (text || '').substring(0, 32);
+                if (_recentAlerts.has(key)) return;
+                _recentAlerts.add(key);
+                if (_recentAlerts.size > 100) {
+                    var it = _recentAlerts.values().next();
+                    if (!it.done) _recentAlerts.delete(it.value);
+                }
+
+                // Web Audio tone alert inside browser
+                try {
+                    var AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtx) {
+                        var ctx = new AudioCtx();
+                        var osc = ctx.createOscillator();
+                        var gain = ctx.createGain();
+                        osc.type = isMod ? 'sawtooth' : 'sine';
+                        osc.frequency.setValueAtTime(isMod ? 987.77 : 659.25, ctx.currentTime); // B5 or E5
+                        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+                        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start();
+                        osc.stop(ctx.currentTime + 0.4);
+                    }
+                } catch (audioErr) {}
+
+                // Dispatch to C# Host Form
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({
+                        type: 'MOD_WHISPER_ALERT',
+                        sender: sender || 'Unknown',
+                        text: text || '',
+                        isMod: !!isMod,
+                        channel: channel || 'whisper',
+                        instanceHash: _instanceHash.toString(16),
+                        timestamp: Date.now()
+                    });
+                }
+                console.warn('[SENTINEL] In-Game Alert detected from:', sender, 'isMod:', isMod, 'msg:', text);
+            } catch (e) {}
+        };
+
+        // Test hook callable programmatically or in test scripts
+        window.__triggerModWhisperTest = triggerWhisperAlert;
+
+        // A. WebSocket packet hook for chat streams
+        if (typeof window.WebSocket !== 'undefined') {
+            var origWs = window.WebSocket;
+            window.WebSocket = function(url, protocols) {
+                var ws = protocols ? new origWs(url, protocols) : new origWs(url);
+                try {
+                    ws.addEventListener('message', function(ev) {
+                        try {
+                            var strData = '';
+                            if (typeof ev.data === 'string') {
+                                strData = ev.data;
+                            } else if (ev.data instanceof ArrayBuffer && typeof TextDecoder !== 'undefined') {
+                                strData = new TextDecoder().decode(ev.data);
+                            }
+                            if (strData) {
+                                var isMod = /\[(?:Mod|Admin|GM|Ankama)\]/i.test(strData) || /(?:^|\W)(?:modérateur|moderator)(?:\W|$)/i.test(strData);
+                                var isWhisper = /channel["']?\s*:\s*9/i.test(strData) || /ChatServerMessage/i.test(strData) || /whisper|chuchote/i.test(strData);
+                                if (isMod || isWhisper) {
+                                    var senderMatch = strData.match(/["'](?:senderName|sender|name)["']\s*:\s*["']([^"']+)["']/i) ||
+                                                      strData.match(/\[([a-zA-Z0-9_\-\s]{3,24})\]/);
+                                    var textMatch = strData.match(/["'](?:content|text|message)["']\s*:\s*["']([^"']+)["']/i);
+                                    var sender = senderMatch ? senderMatch[1] : (isMod ? 'Moderator' : 'Player');
+                                    var text = textMatch ? textMatch[1] : strData.substring(0, 100);
+                                    triggerWhisperAlert(sender, text, isMod, isWhisper ? 'whisper' : 'chat');
+                                }
+                            }
+                        } catch (err) {}
+                    });
+                } catch (err) {}
+                return ws;
+            };
+            window.WebSocket.prototype = origWs.prototype;
+            window.WebSocket.CONNECTING = origWs.CONNECTING;
+            window.WebSocket.OPEN = origWs.OPEN;
+            window.WebSocket.CLOSING = origWs.CLOSING;
+            window.WebSocket.CLOSED = origWs.CLOSED;
+        }
+
+        // B. DOM MutationObserver hook for chat UI rendering
+        if (typeof MutationObserver !== 'undefined') {
+            var chatObserver = new MutationObserver(function(mutations) {
+                for (var i = 0; i < mutations.length; i++) {
+                    var added = mutations[i].addedNodes;
+                    if (!added) continue;
+                    for (var j = 0; j < added.length; j++) {
+                        var node = added[j];
+                        if (node.nodeType === 1) { // Element node
+                            var txt = node.textContent || '';
+                            if (txt.length > 2) {
+                                var isMod = /\[(?:Mod|Admin|GM|Ankama)\]/i.test(txt) || /(?:^|\W)(?:modérateur|moderator)(?:\W|$)/i.test(txt);
+                                var cls = (node.className || '') + ' ' + (node.getAttribute && node.getAttribute('data-channel') || '');
+                                var isWhisper = /whisper|chuchot/i.test(cls) || /\[(?:de|from)\s+([a-zA-Z0-9_\-]+)\]/i.test(txt);
+                                if (isMod || isWhisper) {
+                                    var sender = isMod ? 'Moderator' : 'Player';
+                                    var m = txt.match(/\[(?:de|from)\s+([a-zA-Z0-9_\-]+)\]/i) || txt.match(/\[([a-zA-Z0-9_\-\s]{3,24})\]/);
+                                    if (m) sender = m[1];
+                                    triggerWhisperAlert(sender, txt.trim().substring(0, 120), isMod, isWhisper ? 'whisper' : 'chat');
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            var attachObserver = function() {
+                var target = document.body || document.documentElement;
+                if (target) {
+                    chatObserver.observe(target, { childList: true, subtree: true });
+                }
+            };
+
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                attachObserver();
+            } else {
+                document.addEventListener('DOMContentLoaded', attachObserver, { once: true });
+            }
+        }
+    } catch (e) {}
+
+    // 18. Spatial & Temporal Input Desynchronizer (Anti-Conga Line & Natural Jitter)
+    try {
+        var dx = ((_instanceHash % 7) - 3);
+        var dy = (((_instanceHash >>> 4) % 7) - 3);
+
+        if (typeof MouseEvent !== 'undefined' && MouseEvent.prototype) {
+            var jitterCoordProp = function(propName, deltaBase) {
+                var desc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, propName);
+                if (desc && desc.get) {
+                    var origGet = desc.get;
+                    var jitterMap = new WeakMap();
+                    Object.defineProperty(MouseEvent.prototype, propName, {
+                        get: makeNative(function() {
+                            var val = origGet.call(this);
+                            if (typeof val === 'number') {
+                                var cached = jitterMap.get(this);
+                                if (cached !== undefined) return cached;
+                                // Subtle Gaussian spatial jitter: +- 2..4 px
+                                var offset = deltaBase + (Math.random() * 2 - 1);
+                                var newVal = Math.round(val + offset);
+                                jitterMap.set(this, newVal);
+                                return newVal;
+                            }
+                            return val;
+                        }, 'get ' + propName),
+                        configurable: true,
+                        enumerable: true
+                    });
+                }
+            };
+
+            jitterCoordProp('clientX', dx);
+            jitterCoordProp('pageX', dx);
+            jitterCoordProp('screenX', dx);
+            jitterCoordProp('clientY', dy);
+            jitterCoordProp('pageY', dy);
+            jitterCoordProp('screenY', dy);
+        }
+    } catch (e) {}
+
+    // 19. AI Commander & Co-Op Action Agent (Stealth Human-like Action Execution)
+    try {
+        var _activeDirectives = {};
+
+        var triggerNaturalClick = function(targetEl, offsetX, offsetY, onComplete) {
+            if (!targetEl) return;
+            var rect = targetEl.getBoundingClientRect();
+            var cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
+            var cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
+
+            // Apply Section 18 Spatial Gaussian Jitter (+- 2..4 px)
+            var jitterX = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
+            var jitterY = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
+
+            // Natural human dwell time: 65 - 125 ms
+            var dwellMs = 65 + (Math.random() * 60 | 0);
+
+            var downEvt = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
+            targetEl.dispatchEvent(downEvt);
+
+            setTimeout(function() {
+                var upEvt = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
+                var clickEvt = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY, detail: 1 });
+                targetEl.dispatchEvent(upEvt);
+                targetEl.dispatchEvent(clickEvt);
+                if (typeof onComplete === 'function') onComplete();
+            }, dwellMs);
+        };
+
+        var triggerNaturalDoubleClick = function(targetEl, offsetX, offsetY, onComplete) {
+            if (!targetEl) return;
+            var rect = targetEl.getBoundingClientRect();
+            var cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
+            var cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
+
+            // 1st Click Spatial Jitter
+            var j1x = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
+            var j1y = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
+            var dwell1 = 60 + (Math.random() * 55 | 0);
+
+            targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: j1x, clientY: j1y, detail: 1 }));
+            setTimeout(function() {
+                targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: j1x, clientY: j1y, detail: 1 }));
+                targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: j1x, clientY: j1y, detail: 1 }));
+
+                // Human inter-click delay (95 - 175 ms)
+                var interClickDelay = 95 + (Math.random() * 80 | 0);
+                setTimeout(function() {
+                    // 2nd Click Finger Micro-Shift (+- 1 px drift)
+                    var j2x = j1x + (Math.random() * 2 - 1);
+                    var j2y = j1y + (Math.random() * 2 - 1);
+                    var dwell2 = 60 + (Math.random() * 55 | 0);
+
+                    targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
+                    setTimeout(function() {
+                        targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
+                        targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
+                        targetEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: j2x, clientY: j2y, detail: 2 }));
+                        if (typeof onComplete === 'function') onComplete();
+                    }, dwell2);
+                }, interClickDelay);
+            }, dwell1);
+        };
+
+        window.__triggerNaturalClick = triggerNaturalClick;
+        window.__triggerNaturalDoubleClick = triggerNaturalDoubleClick;
+
+        window.__executeCommanderDirective = function(directive) {
+            try {
+                if (typeof directive === 'string') directive = JSON.parse(directive);
+                var action = (directive && directive.action || '').toUpperCase();
+                console.log('[AI Commander] Received directive:', action, directive);
+
+                if (action === 'PASS_TURN') {
+                    var passBtn = document.querySelector('.pass-turn, .btn-turn, [data-action="pass"], .timeline-turn-pass');
+                    if (passBtn) {
+                        setTimeout(function() {
+                            triggerNaturalClick(passBtn);
+                        }, 400 + (Math.random() * 600 | 0));
+                    }
+                } else if (action === 'AUTO_JOIN_COMBAT') {
+                    var joinBtn = document.querySelector('.join-fight, .btn-join, .sword-fight, [data-action="join"]');
+                    if (joinBtn) {
+                        setTimeout(function() {
+                            triggerNaturalClick(joinBtn);
+                        }, 600 + (Math.random() * 800 | 0));
+                    }
+                } else if (action === 'CLICK' && directive.selector) {
+                    var targetEl = document.querySelector(directive.selector);
+                    if (targetEl) triggerNaturalClick(targetEl, directive.x, directive.y);
+                } else if (action === 'DBLCLICK' && directive.selector) {
+                    var targetDbl = document.querySelector(directive.selector);
+                    if (targetDbl) triggerNaturalDoubleClick(targetDbl, directive.x, directive.y);
+                } else if (action === 'EXECUTE_OPTIMAL_ROTATION' || action === 'EXECUTE_TACTICAL_PLAN' || action === 'ATTACK') {
+                    var meta = directive.metadata || directive;
+                    var rotation = meta.rotation || [];
+                    console.log('[AI Commander] Executing tactical plan (' + (meta.stance || 'COMBAT') + ') with ' + rotation.length + ' actions against ' + (meta.target_name || 'target'));
+
+                    var executeStep = function(stepIndex) {
+                        if (stepIndex >= rotation.length) {
+                            console.log('[AI Commander] Completed rotation execution.');
+                            return;
+                        }
+                        var step = rotation[stepIndex];
+                        var spellEl = document.querySelector('[data-spell-id="' + step.spell_id + '"], .spell-' + step.spell_id + ', [title*="' + step.spell_name + '"]');
+                        if (!spellEl) {
+                            var hotbarSlots = document.querySelectorAll('.hotbar-slot, .spell-slot, .slot-spell');
+                            if (hotbarSlots && hotbarSlots[stepIndex]) spellEl = hotbarSlots[stepIndex];
+                        }
+
+                        if (spellEl) {
+                            triggerNaturalClick(spellEl, undefined, undefined, function() {
+                                var targetPause = 250 + (Math.random() * 200 | 0);
+                                setTimeout(function() {
+                                    var enemyEl = document.querySelector('.fighter-enemy, .target-cell, [data-cell-id]');
+                                    if (enemyEl) triggerNaturalClick(enemyEl);
+
+                                    var interSpellDelay = 400 + (Math.random() * 400 | 0);
+                                    setTimeout(function() {
+                                        executeStep(stepIndex + 1);
+                                    }, interSpellDelay);
+                                }, targetPause);
+                            });
+                        } else {
+                            executeStep(stepIndex + 1);
+                        }
+                    };
+
+                    setTimeout(function() { executeStep(0); }, 300 + (Math.random() * 300 | 0));
+                } else if (action === 'FOLLOW') {
+                    _activeDirectives['follow'] = true;
+                } else if (action === 'STOP') {
+                    _activeDirectives = {};
+                }
+                return JSON.stringify({ status: 'ok', action: action, executed_at: Date.now() });
+            } catch(err) {
+                return JSON.stringify({ status: 'error', message: err.toString() });
+            }
+        };
     } catch (e) {}
 })();
