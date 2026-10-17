@@ -32,6 +32,33 @@ namespace DofusFarm.Engine
         public string LastGpuVendor { get; private set; }
         public string LastGpuRenderer { get; private set; }
         public int BrowserProcessId { get; private set; }
+        public WebView2 BrowserControl { get { return _webView; } }
+
+        public async Task<string> ExecuteScriptAsync(string script)
+        {
+            if (_webView != null && _webView.CoreWebView2 != null)
+            {
+                return await _webView.CoreWebView2.ExecuteScriptAsync(script);
+            }
+            return null;
+        }
+
+        public async Task<bool> CaptureScreenshotAsync(string outputPath)
+        {
+            try
+            {
+                if (_webView != null && _webView.CoreWebView2 != null)
+                {
+                    using (FileStream fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        await _webView.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, fs);
+                        return true;
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
 
         public event Action<string, string> OnDiagnosticReport;
         public event Action<string> OnFormClosedByUser;

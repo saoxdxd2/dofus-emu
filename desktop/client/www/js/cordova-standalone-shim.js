@@ -24,14 +24,39 @@
         NONE: 'none'
     };
 
-    window.navigator.connection = window.navigator.connection || {
-        type: window.Connection.WIFI
+    function safeSetNav(prop, val) {
+        try {
+            var target = (typeof Navigator !== 'undefined' && Navigator.prototype) ? Navigator.prototype : window.navigator;
+            Object.defineProperty(target, prop, {
+                value: val,
+                configurable: true,
+                writable: true,
+                enumerable: true
+            });
+        } catch (e) {
+            try { window.navigator[prop] = val; } catch (e2) {}
+        }
+    }
+
+    safeSetNav('connection', {
+        type: window.Connection.WIFI,
+        effectiveType: '4g',
+        rtt: 50,
+        downlink: 10,
+        saveData: false
+    });
+
+    // Safety guard for early scripts calling getComputedStyle before document.body finishes attaching
+    var origGetComputedStyle = window.getComputedStyle;
+    window.getComputedStyle = function (el, pseudo) {
+        if (!el) el = document.body || document.documentElement || document.createElement('div');
+        return origGetComputedStyle.call(window, el, pseudo);
     };
 
-    window.navigator.splashscreen = window.navigator.splashscreen || {
+    safeSetNav('splashscreen', {
         show: function () { console.log('[Splashscreen] show'); },
         hide: function () { console.log('[Splashscreen] hide'); }
-    };
+    });
 
     window.StatusBar = window.StatusBar || {
         hide: function () {},
@@ -39,7 +64,7 @@
         overlaysWebView: function () {}
     };
 
-    window.navigator.notification = window.navigator.notification || {
+    safeSetNav('notification', {
         alert: function (message, callback, title, buttonName) {
             console.log('[Notification.alert] ' + title + ': ' + message);
             if (typeof callback === 'function') setTimeout(callback, 0);
@@ -47,9 +72,9 @@
         confirm: function (message, callback, title, buttonLabels) {
             if (typeof callback === 'function') setTimeout(function () { callback(1); }, 0);
         }
-    };
+    });
 
-    window.navigator.appInfo = window.navigator.appInfo || {
+    safeSetNav('appInfo', {
         getAppInfo: function (success, error) {
             if (typeof success === 'function') {
                 success({
@@ -59,7 +84,7 @@
                 });
             }
         }
-    };
+    });
 
     window.AppSettings = window.AppSettings || {
         get: function (success, error, keys) {
