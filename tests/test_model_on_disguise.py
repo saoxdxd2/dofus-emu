@@ -17,6 +17,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 # Add dofus-network to path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "dofus-network"))
@@ -105,7 +107,76 @@ def test_disguise_js_diversity() -> dict[str, dict]:
     assert len(canvas_hashes) == 4, f"Canvas hashes collided! Found: {len(canvas_hashes)} unique out of 4"
     assert len(rtts) == 4, f"Network simulated RTTs collided! Found: {len(rtts)} unique out of 4"
     print("\n  [PASS] All 4 instances generated 100% unique, collision-free hardware and canvas hashes!\n")
-    return data
+
+
+@pytest.fixture
+def disguise_profiles() -> dict[str, dict]:
+    node_script = """
+    const fs = require('fs');
+    const crypto = require('crypto');
+    const disguiseCode = fs.readFileSync('scripts/mobile-disguise.js', 'utf8');
+
+    const instances = [
+        { slot: 'slot1', port: 8001, model: 'SM-G998B', serial: 'R5CR123456X', uuid: 'e0123456-789a-bcde-f012-3456789abcde' },
+        { slot: 'slot2', port: 8002, model: 'SM-A515F', serial: 'R58M45F41EFD', uuid: 'ca8ea76b0fe32f85ca8ea76b0fe32f85' },
+        { slot: 'slot3', port: 8003, model: 'Pixel 6 Pro', serial: '19071FDEE0001', uuid: 'f1a2b3c4-d5e6-7890-abcd-ef1234567890' },
+        { slot: 'slot4', port: 8004, model: 'OnePlus 9 Pro', serial: 'OP9P8899AABB', uuid: '01234567-89ab-cdef-0123-456789abcdef' }
+    ];
+
+    const results = {};
+
+    for (const inst of instances) {
+        let code = disguiseCode
+            .replace(/__DEVICE_MODEL__/g, inst.model)
+            .replace(/__DEVICE_SERIAL__/g, inst.serial)
+            .replace(/__DEVICE_UUID__/g, inst.uuid);
+
+        const seed = inst.serial + ':' + inst.uuid + ':' + inst.model;
+        let h = 2166136261;
+        for (let i = 0; i < seed.length; i++) {
+            h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
+        }
+        const instHash = h >>> 0;
+
+        const fakeCanvas = {
+            width: 128,
+            height: 128,
+            data: new Uint8Array(128 * 128 * 4)
+        };
+        for (let i = 0; i < fakeCanvas.data.length; i += 4) {
+            fakeCanvas.data[i] = 120;
+            fakeCanvas.data[i+1] = 140;
+            fakeCanvas.data[i+2] = 160;
+            fakeCanvas.data[i+3] = 255;
+        }
+
+        const px = (instHash % (fakeCanvas.width - 2)) + 1;
+        const py = (((instHash >>> 16) % (fakeCanvas.height - 2)) + 1);
+        const idx = (py * fakeCanvas.width + px) * 4;
+        fakeCanvas.data[idx] ^= ((instHash & 1) ? 1 : 2);
+        fakeCanvas.data[idx+1] ^= (((instHash >>> 3) & 1) ? 1 : 2);
+        fakeCanvas.data[idx+2] ^= (((instHash >>> 7) & 1) ? 1 : 2);
+
+        const canvasHash = crypto.createHash('sha256').update(Buffer.from(fakeCanvas.data)).digest('hex').substring(0, 16);
+        const baseRtt = 40 + (instHash % 25);
+        const simulatedJitter = (instHash % 7) - 3;
+
+        results[inst.slot] = {
+            model: inst.model,
+            serial: inst.serial,
+            instanceHash: instHash.toString(16),
+            canvasHash: canvasHash,
+            inputJitterMs: simulatedJitter,
+            simulatedRttMs: baseRtt
+        };
+    }
+
+    console.log(JSON.stringify(results));
+    """
+    res = subprocess.run(["node", "-e", node_script], cwd=str(REPO_ROOT), capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"Node execution failed: {res.stderr}")
+    return json.loads(res.stdout.strip())
 
 
 def test_trm_moe_on_disguised_telemetry(disguise_profiles: dict[str, dict]) -> None:
@@ -180,31 +251,31 @@ def test_trm_moe_on_disguised_telemetry(disguise_profiles: dict[str, dict]) -> N
     for j in range(12):
         ts = t_deg_start + j * 2.0
         # Normal slots
-        for slot in ["slot-0", "slot-1", "slot-3"]:
+        for slot in ["slot1", "slot3", "slot4"]:
             base_rtt = disguise_profiles[slot]["simulatedRttMs"]
             rtt = base_rtt + math.sin((steps + j) * 0.4) * 3.5
             engine.observe(slot, Observation(timestamp=ts, rtt_ms=rtt, received=1, sent=1))
 
-        # Degraded slot-2
+        # Degraded slot2
         is_packet_lost = (j % 3 == 0)
         deg_rtt = None if is_packet_lost else (240.0 + j * 15.0)
-        deg_res = engine.observe("slot-2", Observation(timestamp=ts, rtt_ms=deg_rtt, received=0 if is_packet_lost else 1, sent=1))
+        deg_res = engine.observe("slot2", Observation(timestamp=ts, rtt_ms=deg_rtt, received=0 if is_packet_lost else 1, sent=1))
         if deg_res is not None:
             deg_forecast_slot2 = deg_res
 
     # Check Slot-2 vs other slots
     assert deg_forecast_slot2 is not None
     actual_s2_rtt = 240.0 + 11 * 15.0
-    s2_z_score = engine.get_robust_zscore("slot-2", actual_s2_rtt)
+    s2_z_score = engine.get_robust_zscore("slot2", actual_s2_rtt)
 
-    f_s0 = engine.observe("slot-0", Observation(timestamp=t_deg_start + 25.0, rtt_ms=disguise_profiles["slot-0"]["simulatedRttMs"], received=1, sent=1))
-    s0_z_score = engine.get_robust_zscore("slot-0", disguise_profiles["slot-0"]["simulatedRttMs"])
+    f_s1 = engine.observe("slot1", Observation(timestamp=t_deg_start + 25.0, rtt_ms=disguise_profiles["slot1"]["simulatedRttMs"], received=1, sent=1))
+    s1_z_score = engine.get_robust_zscore("slot1", disguise_profiles["slot1"]["simulatedRttMs"])
 
     print(f"  [SLOT-2 (DEGRADED)]  Actual: {actual_s2_rtt:.1f}ms | Robust Z-Score: {s2_z_score:.2f} (ANOMALY TRIGGERED!)")
-    print(f"  [SLOT-0 (HEALTHY)]   Actual: {disguise_profiles['slot-0']['simulatedRttMs']:.1f}ms | Robust Z-Score: {s0_z_score:.2f} (HEALTHY)")
+    print(f"  [SLOT-1 (HEALTHY)]   Actual: {disguise_profiles['slot1']['simulatedRttMs']:.1f}ms | Robust Z-Score: {s1_z_score:.2f} (HEALTHY)")
 
-    assert s2_z_score >= 3.0, f"Model failed to detect route anomaly on slot-2: z={s2_z_score} < 3.0"
-    assert s0_z_score < 2.0, f"Cross-contamination detected! Slot-0 affected by Slot-2: z={s0_z_score}"
+    assert s2_z_score >= 3.0, f"Model failed to detect route anomaly on slot2: z={s2_z_score} < 3.0"
+    assert s1_z_score < 2.0, f"Cross-contamination detected! Slot-1 affected by Slot-2: z={s1_z_score}"
 
     print("  [PASS] Anomaly successfully detected on slot-2 without contaminating other instances!")
 

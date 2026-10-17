@@ -46,7 +46,7 @@
       "Concentration"
     ],
     "reward_achieved": 18.5,
-    "success_count": 20,
+    "success_count": 22,
     "notes": ""
   },
   "8:craqueleur:mid:healthy": {
@@ -59,6 +59,42 @@
     ],
     "reward_achieved": 14.25,
     "success_count": 1,
+    "notes": ""
+  },
+  "8:craqueleur_des_plaines:mid:healthy": {
+    "breed_id": 8,
+    "target_pattern": "Craqueleur des Plaines",
+    "stance": "BUFF_AND_ENGAGE",
+    "proven_sequence": [
+      "Épée Divine",
+      "Colère d'Iop"
+    ],
+    "reward_achieved": 14.25,
+    "success_count": 1,
+    "notes": ""
+  },
+  "8:craqueleur_des_plaines:any:healthy": {
+    "breed_id": 8,
+    "target_pattern": "Craqueleur des Plaines",
+    "stance": "BUFF_AND_ENGAGE",
+    "proven_sequence": [
+      "Épée Divine",
+      "Colère d'Iop"
+    ],
+    "reward_achieved": 14.25,
+    "success_count": 1,
+    "notes": ""
+  },
+  "8:testboss:any:healthy": {
+    "breed_id": 8,
+    "target_pattern": "TestBoss",
+    "stance": "BURST_LETHAL",
+    "proven_sequence": [
+      "Pression",
+      "Concentration"
+    ],
+    "reward_achieved": 18.5,
+    "success_count": 2,
     "notes": ""
   }
 }

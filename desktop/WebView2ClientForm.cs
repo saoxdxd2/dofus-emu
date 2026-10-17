@@ -483,7 +483,7 @@ namespace DofusFarm.Engine
                 // presence-only), so the option never actually changed anything.
                 if (!_options.EnableBackgroundThrottling)
                 {
-                    args.Append("--disable-background-timer-throttling --disable-renderer-backgrounding ");
+                    args.Append("--disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion ");
                 }
 
                 envOptions.AdditionalBrowserArguments = args.ToString().Trim();
@@ -573,8 +573,11 @@ namespace DofusFarm.Engine
                 _webView.ZoomFactorChanged += (s, e) =>
                 {
                     if (_isUpdatingZoom) return;
-                    _currentZoomFactor = _webView.ZoomFactor;
-                    _autoZoomEnabled = false;
+                    if (Math.Abs(_webView.ZoomFactor - _currentZoomFactor) > 0.02)
+                    {
+                        _currentZoomFactor = _webView.ZoomFactor;
+                        _autoZoomEnabled = false;
+                    }
                     UpdateZoomButtonText();
                 };
 
@@ -1219,9 +1222,9 @@ namespace DofusFarm.Engine
                 if (Math.Abs(_webView.ZoomFactor - clampedZoom) > 0.015)
                 {
                     _isUpdatingZoom = true;
-                    _webView.ZoomFactor = clampedZoom;
                     _currentZoomFactor = clampedZoom;
-                    _isUpdatingZoom = false;
+                    _webView.ZoomFactor = clampedZoom;
+                    BeginInvoke(new Action(() => { _isUpdatingZoom = false; }));
                     UpdateZoomButtonText();
                     TriggerGameResize();
                 }
@@ -1261,7 +1264,7 @@ namespace DofusFarm.Engine
             try
             {
                 _webView.CoreWebView2.ExecuteScriptAsync(
-                    "if(window.gui&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}else{window.dispatchEvent(new Event('resize'));}if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}"
+                    "try{if(window.gui&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}}catch(e){}try{window.dispatchEvent(new Event('resize'));}catch(e){}try{if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}}catch(e){}"
                 );
             }
             catch { }

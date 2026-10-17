@@ -50,7 +50,7 @@ namespace DofusFarm.Engine
             RamMb = 1024;
             Cores = 1;
             TargetFps = 60;
-            EnableBackgroundThrottling = true;
+            EnableBackgroundThrottling = false;
         }
     }
 
