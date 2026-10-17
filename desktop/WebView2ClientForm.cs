@@ -29,9 +29,14 @@ namespace DofusFarm.Engine
         private Panel _toolbarPanel;
         private Label _lblStatus;
         private Label _lblMemory;
+        private Button _btnZoom;
         private Button _btnDevTools;
         private Button _btnReload;
         private System.Windows.Forms.Timer _telemetryTimer;
+
+        private bool _autoZoomEnabled = true;
+        private bool _isUpdatingZoom = false;
+        private double _currentZoomFactor = 1.0;
 
         public string InstanceId { get { return _instanceId; } }
         public bool IsReady { get; private set; }
@@ -312,7 +317,7 @@ namespace DofusFarm.Engine
         {
             Text = string.Format("[WebView2] {0} - Dofus Farm", _displayName);
             Size = new Size(1024, 640);
-            MinimumSize = new Size(640, 400);
+            MinimumSize = new Size(360, 240);
             BackColor = Color.FromArgb(15, 23, 42);
             StartPosition = FormStartPosition.WindowsDefaultLocation;
 
@@ -352,11 +357,27 @@ namespace DofusFarm.Engine
             };
             _toolbarPanel.Controls.Add(_lblMemory);
 
+            _btnZoom = new Button
+            {
+                Text = "🔍 Auto",
+                Size = new Size(95, 24),
+                Location = new Point(Width - 275, 4),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(37, 99, 235),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            _btnZoom.FlatAppearance.BorderSize = 0;
+            _btnZoom.Click += (s, e) => CycleZoomMode();
+            _toolbarPanel.Controls.Add(_btnZoom);
+
             _btnDevTools = new Button
             {
                 Text = "🛠️ DevTools",
-                Size = new Size(88, 24),
-                Location = new Point(Width - 190, 4),
+                Size = new Size(84, 24),
+                Location = new Point(Width - 175, 4),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(51, 65, 85),
@@ -372,7 +393,7 @@ namespace DofusFarm.Engine
             {
                 Text = "🔄 Reload",
                 Size = new Size(76, 24),
-                Location = new Point(Width - 94, 4),
+                Location = new Point(Width - 86, 4),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(37, 99, 235),
@@ -509,6 +530,8 @@ namespace DofusFarm.Engine
                 settings.IsStatusBarEnabled = false;
                 settings.AreDefaultContextMenusEnabled = true;
                 settings.IsScriptEnabled = true;
+                settings.IsZoomControlEnabled = true;
+                settings.IsPinchZoomEnabled = true;
 
                 if (!string.IsNullOrEmpty(ua))
                 {
@@ -562,9 +585,22 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.AddWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All);
                 _webView.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
 
+                _webView.ZoomFactorChanged += (s, e) =>
+                {
+                    if (_isUpdatingZoom) return;
+                    _currentZoomFactor = _webView.ZoomFactor;
+                    _autoZoomEnabled = false;
+                    UpdateZoomButtonText();
+                };
+
                 IsReady = true;
                 _lblStatus.Text = string.Format("⚡ WebView2 Engine Active ({0})", _options.Profile != null ? _options.Profile.DisplayName : "Direct");
                 _lblStatus.ForeColor = Color.FromArgb(74, 222, 128);
+
+                if (_autoZoomEnabled)
+                {
+                    ApplyAutoZoom();
+                }
 
                 _logCallback?.Invoke(string.Format("[{0}] WebView2 Core initialized successfully (Version: {1}, Browser PID: {2})",
                     _instanceId, env.BrowserVersionString, BrowserProcessId));
@@ -631,29 +667,24 @@ namespace DofusFarm.Engine
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
+            if (_lblMemory != null)
+            {
+                _lblMemory.Visible = (Width >= 620);
+            }
+
             if (IsReady && _webView != null && _webView.CoreWebView2 != null)
             {
-                try
+                if (_autoZoomEnabled)
                 {
-                    _webView.CoreWebView2.ExecuteScriptAsync(
-                        "if(window.gui&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}else{window.dispatchEvent(new Event('resize'));}if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}"
-                    );
-                    BeginInvoke(new Action(async () =>
-                    {
-                        await Task.Delay(150);
-                        if (IsReady && _webView != null && _webView.CoreWebView2 != null)
-                        {
-                            try
-                            {
-                                await _webView.CoreWebView2.ExecuteScriptAsync(
-                                    "if(window.gui&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}"
-                                );
-                            }
-                            catch { }
-                        }
-                    }));
+                    ApplyAutoZoom();
                 }
-                catch { }
+                TriggerGameResize();
+
+                BeginInvoke(new Action(async () =>
+                {
+                    await Task.Delay(150);
+                    TriggerGameResize();
+                }));
             }
         }
 
@@ -682,6 +713,10 @@ namespace DofusFarm.Engine
             if (e.IsSuccess)
             {
                 _logCallback?.Invoke(string.Format("[{0}] Navigation completed successfully (Status: {1})", _instanceId, e.HttpStatusCode));
+                if (_autoZoomEnabled)
+                {
+                    ApplyAutoZoom();
+                }
                 try
                 {
                     _webView.CoreWebView2.ExecuteScriptAsync(
@@ -1158,11 +1193,142 @@ namespace DofusFarm.Engine
             }
         }
 
+        private void CycleZoomMode()
+        {
+            if (!IsReady || _webView == null || _webView.CoreWebView2 == null) return;
+
+            // Cycle: Auto -> 100% -> 80% -> 65% -> 50% -> Auto
+            if (_autoZoomEnabled)
+            {
+                _autoZoomEnabled = false;
+                SetZoom(1.0);
+            }
+            else
+            {
+                double z = _webView.ZoomFactor;
+                if (Math.Abs(z - 1.0) < 0.05)
+                {
+                    SetZoom(0.80);
+                }
+                else if (Math.Abs(z - 0.80) < 0.05)
+                {
+                    SetZoom(0.65);
+                }
+                else if (Math.Abs(z - 0.65) < 0.05)
+                {
+                    SetZoom(0.50);
+                }
+                else
+                {
+                    _autoZoomEnabled = true;
+                    ApplyAutoZoom();
+                }
+            }
+        }
+
+        private void SetZoom(double factor)
+        {
+            if (!IsReady || _webView == null || _webView.CoreWebView2 == null) return;
+            try
+            {
+                _isUpdatingZoom = true;
+                double clamped = Math.Max(0.25, Math.Min(3.0, factor));
+                _webView.ZoomFactor = clamped;
+                _currentZoomFactor = clamped;
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] SetZoom error: {1}", _instanceId, ex.Message));
+            }
+            finally
+            {
+                _isUpdatingZoom = false;
+            }
+            UpdateZoomButtonText();
+            TriggerGameResize();
+        }
+
+        private void ApplyAutoZoom()
+        {
+            if (!IsReady || _webView == null || _webView.CoreWebView2 == null) return;
+            try
+            {
+                int w = _webView.ClientSize.Width;
+                int h = _webView.ClientSize.Height;
+                if (w <= 0 || h <= 0) return;
+
+                // Base design target for Dofus Touch mobile layout
+                const double targetWidth = 1280.0;
+                const double targetHeight = 720.0;
+
+                double scaleX = (double)w / targetWidth;
+                double scaleY = (double)h / targetHeight;
+                double autoZoom = Math.Min(scaleX, scaleY);
+
+                // Cap auto zoom at 1.0 so large/maximized windows retain crisp 1:1 pixel rendering
+                // Floor at 0.30 to avoid extreme shrinking
+                double clampedZoom = Math.Max(0.30, Math.Min(1.0, autoZoom));
+
+                if (Math.Abs(_webView.ZoomFactor - clampedZoom) > 0.015)
+                {
+                    _isUpdatingZoom = true;
+                    _webView.ZoomFactor = clampedZoom;
+                    _currentZoomFactor = clampedZoom;
+                    _isUpdatingZoom = false;
+                    UpdateZoomButtonText();
+                    TriggerGameResize();
+                }
+                else
+                {
+                    UpdateZoomButtonText();
+                }
+            }
+            catch (Exception ex)
+            {
+                _isUpdatingZoom = false;
+                _logCallback?.Invoke(string.Format("[{0}] AutoZoom error: {1}", _instanceId, ex.Message));
+            }
+        }
+
+        private void UpdateZoomButtonText()
+        {
+            if (_btnZoom == null || _btnZoom.IsDisposed) return;
+            if (_webView == null) return;
+
+            int pct = (int)Math.Round(_webView.ZoomFactor * 100.0);
+            if (_autoZoomEnabled)
+            {
+                _btnZoom.Text = string.Format("🔍 Auto ({0}%)", pct);
+                _btnZoom.BackColor = Color.FromArgb(37, 99, 235);
+            }
+            else
+            {
+                _btnZoom.Text = string.Format("🔍 {0}%", pct);
+                _btnZoom.BackColor = Color.FromArgb(51, 65, 85);
+            }
+        }
+
+        private void TriggerGameResize()
+        {
+            if (!IsReady || _webView == null || _webView.CoreWebView2 == null) return;
+            try
+            {
+                _webView.CoreWebView2.ExecuteScriptAsync(
+                    "if(window.gui&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}else{window.dispatchEvent(new Event('resize'));}if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}"
+                );
+            }
+            catch { }
+        }
+
         private void UpdateMemoryUsage()
         {
             if (IsDisposed || !IsHandleCreated) return;
             try
             {
+                if (_lblMemory != null)
+                {
+                    _lblMemory.Visible = (Width >= 620);
+                }
                 double wsMb = GetWorkingSetMb();
                 double pmMb = GetPrivateCommitMb();
                 _lblMemory.Text = string.Format("RAM: {0:F1} MB (Commit: {1:F1} MB)", wsMb, pmMb);
