@@ -897,6 +897,18 @@
                             if (ie.mapScene && typeof ie.mapScene.requireCompleteRefresh === 'function') {
                                 ie.mapScene.requireCompleteRefresh();
                             }
+                            if (window.foreground && typeof window.foreground.unlock === 'function') {
+                                try { window.foreground.unlock('loadMap'); } catch(e){}
+                            }
+                            if (window.dofus && window.dofus.connectionManager && typeof window.dofus.connectionManager.unlockMessages === 'function') {
+                                try { window.dofus.connectionManager.unlockMessages(); } catch(e){}
+                            }
+                            if (ie.actorManager) {
+                                try {
+                                    if (typeof ie.actorManager.unpause === 'function') ie.actorManager.unpause();
+                                    if (ie.actorManager.userActor) ie.actorManager.userActor.moving = false;
+                                } catch(e){}
+                            }
                             ie._isMapLoading = false;
                             ie._loadingFadeInTransitionRunning = false;
                         }

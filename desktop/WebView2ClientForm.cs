@@ -563,8 +563,7 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
 
-                // Wire WebResourceRequested filters for Ankama CDN / API and tactical map mocks
-                _webView.CoreWebView2.AddWebResourceRequestedFilter("*ankama*", CoreWebView2WebResourceContext.All);
+                // Wire WebResourceRequested filter for deprecated tactical map 4624 mock
                 _webView.CoreWebView2.AddWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All);
                 _webView.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
 
@@ -1035,17 +1034,6 @@ namespace DofusFarm.Engine
                     );
                     return;
                 }
-
-                // 2. Outbound User-Agent enforcement for Ankama API / CDN endpoints
-                if (uri.IndexOf("ankama", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    string ua = (_options.Profile != null && !string.IsNullOrEmpty(_options.Profile.UserAgent))
-                        ? _options.Profile.UserAgent
-                        : "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
-                    ua = Regex.Replace(ua, @";\s*wv\b", "", RegexOptions.IgnoreCase);
-                    ua = Regex.Replace(ua, @"Version/[0-9.]+\s*", "", RegexOptions.IgnoreCase).Trim();
-                    e.Request.Headers.SetHeader("User-Agent", ua);
-                }
             }
             catch (Exception ex)
             {
@@ -1329,7 +1317,6 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
                 _webView.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("*ankama*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All); } catch { }
             }
 
