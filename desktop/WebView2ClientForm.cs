@@ -563,6 +563,11 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
 
+                // Wire WebResourceRequested filters for Ankama CDN / API and tactical map mocks
+                _webView.CoreWebView2.AddWebResourceRequestedFilter("*ankama*", CoreWebView2WebResourceContext.All);
+                _webView.CoreWebView2.AddWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All);
+                _webView.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
+
 
 
                 _webView.ZoomFactorChanged += (s, e) =>
@@ -1008,6 +1013,43 @@ namespace DofusFarm.Engine
             OpenOAuthDialog(targetUrl);
         }
 
+        private void OnWebResourceRequested(object sender, CoreWebView2WebResourceRequestedEventArgs e)
+        {
+            try
+            {
+                string uri = e.Request.Uri;
+
+                // 1. Intercept tactical theme 4624.json fallback to avoid 403 stall
+                if (uri.IndexOf("4624.json", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    byte[] mockBytes = Encoding.UTF8.GetBytes(
+                        "{\"id\":4624,\"cells\":[],\"midgroundLayer\":{},\"atlasLayout\":{\"useUiPath\":true,\"width\":1024,\"height\":1024,\"graphicsPositions\":{}}}"
+                    );
+                    var ms = new MemoryStream(mockBytes);
+                    e.Response = _env.CreateWebResourceResponse(
+                        ms, 200, "OK",
+                        "Content-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\n"
+                    );
+                    return;
+                }
+
+                // 2. Outbound User-Agent enforcement for Ankama API / CDN endpoints
+                if (uri.IndexOf("ankama", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    string ua = (_options.Profile != null && !string.IsNullOrEmpty(_options.Profile.UserAgent))
+                        ? _options.Profile.UserAgent
+                        : "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
+                    ua = Regex.Replace(ua, @";\s*wv\b", "", RegexOptions.IgnoreCase);
+                    ua = Regex.Replace(ua, @"Version/[0-9.]+\s*", "", RegexOptions.IgnoreCase).Trim();
+                    e.Request.Headers.SetHeader("User-Agent", ua);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] WebResourceRequested error: {1}", _instanceId, ex.Message));
+            }
+        }
+
 
 
         public void HandleDeepLinkUri(string uri)
@@ -1282,6 +1324,10 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
                 _webView.CoreWebView2.ProcessFailed -= OnProcessFailed;
                 _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+                _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
+                _webView.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("*ankama*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All); } catch { }
             }
 
             base.OnFormClosing(e);

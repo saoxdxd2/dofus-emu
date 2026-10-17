@@ -518,7 +518,45 @@
         }
     } catch (e) {}
 
-    // 12 & 12b. Outbound HTTP & Images - Untouched native browser implementations
+    // 12. Outbound HTTP - Untouched native browser implementations
+
+    // 12b. Non-CORS Static Asset & Market/Shop Image Sanitizer
+    try {
+        if (typeof HTMLImageElement !== 'undefined' && HTMLImageElement.prototype) {
+            var origImageSetSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+            if (origImageSetSrc && origImageSetSrc.set) {
+                var rawSetSrc = origImageSetSrc.set;
+                Object.defineProperty(HTMLImageElement.prototype, 'src', {
+                    set: function(val) {
+                        if (typeof val === 'string' && (val.indexOf('static.ankama.com') !== -1 || val.indexOf('s.ankama.com') !== -1)) {
+                            try { this.removeAttribute('crossOrigin'); this.crossOrigin = null; } catch (e) {}
+                        }
+                        return rawSetSrc.call(this, val);
+                    },
+                    get: origImageSetSrc.get,
+                    configurable: true,
+                    enumerable: true
+                });
+            }
+
+            var origCrossOrigin = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'crossOrigin');
+            if (origCrossOrigin && origCrossOrigin.set) {
+                var rawSetCO = origCrossOrigin.set;
+                Object.defineProperty(HTMLImageElement.prototype, 'crossOrigin', {
+                    set: function(val) {
+                        var curSrc = this.src || '';
+                        if (curSrc.indexOf('static.ankama.com') !== -1 || curSrc.indexOf('s.ankama.com') !== -1) {
+                            return rawSetCO.call(this, null);
+                        }
+                        return rawSetCO.call(this, val);
+                    },
+                    get: origCrossOrigin.get,
+                    configurable: true,
+                    enumerable: true
+                });
+            }
+        }
+    } catch (e) {}
 
     // 13. Child Iframe Disguise
     function disguiseFrameWindow(targetWin) {
@@ -832,5 +870,41 @@
     // 17b. Diagnostics - Untouched native browser implementations
 
     // 18. Map Loading Transition & Black Screen Safeguard Watchdog
-    // NOTE: Intrusive 4s watchdog disabled: game engine manages its own map loading state via changeMapTimeout
+    try {
+        var _mapStallStart = 0;
+        setInterval(function() {
+            try {
+                if (window.isoEngine) {
+                    var ie = window.isoEngine;
+                    var eggAlpha = (ie._loadingProgress && ie._loadingProgress.progressEgg) ? ie._loadingProgress.progressEgg.alpha : 0;
+                    var isTransitionActive = ie._isMapLoading || ie._loadingFadeInTransitionRunning || (eggAlpha > 0.1);
+                    if (isTransitionActive) {
+                        if (!_mapStallStart) {
+                            _mapStallStart = Date.now();
+                        } else if (Date.now() - _mapStallStart > 3500) {
+                            console.warn('[MapWatchdog] Map transition exceeded 3.5s safeguard. Forcing display fade-out and scene refresh...');
+                            _mapStallStart = 0;
+                            if (typeof ie._runLoadingFadeOutTransition === 'function') {
+                                ie._runLoadingFadeOutTransition();
+                            }
+                            if (ie._mapSceneTransitionGraphic) {
+                                try { ie._mapSceneTransitionGraphic.remove(); } catch(e){}
+                                ie._mapSceneTransitionGraphic = null;
+                            }
+                            if (ie._loadingProgress) {
+                                try { ie._loadingProgress.hide(); } catch(e){}
+                            }
+                            if (ie.mapScene && typeof ie.mapScene.requireCompleteRefresh === 'function') {
+                                ie.mapScene.requireCompleteRefresh();
+                            }
+                            ie._isMapLoading = false;
+                            ie._loadingFadeInTransitionRunning = false;
+                        }
+                    } else {
+                        _mapStallStart = 0;
+                    }
+                }
+            } catch(e) {}
+        }, 500);
+    } catch (e) {}
 })();
