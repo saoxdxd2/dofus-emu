@@ -140,7 +140,7 @@ namespace DofusUninstall
         public static void RunUninstallSteps(string targetDir, string exePath, string tempDir, bool noRespawn, bool isForce, Action<int, string> onProgress)
         {
             if (onProgress != null) onProgress(10, "Stopping active game instances and network proxies...");
-            KillProcesses(new[] { "qemu-system-x86_64", "emulator", "dofus-net-proxy", "DofusFarm", "adb" }, targetDir);
+            KillProcesses(new[] { "qemu-system-x86_64", "emulator", "dofus-net-proxy", "DofusFarm", "adb", "msedgewebview2" }, targetDir);
             Thread.Sleep(1200);
 
             if (onProgress != null) onProgress(35, "Removing Android virtual disks, snapshots, and caches...");
@@ -179,6 +179,13 @@ namespace DofusUninstall
             if (Directory.Exists(androidCache))
             {
                 try { Directory.Delete(androidCache, true); } catch { }
+            }
+
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string wvDataDir = Path.Combine(localAppData, "DofusFarm");
+            if (Directory.Exists(wvDataDir))
+            {
+                SafeDeleteDirectory(wvDataDir);
             }
 
             try

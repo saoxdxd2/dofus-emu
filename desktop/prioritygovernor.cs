@@ -12,6 +12,7 @@ namespace DofusFarm.Engine
     {
         private Timer _timer;
         public FarmEngine Engine { get; set; }          // optional: lets the governor size instances from live state
+        public IClientBackend Backend { get; set; }     // optional: lets the governor balance WebView2 instances
         private int _lastForegroundPid = -1;
         private readonly HashSet<int> _pinnedPids = new HashSet<int>();
         private int _runningState = 0;
@@ -262,10 +263,119 @@ namespace DofusFarm.Engine
         // One owner only: when the engine handles affinity, the governor stays out.
         public bool EngineOwnsAffinity { get; set; }
 
+        private int _lastForegroundWvPid = -1;
+
         private void Tick(object state)
         {
-            if (!Enabled || EngineOwnsAffinity || Interlocked.CompareExchange(ref _runningState, 1, 0) != 0) return;
+            if (!Enabled || Interlocked.CompareExchange(ref _runningState, 1, 0) != 0) return;
 
+            try
+            {
+                IntPtr hFg = Win32.GetForegroundWindow();
+                uint fgPid = 0;
+                if (hFg != IntPtr.Zero) Win32.GetWindowThreadProcessId(hFg, out fgPid);
+
+                GovernWebView2Processes(hFg, fgPid);
+                GovernQemuProcesses(hFg, fgPid);
+            }
+            catch { }
+            finally
+            {
+                Interlocked.Exchange(ref _runningState, 0);
+            }
+        }
+
+        private void GovernWebView2Processes(IntPtr hFg, uint fgPid)
+        {
+            Process[] wvProcs = null;
+            try
+            {
+                wvProcs = Process.GetProcessesByName("msedgewebview2");
+                if (wvProcs == null || wvProcs.Length == 0) return;
+
+                int activeBrowserPid = -1;
+                List<int> browserPids = (Backend != null) ? Backend.GetAllBrowserProcessIds() : null;
+
+                if (fgPid > 0)
+                {
+                    foreach (Process p in wvProcs)
+                    {
+                        if (p.Id == (int)fgPid)
+                        {
+                            activeBrowserPid = p.Id;
+                            break;
+                        }
+                    }
+
+                    if (activeBrowserPid <= 0 && browserPids != null && browserPids.Count > 0)
+                    {
+                        HashSet<int> tree = null;
+                        try { tree = Win32.GetProcessTrees(new[] { (int)fgPid }); } catch { }
+                        foreach (int bPid in browserPids)
+                        {
+                            if (bPid == (int)fgPid || (tree != null && tree.Contains(bPid)))
+                            {
+                                activeBrowserPid = bPid;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                HashSet<int> activeTree = null;
+                if (activeBrowserPid > 0)
+                {
+                    try { activeTree = Win32.GetProcessTrees(new[] { activeBrowserPid }); }
+                    catch { activeTree = new HashSet<int> { activeBrowserPid }; }
+                }
+
+                if (activeBrowserPid > 0 && activeBrowserPid != _lastForegroundWvPid)
+                {
+                    _lastForegroundWvPid = activeBrowserPid;
+                    Log(string.Format("Foreground WebView2 prioritized (PID: {0} -> AboveNormal, EcoQoS off). Background renderers throttled.", activeBrowserPid));
+                }
+                else if (activeBrowserPid <= 0 && _lastForegroundWvPid != 0)
+                {
+                    _lastForegroundWvPid = 0;
+                }
+
+                for (int i = 0; i < wvProcs.Length; i++)
+                {
+                    Process p = wvProcs[i];
+                    try
+                    {
+                        bool isForeground = activeTree != null && activeTree.Contains(p.Id);
+                        if (isForeground)
+                        {
+                            if (p.PriorityClass != ProcessPriorityClass.AboveNormal)
+                                p.PriorityClass = ProcessPriorityClass.AboveNormal;
+                            Win32.SetProcessPowerThrottling(p.Id, false);
+                        }
+                        else
+                        {
+                            if (p.PriorityClass != ProcessPriorityClass.BelowNormal)
+                                p.PriorityClass = ProcessPriorityClass.BelowNormal;
+                            Win32.SetProcessPowerThrottling(p.Id, true);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            finally
+            {
+                if (wvProcs != null)
+                {
+                    for (int i = 0; i < wvProcs.Length; i++)
+                    {
+                        try { wvProcs[i].Dispose(); } catch { }
+                    }
+                }
+            }
+        }
+
+        private void GovernQemuProcesses(IntPtr hFg, uint fgPid)
+        {
             Process[] qemuProcs = null;
             try
             {
@@ -295,13 +405,6 @@ namespace DofusFarm.Engine
                                     int instCores;
                                     int slot = GetInstanceSlot(p.Id, out instCores);
                                     if (slot < 0) slot = i;
-                                    // Size the slice from how many instances are actually running instead of
-                                    // from the per-instance figure the user picked. On a 4-core laptop that
-                                    // is the difference between "each farm slot gets a core" and "four slots
-                                    // fight over one core each": with N running instances everyone gets
-                                    // totalCores/N, but never less than 2, because a single logical CPU
-                                    // cannot run the guest's UI and renderer threads at once - that is what
-                                    // makes the screen stop reacting to mouse input.
                                     long mask = ComputeAffinityMask(slot, LiveCoresPerInstance(instCores, totalCores), totalCores);
                                     if (IntPtr.Size == 8)
                                         p.ProcessorAffinity = new IntPtr(mask);
@@ -328,12 +431,7 @@ namespace DofusFarm.Engine
                     }
                 }
 
-                IntPtr hFg = Win32.GetForegroundWindow();
-                if (hFg == IntPtr.Zero) return;
-
-                uint fgPid = 0;
-                Win32.GetWindowThreadProcessId(hFg, out fgPid);
-                if (fgPid == 0) return;
+                if (hFg == IntPtr.Zero || fgPid == 0) return;
 
                 // Check if the foreground window is one of the QEMU instances or their launcher wrapper (emulator.exe)
                 bool isQemuActive = false;
@@ -422,7 +520,6 @@ namespace DofusFarm.Engine
                         }
                     }
                 }
-                Interlocked.Exchange(ref _runningState, 0);
             }
         }
     }

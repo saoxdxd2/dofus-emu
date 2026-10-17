@@ -67,10 +67,14 @@ namespace DofusBuild
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n[1/3] Compiling native C# DofusFarm.exe...");
             Console.ResetColor();
-            var farmSources = new List<string>(7)
+            var farmSources = new List<string>(11)
             {
                 Path.Combine(desktopDir, "Win32.cs"),
                 Path.Combine(desktopDir, "Hardware.cs"),
+                Path.Combine(desktopDir, "IClientBackend.cs"),
+                Path.Combine(desktopDir, "EmulatorBackend.cs"),
+                Path.Combine(desktopDir, "WebView2ClientForm.cs"),
+                Path.Combine(desktopDir, "WebView2Backend.cs"),
                 Path.Combine(desktopDir, "FarmEngine.cs"),
                 Path.Combine(desktopDir, "Watchdog.cs"),
                 Path.Combine(desktopDir, "PriorityGovernor.cs"),
@@ -115,11 +119,28 @@ namespace DofusBuild
             Console.WriteLine("  [OK] uninstall.exe compiled ({0:N0} bytes)", new FileInfo(outUninstall).Length);
             Console.ResetColor();
 
-            // 3. Compile standalone setup.exe embedding sdk.7z & template.zip directly without temp copies
+            // 3. Compile standalone setup.exe (by default standalone WebView2; legacy emulator excluded)
+            bool includeLegacyEmulator = false;
+            if (args != null)
+            {
+                foreach (string a in args)
+                {
+                    if (a.Equals("--include-legacy-emulator", StringComparison.OrdinalIgnoreCase) ||
+                        a.Equals("-LegacyEmulator", StringComparison.OrdinalIgnoreCase))
+                    {
+                        includeLegacyEmulator = true;
+                    }
+                }
+            }
+            if (Environment.GetEnvironmentVariable("INCLUDE_LEGACY_EMULATOR") == "1")
+            {
+                includeLegacyEmulator = true;
+            }
+
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n[3/3] Packaging release payload and compiling standalone setup.exe...");
             Console.ResetColor();
-            if (!BuildStandaloneSetup(outSetup, setupIco, desktopDir))
+            if (!BuildStandaloneSetup(outSetup, setupIco, desktopDir, includeLegacyEmulator))
             {
                 return 1;
             }
@@ -169,7 +190,7 @@ namespace DofusBuild
             }
         }
 
-        static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir)
+        static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir, bool includeLegacyEmulator = false)
         {
             string tempDir = Path.GetTempPath();
             string stageDir = Path.Combine(tempDir, "dofus_build_stage_" + Guid.NewGuid().ToString("N"));
@@ -190,7 +211,7 @@ namespace DofusBuild
                 }
 
                 string repoBin = Path.Combine(RepoRoot, @"scripts\bin");
-                if (Directory.Exists(repoBin))
+                if (Directory.Exists(repoBin) && includeLegacyEmulator)
                 {
                     string stageBin = Path.Combine(stageScripts, "bin");
                     Directory.CreateDirectory(stageBin);
@@ -198,33 +219,78 @@ namespace DofusBuild
                         File.Copy(f, Path.Combine(stageBin, Path.GetFileName(f)), true);
                 }
 
-                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "app_icon.ico", "installer_icon.ico" })
+                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "app_icon.ico", "installer_icon.ico", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
                 {
                     string p = Path.Combine(RepoRoot, b);
                     if (!File.Exists(p)) p = Path.Combine(RepoRoot, "scripts", b);
+                    if (!File.Exists(p)) p = Path.Combine(RepoRoot, "desktop", "lib", "webview2", b);
                     if (File.Exists(p)) File.Copy(p, Path.Combine(stageDir, b), true);
+                }
+
+                // Stage desktop assets (including webview_test.html)
+                string stageAssets = Path.Combine(stageDir, "assets");
+                Directory.CreateDirectory(stageAssets);
+                string repoAssets = Path.Combine(RepoRoot, "desktop", "assets");
+                if (Directory.Exists(repoAssets))
+                {
+                    foreach (string af in Directory.GetFiles(repoAssets))
+                        File.Copy(af, Path.Combine(stageAssets, Path.GetFileName(af)), true);
+                }
+
+                // Stage native loader runtimes
+                string repoRuntimes = Path.Combine(RepoRoot, "runtimes");
+                if (Directory.Exists(repoRuntimes))
+                {
+                    string stageRuntimes = Path.Combine(stageDir, "runtimes");
+                    Directory.CreateDirectory(stageRuntimes);
+                    foreach (string dir in Directory.GetDirectories(repoRuntimes, "*", SearchOption.AllDirectories))
+                        Directory.CreateDirectory(dir.Replace(repoRuntimes, stageRuntimes));
+                    foreach (string file in Directory.GetFiles(repoRuntimes, "*", SearchOption.AllDirectories))
+                        File.Copy(file, file.Replace(repoRuntimes, stageRuntimes), true);
+                }
+
+                // Stage standalone Dofus Touch client bundle
+                string repoClient = Path.Combine(RepoRoot, "desktop", "client");
+                if (Directory.Exists(repoClient))
+                {
+                    string stageClient = Path.Combine(stageDir, "client");
+                    Directory.CreateDirectory(stageClient);
+                    foreach (string dir in Directory.GetDirectories(repoClient, "*", SearchOption.AllDirectories))
+                        Directory.CreateDirectory(dir.Replace(repoClient, stageClient));
+                    foreach (string file in Directory.GetFiles(repoClient, "*", SearchOption.AllDirectories))
+                        File.Copy(file, file.Replace(repoClient, stageClient), true);
                 }
 
                 if (File.Exists(payloadZip)) File.Delete(payloadZip);
                 ZipFile.CreateFromDirectory(stageDir, payloadZip, CompressionLevel.Fastest, false);
 
-                // Embed template.zip and sdk.7z directly from RepoRoot without copying 896 MB into %TEMP%
+                // Embed DofusPayload.zip
                 StringBuilder resourceArgs = new StringBuilder();
                 resourceArgs.AppendFormat("\"/resource:{0},DofusPayload.zip\" ", payloadZip);
 
                 long totalBytes = new FileInfo(payloadZip).Length;
-                string tplZip = Path.Combine(RepoRoot, "template.zip");
-                if (File.Exists(tplZip))
-                {
-                    resourceArgs.AppendFormat("\"/resource:{0},template.zip\" ", tplZip);
-                    totalBytes += new FileInfo(tplZip).Length;
-                }
 
-                string sdk7z = Path.Combine(RepoRoot, "sdk.7z");
-                if (File.Exists(sdk7z))
+                if (includeLegacyEmulator)
                 {
-                    resourceArgs.AppendFormat("\"/resource:{0},sdk.7z\" ", sdk7z);
-                    totalBytes += new FileInfo(sdk7z).Length;
+                    string tplZip = Path.Combine(RepoRoot, "template.zip");
+                    if (File.Exists(tplZip))
+                    {
+                        resourceArgs.AppendFormat("\"/resource:{0},template.zip\" ", tplZip);
+                        totalBytes += new FileInfo(tplZip).Length;
+                    }
+
+                    string sdk7z = Path.Combine(RepoRoot, "sdk.7z");
+                    if (File.Exists(sdk7z))
+                    {
+                        resourceArgs.AppendFormat("\"/resource:{0},sdk.7z\" ", sdk7z);
+                        totalBytes += new FileInfo(sdk7z).Length;
+                    }
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine("  [INFO] Standalone WebView2 package mode (stripped 950 MB legacy Android emulator).");
+                    Console.ResetColor();
                 }
 
                 Console.WriteLine("  [OK] Payload streams ready: {0:F1} MB (zero temp archive duplication)", totalBytes / (1024.0 * 1024.0));
@@ -253,6 +319,7 @@ namespace DofusBuild
                 {
                     Path.Combine(desktopDir, "Win32.cs"),
                     Path.Combine(desktopDir, "Hardware.cs"),
+                    Path.Combine(desktopDir, "IClientBackend.cs"),
                     Path.Combine(desktopDir, "PriorityGovernor.cs"),
                     Path.Combine(desktopDir, "FarmEngine.cs"),
                     Path.Combine(desktopDir, "Installer.cs")
@@ -408,6 +475,16 @@ namespace DofusBuild
                 foreach (string n in names)
                     parts.Add(string.Format("/r:{0}", n));
             }
+
+            // Reference WebView2 assemblies
+            string wvCore = Path.Combine(RepoRoot, "desktop", "lib", "webview2", "Microsoft.Web.WebView2.Core.dll");
+            if (!File.Exists(wvCore)) wvCore = Path.Combine(RepoRoot, "Microsoft.Web.WebView2.Core.dll");
+            if (File.Exists(wvCore)) parts.Add(string.Format("\"/r:{0}\"", wvCore));
+
+            string wvWinForms = Path.Combine(RepoRoot, "desktop", "lib", "webview2", "Microsoft.Web.WebView2.WinForms.dll");
+            if (!File.Exists(wvWinForms)) wvWinForms = Path.Combine(RepoRoot, "Microsoft.Web.WebView2.WinForms.dll");
+            if (File.Exists(wvWinForms)) parts.Add(string.Format("\"/r:{0}\"", wvWinForms));
+
             return string.Join(" ", parts.ToArray()) + " ";
         }
 

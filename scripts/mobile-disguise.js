@@ -183,9 +183,10 @@
     var navOverrides = {
         platform: MOBILE_PLATFORM, userAgent: MOBILE_UA, appVersion: MOBILE_APP_VERSION,
         maxTouchPoints: 5, hardwareConcurrency: _hwSpecs.cores, deviceMemory: _hwSpecs.ram,
-        vendor: 'Google Inc.', webdriver: false, language: 'fr-FR', languages: FROZEN_LANGUAGES,
+        vendor: 'Google Inc.', webdriver: false, pdfViewerEnabled: false, language: 'fr-FR', languages: FROZEN_LANGUAGES,
         onLine: true, plugins: emptyPluginArray, mimeTypes: emptyMimeTypeArray,
-        connection: connectionObj, mozConnection: connectionObj, webkitConnection: connectionObj, battery: fakeBattery
+        connection: connectionObj, mozConnection: connectionObj, webkitConnection: connectionObj, battery: fakeBattery,
+        appInfo: { build: '4.3.15', version: '3.14.2', identifier: 'com.ankama.dofustouch' }
     };
     for (var nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
 

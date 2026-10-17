@@ -55,6 +55,10 @@ namespace DofusFarm.UI
         private PriorityGovernor _governor;
         private HardwareSpecs _specs;
 
+        private IClientBackend _activeBackend;
+        private EmulatorBackend _emulatorBackend;
+        private WebView2Backend _webViewBackend;
+
         private Panel _headerPanel;
         private Label _titleLabel;
         private Label _specsLabel;
@@ -69,6 +73,10 @@ namespace DofusFarm.UI
         private Button _btnRelayout;
         private Button _btnCascade;
 
+        private Label _lblBackend;
+        private ComboBox _cmbBackend;
+        private Button _btnWebViewTest;
+
         private Label _lblGpu;
         private ComboBox _cmbGpu;
         private Label _lblRam;
@@ -76,6 +84,7 @@ namespace DofusFarm.UI
         private Label _lblCores;
         private ComboBox _cmbCores;
         private Button _btnApplyAllHw;
+        private Label _lblEngineNotice;
         private ContextMenuStrip _rowMenu;
         private bool _suppressGpuEvent = false;
         private bool _keepInstancesOnExit = true;
@@ -182,8 +191,8 @@ namespace DofusFarm.UI
             _lblActiveBadge = new Label { Text = "● 0 / 4 Running", Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), ForeColor = ColMuted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right, Location = new Point(_headerPanel.Width - 175, 22) };
             _headerPanel.Controls.AddRange(new Control[] { _titleLabel, _specsLabel, _lblActiveBadge });
 
-            _toolbarPanel = new Panel { Dock = DockStyle.Top, Height = 54, BackColor = Color.FromArgb(21, 22, 29), Padding = new Padding(18, 8, 18, 8) };
-            const int btnY = 10, btnH = 34;
+            _toolbarPanel = new Panel { Dock = DockStyle.Top, Height = 88, BackColor = Color.FromArgb(21, 22, 29), Padding = new Padding(18, 6, 18, 6) };
+            const int btnY = 8, btnH = 32;
 
             _btnLaunchFarm = CreateButton("Launch All", Color.FromArgb(37, 99, 235), Color.FromArgb(59, 130, 246), Color.White, 112, btnH, true, 16, btnY, OnLaunchFarmClick);
             _btnStopAll = CreateButton("Stop All", Color.FromArgb(185, 28, 28), Color.FromArgb(220, 38, 38), Color.White, 80, btnH, true, 134, btnY, OnStopAllClick);
@@ -194,22 +203,39 @@ namespace DofusFarm.UI
             _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 68, btnH, false, 510, btnY, OnCascadeClick);
 
             Color lblCol = Color.FromArgb(180, 185, 195);
-            _lblGpu = new Label { Text = "GPU:", ForeColor = lblCol, AutoSize = true, Location = new Point(716, 17) };
-            _cmbGpu = CreateCombo(750, 14, 108, new object[] { "Host (OpenGL)", "ANGLE (D3D11)", "SwiftShader" }, 0);
+            _lblBackend = new Label { Text = "Engine:", ForeColor = lblCol, AutoSize = true, Location = new Point(590, 15) };
+            _cmbBackend = CreateCombo(644, 12, 195, new object[] { "⚡ Standalone WebView2", "🤖 Android Emulator" }, 0);
+            _cmbBackend.SelectedIndexChanged += OnBackendChanged;
+
+            _btnWebViewTest = CreateButton("⚡ Test WebView2", Color.FromArgb(14, 116, 144), Color.FromArgb(6, 182, 212), Color.White, 135, btnH, true, 846, btnY, OnWebViewTestClick);
+
+            const int row2Y = 47;
+            _lblGpu = new Label { Text = "GPU:", ForeColor = lblCol, AutoSize = true, Location = new Point(16, row2Y + 3) };
+            _cmbGpu = CreateCombo(54, row2Y, 118, new object[] { "Host (OpenGL)", "ANGLE (D3D11)", "SwiftShader" }, 0);
             _cmbGpu.SelectedIndexChanged += OnGpuModeChanged;
 
-            _lblRam = new Label { Text = "RAM:", ForeColor = lblCol, AutoSize = true, Location = new Point(866, 17) };
-            _cmbRam = CreateCombo(904, 14, 90, RamChoices.Select(r => (object)(r + " MB")).ToArray(), 2);
+            _lblRam = new Label { Text = "RAM:", ForeColor = lblCol, AutoSize = true, Location = new Point(182, row2Y + 3) };
+            _cmbRam = CreateCombo(222, row2Y, 86, RamChoices.Select(r => (object)(r + " MB")).ToArray(), 2);
 
-            _lblCores = new Label { Text = "CPU:", ForeColor = lblCol, AutoSize = true, Location = new Point(1000, 17) };
-            _cmbCores = CreateCombo(1034, 14, 76, CoreChoices.Select(c => (object)(c + (c == 1 ? " Core" : " Cores"))).ToArray(), 0);
+            _lblCores = new Label { Text = "CPU:", ForeColor = lblCol, AutoSize = true, Location = new Point(318, row2Y + 3) };
+            _cmbCores = CreateCombo(354, row2Y, 76, CoreChoices.Select(c => (object)(c + (c == 1 ? " Core" : " Cores"))).ToArray(), 0);
 
-            _btnApplyAllHw = CreateButton("Apply All", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 84, btnH, true, 1116, btnY, OnApplyAllHardwareClick);
+            _btnApplyAllHw = CreateButton("Apply All", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 84, 28, true, 438, row2Y, OnApplyAllHardwareClick);
+
+            _lblEngineNotice = new Label
+            {
+                Text = "⚡ Standalone WebView2 enabled with hardware WebGL & per-slot user-data isolation.",
+                ForeColor = Color.FromArgb(56, 189, 248),
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Italic),
+                AutoSize = true,
+                Location = new Point(532, row2Y + 4)
+            };
 
             _toolbarPanel.Controls.AddRange(new Control[]
             {
                 _btnLaunchFarm, _btnStopAll, _btnAddSlot, _btnEditSelected, _btnDeleteSelected,
-                _btnRelayout, _btnCascade, _lblGpu, _cmbGpu, _lblRam, _cmbRam, _lblCores, _cmbCores, _btnApplyAllHw
+                _btnRelayout, _btnCascade, _lblBackend, _cmbBackend, _btnWebViewTest,
+                _lblGpu, _cmbGpu, _lblRam, _cmbRam, _lblCores, _cmbCores, _btnApplyAllHw, _lblEngineNotice
             });
 
             _grid = new DataGridView
@@ -259,7 +285,10 @@ namespace DofusFarm.UI
             );
 
             _rowMenu = new ContextMenuStrip { BackColor = Color.FromArgb(26, 28, 37), ForeColor = Color.White };
-            _rowMenu.Items.Add("Launch / Stop Instance", null, delegate { TriggerSelectedRowAction("Action"); });
+            _rowMenu.Items.Add("Launch / Stop (Active Engine)", null, delegate { TriggerSelectedRowAction("Action"); });
+            _rowMenu.Items.Add("⚡ Launch in Standalone WebView2", null, delegate { LaunchSelectedInWebView2(); });
+            _rowMenu.Items.Add("🤖 Launch in Android Emulator", null, delegate { LaunchSelectedInEmulator(); });
+            _rowMenu.Items.Add(new ToolStripSeparator());
             _rowMenu.Items.Add("Edit Instance...", null, delegate { OnEditSelectedClick(null, EventArgs.Empty); });
             _rowMenu.Items.Add("Clone Instance...", null, delegate { TriggerSelectedRowAction("Clone"); });
             _rowMenu.Items.Add(new ToolStripSeparator());
@@ -418,12 +447,30 @@ namespace DofusFarm.UI
             _governor = new PriorityGovernor();
             _governor.Engine = _engine;
             _governor.OnLog += Log;
-            // The engine assigns each instance its own CPU affinity at launch. If the governor also
-            // re-pinned the same qemu processes, Windows would keep migrating their threads between
-            // cores and the guest would lose its cached translation blocks - slow boot and a device
-            // that ignores mouse input. The governor still handles priorities, just not affinity.
             _governor.EngineOwnsAffinity = true;
             _governor.Start();
+
+            // Initialize backends
+            try
+            {
+                _emulatorBackend = new EmulatorBackend(_engine);
+                _emulatorBackend.OnLog += Log;
+                _emulatorBackend.OnStateChanged += delegate { SafeBeginInvoke(delegate { RefreshGrid(true); }); };
+
+                _webViewBackend = new WebView2Backend();
+                _webViewBackend.OnLog += Log;
+                _webViewBackend.OnStateChanged += delegate { SafeBeginInvoke(delegate { RefreshGrid(true); }); };
+                _webViewBackend.Initialize();
+
+                _activeBackend = (_cmbBackend != null && _cmbBackend.SelectedIndex == 1)
+                    ? (IClientBackend)_emulatorBackend
+                    : (IClientBackend)_webViewBackend;
+                if (_governor != null) _governor.Backend = _activeBackend;
+            }
+            catch (Exception ex)
+            {
+                Log("[BACKEND INIT ERROR] " + ex.Message);
+            }
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -443,6 +490,99 @@ namespace DofusFarm.UI
                 }
                 catch { }
             });
+        }
+
+        private void OnBackendChanged(object sender, EventArgs e)
+        {
+            if (_cmbBackend.SelectedIndex == 0)
+            {
+                _activeBackend = _webViewBackend;
+                if (_governor != null) _governor.Backend = _activeBackend;
+                _lblEngineNotice.Text = "⚡ Standalone WebView2 enabled with hardware WebGL & per-slot user-data isolation.";
+                _lblEngineNotice.ForeColor = Color.FromArgb(56, 189, 248);
+                Log("[ENGINE] Switched active backend to Standalone WebView2.");
+            }
+            else
+            {
+                _activeBackend = _emulatorBackend;
+                if (_governor != null) _governor.Backend = _activeBackend;
+                _lblEngineNotice.Text = "🤖 Android Emulator backend enabled (QEMU + ADB fallback).";
+                _lblEngineNotice.ForeColor = Color.FromArgb(251, 191, 36);
+                Log("[ENGINE] Switched active backend to Android Emulator (Legacy).");
+            }
+            RefreshGrid(true);
+        }
+
+        private void OnWebViewTestClick(object sender, EventArgs e)
+        {
+            Log("[TEST] Launching Standalone WebView2 Capability & Hardware Probe...");
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    var opts = new ClientLaunchOptions
+                    {
+                        InstanceId = "probe-test",
+                        DisplayName = "WebView2 Hardware & WebGL Probe",
+                        UserDataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DofusFarm", "webview2_profiles", "probe-test")
+                    };
+                    _webViewBackend.Start(opts);
+                }
+                catch (Exception ex)
+                {
+                    Log("[TEST ERROR] " + ex.Message);
+                }
+            });
+        }
+
+        private void LaunchSelectedInWebView2()
+        {
+            if (_grid.SelectedRows.Count == 0) return;
+            var inst = _grid.SelectedRows[0].Tag as InstanceModel;
+            if (inst == null) return;
+            if (_webViewBackend.GetState(inst.Name) == ClientInstanceState.Running)
+            {
+                _webViewBackend.Stop(inst.Name);
+            }
+            else
+            {
+                var opts = new ClientLaunchOptions
+                {
+                    InstanceId = inst.Name,
+                    DisplayName = inst.CustomName ?? inst.DisplayName,
+                    SlotPort = inst.Port,
+                    RamMb = inst.RamMb > 0 ? inst.RamMb : GetSelectedRam(),
+                    Cores = inst.Cores > 0 ? inst.Cores : GetSelectedCores(),
+                    Proxy = inst.Proxy
+                };
+                _webViewBackend.Start(opts);
+            }
+            RefreshGrid(true);
+        }
+
+        private void LaunchSelectedInEmulator()
+        {
+            if (_grid.SelectedRows.Count == 0) return;
+            var inst = _grid.SelectedRows[0].Tag as InstanceModel;
+            if (inst == null) return;
+            if (inst.IsRunning)
+            {
+                _emulatorBackend.Stop(inst.Name);
+            }
+            else
+            {
+                var opts = new ClientLaunchOptions
+                {
+                    InstanceId = inst.Name,
+                    DisplayName = inst.CustomName ?? inst.DisplayName,
+                    SlotPort = inst.Port,
+                    RamMb = inst.RamMb > 0 ? inst.RamMb : GetSelectedRam(),
+                    Cores = inst.Cores > 0 ? inst.Cores : GetSelectedCores(),
+                    Proxy = inst.Proxy
+                };
+                _emulatorBackend.Start(opts);
+            }
+            RefreshGrid(true);
         }
 
         protected override void OnShown(EventArgs e)
@@ -510,8 +650,9 @@ namespace DofusFarm.UI
                     var sigBuilder = new StringBuilder(list.Count * 48);
                     foreach (InstanceModel im in list)
                     {
+                        bool isImRunning = im.IsRunning || (_webViewBackend != null && _webViewBackend.GetState(im.Name) == ClientInstanceState.Running);
                         sigBuilder.Append(im.Name).Append(':').Append(im.CustomName).Append(':')
-                                  .Append(im.IsRunning ? '1' : '0').Append(':').Append(im.RamMb).Append(':')
+                                  .Append(isImRunning ? '1' : '0').Append(':').Append(im.RamMb).Append(':')
                                   .Append(im.Cores).Append(':').Append(im.PhoneModelId).Append(':').Append(im.Proxy).Append(';');
                     }
                     string newSig = sigBuilder.ToString();
@@ -530,21 +671,26 @@ namespace DofusFarm.UI
                             int runningCount = 0;
                             foreach (InstanceModel inst in list)
                             {
-                                if (inst.IsRunning) runningCount++;
+                                bool isRunning = inst.IsRunning || (_webViewBackend != null && _webViewBackend.GetState(inst.Name) == ClientInstanceState.Running);
+                                if (isRunning)
+                                {
+                                    inst.IsRunning = true;
+                                    runningCount++;
+                                }
                                 string proxyDisplay = inst.Proxy ?? "127.0.0.1:8880";
                                 proxyDisplay = (proxyDisplay.Contains("127.0.0.1") || proxyDisplay.Contains("Accelerator"))
                                     ? "Built-in Accelerator"
                                     : proxyDisplay.Replace("[🌐] ", "");
 
                                 int rowIdx = _grid.Rows.Add(
-                                    inst.IsRunning ? "Running" : "Stopped",
+                                    isRunning ? "Running" : "Stopped",
                                     inst.CustomName ?? inst.DisplayName,
                                     inst.Name,
                                     inst.RamMb + " MB",
                                     inst.Cores + (inst.Cores == 1 ? " Core" : " Cores"),
                                     inst.PhoneModelName ?? "Galaxy Tab S6",
                                     proxyDisplay,
-                                    inst.IsRunning ? "Stop" : "Launch",
+                                    isRunning ? "Stop" : "Launch",
                                     "Edit", "Clone", "Delete");
 
                                 DataGridViewRow row = _grid.Rows[rowIdx];
@@ -554,7 +700,7 @@ namespace DofusFarm.UI
                                 row.Cells["Name"].Style.ForeColor = ColMuted;
                                 row.Cells["Device"].Style.ForeColor = Color.FromArgb(226, 232, 240);
                                 row.Cells["Proxy"].Style.ForeColor = ColMuted;
-                                if (inst.IsRunning) row.Cells["Status"].ToolTipText = "Click to bring this running instance window to front";
+                                if (isRunning) row.Cells["Status"].ToolTipText = "Click to bring this running instance window to front";
                                 if (!string.IsNullOrEmpty(selectedName) && string.Equals(inst.Name, selectedName, StringComparison.OrdinalIgnoreCase))
                                     row.Selected = true;
                             }
@@ -602,10 +748,6 @@ namespace DofusFarm.UI
                     List<InstanceModel> existingInsts = _engine.GetInstances();
                     if (existingInsts.Count == 0)
                     {
-                        // Provision exactly as many instances as this host can actually run - 4 on the
-                        // 8 GB / 4-core target box - and give each one the even-split core count up
-                        // front. Provisioning more slots than the host can feed just multiplies the
-                        // stutter; the user can always add more by hand.
                         int planned = _engine.RecommendedInstanceCount();
                         int plannedCores = _engine.RecommendedCoresPerInstance(planned);
                         for (int i = 1; i <= planned; i++)
@@ -616,28 +758,53 @@ namespace DofusFarm.UI
                         existingInsts = _engine.GetInstances();
                     }
 
-                    Log(string.Format("Launching {0} instance(s)...", existingInsts.Count));
-                    try { _engine.Adb("", "start-server", 6000); } catch { }
+                    Log(string.Format("Launching {0} instance(s) using backend: {1}...", existingInsts.Count, _activeBackend != null ? _activeBackend.Name : "Default"));
 
-                    foreach (InstanceModel im in existingInsts.Where(x => !x.IsRunning))
+                    if (_activeBackend is WebView2Backend)
                     {
-                        if (_isClosing || !_isFarmLaunching) return;
-                        _engine.LaunchInstance(im.Name, im.Port, im.RamMb > 0 ? im.RamMb : defaultRam, im.Cores > 0 ? im.Cores : defaultCores, im.Proxy);
-                        Thread.Sleep(1500);
+                        foreach (InstanceModel im in existingInsts)
+                        {
+                            if (_isClosing || !_isFarmLaunching) return;
+                            if (_webViewBackend.GetState(im.Name) != ClientInstanceState.Running)
+                            {
+                                var opts = new ClientLaunchOptions
+                                {
+                                    InstanceId = im.Name,
+                                    DisplayName = im.CustomName ?? im.DisplayName,
+                                    SlotPort = im.Port,
+                                    RamMb = im.RamMb > 0 ? im.RamMb : defaultRam,
+                                    Cores = im.Cores > 0 ? im.Cores : defaultCores,
+                                    Proxy = im.Proxy
+                                };
+                                _webViewBackend.Start(opts);
+                                Thread.Sleep(600);
+                            }
+                        }
                     }
-
-                    foreach (int delay in new[] { 2500, 4000 })
+                    else
                     {
-                        Thread.Sleep(delay);
-                        if (_isClosing || !_isFarmLaunching) return;
-                        SafeInvoke(delegate { RefreshGrid(true); OnRelayoutClick(null, null); });
+                        try { _engine.Adb("", "start-server", 6000); } catch { }
+
+                        foreach (InstanceModel im in existingInsts.Where(x => !x.IsRunning))
+                        {
+                            if (_isClosing || !_isFarmLaunching) return;
+                            _engine.LaunchInstance(im.Name, im.Port, im.RamMb > 0 ? im.RamMb : defaultRam, im.Cores > 0 ? im.Cores : defaultCores, im.Proxy);
+                            Thread.Sleep(1500);
+                        }
+
+                        foreach (int delay in new[] { 2500, 4000 })
+                        {
+                            Thread.Sleep(delay);
+                            if (_isClosing || !_isFarmLaunching) return;
+                            SafeInvoke(delegate { RefreshGrid(true); OnRelayoutClick(null, null); });
+                        }
                     }
                 }
                 catch (Exception ex) { Log("Launch error: " + ex.Message); }
                 finally
                 {
                     _isFarmLaunching = false;
-                    SafeBeginInvoke(delegate { _btnLaunchFarm.Enabled = true; });
+                    SafeBeginInvoke(delegate { _btnLaunchFarm.Enabled = true; RefreshGrid(true); });
                 }
             });
         }
@@ -646,11 +813,20 @@ namespace DofusFarm.UI
         {
             _isFarmLaunching = false;
             _btnStopAll.Enabled = false;
-            Log("Stopping all running instances...");
+            Log("Stopping all running instances across both backends...");
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
+                    if (_webViewBackend != null)
+                    {
+                        List<InstanceModel> existingInsts = _engine.GetInstances();
+                        foreach (var im in existingInsts)
+                        {
+                            _webViewBackend.Stop(im.Name);
+                        }
+                        _webViewBackend.Stop("probe-test");
+                    }
                     _engine.StopAll();
                     Thread.Sleep(500);
                     SafeInvoke(delegate { RefreshGrid(true); });
@@ -662,6 +838,14 @@ namespace DofusFarm.UI
 
         private void ApplyWindowLayout(bool tile)
         {
+            if (_activeBackend != null)
+            {
+                if (tile) _activeBackend.TileWindows(true);
+                else _activeBackend.CascadeWindows();
+                Log(string.Format("{0} layout applied via {1}.", tile ? "Tile" : "Cascade", _activeBackend.Name));
+                return;
+            }
+
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
@@ -859,7 +1043,18 @@ namespace DofusFarm.UI
             switch (colName)
             {
                 case "Status":
-                    if (inst.IsRunning) _engine.FocusInstance(inst.Port);
+                    if (_activeBackend is WebView2Backend || (_webViewBackend != null && _webViewBackend.GetState(inst.Name) == ClientInstanceState.Running))
+                    {
+                        var form = _webViewBackend != null ? _webViewBackend.GetForm(inst.Name) : null;
+                        if (form != null && !form.IsDisposed)
+                        {
+                            SafeInvoke(delegate { form.BringToFront(); form.Focus(); });
+                        }
+                    }
+                    else if (inst.IsRunning)
+                    {
+                        _engine.FocusInstance(inst.Port);
+                    }
                     break;
                 case "Action":
                     if (!TryBeginOp(inst.Name)) return;
@@ -868,8 +1063,32 @@ namespace DofusFarm.UI
                         try
                         {
                             if (_isClosing) return;
-                            if (inst.IsRunning) _engine.StopInstance(inst.Serial, inst.Name);
-                            else _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, inst.Proxy);
+                            bool wvRunning = _webViewBackend != null && _webViewBackend.GetState(inst.Name) == ClientInstanceState.Running;
+                            if (_activeBackend is WebView2Backend)
+                            {
+                                if (wvRunning)
+                                {
+                                    _webViewBackend.Stop(inst.Name);
+                                }
+                                else
+                                {
+                                    var opts = new ClientLaunchOptions
+                                    {
+                                        InstanceId = inst.Name,
+                                        DisplayName = inst.CustomName ?? inst.DisplayName,
+                                        SlotPort = inst.Port,
+                                        RamMb = inst.RamMb > 0 ? inst.RamMb : GetSelectedRam(),
+                                        Cores = inst.Cores > 0 ? inst.Cores : GetSelectedCores(),
+                                        Proxy = inst.Proxy
+                                    };
+                                    _webViewBackend.Start(opts);
+                                }
+                            }
+                            else
+                            {
+                                if (inst.IsRunning) _engine.StopInstance(inst.Serial, inst.Name);
+                                else _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, inst.Proxy);
+                            }
                             Thread.Sleep(800);
                             RefreshGrid(true);
                         }
@@ -944,6 +1163,7 @@ namespace DofusFarm.UI
             if (_engine != null) _engine.OnLog -= Log;
             if (_watchdog != null) { _watchdog.OnLog -= Log; _watchdog.Stop(); }
             if (_governor != null) { _governor.OnLog -= Log; _governor.Stop(); }
+            if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch { } }
             if (_engine != null)
             {
                 if (_keepInstancesOnExit) Log("Instances left running on purpose - next Launch will attach to them instantly.");
@@ -957,6 +1177,7 @@ namespace DofusFarm.UI
             if (disposing)
             {
                 _isClosing = true;
+                if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch { } _webViewBackend = null; }
                 if (_cellBadgeFont != null) { try { _cellBadgeFont.Dispose(); } catch { } _cellBadgeFont = null; }
                 if (_customNameFont != null) { try { _customNameFont.Dispose(); } catch { } _customNameFont = null; }
                 if (Icon != null) { try { Icon.Dispose(); } catch { } }

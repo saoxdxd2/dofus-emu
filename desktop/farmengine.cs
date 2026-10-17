@@ -968,13 +968,13 @@ namespace DofusFarm.Engine
         // Keeps the guest's total memory under the host's real RAM instead of the nominal figure.
         public int GetDynamicRamMb(int requestedMb)
         {
-            int requested = Math.Max(1024, requestedMb);
+            int requested = requestedMb > 0 ? requestedMb : 1024;
             long hostMb = GetHostTotalRamMb();
             if (hostMb <= 0) return requested;
 
-            int running = ActiveInstanceCount();
+            int running = Math.Max(1, ActiveInstanceCount());
             long budget = (hostMb * 55) / 100;              // leave the rest for Windows and the emulator
-            long perInstance = budget / Math.Max(1, running);
+            long perInstance = budget / running;
 
             long target = Math.Min(requested, perInstance);
             target = Math.Min(4096, target);
@@ -1698,7 +1698,7 @@ namespace DofusFarm.Engine
 
         public void LaunchInstance(string name, int port, int ramMb, int cores, string proxy = null)
         {
-            int safeRam = ramMb > 0 ? ramMb : GetDynamicRamMb(ramMb), safeCores = cores > 0 ? cores : GetDynamicCores();
+            int safeRam = GetDynamicRamMb(ramMb), safeCores = Math.Min(cores > 0 ? cores : GetDynamicCores(), Math.Max(1, GetHostPhysicalCores()));
             string avdDir = Path.Combine(AvdHome, name + ".avd");
             int launchGen = BumpLaunchGen(port);
             if (TryAdoptRunningInstance(name, port)) return;
@@ -1737,7 +1737,7 @@ namespace DofusFarm.Engine
             bool warmReady = IsInstanceWarmReady(name);
             string snapshotArg = warmReady ? "" : "-no-snapshot-load ";
             string emuArgs = (instProfile != null && string.Equals(instProfile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
-                ? BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, avdDir, cfgFile) + (warmReady ? "" : " -no-snapshot-load")
+                ? BuildWebGlMinimalArgs(name, port, safeRam, safeCores, proxyArg, snapshotArg)
                 : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} {6}-no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
                     name, port, gpuMode, safeRam, safeCores, proxyArg, snapshotArg);
 
@@ -2495,15 +2495,15 @@ namespace DofusFarm.Engine
             string avdDir = Path.Combine(AvdHome, name + ".avd"), cfgFile = Path.Combine(avdDir, "config.ini");
             DeviceProfile profile = GetInstancePhoneModel(name);
             return (profile != null && string.Equals(profile.Id, "webgl-minimal", StringComparison.OrdinalIgnoreCase))
-                ? BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, avdDir, cfgFile) + " -no-snapshot-load"
+                ? BuildWebGlMinimalArgs(name, port, ramMb, cores, proxyArg, "-no-snapshot-load ")
                 : string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-snapshot-load -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
                     name, port, gpuMode, ramMb, cores, proxyArg ?? "");
         }
 
-        private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string avdDir, string cfgFile)
+        private string BuildWebGlMinimalArgs(string name, int port, int ramMb, int cores, string proxyArg, string snapshotArg = "")
         {
-            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} -no-window -no-skin -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
-                name, port, "swiftshader_indirect", ramMb, cores, proxyArg ?? "");
+            return string.Format("-avd {0} -port {1} -gpu {2} -memory {3} -cores {4} {6}-no-window -no-skin -no-boot-anim -no-audio -accel on -skip-adb-auth -no-metrics -no-passive-gps {5}-prop qemu.hw.mainkeys=1 -qemu -smp {4} -m {3}",
+                name, port, "swiftshader_indirect", ramMb, cores, proxyArg ?? "", snapshotArg ?? "");
         }
 
         private void LogEmulatorConsoleTail(string name, string avdDir)

@@ -32,7 +32,9 @@ namespace DofusFarm.Native
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress,
-            byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesRead);        [DllImport("ntdll.dll", SetLastError = true)]
+            byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesRead);
+
+        [DllImport("ntdll.dll", SetLastError = true)]
         public static extern uint NtQueryInformationProcess(IntPtr hProcess, int processInfoClass,
             ref PROCESS_BASIC_INFORMATION_X processInformation, uint processInformationLength,
             ref uint returnLength);
@@ -81,6 +83,21 @@ namespace DofusFarm.Native
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool CreateDirectoryW(string lpPathName, IntPtr lpSecurityAttributes);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_POWER_THROTTLING_STATE
+        {
+            public uint Version;
+            public uint ControlMask;
+            public uint StateMask;
+        }
+
+        public const uint PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1;
+        public const uint PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1;
+        public const int ProcessPowerThrottling = 4;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetProcessInformation(IntPtr hProcess, int ProcessInformationClass, ref PROCESS_POWER_THROTTLING_STATE ProcessInformation, uint ProcessInformationSize);
     }
 
     public struct STARTUPINFOW
@@ -536,6 +553,32 @@ namespace DofusFarm.Native
                     SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x0040);
                     EnsureDeviceWindowInteractive(hWnd);
                 }
+            }
+        }
+
+        public static bool SetProcessPowerThrottling(int pid, bool enable)
+        {
+            if (pid <= 0) return false;
+            IntPtr hProcess = IntPtr.Zero;
+            try
+            {
+                // PROCESS_SET_INFORMATION = 0x0200
+                hProcess = NativeMethods.OpenProcess(0x0200, false, pid);
+                if (hProcess == IntPtr.Zero) return false;
+
+                NativeMethods.PROCESS_POWER_THROTTLING_STATE state = new NativeMethods.PROCESS_POWER_THROTTLING_STATE
+                {
+                    Version = NativeMethods.PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                    ControlMask = NativeMethods.PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                    StateMask = enable ? NativeMethods.PROCESS_POWER_THROTTLING_EXECUTION_SPEED : 0
+                };
+
+                return NativeMethods.SetProcessInformation(hProcess, NativeMethods.ProcessPowerThrottling, ref state, (uint)Marshal.SizeOf(state));
+            }
+            catch { return false; }
+            finally
+            {
+                if (hProcess != IntPtr.Zero) NativeMethods.CloseHandle(hProcess);
             }
         }
     }

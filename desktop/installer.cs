@@ -223,11 +223,11 @@ namespace DofusStandaloneSetup
                             string directDest;
                             if (rel.StartsWith(@"scripts\", StringComparison.OrdinalIgnoreCase))
                             {
-                                directDest = Path.Combine(targetScriptsDir, fileName);
+                                directDest = Path.Combine(targetScriptsDir, rel.Substring(8));
                             }
                             else
                             {
-                                directDest = Path.Combine(targetDir, fileName);
+                                directDest = Path.Combine(targetDir, rel);
                             }
 
                             string parentDir = Path.GetDirectoryName(directDest);
@@ -316,7 +316,22 @@ namespace DofusStandaloneSetup
                 {
                     try { File.SetAttributes(destPath, FileAttributes.Normal); } catch { }
                 }
-                entry.ExtractToFile(destPath, true);
+            }
+        }
+
+        private static void CopyDirectory(string sourceDir, string destDir)
+        {
+            if (!Directory.Exists(sourceDir)) return;
+            Directory.CreateDirectory(destDir);
+            foreach (string file in Directory.GetFiles(sourceDir))
+            {
+                string destFile = Path.Combine(destDir, Path.GetFileName(file));
+                try { File.Copy(file, destFile, true); } catch { }
+            }
+            foreach (string subDir in Directory.GetDirectories(sourceDir))
+            {
+                string destSub = Path.Combine(destDir, Path.GetFileName(subDir));
+                CopyDirectory(subDir, destSub);
             }
         }
 
@@ -342,7 +357,7 @@ namespace DofusStandaloneSetup
                     StreamUnpackPayload(TargetDir, targetScripts, targetTemplateAvd);
 
                     // Fallback copy if running unbundled next to local files
-                    foreach (string f in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "app_icon.ico", "installer_icon.ico" })
+                    foreach (string f in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "app_icon.ico", "installer_icon.ico", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
                     {
                         string dest = Path.Combine(TargetDir, f);
                         if (!File.Exists(dest))
@@ -361,6 +376,27 @@ namespace DofusStandaloneSetup
                         }
                     }
 
+                    // Fallback copy for client bundle and runtimes if unbundled
+                    string targetClient = Path.Combine(TargetDir, "client");
+                    if (!Directory.Exists(targetClient))
+                    {
+                        string localClient = ResolveLocalFallbackFile(@"desktop\client");
+                        if (string.IsNullOrEmpty(localClient)) localClient = ResolveLocalFallbackFile("client");
+                        if (!string.IsNullOrEmpty(localClient) && Directory.Exists(localClient))
+                        {
+                            CopyDirectory(localClient, targetClient);
+                        }
+                    }
+                    string targetRuntimes = Path.Combine(TargetDir, "runtimes");
+                    if (!Directory.Exists(targetRuntimes))
+                    {
+                        string localRuntimes = ResolveLocalFallbackFile("runtimes");
+                        if (!string.IsNullOrEmpty(localRuntimes) && Directory.Exists(localRuntimes))
+                        {
+                            CopyDirectory(localRuntimes, targetRuntimes);
+                        }
+                    }
+
                     if (!File.Exists(Path.Combine(targetTemplateAvd, "userdata-golden.img")))
                     {
                         string localTpl = ResolveLocalFallbackFile("template.zip");
@@ -376,82 +412,81 @@ namespace DofusStandaloneSetup
                         }
                     }
 
-                    // 2. Unpack Android SDK (sdk.7z) with smooth real-time progress interpolation (20% -> 52%)
-                    Report(20, "Unpacking Android virtualization engine...");
+                    // 2. Unpack Android SDK (sdk.7z) ONLY if legacy emulator archive is present
                     string destSdk = Path.Combine(TargetDir, "sdk");
-                    if (!File.Exists(Path.Combine(destSdk, @"emulator\emulator.exe")))
+                    string sdkArchive = ResolveLocalFallbackFile("sdk.7z");
+                    bool hasLegacyArchive = !string.IsNullOrEmpty(sdkArchive) && File.Exists(sdkArchive);
+
+                    if (hasLegacyArchive && !File.Exists(Path.Combine(destSdk, @"emulator\emulator.exe")))
                     {
-                        string sdkArchive = ResolveLocalFallbackFile("sdk.7z");
+                        Report(20, "Unpacking legacy Android virtualization engine...");
                         string z7Exe = ResolveLocalFallbackFile(@"scripts\bin\7z.exe");
-                        if (string.IsNullOrEmpty(sdkArchive) || !File.Exists(sdkArchive))
-                            throw new FileNotFoundException("Required SDK archive (sdk.7z) not found in setup package.");
-                        if (string.IsNullOrEmpty(z7Exe) || !File.Exists(z7Exe))
-                            throw new FileNotFoundException("Required extractor (scripts\\bin\\7z.exe) not found in setup package.");
-
-                        ProcessStartInfo psi7z = new ProcessStartInfo
+                        if (!string.IsNullOrEmpty(z7Exe) && File.Exists(z7Exe))
                         {
-                            FileName = z7Exe,
-                            Arguments = string.Format("x \"{0}\" -o\"{1}\" -y", sdkArchive, TargetDir),
-                            CreateNoWindow = true,
-                            UseShellExecute = false,
-                            WindowStyle = ProcessWindowStyle.Hidden
-                        };
-
-                        using (Process p7z = Process.Start(psi7z))
-                        {
-                            Stopwatch sw7z = Stopwatch.StartNew();
-                            string[] sdkStages = new[]
+                            ProcessStartInfo psi7z = new ProcessStartInfo
                             {
-                                "Unpacking Android virtualization engine...",
-                                "Extracting OpenGL & Vulkan hardware renderers...",
-                                "Deploying Android 10 x86_64 system image...",
-                                "Finalizing SDK platform tools..."
+                                FileName = z7Exe,
+                                Arguments = string.Format("x \"{0}\" -o\"{1}\" -y", sdkArchive, TargetDir),
+                                CreateNoWindow = true,
+                                UseShellExecute = false,
+                                WindowStyle = ProcessWindowStyle.Hidden
                             };
-                            while (!p7z.WaitForExit(450))
+
+                            using (Process p7z = Process.Start(psi7z))
                             {
-                                if (sw7z.Elapsed.TotalMinutes > 30)
+                                Stopwatch sw7z = Stopwatch.StartNew();
+                                string[] sdkStages = new[]
                                 {
-                                    try { p7z.Kill(); } catch { }
-                                    throw new TimeoutException("Android SDK extraction timed out.");
+                                    "Unpacking Android virtualization engine...",
+                                    "Extracting OpenGL & Vulkan hardware renderers...",
+                                    "Deploying Android 10 x86_64 system image...",
+                                    "Finalizing SDK platform tools..."
+                                };
+                                while (!p7z.WaitForExit(450))
+                                {
+                                    if (sw7z.Elapsed.TotalMinutes > 30)
+                                    {
+                                        try { p7z.Kill(); } catch { }
+                                        throw new TimeoutException("Android SDK extraction timed out.");
+                                    }
+                                    double ratio = Math.Min(0.96, sw7z.Elapsed.TotalSeconds / 32.0);
+                                    int pct = 20 + (int)(ratio * 32.0);
+                                    int msgIdx = Math.Min(sdkStages.Length - 1, (int)(ratio * sdkStages.Length));
+                                    Report(pct, sdkStages[msgIdx]);
                                 }
-                                double ratio = Math.Min(0.96, sw7z.Elapsed.TotalSeconds / 32.0);
-                                int pct = 20 + (int)(ratio * 32.0);
-                                int msgIdx = Math.Min(sdkStages.Length - 1, (int)(ratio * sdkStages.Length));
-                                Report(pct, sdkStages[msgIdx]);
+                                if (p7z.ExitCode != 0)
+                                {
+                                    throw new InvalidOperationException(string.Format("Android SDK extraction failed (exit code {0}).", p7z.ExitCode));
+                                }
                             }
-                            if (p7z.ExitCode != 0)
+
+                            if (sdkArchive.StartsWith(StageDir, StringComparison.OrdinalIgnoreCase))
                             {
-                                throw new InvalidOperationException(string.Format("Android SDK extraction failed (exit code {0}).", p7z.ExitCode));
+                                try { File.Delete(sdkArchive); } catch { }
                             }
                         }
 
-                        if (sdkArchive.StartsWith(StageDir, StringComparison.OrdinalIgnoreCase))
+                        string nestedSdk = Path.Combine(destSdk, "sdk");
+                        if (Directory.Exists(nestedSdk))
                         {
-                            try { File.Delete(sdkArchive); } catch { }
+                            foreach (string dir in Directory.GetDirectories(nestedSdk))
+                            {
+                                string subDest = Path.Combine(destSdk, Path.GetFileName(dir));
+                                if (Directory.Exists(subDest)) { try { Directory.Delete(subDest, true); } catch { } }
+                                try { Directory.Move(dir, subDest); } catch { }
+                            }
+                            foreach (string file in Directory.GetFiles(nestedSdk))
+                            {
+                                string fileDest = Path.Combine(destSdk, Path.GetFileName(file));
+                                if (File.Exists(fileDest)) { try { File.Delete(fileDest); } catch { } }
+                                try { Directory.Move(file, fileDest); } catch { }
+                            }
+                            try { Directory.Delete(nestedSdk, true); } catch { }
                         }
                     }
-
-                    string nestedSdk = Path.Combine(destSdk, "sdk");
-                    if (Directory.Exists(nestedSdk))
+                    else
                     {
-                        foreach (string dir in Directory.GetDirectories(nestedSdk))
-                        {
-                            string subDest = Path.Combine(destSdk, Path.GetFileName(dir));
-                            if (Directory.Exists(subDest)) { try { Directory.Delete(subDest, true); } catch { } }
-                            try { Directory.Move(dir, subDest); } catch { }
-                        }
-                        foreach (string file in Directory.GetFiles(nestedSdk))
-                        {
-                            string fileDest = Path.Combine(destSdk, Path.GetFileName(file));
-                            if (File.Exists(fileDest)) { try { File.Delete(fileDest); } catch { } }
-                            try { File.Move(file, fileDest); } catch { }
-                        }
-                        try { Directory.Delete(nestedSdk, true); } catch { }
-                    }
-
-                    if (!File.Exists(Path.Combine(destSdk, @"emulator\emulator.exe")))
-                    {
-                        throw new FileNotFoundException("Android SDK verification failed: emulator.exe not found.");
+                        Report(35, "Configuring Standalone WebView2 Engine (Zero-Emulator Mode)...");
                     }
 
                     // 3. Provision instances using shared FarmEngine (54% -> 62%)
@@ -463,60 +498,77 @@ namespace DofusStandaloneSetup
                         string customName = string.Format("Instance #{0}", i);
                         DeviceProfile prof = DeviceCatalog.GetDefaultProfileForIndex(i);
                         farm.ProvisionInstance(slotName, RamMb, Cores, prof.Id, customName, "");
+
+                        // Also initialize isolated WebView2 profile directory
+                        string wvProf = Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                            "DofusFarm", "webview2_profiles", slotName);
+                        try { Directory.CreateDirectory(wvProf); } catch { }
                     }
 
-                    // 4. Smooth Cold-Run Pre-Warm in waves of 2 so host CPU/RAM stays responsive (62% -> 95%)
-                    int batchSize = 2;
-                    int totalBatches = (InstanceCount + batchSize - 1) / batchSize;
-                    int currentBatch = 0;
-
-                    for (int batchStart = 1; batchStart <= InstanceCount; batchStart += batchSize)
+                    // 4. Smooth Cold-Run Pre-Warm if legacy emulator exists, otherwise finalize WebView2 setup
+                    bool hasEmulatorBinary = File.Exists(Path.Combine(destSdk, @"emulator\emulator.exe"));
+                    if (hasEmulatorBinary)
                     {
-                        currentBatch++;
-                        int batchEnd = Math.Min(InstanceCount, batchStart + batchSize - 1);
-                        int countInBatch = batchEnd - batchStart + 1;
-                        int batchBasePct = 62 + ((currentBatch - 1) * 32) / Math.Max(1, totalBatches);
-                        int batchSpanPct = 32 / Math.Max(1, totalBatches);
+                        int batchSize = 2;
+                        int totalBatches = (InstanceCount + batchSize - 1) / batchSize;
+                        int currentBatch = 0;
 
-                        using (CountdownEvent doneEvent = new CountdownEvent(countInBatch))
+                        for (int batchStart = 1; batchStart <= InstanceCount; batchStart += batchSize)
                         {
-                            for (int idx = batchStart; idx <= batchEnd; idx++)
-                            {
-                                int slotIdx = idx;
-                                ThreadPool.QueueUserWorkItem(delegate
-                                {
-                                    try
-                                    {
-                                        string sName = string.Format("dofus-{0:D2}", slotIdx);
-                                        int sPort = 5554 + 2 * (slotIdx - 1);
-                                        farm.WarmInstanceColdRunSync(sName, sPort, RamMb, Cores);
-                                    }
-                                    catch { }
-                                    finally
-                                    {
-                                        try { doneEvent.Signal(); } catch { }
-                                    }
-                                });
-                                Thread.Sleep(1200);
-                            }
+                            currentBatch++;
+                            int batchEnd = Math.Min(InstanceCount, batchStart + batchSize - 1);
+                            int countInBatch = batchEnd - batchStart + 1;
+                            int batchBasePct = 62 + ((currentBatch - 1) * 32) / Math.Max(1, totalBatches);
+                            int batchSpanPct = 32 / Math.Max(1, totalBatches);
 
-                            Stopwatch batchSw = Stopwatch.StartNew();
-                            string[] warmMessages = new[]
+                            using (CountdownEvent doneEvent = new CountdownEvent(countInBatch))
                             {
-                                string.Format("Starting background warmup for Instance #{0}..#{1}...", batchStart, batchEnd),
-                                string.Format("Optimizing graphics & memory cache for Instance #{0}..#{1}...", batchStart, batchEnd),
-                                string.Format("Pre-loading Dofus Touch for instant startup ({0}/{1})...", batchEnd, InstanceCount),
-                                string.Format("Saving instant-boot snapshot for Instance #{0}..#{1}...", batchStart, batchEnd)
-                            };
-                            while (!doneEvent.Wait(450))
-                            {
-                                if (batchSw.Elapsed.TotalSeconds > 150) break;
-                                double ratio = Math.Min(0.95, batchSw.Elapsed.TotalSeconds / 38.0);
-                                int pct = batchBasePct + (int)(ratio * batchSpanPct);
-                                int mIdx = Math.Min(warmMessages.Length - 1, (int)(ratio * warmMessages.Length));
-                                Report(pct, warmMessages[mIdx]);
+                                for (int idx = batchStart; idx <= batchEnd; idx++)
+                                {
+                                    int slotIdx = idx;
+                                    ThreadPool.QueueUserWorkItem(delegate
+                                    {
+                                        try
+                                        {
+                                            string sName = string.Format("dofus-{0:D2}", slotIdx);
+                                            int sPort = 5554 + 2 * (slotIdx - 1);
+                                            farm.WarmInstanceColdRunSync(sName, sPort, RamMb, Cores);
+                                        }
+                                        catch { }
+                                        finally
+                                        {
+                                            try { doneEvent.Signal(); } catch { }
+                                        }
+                                    });
+                                    Thread.Sleep(1200);
+                                }
+
+                                Stopwatch batchSw = Stopwatch.StartNew();
+                                string[] warmMessages = new[]
+                                {
+                                    string.Format("Starting background warmup for Instance #{0}..#{1}...", batchStart, batchEnd),
+                                    string.Format("Optimizing graphics & memory cache for Instance #{0}..#{1}...", batchStart, batchEnd),
+                                    string.Format("Pre-loading Dofus Touch for instant startup ({0}/{1})...", batchEnd, InstanceCount),
+                                    string.Format("Saving instant-boot snapshot for Instance #{0}..#{1}...", batchStart, batchEnd)
+                                };
+                                while (!doneEvent.Wait(450))
+                                {
+                                    if (batchSw.Elapsed.TotalSeconds > 150) break;
+                                    double ratio = Math.Min(0.95, batchSw.Elapsed.TotalSeconds / 38.0);
+                                    int pct = batchBasePct + (int)(ratio * batchSpanPct);
+                                    int mIdx = Math.Min(warmMessages.Length - 1, (int)(ratio * warmMessages.Length));
+                                    Report(pct, warmMessages[mIdx]);
+                                }
                             }
                         }
+                    }
+                    else
+                    {
+                        Report(70, "Setting up isolated browser storage and mobile disguise profiles...");
+                        Thread.Sleep(150);
+                        Report(90, "Configuring GPU WebGL acceleration and local virtual host mapping...");
+                        Thread.Sleep(150);
                     }
 
                     // 5. Desktop Shortcut, Registry & Environment Variables
@@ -545,6 +597,7 @@ namespace DofusStandaloneSetup
                             if (k != null)
                             {
                                 k.SetValue("InstallPath", TargetDir);
+                                k.SetValue("DefaultBackend", "WebView2");
                                 k.SetValue("DefaultRamMb", RamMb);
                                 k.SetValue("DefaultCores", Cores);
                                 // Renderer check: pick the graphics backend that fits this machine once,
@@ -583,14 +636,18 @@ namespace DofusStandaloneSetup
                         }
 
                         Environment.SetEnvironmentVariable("DOFUS_FARM_HOME",  TargetDir);
-                        Environment.SetEnvironmentVariable("ANDROID_SDK_ROOT", destSdk);
-                        Environment.SetEnvironmentVariable("ANDROID_HOME",     destSdk);
-                        Environment.SetEnvironmentVariable("ANDROID_AVD_HOME", avdHome);
-
                         Environment.SetEnvironmentVariable("DOFUS_FARM_HOME",  TargetDir, EnvironmentVariableTarget.User);
-                        Environment.SetEnvironmentVariable("ANDROID_SDK_ROOT", destSdk,   EnvironmentVariableTarget.User);
-                        Environment.SetEnvironmentVariable("ANDROID_HOME",     destSdk,   EnvironmentVariableTarget.User);
-                        Environment.SetEnvironmentVariable("ANDROID_AVD_HOME", avdHome,   EnvironmentVariableTarget.User);
+
+                        if (hasEmulatorBinary)
+                        {
+                            Environment.SetEnvironmentVariable("ANDROID_SDK_ROOT", destSdk);
+                            Environment.SetEnvironmentVariable("ANDROID_HOME",     destSdk);
+                            Environment.SetEnvironmentVariable("ANDROID_AVD_HOME", avdHome);
+
+                            Environment.SetEnvironmentVariable("ANDROID_SDK_ROOT", destSdk,   EnvironmentVariableTarget.User);
+                            Environment.SetEnvironmentVariable("ANDROID_HOME",     destSdk,   EnvironmentVariableTarget.User);
+                            Environment.SetEnvironmentVariable("ANDROID_AVD_HOME", avdHome,   EnvironmentVariableTarget.User);
+                        }
                     }
                     catch { }
 
@@ -795,7 +852,7 @@ namespace DofusStandaloneSetup
 
             _subtitleLabel = new Label
             {
-                Text = "Multi-Account Virtualization Suite  •  Automatic Instant-Launch Setup",
+                Text = "Ultra-Fast Lightweight Standalone Multi-Account Client  •  Automatic Setup",
                 Font = new Font("Segoe UI", 9f),
                 ForeColor = Color.FromArgb(148, 163, 184),
                 AutoSize = true,
