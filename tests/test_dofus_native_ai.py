@@ -143,6 +143,33 @@ class TestDofusNativeAI(unittest.TestCase):
         self.assertTrue(torch.is_tensor(loss))
         self.assertGreater(loss.item(), 0)
 
+    def test_tokenizer_regex_and_coord_normalization(self) -> None:
+        raw = "stopppp urgent modo [ 5, -12 ]"
+        tokens = self.tokenizer.encode(raw, max_length=16)
+        decoded = self.tokenizer.decode(tokens)
+        self.assertIn("stop", decoded)
+        self.assertIn("[COORD]", decoded)
+
+    def test_knowledge_benchmark_rejection_of_untrained_weights(self) -> None:
+        from ai.dofus_knowledge_benchmark import DofusKnowledgeBenchmark
+
+        vocab_size = len(self.tokenizer.vocab) + 20
+        teacher = DofusBrainTransformer(
+            vocab_size=vocab_size,
+            d_model=64,
+            nhead=4,
+            num_layers=2,
+            dim_feedforward=128,
+            max_seq_len=32,
+            num_policy_classes=4,
+            num_intent_classes=12,
+        )
+        benchmark = DofusKnowledgeBenchmark(min_passing_score=0.88)
+        self.assertGreater(len(benchmark.battery), 50)
+        report = benchmark.evaluate_teacher(teacher, self.tokenizer)
+        self.assertFalse(report.passes_certification)
+        self.assertLess(report.overall_accuracy, 0.88)
+
 
 if __name__ == "__main__":
     unittest.main()

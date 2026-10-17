@@ -74,3 +74,9 @@ runtimes/python/Scripts/
 runtimes/python/share/
 __pycache__/
 *.pyc
+
+# Heavy model checkpoints
+*.pt
+*.safetensors
+dofus-network/models/**/*.pt
+
