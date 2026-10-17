@@ -48,11 +48,11 @@ class CollectorConfig:
     max_measurements: int = 100
     max_results_per_measurement: int = 20000
     request_qps: float = 2.0
-    timeout: tuple[float, float] = (10.0, 60.0)
+    timeout: tuple[float, float] = (5.0, 25.0)
     # Tight timeouts for the cheap "does this id have data?" pre-check. A dead
     # or hanging results endpoint must not cost a full read timeout per try.
-    probe_timeout: tuple[float, float] = (5.0, 15.0)
-    retries: int = 5
+    probe_timeout: tuple[float, float] = (3.0, 8.0)
+    retries: int = 3
     measurement_ids: tuple[int, ...] = ()
     page_size: int = 500
     resume: bool = True
@@ -170,12 +170,14 @@ def discover_measurements(session: requests.Session, limit: int,
         "type": "ping",
         "is_public": "true",
         "is_active": "true",
+        "sort": "-id",
         "page_size": max(20, min(500, page_size)),
         "format": "json",
     }
     ids: list[int] = []
     seen: set[int] = set()
     while url and len(ids) < limit:
+        log(f"Querying active measurements index (found {len(ids)}/{limit})...")
         payload = get_json(session, url, limiter=limiter, params=params,
                            timeout=timeout, retries=retries)
         params = None

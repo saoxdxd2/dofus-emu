@@ -1,7 +1,9 @@
 # Ignore generated pipeline artifacts and local caches.
 
 # Pipeline outputs
-networkhealth_artifacts/
+networkhealth_artifacts/*
+!networkhealth_artifacts/features.npz
+!networkhealth_artifacts/clean.jsonl
 networkhealth_v1_artifacts/
 
 # Python
