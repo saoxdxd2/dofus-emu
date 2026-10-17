@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -18,6 +19,9 @@ namespace DofusFarm.Engine
         private readonly string _userDataDir;
         private readonly string _entryUrl;
         private readonly Action<string> _logCallback;
+
+        private CoreWebView2Environment _env;
+        private OAuthLoginForm _activeOAuthDialog;
 
         private WebView2 _webView;
         private Panel _toolbarPanel;
@@ -67,11 +71,92 @@ namespace DofusFarm.Engine
         private const string CordovaShimScript = @"(function() {
     'use strict';
     if (typeof window === 'undefined') return;
+
+    if (!window.IonicDeeplink) {
+        window.IonicDeeplink = {
+            _callbacks: [],
+            route: function(paths, callback) {
+                if (typeof callback === 'function') this._callbacks.push(callback);
+            },
+            onDeepLink: function(callback) {
+                if (typeof callback === 'function') this._callbacks.push(callback);
+            },
+            fire: function(data) {
+                for (var i = 0; i < this._callbacks.length; i++) {
+                    try { this._callbacks[i](data); } catch (e) { console.error('[IonicDeeplink] Error:', e); }
+                }
+            }
+        };
+    }
+
+    if (!window.__onDeepLinkCallback) {
+        window.__onDeepLinkCallback = function(urlStr) {
+            try {
+                console.log('[Auth] Processing DeepLink callback URL:', urlStr);
+                var safeUrl = (urlStr || '').replace('dofustouch://', 'https://dofus.local/');
+                var parsedUrl = new URL(safeUrl);
+                var host = parsedUrl.host || 'authorized';
+                var path = parsedUrl.pathname || '';
+                var queryString = parsedUrl.search ? parsedUrl.search.substring(1) : '';
+
+                var params = {};
+                if (queryString) {
+                    queryString.split('&').forEach(function(part) {
+                        var kv = part.split('=');
+                        if (kv.length >= 2) params[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1]);
+                    });
+                }
+
+                var deepLinkData = { host: host, path: path, queryString: queryString, url: urlStr };
+                if (window.IonicDeeplink && typeof window.IonicDeeplink.fire === 'function') {
+                    window.IonicDeeplink.fire(deepLinkData);
+                }
+                if (window.dofus && window.dofus.webAuth && typeof window.dofus.webAuth.connectThroughIonicDeepLink === 'function') {
+                    window.dofus.webAuth.connectThroughIonicDeepLink(params);
+                }
+            } catch (e) {
+                console.error('[Auth] Failed to parse callback URL:', e);
+            }
+        };
+    }
+
     if (window.cordova) return;
 
     window.cordova = {
         platformId: 'android',
         version: '10.0.0',
+        plugins: {
+            browsertab: {
+                isAvailable: function(cb) { if (cb) cb(true); },
+                openUrl: function(url, success, error) {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage({ type: 'open_oauth', url: url });
+                    }
+                    if (typeof success === 'function') success();
+                },
+                close: function() {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage({ type: 'close_oauth' });
+                    }
+                }
+            }
+        },
+        InAppBrowser: {
+            open: function(url, target, options) {
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({ type: 'open_oauth', url: url });
+                }
+                return {
+                    addEventListener: function() {},
+                    removeEventListener: function() {},
+                    close: function() {
+                        if (window.chrome && window.chrome.webview) {
+                            window.chrome.webview.postMessage({ type: 'close_oauth' });
+                        }
+                    }
+                };
+            }
+        },
         exec: function(success, fail, service, action, args) {
             if (service === 'Device' && action === 'getDeviceInfo') {
                 if (typeof success === 'function') success(window.device || {});
@@ -243,6 +328,9 @@ namespace DofusFarm.Engine
                     : null;
                 if (!string.IsNullOrEmpty(ua))
                 {
+                    // Clean UserAgent to remove embedded WebView flags (; wv and Version/X.X) that trigger Google disallowed_useragent
+                    ua = Regex.Replace(ua, @";\s*wv\b", "", RegexOptions.IgnoreCase);
+                    ua = Regex.Replace(ua, @"Version/[0-9.]+\s*", "", RegexOptions.IgnoreCase).Trim();
                     args.AppendFormat("--user-agent=\"{0}\" ", ua);
                 }
 
@@ -272,6 +360,7 @@ namespace DofusFarm.Engine
 
                 var env = await CoreWebView2Environment.CreateAsync(null, _userDataDir, envOptions);
                 await _webView.EnsureCoreWebView2Async(env);
+                _env = env;
 
                 BrowserProcessId = (int)_webView.CoreWebView2.BrowserProcessId;
 
@@ -313,6 +402,7 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
                 _webView.CoreWebView2.ProcessFailed += OnProcessFailed;
                 _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+                _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
 
                 IsReady = true;
                 _lblStatus.Text = string.Format("⚡ WebView2 Engine Active ({0})", _options.Profile != null ? _options.Profile.DisplayName : "Direct");
@@ -372,6 +462,15 @@ namespace DofusFarm.Engine
 
         private void OnNavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs e)
         {
+            if (e.Uri.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase) ||
+                (e.Uri.Contains("login-authorized") && (e.Uri.Contains("code=") || e.Uri.Contains("error="))))
+            {
+                e.Cancel = true;
+                _logCallback?.Invoke(string.Format("[{0}] Intercepted Ankama Connect DeepLink in client: {1}", _instanceId, e.Uri));
+                HandleDeepLinkUri(e.Uri);
+                return;
+            }
+
             if (!e.Uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
                 !e.Uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
                 !e.Uri.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
@@ -427,10 +526,111 @@ namespace DofusFarm.Engine
                 {
                     OnDiagnosticReport?.Invoke(_instanceId, json);
                 }
+                else if (json.Contains("\"type\":\"open_oauth\""))
+                {
+                    Match m = Regex.Match(json, "\"url\"\\s*:\\s*\"([^\"]+)\"");
+                    if (m.Success)
+                    {
+                        string oauthUrl = Regex.Unescape(m.Groups[1].Value);
+                        OpenOAuthDialog(oauthUrl);
+                    }
+                }
+                else if (json.Contains("\"type\":\"close_oauth\""))
+                {
+                    CloseOAuthDialog();
+                }
             }
             catch (Exception ex)
             {
                 _logCallback?.Invoke(string.Format("[{0}] WebMessage handling error: {1}", _instanceId, ex.Message));
+            }
+        }
+
+        private void OnNewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
+        {
+            e.Handled = true;
+            string targetUrl = e.Uri;
+            _logCallback?.Invoke(string.Format("[{0}] Intercepted new window request: {1}", _instanceId, targetUrl));
+            OpenOAuthDialog(targetUrl);
+        }
+
+        public void HandleDeepLinkUri(string uri)
+        {
+            if (string.IsNullOrEmpty(uri)) return;
+
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action<string>(HandleDeepLinkUri), uri);
+                return;
+            }
+
+            _logCallback?.Invoke(string.Format("[{0}] 🔑 Dispatching OAuth DeepLink to game engine: {1}", _instanceId, uri.Length > 80 ? uri.Substring(0, 80) + "..." : uri));
+
+            CloseOAuthDialog();
+
+            if (_webView != null && _webView.CoreWebView2 != null)
+            {
+                string escapedUri = uri.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\r", "").Replace("\n", "");
+                string dispatchJs = string.Format(
+                    "(function() {{" +
+                    "  var target = '{0}';" +
+                    "  if (typeof window.__onDeepLinkCallback === 'function') {{" +
+                    "    window.__onDeepLinkCallback(target);" +
+                    "  }} else if (window.IonicDeeplink && typeof window.IonicDeeplink.fire === 'function') {{" +
+                    "    window.IonicDeeplink.fire({{ url: target }});" +
+                    "  }} else {{" +
+                    "    window.location.href = target;" +
+                    "  }}" +
+                    "}})();", escapedUri);
+
+                _webView.CoreWebView2.ExecuteScriptAsync(dispatchJs);
+            }
+        }
+
+        public void OpenOAuthDialog(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return;
+
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action<string>(OpenOAuthDialog), url);
+                return;
+            }
+
+            try
+            {
+                CloseOAuthDialog();
+
+                _activeOAuthDialog = new OAuthLoginForm(url, _options, this, _logCallback, _env);
+                _activeOAuthDialog.FormClosed += (s, ev) => { _activeOAuthDialog = null; };
+                _activeOAuthDialog.Show(this);
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] Failed to open OAuth dialog: {1}", _instanceId, ex.Message));
+            }
+        }
+
+        public void CloseOAuthDialog()
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(CloseOAuthDialog));
+                return;
+            }
+
+            if (_activeOAuthDialog != null && !_activeOAuthDialog.IsDisposed)
+            {
+                try
+                {
+                    _activeOAuthDialog.Close();
+                    _activeOAuthDialog.Dispose();
+                }
+                catch { }
+                finally
+                {
+                    _activeOAuthDialog = null;
+                }
             }
         }
 
@@ -472,6 +672,8 @@ namespace DofusFarm.Engine
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            CloseOAuthDialog();
+
             if (_telemetryTimer != null)
             {
                 _telemetryTimer.Stop();
@@ -485,6 +687,7 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
                 _webView.CoreWebView2.ProcessFailed -= OnProcessFailed;
                 _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+                _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
             }
 
             base.OnFormClosing(e);
@@ -495,6 +698,8 @@ namespace DofusFarm.Engine
         {
             if (disposing)
             {
+                CloseOAuthDialog();
+
                 if (_telemetryTimer != null)
                 {
                     _telemetryTimer.Stop();
@@ -506,6 +711,204 @@ namespace DofusFarm.Engine
                     _webView.Dispose();
                     _webView = null;
                 }
+            }
+            base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>
+    /// Specialized Mobile OAuth dialog for Ankama Connect / Google sign-in.
+    /// Runs with mobile Chrome identity (no embedded webview markers) and intercepts deep link redirects.
+    /// </summary>
+    public class OAuthLoginForm : Form
+    {
+        private readonly string _initialUrl;
+        private readonly ClientLaunchOptions _options;
+        private readonly WebView2ClientForm _parentForm;
+        private readonly Action<string> _logCallback;
+        private readonly CoreWebView2Environment _sharedEnv;
+
+        private WebView2 _webView;
+        private Panel _topBar;
+        private Label _lblTitle;
+        private Button _btnClose;
+
+        public OAuthLoginForm(string initialUrl, ClientLaunchOptions options, WebView2ClientForm parentForm, Action<string> logCallback, CoreWebView2Environment sharedEnv)
+        {
+            _initialUrl = initialUrl;
+            _options = options;
+            _parentForm = parentForm;
+            _logCallback = logCallback;
+            _sharedEnv = sharedEnv;
+
+            InitializeComponent();
+        }
+
+        private void InitializeComponent()
+        {
+            Text = "Connexion Ankama Connect";
+            Size = new Size(520, 720);
+            MinimumSize = new Size(400, 500);
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Color.FromArgb(15, 23, 42);
+            ShowIcon = false;
+            ShowInTaskbar = false;
+            TopMost = true;
+
+            _topBar = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 36,
+                BackColor = Color.FromArgb(30, 41, 59),
+                Padding = new Padding(10, 4, 10, 4)
+            };
+
+            _lblTitle = new Label
+            {
+                Text = "🔒 Authentification Sécurisée Ankama",
+                ForeColor = Color.FromArgb(226, 232, 240),
+                Font = new Font("Segoe UI", 9.0f, FontStyle.Bold),
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            _topBar.Controls.Add(_lblTitle);
+
+            _btnClose = new Button
+            {
+                Text = "✕ Fermer",
+                Dock = DockStyle.Right,
+                Width = 76,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(239, 68, 68),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            _btnClose.FlatAppearance.BorderSize = 0;
+            _btnClose.Click += (s, e) => Close();
+            _topBar.Controls.Add(_btnClose);
+
+            Controls.Add(_topBar);
+
+            _webView = new WebView2
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(15, 23, 42)
+            };
+            Controls.Add(_webView);
+            _webView.BringToFront();
+        }
+
+        protected override async void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            try
+            {
+                string cleanUa = (_options != null && _options.Profile != null && !string.IsNullOrEmpty(_options.Profile.UserAgent))
+                    ? _options.Profile.UserAgent
+                    : null;
+                if (!string.IsNullOrEmpty(cleanUa))
+                {
+                    cleanUa = Regex.Replace(cleanUa, @";\s*wv\b", "", RegexOptions.IgnoreCase);
+                    cleanUa = Regex.Replace(cleanUa, @"Version/[0-9.]+\s*", "", RegexOptions.IgnoreCase).Trim();
+                }
+
+                if (_sharedEnv != null)
+                {
+                    await _webView.EnsureCoreWebView2Async(_sharedEnv);
+                }
+                else
+                {
+                    var envOptions = new CoreWebView2EnvironmentOptions();
+                    var args = new StringBuilder();
+
+                    if (!string.IsNullOrEmpty(cleanUa))
+                    {
+                        args.AppendFormat("--user-agent=\"{0}\" ", cleanUa);
+                    }
+
+                    if (_options != null && _options.ProxyPort > 0)
+                    {
+                        args.AppendFormat("--proxy-server=\"http://127.0.0.1:{0}\" ", _options.ProxyPort);
+                    }
+                    else if (_options != null && !string.IsNullOrEmpty(_options.Proxy) && !_options.Proxy.Contains("DIRECT"))
+                    {
+                        args.AppendFormat("--proxy-server=\"{0}\" ", _options.Proxy);
+                    }
+
+                    args.Append("--enable-gpu-rasterization --touch-events=enabled --disable-blink-features=AutomationControlled ");
+                    envOptions.AdditionalBrowserArguments = args.ToString().Trim();
+
+                    string oauthDataDir = Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));
+                    var env = await CoreWebView2Environment.CreateAsync(null, oauthDataDir, envOptions);
+                    await _webView.EnsureCoreWebView2Async(env);
+                }
+
+                var s = _webView.CoreWebView2.Settings;
+                s.IsWebMessageEnabled = true;
+                s.AreDevToolsEnabled = true;
+                s.IsStatusBarEnabled = false;
+                s.AreDefaultContextMenusEnabled = true;
+
+                if (!string.IsNullOrEmpty(cleanUa))
+                {
+                    s.UserAgent = cleanUa;
+                }
+
+                if (_options != null && !string.IsNullOrEmpty(_options.DisguiseScript))
+                {
+                    await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(_options.DisguiseScript);
+                }
+
+                _webView.CoreWebView2.NavigationStarting += (sdr, ev) =>
+                {
+                    string u = ev.Uri;
+                    _logCallback?.Invoke("[OAUTH-POPUP] Navigating: " + u);
+
+                    if (u.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase) ||
+                        (u.Contains("login-authorized") && (u.Contains("code=") || u.Contains("error="))))
+                    {
+                        ev.Cancel = true;
+                        _logCallback?.Invoke("[OAUTH-POPUP] Intercepted OAuth completion code redirect: " + u);
+                        _parentForm.HandleDeepLinkUri(u);
+                        this.Close();
+                        return;
+                    }
+                };
+
+                _webView.CoreWebView2.NavigationCompleted += (sdr, ev) =>
+                {
+                    if (ev.IsSuccess && _webView.CoreWebView2 != null)
+                    {
+                        string docTitle = _webView.CoreWebView2.DocumentTitle;
+                        if (!string.IsNullOrEmpty(docTitle))
+                        {
+                            _lblTitle.Text = "🔒 " + docTitle;
+                        }
+                    }
+                };
+
+                _webView.CoreWebView2.NewWindowRequested += (sdr, ev) =>
+                {
+                    ev.Handled = true;
+                    _webView.CoreWebView2.Navigate(ev.Uri);
+                };
+
+                _webView.CoreWebView2.Navigate(_initialUrl);
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke("[OAUTH-POPUP] Error initializing dialog: " + ex.Message);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _webView != null)
+            {
+                _webView.Dispose();
+                _webView = null;
             }
             base.Dispose(disposing);
         }

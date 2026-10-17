@@ -463,7 +463,15 @@ namespace DofusFarm.Native
 
             if (count <= 1)
             {
-                return new[] { new Rectangle(wa.X, wa.Y, wa.Width, wa.Height) };
+                if (edgeToEdge)
+                {
+                    return new[] { new Rectangle(wa.X, wa.Y, wa.Width, wa.Height) };
+                }
+                int targetW = Math.Min(1200, (int)(wa.Width * 0.8));
+                int targetH = Math.Min(740, (int)(wa.Height * 0.85));
+                int x = wa.X + (wa.Width - targetW) / 2;
+                int y = wa.Y + (wa.Height - targetH) / 2;
+                return new[] { new Rectangle(x, y, targetW, targetH) };
             }
             if (count == 2)
             {
@@ -478,17 +486,19 @@ namespace DofusFarm.Native
             {
                 int w = (wa.Width - gap) / 2;
                 int h = (wa.Height - gap) / 2;
+                int bottomW = w;
+                int bottomX = wa.X + (wa.Width - bottomW) / 2;
                 return new[]
                 {
                     new Rectangle(wa.X, wa.Y, w, h),
                     new Rectangle(wa.X + w + gap, wa.Y, wa.Width - w - gap, h),
-                    new Rectangle(wa.X, wa.Y + h + gap, wa.Width, wa.Height - h - gap)
+                    new Rectangle(bottomX, wa.Y + h + gap, bottomW, wa.Height - h - gap)
                 };
             }
 
             // 4x grid or N-quad
-            int cols = 2;
-            int rows = (count + 1) / 2;
+            int cols = (count <= 4) ? 2 : ((count <= 6) ? 3 : 4);
+            int rows = (count + cols - 1) / cols;
             int cellW = (wa.Width - gap * (cols - 1)) / cols;
             int cellH = (wa.Height - gap * (rows - 1)) / rows;
 

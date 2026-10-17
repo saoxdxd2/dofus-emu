@@ -75,7 +75,6 @@ namespace DofusFarm.UI
 
         private Label _lblBackend;
         private ComboBox _cmbBackend;
-        private Button _btnWebViewTest;
 
         private Label _lblGpu;
         private ComboBox _cmbGpu;
@@ -199,15 +198,13 @@ namespace DofusFarm.UI
             _btnAddSlot = CreateButton("+ Add", Color.FromArgb(16, 150, 108), Color.FromArgb(16, 185, 129), Color.White, 76, btnH, true, 220, btnY, OnAddSlotClick);
             _btnEditSelected = CreateButton("Edit", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 62, btnH, false, 302, btnY, OnEditSelectedClick);
             _btnDeleteSelected = CreateButton("Delete", Color.FromArgb(153, 27, 27), Color.FromArgb(220, 38, 38), Color.White, 72, btnH, true, 370, btnY, OnDeleteSelectedClick);
-            _btnRelayout = CreateButton("Tile", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 56, btnH, false, 448, btnY, OnRelayoutClick);
-            _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 68, btnH, false, 510, btnY, OnCascadeClick);
+            _btnRelayout = CreateButton("⊞ Tile 4x", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 78, btnH, false, 448, btnY, OnRelayoutClick);
+            _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 72, btnH, false, 532, btnY, OnCascadeClick);
 
             Color lblCol = Color.FromArgb(180, 185, 195);
-            _lblBackend = new Label { Text = "Engine:", ForeColor = lblCol, AutoSize = true, Location = new Point(590, 15) };
-            _cmbBackend = CreateCombo(644, 12, 195, new object[] { "⚡ Standalone WebView2", "🤖 Android Emulator" }, 0);
+            _lblBackend = new Label { Text = "Engine:", ForeColor = lblCol, AutoSize = true, Location = new Point(620, 15) };
+            _cmbBackend = CreateCombo(675, 12, 195, new object[] { "⚡ Standalone WebView2", "🤖 Android Emulator" }, 0);
             _cmbBackend.SelectedIndexChanged += OnBackendChanged;
-
-            _btnWebViewTest = CreateButton("⚡ Test WebView2", Color.FromArgb(14, 116, 144), Color.FromArgb(6, 182, 212), Color.White, 135, btnH, true, 846, btnY, OnWebViewTestClick);
 
             const int row2Y = 47;
             _lblGpu = new Label { Text = "GPU:", ForeColor = lblCol, AutoSize = true, Location = new Point(16, row2Y + 3) };
@@ -234,7 +231,7 @@ namespace DofusFarm.UI
             _toolbarPanel.Controls.AddRange(new Control[]
             {
                 _btnLaunchFarm, _btnStopAll, _btnAddSlot, _btnEditSelected, _btnDeleteSelected,
-                _btnRelayout, _btnCascade, _lblBackend, _cmbBackend, _btnWebViewTest,
+                _btnRelayout, _btnCascade, _lblBackend, _cmbBackend,
                 _lblGpu, _cmbGpu, _lblRam, _cmbRam, _lblCores, _cmbCores, _btnApplyAllHw, _lblEngineNotice
             });
 
@@ -333,7 +330,15 @@ namespace DofusFarm.UI
         private void FocusSlotByIndex(int rowIndex)
         {
             InstanceModel inst = (rowIndex >= 0 && rowIndex < _grid.Rows.Count) ? _grid.Rows[rowIndex].Tag as InstanceModel : null;
-            _engine.FocusInstance(inst != null ? inst.Port : (5554 + (rowIndex * 2)));
+            if (inst == null) return;
+            if (_activeBackend is WebView2Backend || (_webViewBackend != null && _webViewBackend.GetState(inst.Name) == ClientInstanceState.Running))
+            {
+                _webViewBackend.Focus(inst.Name);
+            }
+            else
+            {
+                _engine.FocusInstance(inst.Port);
+            }
         }
 
         private void OnGridCellMouseEnter(object sender, DataGridViewCellEventArgs e)
@@ -513,27 +518,6 @@ namespace DofusFarm.UI
             RefreshGrid(true);
         }
 
-        private void OnWebViewTestClick(object sender, EventArgs e)
-        {
-            Log("[TEST] Launching Standalone WebView2 Capability & Hardware Probe...");
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                try
-                {
-                    var opts = new ClientLaunchOptions
-                    {
-                        InstanceId = "probe-test",
-                        DisplayName = "WebView2 Hardware & WebGL Probe",
-                        UserDataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DofusFarm", "webview2_profiles", "probe-test")
-                    };
-                    _webViewBackend.Start(opts);
-                }
-                catch (Exception ex)
-                {
-                    Log("[TEST ERROR] " + ex.Message);
-                }
-            });
-        }
 
         private void LaunchSelectedInWebView2()
         {

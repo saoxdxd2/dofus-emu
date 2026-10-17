@@ -115,14 +115,80 @@
         angle: 90
     };
 
+    // Standalone Ionic Deeplink implementation for Ankama Connect OAuth
+    window.IonicDeeplink = window.IonicDeeplink || {
+        _callbacks: [],
+        route: function (paths, cb) {
+            if (typeof cb === 'function') this._callbacks.push(cb);
+        },
+        onDeepLink: function (cb) {
+            if (typeof cb === 'function') this._callbacks.push(cb);
+        },
+        fire: function (data) {
+            console.log('[IonicDeeplink] Dispatching deep link:', data);
+            for (var i = 0; i < this._callbacks.length; i++) {
+                try { this._callbacks[i](data); } catch (e) { console.error('[IonicDeeplink] Error:', e); }
+            }
+        }
+    };
+
+    window.__onDeepLinkCallback = function (urlStr) {
+        try {
+            console.log('[Auth] Processing DeepLink callback URL:', urlStr);
+            var safeUrl = urlStr.replace('dofustouch://', 'https://dofus.local/');
+            var parsedUrl = new URL(safeUrl);
+            var host = parsedUrl.host || 'authorized';
+            var path = parsedUrl.pathname || '';
+            var queryString = parsedUrl.search ? parsedUrl.search.substring(1) : '';
+
+            if (window.IonicDeeplink && typeof window.IonicDeeplink.fire === 'function') {
+                window.IonicDeeplink.fire({
+                    host: host,
+                    path: path,
+                    queryString: queryString,
+                    url: urlStr
+                });
+            }
+        } catch (e) {
+            console.error('[Auth] Failed to parse callback URL:', e);
+        }
+    };
+
+    function handleOAuthUrl(url) {
+        console.log('[Auth] Opening OAuth authorization URL in mobile container:', url);
+        if (window.chrome && window.chrome.webview) {
+            window.chrome.webview.postMessage({ type: 'open_oauth', url: url });
+        } else {
+            window.open(url, '_blank');
+        }
+    }
+
     window.cordova.plugins.browsertab = window.cordova.plugins.browsertab || {
         isAvailable: function (cb) { if (cb) cb(true); },
-        openUrl: function (url) { window.open(url, '_blank'); },
-        close: function () {}
+        openUrl: function (url, success, error) {
+            handleOAuthUrl(url);
+            if (typeof success === 'function') success();
+        },
+        close: function () {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ type: 'close_oauth' });
+            }
+        }
     };
 
     window.cordova.InAppBrowser = window.cordova.InAppBrowser || {
-        open: function (url, target, options) { return window.open(url, target); }
+        open: function (url, target, options) {
+            handleOAuthUrl(url);
+            return {
+                addEventListener: function () {},
+                removeEventListener: function () {},
+                close: function () {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage({ type: 'close_oauth' });
+                    }
+                }
+            };
+        }
     };
 
     // Native bridge mock for cordova.exec

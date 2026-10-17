@@ -13,7 +13,7 @@
         return fallback;
     }
 
-    var MOBILE_UA = cfg('__DEVICE_UA__', 'Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36');
+    var MOBILE_UA = cfg('__DEVICE_UA__', 'Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36').replace(/;\s*wv/i, '').replace(/Version\/[0-9.]+\s*/i, '');
     var MOBILE_APP_VERSION = MOBILE_UA.replace(/^Mozilla\//, '');
     var MOBILE_PLATFORM = 'Linux armv8l';
     var _deviceModel = cfg('__DEVICE_MODEL__', 'SM-A515F');

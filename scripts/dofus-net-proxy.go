@@ -44,8 +44,9 @@ var (
 	stripReqHeaders = []string{
 		"Proxy-Connection", "Proxy-Authenticate", "Proxy-Authorization",
 		"Via", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
-		"Forwarded", "X-Real-IP", "Client-IP",
+		"Forwarded", "X-Real-IP", "Client-IP", "X-Requested-With",
 	}
+	reWebViewToken = regexp.MustCompile(`(?i);\s*wv\b|Version/[0-9.]+\s*`)
 	hopReqHeaders = map[string]struct{}{
 		"connection": {}, "keep-alive": {}, "te": {}, "trailers": {}, "transfer-encoding": {}, "upgrade": {},
 	}
@@ -320,7 +321,7 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 		manufacturer = "samsung"
 	}
 	if ua == "" {
-		ua = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.106 Mobile Safari/537.36"
+		ua = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36"
 	}
 	osVer, buildId := "10", "QP1A.190711.020"
 	if m := reOsVer.FindStringSubmatch(ua); len(m) > 1 {
@@ -393,11 +394,18 @@ func (p *ProxyServer) sanitizeRequestHeaders(h http.Header) {
 	for _, k := range stripReqHeaders {
 		h.Del(k)
 	}
+	h.Del("X-Requested-With")
+
 	curUA := h.Get("User-Agent")
 	if strings.HasPrefix(curUA, "Dalvik/") {
 		h.Set("User-Agent", p.dalvikUA)
 	} else if curUA == "" || reLeakUA.MatchString(curUA) {
 		h.Set("User-Agent", p.ua)
+	} else {
+		// Strip embedded WebView flags (; wv and Version/X.X) that cause Google to block OAuth with 'disallowed_useragent'
+		cleanUA := reWebViewToken.ReplaceAllString(curUA, "")
+		cleanUA = strings.TrimSpace(cleanUA)
+		h.Set("User-Agent", cleanUA)
 	}
 
 	if h.Get("Sec-CH-UA-Arch") != "" {
@@ -486,6 +494,27 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, `{"status":"ok","port":%d,"model":"%s"}`, p.port, p.model)
+		return
+	}
+
+	// Intercept Ankama/Google OAuth callback on proxy if redirected here:
+	if r.Method == http.MethodGet && (r.URL.Path == "/authorized" || r.URL.Path == "/login-authorized" || strings.HasPrefix(r.URL.Path, "/oauth/callback")) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		qs := r.URL.RawQuery
+		if qs != "" {
+			qs = "?" + qs
+		}
+		fmt.Fprintf(w, `<!DOCTYPE html><html><head><title>Authorization Success</title></head><body>
+		<script>
+			if (window.opener && window.opener.__onDeepLinkCallback) {
+				window.opener.__onDeepLinkCallback(window.location.href);
+			}
+			window.location.href = "dofustouch://authorized%s";
+		</script>
+		<h2>Authorization Successful</h2>
+		<p>Redirecting back to Dofus Touch...</p>
+		</body></html>`, qs)
 		return
 	}
 

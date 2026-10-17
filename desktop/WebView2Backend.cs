@@ -193,6 +193,7 @@ namespace DofusFarm.Engine
                         _activeForms.TryRemove(instId, out removed);
                         SetState(instId, ClientInstanceState.Stopped);
                         OnLog?.Invoke(string.Format("[{0}] WebView2 client closed by user.", instId));
+                        ScheduleAutoTile(200);
                     };
 
                     _activeForms[id] = form;
@@ -207,6 +208,7 @@ namespace DofusFarm.Engine
                         else
                         {
                             SetState(id, ClientInstanceState.Running);
+                            ScheduleAutoTile(350);
                         }
                     });
                 }
@@ -243,6 +245,7 @@ namespace DofusFarm.Engine
             }
 
             SetState(instanceId, ClientInstanceState.Stopped);
+            ScheduleAutoTile(200);
         }
 
         public void Focus(string instanceId)
@@ -261,9 +264,38 @@ namespace DofusFarm.Engine
             }
         }
 
+        private System.Threading.Timer _autoTileDebounceTimer;
+
+        public void ScheduleAutoTile(int delayMs = 350)
+        {
+            try
+            {
+                if (_autoTileDebounceTimer != null)
+                {
+                    _autoTileDebounceTimer.Dispose();
+                    _autoTileDebounceTimer = null;
+                }
+                _autoTileDebounceTimer = new System.Threading.Timer(_ =>
+                {
+                    if (Application.OpenForms.Count > 0)
+                    {
+                        var main = Application.OpenForms[0];
+                        if (main != null && !main.IsDisposed)
+                        {
+                            SafeUiInvoke(main, () => TileWindows(false));
+                        }
+                    }
+                }, null, delayMs, Timeout.Infinite);
+            }
+            catch { }
+        }
+
         public void TileWindows(bool edgeToEdge)
         {
-            var forms = _activeForms.Values.Where(f => !f.IsDisposed).ToList();
+            var forms = _activeForms.Values
+                .Where(f => !f.IsDisposed)
+                .OrderBy(f => f.InstanceId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
             if (forms.Count == 0) return;
 
             Rectangle[] rects = DofusFarm.Native.Win32.ComputeLayout(forms.Count, edgeToEdge);
