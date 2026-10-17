@@ -115,24 +115,7 @@
         }
     } catch (e) {}
 
-    // 2. Suppress transient proxy/network alert popups
-    function isTransientNetMsg(msg) { return typeof msg === 'string' && /server cannot be reached|check your internet/i.test(msg); }
-    try {
-        var winAlertProto = (typeof Window !== 'undefined' && Window.prototype) ? Window.prototype : window;
-        var originalAlert = winAlertProto.alert || window.alert;
-        var wrappedAlert = makeNative(function alert(msg) { if (!isTransientNetMsg(msg) && originalAlert) return originalAlert.apply(this, arguments); }, 'alert');
-        if (typeof Window !== 'undefined' && Window.prototype && Window.prototype.alert) Window.prototype.alert = wrappedAlert;
-        else window.alert = wrappedAlert;
-        document.addEventListener('deviceready', function() {
-            if (navigator.notification && navigator.notification.alert) {
-                var origCdvAlert = navigator.notification.alert;
-                navigator.notification.alert = makeNative(function alert(msg, cb) {
-                    if (isTransientNetMsg(msg)) { if (typeof cb === 'function') cb(); return; }
-                    return origCdvAlert.apply(this, arguments);
-                }, 'alert');
-            }
-        }, false);
-    } catch (e) {}
+    // 2. Alert & Dialogs - Untouched native browser implementations
 
     // 3 & 5. Navigator, PluginArray, NetworkInformation & BatteryManager
     var falseNative = makeNative(function dispatchEvent() { return false; }, 'dispatchEvent');
@@ -426,79 +409,7 @@
         } catch (e) {}
     } catch (e) {}
 
-    // 7 & 10. Sensors + Full WebRTC SDP & ICE Candidate QEMU 10.0.2.15 Scrubbing
-    var PeerConn = window.RTCPeerConnection || window.webkitRTCPeerConnection;
-    var iceListenerMap = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
-    function scrubCandidate(c) {
-        if (!c) return c;
-        if (c.candidate && c.candidate.indexOf('10.0.2.15') !== -1) c.candidate = c.candidate.replace(/10\.0\.2\.15/g, _fakeLocalIp);
-        if (c.address === '10.0.2.15') { try { Object.defineProperty(c, 'address', { value: _fakeLocalIp, configurable: true, enumerable: true }); } catch (e) {} }
-        return c;
-    }
-
-    try {
-        var motionListeners = [], orientationListeners = [], onDeviceMotionHandler = null, onDeviceOrientationHandler = null, _sensorTimerId = null;
-        function makeSensorEvent(Ctor, type, props) {
-            var evt = null;
-            if (typeof Ctor === 'function') { try { evt = new Ctor(type, props); } catch (e) {} }
-            if (!evt) evt = new Event(type);
-            try { for (var k in props) Object.defineProperty(evt, k, { value: props[k], configurable: true, enumerable: true }); } catch (e) {}
-            return evt;
-        }
-        function dispatchSensor(list, handler, evt) {
-            for (var i = 0; i < list.length; i++) { try { list[i].call(window, evt); } catch (e) {} }
-            if (typeof handler === 'function') { try { handler.call(window, evt); } catch (e) {} }
-        }
-        function tickSensors() {
-            var hasM = motionListeners.length > 0 || typeof onDeviceMotionHandler === 'function';
-            var hasO = orientationListeners.length > 0 || typeof onDeviceOrientationHandler === 'function';
-            if (!hasM && !hasO) { if (_sensorTimerId !== null) { clearInterval(_sensorTimerId); _sensorTimerId = null; } return; }
-            if (hasM) {
-                dispatchSensor(motionListeners, onDeviceMotionHandler, makeSensorEvent(typeof DeviceMotionEvent !== 'undefined' ? DeviceMotionEvent : undefined, 'devicemotion', {
-                    acceleration: { x: (Math.random() - 0.5) * 0.02, y: (Math.random() - 0.5) * 0.02, z: (Math.random() - 0.5) * 0.02 },
-                    accelerationIncludingGravity: { x: 0.08 + (Math.random() - 0.5) * 0.04, y: 9.80 + (Math.random() - 0.5) * 0.06, z: 0.42 + (Math.random() - 0.5) * 0.04 },
-                    rotationRate: { alpha: (Math.random() - 0.5) * 0.1, beta: (Math.random() - 0.5) * 0.1, gamma: (Math.random() - 0.5) * 0.1 }, interval: 50
-                }));
-            }
-            if (hasO) {
-                dispatchSensor(orientationListeners, onDeviceOrientationHandler, makeSensorEvent(typeof DeviceOrientationEvent !== 'undefined' ? DeviceOrientationEvent : undefined, 'deviceorientation', {
-                    alpha: +(180.2 + (Math.random() - 0.5) * 0.2).toFixed(2), beta: +(45.1 + (Math.random() - 0.5) * 0.2).toFixed(2), gamma: +((Math.random() - 0.5) * 0.2).toFixed(2), absolute: true
-                }));
-            }
-        }
-        function ensureSensorTimer() { if (_sensorTimerId === null) _sensorTimerId = setInterval(tickSensors, 50); }
-
-        var targetProto = (typeof EventTarget !== 'undefined' && EventTarget.prototype) ? EventTarget.prototype : window;
-        var origAddEL = targetProto.addEventListener || window.addEventListener, origRemEL = targetProto.removeEventListener || window.removeEventListener;
-        targetProto.addEventListener = makeNative(function addEventListener(type, listener, options) {
-            if (typeof listener === 'function') {
-                if (this === window || (typeof Window !== 'undefined' && this instanceof Window)) {
-                    var arr = type === 'devicemotion' ? motionListeners : (type === 'deviceorientation' ? orientationListeners : null);
-                    if (arr && arr.indexOf(listener) === -1) { arr.push(listener); ensureSensorTimer(); }
-                } else if (PeerConn && this instanceof PeerConn && type === 'icecandidate' && iceListenerMap) {
-                    var wrapped = iceListenerMap.get(listener);
-                    if (!wrapped) { wrapped = function(evt) { if (evt && evt.candidate) scrubCandidate(evt.candidate); return listener.apply(this, arguments); }; iceListenerMap.set(listener, wrapped); }
-                    return origAddEL.call(this, type, wrapped, options);
-                }
-            }
-            if (origAddEL) return origAddEL.apply(this, arguments);
-        }, 'addEventListener');
-        targetProto.removeEventListener = makeNative(function removeEventListener(type, listener, options) {
-            if (listener) {
-                if (this === window || (typeof Window !== 'undefined' && this instanceof Window)) {
-                    var arr = type === 'devicemotion' ? motionListeners : (type === 'deviceorientation' ? orientationListeners : null);
-                    if (arr) { var idx = arr.indexOf(listener); if (idx !== -1) arr.splice(idx, 1); }
-                } else if (PeerConn && this instanceof PeerConn && type === 'icecandidate' && iceListenerMap && iceListenerMap.has(listener)) {
-                    return origRemEL.call(this, type, iceListenerMap.get(listener), options);
-                }
-            }
-            if (origRemEL) return origRemEL.apply(this, arguments);
-        }, 'removeEventListener');
-
-        var winProto = (typeof Window !== 'undefined' && Window.prototype) ? Window.prototype : window;
-        Object.defineProperty(winProto, 'ondevicemotion', { get: makeNative(function() { return onDeviceMotionHandler; }, 'get ondevicemotion'), set: makeNative(function(fn) { onDeviceMotionHandler = fn; if (typeof fn === 'function') ensureSensorTimer(); }, 'set ondevicemotion'), configurable: true, enumerable: true });
-        Object.defineProperty(winProto, 'ondeviceorientation', { get: makeNative(function() { return onDeviceOrientationHandler; }, 'get ondeviceorientation'), set: makeNative(function(fn) { onDeviceOrientationHandler = fn; if (typeof fn === 'function') ensureSensorTimer(); }, 'set ondeviceorientation'), configurable: true, enumerable: true });
-    } catch (e) {}
+    // 7 & 10. Sensors & EventTarget - Untouched native browser implementations
 
     // 8. Coherent Screen & Orientation
     try {
@@ -607,58 +518,7 @@
         }
     } catch (e) {}
 
-    // 12. Outbound HTTPS XHR & Fetch Header Sanitizer
-    try {
-        if (window.XMLHttpRequest && XMLHttpRequest.prototype) {
-            var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
-            if (origSetHeader) {
-                var hdrMap = { 'user-agent': MOBILE_UA, 'sec-ch-ua-arch': '"arm"', 'sec-ch-ua-platform': '"Android"', 'sec-ch-ua-model': '"' + _deviceModel + '"' };
-                XMLHttpRequest.prototype.setRequestHeader = makeNative(function setRequestHeader(h, v) {
-                    var hL = (h || '').toLowerCase();
-                    if (Object.prototype.hasOwnProperty.call(hdrMap, hL)) v = hdrMap[hL];
-                    return origSetHeader.call(this, h, v);
-                }, 'setRequestHeader');
-            }
-        }
-    } catch (e) {}
-
-    // 12b. Non-CORS Static Asset & Market/Shop Image Sanitizer
-    try {
-        if (typeof HTMLImageElement !== 'undefined' && HTMLImageElement.prototype) {
-            var origImageSetSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
-            if (origImageSetSrc && origImageSetSrc.set) {
-                var rawSetSrc = origImageSetSrc.set;
-                Object.defineProperty(HTMLImageElement.prototype, 'src', {
-                    set: function(val) {
-                        if (typeof val === 'string' && (val.indexOf('static.ankama.com') !== -1 || val.indexOf('s.ankama.com') !== -1)) {
-                            try { this.removeAttribute('crossOrigin'); this.crossOrigin = null; } catch (e) {}
-                        }
-                        return rawSetSrc.call(this, val);
-                    },
-                    get: origImageSetSrc.get,
-                    configurable: true,
-                    enumerable: true
-                });
-            }
-
-            var origCrossOrigin = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'crossOrigin');
-            if (origCrossOrigin && origCrossOrigin.set) {
-                var rawSetCO = origCrossOrigin.set;
-                Object.defineProperty(HTMLImageElement.prototype, 'crossOrigin', {
-                    set: function(val) {
-                        var curSrc = this.src || '';
-                        if (curSrc.indexOf('static.ankama.com') !== -1 || curSrc.indexOf('s.ankama.com') !== -1) {
-                            return rawSetCO.call(this, null);
-                        }
-                        return rawSetCO.call(this, val);
-                    },
-                    get: origCrossOrigin.get,
-                    configurable: true,
-                    enumerable: true
-                });
-            }
-        }
-    } catch (e) {}
+    // 12 & 12b. Outbound HTTP & Images - Untouched native browser implementations
 
     // 13. Child Iframe Disguise
     function disguiseFrameWindow(targetWin) {
@@ -822,45 +682,7 @@
         // Test hook callable programmatically or in test scripts
         window.__triggerModWhisperTest = triggerWhisperAlert;
 
-        // A. WebSocket packet hook for chat streams
-        if (typeof window.WebSocket !== 'undefined') {
-            var origWs = window.WebSocket;
-            window.WebSocket = function(url, protocols) {
-                var ws = protocols ? new origWs(url, protocols) : new origWs(url);
-                try {
-                    ws.addEventListener('message', function(ev) {
-                        try {
-                            var strData = '';
-                            if (typeof ev.data === 'string') {
-                                strData = ev.data;
-                            } else if (ev.data instanceof ArrayBuffer && typeof TextDecoder !== 'undefined') {
-                                strData = new TextDecoder().decode(ev.data);
-                            }
-                            if (strData) {
-                                var isMod = /\[(?:Mod|Admin|GM|Ankama)\]/i.test(strData) || /(?:^|\W)(?:modérateur|moderator)(?:\W|$)/i.test(strData);
-                                var isWhisper = /channel["']?\s*:\s*9/i.test(strData) || /ChatServerMessage/i.test(strData) || /whisper|chuchote/i.test(strData);
-                                if (isMod || isWhisper) {
-                                    var senderMatch = strData.match(/["'](?:senderName|sender|name)["']\s*:\s*["']([^"']+)["']/i) ||
-                                                      strData.match(/\[([a-zA-Z0-9_\-\s]{3,24})\]/);
-                                    var textMatch = strData.match(/["'](?:content|text|message)["']\s*:\s*["']([^"']+)["']/i);
-                                    var sender = senderMatch ? senderMatch[1] : (isMod ? 'Moderator' : 'Player');
-                                    var text = textMatch ? textMatch[1] : strData.substring(0, 100);
-                                    triggerWhisperAlert(sender, text, isMod, isWhisper ? 'whisper' : 'chat');
-                                }
-                            }
-                        } catch (err) {}
-                    });
-                } catch (err) {}
-                return ws;
-            };
-            window.WebSocket.prototype = origWs.prototype;
-            window.WebSocket.CONNECTING = origWs.CONNECTING;
-            window.WebSocket.OPEN = origWs.OPEN;
-            window.WebSocket.CLOSING = origWs.CLOSING;
-            window.WebSocket.CLOSED = origWs.CLOSED;
-        }
-
-        // B. DOM MutationObserver disabled: WebSocket packet hook above handles all incoming messages without DOM thrashing
+        // WebSocket - Untouched native browser implementation
     } catch (e) {}
 
     // 18. Spatial & Temporal Input Desynchronizer
@@ -1007,162 +829,7 @@
         };
     } catch (e) {}
 
-    // 17b. Comprehensive Runtime Diagnostics Probe
-    try {
-        var _diagStartTime = Date.now();
-        var _diagImageFails = [];
-        var _diagFetchFails = [];
-        var _diagXhrFails = [];
-        var _diagImageLoads = 0;
-        var _diagImageErrors = 0;
-        var _diagProbeCount = 0;
-
-        // Patch Image constructor to track load failures
-        var _OrigImage = window.Image;
-        window.Image = function(w, h) {
-            var img = (w !== undefined && h !== undefined) ? new _OrigImage(w, h) : (w !== undefined ? new _OrigImage(w) : new _OrigImage());
-            img.addEventListener('load', function() { _diagImageLoads++; });
-            img.addEventListener('error', function() {
-                _diagImageErrors++;
-                var failSrc = (img.src || '').substring(0, 200);
-                if (_diagImageFails.length < 20) _diagImageFails.push(failSrc);
-                console.error('[DIAG-IMG-FAIL] ' + failSrc + ' crossOrigin=' + img.crossOrigin);
-            });
-            return img;
-        };
-        window.Image.prototype = _OrigImage.prototype;
-        try { Object.defineProperty(window.Image, 'name', { value: 'Image' }); } catch(e){}
-
-        // Patch fetch to track failures
-        if (window.fetch) {
-            var _origFetch = window.fetch;
-            window.fetch = function() {
-                var url = (arguments[0] && typeof arguments[0] === 'string') ? arguments[0] : (arguments[0] && arguments[0].url ? arguments[0].url : '');
-                return _origFetch.apply(this, arguments).then(function(resp) {
-                    if (!resp.ok && _diagFetchFails.length < 20) {
-                        _diagFetchFails.push(resp.status + ' ' + url.substring(0, 150));
-                        console.error('[DIAG-FETCH-FAIL] ' + resp.status + ' ' + url.substring(0, 150));
-                    }
-                    return resp;
-                }).catch(function(err) {
-                    if (_diagFetchFails.length < 20) {
-                        _diagFetchFails.push('ERR ' + url.substring(0, 150) + ': ' + err);
-                        console.error('[DIAG-FETCH-ERR] ' + url.substring(0, 150) + ': ' + err);
-                    }
-                    throw err;
-                });
-            };
-        }
-
-        // Patch XHR open/send to track failures
-        if (window.XMLHttpRequest) {
-            var _origXhrOpen = XMLHttpRequest.prototype.open;
-            var _origXhrSend = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.open = function(method, url) {
-                this.__diagUrl = url;
-                return _origXhrOpen.apply(this, arguments);
-            };
-            var _origXhrSendPatched = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.send = function() {
-                var xhr = this;
-                var url = xhr.__diagUrl || '';
-                xhr.addEventListener('error', function() {
-                    if (_diagXhrFails.length < 20) {
-                        _diagXhrFails.push('NETERR ' + url.substring(0, 150));
-                        console.error('[DIAG-XHR-ERR] Network error: ' + url.substring(0, 150));
-                    }
-                });
-                xhr.addEventListener('load', function() {
-                    if (xhr.status >= 400 && _diagXhrFails.length < 20) {
-                        _diagXhrFails.push(xhr.status + ' ' + url.substring(0, 150));
-                        console.error('[DIAG-XHR-FAIL] ' + xhr.status + ' ' + url.substring(0, 150));
-                    }
-                });
-                return _origXhrSendPatched.apply(this, arguments);
-            };
-        }
-
-        // Periodic state probe - runs every 3s for first 90s
-        var _diagInterval = setInterval(function() {
-            _diagProbeCount++;
-            var elapsed = ((Date.now() - _diagStartTime) / 1000).toFixed(1);
-            var state = {
-                t: elapsed + 's',
-                hasConfig: !!window.Config,
-                hasGui: !!window.gui,
-                hasIsoEngine: !!window.isoEngine,
-                hasDofus: !!window.dofus,
-                imgOk: _diagImageLoads,
-                imgFail: _diagImageErrors
-            };
-
-            if (window.Config) {
-                state.assetsUrl = (window.Config.assetsUrl || '').substring(0, 80);
-                state.uiUrl = (window.Config.uiUrl || '').substring(0, 80);
-                state.imgCrossOrigin = window.Config.imgCrossOrigin;
-                state.language = window.Config.language;
-            }
-
-            if (window.isoEngine) {
-                var ie = window.isoEngine;
-                state.mapLoading = ie._isMapLoading;
-                state.fadeIn = ie._loadingFadeInTransitionRunning;
-                state.waitMsg = ie._waitingForMessage;
-                if (ie.mapRenderer) {
-                    state.mapId = ie.mapRenderer.mapId;
-                    state.mapReady = ie.mapRenderer.isReady;
-                    state.hasMap = !!ie.mapRenderer.map;
-                }
-                if (ie._loadingProgress && ie._loadingProgress.progressEgg) {
-                    state.eggAlpha = ie._loadingProgress.progressEgg.alpha;
-                }
-                if (ie.mapScene) {
-                    state.sceneW = ie.mapScene.w;
-                    state.sceneH = ie.mapScene.h;
-                }
-            }
-
-            if (window.gui) {
-                state.guiOpen = !!window.gui.isConnected;
-                state.guiNbChars = (window.gui.playerData && window.gui.playerData.characters) ?
-                    Object.keys(window.gui.playerData.characters).length : 0;
-            }
-
-            // Check WebGL context
-            try {
-                var canvases = document.querySelectorAll('canvas');
-                state.canvasCount = canvases.length;
-                if (canvases.length > 0) {
-                    var mainCanvas = canvases[0];
-                    state.canvasSize = mainCanvas.width + 'x' + mainCanvas.height;
-                    var glCtx = mainCanvas.getContext('webgl') || mainCanvas.getContext('webgl2') || mainCanvas.getContext('experimental-webgl');
-                    state.glContextLost = glCtx ? glCtx.isContextLost() : 'no-ctx';
-                }
-            } catch(e) { state.canvasErr = e.message; }
-
-            console.warn('[DIAG-PROBE #' + _diagProbeCount + '] ' + JSON.stringify(state));
-
-            if (_diagImageFails.length > 0 && _diagProbeCount <= 5) {
-                console.warn('[DIAG-IMG-FAILS] ' + JSON.stringify(_diagImageFails.slice(0, 10)));
-            }
-            if (_diagFetchFails.length > 0 && _diagProbeCount <= 5) {
-                console.warn('[DIAG-FETCH-FAILS] ' + JSON.stringify(_diagFetchFails.slice(0, 10)));
-            }
-            if (_diagXhrFails.length > 0 && _diagProbeCount <= 5) {
-                console.warn('[DIAG-XHR-FAILS] ' + JSON.stringify(_diagXhrFails.slice(0, 10)));
-            }
-
-            // Stop probing after 90 seconds
-            if (Date.now() - _diagStartTime > 90000) {
-                console.warn('[DIAG] Probe period ended. Final: imgOk=' + _diagImageLoads + ' imgFail=' + _diagImageErrors + ' fetchFail=' + _diagFetchFails.length + ' xhrFail=' + _diagXhrFails.length);
-                clearInterval(_diagInterval);
-            }
-        }, 3000);
-
-        console.warn('[DIAG] Runtime diagnostics probe initialized. Will report every 3s for 90s.');
-    } catch (e) {
-        try { console.error('[DIAG] Failed to initialize diagnostics: ' + e); } catch(e2) {}
-    }
+    // 17b. Diagnostics - Untouched native browser implementations
 
     // 18. Map Loading Transition & Black Screen Safeguard Watchdog
     // NOTE: Intrusive 4s watchdog disabled: game engine manages its own map loading state via changeMapTimeout
