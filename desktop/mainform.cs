@@ -99,6 +99,10 @@ namespace DofusFarm.UI
         private Button _btnFocus3;
         private Button _btnFocus4;
 
+        private Panel _commanderPanel;
+        private ComboBox _cmbCmdTarget;
+        private TextBox _txtCmdOrder;
+
         private System.Windows.Forms.Timer _syncTimer;
         private string _lastStateSignature = "";
         private int _isSyncing = 0;
@@ -176,6 +180,12 @@ namespace DofusFarm.UI
 
         private static string FindPythonExecutable()
         {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string appPortable = Path.Combine(baseDir, @"runtimes\python\python.exe");
+            if (File.Exists(appPortable)) return appPortable;
+            appPortable = Path.Combine(baseDir, @"python\python.exe");
+            if (File.Exists(appPortable)) return appPortable;
+
             string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
             foreach (string p in pathEnv.Split(';'))
             {

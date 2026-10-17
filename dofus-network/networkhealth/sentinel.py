@@ -258,6 +258,45 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             res["timestamp"] = time.time()
             self._send_json(200, res)
 
+        elif self.path == "/sentinel/parse_command":
+            cmd_text = req.get("command", "").strip()
+            target_slot = req.get("target_slot", "all")
+
+            cmd_lower = cmd_text.lower()
+            if any(w in cmd_lower for w in ["follow", "suis", "suivre", "lead"]):
+                directive = "FOLLOW"
+                confidence = 0.95
+                explanation = "Set instance to follow leader"
+            elif any(w in cmd_lower for w in ["join", "combat", "fight", "rejoins", "epee"]):
+                directive = "AUTO_JOIN_COMBAT"
+                confidence = 0.96
+                explanation = "Auto-join team fights on map"
+            elif any(w in cmd_lower for w in ["pass", "passe", "tour", "skip"]):
+                directive = "PASS_TURN"
+                confidence = 0.98
+                explanation = "Auto pass turn in combat after natural human delay"
+            elif any(w in cmd_lower for w in ["stop", "pause", "arret", "arrete"]):
+                directive = "STOP"
+                confidence = 0.99
+                explanation = "Stop all active automated co-op directives"
+            elif any(w in cmd_lower for w in ["farm", "mob", "recolte", "harvest", "craft"]):
+                directive = "AUTO_FARM"
+                confidence = 0.90
+                explanation = "Highlight and engage target farm resources"
+            else:
+                directive = "CUSTOM_ACTION"
+                confidence = 0.70
+                explanation = f"Custom action: {cmd_text}"
+
+            self._send_json(200, {
+                "status": "ok",
+                "directive": directive,
+                "confidence": confidence,
+                "explanation": explanation,
+                "target_slot": target_slot,
+                "timestamp": time.time(),
+            })
+
         else:
             self._send_json(404, {"error": "not_found"})
 

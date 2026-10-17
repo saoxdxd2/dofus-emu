@@ -838,4 +838,64 @@
             jitterCoordProp('screenY', dy);
         }
     } catch (e) {}
+
+    // 19. AI Commander & Co-Op Action Agent (Stealth Human-like Action Execution)
+    try {
+        var _activeDirectives = {};
+
+        var triggerNaturalClick = function(targetEl, offsetX, offsetY) {
+            if (!targetEl) return;
+            var rect = targetEl.getBoundingClientRect();
+            var cx = rect.left + (offsetX !== undefined ? offsetX : rect.width / 2);
+            var cy = rect.top + (offsetY !== undefined ? offsetY : rect.height / 2);
+
+            // Apply Section 18 Spatial Gaussian Jitter
+            var jitterX = cx + ((_instanceHash % 7) - 3) + (Math.random() * 2 - 1);
+            var jitterY = cy + (((_instanceHash >>> 4) % 7) - 3) + (Math.random() * 2 - 1);
+
+            // Natural human dwell time: 65 - 125 ms
+            var dwellMs = 65 + (Math.random() * 60 | 0);
+
+            var downEvt = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY });
+            targetEl.dispatchEvent(downEvt);
+
+            setTimeout(function() {
+                var upEvt = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY });
+                var clickEvt = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: jitterX, clientY: jitterY });
+                targetEl.dispatchEvent(upEvt);
+                targetEl.dispatchEvent(clickEvt);
+            }, dwellMs);
+        };
+
+        window.__executeCommanderDirective = function(directive) {
+            try {
+                if (typeof directive === 'string') directive = JSON.parse(directive);
+                var action = (directive && directive.action || '').toUpperCase();
+                console.log('[AI Commander] Received directive:', action, directive);
+
+                if (action === 'PASS_TURN') {
+                    var passBtn = document.querySelector('.pass-turn, .btn-turn, [data-action="pass"], .timeline-turn-pass');
+                    if (passBtn) {
+                        setTimeout(function() {
+                            triggerNaturalClick(passBtn);
+                        }, 400 + (Math.random() * 600 | 0));
+                    }
+                } else if (action === 'AUTO_JOIN_COMBAT') {
+                    var joinBtn = document.querySelector('.join-fight, .btn-join, .sword-fight, [data-action="join"]');
+                    if (joinBtn) {
+                        setTimeout(function() {
+                            triggerNaturalClick(joinBtn);
+                        }, 600 + (Math.random() * 800 | 0));
+                    }
+                } else if (action === 'FOLLOW') {
+                    _activeDirectives['follow'] = true;
+                } else if (action === 'STOP') {
+                    _activeDirectives = {};
+                }
+                return JSON.stringify({ status: 'ok', action: action, executed_at: Date.now() });
+            } catch(err) {
+                return JSON.stringify({ status: 'error', message: err.toString() });
+            }
+        };
+    } catch (e) {}
 })();

@@ -393,6 +393,29 @@ namespace DofusFarm.Engine
             return form;
         }
 
+        public void ExecuteScriptOnInstance(string instanceId, string script)
+        {
+            if (string.IsNullOrEmpty(script)) return;
+
+            if (string.IsNullOrEmpty(instanceId) || string.Equals(instanceId, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var kvp in _activeForms)
+                {
+                    if (kvp.Value != null && !kvp.Value.IsDisposed)
+                    {
+                        kvp.Value.ExecuteScriptAsync(script);
+                    }
+                }
+                return;
+            }
+
+            WebView2ClientForm form;
+            if (_activeForms.TryGetValue(instanceId, out form) && form != null && !form.IsDisposed)
+            {
+                form.ExecuteScriptAsync(script);
+            }
+        }
+
         private void SetState(string instanceId, ClientInstanceState newState)
         {
             _states[instanceId] = newState;
