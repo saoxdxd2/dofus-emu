@@ -238,10 +238,49 @@ class DofusBrainTransformer(nn.Module):
 
 
 class DofusDomainDistiller:
-    """Self-distills domain representations from DofusBrainTransformer into TRM-ACT."""
+    """Self-distills domain representations from DofusBrainTransformer into THX-01 and TRM-ACT.
+
+    1. THX-01 Distillation: Transfers deep linguistic, quest, and navigation intent knowledge
+       from the domain-native teacher into THX-01 for peak client inference performance.
+    2. TRM-ACT Distillation: Transfers tactical combat stance and continuous value representations.
+    """
 
     @classmethod
-    def distill_step(
+    def distill_to_thx01(
+        cls,
+        teacher_model: DofusBrainTransformer,
+        student_model: Any,  # THX-01 / ModernBERT AutoModelForSequenceClassification
+        teacher_tokens: torch.Tensor,
+        student_inputs: Dict[str, torch.Tensor],
+        labels: torch.Tensor,
+        temperature: float = 2.5,
+        alpha: float = 0.65,
+    ) -> torch.Tensor:
+        """Distills domain-native Dofus knowledge into THX-01 for fast, zero-lag inference.
+
+        Computes:
+        L_total = (1 - alpha) * CE(student_logits, labels) + alpha * (T^2) * KL(student/T, teacher/T)
+        """
+        teacher_model.eval()
+        with torch.no_grad():
+            t_out = teacher_model(teacher_tokens)
+            t_logits = t_out["intent_logits"]
+
+        s_out = student_model(**student_inputs)
+        s_logits = s_out.logits
+
+        # Hard supervised loss
+        loss_ce = F.cross_entropy(s_logits, labels)
+
+        # Soft teacher distribution matching (dark knowledge)
+        p_teacher = F.softmax(t_logits / temperature, dim=-1)
+        log_p_student = F.log_softmax(s_logits / temperature, dim=-1)
+        loss_kl = F.kl_div(log_p_student, p_teacher, reduction="batchmean") * (temperature ** 2)
+
+        return (1.0 - alpha) * loss_ce + alpha * loss_kl
+
+    @classmethod
+    def distill_to_trm_combat(
         cls,
         teacher_model: DofusBrainTransformer,
         student_model: Any,  # TinyRecursiveReasoner (TRM-ACT)
@@ -252,13 +291,7 @@ class DofusDomainDistiller:
         temperature: float = 2.0,
         alpha: float = 0.6,
     ) -> torch.Tensor:
-        """Transfers domain knowledge from DofusBrainTransformer to TRM-ACT.
-
-        Combines:
-        1. Hard Cross-Entropy on true ground truth
-        2. Soft KL-Divergence matching Teacher policy logits
-        3. Feature MSE matching Teacher state value predictions
-        """
+        """Transfers domain knowledge from DofusBrainTransformer to TRM-ACT."""
         teacher_model.eval()
         with torch.no_grad():
             t_out = teacher_model(token_inputs)
@@ -286,3 +319,6 @@ class DofusDomainDistiller:
 
         total_loss = (1.0 - alpha) * (loss_ce + 0.05 * loss_mse) + alpha * loss_kl
         return total_loss
+
+    # Backward compatibility alias
+    distill_step = distill_to_trm_combat

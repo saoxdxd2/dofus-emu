@@ -102,6 +102,47 @@ class TestDofusNativeAI(unittest.TestCase):
         self.assertTrue(torch.is_tensor(loss))
         self.assertGreater(loss.item(), 0)
 
+    def test_distill_to_thx01(self) -> None:
+        vocab_size = len(self.tokenizer.vocab) + 20
+        teacher = DofusBrainTransformer(
+            vocab_size=vocab_size,
+            d_model=64,
+            nhead=4,
+            num_layers=2,
+            dim_feedforward=128,
+            max_seq_len=32,
+            num_policy_classes=4,
+            num_intent_classes=12,
+        )
+
+        class MockTHX01(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc = torch.nn.Linear(32, 12)
+            def forward(self, input_ids=None, attention_mask=None):
+                class Out:
+                    pass
+                o = Out()
+                o.logits = self.fc(torch.randn(input_ids.shape[0], 32))
+                return o
+
+        student_thx = MockTHX01()
+        teacher_tokens = torch.randint(0, vocab_size, (4, 16))
+        student_inputs = {"input_ids": torch.randint(0, 500, (4, 16))}
+        labels = torch.tensor([0, 1, 2, 6])
+
+        loss = DofusDomainDistiller.distill_to_thx01(
+            teacher_model=teacher,
+            student_model=student_thx,
+            teacher_tokens=teacher_tokens,
+            student_inputs=student_inputs,
+            labels=labels,
+            temperature=2.5,
+            alpha=0.65,
+        )
+        self.assertTrue(torch.is_tensor(loss))
+        self.assertGreater(loss.item(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
