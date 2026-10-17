@@ -348,15 +348,130 @@ def generate_natural_dataset() -> List[Dict[str, Any]]:
     random.seed(42)
     random.shuffle(samples)
 
-    # 13. Load existing 5,000 unique TACTICAL_COMBAT samples
-    if OUTPUT_FILE.exists():
-        try:
-            old_data = json.loads(OUTPUT_FILE.read_text(encoding="utf-8"))
-            combat_samples = [s for s in old_data if s.get("type") == "TACTICAL_COMBAT"]
-            print(f"Preserving {len(combat_samples)} existing tactical combat samples.")
-            samples.extend(combat_samples)
-        except Exception as e:
-            print(f"Error loading old combat samples: {e}")
+    # 13. Generate 5,000 perfectly balanced, physically grounded TACTICAL_COMBAT samples (1,250 per stance)
+    classes = [
+        {"name": "Iop", "ranged": False, "buff": "Puissance"},
+        {"name": "Cra", "ranged": True, "buff": "Tir Puissant"},
+        {"name": "Sram", "ranged": True, "buff": "Invisibilité"},
+        {"name": "Feca", "ranged": False, "buff": "Bouclier Féca"},
+        {"name": "Sacrier", "ranged": False, "buff": "Châtiment Forcé"},
+        {"name": "Eniripsa", "ranged": False, "buff": "Mot Stimulant"},
+        {"name": "Ecaflip", "ranged": False, "buff": "Roue de la Fortune"},
+        {"name": "Sadida", "ranged": True, "buff": "Puissance Sylvestre"},
+        {"name": "Enutrof", "ranged": True, "buff": "Cupidité"},
+        {"name": "Osamodas", "ranged": False, "buff": "Crapaud"},
+        {"name": "Pandawa", "ranged": False, "buff": "Picole"},
+        {"name": "Xelor", "ranged": False, "buff": "Dévouement"},
+    ]
+
+    mobs_low = [
+        ("Bouftou", 25, 60, "FIRE"),
+        ("Pious", 20, 50, "AIR"),
+        ("Prespic", 50, 110, "AIR"),
+        ("Sanglier", 70, 180, "EARTH"),
+        ("Porkass", 80, 160, "WATER"),
+        ("Chafer Archer", 90, 180, "EARTH"),
+        ("Gelée Bleue", 100, 180, "FIRE"),
+        ("Gelée Rouge", 100, 180, "WATER"),
+    ]
+
+    mobs_high = [
+        ("Kanigrou", 800, 1400, "FIRE"),
+        ("Craqueleur", 600, 1800, "WATER"),
+        ("Craqueleur des Plaines", 500, 900, "WATER"),
+        ("Trool", 1200, 2000, "EARTH"),
+        ("Meulou", 1800, 3000, "FIRE"),
+        ("Blop Coco Royal", 900, 1500, "EARTH"),
+        ("Koulosse", 2500, 4500, "AIR"),
+        ("Skeunk", 3000, 5000, "WATER"),
+        ("Minotoror", 3500, 5500, "AIR"),
+        ("Dark Vlad", 3500, 5500, "WATER"),
+        ("Dragon Cochon", 4000, 6000, "AIR"),
+    ]
+
+    count_per_stance = 1250
+    combat_samples = []
+    melee_classes = [c for c in classes if not c["ranged"]]
+    ranged_classes = [c for c in classes if c["ranged"]]
+
+    # 1. SHIELD_DEFENSE (Critical HP triage: char_hp <= 28%)
+    for _ in range(count_per_stance):
+        cls = random.choice(classes)
+        mob = random.choice(mobs_high + mobs_low)
+        char_lvl = random.randint(60, 150)
+        char_hp = random.randint(12, 28)
+        mob_hp = random.randint(mob[1], mob[2])
+        dist = random.randint(1, 8)
+        text = f"Class: {cls['name']} (Lvl {char_lvl}). Enemy: {mob[0]} (HP {mob_hp}, Weakness: {mob[3]}). Dist: {dist} cells. Player HP: {char_hp}%."
+        combat_samples.append({
+            "type": "TACTICAL_COMBAT",
+            "text": text,
+            "label": "SHIELD_DEFENSE",
+            "stance": "SHIELD_DEFENSE",
+            "value_target": 8.0,
+            "state_vector": [float(cls["ranged"]), char_hp / 100.0, 1.0, 0.5, mob_hp / 5000.0, dist / 10.0, 0.0, 0.0, 0.0, 0.0],
+            "rationale": f"Player HP is critical ({char_hp}%). Prioritize survival shields, heals, and disengagement."
+        })
+
+    # 2. BURST_LETHAL (Low mob HP execution: mob_hp <= 180)
+    for _ in range(count_per_stance):
+        cls = random.choice(classes)
+        mob = random.choice(mobs_low)
+        char_lvl = random.randint(60, 150)
+        char_hp = random.randint(50, 100)
+        mob_hp = random.randint(mob[1], mob[2])
+        dist = random.randint(1, 8)
+        text = f"Class: {cls['name']} (Lvl {char_lvl}). Enemy: {mob[0]} (HP {mob_hp}, Weakness: {mob[3]}). Dist: {dist} cells. Player HP: {char_hp}%."
+        combat_samples.append({
+            "type": "TACTICAL_COMBAT",
+            "text": text,
+            "label": "BURST_LETHAL",
+            "stance": "BURST_LETHAL",
+            "value_target": 15.0,
+            "state_vector": [float(cls["ranged"]), char_hp / 100.0, 1.0, 0.5, mob_hp / 5000.0, dist / 10.0, 0.0, 0.0, 0.0, 0.0],
+            "rationale": f"Enemy HP is low ({mob_hp} HP). Execute lethal burst with direct elemental damage."
+        })
+
+    # 3. BUFF_AND_ENGAGE (High HP mob + healthy character: mob_hp >= 600, char_hp >= 60%, close/mid range melee & buff classes)
+    for _ in range(count_per_stance):
+        cls = random.choice(melee_classes)
+        mob = random.choice(mobs_high)
+        char_lvl = random.randint(80, 180)
+        char_hp = random.randint(60, 100)
+        mob_hp = random.randint(mob[1], mob[2])
+        dist = random.randint(1, 8)
+        text = f"Class: {cls['name']} (Lvl {char_lvl}). Enemy: {mob[0]} (HP {mob_hp}, Weakness: {mob[3]}). Dist: {dist} cells. Player HP: {char_hp}%."
+        combat_samples.append({
+            "type": "TACTICAL_COMBAT",
+            "text": text,
+            "label": "BUFF_AND_ENGAGE",
+            "stance": "BUFF_AND_ENGAGE",
+            "value_target": 12.0,
+            "state_vector": [float(cls["ranged"]), char_hp / 100.0, 1.0, 0.5, mob_hp / 5000.0, dist / 10.0, 0.0, 0.0, 0.0, 0.0],
+            "rationale": f"High HP enemy ({mob_hp} HP). Buff {cls['buff']} on Turn 1 to maximize multi-turn damage."
+        })
+
+    # 4. TRAP_AND_KITE (Ranged control classes at distance: dist >= 5, mob_hp >= 600)
+    for _ in range(count_per_stance):
+        cls = random.choice(ranged_classes)
+        mob = random.choice(mobs_high)
+        char_lvl = random.randint(80, 180)
+        char_hp = random.randint(45, 80)
+        mob_hp = random.randint(mob[1], mob[2])
+        dist = random.randint(5, 9)
+        text = f"Class: {cls['name']} (Lvl {char_lvl}). Enemy: {mob[0]} (HP {mob_hp}, Weakness: {mob[3]}). Dist: {dist} cells. Player HP: {char_hp}%."
+        combat_samples.append({
+            "type": "TACTICAL_COMBAT",
+            "text": text,
+            "label": "TRAP_AND_KITE",
+            "stance": "TRAP_AND_KITE",
+            "value_target": 10.0,
+            "state_vector": [float(cls["ranged"]), char_hp / 100.0, 1.0, 0.5, mob_hp / 5000.0, dist / 10.0, 0.0, 0.0, 0.0, 0.0],
+            "rationale": f"Maintain range ({dist} cells) with {cls['name']}. Deploy traps, pushback and kite."
+        })
+
+    random.shuffle(combat_samples)
+    samples.extend(combat_samples)
 
     # Remove duplicates
     seen_texts = set()
