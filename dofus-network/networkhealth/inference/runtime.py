@@ -320,11 +320,18 @@ class MultiInstanceNetworkHealth:
             )
         return self._engines[anon_key]
 
+    def get_robust_zscore(self, instance_id: str, rtt_ms: float | None) -> float:
+        tracker = self.masker.get_tracker(instance_id)
+        return tracker.robust_zscore(rtt_ms)
+
     def observe(self, instance_id: str, observation: Observation) -> ForecastResult | None:
         """Process an observation for a specific game instance with identity masking."""
         engine = self.get_or_create(instance_id)
 
         # Apply per-instance temporal desynchronization and baseline normalization
+        tracker = self.masker.get_tracker(instance_id)
+        tracker.update(observation.rtt_ms)
+
         masked_ts = self.masker.desynchronize_timestamp(observation.timestamp, instance_id)
         anon_obs = Observation(
             timestamp=masked_ts,

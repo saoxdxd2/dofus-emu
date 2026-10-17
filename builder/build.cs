@@ -261,6 +261,37 @@ namespace DofusBuild
                         File.Copy(file, file.Replace(repoClient, stageClient), true);
                 }
 
+                // Stage dofus-network AI engine & trained TRM-MoE checkpoint
+                string repoNetwork = Path.Combine(RepoRoot, "dofus-network");
+                if (Directory.Exists(repoNetwork))
+                {
+                    string stageNetwork = Path.Combine(stageDir, "dofus-network");
+                    Directory.CreateDirectory(stageNetwork);
+                    foreach (string dir in Directory.GetDirectories(repoNetwork, "*", SearchOption.AllDirectories))
+                    {
+                        if (dir.Contains("__pycache__") || dir.Contains(".git") || dir.Contains(".pytest_cache")) continue;
+                        Directory.CreateDirectory(dir.Replace(repoNetwork, stageNetwork));
+                    }
+                    foreach (string file in Directory.GetFiles(repoNetwork, "*", SearchOption.AllDirectories))
+                    {
+                        if (file.EndsWith(".pyc") || file.Contains("__pycache__")) continue;
+                        string destFile = file.Replace(repoNetwork, stageNetwork);
+                        string parent = Path.GetDirectoryName(destFile);
+                        if (!Directory.Exists(parent)) Directory.CreateDirectory(parent);
+                        File.Copy(file, destFile, true);
+                    }
+                }
+
+                // Write requirements.txt and helper scripts
+                string reqPath = Path.Combine(stageDir, "requirements.txt");
+                File.WriteAllText(reqPath, "torch>=2.0.0\r\ntransformers>=4.48.0\r\nlaya>=0.4.0\r\nsafetensors>=0.4.0\r\n");
+
+                string sentinelBat = Path.Combine(stageDir, "start-sentinel.bat");
+                File.WriteAllText(sentinelBat, "@echo off\r\ncd /d \"%~dp0\"\r\ntitle Dofus Farm AI Sentinel Daemon\r\necho Starting Singleton AI Sentinel on http://127.0.0.1:8890...\r\npython dofus-network\\networkhealth\\sentinel.py\r\npause\r\n");
+
+                string installPyBat = Path.Combine(stageDir, "install-python-ai.bat");
+                File.WriteAllText(installPyBat, "@echo off\r\ncd /d \"%~dp0\"\r\necho ====================================================\r\necho   DOFUS FARM AI SENTINEL PYTHON DEPENDENCY SETUP   \r\necho ====================================================\r\nwhere python >nul 2>nul\r\nif %errorlevel% neq 0 (\r\n  echo Python not found! Please download and install Python 3.12+:\r\n  echo https://www.python.org/downloads/\r\n  echo Make sure to check 'Add python.exe to PATH' during installation!\r\n  pause\r\n  exit /b 1\r\n)\r\necho Installing required AI packages (torch, transformers, laya)...\r\npython -m pip install -r requirements.txt\r\necho.\r\necho [SUCCESS] All Python AI libraries installed!\r\npause\r\n");
+
                 if (File.Exists(payloadZip)) File.Delete(payloadZip);
                 ZipFile.CreateFromDirectory(stageDir, payloadZip, CompressionLevel.Fastest, false);
 

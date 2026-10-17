@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -289,6 +291,81 @@ func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.D
 	return conn, nil
 }
 
+type ProxyTelemetry struct {
+	mu          sync.RWMutex
+	lastRTTMs   float64
+	lastRTTTime time.Time
+	rttHistory  []float64
+	connsTotal  uint64
+	connsActive int64
+	connsFailed uint64
+	bytesSent   uint64
+	bytesRecv   uint64
+}
+
+func (t *ProxyTelemetry) recordDial(rttMs float64, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.connsTotal++
+	if err != nil {
+		t.connsFailed++
+		return
+	}
+	t.connsActive++
+	t.lastRTTMs = rttMs
+	t.lastRTTTime = time.Now()
+	t.rttHistory = append(t.rttHistory, rttMs)
+	if len(t.rttHistory) > 32 {
+		t.rttHistory = t.rttHistory[len(t.rttHistory)-32:]
+	}
+}
+
+func (t *ProxyTelemetry) recordClose(sent, recv int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.connsActive > 0 {
+		t.connsActive--
+	}
+	if sent > 0 {
+		t.bytesSent += uint64(sent)
+	}
+	if recv > 0 {
+		t.bytesRecv += uint64(recv)
+	}
+}
+
+type TelemetrySnapshot struct {
+	lastRTTMs   float64
+	avgRTTMs    float64
+	connsTotal  uint64
+	connsActive int64
+	connsFailed uint64
+	bytesSent   uint64
+	bytesRecv   uint64
+}
+
+func (t *ProxyTelemetry) snapshot() TelemetrySnapshot {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	avg := 0.0
+	if len(t.rttHistory) > 0 {
+		sum := 0.0
+		for _, v := range t.rttHistory {
+			sum += v
+		}
+		avg = sum / float64(len(t.rttHistory))
+	}
+	return TelemetrySnapshot{
+		lastRTTMs:   t.lastRTTMs,
+		avgRTTMs:    avg,
+		connsTotal:  t.connsTotal,
+		connsActive: t.connsActive,
+		connsFailed: t.connsFailed,
+		bytesSent:   t.bytesSent,
+		bytesRecv:   t.bytesRecv,
+	}
+}
+
 type ProxyServer struct {
 	resolver       *FastDNSResolver
 	upstreamURL    *url.URL
@@ -311,6 +388,7 @@ type ProxyServer struct {
 	cachedDisguise string
 	disguiseBytes  []byte
 	client         *http.Client
+	telemetry      ProxyTelemetry
 }
 
 func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet bool, port int, authToken, serial, uuid, model, manufacturer, ua, glVendor, glRenderer, maxTextureSize string) *ProxyServer {
@@ -426,6 +504,14 @@ func (p *ProxyServer) sanitizeRequestHeaders(h http.Header) {
 }
 
 func (p *ProxyServer) dialUpstreamOrDirect(ctx context.Context, dest string) (net.Conn, error) {
+	start := time.Now()
+	conn, err := p.doDial(ctx, dest)
+	rttMs := float64(time.Since(start).Microseconds()) / 1000.0
+	p.telemetry.recordDial(rttMs, err)
+	return conn, err
+}
+
+func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error) {
 	if p.upstreamURL != nil {
 		scheme := strings.ToLower(p.upstreamURL.Scheme)
 		if strings.HasPrefix(scheme, "socks5") {
@@ -490,10 +576,20 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if r.Method == http.MethodGet && r.URL.Path == "/__health" && (r.Host == "" || strings.HasPrefix(r.Host, "127.0.0.1") || strings.HasPrefix(r.Host, "localhost")) {
+	if r.Method == http.MethodGet && (r.URL.Path == "/__health" || r.URL.Path == "/__telemetry") && (r.Host == "" || strings.HasPrefix(r.Host, "127.0.0.1") || strings.HasPrefix(r.Host, "localhost")) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":"ok","port":%d,"model":"%s"}`, p.port, p.model)
+		snap := p.telemetry.snapshot()
+		_, _ = fmt.Fprintf(w, `{"status":"ok","port":%d,"model":"%s","rtt_ms":%.2f,"rtt_avg_ms":%.2f,"sent_bytes":%d,"recv_bytes":%d,"conns_total":%d,"conns_failed":%d,"conns_active":%d,"timestamp":%d}`,
+			p.port, p.model, snap.lastRTTMs, snap.avgRTTMs, snap.bytesSent, snap.bytesRecv, snap.connsTotal, snap.connsFailed, snap.connsActive, time.Now().Unix())
+		return
+	}
+
+	if r.Method == http.MethodGet && r.URL.Path == "/__audit" && (r.Host == "" || strings.HasPrefix(r.Host, "127.0.0.1") || strings.HasPrefix(r.Host, "localhost")) {
+		w.Header().Set("Content-Type", "application/json")
+		auditData := p.auditOutboundIP()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(auditData)
 		return
 	}
 
@@ -528,6 +624,86 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (p *ProxyServer) auditOutboundIP() []byte {
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return p.dialUpstreamOrDirect(ctx, addr)
+		},
+		ResponseHeaderTimeout: 5 * time.Second,
+	}
+	client := &http.Client{Transport: tr, Timeout: 6 * time.Second}
+	resp, err := client.Get("http://ip-api.com/json/?fields=status,message,country,city,isp,org,as,query,mobile,proxy,hosting")
+	if err != nil {
+		res, _ := json.Marshal(map[string]interface{}{
+			"status":     "error",
+			"port":       p.port,
+			"model":      p.model,
+			"message":    err.Error(),
+			"verdict":    "LOOKUP_OFFLINE",
+			"risk_score": 50,
+		})
+		return res
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var info struct {
+		Status  string `json:"status"`
+		Query   string `json:"query"`
+		ISP     string `json:"isp"`
+		Org     string `json:"org"`
+		AS      string `json:"as"`
+		Country string `json:"country"`
+		City    string `json:"city"`
+		Mobile  bool   `json:"mobile"`
+		Proxy   bool   `json:"proxy"`
+		Hosting bool   `json:"hosting"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &info); err != nil || info.Status != "success" {
+		res, _ := json.Marshal(map[string]interface{}{
+			"status":     "error",
+			"port":       p.port,
+			"model":      p.model,
+			"message":    "upstream_ip_api_error",
+			"verdict":    "UNKNOWN",
+			"risk_score": 50,
+		})
+		return res
+	}
+
+	riskScore := 0
+	verdict := "SAFE_RESIDENTIAL"
+	if info.Hosting {
+		riskScore = 85
+		verdict = "DANGEROUS_DATACENTER"
+	} else if info.Mobile {
+		riskScore = 0
+		verdict = "PRISTINE_CELLULAR_4G"
+	} else if info.Proxy {
+		riskScore = 45
+		verdict = "SUSPICIOUS_PUBLIC_PROXY"
+	}
+
+	res, _ := json.Marshal(map[string]interface{}{
+		"status":      "ok",
+		"port":        p.port,
+		"model":       p.model,
+		"outbound_ip": info.Query,
+		"isp":         info.ISP,
+		"org":         info.Org,
+		"asn":         info.AS,
+		"country":     info.Country,
+		"city":        info.City,
+		"is_cellular": info.Mobile,
+		"is_hosting":  info.Hosting,
+		"is_proxy":    info.Proxy,
+		"risk_score":  riskScore,
+		"verdict":     verdict,
+	})
+	return res
+}
+
 func tuneTCPConn(c net.Conn) {
 	_ = c.SetDeadline(time.Time{})
 	if tc, ok := c.(*net.TCPConn); ok {
@@ -545,17 +721,20 @@ func halfCloseOrClose(c net.Conn) {
 	}
 }
 
-func pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn) {
+func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn) {
 	tuneTCPConn(clientConn)
 	tuneTCPConn(destConn)
 
+	var sentBytes, recvBytes int64
 	done := make(chan struct{}, 2)
 	go func() {
 		if clientBuf != nil && clientBuf.Reader.Buffered() > 0 {
-			_, _ = io.CopyN(destConn, clientBuf, int64(clientBuf.Reader.Buffered()))
+			n, _ := io.CopyN(destConn, clientBuf, int64(clientBuf.Reader.Buffered()))
+			atomic.AddInt64(&sentBytes, n)
 		}
 		buf := bufPool.Get().([]byte)
-		_, _ = io.CopyBuffer(destConn, clientConn, buf)
+		n, _ := io.CopyBuffer(destConn, clientConn, buf)
+		atomic.AddInt64(&sentBytes, n)
 		bufPool.Put(buf)
 		halfCloseOrClose(destConn)
 		done <- struct{}{}
@@ -563,7 +742,8 @@ func pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.C
 
 	go func() {
 		buf := bufPool.Get().([]byte)
-		_, _ = io.CopyBuffer(clientConn, destConn, buf)
+		n, _ := io.CopyBuffer(clientConn, destConn, buf)
+		atomic.AddInt64(&recvBytes, n)
 		bufPool.Put(buf)
 		halfCloseOrClose(clientConn)
 		done <- struct{}{}
@@ -578,6 +758,7 @@ func pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.C
 	}
 	_ = destConn.Close()
 	_ = clientConn.Close()
+	p.telemetry.recordClose(atomic.LoadInt64(&sentBytes), atomic.LoadInt64(&recvBytes))
 }
 
 func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -611,7 +792,7 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if !p.quiet && strings.Contains(dest, "ankama") {
 		log.Printf("[TUNNEL] CONNECT -> %s (%s)", dest, p.model)
 	}
-	pipeTunnel(clientConn, clientBuf, destConn)
+	p.pipeTunnel(clientConn, clientBuf, destConn)
 }
 
 func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -645,7 +826,7 @@ func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		clientConn.Close()
 		return
 	}
-	pipeTunnel(clientConn, clientBuf, destConn)
+	p.pipeTunnel(clientConn, clientBuf, destConn)
 }
 
 func atomicReplaceFile(src, dst string) error {

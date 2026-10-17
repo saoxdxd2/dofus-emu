@@ -397,6 +397,25 @@ namespace DofusStandaloneSetup
                         }
                     }
 
+                    string targetNetwork = Path.Combine(TargetDir, "dofus-network");
+                    if (!Directory.Exists(targetNetwork))
+                    {
+                        string localNet = ResolveLocalFallbackFile("dofus-network");
+                        if (!string.IsNullOrEmpty(localNet) && Directory.Exists(localNet))
+                        {
+                            CopyDirectory(localNet, targetNetwork);
+                        }
+                    }
+                    foreach (string hFile in new[] { "requirements.txt", "start-sentinel.bat", "install-python-ai.bat" })
+                    {
+                        string dest = Path.Combine(TargetDir, hFile);
+                        if (!File.Exists(dest))
+                        {
+                            string src = ResolveLocalFallbackFile(hFile);
+                            if (!string.IsNullOrEmpty(src) && File.Exists(src)) File.Copy(src, dest, true);
+                        }
+                    }
+
                     if (!File.Exists(Path.Combine(targetTemplateAvd, "userdata-golden.img")))
                     {
                         string localTpl = ResolveLocalFallbackFile("template.zip");
@@ -567,9 +586,13 @@ namespace DofusStandaloneSetup
                     {
                         Report(70, "Setting up isolated browser storage and mobile disguise profiles...");
                         Thread.Sleep(150);
-                        Report(90, "Configuring GPU WebGL acceleration and local virtual host mapping...");
+                        Report(82, "Configuring GPU WebGL acceleration and local virtual host mapping...");
                         Thread.Sleep(150);
                     }
+
+                    // 4b. Configure Python AI Sentinel Environment & Dependencies
+                    Report(88, "Checking Python environment for AI Network Health & Sentinel...");
+                    SetupPythonEnvironment(TargetDir);
 
                     // 5. Desktop Shortcut, Registry & Environment Variables
                     Report(96, "Creating desktop shortcut & finalizing installation...");
@@ -689,6 +712,90 @@ namespace DofusStandaloneSetup
             sc.Description = desc;
             if (File.Exists(iconPath)) sc.IconLocation = iconPath + ",0";
             sc.Save();
+        }
+
+        private void SetupPythonEnvironment(string targetDir)
+        {
+            try
+            {
+                string pyExe = FindPythonExecutable();
+                string reqFile = Path.Combine(targetDir, "requirements.txt");
+
+                if (!string.IsNullOrEmpty(pyExe) && File.Exists(reqFile))
+                {
+                    Report(88, "Checking and installing Python AI dependencies (torch, transformers, laya)...");
+                    ProcessStartInfo psi = new ProcessStartInfo
+                    {
+                        FileName = pyExe,
+                        Arguments = string.Format("-m pip install -r \"{0}\" --no-warn-script-location -q", reqFile),
+                        WorkingDirectory = targetDir,
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    };
+                    using (Process proc = Process.Start(psi))
+                    {
+                        if (proc != null)
+                        {
+                            if (!proc.WaitForExit(60000))
+                            {
+                                try { proc.Kill(); } catch { }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    Report(88, "Python not detected. Created install-python-ai.bat for one-click setup.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Report(88, "Python setup note: " + ex.Message);
+            }
+        }
+
+        private static string FindPythonExecutable()
+        {
+            string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+            foreach (string p in pathEnv.Split(';'))
+            {
+                if (string.IsNullOrEmpty(p)) continue;
+                try
+                {
+                    string candidate = Path.Combine(p.Trim(), "python.exe");
+                    if (File.Exists(candidate)) return candidate;
+                }
+                catch { }
+            }
+
+            string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string pyPrograms = Path.Combine(localApp, @"Programs\Python");
+            if (Directory.Exists(pyPrograms))
+            {
+                try
+                {
+                    foreach (string dir in Directory.GetDirectories(pyPrograms, "Python3*"))
+                    {
+                        string candidate = Path.Combine(dir, "python.exe");
+                        if (File.Exists(candidate)) return candidate;
+                    }
+                }
+                catch { }
+            }
+
+            foreach (string p in pathEnv.Split(';'))
+            {
+                if (string.IsNullOrEmpty(p)) continue;
+                try
+                {
+                    string candidate = Path.Combine(p.Trim(), "py.exe");
+                    if (File.Exists(candidate)) return candidate;
+                }
+                catch { }
+            }
+
+            return null;
         }
 
         public static void KillLingeringProcesses()

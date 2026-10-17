@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Media;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -93,9 +95,16 @@ namespace DofusFarm.Engine
         window.__onDeepLinkCallback = function(urlStr) {
             try {
                 console.log('[Auth] Processing DeepLink callback URL:', urlStr);
-                var safeUrl = (urlStr || '').replace('dofustouch://', 'https://dofus.local/');
+                var safeUrl = urlStr || '';
+                if (safeUrl.indexOf('login-authorized') !== -1 || (safeUrl.indexOf('code=') !== -1 && safeUrl.indexOf('dofustouch://') === -1)) {
+                    var qIdx = safeUrl.indexOf('?');
+                    var qs = qIdx !== -1 ? safeUrl.substring(qIdx) : '';
+                    safeUrl = 'dofustouch://authorized' + qs;
+                }
+                var normalizedStr = safeUrl;
+                safeUrl = safeUrl.replace('dofustouch://', 'https://dofus.local/');
                 var parsedUrl = new URL(safeUrl);
-                var host = parsedUrl.host || 'authorized';
+                var host = 'authorized';
                 var path = parsedUrl.pathname || '';
                 var queryString = parsedUrl.search ? parsedUrl.search.substring(1) : '';
 
@@ -107,7 +116,7 @@ namespace DofusFarm.Engine
                     });
                 }
 
-                var deepLinkData = { host: host, path: path, queryString: queryString, url: urlStr };
+                var deepLinkData = { host: 'authorized', path: path, queryString: queryString, url: normalizedStr };
                 if (window.IonicDeeplink && typeof window.IonicDeeplink.fire === 'function') {
                     window.IonicDeeplink.fire(deepLinkData);
                 }
@@ -539,11 +548,122 @@ namespace DofusFarm.Engine
                 {
                     CloseOAuthDialog();
                 }
+                else if (json.Contains("\"type\":\"MOD_WHISPER_ALERT\""))
+                {
+                    HandleModWhisperAlert(json);
+                }
             }
             catch (Exception ex)
             {
                 _logCallback?.Invoke(string.Format("[{0}] WebMessage handling error: {1}", _instanceId, ex.Message));
             }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool FlashWindow(IntPtr hwnd, bool bInvert);
+
+        private void HandleModWhisperAlert(string json)
+        {
+            try
+            {
+                Match mSender = Regex.Match(json, "\"sender\"\\s*:\\s*\"([^\"]+)\"");
+                Match mText = Regex.Match(json, "\"text\"\\s*:\\s*\"([^\"]+)\"");
+                bool isMod = json.Contains("\"isMod\":true");
+                string sender = mSender.Success ? Regex.Unescape(mSender.Groups[1].Value) : "Unknown";
+                string text = mText.Success ? Regex.Unescape(mText.Groups[1].Value) : "";
+
+                _logCallback?.Invoke(string.Format("🚨 [{0}] {1} from '{2}': \"{3}\"",
+                    _instanceId, isMod ? "CRITICAL MODERATOR PM" : "Private Message", sender, text));
+
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action(() => TriggerVisualAlert(sender, text, isMod)));
+                }
+                else
+                {
+                    TriggerVisualAlert(sender, text, isMod);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] Error parsing MOD_WHISPER_ALERT: {1}", _instanceId, ex.Message));
+            }
+        }
+
+        private void TriggerVisualAlert(string sender, string text, bool isMod)
+        {
+            try
+            {
+                FlashWindow(Handle, true);
+                SystemSounds.Exclamation.Play();
+
+                if (isMod)
+                {
+                    TopMost = true;
+                    TopMost = false;
+                    BringToFront();
+                }
+
+                if (_lblStatus != null)
+                {
+                    _lblStatus.Text = string.Format("⚠️ [{0}] {1}: {2}", isMod ? "MOD ALERT" : "WHISPER", sender, text.Length > 40 ? text.Substring(0, 40) + "..." : text);
+                    _lblStatus.ForeColor = isMod ? Color.FromArgb(239, 68, 68) : Color.FromArgb(56, 189, 248);
+                }
+
+                // Dispatch to Discord Webhook if configured
+                string webhookUrl = Environment.GetEnvironmentVariable("DOFUS_MOD_WEBHOOK");
+                if (!string.IsNullOrEmpty(webhookUrl))
+                {
+                    Task.Run(() => DispatchDiscordAlert(webhookUrl, _instanceId, _displayName, sender, text, isMod));
+                }
+
+                // Query central AI Sentinel (singleton Laya) for threat triage
+                Task.Run(() => QueryCentralSentinel(sender, text, isMod));
+            }
+            catch { }
+        }
+
+        private void QueryCentralSentinel(string sender, string text, bool isMod)
+        {
+            try
+            {
+                using (var client = new System.Net.WebClient())
+                {
+                    client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
+                    string escapedSender = sender.Replace("\"", "\\\"");
+                    string escapedText = text.Replace("\"", "\\\"");
+                    string payload = string.Format("{{\"instance_id\":\"{0}\",\"sender\":\"{1}\",\"text\":\"{2}\",\"is_mod\":{3}}}",
+                        _instanceId, escapedSender, escapedText, isMod ? "true" : "false");
+                    string response = client.UploadString("http://127.0.0.1:8890/sentinel/eval_chat", "POST", payload);
+                    if (!string.IsNullOrEmpty(response) && response.Contains("\"is_threat\":true"))
+                    {
+                        Match mUrgency = Regex.Match(response, "\"urgency\"\\s*:\\s*\"([^\"]+)\"");
+                        string urgency = mUrgency.Success ? mUrgency.Groups[1].Value : "HIGH";
+                        _logCallback?.Invoke(string.Format("🧠 [{0}] Central Laya Sentinel flagged threat ({1}): \"{2}\"", _instanceId, urgency, text));
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static void DispatchDiscordAlert(string webhookUrl, string instanceId, string displayName, string sender, string text, bool isMod)
+        {
+            try
+            {
+                using (var client = new System.Net.WebClient())
+                {
+                    client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
+                    string escapedSender = sender.Replace("\"", "\\\"");
+                    string escapedText = text.Replace("\"", "\\\"");
+                    string color = isMod ? "15158332" : "3447003"; // Red or Blue
+                    string title = isMod ? "🚨 MODERATOR IN-GAME ALERT" : "💬 In-Game Private Message";
+                    string payload = string.Format(
+                        "{{\"embeds\":[{{\"title\":\"{0}\",\"description\":\"**Account**: {1} ({2})\\n**Sender**: {3}\\n**Message**: {4}\",\"color\":{5}}}]}}",
+                        title, instanceId, displayName, escapedSender, escapedText, color);
+                    client.UploadString(webhookUrl, "POST", payload);
+                }
+            }
+            catch { }
         }
 
         private void OnNewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
@@ -570,7 +690,15 @@ namespace DofusFarm.Engine
 
             if (_webView != null && _webView.CoreWebView2 != null)
             {
-                string escapedUri = uri.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\r", "").Replace("\n", "");
+                string normalizedUri = uri;
+                if (normalizedUri.Contains("login-authorized") || (normalizedUri.Contains("code=") && !normalizedUri.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase)))
+                {
+                    int qIdx = normalizedUri.IndexOf('?');
+                    string qs = qIdx >= 0 ? normalizedUri.Substring(qIdx) : "";
+                    normalizedUri = "dofustouch://authorized" + qs;
+                }
+
+                string escapedUri = normalizedUri.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\r", "").Replace("\n", "");
                 string dispatchJs = string.Format(
                     "(function() {{" +
                     "  var target = '{0}';" +

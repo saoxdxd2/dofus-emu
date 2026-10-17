@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
-from .runtime import ForecastResult, NetworkHealthInference, Observation, RollingWindow
+from .runtime import (
+    ForecastResult,
+    MultiInstanceNetworkHealth,
+    NetworkHealthInference,
+    Observation,
+    RollingWindow,
+)
 
-__all__ = ["ForecastResult", "NetworkHealthInference", "Observation", "RollingWindow"]
+__all__ = [
+    "ForecastResult",
+    "MultiInstanceNetworkHealth",
+    "NetworkHealthInference",
+    "Observation",
+    "RollingWindow",
+]

@@ -136,10 +136,72 @@ namespace DofusFarm.UI
         private void SafeInvoke(Action action) { SafeUi(action, false); }
         private void SafeBeginInvoke(Action action) { SafeUi(action, true); }
 
+        private Process _sentinelProcess;
+
         public MainForm()
         {
             InitializeComponent();
             InitializeEngine();
+            TryStartSingletonSentinel();
+        }
+
+        private void TryStartSingletonSentinel()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    string sentinelScript = Path.Combine(baseDir, @"dofus-network\networkhealth\sentinel.py");
+                    if (!File.Exists(sentinelScript)) return;
+
+                    string pyExe = FindPythonExecutable();
+                    if (string.IsNullOrEmpty(pyExe)) return;
+
+                    ProcessStartInfo psi = new ProcessStartInfo
+                    {
+                        FileName = pyExe,
+                        Arguments = string.Format("\"{0}\"", sentinelScript),
+                        WorkingDirectory = baseDir,
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    };
+                    _sentinelProcess = Process.Start(psi);
+                    Log("🧠 Singleton AI Sentinel daemon auto-started (Port 8890).");
+                }
+                catch { }
+            });
+        }
+
+        private static string FindPythonExecutable()
+        {
+            string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+            foreach (string p in pathEnv.Split(';'))
+            {
+                if (string.IsNullOrEmpty(p)) continue;
+                try
+                {
+                    string candidate = Path.Combine(p.Trim(), "python.exe");
+                    if (File.Exists(candidate)) return candidate;
+                }
+                catch { }
+            }
+            string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string pyPrograms = Path.Combine(localApp, @"Programs\Python");
+            if (Directory.Exists(pyPrograms))
+            {
+                try
+                {
+                    foreach (string dir in Directory.GetDirectories(pyPrograms, "Python3*"))
+                    {
+                        string candidate = Path.Combine(dir, "python.exe");
+                        if (File.Exists(candidate)) return candidate;
+                    }
+                }
+                catch { }
+            }
+            return null;
         }
 
         private static ComboBox CreateCombo(int x, int y, int width, object[] items, int selectedIndex)
@@ -761,7 +823,9 @@ namespace DofusFarm.UI
                                     Proxy = im.Proxy
                                 };
                                 _webViewBackend.Start(opts);
-                                Thread.Sleep(600);
+                                // Natural human stagger: 2.5s - 3.8s between client connection handshakes
+                                int naturalStaggerMs = 2500 + new Random().Next(1300);
+                                Thread.Sleep(naturalStaggerMs);
                             }
                         }
                     }
@@ -1153,6 +1217,18 @@ namespace DofusFarm.UI
                 if (_keepInstancesOnExit) Log("Instances left running on purpose - next Launch will attach to them instantly.");
                 else _engine.StopAll();
             }
+
+            if (_sentinelProcess != null)
+            {
+                try
+                {
+                    if (!_sentinelProcess.HasExited) _sentinelProcess.Kill();
+                    _sentinelProcess.Dispose();
+                }
+                catch { }
+                finally { _sentinelProcess = null; }
+            }
+
             base.OnFormClosing(e);
         }
 
