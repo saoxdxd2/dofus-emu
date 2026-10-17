@@ -202,7 +202,7 @@ namespace DofusFarm.Engine
                     // Use PROCESS_BASIC_INFORMATION to get PEB address
                     NativeMethods.PROCESS_BASIC_INFORMATION_X pbi = new NativeMethods.PROCESS_BASIC_INFORMATION_X();
                     uint returnLen = 0;
-                    uint err = NativeMethods.NtQueryInformationProcess(hProcess, 6, ref pbi, (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(NativeMethods.PROCESS_BASIC_INFORMATION_X)), ref returnLen);
+                    uint err = NativeMethods.NtQueryInformationProcess(hProcess, 0, ref pbi, (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(NativeMethods.PROCESS_BASIC_INFORMATION_X)), ref returnLen);
                     if (err == 0 && pbi.PebBaseAddress != IntPtr.Zero)
                     {
                         // Read the PEB structure from the remote process
@@ -242,7 +242,10 @@ namespace DofusFarm.Engine
                                             lock (_cmdLineLock)
                                             {
                                                 if (!_cmdLineCache.ContainsKey(pid))
+                                                {
+                                                    if (_cmdLineCache.Count > 512) _cmdLineCache.Clear();
                                                     _cmdLineCache[pid] = cmdLineRead;
+                                                }
                                             }
                                             return cmdLineRead;
                                         }

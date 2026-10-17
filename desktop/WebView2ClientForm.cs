@@ -489,7 +489,7 @@ namespace DofusFarm.Engine
                 }
 
                 // Performance & GPU rendering flags
-                args.Append("--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist ");
+                args.Append("--enable-gpu-rasterization --ignore-gpu-blocklist --use-angle=d3d11 --enable-webgl --enable-accelerated-2d-canvas ");
 
                 // Native mobile touch and automation suppression switches
                 args.Append("--touch-events=enabled --disable-blink-features=AutomationControlled ");
@@ -497,10 +497,13 @@ namespace DofusFarm.Engine
                 // Allow cross-origin requests from virtual host https://dofus.local to Ankama Auth & CDN
                 args.Append("--disable-web-security --allow-running-insecure-content ");
 
-                // Background CPU optimization: throttle background window timers to preserve host CPU
-                if (_options.EnableBackgroundThrottling)
+                // Background CPU optimization: Chromium throttles background-window timers by
+                // default; only opt out when the user disabled background throttling. The old
+                // code appended the disable switches with "=false" (Chromium switches are
+                // presence-only), so the option never actually changed anything.
+                if (!_options.EnableBackgroundThrottling)
                 {
-                    args.Append("--disable-background-timer-throttling=false --disable-renderer-backgrounding=false ");
+                    args.Append("--disable-background-timer-throttling --disable-renderer-backgrounding ");
                 }
 
                 envOptions.AdditionalBrowserArguments = args.ToString().Trim();
@@ -1059,45 +1062,7 @@ namespace DofusFarm.Engine
                     e.Request.Headers.SetHeader("User-Agent", ua);
                 }
 
-                // 3. Intercept static.ankama.com image assets to bypass missing CORS headers
-                if (uri.IndexOf("static.ankama.com", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    uri.IndexOf("s.ankama.com", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    var deferral = e.GetDeferral();
-                    Task.Run(() =>
-                    {
-                        try
-                        {
-                            var req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(uri);
-                            req.Method = "GET";
-                            req.UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
-                            req.Timeout = 8000;
-                            using (var resp = (System.Net.HttpWebResponse)req.GetResponse())
-                            {
-                                var mem = new MemoryStream();
-                                using (var s = resp.GetResponseStream())
-                                {
-                                    s.CopyTo(mem);
-                                }
-                                mem.Position = 0;
-                                string ct = resp.ContentType ?? "image/png";
-                                string headers = string.Format(
-                                    "Content-Type: {0}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\n",
-                                    ct);
-                                e.Response = _env.CreateWebResourceResponse(mem, (int)resp.StatusCode, resp.StatusDescription, headers);
-                            }
-                        }
-                        catch
-                        {
-                            // Fall back to natural browser request
-                        }
-                        finally
-                        {
-                            deferral.Complete();
-                        }
-                    });
-                    return;
-                }
+
             }
             catch (Exception ex)
             {

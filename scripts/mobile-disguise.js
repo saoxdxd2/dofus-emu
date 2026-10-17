@@ -770,32 +770,7 @@
     } catch (e) {}
 
     // 16. Natural Behavioral Desynchronization (~20ms Input & Touch Micro-Jitter)
-    try {
-        var baseInputJitter = ((_instanceHash % 11) + 1); // 1..11ms deterministic instance base
-        if (typeof Event !== 'undefined' && Event.prototype) {
-            var origTimeStampDesc = Object.getOwnPropertyDescriptor(Event.prototype, 'timeStamp');
-            if (origTimeStampDesc && origTimeStampDesc.get) {
-                var origGetTs = origTimeStampDesc.get;
-                var jitteredEvents = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
-                Object.defineProperty(Event.prototype, 'timeStamp', {
-                    get: makeNative(function() {
-                        var raw = origGetTs.call(this);
-                        if (jitteredEvents && (this.type && /touch|pointer|mouse|click/i.test(this.type))) {
-                            var cached = jitteredEvents.get(this);
-                            if (cached !== undefined) return cached;
-                            // Add 15..25ms (mean ~20ms) subtle desynchronization
-                            var j = raw + baseInputJitter + (Math.random() * 10 - 5) + 10;
-                            jitteredEvents.set(this, j);
-                            return j;
-                        }
-                        return raw;
-                    }, 'get timeStamp'),
-                    configurable: true,
-                    enumerable: true
-                });
-            }
-        }
-    } catch (e) {}
+    // NOTE: Event.prototype.timeStamp jitter disabled to preserve smooth 60fps input & tween delta-times
 
     // 17. In-Game Moderator & Private Message Sentinel
     try {
@@ -885,86 +860,11 @@
             window.WebSocket.CLOSED = origWs.CLOSED;
         }
 
-        // B. DOM MutationObserver hook for chat UI rendering
-        if (typeof MutationObserver !== 'undefined') {
-            var chatObserver = new MutationObserver(function(mutations) {
-                for (var i = 0; i < mutations.length; i++) {
-                    var added = mutations[i].addedNodes;
-                    if (!added) continue;
-                    for (var j = 0; j < added.length; j++) {
-                        var node = added[j];
-                        if (node.nodeType === 1) { // Element node
-                            var txt = node.textContent || '';
-                            if (txt.length > 2) {
-                                var isMod = /\[(?:Mod|Admin|GM|Ankama)\]/i.test(txt) || /(?:^|\W)(?:modérateur|moderator)(?:\W|$)/i.test(txt);
-                                var cls = (node.className || '') + ' ' + (node.getAttribute && node.getAttribute('data-channel') || '');
-                                var isWhisper = /whisper|chuchot/i.test(cls) || /\[(?:de|from)\s+([a-zA-Z0-9_\-]+)\]/i.test(txt);
-                                if (isMod || isWhisper) {
-                                    var sender = isMod ? 'Moderator' : 'Player';
-                                    var m = txt.match(/\[(?:de|from)\s+([a-zA-Z0-9_\-]+)\]/i) || txt.match(/\[([a-zA-Z0-9_\-\s]{3,24})\]/);
-                                    if (m) sender = m[1];
-                                    triggerWhisperAlert(sender, txt.trim().substring(0, 120), isMod, isWhisper ? 'whisper' : 'chat');
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-
-            var attachObserver = function() {
-                var target = document.body || document.documentElement;
-                if (target) {
-                    chatObserver.observe(target, { childList: true, subtree: true });
-                }
-            };
-
-            if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                attachObserver();
-            } else {
-                document.addEventListener('DOMContentLoaded', attachObserver, { once: true });
-            }
-        }
+        // B. DOM MutationObserver disabled: WebSocket packet hook above handles all incoming messages without DOM thrashing
     } catch (e) {}
 
-    // 18. Spatial & Temporal Input Desynchronizer (Anti-Conga Line & Natural Jitter)
-    try {
-        var dx = ((_instanceHash % 7) - 3);
-        var dy = (((_instanceHash >>> 4) % 7) - 3);
-
-        if (typeof MouseEvent !== 'undefined' && MouseEvent.prototype) {
-            var jitterCoordProp = function(propName, deltaBase) {
-                var desc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, propName);
-                if (desc && desc.get) {
-                    var origGet = desc.get;
-                    var jitterMap = new WeakMap();
-                    Object.defineProperty(MouseEvent.prototype, propName, {
-                        get: makeNative(function() {
-                            var val = origGet.call(this);
-                            if (typeof val === 'number') {
-                                var cached = jitterMap.get(this);
-                                if (cached !== undefined) return cached;
-                                // Subtle Gaussian spatial jitter: +- 2..4 px
-                                var offset = deltaBase + (Math.random() * 2 - 1);
-                                var newVal = Math.round(val + offset);
-                                jitterMap.set(this, newVal);
-                                return newVal;
-                            }
-                            return val;
-                        }, 'get ' + propName),
-                        configurable: true,
-                        enumerable: true
-                    });
-                }
-            };
-
-            jitterCoordProp('clientX', dx);
-            jitterCoordProp('pageX', dx);
-            jitterCoordProp('screenX', dx);
-            jitterCoordProp('clientY', dy);
-            jitterCoordProp('pageY', dy);
-            jitterCoordProp('screenY', dy);
-        }
-    } catch (e) {}
+    // 18. Spatial & Temporal Input Desynchronizer
+    // NOTE: MouseEvent coordinate jitter disabled to prevent diamond grid cell hit-test miss on map change triggers
 
     // 19. AI Commander & Co-Op Action Agent (Stealth Human-like Action Execution)
     try {
@@ -1265,41 +1165,5 @@
     }
 
     // 18. Map Loading Transition & Black Screen Safeguard Watchdog
-    try {
-        var _mapStallStart = 0;
-        setInterval(function() {
-            try {
-                if (window.isoEngine) {
-                    var ie = window.isoEngine;
-                    var eggAlpha = (ie._loadingProgress && ie._loadingProgress.progressEgg) ? ie._loadingProgress.progressEgg.alpha : 0;
-                    var isTransitionActive = ie._isMapLoading || ie._loadingFadeInTransitionRunning || (eggAlpha > 0.1);
-                    if (isTransitionActive) {
-                        if (!_mapStallStart) {
-                            _mapStallStart = Date.now();
-                        } else if (Date.now() - _mapStallStart > 4000) {
-                            console.warn('[MapWatchdog] Map transition exceeded 4s safeguard. Forcing display fade-out and scene refresh...');
-                            _mapStallStart = 0;
-                            if (typeof ie._runLoadingFadeOutTransition === 'function') {
-                                ie._runLoadingFadeOutTransition();
-                            }
-                            if (ie._mapSceneTransitionGraphic) {
-                                try { ie._mapSceneTransitionGraphic.remove(); } catch(e){}
-                                ie._mapSceneTransitionGraphic = null;
-                            }
-                            if (ie._loadingProgress) {
-                                try { ie._loadingProgress.hide(); } catch(e){}
-                            }
-                            if (ie.mapScene && typeof ie.mapScene.requireCompleteRefresh === 'function') {
-                                ie.mapScene.requireCompleteRefresh();
-                            }
-                            ie._isMapLoading = false;
-                            ie._loadingFadeInTransitionRunning = false;
-                        }
-                    } else {
-                        _mapStallStart = 0;
-                    }
-                }
-            } catch(e) {}
-        }, 800);
-    } catch (e) {}
+    // NOTE: Intrusive 4s watchdog disabled: game engine manages its own map loading state via changeMapTimeout
 })();
