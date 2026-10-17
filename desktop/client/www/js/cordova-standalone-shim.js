@@ -74,14 +74,25 @@
         }
     });
 
+    window.appInfo = {
+        version: '3.14.2',
+        identifier: 'com.ankama.dofustouch',
+        build: '3.14.2',
+        versionCode: '3014002'
+    };
+
     safeSetNav('appInfo', {
+        version: '3.14.2',
+        identifier: 'com.ankama.dofustouch',
+        build: '3.14.2',
+        versionCode: '3014002',
         getAppInfo: function (success, error) {
             if (typeof success === 'function') {
                 success({
-                    version: '3.2.7',
+                    version: '3.14.2',
                     identifier: 'com.ankama.dofustouch',
-                    build: '3.2.7',
-                    versionCode: '3002007'
+                    build: '3.14.2',
+                    versionCode: '3014002'
                 });
             }
         }
@@ -200,7 +211,7 @@
                 if (service === 'AppSettings' && action === 'get') {
                     window.cordova.callbackFromNative(callbackId, true, 1, [{ server: 'https://dt-proxy-production-login.ankama-games.com' }], false);
                 } else if (service === 'AppInfo' && action === 'getAppInfo') {
-                    window.cordova.callbackFromNative(callbackId, true, 1, [{ version: '3.2.7', identifier: 'com.ankama.dofustouch', build: '3.2.7', versionCode: '3002007' }], false);
+                    window.cordova.callbackFromNative(callbackId, true, 1, [{ version: '3.14.2', identifier: 'com.ankama.dofustouch', build: '3.14.2', versionCode: '3014002' }], false);
                 } else if (service === 'Device' && action === 'getDeviceInfo') {
                     window.cordova.callbackFromNative(callbackId, true, 1, [window.device], false);
                 } else if (service === 'NetworkStatus') {
