@@ -178,9 +178,18 @@ namespace DofusStandaloneSetup
                 {
                     using (ZipArchive archive = new ZipArchive(resStream, ZipArchiveMode.Read))
                     {
+                        int totalEntries = archive.Entries.Count;
+                        int entryIndex = 0;
                         foreach (ZipArchiveEntry entry in archive.Entries)
                         {
+                            entryIndex++;
                             if (string.IsNullOrEmpty(entry.Name)) continue;
+
+                            if (entryIndex % 20 == 0 || entryIndex == totalEntries)
+                            {
+                                int pct = 4 + (int)((entryIndex * 48.0) / Math.Max(1, totalEntries));
+                                Report(pct, string.Format("Extracting {0} ({1}/{2})...", entry.Name, entryIndex, totalEntries));
+                            }
 
                             string rel = entry.FullName.Replace('/', '\\').TrimStart('\\');
                             string fileName = entry.Name;
@@ -298,7 +307,8 @@ namespace DofusStandaloneSetup
             string fullDestDir = Path.GetFullPath(destDir);
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
-                string destPath = Path.GetFullPath(Path.Combine(destDir, entry.FullName));                    if (!destPath.StartsWith(fullDestDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+                string destPath = Path.GetFullPath(Path.Combine(destDir, entry.FullName));
+                if (!destPath.StartsWith(fullDestDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
                     !destPath.Equals(fullDestDir, StringComparison.OrdinalIgnoreCase))
                     continue;
 
@@ -316,6 +326,7 @@ namespace DofusStandaloneSetup
                 {
                     try { File.SetAttributes(destPath, FileAttributes.Normal); } catch { }
                 }
+                entry.ExtractToFile(destPath, true);
             }
         }
 
@@ -413,6 +424,18 @@ namespace DofusStandaloneSetup
                         {
                             string src = ResolveLocalFallbackFile(hFile);
                             if (!string.IsNullOrEmpty(src) && File.Exists(src)) File.Copy(src, dest, true);
+                        }
+                    }
+
+                    string embedZip = Path.Combine(TargetDir, @"runtimes\python_embed.zip");
+                    string targetPythonDir = Path.Combine(TargetDir, @"runtimes\python");
+                    if (File.Exists(embedZip) && (!Directory.Exists(targetPythonDir) || !File.Exists(Path.Combine(targetPythonDir, "python.exe"))))
+                    {
+                        Report(18, "Unpacking clean embedded Python runtime...");
+                        Directory.CreateDirectory(targetPythonDir);
+                        using (ZipArchive pArch = ZipFile.OpenRead(embedZip))
+                        {
+                            ExtractArchiveToDirectory(pArch, targetPythonDir);
                         }
                     }
 

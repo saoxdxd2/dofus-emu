@@ -22,6 +22,9 @@ from pathlib import Path
 from socketserver import ThreadingMixIn
 from typing import Any
 import urllib.parse
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 # Ensure networkhealth is in path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -60,6 +63,31 @@ SUGGESTED_REPLIES = [
 ]
 
 
+
+class TinyRecursiveReasoner(nn.Module):
+    def __init__(self, in_dim: int = 24, hidden_dim: int = 64, max_recursions: int = 4):
+        super().__init__()
+        self.in_proj = nn.Linear(in_dim, hidden_dim)
+        self.ln_in = nn.LayerNorm(hidden_dim)
+        self.gru = nn.GRUCell(hidden_dim, hidden_dim)
+        self.ln_rec = nn.LayerNorm(hidden_dim)
+        self.stance_head = nn.Linear(hidden_dim, 4)
+        self.halt_head = nn.Linear(hidden_dim, 1)
+        self.value_head = nn.Linear(hidden_dim, 1)
+        self.max_recursions = max_recursions
+
+    def forward(self, x: torch.Tensor, max_steps: int | None = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        max_s = max_steps or self.max_recursions
+        h = self.ln_in(F.gelu(self.in_proj(x)))
+        x_proj = h
+        all_logits, all_halts = [], []
+        for step in range(max_s):
+            h = self.ln_rec(self.gru(x_proj, h))
+            all_logits.append(self.stance_head(h))
+            all_halts.append(torch.sigmoid(self.halt_head(h)))
+        return all_logits[-1], torch.stack(all_halts, dim=1), self.value_head(h)
+
+
 class SingletonDecisionAgent:
     """Manages a single shared instance of the THX-01 calibrated decision model."""
 
@@ -68,6 +96,10 @@ class SingletonDecisionAgent:
 
     def __init__(self) -> None:
         self.agent: Any = None
+        self.model: Any = None
+        self.tokenizer: Any = None
+        self.id2label: dict[int, str] = {}
+        self.combat_model: Any = None
         self.model_name = "heuristic"
         self._load_attempted = False
         self._init_decision_agent()
@@ -86,19 +118,63 @@ class SingletonDecisionAgent:
 
         def _loader() -> None:
             try:
-                import thx01
                 custom_model = Path(__file__).resolve().parent.parent / "models" / "dofus-thx01"
-                target_model = str(custom_model) if custom_model.exists() else "doofz/THX-01"
-                logger.info(f"Background loading shared Singleton THX-01 Model ({target_model})...")
-                agent = thx01.load(target_model, device="cpu")
-                with self._lock:
-                    self.agent = agent
-                    self.model_name = target_model
-                logger.info(f"Singleton THX-01 model ({target_model}) ready in RAM.")
+                if custom_model.exists():
+                    logger.info(f"Background loading distilled THX-01 ModernBERT Model from {custom_model}...")
+                    from transformers import AutoTokenizer, ModernBertForSequenceClassification, ModernBertConfig
+                    import safetensors.torch
+
+                    tok = AutoTokenizer.from_pretrained(str(custom_model))
+                    cfg = ModernBertConfig.from_pretrained(str(custom_model))
+                    mod = ModernBertForSequenceClassification(cfg)
+                    weights = safetensors.torch.load_file(str(custom_model / "model.safetensors"), device="cpu")
+                    mod.load_state_dict(weights, strict=False)
+                    mod.eval()
+
+                    with open(custom_model / "labels.json", "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    id2label = {int(v): k for k, v in meta["label_map"].items()}
+
+                    cm_instance = None
+                    trm_file = custom_model / "trm_act_combat.pt"
+                    if trm_file.exists():
+                        try:
+                            cm = TinyRecursiveReasoner()
+                            cm_weights = torch.load(str(trm_file), map_location="cpu", weights_only=False)
+                            cm.load_state_dict(cm_weights)
+                            cm.eval()
+                            cm_instance = cm
+                            logger.info("TRM-ACT Combat Reasoner neural weights loaded successfully.")
+                        except Exception as c_err:
+                            logger.warning(f"Could not load TRM-ACT weights: {c_err}")
+
+                    with self._lock:
+                        self.tokenizer = tok
+                        self.model = mod
+                        self.id2label = id2label
+                        self.agent = mod
+                        self.combat_model = cm_instance
+                        self.model_name = "THX-01-ModernBERT-Distilled"
+                    logger.info("Singleton THX-01 model ready in RAM.")
             except Exception as ex:
                 logger.warning(f"THX-01 background loading deferred or offline: {ex}. Calibrated heuristics active.")
 
         threading.Thread(target=_loader, daemon=True, name="DecisionAgentLoader").start()
+
+    def classify_directive(self, text: str) -> tuple[str, float]:
+        if not self.model or not self.tokenizer or not self.id2label:
+            return ("NONE", 0.0)
+        try:
+            inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=128)
+            with torch.no_grad():
+                logits = self.model(**inputs).logits
+                probs = torch.softmax(logits, dim=-1)[0]
+                pred_id = int(torch.argmax(probs).item())
+                pred_label = self.id2label.get(pred_id, "NONE")
+                conf = float(probs[pred_id].item())
+                return (pred_label, conf)
+        except Exception:
+            return ("NONE", 0.0)
 
     def evaluate_message(self, sender: str, text: str, is_mod_tag: bool = False) -> dict[str, Any]:
         """Classify incoming message for bot-check / moderator threats."""
@@ -280,7 +356,8 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
                     "trm_moe": self.network_engine is not None,
                     "laya": self.laya.agent is not None,
                     "model_name": self.laya.model_name,
-                    "thx01": "THX-01" in self.laya.model_name,
+                    "thx01": self.laya.model is not None or "THX-01" in self.laya.model_name,
+                    "trm_act": self.laya.combat_model is not None,
                     "vision": True,
                     "combat_calculator": True,
                     "total_spells": len(self.repo.spells_by_id),
@@ -607,6 +684,14 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             confidence = 0.85
             explanation = "Intent parsing"
             metadata: dict[str, Any] = {}
+
+            # 1. Neural classification via distilled THX-01 ModernBERT
+            pred_label, thx_conf = self.laya.classify_directive(cmd_text)
+            if pred_label != "NONE" and thx_conf >= 0.70:
+                directive = pred_label
+                confidence = thx_conf
+                explanation = f"THX-01 Classified Directive: {pred_label}"
+                metadata = {"source": "THX-01-ModernBERT", "neural_confidence": thx_conf}
 
             cmd_lower = cmd_text.lower()
 

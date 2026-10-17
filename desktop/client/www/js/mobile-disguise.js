@@ -346,6 +346,84 @@
                 return origMatchMedia.apply(this, arguments);
             }, 'matchMedia');
         }
+
+        // Universal Mouse-to-Touch Bridge: translates desktop mouse drag and slide into native TouchEvents
+        try {
+            var isMouseDown = false, touchIdSeq = 1, currentTarget = null;
+            function makeFakeTouch(e, target) {
+                var radius = 14;
+                var touchProps = {
+                    identifier: touchIdSeq,
+                    target: target || e.target,
+                    screenX: e.screenX,
+                    screenY: e.screenY,
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    pageX: e.pageX,
+                    pageY: e.pageY,
+                    radiusX: radius,
+                    radiusY: radius,
+                    rotationAngle: 0,
+                    force: 1
+                };
+                if (typeof Touch === 'function') {
+                    try { return new Touch(touchProps); } catch (err) {}
+                }
+                return touchProps;
+            }
+
+            function dispatchTouchEvent(type, mouseEvt, touches, targetTouches, changedTouches, target) {
+                var touchEvt;
+                var eventInit = {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    touches: touches,
+                    targetTouches: targetTouches,
+                    changedTouches: changedTouches,
+                    shiftKey: mouseEvt.shiftKey,
+                    altKey: mouseEvt.altKey,
+                    ctrlKey: mouseEvt.ctrlKey,
+                    metaKey: mouseEvt.metaKey
+                };
+                if (typeof TouchEvent === 'function') {
+                    try {
+                        touchEvt = new TouchEvent(type, eventInit);
+                    } catch (err) {}
+                }
+                if (!touchEvt) {
+                    touchEvt = document.createEvent('UIEvent');
+                    touchEvt.initUIEvent(type, true, true, window, 1);
+                    for (var k in eventInit) {
+                        try { Object.defineProperty(touchEvt, k, { value: eventInit[k] }); } catch (ex) {}
+                    }
+                }
+                (target || mouseEvt.target).dispatchEvent(touchEvt);
+            }
+
+            window.addEventListener('mousedown', function(e) {
+                if (e.which !== 1) return;
+                isMouseDown = true;
+                currentTarget = e.target;
+                touchIdSeq++;
+                var t = makeFakeTouch(e, currentTarget);
+                dispatchTouchEvent('touchstart', e, [t], [t], [t], currentTarget);
+            }, true);
+
+            window.addEventListener('mousemove', function(e) {
+                if (!isMouseDown || !currentTarget) return;
+                var t = makeFakeTouch(e, currentTarget);
+                dispatchTouchEvent('touchmove', e, [t], [t], [t], currentTarget);
+            }, true);
+
+            window.addEventListener('mouseup', function(e) {
+                if (!isMouseDown || !currentTarget) return;
+                var t = makeFakeTouch(e, currentTarget);
+                dispatchTouchEvent('touchend', e, [], [], [t], currentTarget);
+                isMouseDown = false;
+                currentTarget = null;
+            }, true);
+        } catch (e) {}
     } catch (e) {}
 
     // 7 & 10. Sensors + Full WebRTC SDP & ICE Candidate QEMU 10.0.2.15 Scrubbing
@@ -540,6 +618,44 @@
                     if (Object.prototype.hasOwnProperty.call(hdrMap, hL)) v = hdrMap[hL];
                     return origSetHeader.call(this, h, v);
                 }, 'setRequestHeader');
+            }
+        }
+    } catch (e) {}
+
+    // 12b. Non-CORS Static Asset & Market/Shop Image Sanitizer
+    try {
+        if (typeof HTMLImageElement !== 'undefined' && HTMLImageElement.prototype) {
+            var origImageSetSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+            if (origImageSetSrc && origImageSetSrc.set) {
+                var rawSetSrc = origImageSetSrc.set;
+                Object.defineProperty(HTMLImageElement.prototype, 'src', {
+                    set: function(val) {
+                        if (typeof val === 'string' && (val.indexOf('static.ankama.com') !== -1 || val.indexOf('s.ankama.com') !== -1)) {
+                            try { this.removeAttribute('crossOrigin'); this.crossOrigin = null; } catch (e) {}
+                        }
+                        return rawSetSrc.call(this, val);
+                    },
+                    get: origImageSetSrc.get,
+                    configurable: true,
+                    enumerable: true
+                });
+            }
+
+            var origCrossOrigin = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'crossOrigin');
+            if (origCrossOrigin && origCrossOrigin.set) {
+                var rawSetCO = origCrossOrigin.set;
+                Object.defineProperty(HTMLImageElement.prototype, 'crossOrigin', {
+                    set: function(val) {
+                        var curSrc = this.src || '';
+                        if (curSrc.indexOf('static.ankama.com') !== -1 || curSrc.indexOf('s.ankama.com') !== -1) {
+                            return rawSetCO.call(this, null);
+                        }
+                        return rawSetCO.call(this, val);
+                    },
+                    get: origCrossOrigin.get,
+                    configurable: true,
+                    enumerable: true
+                });
             }
         }
     } catch (e) {}
@@ -989,5 +1105,201 @@
                 return JSON.stringify({ status: 'error', message: err.toString() });
             }
         };
+    } catch (e) {}
+
+    // 17b. Comprehensive Runtime Diagnostics Probe
+    try {
+        var _diagStartTime = Date.now();
+        var _diagImageFails = [];
+        var _diagFetchFails = [];
+        var _diagXhrFails = [];
+        var _diagImageLoads = 0;
+        var _diagImageErrors = 0;
+        var _diagProbeCount = 0;
+
+        // Patch Image constructor to track load failures
+        var _OrigImage = window.Image;
+        window.Image = function(w, h) {
+            var img = (w !== undefined && h !== undefined) ? new _OrigImage(w, h) : (w !== undefined ? new _OrigImage(w) : new _OrigImage());
+            img.addEventListener('load', function() { _diagImageLoads++; });
+            img.addEventListener('error', function() {
+                _diagImageErrors++;
+                var failSrc = (img.src || '').substring(0, 200);
+                if (_diagImageFails.length < 20) _diagImageFails.push(failSrc);
+                console.error('[DIAG-IMG-FAIL] ' + failSrc + ' crossOrigin=' + img.crossOrigin);
+            });
+            return img;
+        };
+        window.Image.prototype = _OrigImage.prototype;
+        try { Object.defineProperty(window.Image, 'name', { value: 'Image' }); } catch(e){}
+
+        // Patch fetch to track failures
+        if (window.fetch) {
+            var _origFetch = window.fetch;
+            window.fetch = function() {
+                var url = (arguments[0] && typeof arguments[0] === 'string') ? arguments[0] : (arguments[0] && arguments[0].url ? arguments[0].url : '');
+                return _origFetch.apply(this, arguments).then(function(resp) {
+                    if (!resp.ok && _diagFetchFails.length < 20) {
+                        _diagFetchFails.push(resp.status + ' ' + url.substring(0, 150));
+                        console.error('[DIAG-FETCH-FAIL] ' + resp.status + ' ' + url.substring(0, 150));
+                    }
+                    return resp;
+                }).catch(function(err) {
+                    if (_diagFetchFails.length < 20) {
+                        _diagFetchFails.push('ERR ' + url.substring(0, 150) + ': ' + err);
+                        console.error('[DIAG-FETCH-ERR] ' + url.substring(0, 150) + ': ' + err);
+                    }
+                    throw err;
+                });
+            };
+        }
+
+        // Patch XHR open/send to track failures
+        if (window.XMLHttpRequest) {
+            var _origXhrOpen = XMLHttpRequest.prototype.open;
+            var _origXhrSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function(method, url) {
+                this.__diagUrl = url;
+                return _origXhrOpen.apply(this, arguments);
+            };
+            var _origXhrSendPatched = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.send = function() {
+                var xhr = this;
+                var url = xhr.__diagUrl || '';
+                xhr.addEventListener('error', function() {
+                    if (_diagXhrFails.length < 20) {
+                        _diagXhrFails.push('NETERR ' + url.substring(0, 150));
+                        console.error('[DIAG-XHR-ERR] Network error: ' + url.substring(0, 150));
+                    }
+                });
+                xhr.addEventListener('load', function() {
+                    if (xhr.status >= 400 && _diagXhrFails.length < 20) {
+                        _diagXhrFails.push(xhr.status + ' ' + url.substring(0, 150));
+                        console.error('[DIAG-XHR-FAIL] ' + xhr.status + ' ' + url.substring(0, 150));
+                    }
+                });
+                return _origXhrSendPatched.apply(this, arguments);
+            };
+        }
+
+        // Periodic state probe - runs every 3s for first 90s
+        var _diagInterval = setInterval(function() {
+            _diagProbeCount++;
+            var elapsed = ((Date.now() - _diagStartTime) / 1000).toFixed(1);
+            var state = {
+                t: elapsed + 's',
+                hasConfig: !!window.Config,
+                hasGui: !!window.gui,
+                hasIsoEngine: !!window.isoEngine,
+                hasDofus: !!window.dofus,
+                imgOk: _diagImageLoads,
+                imgFail: _diagImageErrors
+            };
+
+            if (window.Config) {
+                state.assetsUrl = (window.Config.assetsUrl || '').substring(0, 80);
+                state.uiUrl = (window.Config.uiUrl || '').substring(0, 80);
+                state.imgCrossOrigin = window.Config.imgCrossOrigin;
+                state.language = window.Config.language;
+            }
+
+            if (window.isoEngine) {
+                var ie = window.isoEngine;
+                state.mapLoading = ie._isMapLoading;
+                state.fadeIn = ie._loadingFadeInTransitionRunning;
+                state.waitMsg = ie._waitingForMessage;
+                if (ie.mapRenderer) {
+                    state.mapId = ie.mapRenderer.mapId;
+                    state.mapReady = ie.mapRenderer.isReady;
+                    state.hasMap = !!ie.mapRenderer.map;
+                }
+                if (ie._loadingProgress && ie._loadingProgress.progressEgg) {
+                    state.eggAlpha = ie._loadingProgress.progressEgg.alpha;
+                }
+                if (ie.mapScene) {
+                    state.sceneW = ie.mapScene.w;
+                    state.sceneH = ie.mapScene.h;
+                }
+            }
+
+            if (window.gui) {
+                state.guiOpen = !!window.gui.isConnected;
+                state.guiNbChars = (window.gui.playerData && window.gui.playerData.characters) ?
+                    Object.keys(window.gui.playerData.characters).length : 0;
+            }
+
+            // Check WebGL context
+            try {
+                var canvases = document.querySelectorAll('canvas');
+                state.canvasCount = canvases.length;
+                if (canvases.length > 0) {
+                    var mainCanvas = canvases[0];
+                    state.canvasSize = mainCanvas.width + 'x' + mainCanvas.height;
+                    var glCtx = mainCanvas.getContext('webgl') || mainCanvas.getContext('webgl2') || mainCanvas.getContext('experimental-webgl');
+                    state.glContextLost = glCtx ? glCtx.isContextLost() : 'no-ctx';
+                }
+            } catch(e) { state.canvasErr = e.message; }
+
+            console.warn('[DIAG-PROBE #' + _diagProbeCount + '] ' + JSON.stringify(state));
+
+            if (_diagImageFails.length > 0 && _diagProbeCount <= 5) {
+                console.warn('[DIAG-IMG-FAILS] ' + JSON.stringify(_diagImageFails.slice(0, 10)));
+            }
+            if (_diagFetchFails.length > 0 && _diagProbeCount <= 5) {
+                console.warn('[DIAG-FETCH-FAILS] ' + JSON.stringify(_diagFetchFails.slice(0, 10)));
+            }
+            if (_diagXhrFails.length > 0 && _diagProbeCount <= 5) {
+                console.warn('[DIAG-XHR-FAILS] ' + JSON.stringify(_diagXhrFails.slice(0, 10)));
+            }
+
+            // Stop probing after 90 seconds
+            if (Date.now() - _diagStartTime > 90000) {
+                console.warn('[DIAG] Probe period ended. Final: imgOk=' + _diagImageLoads + ' imgFail=' + _diagImageErrors + ' fetchFail=' + _diagFetchFails.length + ' xhrFail=' + _diagXhrFails.length);
+                clearInterval(_diagInterval);
+            }
+        }, 3000);
+
+        console.warn('[DIAG] Runtime diagnostics probe initialized. Will report every 3s for 90s.');
+    } catch (e) {
+        try { console.error('[DIAG] Failed to initialize diagnostics: ' + e); } catch(e2) {}
+    }
+
+    // 18. Map Loading Transition & Black Screen Safeguard Watchdog
+    try {
+        var _mapStallStart = 0;
+        setInterval(function() {
+            try {
+                if (window.isoEngine) {
+                    var ie = window.isoEngine;
+                    var eggAlpha = (ie._loadingProgress && ie._loadingProgress.progressEgg) ? ie._loadingProgress.progressEgg.alpha : 0;
+                    var isTransitionActive = ie._isMapLoading || ie._loadingFadeInTransitionRunning || (eggAlpha > 0.1);
+                    if (isTransitionActive) {
+                        if (!_mapStallStart) {
+                            _mapStallStart = Date.now();
+                        } else if (Date.now() - _mapStallStart > 4000) {
+                            console.warn('[MapWatchdog] Map transition exceeded 4s safeguard. Forcing display fade-out and scene refresh...');
+                            _mapStallStart = 0;
+                            if (typeof ie._runLoadingFadeOutTransition === 'function') {
+                                ie._runLoadingFadeOutTransition();
+                            }
+                            if (ie._mapSceneTransitionGraphic) {
+                                try { ie._mapSceneTransitionGraphic.remove(); } catch(e){}
+                                ie._mapSceneTransitionGraphic = null;
+                            }
+                            if (ie._loadingProgress) {
+                                try { ie._loadingProgress.hide(); } catch(e){}
+                            }
+                            if (ie.mapScene && typeof ie.mapScene.requireCompleteRefresh === 'function') {
+                                ie.mapScene.requireCompleteRefresh();
+                            }
+                            ie._isMapLoading = false;
+                            ie._loadingFadeInTransitionRunning = false;
+                        }
+                    } else {
+                        _mapStallStart = 0;
+                    }
+                }
+            } catch(e) {}
+        }, 800);
     } catch (e) {}
 })();

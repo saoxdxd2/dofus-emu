@@ -94,8 +94,9 @@ runtimes/python/share/
 __pycache__/
 *.pyc
 
-# Heavy model checkpoints
+# Heavy model checkpoints & weights (Strictly local)
 *.pt
 *.safetensors
-dofus-network/models/**/*.pt
+dofus-network/models/**
+*_DofusFarm.exe
 
