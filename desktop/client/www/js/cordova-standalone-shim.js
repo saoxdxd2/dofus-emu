@@ -74,26 +74,23 @@
         }
     });
 
-    window.appInfo = {
+    var curAppInfo = window.appInfo || {
         version: '3.14.2',
         identifier: 'com.ankama.dofustouch',
         build: '3.14.2',
         versionCode: '3014002'
     };
+    window.appInfo = curAppInfo;
+    if (!window.buildVersion) window.buildVersion = '1.74.8';
 
     safeSetNav('appInfo', {
-        version: '3.14.2',
-        identifier: 'com.ankama.dofustouch',
-        build: '3.14.2',
-        versionCode: '3014002',
+        version: curAppInfo.version,
+        identifier: curAppInfo.identifier,
+        build: curAppInfo.build,
+        versionCode: curAppInfo.versionCode,
         getAppInfo: function (success, error) {
             if (typeof success === 'function') {
-                success({
-                    version: '3.14.2',
-                    identifier: 'com.ankama.dofustouch',
-                    build: '3.14.2',
-                    versionCode: '3014002'
-                });
+                success(curAppInfo);
             }
         }
     });

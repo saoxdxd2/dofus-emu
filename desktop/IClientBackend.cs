@@ -40,6 +40,11 @@ namespace DofusFarm.Engine
         public bool EnableBackgroundThrottling { get; set; }
         public int TargetFps { get; set; }
 
+        // Dynamic client & server protocol versioning
+        public string AppVersion { get; set; }
+        public string BuildVersion { get; set; }
+        public string VersionCode { get; set; }
+
         public ClientLaunchOptions()
         {
             RamMb = 1024;

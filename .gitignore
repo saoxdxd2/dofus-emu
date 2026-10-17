@@ -64,6 +64,7 @@ launcher/.gradle/
 *.jar
 
 # Local runtime state, credentials, logins and account stats (Strict Privacy)
+app_version.json
 identity.json
 alias.json
 account*.json

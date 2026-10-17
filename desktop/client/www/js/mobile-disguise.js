@@ -179,6 +179,10 @@
         level: getLazyBatteryLevel
     });
 
+    var _appVersion = (window.appInfo && window.appInfo.version) || cfg('__DEVICE_APP_VERSION__', '3.14.2');
+    var _versionCode = (window.appInfo && window.appInfo.versionCode) || cfg('__DEVICE_VERSION_CODE__', '3014002');
+    var _buildVersion = window.buildVersion || cfg('__DEVICE_BUILD_VERSION__', '1.74.8');
+
     var FROZEN_LANGUAGES = Object.freeze ? Object.freeze(['fr-FR', 'fr', 'en-US', 'en']) : ['fr-FR', 'fr', 'en-US', 'en'];
     var navOverrides = {
         platform: MOBILE_PLATFORM, userAgent: MOBILE_UA, appVersion: MOBILE_APP_VERSION,
@@ -186,12 +190,15 @@
         vendor: 'Google Inc.', webdriver: false, pdfViewerEnabled: false, language: 'fr-FR', languages: FROZEN_LANGUAGES,
         onLine: true, plugins: emptyPluginArray, mimeTypes: emptyMimeTypeArray,
         connection: connectionObj, mozConnection: connectionObj, webkitConnection: connectionObj, battery: fakeBattery,
-        appInfo: { build: '3.14.2', version: '3.14.2', identifier: 'com.ankama.dofustouch', versionCode: '3014002' }
+        appInfo: { build: _appVersion, version: _appVersion, identifier: 'com.ankama.dofustouch', versionCode: _versionCode }
     };
     for (var nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
     try {
-        window.appInfo = { build: '3.14.2', version: '3.14.2', identifier: 'com.ankama.dofustouch', versionCode: '3014002' };
-        window.buildVersion = '1.74.8';
+        window.appInfo = window.appInfo || { build: _appVersion, version: _appVersion, identifier: 'com.ankama.dofustouch', versionCode: _versionCode };
+        if (!window.appInfo.version) window.appInfo.version = _appVersion;
+        if (!window.appInfo.build) window.appInfo.build = _appVersion;
+        if (!window.appInfo.versionCode) window.appInfo.versionCode = _versionCode;
+        if (!window.buildVersion) window.buildVersion = _buildVersion;
     } catch (e) {}
 
     try {

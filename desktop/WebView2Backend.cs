@@ -97,6 +97,12 @@ namespace DofusFarm.Engine
                 options.Profile = DeviceCatalog.GetDefaultProfileForIndex(slotNum);
             }
 
+            // Dynamically resolve live client & server protocol version
+            DofusVersionInfo verInfo = DynamicVersionResolver.ResolveVersion(null, false, msg => OnLog?.Invoke(msg));
+            if (string.IsNullOrEmpty(options.AppVersion)) options.AppVersion = verInfo.AppVersion;
+            if (string.IsNullOrEmpty(options.BuildVersion)) options.BuildVersion = verInfo.BuildVersion;
+            if (string.IsNullOrEmpty(options.VersionCode)) options.VersionCode = verInfo.VersionCode;
+
             // Prepare mobile disguise script to close the blackbox completely
             if (string.IsNullOrEmpty(options.DisguiseScript))
             {
@@ -123,7 +129,10 @@ namespace DofusFarm.Engine
                         string raw = File.ReadAllText(scriptPath, Encoding.UTF8);
                         string serial = options.DeviceSerial ?? ((options.Profile != null ? options.Profile.SerialPrefix : "R58M") + "45F41EFD");
                         string uuid = options.DeviceUuid ?? "ca8ea76b0fe32f85";
-                        options.DisguiseScript = FarmEngine.InterpolateDisguise(raw, uuid, serial, options.Profile, options.Profile != null ? options.Profile.UserAgent : "");
+                        options.DisguiseScript = FarmEngine.InterpolateDisguise(
+                            raw, uuid, serial, options.Profile,
+                            options.Profile != null ? options.Profile.UserAgent : "",
+                            options.AppVersion, options.VersionCode, options.BuildVersion);
                     }
                     catch { }
                 }
@@ -151,7 +160,11 @@ namespace DofusFarm.Engine
 
                 if (foundClient)
                 {
-                    options.EntryUrl = "https://dofus.local/standalone.html";
+                    options.EntryUrl = string.Format(
+                        "https://dofus.local/standalone.html?appVersion={0}&buildVersion={1}&versionCode={2}",
+                        Uri.EscapeDataString(options.AppVersion),
+                        Uri.EscapeDataString(options.BuildVersion),
+                        Uri.EscapeDataString(options.VersionCode));
                 }
                 else
                 {

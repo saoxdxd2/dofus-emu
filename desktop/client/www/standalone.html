@@ -12,8 +12,14 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: wss: ws: gap: cdvfile: http: 'unsafe-eval' 'unsafe-inline';">
     <link rel="stylesheet" href="build/styles-native.css">
     <script type="text/javascript">
-        window.appInfo = { version: '3.14.2', identifier: 'com.ankama.dofustouch', build: '3.14.2', versionCode: '3014002' };
-        window.buildVersion = '1.74.8';
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var v = params.get('appVersion') || (window.appInfo && window.appInfo.version) || '3.14.2';
+            var b = params.get('buildVersion') || window.buildVersion || '1.74.8';
+            var c = params.get('versionCode') || (window.appInfo && window.appInfo.versionCode) || '3014002';
+            window.appInfo = { version: v, identifier: 'com.ankama.dofustouch', build: v, versionCode: c };
+            window.buildVersion = b;
+        })();
     </script>
     <script type="text/javascript" src="js/mobile-disguise.js"></script>
     <script type="text/javascript" src="js/cordova-standalone-shim.js"></script>

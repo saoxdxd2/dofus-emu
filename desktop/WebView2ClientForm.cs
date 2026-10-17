@@ -135,11 +135,36 @@ namespace DofusFarm.Engine
                 if (window.dofus && window.dofus.webAuth && typeof window.dofus.webAuth.connectThroughIonicDeepLink === 'function') {
                     window.dofus.webAuth.connectThroughIonicDeepLink(params);
                 }
+                if (window.__webAuth && typeof window.__webAuth.connectThroughIonicDeepLink === 'function') {
+                    window.__webAuth.connectThroughIonicDeepLink(params);
+                }
             } catch (e) {
                 console.error('[Auth] Failed to parse callback URL:', e);
             }
         };
     }
+
+    try {
+        var _cLog = console.log, _cWarn = console.warn, _cErr = console.error;
+        console.log = function() {
+            _cLog.apply(console, arguments);
+            if (window.chrome && window.chrome.webview) {
+                try { window.chrome.webview.postMessage({ type: 'CONSOLE_LOG', level: 'info', text: Array.prototype.slice.call(arguments).join(' ') }); } catch(e){}
+            }
+        };
+        console.warn = function() {
+            _cWarn.apply(console, arguments);
+            if (window.chrome && window.chrome.webview) {
+                try { window.chrome.webview.postMessage({ type: 'CONSOLE_LOG', level: 'warn', text: Array.prototype.slice.call(arguments).join(' ') }); } catch(e){}
+            }
+        };
+        console.error = function() {
+            _cErr.apply(console, arguments);
+            if (window.chrome && window.chrome.webview) {
+                try { window.chrome.webview.postMessage({ type: 'CONSOLE_LOG', level: 'error', text: Array.prototype.slice.call(arguments).join(' ') }); } catch(e){}
+            }
+        };
+    } catch(e) {}
 
     if (!window.__executeCommanderDirective) {
         window.__executeCommanderDirective = function(directiveData) {
@@ -444,17 +469,32 @@ namespace DofusFarm.Engine
                     settings.UserAgent = ua;
                 }
 
-                // 1. Synchronously inject Mobile Disguise script (closes the blackbox completely)
+                // 0. Ensure dynamic version is resolved
+                if (string.IsNullOrEmpty(_options.AppVersion))
+                {
+                    var vi = DynamicVersionResolver.ResolveVersion(null, false, msg => _logCallback?.Invoke(msg));
+                    _options.AppVersion = vi.AppVersion;
+                    _options.BuildVersion = vi.BuildVersion;
+                    _options.VersionCode = vi.VersionCode;
+                }
+
+                // 1. Synchronously inject early dynamic version state
+                string dynamicVerScript = string.Format(
+                    "(function() {{ window.appInfo = window.appInfo || {{}}; window.appInfo.version = '{0}'; window.appInfo.build = '{0}'; window.appInfo.versionCode = '{1}'; window.appInfo.identifier = 'com.ankama.dofustouch'; window.buildVersion = '{2}'; }})();",
+                    _options.AppVersion, _options.VersionCode, _options.BuildVersion);
+                await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(dynamicVerScript);
+
+                // 2. Synchronously inject Mobile Disguise script (closes the blackbox completely)
                 if (!string.IsNullOrEmpty(_options.DisguiseScript))
                 {
                     await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(_options.DisguiseScript);
                     _logCallback?.Invoke(string.Format("[{0}] Registered mobile spoofing disguise script in CoreWebView2.", _instanceId));
                 }
 
-                // 2. Synchronously inject Cordova compatibility polyfill
+                // 3. Synchronously inject Cordova compatibility polyfill
                 await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(CordovaShimScript);
 
-                // 3. Map virtual origin https://dofus.local/ to standalone game bundle
+                // 4. Map virtual origin https://dofus.local/ to standalone game bundle
                 string clientDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "desktop", "client", "www");
                 if (!Directory.Exists(clientDir)) clientDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client", "www");
                 if (!Directory.Exists(clientDir)) clientDir = Path.Combine(Directory.GetCurrentDirectory(), "desktop", "client", "www");
@@ -490,6 +530,16 @@ namespace DofusFarm.Engine
 
                 if (!string.IsNullOrEmpty(targetUrl))
                 {
+                    if (targetUrl.Contains("standalone.html") && !targetUrl.Contains("appVersion="))
+                    {
+                        string sep = targetUrl.Contains("?") ? "&" : "?";
+                        targetUrl += string.Format("{0}appVersion={1}&buildVersion={2}&versionCode={3}",
+                            sep,
+                            Uri.EscapeDataString(_options.AppVersion),
+                            Uri.EscapeDataString(_options.BuildVersion),
+                            Uri.EscapeDataString(_options.VersionCode));
+                    }
+
                     _logCallback?.Invoke(string.Format("[{0}] Navigating to: {1}", _instanceId, targetUrl));
                     _webView.CoreWebView2.Navigate(targetUrl);
                 }
@@ -583,9 +633,23 @@ namespace DofusFarm.Engine
             try
             {
                 string json = e.WebMessageAsJson;
-                _logCallback?.Invoke(string.Format("[{0}] [JS->C# Message]: {1}", _instanceId, json));
+                if (!json.Contains("\"type\":\"CONSOLE_LOG\""))
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] [JS->C# Message]: {1}", _instanceId, json));
+                }
 
-                if (json.Contains("\"type\":\"ping\""))
+                if (json.Contains("\"type\":\"CONSOLE_LOG\""))
+                {
+                    Match mText = Regex.Match(json, "\"text\"\\s*:\\s*\"([^\"]+)\"");
+                    Match mLvl = Regex.Match(json, "\"level\"\\s*:\\s*\"([^\"]+)\"");
+                    if (mText.Success)
+                    {
+                        string text = Regex.Unescape(mText.Groups[1].Value);
+                        string lvl = mLvl.Success ? mLvl.Groups[1].Value.ToUpper() : "JS";
+                        _logCallback?.Invoke(string.Format("[{0}] [WEB-{1}] {2}", _instanceId, lvl, text));
+                    }
+                }
+                else if (json.Contains("\"type\":\"ping\""))
                 {
                     _webView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"pong\",\"reply\":\"Hello from C# WinForms Host!\"}");
                 }
