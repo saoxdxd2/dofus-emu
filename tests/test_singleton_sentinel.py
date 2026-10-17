@@ -18,6 +18,15 @@ import time
 import urllib.request
 from pathlib import Path
 
+# The suite prints emoji status badges; a cp1252 console (default on many Windows
+# terminals) raises UnicodeEncodeError and aborts the run. Force an UTF-8 stdout
+# with replacement so the tests always complete.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "dofus-network"))
 
@@ -147,4 +156,6 @@ if __name__ == "__main__":
     print("=" * 70)
     print("ALL SINGLETON AI SENTINEL TESTS PASSED WITH ZERO RAM DUPLICATION!")
     print("=" * 70)
+    sys.stdout.flush()
+    sys.stderr.flush()
     os._exit(0)
