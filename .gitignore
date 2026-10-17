@@ -67,3 +67,7 @@ alias.json
 *.bak
 *.orig
 *.rej
+
+# Embedded Python dynamic site-packages & pip artifacts
+runtimes/python/Lib/
+runtimes/python/Scripts/

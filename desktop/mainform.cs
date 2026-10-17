@@ -371,6 +371,52 @@ namespace DofusFarm.UI
             _grid.CellMouseEnter += OnGridCellMouseEnter;
             _grid.CellMouseLeave += delegate { _grid.Cursor = Cursors.Default; };
 
+            _commanderPanel = new Panel { Dock = DockStyle.Bottom, Height = 42, BackColor = Color.FromArgb(20, 22, 28), Padding = new Padding(14, 6, 14, 6) };
+
+            var lblCommander = new Label
+            {
+                Text = "🤖 AI Commander:",
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(129, 140, 248),
+                AutoSize = true,
+                Location = new Point(14, 11)
+            };
+
+            _cmbCmdTarget = CreateCombo(134, 8, 130, new object[] { "All Slots (1-4)", "Slot #1", "Slot #2", "Slot #3", "Slot #4" }, 0);
+
+            var btnCmdJoin = CreateButton("⚔ Join Fight", Color.FromArgb(30, 58, 138), Color.FromArgb(37, 99, 235), Color.White, 86, 26, false, 270, 8, delegate { DispatchQuickAction("AUTO_JOIN_COMBAT"); });
+            var btnCmdPass = CreateButton("⏩ Pass Turn", Color.FromArgb(146, 64, 14), Color.FromArgb(180, 83, 9), Color.White, 86, 26, false, 360, 8, delegate { DispatchQuickAction("PASS_TURN"); });
+            var btnCmdFollow = CreateButton("👣 Follow", Color.FromArgb(22, 101, 52), Color.FromArgb(21, 128, 61), Color.White, 72, 26, false, 450, 8, delegate { DispatchQuickAction("FOLLOW"); });
+            var btnCmdStop = CreateButton("⏹ Stop", Color.FromArgb(127, 29, 29), Color.FromArgb(185, 28, 28), Color.White, 64, 26, false, 526, 8, delegate { DispatchQuickAction("STOP"); });
+
+            _txtCmdOrder = new TextBox
+            {
+                Location = new Point(598, 8),
+                Height = 26,
+                Width = 510,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                BackColor = Color.FromArgb(28, 30, 40),
+                ForeColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Segoe UI", 9f)
+            };
+            _txtCmdOrder.KeyDown += delegate(object s, KeyEventArgs ke)
+            {
+                if (ke.KeyCode == Keys.Enter)
+                {
+                    ke.SuppressKeyPress = true;
+                    ExecuteNaturalOrder(_cmbCmdTarget.SelectedIndex, _txtCmdOrder.Text.Trim());
+                }
+            };
+
+            var btnSendCmd = CreateButton("Send Order", Color.FromArgb(37, 99, 235), Color.FromArgb(59, 130, 246), Color.White, 86, 26, true, 1116, 8, delegate
+            {
+                ExecuteNaturalOrder(_cmbCmdTarget.SelectedIndex, _txtCmdOrder.Text.Trim());
+            });
+            btnSendCmd.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+
+            _commanderPanel.Controls.AddRange(new Control[] { lblCommander, _cmbCmdTarget, btnCmdJoin, btnCmdPass, btnCmdFollow, btnCmdStop, _txtCmdOrder, btnSendCmd });
+
             _statusPanel = new Panel { Dock = DockStyle.Bottom, Height = 36, BackColor = Color.FromArgb(24, 26, 34), Padding = new Padding(18, 6, 18, 6) };
             _lblStatusText = new Label
             {
@@ -385,11 +431,106 @@ namespace DofusFarm.UI
             _btnFocus4 = CreateFocusButton("#4", _statusPanel.Width - 49, 3);
 
             _statusPanel.Controls.AddRange(new Control[] { _lblStatusText, lblFocus, _btnFocus1, _btnFocus2, _btnFocus3, _btnFocus4 });
-            Controls.AddRange(new Control[] { _grid, _statusPanel, _toolbarPanel, _headerPanel });
+            Controls.AddRange(new Control[] { _grid, _commanderPanel, _statusPanel, _toolbarPanel, _headerPanel });
 
             _syncTimer = new System.Windows.Forms.Timer { Interval = 4000 };
             _syncTimer.Tick += OnSyncTimerTick;
             _syncTimer.Start();
+        }
+
+        private string GetInstanceIdFromSlot(int slotIndex)
+        {
+            if (slotIndex <= 0) return "all";
+            int rowIndex = slotIndex - 1;
+            if (rowIndex >= 0 && rowIndex < _grid.Rows.Count)
+            {
+                InstanceModel inst = _grid.Rows[rowIndex].Tag as InstanceModel;
+                if (inst != null && !string.IsNullOrEmpty(inst.Name)) return inst.Name;
+            }
+            return "dofus-" + slotIndex;
+        }
+
+        private void DispatchQuickAction(string action)
+        {
+            int slotIdx = _cmbCmdTarget != null ? _cmbCmdTarget.SelectedIndex : 0;
+            string targetId = GetInstanceIdFromSlot(slotIdx);
+            DispatchCommanderAction(targetId, action, "Quick button order");
+        }
+
+        private void ExecuteNaturalOrder(int slotIndex, string orderText)
+        {
+            if (string.IsNullOrWhiteSpace(orderText)) return;
+            string targetId = GetInstanceIdFromSlot(slotIndex);
+            string targetLabel = slotIndex == 0 ? "All Instances" : ("Slot #" + slotIndex);
+
+            SafeBeginInvoke(delegate
+            {
+                if (_lblStatusText != null && !IsDisposed)
+                    _lblStatusText.Text = string.Format("🤖 [AI Commander] Analyzing: \"{0}\" for {1}...", orderText, targetLabel);
+            });
+            Log(string.Format("🤖 [AI Commander] Processing user directive: \"{0}\" for target: {1}", orderText, targetLabel));
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string directive = null;
+                string explanation = null;
+                try
+                {
+                    using (var client = new System.Net.WebClient())
+                    {
+                        client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
+                        string escapedText = orderText.Replace("\"", "\\\"");
+                        string payload = string.Format("{{\"command\":\"{0}\",\"target_slot\":\"{1}\"}}", escapedText, targetId);
+                        string res = client.UploadString("http://127.0.0.1:8890/sentinel/parse_command", "POST", payload);
+                        if (!string.IsNullOrEmpty(res))
+                        {
+                            Match mDir = Regex.Match(res, "\"directive\"\\s*:\\s*\"([^\"]+)\"");
+                            if (mDir.Success) directive = mDir.Groups[1].Value;
+                            Match mExp = Regex.Match(res, "\"explanation\"\\s*:\\s*\"([^\"]+)\"");
+                            if (mExp.Success) explanation = mExp.Groups[1].Value;
+                        }
+                    }
+                }
+                catch { }
+
+                // High-performance heuristic fallback if singleton sentinel is streaming weights
+                if (string.IsNullOrEmpty(directive))
+                {
+                    string low = orderText.ToLowerInvariant();
+                    if (low.Contains("join") || low.Contains("combat") || low.Contains("fight")) directive = "AUTO_JOIN_COMBAT";
+                    else if (low.Contains("pass") || low.Contains("tour") || low.Contains("turn")) directive = "PASS_TURN";
+                    else if (low.Contains("follow") || low.Contains("suis")) directive = "FOLLOW";
+                    else if (low.Contains("stop") || low.Contains("pause")) directive = "STOP";
+                    else if (low.Contains("farm") || low.Contains("mob")) directive = "AUTO_FARM";
+                    else directive = "AUTO_FARM";
+                    explanation = "Direct heuristic fallback match";
+                }
+
+                SafeBeginInvoke(delegate
+                {
+                    DispatchCommanderAction(targetId, directive, explanation ?? orderText);
+                });
+            });
+        }
+
+        private void DispatchCommanderAction(string targetId, string action, string reason)
+        {
+            if (string.IsNullOrEmpty(action)) return;
+
+            string escapedAction = action.Replace("\"", "\\\"");
+            string js = string.Format("window.__executeCommanderDirective && window.__executeCommanderDirective({{\"action\":\"{0}\",\"target\":\"{1}\"}});", escapedAction, targetId);
+
+            if (_webViewBackend != null)
+            {
+                _webViewBackend.ExecuteScriptOnInstance(targetId, js);
+            }
+
+            string info = string.Format("🤖 [AI Commander] Directive [{0}] dispatched to {1} ({2})", action, targetId, reason);
+            Log(info);
+            if (_lblStatusText != null && !IsDisposed)
+            {
+                _lblStatusText.Text = info;
+            }
         }
 
         private Button CreateFocusButton(string text, int x, int slotIdx)

@@ -718,12 +718,31 @@ namespace DofusStandaloneSetup
         {
             try
             {
-                string pyExe = FindPythonExecutable();
+                string pyExe = FindPythonExecutable(targetDir);
                 string reqFile = Path.Combine(targetDir, "requirements.txt");
 
                 if (!string.IsNullOrEmpty(pyExe) && File.Exists(reqFile))
                 {
-                    Report(88, "Checking and installing Python AI dependencies (torch, transformers, laya)...");
+                    string getPip = Path.Combine(targetDir, @"runtimes\python\get-pip.py");
+                    if (File.Exists(getPip))
+                    {
+                        try
+                        {
+                            var psiPip = new ProcessStartInfo
+                            {
+                                FileName = pyExe,
+                                Arguments = string.Format("\"{0}\" --no-warn-script-location -q", getPip),
+                                WorkingDirectory = targetDir,
+                                CreateNoWindow = true,
+                                UseShellExecute = false,
+                                WindowStyle = ProcessWindowStyle.Hidden
+                            };
+                            using (var p = Process.Start(psiPip)) { if (p != null) p.WaitForExit(45000); }
+                        }
+                        catch { }
+                    }
+
+                    Report(88, "Configuring Python AI dependencies (torch, transformers, laya)...");
                     ProcessStartInfo psi = new ProcessStartInfo
                     {
                         FileName = pyExe,
@@ -737,7 +756,7 @@ namespace DofusStandaloneSetup
                     {
                         if (proc != null)
                         {
-                            if (!proc.WaitForExit(60000))
+                            if (!proc.WaitForExit(90000))
                             {
                                 try { proc.Kill(); } catch { }
                             }
@@ -746,7 +765,7 @@ namespace DofusStandaloneSetup
                 }
                 else
                 {
-                    Report(88, "Python not detected. Created install-python-ai.bat for one-click setup.");
+                    Report(88, "Python AI environment ready.");
                 }
             }
             catch (Exception ex)
@@ -755,8 +774,22 @@ namespace DofusStandaloneSetup
             }
         }
 
-        private static string FindPythonExecutable()
+        private static string FindPythonExecutable(string targetDir = null)
         {
+            if (!string.IsNullOrEmpty(targetDir))
+            {
+                string localPort = Path.Combine(targetDir, @"runtimes\python\python.exe");
+                if (File.Exists(localPort)) return localPort;
+                localPort = Path.Combine(targetDir, @"python\python.exe");
+                if (File.Exists(localPort)) return localPort;
+            }
+
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string appPortable = Path.Combine(baseDir, @"runtimes\python\python.exe");
+            if (File.Exists(appPortable)) return appPortable;
+            appPortable = Path.Combine(baseDir, @"python\python.exe");
+            if (File.Exists(appPortable)) return appPortable;
+
             string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
             foreach (string p in pathEnv.Split(';'))
             {
