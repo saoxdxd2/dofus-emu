@@ -291,6 +291,27 @@ class TestSentinelCombatEndpoints(unittest.TestCase):
         self.assertIn("stance", data)
         self.assertGreater(len(data["action_sequence"]), 0)
 
+    def test_08_teacher_distillation_pipeline(self):
+        from data.teacher_distillation import TeacherKnowledgeDistiller
+        import torch
+
+        prompt = TeacherKnowledgeDistiller.get_teacher_generation_prompt("tactical_combat", "fr", 5)
+        self.assertIn("Qwen", TeacherKnowledgeDistiller.DEFAULT_TEACHER_MODEL)
+        self.assertIn("5", prompt)
+
+        # Test Hinton-style KL distillation loss calculation
+        student_logits = torch.randn(4, 6)
+        teacher_logits = torch.randn(4, 6)
+        labels = torch.tensor([0, 1, 2, 3])
+        loss = TeacherKnowledgeDistiller.compute_distillation_loss(student_logits, teacher_logits, labels)
+        self.assertTrue(torch.is_tensor(loss))
+        self.assertGreater(loss.item(), 0)
+
+        # Test synthetic seed traces
+        traces = TeacherKnowledgeDistiller.synthesize_local_seed_traces()
+        self.assertGreater(len(traces), 3)
+        self.assertEqual(traces[0]["type"], "DISTILLED_COT")
+
 
 if __name__ == "__main__":
     unittest.main()
