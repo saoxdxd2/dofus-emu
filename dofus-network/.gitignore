@@ -1,0 +1,26 @@
+# Ignore generated pipeline artifacts and local caches.
+
+# Pipeline outputs
+networkhealth_artifacts/
+networkhealth_v1_artifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Model weights are large; move them deliberately, never by accident
+*.pt
+*.pth
+*.ckpt
+
+# Editor / OS
+.vscode/settings.json
+.DS_Store
+Thumbs.db

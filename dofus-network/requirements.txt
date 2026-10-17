@@ -1,0 +1,11 @@
+# NetworkHealth AI — Python dependencies
+#
+# Local CPU inference / pipeline testing:
+#   python -m pip install -r requirements.txt
+#
+# NOTE: this machine runs Python 3.15, for which PyTorch wheels may not exist
+# yet. For Phase 1/2 training use Google Colab (Python 3.11/3.12) or a venv on
+# Python 3.11-3.13. See docs/DATASETS.md for the environment matrix.
+
+numpy>=1.26
+requests>=2.31
