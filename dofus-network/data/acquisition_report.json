@@ -1,0 +1,65 @@
+{
+  "seed": 42,
+  "sources": [
+    {
+      "source": "dofusdb_encyclopedia",
+      "ok": true,
+      "records": 0,
+      "seconds": 0.0,
+      "detail": {
+        "skipped": true
+      },
+      "error": null
+    },
+    {
+      "source": "bot_logs",
+      "ok": true,
+      "records": 6,
+      "seconds": 0.04,
+      "detail": {
+        "directory": "data\\captures",
+        "by_type": {
+          "TURN_START": 2,
+          "SPELL_CAST": 2,
+          "CHAT_WHISPER": 2
+        },
+        "written": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\captured_events.jsonl"
+      },
+      "error": null
+    },
+    {
+      "source": "synthetic_corpus",
+      "ok": true,
+      "records": 10238,
+      "seconds": 0.21,
+      "detail": {
+        "combat_scenarios": 200,
+        "written": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\dofus_deep_training_corpus.json"
+      },
+      "error": null
+    },
+    {
+      "source": "online_corpus",
+      "ok": true,
+      "records": 245,
+      "seconds": 0.17,
+      "detail": {
+        "staged": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\_online_corpus_staging.json",
+        "backbone_preserved": 10238,
+        "merged_into_corpus": 226
+      },
+      "error": null
+    }
+  ],
+  "corpus_samples": 10513,
+  "merged_extra_samples": 49,
+  "corpus_file": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\dofus_deep_training_corpus.json",
+  "combat_file": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\dofus_combat_policy_dataset.json",
+  "combat_scenarios": 150,
+  "live_sources_ok": [
+    "bot_logs",
+    "synthetic_corpus",
+    "online_corpus"
+  ],
+  "degraded": []
+}

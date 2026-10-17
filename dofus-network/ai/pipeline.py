@@ -81,24 +81,52 @@ def _corpus_stats(path: Path) -> Dict[str, Any]:
     return {"exists": True, "samples": len(data), "by_type": counts}
 
 
-def stage_generate_data(seed: int, force: bool = False) -> StageResult:
-    """Regenerate the combat and expanded corpora deterministically."""
+def stage_generate_data(
+    seed: int,
+    force: bool = False,
+    live: bool = False,
+    logs_dir: Optional[Path] = None,
+) -> StageResult:
+    """Acquire the training corpus.
+
+    With ``live=True`` this runs the full acquisition chain (DofusDB encyclopedia
+    sync, bot log ingestion, online corpus) before the deterministic synthetic
+    corpus. Without it, only the deterministic synthetic corpus is built, which
+    keeps the stage runnable offline and reproducible.
+    """
     started = time.perf_counter()
     result = StageResult(name="generate_data", ok=True)
     try:
-        from data.generate_combat_policy_dataset import generate_scenarios
-        from data.generate_expanded_corpus import generate_natural_dataset
+        if live:
+            from data.acquire import acquire
 
-        if force or not COMBAT_FILE.exists():
-            scenarios = generate_scenarios(1500, seed=seed)
-            result.detail["combat_scenarios"] = len(scenarios)
+            report = acquire(seed=seed, logs_dir=logs_dir)
+            result.detail["acquisition"] = {
+                "corpus_samples": report["corpus_samples"],
+                "live_sources_ok": report["live_sources_ok"],
+                "degraded": report["degraded"],
+                "sources": report["sources"],
+            }
+            if report["corpus_samples"] == 0:
+                result.ok = False
+                result.error = "acquisition produced no corpus samples"
+        else:
+            from data.generate_combat_policy_dataset import generate_scenarios
+            from data.generate_expanded_corpus import generate_natural_dataset
 
-        corpus = generate_natural_dataset(seed=seed)
-        CORPUS_FILE.write_text(
-            json.dumps(corpus, ensure_ascii=False, indent=2), encoding="utf-8")
-        result.detail["corpus_samples"] = len(corpus)
+            if force or not COMBAT_FILE.exists():
+                scenarios = generate_scenarios(1500, seed=seed)
+                result.detail["combat_scenarios"] = len(scenarios)
+
+            corpus = generate_natural_dataset(seed=seed)
+            CORPUS_FILE.write_text(
+                json.dumps(corpus, ensure_ascii=False, indent=2), encoding="utf-8")
+            result.detail["corpus_samples"] = len(corpus)
+
         result.detail["corpus_stats"] = _corpus_stats(CORPUS_FILE)
-        logger.info(f"Generated {len(corpus):,} corpus samples (seed={seed})")
+        logger.info(
+            f"Corpus ready: {result.detail['corpus_stats'].get('samples', 0):,} samples "
+            f"(seed={seed}, live={live})")
     except Exception as exc:  # noqa: BLE001 - surfaced in the report
         result.ok = False
         result.error = f"{type(exc).__name__}: {exc}"
@@ -230,7 +258,9 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
         stages.append(stage_benchmark(args.seed, args.checkpoint, args.threshold))
     else:
         if not args.skip_data:
-            stages.append(stage_generate_data(args.seed, force=args.force_data))
+            stages.append(stage_generate_data(
+                args.seed, force=args.force_data,
+                live=args.live_data, logs_dir=args.logs_dir))
         else:
             stages.append(StageResult(
                 name="generate_data", ok=True,
@@ -285,6 +315,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Reuse the existing corpus instead of regenerating it")
     parser.add_argument("--force-data", action="store_true",
                         help="Regenerate the combat scenarios even if they exist")
+    parser.add_argument("--live-data", action="store_true",
+                        help="Acquire live data first (DofusDB sync + bot log ingestion) "
+                             "before the synthetic corpus")
+    parser.add_argument("--logs-dir", type=Path, default=None,
+                        help="Directory of captured bot logs to ingest (with --live-data)")
     parser.add_argument("--benchmark-only", action="store_true",
                         help="Skip data and training; only run the certification battery")
     parser.add_argument("--checkpoint", type=Path, default=None,
