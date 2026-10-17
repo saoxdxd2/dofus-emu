@@ -932,10 +932,10 @@
                 } else if (action === 'DBLCLICK' && directive.selector) {
                     var targetDbl = document.querySelector(directive.selector);
                     if (targetDbl) triggerNaturalDoubleClick(targetDbl, directive.x, directive.y);
-                } else if (action === 'EXECUTE_OPTIMAL_ROTATION' || action === 'ATTACK') {
+                } else if (action === 'EXECUTE_OPTIMAL_ROTATION' || action === 'EXECUTE_TACTICAL_PLAN' || action === 'ATTACK') {
                     var meta = directive.metadata || directive;
                     var rotation = meta.rotation || [];
-                    console.log('[AI Commander] Executing optimal rotation with ' + rotation.length + ' spells against ' + (meta.target_name || 'target'));
+                    console.log('[AI Commander] Executing tactical plan (' + (meta.stance || 'COMBAT') + ') with ' + rotation.length + ' actions against ' + (meta.target_name || 'target'));
 
                     var executeStep = function(stepIndex) {
                         if (stepIndex >= rotation.length) {

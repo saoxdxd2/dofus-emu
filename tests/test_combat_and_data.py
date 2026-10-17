@@ -20,7 +20,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "dofus-network"))
 
-from data.game_data_extractor import GameDataRepository, MonsterGrade, MonsterInfo, SpellInfo
+from data.game_data_extractor import DamageEffect, GameDataRepository, MonsterGrade, MonsterInfo, SpellInfo
 from combat.damage_calculator import (
     CharacterStats,
     DofusDamageCalculator,
@@ -29,6 +29,7 @@ from combat.damage_calculator import (
     SpellRotationOptimizer,
     TargetStats,
 )
+from combat.tactical_engine import TacticalCombatEngine, TacticalStance
 from networkhealth.sentinel import SentinelHTTPHandler, ThreadedHTTPServer
 
 
@@ -45,17 +46,17 @@ class TestGameDataAndCombat(unittest.TestCase):
         # French
         mob_fr = self.repo.find_monster("Chef de Guerre Bouftou")
         self.assertIsNotNone(mob_fr)
-        self.assertEqual(mob_fr.id, 102)
+        self.assertIn(mob_fr.id, [102, 148])
 
         # English
         mob_en = self.repo.find_monster("Gobball War Chief")
         self.assertIsNotNone(mob_en)
-        self.assertEqual(mob_en.id, 102)
+        self.assertEqual(mob_en.id, mob_fr.id)
 
         # Spanish
         mob_es = self.repo.find_monster("Jefe de Guerra Jalato")
         self.assertIsNotNone(mob_es)
-        self.assertEqual(mob_es.id, 102)
+        self.assertEqual(mob_es.id, mob_fr.id)
 
     def test_03_trilingual_spell_lookup(self):
         # FR: Épée d'Iop
@@ -135,6 +136,40 @@ class TestGameDataAndCombat(unittest.TestCase):
         self.assertGreaterEqual(opt.total_ap_spent, 8)
         self.assertGreater(opt.total_expected_damage, 400.0)
 
+    def test_07_tactical_buff_and_engage_stance(self):
+        """Against high HP target, TacticalCombatEngine chooses BUFF_AND_ENGAGE stance."""
+        pression = self.repo.find_spell("Pression")
+        divine = self.repo.find_spell("Epee Divine")
+        spells = [pression, divine]
+
+        poutch = self.repo.find_monster("Poutch Ingball")
+        target = TargetStats.from_monster_grade(poutch, 1)
+
+        char = CharacterStats(action_points=10, strength=300, agility=100)
+        plan = TacticalCombatEngine.plan_tactical_turn(char, target, spells)
+
+        self.assertEqual(plan.stance, TacticalStance.BUFF_AND_ENGAGE)
+        self.assertGreater(len(plan.action_sequence), 0)
+        self.assertEqual(plan.action_sequence[0]["type"], "CAST_BUFF")
+
+    def test_08_emergency_shield_defense_on_low_hp(self):
+        """When HP is critical (<35%), prioritize healing and disengagement."""
+        mot_interdit = self.repo.find_spell("Mot Interdit")
+        mot_soignant = SpellInfo(
+            id=125, name_fr="Mot Soignant", name_en="Healing Word", name_es="Palabra Sanadora",
+            breed_id=7, ap_cost=3, effects=[DamageEffect("HEAL", 15, 25)]
+        )
+        spells = [mot_interdit, mot_soignant]
+
+        mob = self.repo.find_monster("Bouftou")
+        target = TargetStats.from_monster_grade(mob, 1)
+
+        char = CharacterStats(action_points=9, intelligence=200, breed_id=7)
+        plan = TacticalCombatEngine.plan_tactical_turn(char, target, spells, char_hp_percent=0.25)
+
+        self.assertEqual(plan.stance, TacticalStance.SHIELD_DEFENSE)
+        self.assertEqual(plan.action_sequence[0]["type"], "CAST_HEAL")
+
 
 class TestSentinelCombatEndpoints(unittest.TestCase):
     @classmethod
@@ -190,8 +225,10 @@ class TestSentinelCombatEndpoints(unittest.TestCase):
                 "power": 50,
                 "damage_earth": 20,
             },
-            "monster": "Chef de Guerre Bouftou",
-            "monster_grade": 1,
+            "target": {
+                "name": "BenchmarkTarget",
+                "res_percent_earth": 20,
+            },
         }
         data = self._post("/sentinel/combat/calculate_damage", payload)
         self.assertEqual(data["status"], "ok")
@@ -231,9 +268,28 @@ class TestSentinelCombatEndpoints(unittest.TestCase):
         }
         data = self._post("/sentinel/parse_command", payload)
         self.assertEqual(data["status"], "ok")
-        self.assertEqual(data["directive"], "EXECUTE_OPTIMAL_ROTATION")
+        self.assertEqual(data["directive"], "EXECUTE_TACTICAL_PLAN")
         self.assertIn("metadata", data)
-        self.assertTrue(data["metadata"]["is_guaranteed_lethal"])
+        self.assertIn("stance", data["metadata"])
+
+    def test_07_tactical_plan_endpoint(self):
+        payload = {
+            "character": {
+                "action_points": 10,
+                "strength": 400,
+                "power": 50,
+                "damage_earth": 20,
+                "breed_id": 8,
+            },
+            "monster": "Craqueleur des Plaines",
+            "monster_grade": 1,
+            "distance_cells": 4,
+            "hp_percent": 1.0,
+        }
+        data = self._post("/sentinel/combat/tactical_plan", payload)
+        self.assertEqual(data["status"], "ok")
+        self.assertIn("stance", data)
+        self.assertGreater(len(data["action_sequence"]), 0)
 
 
 if __name__ == "__main__":

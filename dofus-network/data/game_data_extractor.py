@@ -479,6 +479,20 @@ class GameDataRepository:
             except Exception as e:
                 logger.warning(f"Failed to read custom monsters: {e}")
 
+        # Full synchronized encyclopedias
+        full_monsters = CACHE_DIR / "monsters_full.json"
+        if full_monsters.exists():
+            try:
+                data = json.loads(full_monsters.read_text(encoding="utf-8"))
+                for item in data:
+                    grs = [MonsterGrade(**g) for g in item.get("grades", [])]
+                    item["grades"] = grs
+                    mn = MonsterInfo(**item)
+                    self.register_monster(mn)
+                logger.info(f"Loaded {len(data)} full official monsters from cache.")
+            except Exception as e:
+                logger.warning(f"Failed to read full monsters: {e}")
+
     def find_spell(self, identifier: Any) -> Optional[SpellInfo]:
         """Lookup spell by ID or trilingual name."""
         if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):

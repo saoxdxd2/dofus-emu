@@ -37,6 +37,7 @@ from combat.damage_calculator import (
     SpellRotationOptimizer,
     TargetStats,
 )
+from combat.tactical_engine import TacticalCombatEngine, TacticalStance, TacticalTurnPlan
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("sentinel.daemon")
@@ -453,6 +454,36 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             opt = SpellRotationOptimizer.optimize_turn(char, available, target)
             self._send_json(200, {"status": "ok", **opt.to_dict()})
 
+        elif self.path == "/sentinel/combat/tactical_plan":
+            char_dict = req.get("character", {})
+            monster_query = req.get("monster", "Bouftou")
+            grade_num = int(req.get("monster_grade", 1))
+            dist = int(req.get("distance_cells", 3))
+            hp_pct = float(req.get("hp_percent", 1.0))
+
+            char = _safe_char_stats(char_dict)
+            mob = self.repo.find_monster(monster_query)
+            if not mob:
+                self._send_json(404, {"error": "monster_not_found", "monster": monster_query})
+                return
+            target = TargetStats.from_monster_grade(mob, grade_num)
+
+            breed_id = char_dict.get("breed_id", 8) if char_dict else 8
+            available = self.repo.get_breed_spells(breed_id)
+
+            plan = TacticalCombatEngine.plan_tactical_turn(char, target, available, distance_cells=dist, char_hp_percent=hp_pct)
+            self._send_json(200, {
+                "status": "ok",
+                "stance": plan.stance.value,
+                "target_name": plan.target_name,
+                "target_hp": plan.target_hp,
+                "estimated_damage": plan.estimated_damage,
+                "multi_turn_projected_damage": plan.multi_turn_projected_damage,
+                "action_sequence": plan.action_sequence,
+                "explanation": plan.explanation,
+                "value_score": plan.value_score,
+            })
+
         elif self.path == "/sentinel/parse_command":
             cmd_text = req.get("command", "").strip()
             target_slot = req.get("target_slot", "all")
@@ -481,12 +512,19 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
                     char = _safe_char_stats(char_dict) if char_dict else CharacterStats(action_points=10, strength=300, power=40)
                     available = self.repo.get_breed_spells(char_dict.get("breed_id", 8) if char_dict else 8)
                     target = TargetStats.from_monster_grade(target_mob, 1)
-                    opt = SpellRotationOptimizer.optimize_turn(char, available, target)
+                    plan = TacticalCombatEngine.plan_tactical_turn(char, target, available)
 
-                    directive = "EXECUTE_OPTIMAL_ROTATION"
+                    directive = "EXECUTE_TACTICAL_PLAN"
                     confidence = 0.98
-                    explanation = f"Calculated optimal rotation against {target_mob.name_fr} ({opt.total_expected_damage} EV dmg, TTK: {opt.estimated_turns_to_kill})"
-                    metadata = opt.to_dict()
+                    explanation = f"Tactical Stance: {plan.stance.value} against {target_mob.name_fr} - {plan.explanation}"
+                    metadata = {
+                        "stance": plan.stance.value,
+                        "target_name": plan.target_name,
+                        "target_hp": plan.target_hp,
+                        "rotation": plan.action_sequence,
+                        "multi_turn_projected_damage": plan.multi_turn_projected_damage,
+                        "value_score": plan.value_score,
+                    }
 
             if not directive:
                 # 1. Neural calibrated decision classification if THX-01 / Decision Agent is loaded
