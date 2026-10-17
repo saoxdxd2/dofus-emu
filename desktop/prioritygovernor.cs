@@ -18,6 +18,11 @@ namespace DofusFarm.Engine
         private int _runningState = 0;
         public volatile bool Enabled = true;
 
+        // Precompiled once: GetInstanceSlot parses emulator command lines, and
+        // re-parsing the pattern from source on every new PID was pure waste.
+        private static readonly Regex RxPortArg = new Regex(@"-port\s+(\d+)", RegexOptions.Compiled);
+        private static readonly Regex RxCoresArg = new Regex(@"-cores\s+(\d+)", RegexOptions.Compiled);
+
         public event Action<string> OnLog;
 
         public PriorityGovernor()
@@ -145,13 +150,13 @@ namespace DofusFarm.Engine
                 string cmd = GetCachedCommandLine(pid);
                 if (!string.IsNullOrEmpty(cmd))
                 {
-                    var mp = Regex.Match(cmd, @"-port\s+(\d+)");
+                    var mp = RxPortArg.Match(cmd);
                     if (mp.Success)
                     {
                         int port = int.Parse(mp.Groups[1].Value);
                         resolved = Math.Max(0, (port - 5554) / 2);
                     }
-                    var mc = Regex.Match(cmd, @"-cores\s+(\d+)");
+                    var mc = RxCoresArg.Match(cmd);
                     if (mc.Success)
                     {
                         int.TryParse(mc.Groups[1].Value, out parsedCores);

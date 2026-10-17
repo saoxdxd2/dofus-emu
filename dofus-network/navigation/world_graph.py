@@ -26,7 +26,7 @@ class Direction(str, Enum):
     ZAAPI = "ZAAPI"    # Intra-city transport
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MapCoord:
     x: int
     y: int
@@ -78,7 +78,7 @@ class ZaapLocation:
         return self.name_fr
 
 
-@dataclass
+@dataclass(slots=True)
 class NavigationStep:
     step_index: int
     from_coord: Tuple[int, int]
@@ -162,6 +162,15 @@ class DofusWorldGraph:
         self.zaap_by_coord: Dict[Tuple[int, int], ZaapLocation] = {
             (z.coord.x, z.coord.y): z for z in self.zaaps
         }
+        # Flat tuple views of the Zaap coordinates: avoids constructing
+        # (and later GC-ing) a MapCoord object for every candidate on every
+        # find_nearest_zaap() call. Ties resolve to the first-listed Zaap,
+        # matching the original linear scan.
+        self._zaap_coords: List[Tuple[int, int]] = [(z.coord.x, z.coord.y) for z in self.zaaps]
+        # find_nearest_zaap() is called for both endpoints of every path
+        # query; bots repeatedly route from the same few towns, so memoizing
+        # turns an O(#zaaps) scan into an O(1) dict hit for the common case.
+        self._nearest_zaap_cache: Dict[Tuple[int, int], Tuple[ZaapLocation, int]] = {}
 
     def get_all_zaaps(self) -> List[Dict[str, Any]]:
         return [
@@ -178,14 +187,24 @@ class DofusWorldGraph:
 
     def find_nearest_zaap(self, coord: MapCoord) -> Tuple[ZaapLocation, int]:
         """Returns the closest Zaap to a given coordinate and its Manhattan distance."""
+        key = (coord.x, coord.y)
+        hit = self._nearest_zaap_cache.get(key)
+        if hit is not None:
+            return hit
         best_zaap = self.zaaps[0]
         best_dist = coord.manhattan_distance(best_zaap.coord)
-        for z in self.zaaps[1:]:
-            d = coord.manhattan_distance(z.coord)
+        for z, (zx, zy) in zip(self.zaaps[1:], self._zaap_coords[1:]):
+            d = abs(coord.x - zx) + abs(coord.y - zy)
             if d < best_dist:
                 best_dist = d
                 best_zaap = z
-        return best_zaap, best_dist
+        result = (best_zaap, best_dist)
+        # Bound the cache so long-running bots navigating a dense grid of
+        # unique coordinates don't grow it without limit.
+        if len(self._nearest_zaap_cache) >= 4096:
+            self._nearest_zaap_cache.clear()
+        self._nearest_zaap_cache[key] = result
+        return result
 
     def find_zaap_by_name(self, name_query: str) -> Optional[ZaapLocation]:
         """Fuzzy matches a Zaap name in FR, EN, or ES."""
@@ -379,17 +398,19 @@ class CellPathfinder:
         """Converts a flat cell ID (0..559) to continuous isometric coordinates (X, Y)."""
         if not (0 <= cell_id < cls.TOTAL_CELLS):
             raise ValueError(f"Cell ID {cell_id} out of bounds [0..{cls.TOTAL_CELLS - 1}]")
-        loc_x = cell_id % cls.WIDTH
-        loc_y = cell_id // cls.WIDTH
-        iso_x = loc_x + (loc_y // 2)
-        iso_y = (loc_y // 2) - loc_x + (loc_y % 2)
-        return iso_x, iso_y
+        return cls._ISO_COORDS[cell_id]
 
     @classmethod
     def cell_distance(cls, cell_a: int, cell_b: int) -> int:
         """Computes Manhattan distance in isometric cells between two cell IDs."""
-        xa, ya = cls.cell_to_iso_coords(cell_a)
-        xb, yb = cls.cell_to_iso_coords(cell_b)
+        # Bounds check first so invalid IDs still raise ValueError (a raw
+        # table index would silently wrap on negative IDs in Python).
+        if not (0 <= cell_a < cls.TOTAL_CELLS):
+            raise ValueError(f"Cell ID {cell_a} out of bounds [0..{cls.TOTAL_CELLS - 1}]")
+        if not (0 <= cell_b < cls.TOTAL_CELLS):
+            raise ValueError(f"Cell ID {cell_b} out of bounds [0..{cls.TOTAL_CELLS - 1}]")
+        xa, ya = cls._ISO_COORDS[cell_a]
+        xb, yb = cls._ISO_COORDS[cell_b]
         return abs(xa - xb) + abs(ya - yb)
 
     @classmethod
@@ -412,3 +433,15 @@ class CellPathfinder:
         if not border:
             return current_cell
         return min(border, key=lambda c: cls.cell_distance(current_cell, c))
+
+
+# Precomputed isometric coordinate table for every cell id (0..559). Computing
+# this on every cell_distance() call dominated the tactical pathfinding loops
+# (two divmods + several int allocations per lookup). Built once at import.
+# Declared after the class body because class-body comprehensions cannot see
+# sibling class attributes in Python 3.
+CellPathfinder._ISO_COORDS = [
+    ((cid % CellPathfinder.WIDTH) + ((cid // CellPathfinder.WIDTH) // 2),
+     ((cid // CellPathfinder.WIDTH) // 2) - (cid % CellPathfinder.WIDTH) + ((cid // CellPathfinder.WIDTH) % 2))
+    for cid in range(CellPathfinder.TOTAL_CELLS)
+]

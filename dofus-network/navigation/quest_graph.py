@@ -287,6 +287,10 @@ class QuestKnowledgeGraph:
     def __init__(self) -> None:
         self.guides = list(self.BUILTIN_GUIDES)
         self.by_id: Dict[str, QuestGuide] = {g.id: g for g in self.guides}
+        # Per-guide lowercase search terms, built lazily on first search and
+        # reused afterwards (the terms are derived only from immutable guide
+        # fields, so they never need to be recomputed).
+        self._search_terms_cache: Dict[str, List[str]] = {}
         self._load_cache()
 
     def _load_cache(self) -> None:
@@ -323,34 +327,45 @@ class QuestKnowledgeGraph:
         q = query.strip().lower()
         matches: List[QuestGuide] = []
         for g in self.guides:
-            terms = [
-                g.id,
-                g.title_fr.lower(),
-                g.title_en.lower(),
-                g.title_es.lower(),
-                g.start_npc.lower(),
-            ]
-            if g.dofus_reward:
-                terms.append(g.dofus_reward.lower())
-
-            # Specific high-frequency quest landmarks
-            if "cawotte" in g.id: terms.append("cawotte")
-            if "otomai" in g.id: terms.extend(["otomai", "otomaï"])
-            if "moon" in g.id: terms.append("moon")
-            if "frigost" in g.id: terms.append("frigost")
-            if "koulosse" in g.id: terms.append("koulosse")
-            if "skeunk" in g.id: terms.append("skeunk")
-            if "ocre" in g.id: terms.extend(["ocre", "éternelle moisson", "eternelle moisson"])
-            if "argente" in g.id: terms.extend(["argenté", "argente"])
-
-            matched = False
-            for t in terms:
-                if t in q or q in t:
-                    matched = True
-                    break
-            if matched:
+            terms = self._search_terms(g)
+            if any(t in q or q in t for t in terms):
                 matches.append(g)
         return matches
+
+    def _search_terms(self, g: QuestGuide) -> List[str]:
+        """Search terms for a guide, cached per instance.
+
+        The terms depend only on immutable guide fields, so they are computed
+        once per guide (and reused across searches) instead of being rebuilt
+        on every call.
+        """
+        cache = self._search_terms_cache
+        cached = cache.get(g.id)
+        if cached is not None:
+            return cached
+
+        terms = [
+            g.id,
+            g.title_fr.lower(),
+            g.title_en.lower(),
+            g.title_es.lower(),
+            g.start_npc.lower(),
+        ]
+        if g.dofus_reward:
+            terms.append(g.dofus_reward.lower())
+
+        # Specific high-frequency quest landmarks
+        if "cawotte" in g.id: terms.append("cawotte")
+        if "otomai" in g.id: terms.extend(["otomai", "otomaï"])
+        if "moon" in g.id: terms.append("moon")
+        if "frigost" in g.id: terms.append("frigost")
+        if "koulosse" in g.id: terms.append("koulosse")
+        if "skeunk" in g.id: terms.append("skeunk")
+        if "ocre" in g.id: terms.extend(["ocre", "éternelle moisson", "eternelle moisson"])
+        if "argente" in g.id: terms.extend(["argenté", "argente"])
+
+        cache[g.id] = terms
+        return terms
 
     def get_guide(self, guide_id: str) -> Optional[QuestGuide]:
         return self.by_id.get(guide_id)

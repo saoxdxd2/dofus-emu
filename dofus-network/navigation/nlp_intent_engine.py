@@ -53,6 +53,17 @@ class NLPQueryResult:
         }
 
 
+# Compiled once at import time instead of being re-parsed from source on
+# every process_query()/detect_language() call (the re module caches recent
+# patterns, but only up to _MAXCACHE=512 distinct patterns, which this file
+# alone could evict under mixed traffic).
+_RE_COORD_BRACKET = re.compile(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]")
+_RE_COORD_NATURAL = re.compile(r"\b(?:va\s+en|go\s+to|ve\s+a|aller\s+en|coords?|pos)\s+(-?\d+)[,\s]+(-?\d+)\b")
+_RE_LANG_FR = re.compile(r"\b(le|la|les|du|des|un|une|va|en|comment|pour|au|dans|où|fer|blé|chêne|quête|donjon)\b")
+_RE_LANG_ES = re.compile(r"\b(el|la|los|las|de|del|un|una|ve|a|cómo|para|en|dónde|hierro|trigo|roble|misión|mazmorra)\b")
+_RE_LANG_EN = re.compile(r"\b(the|a|an|of|to|go|how|for|in|where|iron|wheat|oak|quest|dungeon|path)\b")
+
+
 class DofusNLPEngine:
     """Natural Language Understanding pipeline for Dofus Touch."""
 
@@ -60,13 +71,37 @@ class DofusNLPEngine:
         self.world_graph = DofusWorldGraph()
         self.resource_graph = ResourceKnowledgeGraph()
         self.quest_graph = QuestKnowledgeGraph()
+        # Precomputed lowercase resource name aliases: the old code looped
+        # over every resource and re-lowercased/re-stripped its name inside
+        # process_query() on every call. The tuple order matches the original
+        # (fr-stripped, en-stripped, es-stripped) so first-match behaviour is
+        # identical.
+        self._resource_aliases = [
+            (
+                r.name_fr.lower().replace("bois de ", "").replace("bois d'", ""),
+                r.name_en.lower().replace(" wood", ""),
+                r.name_es.lower().replace("madera de ", ""),
+                r,
+            )
+            for r in self.resource_graph.resources
+        ]
+        # Zaap name variants used by the "zaap ..." intent, precomputed once.
+        self._zaap_aliases = [
+            (
+                z.name_fr.lower().replace("village d'", "").replace("cité de ", "").replace("port de ", ""),
+                z.name_en.lower(),
+                z.name_es.lower(),
+                z,
+            )
+            for z in self.world_graph.zaaps
+        ]
 
     def detect_language(self, text: str) -> str:
         """Detects language between FR, EN, and ES using high-frequency lexical markers."""
         t = text.lower()
-        fr_score = len(re.findall(r"\b(le|la|les|du|des|un|une|va|en|comment|pour|au|dans|où|fer|blé|chêne|quête|donjon)\b", t))
-        es_score = len(re.findall(r"\b(el|la|los|las|de|del|un|una|ve|a|cómo|para|en|dónde|hierro|trigo|roble|misión|mazmorra)\b", t))
-        en_score = len(re.findall(r"\b(the|a|an|of|to|go|how|for|in|where|iron|wheat|oak|quest|dungeon|path)\b", t))
+        fr_score = len(_RE_LANG_FR.findall(t))
+        es_score = len(_RE_LANG_ES.findall(t))
+        en_score = len(_RE_LANG_EN.findall(t))
 
         if es_score > fr_score and es_score > en_score:
             return "es"
@@ -85,9 +120,9 @@ class DofusNLPEngine:
         q_lower = q.lower()
 
         # 1. Coordinate Navigation: [X, Y] or "va en X, Y" / "go to X, Y" / "ve a X, Y"
-        coord_match = re.search(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]", q)
+        coord_match = _RE_COORD_BRACKET.search(q)
         if not coord_match:
-            coord_match = re.search(r"\b(?:va\s+en|go\s+to|ve\s+a|aller\s+en|coords?|pos)\s+(-?\d+)[,\s]+(-?\d+)\b", q_lower)
+            coord_match = _RE_COORD_NATURAL.search(q_lower)
 
         if coord_match:
             tx = int(coord_match.group(1))
@@ -113,9 +148,8 @@ class DofusNLPEngine:
 
         # 2. Zaap Navigation: "zaap astrub", "aller au zaap de bonta", "teleport to village zaap"
         if "zaap" in q_lower or "téléporte" in q_lower or "teleport" in q_lower:
-            for z in self.world_graph.zaaps:
-                name_clean = z.name_fr.lower().replace("village d'", "").replace("cité de ", "").replace("port de ", "")
-                if name_clean in q_lower or z.name_en.lower() in q_lower or z.name_es.lower() in q_lower:
+            for name_clean, name_en, name_es, z in self._zaap_aliases:
+                if name_clean in q_lower or name_en in q_lower or name_es in q_lower:
                     path = self.world_graph.find_path(current_pos, (z.coord.x, z.coord.y), allow_zaap=True, lang=lang)
                     z_name = z.get_name(lang)
                     if lang == "en":
@@ -181,13 +215,8 @@ class DofusNLPEngine:
 
         # 4. Resource Level Requirement: "quel niveau pour miner le kobalte", "what level to cut oak"
         if any(k in q_lower for k in ["niveau pour", "level for", "level to", "nivel para"]):
-            for r in self.resource_graph.resources:
-                if (
-                    r.name_fr.lower() in q_lower
-                    or r.name_en.lower() in q_lower
-                    or r.name_es.lower() in q_lower
-                    or r.name_fr.lower().replace("bois de ", "").replace("bois d'", "") in q_lower
-                ):
+            for r_fr, r_en, r_es, r in self._resource_aliases:
+                if r_fr in q_lower or r_en in q_lower or r_es in q_lower:
                     if lang == "en":
                         reply = f"Harvesting {r.name_en} requires {r.profession.capitalize()} Level {r.level_req}."
                     elif lang == "es":
@@ -206,10 +235,7 @@ class DofusNLPEngine:
 
         # 5. Start Circular Farm Loop: "farm du blé", "gather iron", "minar cobre", "récolte du chêne"
         if any(k in q_lower for k in ["farm", "récolte", "recolte", "gather", "harvest", "minar", "cosecha"]):
-            for r in self.resource_graph.resources:
-                r_fr = r.name_fr.lower().replace("bois de ", "").replace("bois d'", "")
-                r_en = r.name_en.lower().replace(" wood", "")
-                r_es = r.name_es.lower().replace("madera de ", "")
+            for r_fr, r_en, r_es, r in self._resource_aliases:
                 if r_fr in q_lower or r_en in q_lower or r_es in q_lower:
                     farm_loop = self.resource_graph.generate_farm_loop(r.name_fr, start_coord=current_pos, max_maps=6)
                     if farm_loop:
@@ -232,10 +258,7 @@ class DofusNLPEngine:
 
         # 6. Find Resource Spots: "où trouver du fer", "where to find ash wood", "dónde hay trigo"
         if any(k in q_lower for k in ["où trouver", "ou trouver", "where", "dónde", "donde", "spot"]):
-            for r in self.resource_graph.resources:
-                r_fr = r.name_fr.lower().replace("bois de ", "").replace("bois d'", "")
-                r_en = r.name_en.lower().replace(" wood", "")
-                r_es = r.name_es.lower().replace("madera de ", "")
+            for r_fr, r_en, r_es, r in self._resource_aliases:
                 if r_fr in q_lower or r_en in q_lower or r_es in q_lower:
                     spots = self.resource_graph.search_spots(r.name_fr, near_pos=current_pos, max_results=4)
                     if spots:
