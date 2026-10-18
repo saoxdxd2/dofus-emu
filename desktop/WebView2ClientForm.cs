@@ -664,9 +664,25 @@ namespace DofusFarm.Engine
                 // shim that rewrites CDN asset URLs through it. Inert when no
                 // ProxyPort is wired or when the page ships its own copy
                 // (double-load is guarded inside the shim).
+                string cacheRoot = !string.IsNullOrEmpty(_options.CacheDir)
+                    ? _options.CacheDir
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "asset_cache");
+                string mirrorDir = Path.Combine(cacheRoot, "files");
+                string cacheBase = "";
+                try
+                {
+                    Directory.CreateDirectory(mirrorDir);
+                    _webView.CoreWebView2.SetVirtualHostNameToFolderMapping("assets.local", mirrorDir, CoreWebView2HostResourceAccessKind.Allow);
+                    cacheBase = "https://assets.local/";
+                    _logCallback?.Invoke(string.Format("[{0}] Mapped asset mirror https://assets.local/ -> {1}", _instanceId, mirrorDir));
+                }
+                catch (Exception mirrorEx)
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] Asset mirror mapping warning: {1}", _instanceId, mirrorEx.Message));
+                }
                 string relayCfgScript = string.Format(
-                    "(function() {{ window.__DOFUS_CDN_RELAY = {{ enabled: {0}, port: {1}, referer: \"{2}\" }}; }})();",
-                    (_options.ProxyPort > 0) ? "true" : "false", _options.ProxyPort, CdnReferer);
+                    "(function() {{ window.__DOFUS_CDN_RELAY = {{ enabled: {0}, port: {1}, referer: \"{2}\", cacheBase: \"{3}\" }}; }})();",
+                    (_options.ProxyPort > 0) ? "true" : "false", _options.ProxyPort, CdnReferer, cacheBase);
                 await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(relayCfgScript);
                 try
                 {
@@ -680,6 +696,24 @@ namespace DofusFarm.Engine
                 catch (Exception shimEx)
                 {
                     _logCallback?.Invoke(string.Format("[{0}] CDN relay shim injection warning: {1}", _instanceId, shimEx.Message));
+                }
+
+                // 3c. wizAssets local-file layer: the official mobile client
+                // persists every asset to device storage and loads it back from
+                // files; this shim replicates that on top of the relay cache
+                // mirror so repeat loads never touch the network.
+                try
+                {
+                    string wizShimPath = Path.Combine(clientDir, "js", "wizassets-shim.js");
+                    if (File.Exists(wizShimPath))
+                    {
+                        await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(File.ReadAllText(wizShimPath));
+                        _logCallback?.Invoke(string.Format("[{0}] Registered wizAssets local-file shim.", _instanceId));
+                    }
+                }
+                catch (Exception wizEx)
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] wizAssets shim injection warning: {1}", _instanceId, wizEx.Message));
                 }
 
                 // 4. Map virtual origin https://dofus.local/ to standalone game bundle

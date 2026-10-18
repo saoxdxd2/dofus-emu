@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -584,6 +585,19 @@ type ProxyServer struct {
 	prefetchMu         sync.Mutex
 	prefetchSeen       map[int64]time.Time
 	prefetchLogMu      sync.Mutex
+
+	// Asset mirror (see mirrorCachedFile): every cached asset is hard-linked
+	// into <cacheDir>/files/<host>/<path>. WebView2 maps that tree to
+	// https://assets.local/ so the client's wizAssets layer can load assets
+	// straight from local files (no relay round-trip, no connection limits).
+	mirrorMu    sync.Mutex
+	mirrorIndex map[string]struct{}
+	mirrorBuilt bool
+
+	// In-flight de-duplication for warmAssetCacheDetail so the client and the
+	// prefetcher never download the same asset from the CDN twice at once.
+	warmMu       sync.Mutex
+	warmInflight map[string]chan struct{}
 }
 
 func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet bool, port int, authToken, serial, uuid, model, manufacturer, ua, glVendor, glRenderer, maxTextureSize, referer string) *ProxyServer {
@@ -895,9 +909,15 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Loopback-only CDN relay for the WebView2 client (see handleCDNRelay).
 	// Exempt from proxy auth: it is reachable only from the local machine and
 	// is called by plain browser XHRs that cannot carry proxy credentials.
-	if strings.HasPrefix(r.URL.Path, "/__cdn/") && isLocalRequestHost(r.Host) {
-		p.handleCDNRelay(w, r)
-		return
+	if isLocalRequestHost(r.Host) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/__cdn/"):
+			p.handleCDNRelay(w, r)
+			return
+		case r.URL.Path == "/__files" || r.URL.Path == "/__warm" || r.URL.Path == "/__delete":
+			p.handleAssetStore(w, r)
+			return
+		}
 	}
 
 	if p.authToken != "" {
@@ -1415,6 +1435,214 @@ func (p *ProxyServer) serveCachedAsset(w http.ResponseWriter, r *http.Request, c
 	return true
 }
 
+// ---------------------------------------------------------------------------
+// Asset mirror for the wizAssets local-file layer
+//
+// Every cached asset is hard-linked into <cacheDir>/files/<host>/<path>. The
+// WebView2 client maps that tree to https://assets.local/ so its wizAssets
+// shim can hand the game local URLs, mirroring how the original mobile client
+// persists assets to device storage and loads them back from files.
+// ---------------------------------------------------------------------------
+
+// mirrorRelPath returns "<host>/<url-path>" (forward slashes) for a plain
+// http(s) asset URL, or "" when the URL is unusable as a mirror path.
+func mirrorRelPath(target string) string {
+	u, err := url.Parse(target)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" || strings.ContainsAny(host, `<>:"|?*\`) {
+		return ""
+	}
+	assetPath := u.Path
+	if assetPath == "" || assetPath == "/" || strings.Contains(assetPath, "..") ||
+		strings.ContainsAny(assetPath, "<>:\"|*\\") {
+		return ""
+	}
+	return host + assetPath
+}
+
+// mirrorPathFor maps a CDN asset URL to its mirrored on-disk location below
+// <cacheDir>/files.
+func (p *ProxyServer) mirrorPathFor(target string) string {
+	if p.cacheDir == "" {
+		return ""
+	}
+	rel := mirrorRelPath(target)
+	if rel == "" {
+		return ""
+	}
+	return filepath.Join(p.cacheDir, "files", filepath.FromSlash(rel))
+}
+
+// mirrorCachedFile hard-links a cached file into the mirror tree (falling
+// back to a copy where links are unsupported). Existing entries are left
+// alone: asset URLs are version-hashed, so their content never changes.
+func (p *ProxyServer) mirrorCachedFile(target, cacheFilePath string) {
+	mirror := p.mirrorPathFor(target)
+	if mirror == "" {
+		return
+	}
+	if _, err := os.Stat(mirror); err == nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(mirror), 0755); err != nil {
+		return
+	}
+	if os.Link(cacheFilePath, mirror) == nil {
+		p.mirrorIndexAdd(mirrorRelPath(target))
+		return
+	}
+	in, err := os.Open(cacheFilePath)
+	if err != nil {
+		return
+	}
+	defer in.Close()
+	out, err := os.Create(mirror)
+	if err != nil {
+		return
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(mirror)
+		return
+	}
+	_ = out.Close()
+	p.mirrorIndexAdd(mirrorRelPath(target))
+}
+
+func (p *ProxyServer) mirrorIndexAdd(rel string) {
+	if rel == "" {
+		return
+	}
+	p.mirrorMu.Lock()
+	if p.mirrorBuilt && p.mirrorIndex != nil {
+		p.mirrorIndex[rel] = struct{}{}
+	}
+	p.mirrorMu.Unlock()
+}
+
+// mirrorIndexSnapshot lists the mirrored rel paths, walking the mirror tree
+// on first use and caching the index afterwards.
+func (p *ProxyServer) mirrorIndexSnapshot() []string {
+	p.mirrorMu.Lock()
+	defer p.mirrorMu.Unlock()
+	if !p.mirrorBuilt {
+		p.mirrorIndex = make(map[string]struct{}, 4096)
+		root := filepath.Join(p.cacheDir, "files")
+		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info == nil || info.IsDir() {
+				return nil
+			}
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return nil
+			}
+			p.mirrorIndex[filepath.ToSlash(rel)] = struct{}{}
+			return nil
+		})
+		p.mirrorBuilt = true
+	}
+	out := make([]string, 0, len(p.mirrorIndex))
+	for rel := range p.mirrorIndex {
+		out = append(out, rel)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// handleAssetStore serves the loopback-only wizAssets support endpoints used
+// by the client shim:
+//
+//	GET /__files          -> JSON array of mirrored "<host>/<path>" entries
+//	GET /__warm?u=<url>   -> ensures the asset is cached + mirrored
+//	GET /__delete?p=<path>-> removes mirror + cache entries for a path
+func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	h.Set("Access-Control-Allow-Headers", "*")
+	h.Set("Cache-Control", "no-store")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	switch r.URL.Path {
+	case "/__files":
+		files := p.mirrorIndexSnapshot()
+		payload, err := json.Marshal(files)
+		if err != nil {
+			http.Error(w, "encode error", http.StatusInternalServerError)
+			return
+		}
+		h.Set("Content-Type", "application/json")
+		if len(payload) > 32<<10 && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			h.Set("Content-Encoding", "gzip")
+			w.WriteHeader(http.StatusOK)
+			gz := gzip.NewWriter(w)
+			_, _ = gz.Write(payload)
+			_ = gz.Close()
+			return
+		}
+		_, _ = w.Write(payload)
+	case "/__warm":
+		target := r.URL.Query().Get("u")
+		if !isCacheAssetURL(target) {
+			http.Error(w, "Bad target", http.StatusBadRequest)
+			return
+		}
+		if !p.quiet {
+			log.Printf("[WARM] %s", target)
+		}
+		ok, already, status, errText := p.warmAssetCacheDetail(r.Context(), target)
+		h.Set("Content-Type", "application/json")
+		if !ok {
+			p.prefetchLog("[WARM] failed status=%d err=%q %s", status, errText, target)
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = fmt.Fprintf(w, `{"ok":false,"status":%d,"err":%q}`, status, errText)
+			return
+		}
+		p.requestLog("WARM %s", target)
+		if u, err := url.Parse(target); err == nil {
+			if id := mapJSONID(u.Path); id > 0 {
+				p.scheduleMapPrefetch(target, id)
+			}
+		}
+		_, _ = fmt.Fprintf(w, `{"ok":true,"cached":%t}`, already)
+	case "/__delete":
+		needle := strings.Trim(r.URL.Query().Get("p"), "/")
+		if needle == "" {
+			http.Error(w, "Bad path", http.StatusBadRequest)
+			return
+		}
+		removed := 0
+		for _, rel := range p.mirrorIndexSnapshot() {
+			if rel != needle && !strings.HasSuffix(rel, "/"+needle) {
+				continue
+			}
+			_ = os.Remove(filepath.Join(p.cacheDir, "files", filepath.FromSlash(rel)))
+			target := "https://" + rel
+			_ = os.Remove(p.assetCachePath(target))
+			_ = os.Remove(p.assetCachePath(target) + ".meta")
+			p.mirrorMu.Lock()
+			if p.mirrorIndex != nil {
+				delete(p.mirrorIndex, rel)
+			}
+			p.mirrorMu.Unlock()
+			removed++
+		}
+		h.Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"ok":true,"removed":%d}`, removed)
+	default:
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}
+}
+
 func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	setCORS := func() {
 		h := w.Header()
@@ -1459,6 +1687,7 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	if cacheable {
 		cacheFilePath = p.assetCachePath(targetStr)
 		if p.serveCachedAsset(w, r, cacheFilePath, assetPath) {
+			p.mirrorCachedFile(targetStr, cacheFilePath)
 			if !p.quiet {
 				log.Printf("[RELAY] HIT %s", targetStr)
 			}
@@ -1540,6 +1769,7 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 		if ct := resp.Header.Get("Content-Type"); ct != "" {
 			_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
 		}
+		p.mirrorCachedFile(targetStr, cacheFilePath)
 		if id := mapJSONID(assetPath); id > 0 {
 			p.scheduleMapPrefetch(targetStr, id)
 		}
@@ -1551,20 +1781,60 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 // warmAssetCache fetches a cacheable asset through the proxy transport and
 // stores it in the shared cache. Returns (ok, alreadyCached).
 func (p *ProxyServer) warmAssetCache(ctx context.Context, target string) (bool, bool) {
+	ok, already, _, _ := p.warmAssetCacheDetail(ctx, target)
+	return ok, already
+}
+
+// warmAssetCacheDetail is warmAssetCache with failure diagnostics: status is
+// the upstream HTTP status (0 when the request never completed) and errText
+// describes transport or cache-write errors. Concurrent warms of the same
+// asset are de-duplicated so the client and the prefetcher can race without
+// downloading the same file twice.
+func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (bool, bool, int, string) {
 	if p.cacheDir == "" || !isCacheAssetURL(target) || isVolatileCacheURL(target) {
-		return false, false
+		return false, false, 0, "not cacheable"
 	}
 	cacheFilePath := p.assetCachePath(target)
 	if fi, err := os.Stat(cacheFilePath); err == nil {
 		if time.Since(fi.ModTime()) <= assetCacheTTL {
-			return true, true
+			p.mirrorCachedFile(target, cacheFilePath)
+			return true, true, 200, ""
 		}
 		_ = os.Remove(cacheFilePath)
 		_ = os.Remove(cacheFilePath + ".meta")
 	}
+
+	// De-duplicate concurrent warms of the same target.
+	p.warmMu.Lock()
+	if p.warmInflight == nil {
+		p.warmInflight = make(map[string]chan struct{})
+	}
+	if ch, ok := p.warmInflight[target]; ok {
+		p.warmMu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return false, false, 0, "canceled while waiting for in-flight warm"
+		}
+		if fi, err := os.Stat(cacheFilePath); err == nil && time.Since(fi.ModTime()) <= assetCacheTTL {
+			p.mirrorCachedFile(target, cacheFilePath)
+			return true, true, 200, ""
+		}
+		return false, false, 0, "in-flight warm did not produce a cache entry"
+	}
+	inflightCh := make(chan struct{})
+	p.warmInflight[target] = inflightCh
+	p.warmMu.Unlock()
+	defer func() {
+		p.warmMu.Lock()
+		delete(p.warmInflight, target)
+		p.warmMu.Unlock()
+		close(inflightCh)
+	}()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return false, false
+		return false, false, 0, "request: " + err.Error()
 	}
 	req.Header.Set("User-Agent", p.ua)
 	req.Header.Set("Referer", p.referer)
@@ -1572,31 +1842,32 @@ func (p *ProxyServer) warmAssetCache(ctx context.Context, target string) (bool, 
 	req.Header.Set("Accept", "*/*")
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return false, false
+		return false, false, 0, "fetch: " + err.Error()
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false, false
+		return false, false, resp.StatusCode, ""
 	}
 	tmpPath := fmt.Sprintf("%s.%d.%d.tmp", cacheFilePath, os.Getpid(), time.Now().UnixNano())
 	tf, err := os.Create(tmpPath)
 	if err != nil {
-		return false, false
+		return false, false, resp.StatusCode, "create tmp: " + err.Error()
 	}
 	written, copyErr := io.Copy(tf, io.LimitReader(resp.Body, 64<<20))
 	_ = tf.Close()
 	if copyErr != nil || written == 0 || (resp.ContentLength > 0 && written != resp.ContentLength) {
 		_ = os.Remove(tmpPath)
-		return false, false
+		return false, false, resp.StatusCode, fmt.Sprintf("copy: err=%v written=%d contentLength=%d", copyErr, written, resp.ContentLength)
 	}
-	if atomicReplaceFile(tmpPath, cacheFilePath) != nil {
+	if err := atomicReplaceFile(tmpPath, cacheFilePath); err != nil {
 		_ = os.Remove(tmpPath)
-		return false, false
+		return false, false, resp.StatusCode, "replace: " + err.Error()
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
 	}
-	return true, false
+	p.mirrorCachedFile(target, cacheFilePath)
+	return true, false, resp.StatusCode, ""
 }
 
 // ---------------------------------------------------------------------------
@@ -1786,15 +2057,16 @@ func (p *ProxyServer) prefetchWorker() {
 }
 
 // processPrefetchJob warms one node of the neighbour graph: ensures the map
-// JSON is cached, warms its tiles when the node is a walkable neighbour
-// (depth 1..prefetchTilesDepth), then enqueues its own neighbours until
-// prefetchRadius is reached.
+// JSON is cached, warms its tiles (depth 0 = the map being loaded, up to
+// prefetchTilesDepth), then enqueues its own neighbours until prefetchRadius
+// is reached.
 func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 	mapURL := job.target
 	cacheFilePath := p.assetCachePath(mapURL)
 	if _, err := os.Stat(cacheFilePath); err != nil {
-		if ok, _ := p.warmAssetCache(ctx, mapURL); !ok {
-			p.prefetchLog("[PREFETCH] map %d json fetch failed", job.id)
+		ok, _, status, errText := p.warmAssetCacheDetail(ctx, mapURL)
+		if !ok {
+			p.prefetchLog("[PREFETCH] map %d json fetch failed status=%d err=%q", job.id, status, errText)
 			return
 		}
 	}
@@ -1812,7 +2084,7 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 	neighbours := mapJSONNeighbours(body)
 
 	newTiles, cachedTiles, totalTiles := 0, 0, 0
-	if job.depth >= 1 && job.depth <= p.prefetchTilesDepth {
+	if job.depth <= p.prefetchTilesDepth {
 		for _, tileURL := range mapTileURLs(body, prefix) {
 			totalTiles++
 			ok, already := p.warmAssetCache(ctx, tileURL)
@@ -1972,6 +2244,7 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		// chunks - no extra Stat, no manual Content-Length math, and
 		// repeat visits can be answered with a 304.
 		if p.serveCachedAsset(w, r, cacheFilePath, targetURL.Path) {
+			p.mirrorCachedFile(targetStr, cacheFilePath)
 			if id := mapJSONID(targetURL.Path); id > 0 {
 				p.scheduleMapPrefetch(targetStr, id)
 			}
@@ -2058,6 +2331,7 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				if ct != "" {
 					_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
 				}
+				p.mirrorCachedFile(targetStr, cacheFilePath)
 				if id := mapJSONID(targetURL.Path); id > 0 {
 					p.scheduleMapPrefetch(targetStr, id)
 				}
@@ -2094,7 +2368,7 @@ func main() {
 	prefetchNeighbours := flag.Bool("prefetch-neighbours", true, "Warm neighbour map JSONs and tiles into -cache whenever a map is loaded")
 	prefetchRadius := flag.Int("prefetch-radius", 2, "Map graph depth warmed for JSON (1=direct neighbours, 2=neighbours of neighbours)")
 	prefetchTilesDepth := flag.Int("prefetch-tiles-depth", 1, "Graph depth at which map tile images (gfx/world/*) are warmed")
-	prefetchWorkers := flag.Int("prefetch-workers", 3, "Parallel workers for neighbour prefetch")
+	prefetchWorkers := flag.Int("prefetch-workers", 5, "Parallel workers for neighbour prefetch")
 	flag.Parse()
 
 	log.SetFlags(log.Ldate | log.Ltime)

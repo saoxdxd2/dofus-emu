@@ -2932,6 +2932,8 @@ namespace DofusFarm.UI
 
                     opts.ProxyPort = localProxyPort;
 
+                    try { opts.CacheDir = System.IO.Path.Combine(_engine.AppBaseDir, "asset_cache"); } catch { }
+
                     Log(string.Format("WebView2 {0}: relay proxy on 127.0.0.1:{1} (upstream: {2})",
 
                         inst.Name, localProxyPort, string.IsNullOrEmpty(upstream) ? "DIRECT" : upstream));

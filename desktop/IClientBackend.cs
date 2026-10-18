@@ -36,6 +36,9 @@ namespace DofusFarm.Engine
         public string DisguiseScript { get; set; }
         public int ProxyPort { get; set; }
 
+        // Shared asset cache directory (relay cache + wizAssets mirror).
+        public string CacheDir { get; set; }
+
         // CPU & rendering optimizations
         public bool EnableBackgroundThrottling { get; set; }
         public int TargetFps { get; set; }
