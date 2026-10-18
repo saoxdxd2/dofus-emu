@@ -11,6 +11,9 @@
  *  - inert when the relay config is absent/disabled or the probe fails;
  *  - XHRs retry the original CDN URL once if the relay errors or returns 4xx,
  *    which lets the C# WebResourceRequested layer (browser cookies) win;
+ *  - URLs already carrying the relay prefix (e.g. built from the rewritten
+ *    Config.assetsUrl) are unwrapped back to the CDN origin for that retry,
+ *    so relay failures on gated assets still fall through to the intercept;
  *  - <img>/<audio> retry the original URL once on error.
  *
  * Idempotent: safe to load both as a page script and via host script
@@ -29,6 +32,8 @@
   var active = false;
   var rewriteCount = 0;
   var retryCount = 0;
+  var jsonLog = 0;
+  var fetchRetryCount = 0;
 
   function diag(text) {
     try {
@@ -45,7 +50,17 @@
     var i = url.indexOf("://");
     rewriteCount++;
     if (rewriteCount <= 2 || rewriteCount % 100 === 0) diag("rewrite #" + rewriteCount + " " + url.slice(0, 120));
+    if (jsonLog < 40 && /\.json(\?|$)|\/maps\//i.test(url)) {
+      jsonLog++;
+      diag("jsonrewrite #" + jsonLog + " " + url.slice(0, 130));
+    }
     return relayPrefix + url.slice(i + 3);
+  }
+
+  function unwrapRelayUrl(url) {
+    if (typeof url !== "string" || url.length === 0) return null;
+    if (url.lastIndexOf(relayPrefix, 0) !== 0) return null;
+    return "https://" + url.slice(relayPrefix.length);
   }
 
   function rewriteConfig(c) {
@@ -80,11 +95,20 @@
     XHR.prototype.open = function (method, url) {
       try {
         if (active && !this.__dtRelayBypass) {
-          var rw = rewrite(url);
-          if (rw !== url) {
-            this.__dtRelayOrig = url;
+          var unwrapped = unwrapRelayUrl(url);
+          if (unwrapped) {
+            // Already relay-prefixed (built from rewritten Config.assetsUrl).
+            // Keep the relay URL now, but remember the CDN URL so a 4xx can
+            // fall back to the native/intercept path.
+            this.__dtRelayOrig = unwrapped;
             this.__dtRelayMethod = method;
-            arguments[1] = rw;
+          } else {
+            var rw = rewrite(url);
+            if (rw !== url) {
+              this.__dtRelayOrig = url;
+              this.__dtRelayMethod = method;
+              arguments[1] = rw;
+            }
           }
         }
         this.__dtRelayBypass = false;
@@ -117,7 +141,7 @@
           if (s === 0 || s >= 400) {
             xhr.__dtRelayRetried = true;
             retryCount++;
-            if (retryCount <= 3 || retryCount % 50 === 0) diag("retry #" + retryCount + " (relay gave " + s + ") " + String(orig).slice(0, 100));
+            if (retryCount <= 25 || retryCount % 50 === 0) diag("retry #" + retryCount + " (relay gave " + s + ") " + String(orig).slice(0, 130));
             try {
               var responseType = xhr.responseType;
               var withCredentials = xhr.withCredentials;
@@ -141,23 +165,47 @@
     };
   }
 
-  // ---- fetch: string/Request input rewrite ----
+  // ---- fetch: string/Request input rewrite, one native retry on 4xx/5xx ----
   if (window.fetch) {
     var origFetch = window.fetch;
-    window.fetch = function (input) {
+    window.fetch = function (input, init) {
+      var nativeFallback = null;
       try {
         if (active) {
           if (typeof input === "string") {
-            input = rewrite(input);
+            var unwrapped = unwrapRelayUrl(input);
+            if (unwrapped) {
+              nativeFallback = unwrapped;
+            } else {
+              input = rewrite(input);
+            }
           } else if (typeof Request !== "undefined" && input instanceof Request) {
-            var rw = rewrite(input.url);
-            if (rw !== input.url) input = new Request(rw, input);
+            var unwrappedReq = unwrapRelayUrl(input.url);
+            if (unwrappedReq) {
+              nativeFallback = unwrappedReq;
+            } else {
+              var rw = rewrite(input.url);
+              if (rw !== input.url) input = new Request(rw, input);
+            }
           }
         }
       } catch (e) { }
-      return origFetch.apply(this, arguments);
+      var p = origFetch.call(this, input, init);
+      if (nativeFallback && p && typeof p.then === "function") {
+        p = p.then(function (res) {
+          if (res && res.status >= 400) {
+            fetchRetryCount++;
+            if (fetchRetryCount <= 25) diag("fetchretry #" + fetchRetryCount + " (relay gave " + res.status + ") " + nativeFallback.slice(0, 130));
+            return origFetch.call(window, nativeFallback, init);
+          }
+          return res;
+        });
+      }
+      return p;
     };
   }
+
+  var srcRetryCount = 0;
 
   // ---- src setters: rewrite + one retry on the original CDN URL ----
   function patchSrcSetter(proto) {
@@ -170,10 +218,14 @@
       get: d.get,
       set: function (v) {
         var rw = active ? rewrite(v) : v;
-        if (rw !== v && !this.__dtRelayRetryBound) {
+        var nativeOrig = null;
+        if (active && rw === v) nativeOrig = unwrapRelayUrl(v);
+        if ((rw !== v || nativeOrig) && !this.__dtRelayRetryBound) {
           this.__dtRelayRetryBound = true;
-          var el = this, orig = v;
+          var el = this, orig = nativeOrig || v;
           el.addEventListener("error", function () {
+            srcRetryCount++;
+            if (srcRetryCount <= 25) diag("srcretry #" + srcRetryCount + " " + String(orig).slice(0, 130));
             try { d.set.call(el, orig); } catch (e) { }
           }, { once: true });
         }
@@ -191,9 +243,13 @@
       if (active && name === "src") {
         try {
           var rw = rewrite(value);
-          if (rw !== value) {
-            var el = this, orig = value;
+          var nativeOrig = null;
+          if (rw === value) nativeOrig = unwrapRelayUrl(value);
+          if (rw !== value || nativeOrig) {
+            var el = this, orig = nativeOrig || value;
             el.addEventListener("error", function () {
+              srcRetryCount++;
+              if (srcRetryCount <= 25) diag("srcretry #" + srcRetryCount + " " + String(orig).slice(0, 130));
               try { setAttr.call(el, "src", orig); } catch (e) { }
             }, { once: true });
             value = rw;

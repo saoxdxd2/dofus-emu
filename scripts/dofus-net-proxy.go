@@ -1357,6 +1357,14 @@ func (p *ProxyServer) assetCachePath(target string) string {
 	return filepath.Join(p.cacheDir, hex.EncodeToString(sum[:16]))
 }
 
+// setLongAssetCacheHeaders marks static CDN asset responses as immutable for a
+// week. Asset paths are version-hashed, so this is safe, and it lets both the
+// WebView2 HTTP cache and intermediate layers absorb repeat loads (map
+// navigation previously re-fetched every sprite through the relay).
+func setLongAssetCacheHeaders(h http.Header) {
+	h.Set("Cache-Control", "public, max-age=604800, immutable")
+}
+
 // serveCachedAsset streams a cached asset response (CORS + cached
 // Content-Type + Range/304 via http.ServeContent) and reports whether the
 // cache was served. Expired entries are evicted.
@@ -1379,6 +1387,7 @@ func (p *ProxyServer) serveCachedAsset(w http.ResponseWriter, r *http.Request, c
 	h.Set("Access-Control-Allow-Origin", "*")
 	h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
 	h.Set("Access-Control-Allow-Headers", "*")
+	setLongAssetCacheHeaders(h)
 	mimeType := ""
 	if metaBytes, metaErr := os.ReadFile(cacheFilePath + ".meta"); metaErr == nil {
 		mimeType = strings.TrimSpace(string(metaBytes))
@@ -1478,6 +1487,9 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	wh := w.Header()
 	copyHeaderFiltered(wh, resp.Header, hopRespHeaders)
 	setCORS()
+	if resp.StatusCode == http.StatusOK {
+		setLongAssetCacheHeaders(wh)
+	}
 	if !p.quiet {
 		log.Printf("[RELAY] %d %s", resp.StatusCode, targetStr)
 	}
@@ -1718,6 +1730,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	wh := w.Header()
 	copyHeaderFiltered(wh, resp.Header, hopRespHeaders)
 	wh.Set("Access-Control-Allow-Origin", "*")
+	if resp.StatusCode == http.StatusOK && cacheFilePath != "" {
+		setLongAssetCacheHeaders(wh)
+	}
 
 	ct := resp.Header.Get("Content-Type")
 	isHTML := (strings.Contains(ct, "text/html") || strings.HasSuffix(strings.ToLower(targetURL.Path), ".html")) && resp.StatusCode == http.StatusOK

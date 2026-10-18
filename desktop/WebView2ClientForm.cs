@@ -77,6 +77,7 @@ namespace DofusFarm.Engine
         private int _cdnInterceptOk;
         private int _cdnInterceptFail;
         private int _cdnInterceptLoggedErrors;
+        private int _cdnInterceptReqLog;
         private bool _cdnInterceptFirstOkLogged;
 
         private sealed class CdnFetchResult
@@ -609,8 +610,8 @@ namespace DofusFarm.Engine
                 {
                     await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setTouchEmulationEnabled", "{\"enabled\":true,\"maxTouchPoints\":5}");
                     await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Emulation.setEmitTouchEventsForMouse", "{\"enabled\":true,\"configuration\":\"mobile\"}");
-                    await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.setCacheDisabled", "{\"cacheDisabled\":true}");
-                    _logCallback?.Invoke(string.Format("[{0}] Enabled native mobile touch emulation and disabled HTTP cache for fresh assets.", _instanceId));
+                    await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.setCacheDisabled", "{\"cacheDisabled\":false}");
+                    _logCallback?.Invoke(string.Format("[{0}] Enabled native mobile touch emulation; HTTP cache active (versioned asset URLs keep it safe).", _instanceId));
                 }
                 catch (Exception ex)
                 {
@@ -1191,6 +1192,13 @@ namespace DofusFarm.Engine
                 string requestUri = uri;
                 var deferral = e.GetDeferral();
                 _cdnInterceptTotal++;
+                if (_cdnInterceptReqLog < 60)
+                {
+                    _cdnInterceptReqLog++;
+                    _logCallback?.Invoke(string.Format("[{0}] CDN intercept req #{1} {2}",
+                        _instanceId, _cdnInterceptReqLog,
+                        requestUri.Length > 170 ? requestUri.Substring(0, 170) : requestUri));
+                }
 
                 Task.Run(async () =>
                 {
@@ -1365,24 +1373,60 @@ namespace DofusFarm.Engine
         private CdnFetchResult FetchCdnAsset(string uri, string method, string range, string cookieHeader)
         {
             bool useProxy = _options != null && _options.ProxyPort > 0;
-            WebProxy proxy = useProxy ? new WebProxy("http://127.0.0.1:" + _options.ProxyPort) : null;
 
             HttpWebResponse resp = null;
             string lastError = null;
-            try
+
+            // Serve intercepted assets through the local relay first: it
+            // shares the on-disk cache with the JS shim path, applies the
+            // hotlink headers server-side and keeps TLS handling in one
+            // place. Falls through to a direct fetch when the relay is
+            // unreachable or has no usable answer.
+            Uri parsed = null;
+            if (useProxy && Uri.TryCreate(uri, UriKind.Absolute, out parsed))
             {
-                resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, proxy).GetResponse();
-            }
-            catch (WebException wex)
-            {
-                resp = wex.Response as HttpWebResponse;
-                lastError = wex.Status + ": " + wex.Message;
-                if (resp == null && useProxy)
+                string relayUri = string.Format("http://127.0.0.1:{0}/__cdn/{1}{2}{3}",
+                    _options.ProxyPort, parsed.Host, parsed.AbsolutePath,
+                    string.IsNullOrEmpty(parsed.Query) ? "" : parsed.Query);
+                try
                 {
-                    // Local relay unreachable: retry straight once.
-                    try { resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, null).GetResponse(); }
-                    catch (WebException wex2) { resp = wex2.Response as HttpWebResponse; lastError = wex2.Status + ": " + wex2.Message; }
-                    catch (Exception ex2) { resp = null; lastError = ex2.GetType().Name + ": " + ex2.Message; }
+                    resp = (HttpWebResponse)BuildCdnRequest(relayUri, method, range, cookieHeader, null).GetResponse();
+                }
+                catch (WebException wex)
+                {
+                    resp = wex.Response as HttpWebResponse;
+                    lastError = wex.Status + ": " + wex.Message;
+                }
+                catch (Exception ex)
+                {
+                    resp = null;
+                    lastError = ex.GetType().Name + ": " + ex.Message;
+                }
+            }
+
+            if (resp == null)
+            {
+                WebProxy proxy = useProxy ? new WebProxy("http://127.0.0.1:" + _options.ProxyPort) : null;
+                try
+                {
+                    resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, proxy).GetResponse();
+                }
+                catch (WebException wex)
+                {
+                    resp = wex.Response as HttpWebResponse;
+                    lastError = wex.Status + ": " + wex.Message;
+                    if (resp == null)
+                    {
+                        // Local relay unreachable: retry straight once.
+                        try { resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, null).GetResponse(); }
+                        catch (WebException wex2) { resp = wex2.Response as HttpWebResponse; lastError = wex2.Status + ": " + wex2.Message; }
+                        catch (Exception ex2) { resp = null; lastError = ex2.GetType().Name + ": " + ex2.Message; }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    resp = null;
+                    lastError = ex.GetType().Name + ": " + ex.Message;
                 }
             }
             if (resp == null) return SimpleCdnResult(502, string.IsNullOrEmpty(lastError) ? "Bad Gateway" : lastError);
