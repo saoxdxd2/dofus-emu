@@ -12,8 +12,8 @@ using DofusFarm.UI;
 [assembly: AssemblyCompany("Dofus Farm Project")]
 [assembly: AssemblyProduct("Dofus Farm Manager")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
-[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.4.0.0")]
+[assembly: AssemblyVersion("2.4.0.0")]
 
 namespace DofusFarm
 {

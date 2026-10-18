@@ -356,11 +356,11 @@ namespace DofusBuild
                 string manifestSource =
                     "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
                     "<assembly manifestVersion=\"1.0\" xmlns=\"urn:schemas-microsoft-com:asm.v1\">\n" +
-                    "  <assemblyIdentity version=\"2.3.0.0\" name=\"DofusFarmSetup\"/>\n" +
+                    "  <assemblyIdentity version=\"2.4.0.0\" name=\"DofusFarmSetup\"/>\n" +
                     "  <trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n" +
                     "    <security>\n" +
                     "      <requestedPrivileges xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n" +
-                    "        <requestedExecutionLevel level=\"asInvoker\" uiAccess=\"false\" />\n" +
+                    "        <requestedExecutionLevel level=\"requireAdministrator\" uiAccess=\"false\" />\n" +
                     "      </requestedPrivileges>\n" +
                     "    </security>\n" +
                     "  </trustInfo>\n" +
