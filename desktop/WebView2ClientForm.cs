@@ -17,6 +17,23 @@ namespace DofusFarm.Engine
 {
     public class WebView2ClientForm : Form
     {
+        static WebView2ClientForm()
+        {
+            try
+            {
+                // This executable has no app.config, so the CLR keeps its
+                // legacy SecurityProtocol default (Ssl3 | Tls) and every
+                // .NET fetch to the CDN dies with SecureChannelFailure
+                // ("Could not create SSL/TLS secure channel"), which the
+                // intercept surfaced as 502 Bad Gateway -> black maps.
+                // CloudFront requires TLS 1.2, so opt into modern TLS once
+                // for the whole process.
+                ServicePointManager.SecurityProtocol =
+                    (SecurityProtocolType)3072 | (SecurityProtocolType)768;
+            }
+            catch { }
+        }
+
         private readonly ClientLaunchOptions _options;
         private readonly string _instanceId;
         private readonly string _displayName;
@@ -678,9 +695,8 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
 
-                // Wire WebResourceRequested filter: tactical map 4624 mock +
-                // the Ankama CDN asset repair path (cookie + referer fix).
-                _webView.CoreWebView2.AddWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All);
+                // Wire WebResourceRequested filter for the Ankama CDN asset
+                // repair path (cookie + referer fix).
                 try
                 {
                     _webView.CoreWebView2.AddWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All);
@@ -1146,21 +1162,7 @@ namespace DofusFarm.Engine
             {
                 string uri = e.Request.Uri;
 
-                // 1. Intercept tactical theme 4624.json fallback to avoid 403 stall
-                if (uri.IndexOf("4624.json", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    byte[] mockBytes = Encoding.UTF8.GetBytes(
-                        "{\"id\":4624,\"cells\":[],\"midgroundLayer\":{},\"atlasLayout\":{\"useUiPath\":true,\"width\":1024,\"height\":1024,\"graphicsPositions\":{}}}"
-                    );
-                    var ms = new MemoryStream(mockBytes);
-                    e.Response = _env.CreateWebResourceResponse(
-                        ms, 200, "OK",
-                        "Content-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\n"
-                    );
-                    return;
-                }
-
-                // 2. Ankama CDN assets: re-issue the request from .NET with the
+                // 1. Ankama CDN assets: re-issue the request from .NET with the
                 // full WebView2 cookie jar (HttpOnly/SameSite included) and the
                 // official web-client Referer/Origin. This repairs the CDN 403s
                 // that black-screen the client on map/asset loads.
@@ -1225,8 +1227,8 @@ namespace DofusFarm.Engine
                         {
                             _cdnInterceptFail++;
                             if (_cdnInterceptFail <= 5)
-                                _logCallback?.Invoke(string.Format("[{0}] CDN intercept {1} for {2} (cookies={3})",
-                                    _instanceId, status, requestUri, string.IsNullOrEmpty(cookies) ? "none" : cookies.Length + "c"));
+                                _logCallback?.Invoke(string.Format("[{0}] CDN intercept {1} ({4}) for {2} (cookies={3})",
+                                    _instanceId, status, requestUri, string.IsNullOrEmpty(cookies) ? "none" : cookies.Length + "c", reason));
                         }
                     }
                     catch (Exception ex)
@@ -1366,6 +1368,7 @@ namespace DofusFarm.Engine
             WebProxy proxy = useProxy ? new WebProxy("http://127.0.0.1:" + _options.ProxyPort) : null;
 
             HttpWebResponse resp = null;
+            string lastError = null;
             try
             {
                 resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, proxy).GetResponse();
@@ -1373,15 +1376,16 @@ namespace DofusFarm.Engine
             catch (WebException wex)
             {
                 resp = wex.Response as HttpWebResponse;
+                lastError = wex.Status + ": " + wex.Message;
                 if (resp == null && useProxy)
                 {
                     // Local relay unreachable: retry straight once.
                     try { resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, null).GetResponse(); }
-                    catch (WebException wex2) { resp = wex2.Response as HttpWebResponse; }
-                    catch { resp = null; }
+                    catch (WebException wex2) { resp = wex2.Response as HttpWebResponse; lastError = wex2.Status + ": " + wex2.Message; }
+                    catch (Exception ex2) { resp = null; lastError = ex2.GetType().Name + ": " + ex2.Message; }
                 }
             }
-            if (resp == null) return SimpleCdnResult(502, "Bad Gateway");
+            if (resp == null) return SimpleCdnResult(502, string.IsNullOrEmpty(lastError) ? "Bad Gateway" : lastError);
 
             using (resp)
             {
@@ -1725,7 +1729,6 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
                 _webView.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
             }
