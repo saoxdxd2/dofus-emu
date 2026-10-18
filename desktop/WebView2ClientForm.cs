@@ -743,6 +743,22 @@ namespace DofusFarm.Engine
                 }
                 _webView.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
 
+                // Wire AUTH endpoint observation (login/token/guest flows) so
+                // auth rejections carry their real HTTP status + error body
+                // into the log instead of only showing as in-game popups.
+                try
+                {
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://auth.ankama.com/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://account.ankama.com/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://dt-proxy-production-login.ankama-games.com/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://dt-proxy-production-early.ankama-games.com/*", CoreWebView2WebResourceContext.All);
+                }
+                catch (Exception authFiltEx)
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] AUTH filter registration warning: {1}", _instanceId, authFiltEx.Message));
+                }
+                _webView.CoreWebView2.WebResourceResponseReceived += OnAuthNetResponse;
+
 
 
                 _webView.ZoomFactorChanged += (s, e) =>
@@ -910,6 +926,48 @@ namespace DofusFarm.Engine
                 _lblStatus.Text = "⚠️ Renderer Restarting...";
                 _lblStatus.ForeColor = Color.FromArgb(250, 204, 21);
                 _webView.Reload();
+            }
+        }
+
+        private async void OnAuthNetResponse(object sender, CoreWebView2WebResourceResponseReceivedEventArgs e)
+        {
+            try
+            {
+                string uri = e.Request.Uri;
+                int status = e.Response.StatusCode;
+                bool isTokenCall = uri.Contains("/token") || uri.Contains("create-guest") || uri.Contains("validate-guest");
+                bool isFailure = status >= 400;
+                if (uri.Contains("access_token") || uri.Contains("refresh_token")) isTokenCall = false;
+                if (!isTokenCall && !isFailure) return;
+
+                string body = "";
+                if (isTokenCall || isFailure)
+                {
+                    try
+                    {
+                        using (var content = await e.Response.GetContentAsync())
+                        {
+                            if (content != null)
+                            {
+                                using (var reader = new StreamReader(content))
+                                {
+                                    body = await reader.ReadToEndAsync();
+                                    if (body.Length > 300) body = body.Substring(0, 300);
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                string shortUri = uri.Length > 110 ? uri.Substring(0, 110) + "..." : uri;
+                _logCallback?.Invoke(string.Format("[{0}] [AUTH-NET] {1} {2} -> {3}{4}",
+                    _instanceId, e.Request.Method, shortUri, status,
+                    body.Length > 0 ? " body=" + body : ""));
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] [AUTH-NET] handler error: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -1838,8 +1896,13 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
                 _webView.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
+                try { _webView.CoreWebView2.WebResourceResponseReceived -= OnAuthNetResponse; } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://auth.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://account.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://dt-proxy-production-login.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://dt-proxy-production-early.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
             }
 
             base.OnFormClosing(e);
@@ -2050,17 +2113,50 @@ namespace DofusFarm.Engine
                     }
                 };
 
-                _webView.CoreWebView2.NavigationCompleted += (sdr, ev) =>
+                _webView.CoreWebView2.NavigationCompleted += async (sdrN, evN) =>
                 {
-                    if (ev.IsSuccess && _webView.CoreWebView2 != null)
+                    if (evN.IsSuccess && _webView.CoreWebView2 != null)
                     {
                         string docTitle = _webView.CoreWebView2.DocumentTitle;
                         if (!string.IsNullOrEmpty(docTitle))
                         {
                             _lblTitle.Text = "🔒 " + docTitle;
                         }
+                        try
+                        {
+                            string curUrl = _webView.CoreWebView2.Source;
+                            if (!string.IsNullOrEmpty(curUrl) && curUrl.Contains("ankama"))
+                            {
+                                string txt = await _webView.CoreWebView2.ExecuteScriptAsync("(document.body && document.body.innerText ? document.body.innerText : '').replace(/\\s+/g, ' ').slice(0, 220)");
+                                if (!string.IsNullOrEmpty(txt) && txt != "\"\"")
+                                {
+                                    _logCallback?.Invoke("[OAUTH-POPUP] Page text: " + txt);
+                                }
+                            }
+                        }
+                        catch { }
                     }
                 };
+
+                try
+                {
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://auth.ankama.com/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.WebResourceResponseReceived += (sdrR, evR) =>
+                    {
+                        try
+                        {
+                            int st = evR.Response.StatusCode;
+                            if (st >= 400)
+                            {
+                                string u = evR.Request.Uri;
+                                if (u.Length > 110) u = u.Substring(0, 110) + "...";
+                                _logCallback?.Invoke("[OAUTH-POPUP] [AUTH-NET] " + evR.Request.Method + " " + u + " -> " + st);
+                            }
+                        }
+                        catch { }
+                    };
+                }
+                catch { }
 
                 _webView.CoreWebView2.NewWindowRequested += (sdr, ev) =>
                 {

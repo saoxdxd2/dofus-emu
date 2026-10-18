@@ -598,6 +598,16 @@ type ProxyServer struct {
 	// prefetcher never download the same asset from the CDN twice at once.
 	warmMu       sync.Mutex
 	warmInflight map[string]chan struct{}
+
+	// Mods pipeline (see applyModRules): rules.json inside modsDir rewrites,
+	// blocks or patches CDN responses on the fly. Rules hot-reload when the
+	// file changes; the unpatched originals stay in the cache untouched.
+	modsDir      string
+	modsMu       sync.Mutex
+	modsRules    []modRule
+	modsRes      []*regexp.Regexp
+	modsChecked  time.Time
+	modsRulesMod time.Time
 }
 
 func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet bool, port int, authToken, serial, uuid, model, manufacturer, ua, glVendor, glRenderer, maxTextureSize, referer string) *ProxyServer {
@@ -1643,6 +1653,341 @@ func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Mods pipeline: rules.json in modsDir rewrites CDN responses on the fly.
+//
+// Rules match (in order) against the full upstream asset URL:
+//
+//	{"match": "regex", "action": "block",    "status": 204}
+//	{"match": "regex", "action": "override", "file": "local/file.png"}
+//	{"match": "regex", "action": "patch",    "patch": [{"op":"set","path":"/a/b","value":1}]}
+//
+// block returns a synthetic status; override serves a local file from the
+// mods directory; patch applies RFC 6901-style edits (set/remove) to the JSON
+// body. Patches are applied per request on top of the unmodified cached
+// original, so rules can be edited or deleted at any time without touching
+// the cache.
+// ---------------------------------------------------------------------------
+
+type modPatchOp struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path"`
+	Value interface{} `json:"value"`
+}
+
+type modRule struct {
+	Match       string       `json:"match"`
+	Action      string       `json:"action"`
+	Status      int          `json:"status"`
+	File        string       `json:"file"`
+	ContentType string       `json:"contentType"`
+	Patch       []modPatchOp `json:"patch"`
+}
+
+// loadModsIfChanged (re)loads rules.json when its mtime changes, throttled to
+// one stat every two seconds. Called per relay request; cheap when idle.
+func (p *ProxyServer) loadModsIfChanged() {
+	if p.modsDir == "" {
+		return
+	}
+	p.modsMu.Lock()
+	defer p.modsMu.Unlock()
+	if time.Since(p.modsChecked) < 2*time.Second {
+		return
+	}
+	p.modsChecked = time.Now()
+	rulesPath := filepath.Join(p.modsDir, "rules.json")
+	fi, err := os.Stat(rulesPath)
+	if err != nil {
+		if len(p.modsRules) > 0 {
+			p.modsRules, p.modsRes = nil, nil
+			log.Printf("[MODS] rules.json removed; mods disabled")
+		}
+		return
+	}
+	if fi.ModTime().Equal(p.modsRulesMod) {
+		return
+	}
+	raw, err := os.ReadFile(rulesPath)
+	if err != nil {
+		return
+	}
+	var rules []modRule
+	if err := json.Unmarshal(raw, &rules); err != nil {
+		log.Printf("[MODS] rules.json parse error: %v", err)
+		return
+	}
+	res := make([]*regexp.Regexp, len(rules))
+	for i := range rules {
+		re, err := regexp.Compile(rules[i].Match)
+		if err != nil {
+			log.Printf("[MODS] rule %d has invalid match %q: %v", i, rules[i].Match, err)
+			continue
+		}
+		res[i] = re
+	}
+	p.modsRules, p.modsRes, p.modsRulesMod = rules, res, fi.ModTime()
+	log.Printf("[MODS] loaded %d rule(s) from %s", len(rules), rulesPath)
+}
+
+// applyModRules runs the first matching rule for an upstream asset URL and
+// reports whether the response was fully handled (block/override/patch).
+func (p *ProxyServer) applyModRules(w http.ResponseWriter, r *http.Request, targetStr string) bool {
+	if p.modsDir == "" {
+		return false
+	}
+	p.loadModsIfChanged()
+	p.modsMu.Lock()
+	rules, res := p.modsRules, p.modsRes
+	p.modsMu.Unlock()
+	for i, rule := range rules {
+		if i >= len(res) || res[i] == nil || !res[i].MatchString(targetStr) {
+			continue
+		}
+		switch rule.Action {
+		case "block":
+			status := rule.Status
+			if status < 100 || status > 599 {
+				status = http.StatusNoContent
+			}
+			w.WriteHeader(status)
+			p.requestLog("MODBLOCK %d %s", status, targetStr)
+			return true
+		case "override":
+			if p.serveModOverride(w, r, rule, targetStr) {
+				return true
+			}
+		case "patch":
+			if p.serveModPatched(w, r, rule, targetStr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *ProxyServer) serveModOverride(w http.ResponseWriter, r *http.Request, rule modRule, targetStr string) bool {
+	rel := strings.TrimSpace(rule.File)
+	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "..") {
+		p.prefetchLog("[MODS] override rule for %s has invalid file %q", targetStr, rule.File)
+		return false
+	}
+	full := filepath.Join(p.modsDir, filepath.FromSlash(rel))
+	f, err := os.Open(full)
+	if err != nil {
+		p.prefetchLog("[MODS] override file missing: %s", full)
+		return false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.IsDir() {
+		return false
+	}
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	h.Set("Access-Control-Allow-Headers", "*")
+	setLongAssetCacheHeaders(h)
+	ct := rule.ContentType
+	if ct == "" {
+		ct = detectMimeType(full)
+	}
+	if ct != "" {
+		h.Set("Content-Type", ct)
+	}
+	http.ServeContent(w, r, filepath.Base(full), fi.ModTime(), f)
+	p.requestLog("MODOVER %s", targetStr)
+	return true
+}
+
+func (p *ProxyServer) serveModPatched(w http.ResponseWriter, r *http.Request, rule modRule, targetStr string) bool {
+	body, ct, ok := p.patchedAssetBody(r.Context(), targetStr, rule)
+	if !ok {
+		return false
+	}
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	h.Set("Access-Control-Allow-Headers", "*")
+	setLongAssetCacheHeaders(h)
+	if rule.ContentType != "" {
+		h.Set("Content-Type", rule.ContentType)
+	} else if ct != "" {
+		h.Set("Content-Type", ct)
+	} else {
+		h.Set("Content-Type", "application/json")
+	}
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(body)
+	}
+	p.requestLog("MODPATCH %s (%d bytes)", targetStr, len(body))
+	return true
+}
+
+// patchedAssetBody materializes the cache entry for targetStr (warming it
+// first when needed) and applies the rule's JSON patches in memory. The
+// cached file itself is never modified.
+func (p *ProxyServer) patchedAssetBody(ctx context.Context, targetStr string, rule modRule) ([]byte, string, bool) {
+	cacheFilePath := p.assetCachePath(targetStr)
+	if _, err := os.Stat(cacheFilePath); err != nil {
+		ok, _, status, errText := p.warmAssetCacheDetail(ctx, targetStr)
+		if !ok {
+			p.prefetchLog("[MODS] patch base fetch failed status=%d err=%q %s", status, errText, targetStr)
+			return nil, "", false
+		}
+	}
+	f, err := os.Open(cacheFilePath)
+	if err != nil {
+		return nil, "", false
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, 64<<20))
+	_ = f.Close()
+	if err != nil {
+		return nil, "", false
+	}
+	ct := ""
+	if metaBytes, metaErr := os.ReadFile(cacheFilePath + ".meta"); metaErr == nil {
+		ct = strings.TrimSpace(string(metaBytes))
+	}
+	var doc interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, "", false // not JSON: patch rules do not apply
+	}
+	for _, op := range rule.Patch {
+		switch strings.ToLower(strings.TrimSpace(op.Op)) {
+		case "set":
+			doc, _ = jsonPointerSet(doc, op.Path, op.Value)
+		case "remove", "delete":
+			doc, _ = jsonPointerRemove(doc, op.Path)
+		}
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return nil, "", false
+	}
+	return out, ct, true
+}
+
+// jsonPointerTokens splits an RFC 6901 pointer into unescaped tokens.
+func jsonPointerTokens(pointer string) []string {
+	pointer = strings.TrimPrefix(pointer, "/")
+	if pointer == "" {
+		return nil
+	}
+	parts := strings.Split(pointer, "/")
+	for i, s := range parts {
+		s = strings.ReplaceAll(s, "~1", "/")
+		s = strings.ReplaceAll(s, "~0", "~")
+		parts[i] = s
+	}
+	return parts
+}
+
+// jsonPointerSet writes value at pointer, auto-creating missing object keys
+// along the way. "-" appends to arrays. Returns the (possibly new) document.
+func jsonPointerSet(doc interface{}, pointer string, value interface{}) (interface{}, bool) {
+	tokens := jsonPointerTokens(pointer)
+	if len(tokens) == 0 {
+		return value, true
+	}
+	return pointerSetWalk(doc, tokens, value, 0)
+}
+
+func pointerSetWalk(node interface{}, tokens []string, value interface{}, idx int) (interface{}, bool) {
+	tok := tokens[idx]
+	last := idx == len(tokens)-1
+	switch cur := node.(type) {
+	case map[string]interface{}:
+		if last {
+			cur[tok] = value
+			return cur, true
+		}
+		child, ok := cur[tok]
+		if !ok || child == nil {
+			child = map[string]interface{}{}
+		}
+		updated, ok2 := pointerSetWalk(child, tokens, value, idx+1)
+		if !ok2 {
+			return cur, false
+		}
+		cur[tok] = updated
+		return cur, true
+	case []interface{}:
+		if last && tok == "-" {
+			return append(cur, value), true
+		}
+		n, err := strconv.Atoi(tok)
+		if err != nil || n < 0 || n >= len(cur) {
+			return cur, false
+		}
+		if last {
+			cur[n] = value
+			return cur, true
+		}
+		updated, ok2 := pointerSetWalk(cur[n], tokens, value, idx+1)
+		if !ok2 {
+			return cur, false
+		}
+		cur[n] = updated
+		return cur, true
+	default:
+		return node, false
+	}
+}
+
+// jsonPointerRemove deletes the node at pointer (splicing arrays). Returns
+// the (possibly new) document.
+func jsonPointerRemove(doc interface{}, pointer string) (interface{}, bool) {
+	tokens := jsonPointerTokens(pointer)
+	if len(tokens) == 0 {
+		return doc, false
+	}
+	return pointerRemoveWalk(doc, tokens, 0)
+}
+
+func pointerRemoveWalk(node interface{}, tokens []string, idx int) (interface{}, bool) {
+	tok := tokens[idx]
+	last := idx == len(tokens)-1
+	switch cur := node.(type) {
+	case map[string]interface{}:
+		if last {
+			if _, ok := cur[tok]; !ok {
+				return cur, false
+			}
+			delete(cur, tok)
+			return cur, true
+		}
+		child, ok := cur[tok]
+		if !ok {
+			return cur, false
+		}
+		updated, ok2 := pointerRemoveWalk(child, tokens, idx+1)
+		if !ok2 {
+			return cur, false
+		}
+		cur[tok] = updated
+		return cur, true
+	case []interface{}:
+		n, err := strconv.Atoi(tok)
+		if err != nil || n < 0 || n >= len(cur) {
+			return cur, false
+		}
+		if last {
+			return append(cur[:n], cur[n+1:]...), true
+		}
+		updated, ok2 := pointerRemoveWalk(cur[n], tokens, idx+1)
+		if !ok2 {
+			return cur, false
+		}
+		cur[n] = updated
+		return cur, true
+	default:
+		return node, false
+	}
+}
+
 func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	setCORS := func() {
 		h := w.Header()
@@ -1679,6 +2024,9 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	targetStr := "https://" + host + assetPath
 	if r.URL.RawQuery != "" {
 		targetStr += "?" + r.URL.RawQuery
+	}
+	if p.applyModRules(w, r, targetStr) {
+		return
 	}
 	reqStart := time.Now()
 
@@ -2208,6 +2556,161 @@ func (p *ProxyServer) precacheMaps(ctx context.Context, assetsURL, spec string, 
 		atomic.LoadInt64(&total), atomic.LoadInt64(&fetched), atomic.LoadInt64(&cached), atomic.LoadInt64(&failed))
 }
 
+// sleepCtx sleeps for d unless ctx is cancelled first; reports whether the
+// sleep completed.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// parseCrawlSeeds expands a map id spec ("150737668,7442,1-50") into a seed
+// slice for -crawl. Note: map ids in Dofus Touch are 9-digit, so this cannot
+// reuse feedMapIDs (which clamps to 2,000,000 for the legacy -precache-maps
+// ranges).
+func parseCrawlSeeds(spec string) []int64 {
+	var out []int64
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if dash := strings.IndexByte(part, '-'); dash > 0 {
+			lo, errLo := strconv.ParseInt(strings.TrimSpace(part[:dash]), 10, 64)
+			hi, errHi := strconv.ParseInt(strings.TrimSpace(part[dash+1:]), 10, 64)
+			if errLo != nil || errHi != nil || lo < 1 {
+				continue
+			}
+			if hi < lo {
+				hi = lo
+			}
+			if hi-lo > 4096 {
+				hi = lo + 4096
+			}
+			for id := lo; id <= hi; id++ {
+				out = append(out, id)
+				if len(out) >= 4096 {
+					return out
+				}
+			}
+		} else {
+			id, err := strconv.ParseInt(part, 10, 64)
+			if err != nil || id < 1 {
+				continue
+			}
+			out = append(out, id)
+			if len(out) >= 4096 {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+// runMapCrawler walks the map neighbour graph breadth-first from seeds,
+// warming each map's JSON (and optionally its tiles) into the shared cache at
+// a paced rate so the CDN sees a friendly, steady request stream. Already
+// cached maps are skipped with a stat, so repeat runs are nearly free and a
+// later run only fetches what is still missing. Runs until the queue drains,
+// -crawl-max maps are visited, or the process is stopped.
+func (p *ProxyServer) runMapCrawler(ctx context.Context, assetsURL string, seeds []int64, maxMaps int, rate float64, withTiles bool) {
+	if p.cacheDir == "" {
+		p.prefetchLog("[CRAWL] no -cache directory; skipping")
+		return
+	}
+	base := strings.TrimRight(assetsURL, "/")
+	if base == "" {
+		return
+	}
+	if rate <= 0 {
+		rate = 1
+	}
+	if rate > 50 {
+		rate = 50
+	}
+	interval := time.Duration(float64(time.Second) / rate)
+	if interval < 20*time.Millisecond {
+		interval = 20 * time.Millisecond
+	}
+	p.prefetchLog("[CRAWL] start base=%s seeds=%d max=%d rate=%.1f/s tiles=%t", base, len(seeds), maxMaps, rate, withTiles)
+
+	visited := make(map[int64]struct{}, 8192)
+	queue := append([]int64(nil), seeds...)
+	fetched, reused, failed := 0, 0, 0
+	for len(queue) > 0 && ctx.Err() == nil {
+		if maxMaps > 0 && len(visited) >= maxMaps {
+			break
+		}
+		id := queue[0]
+		queue = queue[1:]
+		if id <= 0 {
+			continue
+		}
+		if _, dup := visited[id]; dup {
+			continue
+		}
+		visited[id] = struct{}{}
+
+		mapURL := base + "/maps/" + strconv.FormatInt(id, 10) + ".json"
+		cacheFilePath := p.assetCachePath(mapURL)
+		if _, err := os.Stat(cacheFilePath); err != nil {
+			if !sleepCtx(ctx, interval) {
+				break
+			}
+			ok, _, status, errText := p.warmAssetCacheDetail(ctx, mapURL)
+			if !ok {
+				failed++
+				p.prefetchLog("[CRAWL] map %d json failed status=%d err=%q", id, status, errText)
+				continue
+			}
+			fetched++
+		} else {
+			reused++
+			p.mirrorCachedFile(mapURL, cacheFilePath)
+		}
+
+		f, err := os.Open(cacheFilePath)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(f, prefetchMapJSONReadMax))
+		_ = f.Close()
+		if err != nil || len(body) == 0 {
+			continue
+		}
+		for _, nid := range mapJSONNeighbours(body) {
+			if _, dup := visited[nid]; !dup {
+				queue = append(queue, nid)
+			}
+		}
+		if withTiles {
+			prefix := strings.TrimSuffix(mapURL, "/maps/"+strconv.FormatInt(id, 10)+".json")
+			for _, tileURL := range mapTileURLs(body, prefix) {
+				if ctx.Err() != nil {
+					break
+				}
+				if _, err := os.Stat(p.assetCachePath(tileURL)); err == nil {
+					continue
+				}
+				if !sleepCtx(ctx, interval) {
+					break
+				}
+				p.warmAssetCache(ctx, tileURL)
+			}
+		}
+		if n := len(visited); n%100 == 0 {
+			p.prefetchLog("[CRAWL] visited=%d queued=%d current=%d fetched=%d reused=%d failed=%d",
+				n, len(queue), id, fetched, reused, failed)
+		}
+	}
+	p.prefetchLog("[CRAWL] done visited=%d queued=%d fetched=%d reused=%d failed=%d", len(visited), len(queue), fetched, reused, failed)
+}
+
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	targetURL := r.URL
 	if targetURL.Scheme == "" {
@@ -2369,6 +2872,11 @@ func main() {
 	prefetchRadius := flag.Int("prefetch-radius", 2, "Map graph depth warmed for JSON (1=direct neighbours, 2=neighbours of neighbours)")
 	prefetchTilesDepth := flag.Int("prefetch-tiles-depth", 1, "Graph depth at which map tile images (gfx/world/*) are warmed")
 	prefetchWorkers := flag.Int("prefetch-workers", 5, "Parallel workers for neighbour prefetch")
+	crawlSpec := flag.String("crawl", "", "Graph crawl seeds: BFS the map neighbour graph from these map IDs, warming JSON (+tiles with -crawl-tiles) into -cache (requires -assets-url)")
+	crawlMax := flag.Int("crawl-max", 0, "Stop the crawl after this many maps (0 = unlimited)")
+	crawlRate := flag.Float64("crawl-rate", 3, "Max upstream CDN requests per second during the crawl")
+	crawlTiles := flag.Bool("crawl-tiles", false, "Also warm tile images for every crawled map")
+	modsDir := flag.String("mods-dir", "", "Directory containing a mods rules.json (default: <cache>/mods)")
 	flag.Parse()
 
 	log.SetFlags(log.Ldate | log.Ltime)
@@ -2402,6 +2910,24 @@ func main() {
 			log.Printf("[PRECACHE] -precache-maps set without -assets-url; skipping")
 		} else {
 			go proxy.precacheMaps(runCtx, *assetsURL, *precacheSpec, *precacheWorkers)
+		}
+	}
+
+	if *modsDir == "" && *cacheDir != "" {
+		*modsDir = filepath.Join(*cacheDir, "mods")
+	}
+	proxy.modsDir = *modsDir
+	if *modsDir != "" {
+		proxy.loadModsIfChanged()
+	}
+
+	if *crawlSpec != "" {
+		if *assetsURL == "" {
+			log.Printf("[CRAWL] -crawl set without -assets-url; skipping")
+		} else if seeds := parseCrawlSeeds(*crawlSpec); len(seeds) > 0 {
+			go proxy.runMapCrawler(runCtx, *assetsURL, seeds, *crawlMax, *crawlRate, *crawlTiles)
+		} else {
+			log.Printf("[CRAWL] no valid seeds parsed from %q", *crawlSpec)
 		}
 	}
 
