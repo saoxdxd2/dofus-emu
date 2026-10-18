@@ -12,7 +12,6 @@ if not exist %CSC% (
 )
 if not exist %CSC% (
     echo [ERROR] .NET Framework 4.0/4.8 csc.exe compiler not found at %CSC%
-    pause
     exit /b 1
 )
 
@@ -20,7 +19,6 @@ echo [1/2] Compiling Build.exe from builder\Build.cs...
 %CSC% /nologo /target:exe /r:System.IO.Compression.FileSystem.dll /out:Build.exe builder\Build.cs
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Failed to compile Build.exe
-    pause
     exit /b %ERRORLEVEL%
 )
 
@@ -28,7 +26,6 @@ echo [2/2] Running Build.exe to generate DofusFarm.exe, uninstall.exe, and setup
 Build.exe %*
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Build failed
-    pause
     exit /b %ERRORLEVEL%
 )
 

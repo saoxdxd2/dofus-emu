@@ -53,6 +53,15 @@ namespace DofusFarm.Engine
         private DateTime _cdnCookieRefreshedUtc = DateTime.MinValue;
         private string _cleanUa;
 
+        // Intercept telemetry: summed in the log to keep it flood-free but
+        // still observable (a silent black screen produced zero diagnostics
+        // the first time this shipped).
+        private int _cdnInterceptTotal;
+        private int _cdnInterceptOk;
+        private int _cdnInterceptFail;
+        private int _cdnInterceptLoggedErrors;
+        private bool _cdnInterceptFirstOkLogged;
+
         private sealed class CdnFetchResult
         {
             public int Status;
@@ -1167,10 +1176,15 @@ namespace DofusFarm.Engine
                     return;
                 }
 
-                string range = e.Request.Headers.GetHeader("Range");
-                string inboundCookie = e.Request.Headers.GetHeader("Cookie");
+                // NOTE: CoreWebView2HttpRequestHeaders.GetHeader THROWS
+                // 0x80070490 ("Element not found") when the header is absent
+                // instead of returning an empty string - verified against
+                // runtime 155.0.4283.62. Always go through SafeGetHeader.
+                string range = SafeGetHeader(e.Request, "Range");
+                string inboundCookie = SafeGetHeader(e.Request, "Cookie");
                 string requestUri = uri;
                 var deferral = e.GetDeferral();
+                _cdnInterceptTotal++;
 
                 Task.Run(async () =>
                 {
@@ -1191,10 +1205,31 @@ namespace DofusFarm.Engine
                         reason = result.Reason;
                         body = result.Body;
                         headerBlock = result.Headers;
+                        if (status >= 200 && status < 400)
+                        {
+                            _cdnInterceptOk++;
+                            if (!_cdnInterceptFirstOkLogged)
+                            {
+                                _cdnInterceptFirstOkLogged = true;
+                                _logCallback?.Invoke(string.Format(
+                                    "[{0}] CDN intercept live: first asset {1} ({2}B, cookies={3})",
+                                    _instanceId, status, body != null ? body.Length : 0,
+                                    string.IsNullOrEmpty(cookies) ? "none" : cookies.Length + "c"));
+                            }
+                        }
+                        else
+                        {
+                            _cdnInterceptFail++;
+                            if (_cdnInterceptFail <= 5)
+                                _logCallback?.Invoke(string.Format("[{0}] CDN intercept {1} for {2} (cookies={3})",
+                                    _instanceId, status, requestUri, string.IsNullOrEmpty(cookies) ? "none" : cookies.Length + "c"));
+                        }
                     }
                     catch (Exception ex)
                     {
-                        _logCallback?.Invoke(string.Format("[{0}] CDN fetch failed ({1}): {2}", _instanceId, requestUri, ex.Message));
+                        _cdnInterceptFail++;
+                        if (_cdnInterceptFail <= 5)
+                            _logCallback?.Invoke(string.Format("[{0}] CDN fetch failed ({1}): {2}", _instanceId, requestUri, ex.Message));
                     }
                     try
                     {
@@ -1216,8 +1251,17 @@ namespace DofusFarm.Engine
             }
             catch (Exception ex)
             {
-                _logCallback?.Invoke(string.Format("[{0}] WebResourceRequested error: {1}", _instanceId, ex.Message));
+                _cdnInterceptLoggedErrors++;
+                if (_cdnInterceptLoggedErrors <= 3 || _cdnInterceptLoggedErrors % 100 == 0)
+                    _logCallback?.Invoke(string.Format("[{0}] WebResourceRequested error #{1}: {2}",
+                        _instanceId, _cdnInterceptLoggedErrors, ex.Message));
             }
+        }
+
+        private static string SafeGetHeader(CoreWebView2WebResourceRequest request, string name)
+        {
+            try { return request.Headers.GetHeader(name); }
+            catch { return null; }
         }
 
         private Task RunOnUiThreadAsync(Action action)
@@ -1656,6 +1700,11 @@ namespace DofusFarm.Engine
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             CloseOAuthDialog();
+
+            if (_cdnInterceptTotal > 0)
+                _logCallback?.Invoke(string.Format(
+                    "[{0}] CDN intercept summary: {1} requests, {2} ok, {3} failed, {4} handler errors",
+                    _instanceId, _cdnInterceptTotal, _cdnInterceptOk, _cdnInterceptFail, _cdnInterceptLoggedErrors));
 
             if (_telemetryTimer != null)
             {

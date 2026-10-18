@@ -27,11 +27,24 @@
   var relayPrefix = "http://127.0.0.1:" + cfg.port + "/__cdn/";
   var cdnRe = /^https?:\/\/([a-z0-9.-]*\.cdn\.ankama(?:-games)?\.com)\/(?:assets|ui)\//i;
   var active = false;
+  var rewriteCount = 0;
+  var retryCount = 0;
+
+  function diag(text) {
+    try {
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+        window.chrome.webview.postMessage("{\"type\":\"CDN_RELAY_DIAG\",\"text\":\"" + String(text).replace(/["\\]/g, "'") + "\"}");
+      }
+    } catch (e) { }
+  }
+  diag("shim installed (port " + cfg.port + ")");
 
   function rewrite(url) {
     if (!active || typeof url !== "string" || url.length === 0) return url;
     if (!cdnRe.test(url)) return url;
     var i = url.indexOf("://");
+    rewriteCount++;
+    if (rewriteCount <= 2 || rewriteCount % 100 === 0) diag("rewrite #" + rewriteCount + " " + url.slice(0, 120));
     return relayPrefix + url.slice(i + 3);
   }
 
@@ -45,6 +58,7 @@
   function activate() {
     active = true;
     rewriteConfig(window.Config);
+    diag("activated (assetsUrl=" + ((window.Config && window.Config.assetsUrl) || "n/a") + ")");
   }
 
   // ---- Config hook: rewrite assetsUrl/uiUrl/dataUrl as soon as it is set ----
@@ -78,6 +92,19 @@
       return xhrOpen.apply(this, arguments);
     };
 
+    // Track headers applied between open() and send() so the fallback retry
+    // can faithfully replay the request (open() resets responseType and
+    // nukes previously set headers; losing responseType would hand the game
+    // a string where it expects an ArrayBuffer).
+    var xhrSetHeader = XHR.prototype.setRequestHeader;
+    XHR.prototype.setRequestHeader = function (name, value) {
+      try {
+        if (!this.__dtRelayHeaders) this.__dtRelayHeaders = [];
+        this.__dtRelayHeaders.push([name, value]);
+      } catch (e) { }
+      return xhrSetHeader.apply(this, arguments);
+    };
+
     var xhrSend = XHR.prototype.send;
     XHR.prototype.send = function () {
       var xhr = this;
@@ -89,9 +116,22 @@
           var s = xhr.status;
           if (s === 0 || s >= 400) {
             xhr.__dtRelayRetried = true;
+            retryCount++;
+            if (retryCount <= 3 || retryCount % 50 === 0) diag("retry #" + retryCount + " (relay gave " + s + ") " + String(orig).slice(0, 100));
             try {
+              var responseType = xhr.responseType;
+              var withCredentials = xhr.withCredentials;
+              var timeout = xhr.timeout;
+              var headers = xhr.__dtRelayHeaders;
               xhr.__dtRelayBypass = true; // do not re-rewrite the original URL
               xhr.open(xhr.__dtRelayMethod || "GET", orig, true);
+              try { xhr.responseType = responseType; } catch (e) { }
+              xhr.withCredentials = withCredentials;
+              if (timeout) xhr.timeout = timeout;
+              if (headers) for (var i = 0; i < headers.length; i++) {
+                try { xhr.setRequestHeader(headers[i][0], headers[i][1]); } catch (e) { }
+              }
+              xhr.__dtRelayHeaders = [];
               xhr.send();
             } catch (e) { }
           }
@@ -170,9 +210,13 @@
     probe.open("GET", "http://127.0.0.1:" + cfg.port + "/__cdn/__probe", true);
     probe.timeout = 1500;
     probe.onload = function () {
+      diag("probe status " + probe.status);
       if (probe.status === 204 || probe.status === 200) activate();
     };
-    probe.onerror = probe.ontimeout = function () { /* stay inactive */ };
+    probe.onerror = function () { diag("probe network error (relay unreachable / blocked)"); };
+    probe.ontimeout = function () { diag("probe timed out"); };
     probe.send();
   } catch (e) { /* stay inactive */ }
+
+  diag("shim ready (rewrites=" + rewriteCount + " retries=" + retryCount + ")");
 })();
