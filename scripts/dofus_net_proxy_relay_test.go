@@ -140,6 +140,59 @@ func TestRelayProbeAndAllowlist(t *testing.T) {
 	}
 }
 
+func TestMapJSONID(t *testing.T) {
+	cases := map[string]int64{
+		"/assets/3.3.9_znDI1I3e76AsBAbi3QoRVb_02piQ7P1x/maps/123995138.json": 123995138,
+		"/assets/v/maps/262.json":   262,
+		"/assets/v/maps/262.json.bak": 0,
+		"/assets/v/gfx/world/png/7715.png": 0,
+		"/assets/v/maps/abc.json":   0,
+	}
+	for path, want := range cases {
+		if got := mapJSONID(path); got != want {
+			t.Errorf("mapJSONID(%q) = %d, want %d", path, got, want)
+		}
+	}
+}
+
+func TestMapJSONNeighbours(t *testing.T) {
+	body := []byte(`{"id":123995138,"topNeighbourId":123995137,"bottomNeighbourId":123995139,"leftNeighbourId":123994626,"rightNeighbourId":123995650,"shadowBonusOnEntities":-1,"cells":[{"l":66}]}`)
+	got := mapJSONNeighbours(body)
+	want := []int64{123995137, 123995139, 123994626, 123995650}
+	if len(got) != len(want) {
+		t.Fatalf("neighbours = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("neighbours = %v, want %v", got, want)
+		}
+	}
+	edge := []byte(`{"id":262,"topNeighbourId":263,"bottomNeighbourId":261,"leftNeighbourId":-1,"rightNeighbourId":0}`)
+	if got := mapJSONNeighbours(edge); len(got) != 2 || got[0] != 263 || got[1] != 261 {
+		t.Errorf("edge neighbours = %v, want [263 261]", got)
+	}
+	if got := mapJSONNeighbours([]byte(`{"cells":[]}`)); got != nil {
+		t.Errorf("no-header neighbours = %v, want nil", got)
+	}
+}
+
+func TestMapTileURLs(t *testing.T) {
+	body := []byte(`{"id":1,"atlasLayout":{"width":10,"height":10,"graphicsPositions":{"7715":{"sx":1258,"sy":394,"sw":30,"sh":16,"cw":201,"ch":106},"200406":{"sx":1,"sy":2,"sw":3,"sh":4,"jpg":1}}},"midgroundLayer":{"181":[{"g":7715,"x":1,"y":2}]},"cells":[{"l":66}]}`)
+	got := mapTileURLs(body, "https://cdn.example/assets/v")
+	want := []string{
+		"https://cdn.example/assets/v/gfx/world/png/7715.png",
+		"https://cdn.example/assets/v/gfx/world/jpg/200406.jpg",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("tileURLs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("tileURLs = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestIsLocalRequestHost(t *testing.T) {
 	if !isLocalRequestHost("") || !isLocalRequestHost("127.0.0.1:8880") ||
 		!isLocalRequestHost("localhost:8880") || !isLocalRequestHost("[::1]:8880") {

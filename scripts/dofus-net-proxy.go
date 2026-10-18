@@ -571,6 +571,19 @@ type ProxyServer struct {
 	disguiseBytes  []byte
 	client         *http.Client
 	telemetry      ProxyTelemetry
+
+	// Neighbour map prefetch (see scheduleMapPrefetch): when a map JSON is
+	// served, the surrounding maps' JSONs and tiles are warmed into the same
+	// on-disk cache so walking around never waits on the CDN.
+	prefetch           bool
+	prefetchRadius     int
+	prefetchTilesDepth int
+	prefetchWorkers    int
+	prefetchOnce       sync.Once
+	prefetchQ          chan prefetchJob
+	prefetchMu         sync.Mutex
+	prefetchSeen       map[int64]time.Time
+	prefetchLogMu      sync.Mutex
 }
 
 func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet bool, port int, authToken, serial, uuid, model, manufacturer, ua, glVendor, glRenderer, maxTextureSize, referer string) *ProxyServer {
@@ -1439,6 +1452,7 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		targetStr += "?" + r.URL.RawQuery
 	}
+	reqStart := time.Now()
 
 	cacheable := p.cacheDir != "" && isCacheAssetURL(targetStr) && !isVolatileCacheURL(targetStr)
 	var cacheFilePath string
@@ -1447,6 +1461,10 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 		if p.serveCachedAsset(w, r, cacheFilePath, assetPath) {
 			if !p.quiet {
 				log.Printf("[RELAY] HIT %s", targetStr)
+			}
+			p.requestLog("HIT %s", targetStr)
+			if id := mapJSONID(assetPath); id > 0 {
+				p.scheduleMapPrefetch(targetStr, id)
 			}
 			return
 		}
@@ -1479,6 +1497,7 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := p.client.Do(outReq)
 	if err != nil {
+		p.requestLog("ERR %dms %s (%v)", time.Since(reqStart).Milliseconds(), targetStr, err)
 		http.Error(w, "Relay Error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -1493,6 +1512,7 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	if !p.quiet {
 		log.Printf("[RELAY] %d %s", resp.StatusCode, targetStr)
 	}
+	p.requestLog("%d %dms %s", resp.StatusCode, time.Since(reqStart).Milliseconds(), targetStr)
 
 	w.WriteHeader(resp.StatusCode)
 	buf := bufPool.Get().([]byte)
@@ -1519,6 +1539,9 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	if atomicReplaceFile(tmpPath, cacheFilePath) == nil {
 		if ct := resp.Header.Get("Content-Type"); ct != "" {
 			_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
+		}
+		if id := mapJSONID(assetPath); id > 0 {
+			p.scheduleMapPrefetch(targetStr, id)
 		}
 	} else {
 		_ = os.Remove(tmpPath)
@@ -1574,6 +1597,255 @@ func (p *ProxyServer) warmAssetCache(ctx context.Context, target string) (bool, 
 		_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
 	}
 	return true, false
+}
+
+// ---------------------------------------------------------------------------
+// Neighbour map prefetch
+//
+// The client renders a map from three things fetched over HTTP: the map JSON
+// (maps/<id>.json), the ground/decor tiles stitched from atlasLayout
+// (gfx/world/png/<gid>.png, or jpg/) and assorted sprites. The map JSON
+// already contains the exact neighbours of the map (top/bottom/left/right),
+// so when a map is loaded we can warm the cache for the maps reachable by
+// walking: their JSONs (a few KB) plus, for direct neighbours, the tile PNGs
+// that make first entry slow. Everything lands in the same shared disk cache
+// used by the relay, so the client's own requests hit the cache (~ms) instead
+// of round-tripping to the CDN, and repeated visits stay in the browser cache.
+// ---------------------------------------------------------------------------
+
+const (
+	prefetchCooldown        = 20 * time.Second
+	prefetchQueueSize       = 1024
+	prefetchMaxTilesPerMap  = 600
+	prefetchMapJSONReadMax  = 4 << 20
+)
+
+var (
+	reMapJSONPath = regexp.MustCompile(`/maps/(\d+)\.json$`)
+	reMapHeader   = regexp.MustCompile(`^\{"id":(\d+),"topNeighbourId":(-?\d+),"bottomNeighbourId":(-?\d+),"leftNeighbourId":(-?\d+),"rightNeighbourId":(-?\d+)`)
+	reAtlasEntry  = regexp.MustCompile(`"(\d+)":\{([^{}]*)\}`)
+)
+
+type prefetchJob struct {
+	target string
+	id     int64
+	depth  int
+}
+
+// mapJSONID extracts the numeric map id from an asset path ending in
+// /maps/<id>.json. Returns 0 when the path is not a map JSON.
+func mapJSONID(path string) int64 {
+	if m := reMapJSONPath.FindStringSubmatch(path); m != nil {
+		if id, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+			return id
+		}
+	}
+	return 0
+}
+
+// mapJSONNeighbours returns the walkable neighbours (top, bottom, left,
+// right) declared in the map JSON header, deduplicated and in that order.
+func mapJSONNeighbours(body []byte) []int64 {
+	head := body
+	if len(head) > 300 {
+		head = head[:300]
+	}
+	m := reMapHeader.FindSubmatch(head)
+	if m == nil {
+		return nil
+	}
+	var out []int64
+	seen := make(map[int64]struct{}, 4)
+	for _, g := range m[2:] {
+		id, err := strconv.ParseInt(string(g), 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// mapTileURLs lists the tile image URLs a map's atlasLayout references.
+// atlasLayout.graphicsPositions is a map of "<gid>":{"sx":..} entries; the
+// renderer loads each as gfx/world/<png|jpg>/<gid>.<png|jpg> ("jpg":1 entries
+// live under jpg/). prefix is the asset base of the owning map, e.g.
+// https://host/assets/<version>.
+func mapTileURLs(body []byte, prefix string) []string {
+	matches := reAtlasEntry.FindAllSubmatch(body, prefetchMaxTilesPerMap+1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if !bytes.Contains(m[2], []byte(`"sx"`)) {
+			continue
+		}
+		dir, ext := "png", ".png"
+		if bytes.Contains(m[2], []byte(`"jpg"`)) {
+			dir, ext = "jpg", ".jpg"
+		}
+		out = append(out, prefix+"/gfx/world/"+dir+"/"+string(m[1])+ext)
+		if len(out) == prefetchMaxTilesPerMap {
+			break
+		}
+	}
+	return out
+}
+
+func (p *ProxyServer) prefetchLog(format string, args ...interface{}) {
+	line := fmt.Sprintf(format, args...)
+	if !p.quiet {
+		log.Printf("%s", line)
+	}
+	if p.cacheDir == "" {
+		return
+	}
+	p.prefetchLogMu.Lock()
+	defer p.prefetchLogMu.Unlock()
+	f, err := os.OpenFile(filepath.Join(p.cacheDir, "prefetch.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(f, "%s %s\n", time.Now().Format("2006-01-02 15:04:05"), line)
+	_ = f.Close()
+}
+
+// requestLog appends one line per CDN asset request handled by the relay to
+// <cacheDir>/requests.log (rotated past 16 MB). This is the ground truth for
+// post-session debugging: cache hits, slow misses, 403/404 storms and stalls
+// all show up with the exact URL.
+func (p *ProxyServer) requestLog(format string, args ...interface{}) {
+	if p.cacheDir == "" {
+		return
+	}
+	logPath := filepath.Join(p.cacheDir, "requests.log")
+	p.prefetchLogMu.Lock()
+	defer p.prefetchLogMu.Unlock()
+	if fi, err := os.Stat(logPath); err == nil && fi.Size() > 16<<20 {
+		_ = os.Rename(logPath, logPath+".1")
+	}
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(f, "%s %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
+	_ = f.Close()
+}
+
+// scheduleMapPrefetch enqueues a map node for warming. Called whenever a map
+// JSON travels through the proxy/relay; a cooldown per map id keeps loops
+// (root -> neighbour -> root) from re-enqueueing the same node in a burst.
+func (p *ProxyServer) scheduleMapPrefetch(target string, id int64) {
+	if !p.prefetch || p.cacheDir == "" || id <= 0 {
+		return
+	}
+	p.prefetchMu.Lock()
+	if p.prefetchSeen == nil {
+		p.prefetchSeen = make(map[int64]time.Time)
+	}
+	if last, ok := p.prefetchSeen[id]; ok && time.Since(last) < prefetchCooldown {
+		p.prefetchMu.Unlock()
+		return
+	}
+	if len(p.prefetchSeen) > 8192 {
+		now := time.Now()
+		for k, v := range p.prefetchSeen {
+			if now.Sub(v) > time.Hour {
+				delete(p.prefetchSeen, k)
+			}
+		}
+	}
+	p.prefetchSeen[id] = time.Now()
+	p.prefetchMu.Unlock()
+
+	p.prefetchOnce.Do(p.startPrefetchWorkers)
+	select {
+	case p.prefetchQ <- prefetchJob{target: target, id: id, depth: 0}:
+	default: // queue full: drop, the map was served moments ago anyway
+	}
+}
+
+func (p *ProxyServer) startPrefetchWorkers() {
+	p.prefetchQ = make(chan prefetchJob, prefetchQueueSize)
+	n := p.prefetchWorkers
+	if n < 1 {
+		n = 1
+	}
+	for i := 0; i < n; i++ {
+		go p.prefetchWorker()
+	}
+}
+
+func (p *ProxyServer) prefetchWorker() {
+	ctx := context.Background()
+	for job := range p.prefetchQ {
+		p.processPrefetchJob(ctx, job)
+	}
+}
+
+// processPrefetchJob warms one node of the neighbour graph: ensures the map
+// JSON is cached, warms its tiles when the node is a walkable neighbour
+// (depth 1..prefetchTilesDepth), then enqueues its own neighbours until
+// prefetchRadius is reached.
+func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
+	mapURL := job.target
+	cacheFilePath := p.assetCachePath(mapURL)
+	if _, err := os.Stat(cacheFilePath); err != nil {
+		if ok, _ := p.warmAssetCache(ctx, mapURL); !ok {
+			p.prefetchLog("[PREFETCH] map %d json fetch failed", job.id)
+			return
+		}
+	}
+	f, err := os.Open(cacheFilePath)
+	if err != nil {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(f, prefetchMapJSONReadMax))
+	_ = f.Close()
+	if err != nil || len(body) == 0 {
+		return
+	}
+
+	prefix := strings.TrimSuffix(mapURL, "/maps/"+strconv.FormatInt(job.id, 10)+".json")
+	neighbours := mapJSONNeighbours(body)
+
+	newTiles, cachedTiles, totalTiles := 0, 0, 0
+	if job.depth >= 1 && job.depth <= p.prefetchTilesDepth {
+		for _, tileURL := range mapTileURLs(body, prefix) {
+			totalTiles++
+			ok, already := p.warmAssetCache(ctx, tileURL)
+			if already {
+				cachedTiles++
+			} else if ok {
+				newTiles++
+			}
+		}
+	}
+	p.prefetchLog("[PREFETCH] map %d d%d neighbours=%d tiles new=%d cached=%d total=%d",
+		job.id, job.depth, len(neighbours), newTiles, cachedTiles, totalTiles)
+
+	if job.depth >= p.prefetchRadius {
+		return
+	}
+	for _, nid := range neighbours {
+		p.prefetchMu.Lock()
+		last, ok := p.prefetchSeen[nid]
+		skip := ok && time.Since(last) < prefetchCooldown
+		if !skip {
+			p.prefetchSeen[nid] = time.Now()
+		}
+		p.prefetchMu.Unlock()
+		if skip {
+			continue
+		}
+		nTarget := prefix + "/maps/" + strconv.FormatInt(nid, 10) + ".json"
+		select {
+		case p.prefetchQ <- prefetchJob{target: nTarget, id: nid, depth: job.depth + 1}:
+		default:
+		}
+	}
 }
 
 // feedMapIDs iterates the map id ranges in spec ("1-20000,7442,9000-9100"),
@@ -1700,6 +1972,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		// chunks - no extra Stat, no manual Content-Length math, and
 		// repeat visits can be answered with a 304.
 		if p.serveCachedAsset(w, r, cacheFilePath, targetURL.Path) {
+			if id := mapJSONID(targetURL.Path); id > 0 {
+				p.scheduleMapPrefetch(targetStr, id)
+			}
 			return
 		}
 	}
@@ -1783,6 +2058,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				if ct != "" {
 					_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
 				}
+				if id := mapJSONID(targetURL.Path); id > 0 {
+					p.scheduleMapPrefetch(targetStr, id)
+				}
 			} else {
 				_ = os.Remove(tmpPath)
 			}
@@ -1813,11 +2091,35 @@ func main() {
 	assetsURL := flag.String("assets-url", "", "Assets base URL for map precaching, e.g. https://dofustouch.cdn.ankama.com/assets/<version>")
 	precacheSpec := flag.String("precache-maps", "", "Map IDs to precache into -cache, e.g. \"1-20000\" or \"7442,10354\" (requires -assets-url)")
 	precacheWorkers := flag.Int("precache-workers", 4, "Parallel workers for -precache-maps")
+	prefetchNeighbours := flag.Bool("prefetch-neighbours", true, "Warm neighbour map JSONs and tiles into -cache whenever a map is loaded")
+	prefetchRadius := flag.Int("prefetch-radius", 2, "Map graph depth warmed for JSON (1=direct neighbours, 2=neighbours of neighbours)")
+	prefetchTilesDepth := flag.Int("prefetch-tiles-depth", 1, "Graph depth at which map tile images (gfx/world/*) are warmed")
+	prefetchWorkers := flag.Int("prefetch-workers", 3, "Parallel workers for neighbour prefetch")
 	flag.Parse()
 
 	log.SetFlags(log.Ldate | log.Ltime)
 	resolver := NewFastDNSResolver(*dnsServer, 10*time.Minute)
 	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, *token, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize, *referer)
+	proxy.prefetch = *prefetchNeighbours
+	proxy.prefetchRadius = *prefetchRadius
+	if proxy.prefetchRadius < 1 {
+		proxy.prefetchRadius = 1
+	}
+	proxy.prefetchTilesDepth = *prefetchTilesDepth
+	if proxy.prefetchTilesDepth < 0 {
+		proxy.prefetchTilesDepth = 0
+	}
+	proxy.prefetchWorkers = *prefetchWorkers
+	if proxy.prefetchWorkers < 1 {
+		proxy.prefetchWorkers = 1
+	}
+	if proxy.prefetchWorkers > 16 {
+		proxy.prefetchWorkers = 16
+	}
+	if proxy.prefetch && proxy.cacheDir != "" {
+		log.Printf("[PREFETCH] Neighbour prefetch enabled (radius=%d tiles-depth=%d workers=%d)",
+			proxy.prefetchRadius, proxy.prefetchTilesDepth, proxy.prefetchWorkers)
+	}
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()

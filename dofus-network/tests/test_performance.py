@@ -20,7 +20,7 @@ try:
     import torch
     from networkhealth.evaluation import measure_cost
     from networkhealth.model import ModelConfig, NetworkHealthTCN
-    from networkhealth.trm_moe import TRMMoEConfig, TRMMoE as TRMMoE
+    from networkhealth.trm_moe import TRMMoEConfig, NetworkHealthTRMMoE as TRMMoE
     _HAS_TORCH = True
 except ImportError:
     _HAS_TORCH = False

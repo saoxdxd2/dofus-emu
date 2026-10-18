@@ -39,7 +39,7 @@ class NetworkHealthBridge:
 
         self.engine = MultiInstanceNetworkHealth(self.checkpoint_path)
         self._last_metrics: dict[int, dict[str, Any]] = {}
-        self._pending_predictions: dict[str, tuple[float, float, float]] = {}  # slot_id -> (pred_rtt, pred_std, ts)
+        self._pending_predictions: dict[str, tuple[float, float]] = {}  # slot_id -> (pred_rtt, pred_std)
         self._ewma_z: dict[str, float] = {}                                     # slot_id -> smoothed residual z-score
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -90,7 +90,7 @@ class NetworkHealthBridge:
             route_anomaly = False
             prev_pred = self._pending_predictions.get(slot_id)
             if prev_pred is not None:
-                pred_rtt, pred_std, _ = prev_pred
+                pred_rtt, pred_std = prev_pred
                 residual = abs(rtt_ms - pred_rtt)
                 z_score = residual / max(1.0, pred_std)
                 prev_ewma = self._ewma_z.get(slot_id, 0.0)
@@ -126,7 +126,7 @@ class NetworkHealthBridge:
                 pred_h1_rtt = forecast.rtt_ms[0]
                 pred_h1_std = forecast.rtt_std_ms[0] if forecast.rtt_std_ms else 1.5
                 if pred_h1_rtt is not None and pred_h1_std is not None:
-                    self._pending_predictions[slot_id] = (pred_h1_rtt, pred_h1_std, now)
+                    self._pending_predictions[slot_id] = (pred_h1_rtt, pred_h1_std)
 
                 if forecast.degradation_probability:
                     deg_prob = float(forecast.degradation_probability[0])

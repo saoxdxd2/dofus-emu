@@ -54,14 +54,14 @@ class TemporalCycleBlock(nn.Module):
                                padding=padding, dilation=dilation)
         self.chomp1 = Chomp1d(padding)
         self.act1 = nn.SiLU()
-        self.norm1 = nn.BatchNorm1d(out_channels)
+        self.norm1 = nn.GroupNorm(1, out_channels)
         self.drop1 = nn.Dropout(dropout)
 
         self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size,
                                padding=padding, dilation=dilation)
         self.chomp2 = Chomp1d(padding)
         self.act2 = nn.SiLU()
-        self.norm2 = nn.BatchNorm1d(out_channels)
+        self.norm2 = nn.GroupNorm(1, out_channels)
         self.drop2 = nn.Dropout(dropout)
 
         self.downsample = nn.Conv1d(in_channels, out_channels, 1) if in_channels != out_channels else None

@@ -45,7 +45,7 @@ class TestTokenizer(unittest.TestCase):
 @unittest.skipUnless(_HAS_TORCH, "torch not available")
 class TestDofusBrainTransformer(unittest.TestCase):
     def test_transformer_forward(self):
-        model = DofusBrainTransformer(vocab_size=100, d_model=64, n_layers=2, n_heads=4)
+        model = DofusBrainTransformer(vocab_size=100, d_model=64, nhead=4, num_layers=2)
         model.eval()
         tokens = torch.randint(0, 100, (2, 16))
         with torch.no_grad():

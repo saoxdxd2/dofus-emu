@@ -1,20 +1,11 @@
 {
-  "generated_utc": "2026-10-18T15:20:58+00:00",
+  "generated_utc": "2026-10-18T15:55:07+00:00",
   "tests_run": 73,
   "failures": 0,
-  "errors": 2,
-  "skipped": 12,
-  "successful": 71,
-  "was_successful": false,
+  "errors": 0,
+  "skipped": 0,
+  "successful": 73,
+  "was_successful": true,
   "failures_detail": [],
-  "errors_detail": [
-    {
-      "test": "test_transformer_forward (test_ai.TestDofusBrainTransformer.test_transformer_forward)",
-      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\tests\\test_ai.py\", line 48, in test_transformer_forward\n    model = DofusBrainTransformer(vocab_size=100, d_model=64, n_layers=2, n_heads=4)\nTypeError: DofusBrainTransformer.__init__() got an unexpected keyword argument 'n_layers'. Did you mean 'num_layers'?\n"
-    },
-    {
-      "test": "test_trm_moe_parameter_count (test_performance.TestPerformanceBaseline.test_trm_moe_parameter_count)",
-      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\tests\\test_performance.py\", line 39, in test_trm_moe_parameter_count\n    model = TRMMoE(cfg)\n            ^^^^^^\nNameError: name 'TRMMoE' is not defined\n"
-    }
-  ]
+  "errors_detail": []
 }

@@ -77,17 +77,18 @@ class TestEvaluation(unittest.TestCase):
         self.assertEqual(m["f1"], 1.0)
 
     def test_json_default_handles_numpy(self):
-        # numpy types are handled correctly (caught before math.generic line)
+        # numpy types are handled correctly (caught before numbers.Number line)
         self.assertEqual(_json_default(np.float64(3.5)), 3.5)
         self.assertEqual(_json_default(np.int32(7)), 7)
         self.assertEqual(_json_default(np.array([1, 2, 3])), [1, 2, 3])
 
-    def test_json_default_math_generic_bug(self):
-        """BUG-001: math.generic does not exist, crashing _json_default for any
-        non-numpy type. Even _json_default(42) raises AttributeError."""
-        with self.assertRaises(AttributeError):
-            _json_default(42)
-        with self.assertRaises((TypeError, AttributeError)):
+    def test_json_default_math_generic_bug_fixed(self):
+        """BUG-001 FIXED: math.generic replaced with numbers.Number — _json_default
+        now handles int/float/Decimal/etc. without AttributeError."""
+        self.assertEqual(_json_default(42), 42)
+        self.assertEqual(_json_default(3.14), 3.14)
+        # Non-numeric types still raise TypeError
+        with self.assertRaises(TypeError):
             _json_default({"not": "serialisable"})
 
 

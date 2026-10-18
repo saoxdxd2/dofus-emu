@@ -14,7 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 try:
     import torch
     from networkhealth.model import ModelConfig, NetworkHealthTCN
-    from networkhealth.trm_moe import TRMMoEConfig, TRMMoE
+    from networkhealth.trm_moe import TRMMoEConfig, NetworkHealthTRMMoE
     from networkhealth.identity_mask import InstanceIdentityMaskLayer, IdentityMaskConfig, InstanceIdentityMasker
     _HAS_TORCH = True
 except ImportError:
@@ -64,7 +64,7 @@ class TestModelTCN(unittest.TestCase):
 class TestTRMMoE(unittest.TestCase):
     def test_trm_moe_forward(self):
         cfg = TRMMoEConfig(in_features=10, hidden=32, num_experts=4, top_k=2)
-        model = TRMMoE(cfg)
+        model = NetworkHealthTRMMoE(cfg)
         model.eval()
         x = torch.randn(4, 16, 10)
         with torch.no_grad():
@@ -76,7 +76,7 @@ class TestTRMMoE(unittest.TestCase):
 
     def test_trm_moe_parameter_count(self):
         cfg = TRMMoEConfig(in_features=10, hidden=64, num_experts=4, top_k=2)
-        model = TRMMoE(cfg)
+        model = NetworkHealthTRMMoE(cfg)
         count = model.parameter_count()
         self.assertGreater(count, 0)
         self.assertLess(count, 5_000_000)

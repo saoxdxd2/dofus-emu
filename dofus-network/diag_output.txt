@@ -1,5 +1,0 @@
-DofusBrainTransformer.__init__: (self, vocab_size: 'int' = 4096, d_model: 'int' = 256, nhead: 'int' = 8, num_layers: 'int' = 6, dim_feedforward: 'int' = 768, max_seq_len: 'int' = 128, num_policy_classes: 'int' = 4, num_intent_classes: 'int' = 12, dropout: 'float' = 0.1)
-Traceback (most recent call last):
-  File "C:\Users\sao\Documents\dofus-emu\dofus-network\tests\_diag.py", line 11, in <module>
-    from networkhealth.trm_moe import TRMMoEConfig, TRMMoE
-ImportError: cannot import name 'TRMMoE' from 'networkhealth.trm_moe' (C:\Users\sao\Documents\dofus-emu\dofus-network\networkhealth\trm_moe.py)

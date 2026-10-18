@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import numbers
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -196,7 +197,7 @@ def _json_default(value: Any) -> Any:
         return value.item()
     if isinstance(value, np.ndarray):
         return value.tolist()
-    if isinstance(value, (math.generic,)):
+    if isinstance(value, numbers.Number):
         return float(value)
     raise TypeError(f"Not JSON serialisable: {type(value)!r}")
 

@@ -202,8 +202,7 @@ def _safe_bias(pred: list[float], true: list[float], mask: list[float]) -> float
 def _safe_accuracy(pred: list[float], true: list[float]) -> float | None:
     if not true:
         return None
-    return float(np.mean([1.0 if p >= 0.5 else 0.0 == t for p, t in zip(pred, true)])
-                 if False else np.mean([(1.0 if p >= 0.5 else 0.0) == t for p, t in zip(pred, true)]))
+    return float(np.mean([(1.0 if p >= 0.5 else 0.0) == t for p, t in zip(pred, true)]))
 
 
 @dataclass

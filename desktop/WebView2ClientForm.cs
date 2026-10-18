@@ -1188,6 +1188,8 @@ namespace DofusFarm.Engine
                 // instead of returning an empty string - verified against
                 // runtime 155.0.4283.62. Always go through SafeGetHeader.
                 string range = SafeGetHeader(e.Request, "Range");
+                string ifNoneMatch = SafeGetHeader(e.Request, "If-None-Match");
+                string ifModifiedSince = SafeGetHeader(e.Request, "If-Modified-Since");
                 string inboundCookie = SafeGetHeader(e.Request, "Cookie");
                 string requestUri = uri;
                 var deferral = e.GetDeferral();
@@ -1211,10 +1213,17 @@ namespace DofusFarm.Engine
                         string cookies = inboundCookie;
                         if (string.IsNullOrEmpty(cookies))
                         {
-                            try { cookies = await RunOnUiThreadAsync(GetCdnCookieHeaderAsync); }
-                            catch { }
+                            if ((DateTime.UtcNow - _cdnCookieRefreshedUtc).TotalSeconds < CdnCookieTtlSeconds)
+                            {
+                                cookies = _cdnCookieHeader;
+                            }
+                            else
+                            {
+                                try { cookies = await RunOnUiThreadAsync(GetCdnCookieHeaderAsync); }
+                                catch { }
+                            }
                         }
-                        CdnFetchResult result = FetchCdnAsset(requestUri, method, range, cookies);
+                        CdnFetchResult result = FetchCdnAsset(requestUri, method, range, cookies, ifNoneMatch, ifModifiedSince);
                         status = result.Status;
                         reason = result.Reason;
                         body = result.Body;
@@ -1342,7 +1351,7 @@ namespace DofusFarm.Engine
             return header;
         }
 
-        private HttpWebRequest BuildCdnRequest(string uri, string method, string range, string cookieHeader, WebProxy proxy)
+        private HttpWebRequest BuildCdnRequest(string uri, string method, string range, string cookieHeader, WebProxy proxy, string ifNoneMatch, string ifModifiedSince)
         {
             var req = (HttpWebRequest)WebRequest.Create(uri);
             req.Method = method;
@@ -1360,6 +1369,14 @@ namespace DofusFarm.Engine
             {
                 try { req.Headers["Range"] = range; } catch { }
             }
+            if (!string.IsNullOrEmpty(ifNoneMatch))
+            {
+                try { req.Headers["If-None-Match"] = ifNoneMatch; } catch { }
+            }
+            if (!string.IsNullOrEmpty(ifModifiedSince))
+            {
+                try { req.Headers["If-Modified-Since"] = ifModifiedSince; } catch { }
+            }
             req.Proxy = proxy;
             try
             {
@@ -1370,7 +1387,7 @@ namespace DofusFarm.Engine
             return req;
         }
 
-        private CdnFetchResult FetchCdnAsset(string uri, string method, string range, string cookieHeader)
+        private CdnFetchResult FetchCdnAsset(string uri, string method, string range, string cookieHeader, string ifNoneMatch, string ifModifiedSince)
         {
             bool useProxy = _options != null && _options.ProxyPort > 0;
 
@@ -1390,7 +1407,7 @@ namespace DofusFarm.Engine
                     string.IsNullOrEmpty(parsed.Query) ? "" : parsed.Query);
                 try
                 {
-                    resp = (HttpWebResponse)BuildCdnRequest(relayUri, method, range, cookieHeader, null).GetResponse();
+                    resp = (HttpWebResponse)BuildCdnRequest(relayUri, method, range, cookieHeader, null, ifNoneMatch, ifModifiedSince).GetResponse();
                 }
                 catch (WebException wex)
                 {
@@ -1409,7 +1426,7 @@ namespace DofusFarm.Engine
                 WebProxy proxy = useProxy ? new WebProxy("http://127.0.0.1:" + _options.ProxyPort) : null;
                 try
                 {
-                    resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, proxy).GetResponse();
+                    resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, proxy, ifNoneMatch, ifModifiedSince).GetResponse();
                 }
                 catch (WebException wex)
                 {
@@ -1418,7 +1435,7 @@ namespace DofusFarm.Engine
                     if (resp == null)
                     {
                         // Local relay unreachable: retry straight once.
-                        try { resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, null).GetResponse(); }
+                        try { resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, null, ifNoneMatch, ifModifiedSince).GetResponse(); }
                         catch (WebException wex2) { resp = wex2.Response as HttpWebResponse; lastError = wex2.Status + ": " + wex2.Message; }
                         catch (Exception ex2) { resp = null; lastError = ex2.GetType().Name + ": " + ex2.Message; }
                     }
@@ -1448,6 +1465,17 @@ namespace DofusFarm.Engine
                 if (!string.IsNullOrEmpty(etag)) sb.Append("ETag: ").Append(etag).Append("\r\n");
                 string lm = resp.Headers["Last-Modified"];
                 if (!string.IsNullOrEmpty(lm)) sb.Append("Last-Modified: ").Append(lm).Append("\r\n");
+                string cc = resp.Headers["Cache-Control"];
+                if (!string.IsNullOrEmpty(cc))
+                {
+                    sb.Append("Cache-Control: ").Append(cc).Append("\r\n");
+                }
+                else if (resp.StatusCode == HttpStatusCode.OK && method.Equals("GET", StringComparison.OrdinalIgnoreCase))
+                {
+                    // CDN asset paths are version-hashed: cache hard so map
+                    // navigation stops re-fetching every sprite every time.
+                    sb.Append("Cache-Control: public, max-age=604800, immutable\r\n");
+                }
 
                 var body = new MemoryStream();
                 bool wantBody = method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
@@ -1469,7 +1497,10 @@ namespace DofusFarm.Engine
                     }
                     catch { }
                 }
-                sb.Append("Content-Length: ").Append(body.Length).Append("\r\n");
+                if (resp.StatusCode != HttpStatusCode.NotModified)
+                {
+                    sb.Append("Content-Length: ").Append(body.Length).Append("\r\n");
+                }
 
                 return new CdnFetchResult
                 {
