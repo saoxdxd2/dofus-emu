@@ -162,12 +162,6 @@ namespace DofusFarm.UI
 
         private ComboBox _cmbGpu;
 
-        private Label _lblCores;
-
-        private ComboBox _cmbCores;
-
-        private Button _btnApplyAllHw;
-
         private Label _lblRamBadge;
 
         private Label _lblEngineNotice;
@@ -686,21 +680,11 @@ namespace DofusFarm.UI
 
 
 
-            _lblCores = new Label { Text = "CPU:", ForeColor = lblCol, AutoSize = true, Location = new Point(182, row2Y + 3) };
-
-            _cmbCores = CreateCombo(218, row2Y, 80, CoreChoices.Select(c => (object)(c == 0 ? "Auto (Shared)" : (c + (c == 1 ? " Core" : " Cores")))).ToArray(), 0);
-
-
-
-            _btnApplyAllHw = CreateButton("Apply CPU", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 84, 28, true, 306, row2Y, OnApplyAllHardwareClick);
-
-
-
             _lblRamBadge = new Label
 
             {
 
-                Text = "⚡ Shared RAM: Auto Pool",
+                Text = "⚡ Resource Architecture: Dynamic Shared RAM & CPU Pool (Auto-Balanced)",
 
                 ForeColor = Color.FromArgb(52, 211, 153),
 
@@ -708,7 +692,7 @@ namespace DofusFarm.UI
 
                 AutoSize = true,
 
-                Location = new Point(402, row2Y + 4)
+                Location = new Point(190, row2Y + 4)
 
             };
 
@@ -726,7 +710,7 @@ namespace DofusFarm.UI
 
                 AutoSize = true,
 
-                Location = new Point(570, row2Y + 4)
+                Location = new Point(660, row2Y + 4)
 
             };
 
@@ -740,7 +724,7 @@ namespace DofusFarm.UI
 
                 _btnRelayout, _btnCascade, _lblBackend, _cmbBackend,
 
-                _lblGpu, _cmbGpu, _lblCores, _cmbCores, _btnApplyAllHw, _lblRamBadge, _lblEngineNotice
+                _lblGpu, _cmbGpu, _lblRamBadge, _lblEngineNotice
 
             });
 
@@ -1882,7 +1866,7 @@ namespace DofusFarm.UI
 
         private int GetSelectedRam() { return 0; } // 0 = dynamic shared memory
 
-        private int GetSelectedCores() { return ParseFirstInt(_cmbCores.SelectedItem, 1); }
+        private int GetSelectedCores() { return 0; } // 0 = dynamic shared all cores
 
 
 
@@ -1912,9 +1896,7 @@ namespace DofusFarm.UI
 
             // that is 1 Core, so 4 instances fit exactly on 4 physical cores - the target config.
 
-            int coreIdx = Array.IndexOf(CoreChoices, _engine.RecommendedCoresPerInstance(4));
 
-            _cmbCores.SelectedIndex = coreIdx >= 0 ? coreIdx : 0;
 
         }
 
@@ -2100,37 +2082,7 @@ namespace DofusFarm.UI
 
 
 
-        private void OnApplyAllHardwareClick(object sender, EventArgs e)
 
-        {
-
-            int cores = GetSelectedCores();
-
-            _btnApplyAllHw.Enabled = false;
-
-            ThreadPool.QueueUserWorkItem(delegate
-
-            {
-
-                try
-
-                {
-
-                    int updated = _engine.ApplyHardwareToAllInstances(0, cores);
-
-                    Log(string.Format("Applied {0} CPU Core(s) (Shared Dynamic RAM) across {1} stopped instance(s).", cores, updated));
-
-                    RefreshGrid(true);
-
-                }
-
-                catch (Exception ex) { Log("Error applying hardware settings: " + ex.Message); }
-
-                finally { SafeBeginInvoke(delegate { _btnApplyAllHw.Enabled = true; }); }
-
-            });
-
-        }
 
 
 
@@ -3210,8 +3162,6 @@ namespace DofusFarm.UI
 
         private TextBox _txtCustomName;
 
-        private ComboBox _cmbCores;
-
         private ComboBox _cmbProfiles;
 
         private Button _btnRandomProfile;
@@ -3274,13 +3224,13 @@ namespace DofusFarm.UI
 
 
 
-            var lblRam = new Label { Text = "Memory:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = lblColor };
+            var lblRes = new Label { Text = "System Resources:", Location = new Point(22, y + 3), AutoSize = true, ForeColor = lblColor };
 
-            var lblRamVal = new Label
+            var lblResVal = new Label
 
             {
 
-                Text = "⚡ Shared Dynamic Memory (Auto-Balanced)",
+                Text = "⚡ Shared Dynamic RAM & CPU Pool (Auto)",
 
                 Location = new Point(165, y + 3),
 
@@ -3292,19 +3242,7 @@ namespace DofusFarm.UI
 
             };
 
-
-
-            var lblCores = new Label { Text = "CPU Cores:", Location = new Point(22, y + 40), AutoSize = true, ForeColor = lblColor };
-
-            _cmbCores = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(165, y + 37), Width = 120, BackColor = inputBg, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
-
-            _cmbCores.Items.AddRange(MainForm.CoreChoices.Select(c => (object)(c == 0 ? "Auto (Shared)" : (c + (c == 1 ? " Core" : " Cores")))).ToArray());
-
-            int coreIdx = Array.IndexOf(MainForm.CoreChoices, currentCores);
-
-            _cmbCores.SelectedIndex = coreIdx >= 0 ? coreIdx : 0;
-
-            y += 80;
+            y += 45;
 
 
 
@@ -3390,7 +3328,7 @@ namespace DofusFarm.UI
 
                 SelectedRamMb = 0; // 0 = dynamic shared memory
 
-                SelectedCores = MainForm.ParseFirstInt(_cmbCores.SelectedItem, 1);
+                SelectedCores = 0; // 0 = dynamic shared all cores
 
                 int pIdx = _cmbProfiles.SelectedIndex;
 
@@ -3448,7 +3386,7 @@ namespace DofusFarm.UI
 
             {
 
-                lblName, _txtCustomName, lblRam, lblRamVal, lblCores, _cmbCores,
+                lblName, _txtCustomName, lblRes, lblResVal,
 
                 lblPhone, _cmbProfiles, _btnRandomProfile, lblProxy, _txtProxy, lblProxyHint, _btnSave, _btnCancel
 

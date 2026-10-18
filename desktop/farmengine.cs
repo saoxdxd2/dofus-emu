@@ -1302,7 +1302,7 @@ namespace DofusFarm.Engine
         private void UpdateConfigIni(string cfgFile, string name, int ramMb, int cores, DeviceProfile profile = null)
         {
             profile = profile ?? DeviceCatalog.GetProfile("galaxy-a51");
-            int safeRam = ramMb > 0 ? Math.Max(768, ramMb) : GetDynamicRamMb(0), safeCores = Math.Max(1, cores);
+            int safeRam = ramMb > 0 ? Math.Max(768, ramMb) : GetDynamicRamMb(0), safeCores = cores > 0 ? Math.Max(1, cores) : GetDynamicCores();
 
             var existing = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             // deliberately left as-is: this is only reached when the user edits an instance by hand
