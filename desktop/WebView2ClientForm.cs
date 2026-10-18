@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Media;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -24,6 +26,40 @@ namespace DofusFarm.Engine
 
         private CoreWebView2Environment _env;
         private OAuthLoginForm _activeOAuthDialog;
+
+        // ---- CDN asset repair (WebResourceRequested) ----
+        // Ankama's CDN hotlink-checks asset requests: XHRs from the virtual
+        // origin https://dofus.local/ get 403 because the browser's CDN
+        // cookies are cross-site and the Referer is not on the allowlist.
+        // Fetched CDN assets are re-issued here via .NET with the full
+        // WebView2 cookie jar (including HttpOnly/SameSite cookies) and the
+        // official web-client Referer/Origin.
+        private const string CdnReferer = "https://www.dofus-touch.com/";
+        private const int CdnCookieTtlSeconds = 45;
+        private static readonly Regex CdnAssetUriRe = new Regex(
+            @"^https?://(?:[a-z0-9-]+\.)*cdn\.ankama(?:-games)?\.com/(?:assets|ui|export-web)/",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly string[] CdnCookieOrigins = new[]
+        {
+            "https://dofustouch.cdn.ankama.com/",
+            "https://dofus-touch.com/",
+            "https://www.dofus-touch.com/",
+            "https://account.ankama.com/",
+            "https://www.ankama.com/",
+            "https://dt-proxy-production-login.ankama-games.com/"
+        };
+        private readonly object _cdnCookieLock = new object();
+        private string _cdnCookieHeader = "";
+        private DateTime _cdnCookieRefreshedUtc = DateTime.MinValue;
+        private string _cleanUa;
+
+        private sealed class CdnFetchResult
+        {
+            public int Status;
+            public string Reason;
+            public MemoryStream Body;
+            public string Headers;
+        }
 
         private WebView2 _webView;
         private Panel _toolbarPanel;
@@ -467,6 +503,12 @@ namespace DofusFarm.Engine
                 _logCallback?.Invoke(string.Format("[{0}] Preparing WebView2 profile at: {1}", _instanceId, _userDataDir));
                 Directory.CreateDirectory(_userDataDir);
 
+                // Resolve the standalone bundle root once; used for the virtual
+                // host mapping and for the CDN relay shim injection below.
+                string clientDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "desktop", "client", "www");
+                if (!Directory.Exists(clientDir)) clientDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client", "www");
+                if (!Directory.Exists(clientDir)) clientDir = Path.Combine(Directory.GetCurrentDirectory(), "desktop", "client", "www");
+
                 // Configure Chromium switches
                 var envOptions = new CoreWebView2EnvironmentOptions();
                 var args = new StringBuilder();
@@ -481,10 +523,19 @@ namespace DofusFarm.Engine
                     ua = Regex.Replace(ua, @"Version/[0-9.]+\s*", "", RegexOptions.IgnoreCase).Trim();
                     args.AppendFormat("--user-agent=\"{0}\" ", ua);
                 }
+                _cleanUa = ua;
 
+                // Local Go proxy (relay + shared asset cache + hotlink-safe
+                // headers). When mainform wired a ProxyPort, all WebView2
+                // traffic goes through it; Chromium implicitly bypasses
+                // loopback, so the relay endpoint on 127.0.0.1 stays direct.
+                if (_options.ProxyPort > 0)
+                {
+                    args.AppendFormat("--proxy-server=\"http://127.0.0.1:{0}\" ", _options.ProxyPort);
+                }
                 // Proxy integration: default to pure DIRECT network connection
                 // Never hijack default traffic through local accelerators or tunnels
-                if (!string.IsNullOrEmpty(_options.Proxy) &&
+                else if (!string.IsNullOrEmpty(_options.Proxy) &&
                     !_options.Proxy.Contains("DIRECT") &&
                     !_options.Proxy.Contains("[⚡]") &&
                     !_options.Proxy.Contains("Accelerator") &&
@@ -578,10 +629,29 @@ namespace DofusFarm.Engine
                 // 3. Synchronously inject Cordova compatibility polyfill
                 await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(CordovaShimScript);
 
+                // 3b. CDN relay: expose the local relay config, then inject the
+                // shim that rewrites CDN asset URLs through it. Inert when no
+                // ProxyPort is wired or when the page ships its own copy
+                // (double-load is guarded inside the shim).
+                string relayCfgScript = string.Format(
+                    "(function() {{ window.__DOFUS_CDN_RELAY = {{ enabled: {0}, port: {1}, referer: \"{2}\" }}; }})();",
+                    (_options.ProxyPort > 0) ? "true" : "false", _options.ProxyPort, CdnReferer);
+                await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(relayCfgScript);
+                try
+                {
+                    string cdnShimPath = Path.Combine(clientDir, "js", "cdn-relay-shim.js");
+                    if (File.Exists(cdnShimPath))
+                    {
+                        await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(File.ReadAllText(cdnShimPath));
+                        _logCallback?.Invoke(string.Format("[{0}] Registered CDN relay shim (relay port: {1}).", _instanceId, _options.ProxyPort));
+                    }
+                }
+                catch (Exception shimEx)
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] CDN relay shim injection warning: {1}", _instanceId, shimEx.Message));
+                }
+
                 // 4. Map virtual origin https://dofus.local/ to standalone game bundle
-                string clientDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "desktop", "client", "www");
-                if (!Directory.Exists(clientDir)) clientDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client", "www");
-                if (!Directory.Exists(clientDir)) clientDir = Path.Combine(Directory.GetCurrentDirectory(), "desktop", "client", "www");
                 if (Directory.Exists(clientDir))
                 {
                     _webView.CoreWebView2.SetVirtualHostNameToFolderMapping("dofus.local", clientDir, CoreWebView2HostResourceAccessKind.Allow);
@@ -595,8 +665,18 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
                 _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
 
-                // Wire WebResourceRequested filter for deprecated tactical map 4624 mock
+                // Wire WebResourceRequested filter: tactical map 4624 mock +
+                // the Ankama CDN asset repair path (cookie + referer fix).
                 _webView.CoreWebView2.AddWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All);
+                try
+                {
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All);
+                }
+                catch (Exception filtEx)
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] CDN filter registration warning: {1}", _instanceId, filtEx.Message));
+                }
                 _webView.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
 
 
@@ -1066,11 +1146,254 @@ namespace DofusFarm.Engine
                     );
                     return;
                 }
+
+                // 2. Ankama CDN assets: re-issue the request from .NET with the
+                // full WebView2 cookie jar (HttpOnly/SameSite included) and the
+                // official web-client Referer/Origin. This repairs the CDN 403s
+                // that black-screen the client on map/asset loads.
+                if (!CdnAssetUriRe.IsMatch(uri)) return;
+                string method = e.Request.Method ?? "GET";
+                bool isGet = method.Equals("GET", StringComparison.OrdinalIgnoreCase);
+                bool isHead = method.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
+                bool isOptions = method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase);
+                if (!isGet && !isHead && !isOptions) return;
+
+                if (isOptions)
+                {
+                    e.Response = _env.CreateWebResourceResponse(
+                        new MemoryStream(new byte[0]), 204, "No Content",
+                        "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\n"
+                    );
+                    return;
+                }
+
+                string range = e.Request.Headers.GetHeader("Range");
+                string inboundCookie = e.Request.Headers.GetHeader("Cookie");
+                string requestUri = uri;
+                var deferral = e.GetDeferral();
+
+                Task.Run(async () =>
+                {
+                    int status = 502;
+                    string reason = "Bad Gateway";
+                    MemoryStream body = null;
+                    string headerBlock = "Access-Control-Allow-Origin: *\r\nContent-Length: 0\r\n";
+                    try
+                    {
+                        string cookies = inboundCookie;
+                        if (string.IsNullOrEmpty(cookies))
+                        {
+                            try { cookies = await RunOnUiThreadAsync(GetCdnCookieHeaderAsync); }
+                            catch { }
+                        }
+                        CdnFetchResult result = FetchCdnAsset(requestUri, method, range, cookies);
+                        status = result.Status;
+                        reason = result.Reason;
+                        body = result.Body;
+                        headerBlock = result.Headers;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logCallback?.Invoke(string.Format("[{0}] CDN fetch failed ({1}): {2}", _instanceId, requestUri, ex.Message));
+                    }
+                    try
+                    {
+                        MemoryStream payload = body ?? new MemoryStream(new byte[0]);
+                        int st = status;
+                        string rs = reason;
+                        string hb = headerBlock;
+                        await RunOnUiThreadAsync(delegate
+                        {
+                            try { e.Response = _env.CreateWebResourceResponse(payload, st, rs, hb); } catch { }
+                        });
+                    }
+                    catch { }
+                    finally
+                    {
+                        try { deferral.Complete(); } catch { }
+                    }
+                });
             }
             catch (Exception ex)
             {
                 _logCallback?.Invoke(string.Format("[{0}] WebResourceRequested error: {1}", _instanceId, ex.Message));
             }
+        }
+
+        private Task RunOnUiThreadAsync(Action action)
+        {
+            var tcs = new TaskCompletionSource<bool>();
+            try
+            {
+                BeginInvoke((Action)delegate
+                {
+                    try { action(); tcs.TrySetResult(true); }
+                    catch (Exception ex) { tcs.TrySetException(ex); }
+                });
+            }
+            catch (Exception ex) { tcs.TrySetException(ex); }
+            return tcs.Task;
+        }
+
+        private Task<T> RunOnUiThreadAsync<T>(Func<Task<T>> func)
+        {
+            var tcs = new TaskCompletionSource<T>();
+            try
+            {
+                BeginInvoke((Action)(async delegate
+                {
+                    try { tcs.TrySetResult(await func()); }
+                    catch (Exception ex) { tcs.TrySetException(ex); }
+                }));
+            }
+            catch (Exception ex) { tcs.TrySetException(ex); }
+            return tcs.Task;
+        }
+
+        // Collects cookies for every origin that participates in the CDN
+        // handshake (the CDN itself plus Ankama auth domains), deduped by
+        // name@domain and skipping expired ones. Cached for a few seconds so
+        // an asset burst costs a single cookie-jar round trip. Must run on the
+        // UI thread (CookieManager is a CoreWebView2 member).
+        private async Task<string> GetCdnCookieHeaderAsync()
+        {
+            if ((DateTime.UtcNow - _cdnCookieRefreshedUtc).TotalSeconds < CdnCookieTtlSeconds)
+                return _cdnCookieHeader;
+
+            var sb = new StringBuilder(256);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string origin in CdnCookieOrigins)
+            {
+                List<CoreWebView2Cookie> cookies;
+                try { cookies = await _webView.CoreWebView2.CookieManager.GetCookiesAsync(origin); }
+                catch { continue; }
+                if (cookies == null) continue;
+                foreach (CoreWebView2Cookie c in cookies)
+                {
+                    if (!c.IsSession && c.Expires <= DateTime.Now) continue;
+                    if (!seen.Add(c.Name + "@" + c.Domain)) continue;
+                    sb.Append(c.Name).Append('=').Append(c.Value).Append("; ");
+                }
+            }
+            string header = sb.Length >= 2 ? sb.ToString(0, sb.Length - 2) : "";
+            lock (_cdnCookieLock)
+            {
+                _cdnCookieHeader = header;
+                _cdnCookieRefreshedUtc = DateTime.UtcNow;
+            }
+            return header;
+        }
+
+        private HttpWebRequest BuildCdnRequest(string uri, string method, string range, string cookieHeader, WebProxy proxy)
+        {
+            var req = (HttpWebRequest)WebRequest.Create(uri);
+            req.Method = method;
+            req.Timeout = 30000;
+            req.ReadWriteTimeout = 30000;
+            req.MaximumAutomaticRedirections = 5;
+            req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+            req.KeepAlive = true;
+            req.Accept = "*/*";
+            if (!string.IsNullOrEmpty(_cleanUa)) req.UserAgent = _cleanUa;
+            req.Referer = CdnReferer;
+            try { req.Headers["Origin"] = CdnReferer.TrimEnd('/'); } catch { }
+            if (!string.IsNullOrEmpty(cookieHeader)) req.Headers["Cookie"] = cookieHeader;
+            if (!string.IsNullOrEmpty(range))
+            {
+                try { req.Headers["Range"] = range; } catch { }
+            }
+            req.Proxy = proxy;
+            try
+            {
+                req.ServicePoint.Expect100Continue = false;
+                req.ServicePoint.ConnectionLimit = 24;
+            }
+            catch { }
+            return req;
+        }
+
+        private CdnFetchResult FetchCdnAsset(string uri, string method, string range, string cookieHeader)
+        {
+            bool useProxy = _options != null && _options.ProxyPort > 0;
+            WebProxy proxy = useProxy ? new WebProxy("http://127.0.0.1:" + _options.ProxyPort) : null;
+
+            HttpWebResponse resp = null;
+            try
+            {
+                resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, proxy).GetResponse();
+            }
+            catch (WebException wex)
+            {
+                resp = wex.Response as HttpWebResponse;
+                if (resp == null && useProxy)
+                {
+                    // Local relay unreachable: retry straight once.
+                    try { resp = (HttpWebResponse)BuildCdnRequest(uri, method, range, cookieHeader, null).GetResponse(); }
+                    catch (WebException wex2) { resp = wex2.Response as HttpWebResponse; }
+                    catch { resp = null; }
+                }
+            }
+            if (resp == null) return SimpleCdnResult(502, "Bad Gateway");
+
+            using (resp)
+            {
+                var sb = new StringBuilder(320);
+                sb.Append("Access-Control-Allow-Origin: *\r\n");
+                sb.Append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n");
+                sb.Append("Access-Control-Allow-Headers: *\r\n");
+                sb.Append("Access-Control-Expose-Headers: Content-Length, Content-Range, Content-Type, ETag\r\n");
+                string ct = resp.ContentType;
+                if (!string.IsNullOrEmpty(ct)) sb.Append("Content-Type: ").Append(ct).Append("\r\n");
+                string cr = resp.Headers["Content-Range"];
+                if (!string.IsNullOrEmpty(cr)) sb.Append("Content-Range: ").Append(cr).Append("\r\n");
+                string ar = resp.Headers["Accept-Ranges"];
+                if (!string.IsNullOrEmpty(ar)) sb.Append("Accept-Ranges: ").Append(ar).Append("\r\n");
+                string etag = resp.Headers["ETag"];
+                if (!string.IsNullOrEmpty(etag)) sb.Append("ETag: ").Append(etag).Append("\r\n");
+                string lm = resp.Headers["Last-Modified"];
+                if (!string.IsNullOrEmpty(lm)) sb.Append("Last-Modified: ").Append(lm).Append("\r\n");
+
+                var body = new MemoryStream();
+                bool wantBody = method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                                resp.StatusCode != HttpStatusCode.NoContent &&
+                                resp.StatusCode != HttpStatusCode.NotModified;
+                if (wantBody)
+                {
+                    try
+                    {
+                        using (Stream rs = resp.GetResponseStream())
+                        {
+                            if (rs != null)
+                            {
+                                byte[] buf = new byte[81920];
+                                int n;
+                                while ((n = rs.Read(buf, 0, buf.Length)) > 0) body.Write(buf, 0, n);
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                sb.Append("Content-Length: ").Append(body.Length).Append("\r\n");
+
+                return new CdnFetchResult
+                {
+                    Status = (int)resp.StatusCode,
+                    Reason = string.IsNullOrEmpty(resp.StatusDescription) ? "OK" : resp.StatusDescription,
+                    Body = body,
+                    Headers = sb.ToString()
+                };
+            }
+        }
+
+        private static CdnFetchResult SimpleCdnResult(int status, string reason)
+        {
+            return new CdnFetchResult
+            {
+                Status = status,
+                Reason = reason,
+                Body = new MemoryStream(new byte[0]),
+                Headers = "Access-Control-Allow-Origin: *\r\nContent-Length: 0\r\n"
+            };
         }
 
 
@@ -1350,6 +1673,8 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
                 _webView.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("*4624.json*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
             }
 
             base.OnFormClosing(e);

@@ -13,7 +13,7 @@ import (
 
 var (
 	legacyReWebViewToken = regexp.MustCompile(`(?i);\s*wv\b|Version/[0-9.]+\s*`)
-	legacyReCacheAsset   = regexp.MustCompile(`(?i)\.(?:png|jpe?g|webp|mp3|ogg|wasm|zip|pak|dat)$|/assets/`)
+	legacyReCacheAsset   = regexp.MustCompile(`(?i)\.(?:png|jpe?g|webp|mp3|ogg|wasm|zip|pak|dat|json)$|/assets/`)
 	legacyReLeakUA       = regexp.MustCompile(`(?i)x86|sdk|emulator|goldfish|ranchu|mozilla/`)
 )
 
@@ -125,6 +125,15 @@ func TestIsCacheAssetURLEquivalence(t *testing.T) {
 		"file.ogg",
 		"file.webp",
 		"file.wasm",
+		"file.json",
+		"file.JSON",
+		"file.jsonx",
+		"file.nojson",
+		"https://dofustouch.cdn.ankama.com/assets/3.3.9_abc/maps/7442.json",
+		"a/b.json?v=1",
+		"file.json ",
+		".json",
+		"config.json",
 		"file.bmp",
 		"file.tar.gz",
 		"file.pn",
@@ -148,7 +157,7 @@ func TestIsCacheAssetURLEquivalence(t *testing.T) {
 
 func TestIsCacheAssetURLFuzzEquivalence(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
-	alphabet := []byte("abcxyzPNGjpgwebpmw3ogipakdat/assets/.?#=&")
+	alphabet := []byte("abcxyznPNGjpgwebpmw3ogipakdat/assets/.?#=&")
 	for i := 0; i < 20000; i++ {
 		n := rng.Intn(32)
 		b := make([]byte, n)

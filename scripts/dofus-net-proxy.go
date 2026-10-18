@@ -290,9 +290,9 @@ func isTokenCharUA(s string, i int) bool {
 }
 
 // isCacheAssetURL mirrors the regex
-// `(?i)\.(?:png|jpe?g|webp|mp3|ogg|wasm|zip|pak|dat)$|/assets/`
+// `(?i)\.(?:png|jpe?g|webp|mp3|ogg|wasm|zip|pak|dat|json)$|/assets/`
 // with a single linear scan (was ~11us of regex backtracking per request).
-// Verified equivalent by FuzzIsCacheAssetURLEquivalence.
+// Verified equivalent by TestIsCacheAssetURLEquivalence.
 func isCacheAssetURL(u string) bool {
 	if strings.Contains(u, "/assets/") {
 		return true
@@ -311,7 +311,7 @@ func isCacheAssetURL(u string) bool {
 			asciiEqualFold(ext, "dat")
 	case 4:
 		return asciiEqualFold(ext, "jpeg") || asciiEqualFold(ext, "webp") ||
-			asciiEqualFold(ext, "wasm")
+			asciiEqualFold(ext, "wasm") || asciiEqualFold(ext, "json")
 	}
 	return false
 }
@@ -564,6 +564,8 @@ type ProxyServer struct {
 	glVendor       string
 	glRenderer     string
 	maxTextureSize string
+	referer        string
+	refererRoot    string
 	disguiseOnce   sync.Once
 	cachedDisguise string
 	disguiseBytes  []byte
@@ -571,7 +573,7 @@ type ProxyServer struct {
 	telemetry      ProxyTelemetry
 }
 
-func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet bool, port int, authToken, serial, uuid, model, manufacturer, ua, glVendor, glRenderer, maxTextureSize string) *ProxyServer {
+func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet bool, port int, authToken, serial, uuid, model, manufacturer, ua, glVendor, glRenderer, maxTextureSize, referer string) *ProxyServer {
 	if model == "" {
 		model = "SM-A515F"
 	}
@@ -580,6 +582,16 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 	}
 	if ua == "" {
 		ua = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36"
+	}
+	// Referer "https://www.dofus-touch.com/" is the origin the official web
+	// client itself declares (config.webAuth.referer) and is what Ankama's CDN
+	// hotlink checks accept for asset fetches.
+	if referer == "" {
+		referer = "https://www.dofus-touch.com/"
+	}
+	refererRoot := referer
+	if u, err := url.Parse(referer); err == nil && u.Scheme != "" && u.Host != "" {
+		refererRoot = u.Scheme + "://" + u.Host
 	}
 	osVer, buildId := "10", "QP1A.190711.020"
 	if m := reOsVer.FindStringSubmatch(ua); len(m) > 1 {
@@ -606,6 +618,8 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 		glVendor:       glVendor,
 		glRenderer:     glRenderer,
 		maxTextureSize: maxTextureSize,
+		referer:        referer,
+		refererRoot:    refererRoot,
 		upstreamURL:    parseUpstreamProxy(upstream),
 	}
 
@@ -865,6 +879,14 @@ func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error)
 }
 
 func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Loopback-only CDN relay for the WebView2 client (see handleCDNRelay).
+	// Exempt from proxy auth: it is reachable only from the local machine and
+	// is called by plain browser XHRs that cannot carry proxy credentials.
+	if strings.HasPrefix(r.URL.Path, "/__cdn/") && isLocalRequestHost(r.Host) {
+		p.handleCDNRelay(w, r)
+		return
+	}
+
 	if p.authToken != "" {
 		auth := r.Header.Get("Proxy-Authorization")
 		if auth == "" {
@@ -1252,6 +1274,384 @@ func (p *ProxyServer) loadDisguiseFromDisk() string {
 	return ""
 }
 
+// ---- CDN relay + shared asset cache ----------------------------------------
+//
+// GET http://127.0.0.1:<port>/__cdn/<host>/<path>[?query] fetches
+// https://<host>/<path> with server-side hotlink-safe headers (Referer/Origin
+// of the official web client, mobile UA) and serves it to the caller with CORS.
+// Responses reuse the same on-disk cache as the regular proxy path (identical
+// sha256 keys), so a map fetched once is served from disk for both Android and
+// WebView2 clients. Loopback-only: /__cdn/ is unreachable from the network.
+
+const assetCacheTTL = 7 * 24 * time.Hour
+
+func isLocalRequestHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	host = strings.ToLower(host)
+	return strings.HasPrefix(host, "127.0.0.1") ||
+		strings.HasPrefix(host, "localhost") ||
+		strings.HasPrefix(host, "[::1]")
+}
+
+// isCdnAssetHost reports whether host is an Ankama asset CDN host
+// (*.cdn.ankama.com / *.cdn.ankama-games.com). Deliberately narrow: API and
+// login hosts must never have asset headers injected.
+func isCdnAssetHost(host string) bool {
+	if i := strings.IndexByte(host, ':'); i != -1 {
+		host = host[:i]
+	}
+	host = strings.ToLower(host)
+	return host == "cdn.ankama.com" || host == "cdn.ankama-games.com" ||
+		strings.HasSuffix(host, ".cdn.ankama.com") || strings.HasSuffix(host, ".cdn.ankama-games.com")
+}
+
+// isVolatileCacheURL blocks long-term caching of bootstrap/auth JSON served by
+// the login proxies (config.json, getLanguage.json, version.json): a stale
+// session/login config would break the client for up to assetCacheTTL.
+func isVolatileCacheURL(u string) bool {
+	if strings.Contains(u, "production-login") {
+		return true
+	}
+	noQuery := u
+	if i := strings.IndexAny(u, "?#"); i != -1 {
+		noQuery = u[:i]
+	}
+	return strings.HasSuffix(noQuery, "/config.json") ||
+		strings.HasSuffix(noQuery, "/getLanguage.json") ||
+		strings.HasSuffix(noQuery, "/version.json")
+}
+
+// isEmulatorOrigin reports whether a Referer/Origin value comes from the
+// emulator/webview environment rather than a real client.
+func isEmulatorOrigin(v string) bool {
+	if v == "" {
+		return true
+	}
+	l := strings.ToLower(v)
+	return strings.Contains(l, "dofus.local") || strings.Contains(l, "localhost") ||
+		strings.Contains(l, "127.0.0.1") || strings.HasPrefix(l, "file:")
+}
+
+// applyHotlinkHeaders replaces emulator-origin Referer/Origin headers on CDN
+// asset requests with the official web-client origin. Absent headers (native
+// mobile clients) are left untouched so the Android path is bit-for-bit
+// unchanged.
+func (p *ProxyServer) applyHotlinkHeaders(h http.Header, host string) {
+	if !isCdnAssetHost(host) {
+		return
+	}
+	if ref := h.Get("Referer"); ref != "" && isEmulatorOrigin(ref) {
+		h.Set("Referer", p.referer)
+	}
+	if org := h.Get("Origin"); org != "" && isEmulatorOrigin(org) {
+		h.Set("Origin", p.refererRoot)
+	}
+}
+
+// assetCachePath maps a target URL to its on-disk cache entry (16-byte sha256
+// prefix, hex). Shared by handleHTTP, the relay and the precache warmer.
+func (p *ProxyServer) assetCachePath(target string) string {
+	sum := sha256.Sum256([]byte(target))
+	return filepath.Join(p.cacheDir, hex.EncodeToString(sum[:16]))
+}
+
+// serveCachedAsset streams a cached asset response (CORS + cached
+// Content-Type + Range/304 via http.ServeContent) and reports whether the
+// cache was served. Expired entries are evicted.
+func (p *ProxyServer) serveCachedAsset(w http.ResponseWriter, r *http.Request, cacheFilePath, fallbackPath string) bool {
+	fi, err := os.Stat(cacheFilePath)
+	if err != nil {
+		return false
+	}
+	if time.Since(fi.ModTime()) > assetCacheTTL {
+		_ = os.Remove(cacheFilePath)
+		_ = os.Remove(cacheFilePath + ".meta")
+		return false
+	}
+	f, err := os.Open(cacheFilePath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+	h.Set("Access-Control-Allow-Headers", "*")
+	mimeType := ""
+	if metaBytes, metaErr := os.ReadFile(cacheFilePath + ".meta"); metaErr == nil {
+		mimeType = strings.TrimSpace(string(metaBytes))
+	}
+	if mimeType == "" {
+		mimeType = detectMimeType(fallbackPath)
+	}
+	if mimeType != "" {
+		h.Set("Content-Type", mimeType)
+	}
+	http.ServeContent(w, r, fallbackPath, fi.ModTime(), f)
+	return true
+}
+
+func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
+	setCORS := func() {
+		h := w.Header()
+		h.Set("Access-Control-Allow-Origin", "*")
+		h.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+		h.Set("Access-Control-Allow-Headers", "*")
+	}
+	setCORS()
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	rest := strings.TrimPrefix(r.URL.Path, "/__cdn/")
+	if rest == "" || rest == "__probe" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	slash := strings.IndexByte(rest, '/')
+	if slash <= 0 {
+		http.Error(w, "Bad relay target", http.StatusBadRequest)
+		return
+	}
+	host, assetPath := rest[:slash], rest[slash:]
+	if !isCdnAssetHost(host) {
+		http.Error(w, "Host not allowed", http.StatusForbidden)
+		return
+	}
+	targetStr := "https://" + host + assetPath
+	if r.URL.RawQuery != "" {
+		targetStr += "?" + r.URL.RawQuery
+	}
+
+	cacheable := p.cacheDir != "" && isCacheAssetURL(targetStr) && !isVolatileCacheURL(targetStr)
+	var cacheFilePath string
+	if cacheable {
+		cacheFilePath = p.assetCachePath(targetStr)
+		if p.serveCachedAsset(w, r, cacheFilePath, assetPath) {
+			if !p.quiet {
+				log.Printf("[RELAY] HIT %s", targetStr)
+			}
+			return
+		}
+	}
+
+	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetStr, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	outReq.Header.Set("User-Agent", p.ua)
+	outReq.Header.Set("Referer", p.referer)
+	outReq.Header.Set("Origin", p.refererRoot)
+	outReq.Header.Set("Accept", "*/*")
+	if c := r.Header.Get("Cookie"); c != "" {
+		outReq.Header.Set("Cookie", c)
+	}
+	if v := r.Header.Get("Range"); v != "" {
+		outReq.Header.Set("Range", v)
+	}
+	if v := r.Header.Get("If-None-Match"); v != "" {
+		outReq.Header.Set("If-None-Match", v)
+	}
+	if v := r.Header.Get("If-Modified-Since"); v != "" {
+		outReq.Header.Set("If-Modified-Since", v)
+	}
+	// No explicit Accept-Encoding: Go's transport then negotiates gzip and
+	// decodes it transparently, so bodies stream clean (O(32KB) chunks) into
+	// both the client and the cache file with no full-body buffering.
+
+	resp, err := p.client.Do(outReq)
+	if err != nil {
+		http.Error(w, "Relay Error: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	wh := w.Header()
+	copyHeaderFiltered(wh, resp.Header, hopRespHeaders)
+	setCORS()
+	if !p.quiet {
+		log.Printf("[RELAY] %d %s", resp.StatusCode, targetStr)
+	}
+
+	w.WriteHeader(resp.StatusCode)
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
+
+	if cacheFilePath == "" || resp.StatusCode != http.StatusOK || r.Method != http.MethodGet {
+		_, _ = io.CopyBuffer(w, resp.Body, buf)
+		return
+	}
+
+	// Cache miss on a cacheable asset: stream to client and temp file at once.
+	tmpPath := fmt.Sprintf("%s.%d.%d.tmp", cacheFilePath, os.Getpid(), time.Now().UnixNano())
+	tf, err := os.Create(tmpPath)
+	if err != nil {
+		_, _ = io.CopyBuffer(w, resp.Body, buf)
+		return
+	}
+	written, copyErr := io.CopyBuffer(io.MultiWriter(w, tf), resp.Body, buf)
+	_ = tf.Close()
+	if copyErr != nil || (resp.ContentLength > 0 && written < resp.ContentLength) {
+		_ = os.Remove(tmpPath)
+		return
+	}
+	if atomicReplaceFile(tmpPath, cacheFilePath) == nil {
+		if ct := resp.Header.Get("Content-Type"); ct != "" {
+			_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
+		}
+	} else {
+		_ = os.Remove(tmpPath)
+	}
+}
+
+// warmAssetCache fetches a cacheable asset through the proxy transport and
+// stores it in the shared cache. Returns (ok, alreadyCached).
+func (p *ProxyServer) warmAssetCache(ctx context.Context, target string) (bool, bool) {
+	if p.cacheDir == "" || !isCacheAssetURL(target) || isVolatileCacheURL(target) {
+		return false, false
+	}
+	cacheFilePath := p.assetCachePath(target)
+	if fi, err := os.Stat(cacheFilePath); err == nil {
+		if time.Since(fi.ModTime()) <= assetCacheTTL {
+			return true, true
+		}
+		_ = os.Remove(cacheFilePath)
+		_ = os.Remove(cacheFilePath + ".meta")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return false, false
+	}
+	req.Header.Set("User-Agent", p.ua)
+	req.Header.Set("Referer", p.referer)
+	req.Header.Set("Origin", p.refererRoot)
+	req.Header.Set("Accept", "*/*")
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return false, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, false
+	}
+	tmpPath := fmt.Sprintf("%s.%d.%d.tmp", cacheFilePath, os.Getpid(), time.Now().UnixNano())
+	tf, err := os.Create(tmpPath)
+	if err != nil {
+		return false, false
+	}
+	written, copyErr := io.Copy(tf, io.LimitReader(resp.Body, 64<<20))
+	_ = tf.Close()
+	if copyErr != nil || written == 0 || (resp.ContentLength > 0 && written != resp.ContentLength) {
+		_ = os.Remove(tmpPath)
+		return false, false
+	}
+	if atomicReplaceFile(tmpPath, cacheFilePath) != nil {
+		_ = os.Remove(tmpPath)
+		return false, false
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
+	}
+	return true, false
+}
+
+// feedMapIDs iterates the map id ranges in spec ("1-20000,7442,9000-9100"),
+// calling fn for each id until fn returns false. Lazy: O(1) extra space
+// regardless of range size.
+func feedMapIDs(spec string, fn func(id int) bool) {
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		lo, hi := 0, 0
+		if dash := strings.IndexByte(part, '-'); dash > 0 {
+			lo, _ = strconv.Atoi(strings.TrimSpace(part[:dash]))
+			hi, _ = strconv.Atoi(strings.TrimSpace(part[dash+1:]))
+		} else {
+			lo, _ = strconv.Atoi(part)
+			hi = lo
+		}
+		if lo < 1 {
+			continue
+		}
+		if hi < lo {
+			hi = lo
+		}
+		if hi > 2000000 {
+			hi = 2000000
+		}
+		for id := lo; id <= hi; id++ {
+			if !fn(id) {
+				return
+			}
+		}
+	}
+}
+
+// precacheMaps warms the shared asset cache with every map JSON in spec using
+// a small worker pool. Already-cached maps are skipped with a single os.Stat,
+// so repeat runs are nearly free. Runs until done or ctx cancellation.
+func (p *ProxyServer) precacheMaps(ctx context.Context, assetsURL, spec string, workers int) {
+	if assetsURL == "" || spec == "" {
+		return
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	base := strings.TrimRight(assetsURL, "/")
+	log.Printf("[PRECACHE] Warming maps from %s/maps/*.json (workers=%d)", base, workers)
+
+	jobs := make(chan int)
+	var fetched, cached, failed, total int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range jobs {
+				if ctx.Err() != nil {
+					continue // drain so the feeder never blocks
+				}
+				ok, already := p.warmAssetCache(ctx, base+"/maps/"+strconv.Itoa(id)+".json")
+				n := atomic.AddInt64(&total, 1)
+				switch {
+				case already:
+					atomic.AddInt64(&cached, 1)
+				case ok:
+					atomic.AddInt64(&fetched, 1)
+				default:
+					atomic.AddInt64(&failed, 1)
+				}
+				if !p.quiet && n%500 == 0 {
+					log.Printf("[PRECACHE] %d processed (fetched=%d cached=%d failed=%d)",
+						n, atomic.LoadInt64(&fetched), atomic.LoadInt64(&cached), atomic.LoadInt64(&failed))
+				}
+			}
+		}()
+	}
+	feedMapIDs(spec, func(id int) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		jobs <- id
+		return true
+	})
+	close(jobs)
+	wg.Wait()
+	log.Printf("[PRECACHE] done: total=%d fetched=%d cached=%d failed=%d",
+		atomic.LoadInt64(&total), atomic.LoadInt64(&fetched), atomic.LoadInt64(&cached), atomic.LoadInt64(&failed))
+}
+
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	targetURL := r.URL
 	if targetURL.Scheme == "" {
@@ -1280,38 +1680,15 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	targetStr := targetURL.String()
 	var cacheFilePath string
-	if p.cacheDir != "" && r.Method == http.MethodGet && isCacheAssetURL(targetStr) {
-		sum := sha256.Sum256([]byte(targetStr))
-		cacheFilePath = filepath.Join(p.cacheDir, hex.EncodeToString(sum[:16]))
-		if fi, err := os.Stat(cacheFilePath); err == nil {
-			if time.Since(fi.ModTime()) > 7*24*time.Hour {
-				_ = os.Remove(cacheFilePath)
-				_ = os.Remove(cacheFilePath + ".meta")
-			} else if f, err := os.Open(cacheFilePath); err == nil {
-				defer f.Close()
-				h := w.Header()
-				h.Set("Access-Control-Allow-Origin", "*")
-				h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
-				h.Set("Access-Control-Allow-Headers", "*")
-				mimeType := ""
-				if metaBytes, metaErr := os.ReadFile(cacheFilePath + ".meta"); metaErr == nil {
-					mimeType = strings.TrimSpace(string(metaBytes))
-				}
-				if mimeType == "" {
-					mimeType = detectMimeType(targetURL.Path)
-				}
-				if mimeType != "" {
-					h.Set("Content-Type", mimeType)
-				}
-				// http.ServeContent handles Content-Length, Range
-				// requests, If-None-Match/If-Modified-Since (ETag
-				// derived from modtime+size) and streams from the
-				// already-open file in 32 KB pooled chunks - no extra
-				// Stat, no manual Content-Length math, and repeat
-				// visits can now be answered with a 304.
-				http.ServeContent(w, r, targetURL.Path, fi.ModTime(), f)
-				return
-			}
+	if p.cacheDir != "" && r.Method == http.MethodGet && isCacheAssetURL(targetStr) && !isVolatileCacheURL(targetStr) {
+		cacheFilePath = p.assetCachePath(targetStr)
+		// serveCachedAsset handles Content-Length, Range requests,
+		// If-None-Match/If-Modified-Since (ETag derived from
+		// modtime+size) and streams from the open file in pooled
+		// chunks - no extra Stat, no manual Content-Length math, and
+		// repeat visits can be answered with a 304.
+		if p.serveCachedAsset(w, r, cacheFilePath, targetURL.Path) {
+			return
 		}
 	}
 
@@ -1323,6 +1700,7 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	copyHeaderFiltered(outReq.Header, r.Header, hopReqHeaders)
 	p.sanitizeRequestHeaders(outReq.Header)
+	p.applyHotlinkHeaders(outReq.Header, targetURL.Host)
 
 	if ae := outReq.Header.Get("Accept-Encoding"); ae != "" {
 		if filtered := filterAcceptEncoding(ae); filtered != ae {
@@ -1416,11 +1794,25 @@ func main() {
 	glVendor := flag.String("gl-vendor", "", "OpenGL vendor string to interpolate (e.g. Qualcomm)")
 	glRenderer := flag.String("gl-renderer", "", "OpenGL renderer string to interpolate (e.g. Adreno (TM) 620)")
 	maxTextureSize := flag.String("texture-size", "", "Maximum GL texture size to interpolate (e.g. 16384)")
+	referer := flag.String("referer", "https://www.dofus-touch.com/", "Referer/Origin sent on CDN asset fetches (hotlink protection bypass)")
+	assetsURL := flag.String("assets-url", "", "Assets base URL for map precaching, e.g. https://dofustouch.cdn.ankama.com/assets/<version>")
+	precacheSpec := flag.String("precache-maps", "", "Map IDs to precache into -cache, e.g. \"1-20000\" or \"7442,10354\" (requires -assets-url)")
+	precacheWorkers := flag.Int("precache-workers", 4, "Parallel workers for -precache-maps")
 	flag.Parse()
 
 	log.SetFlags(log.Ldate | log.Ltime)
 	resolver := NewFastDNSResolver(*dnsServer, 10*time.Minute)
-	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, *token, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize)
+	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, *token, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize, *referer)
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+	if *precacheSpec != "" {
+		if *assetsURL == "" {
+			log.Printf("[PRECACHE] -precache-maps set without -assets-url; skipping")
+		} else {
+			go proxy.precacheMaps(runCtx, *assetsURL, *precacheSpec, *precacheWorkers)
+		}
+	}
 
 	server := &http.Server{
 		Addr:              net.JoinHostPort(*host, strconv.Itoa(*port)),
@@ -1440,6 +1832,7 @@ func main() {
 	}()
 
 	<-sigChan
+	runCancel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)

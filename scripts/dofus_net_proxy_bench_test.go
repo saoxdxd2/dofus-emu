@@ -32,7 +32,7 @@ func BenchmarkReLeakUA(b *testing.B) {
 }
 
 func newBenchProxy() *ProxyServer {
-	return NewProxyServer(NewFastDNSResolver("", 0), "", "", true, 8880, "", "", "", "SM-A515F", "samsung", benchUAStrings[3], "ARM", "Mali-G72 MP3", "8192")
+	return NewProxyServer(NewFastDNSResolver("", 0), "", "", true, 8880, "", "", "", "SM-A515F", "samsung", benchUAStrings[3], "ARM", "Mali-G72 MP3", "8192", "")
 }
 
 func BenchmarkSanitizeRequestHeaders(b *testing.B) {

@@ -1412,6 +1412,7 @@ namespace DofusFarm.UI
                                         Cores = inst.Cores > 0 ? inst.Cores : GetSelectedCores(),
                                         Proxy = inst.Proxy
                                     };
+                                    WireWebView2LocalProxy(opts, inst);
                                     _webViewBackend.Start(opts);
                                 }
                             }
@@ -1457,6 +1458,41 @@ namespace DofusFarm.UI
                 case "Delete":
                     PromptAndDeleteInstance(inst);
                     break;
+            }
+        }
+
+        // Routes the WebView2 client through the local Go proxy: it provides
+        // the /__cdn/ asset relay (hotlink-safe headers + shared disk cache)
+        // and optional upstream egress, mirroring what LaunchInstance does for
+        // Android instances.
+        private void WireWebView2LocalProxy(ClientLaunchOptions opts, InstanceModel inst)
+        {
+            try
+            {
+                string pTrim = (inst.Proxy ?? "").Trim();
+                bool useUpstream = pTrim.Length > 0 &&
+                    !pTrim.Equals("DIRECT", StringComparison.OrdinalIgnoreCase) &&
+                    !pTrim.Equals("[DIRECT] DIRECT", StringComparison.OrdinalIgnoreCase) &&
+                    !pTrim.Contains("[⚡]") &&
+                    !pTrim.Equals("127.0.0.1:8880", StringComparison.OrdinalIgnoreCase);
+                string upstream = useUpstream ? FarmEngine.NormalizeUpstreamProxy(inst.Proxy) : null;
+
+                int slot = Math.Max(0, (inst.Port - 5554) / 2), localProxyPort = 8880 + slot;
+                DeviceProfile profile = _engine.GetInstancePhoneModel(inst.Name);
+                string serialPrefix = (profile != null && !string.IsNullOrEmpty(profile.SerialPrefix)) ? profile.SerialPrefix : "R58M";
+                string serialNo = serialPrefix + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant();
+                string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLowerInvariant();
+
+                if (_engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile))
+                {
+                    opts.ProxyPort = localProxyPort;
+                    Log(string.Format("WebView2 {0}: relay proxy on 127.0.0.1:{1} (upstream: {2})",
+                        inst.Name, localProxyPort, string.IsNullOrEmpty(upstream) ? "DIRECT" : upstream));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(string.Format("WebView2 proxy wiring failed for {0}: {1}", inst.Name, ex.Message));
             }
         }
 

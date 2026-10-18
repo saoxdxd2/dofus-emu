@@ -2982,6 +2982,18 @@ namespace DofusFarm.Engine
                 if (parts.Length < 2) { client.Close(); return; }
                 string method = parts[0].ToUpperInvariant(), rawTarget = parts[1];
 
+                // Never serve /__cdn/ relay paths from the in-process proxy:
+                // they belong to the Go proxy's asset relay. Answering 501
+                // makes callers fail open instead of looping back into this
+                // tunnel or stalling.
+                if (rawTarget.IndexOf("/__cdn/", StringComparison.Ordinal) >= 0 || rawTarget.EndsWith("/__cdn", StringComparison.Ordinal))
+                {
+                    byte[] notImpl = Encoding.ASCII.GetBytes("HTTP/1.1 501 Not Implemented\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    try { cStream.Write(notImpl, 0, notImpl.Length); } catch { }
+                    client.Close();
+                    return;
+                }
+
                 if (method == "GET" && (rawTarget.EndsWith("/__health") || rawTarget.EndsWith("/__telemetry") || rawTarget.EndsWith("/__disguise.js") || rawTarget.EndsWith("/mobile-disguise.js")))
                 {
                     bool isHealth = rawTarget.EndsWith("/__health"), isTelemetry = rawTarget.EndsWith("/__telemetry");

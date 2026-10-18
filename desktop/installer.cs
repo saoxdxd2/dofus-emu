@@ -21,8 +21,8 @@ using DofusFarm.Native;
 [assembly: AssemblyCompany("Dofus Farm Project")]
 [assembly: AssemblyProduct("Dofus Touch Farm Setup")]
 [assembly: AssemblyCopyright("Copyright © 2026")]
-[assembly: AssemblyFileVersion("2.3.0.0")]
-[assembly: AssemblyVersion("2.3.0.0")]
+[assembly: AssemblyFileVersion("2.4.0.0")]
+[assembly: AssemblyVersion("2.4.0.0")]
 
 namespace DofusStandaloneSetup
 {
@@ -129,7 +129,7 @@ namespace DofusStandaloneSetup
             StageDir = stageDir;
             TargetDir = targetDir;
             InstanceCount = 4;
-            RamMb = 1024;
+            RamMb = 0; // 0 = dynamic shared memory
             Cores = 1;
             LaunchOnComplete = true;
         }
@@ -532,14 +532,14 @@ namespace DofusStandaloneSetup
                     }
 
                     // 3. Provision instances using shared FarmEngine (54% -> 62%)
-                    Report(55, string.Format("Configuring {0} isolated game account slot(s)...", InstanceCount));
+                    Report(55, string.Format("Configuring {0} isolated game account slot(s) [Shared Dynamic Memory]...", InstanceCount));
                     FarmEngine farm = new FarmEngine(TargetDir, true);
                     for (int i = 1; i <= InstanceCount; i++)
                     {
                         string slotName = string.Format("dofus-{0:D2}", i);
                         string customName = string.Format("Instance #{0}", i);
                         DeviceProfile prof = DeviceCatalog.GetDefaultProfileForIndex(i);
-                        farm.ProvisionInstance(slotName, RamMb, Cores, prof.Id, customName, "");
+                        farm.ProvisionInstance(slotName, 0, Cores, prof.Id, customName, "");
 
                         // Also initialize isolated WebView2 profile directory
                         string wvProf = Path.Combine(
@@ -575,7 +575,7 @@ namespace DofusStandaloneSetup
                                         {
                                             string sName = string.Format("dofus-{0:D2}", slotIdx);
                                             int sPort = 5554 + 2 * (slotIdx - 1);
-                                            farm.WarmInstanceColdRunSync(sName, sPort, RamMb, Cores);
+                                            farm.WarmInstanceColdRunSync(sName, sPort, 0, Cores);
                                         }
                                         catch { }
                                         finally
@@ -644,7 +644,7 @@ namespace DofusStandaloneSetup
                             {
                                 k.SetValue("InstallPath", TargetDir);
                                 k.SetValue("DefaultBackend", "WebView2");
-                                k.SetValue("DefaultRamMb", RamMb);
+                                k.SetValue("DefaultRamMb", 0); // 0 = shared dynamic memory
                                 k.SetValue("DefaultCores", Cores);
                                 // Renderer check: pick the graphics backend that fits this machine once,
                                 // at install time, instead of leaving the user to guess Host vs ANGLE.
@@ -665,7 +665,7 @@ namespace DofusStandaloneSetup
                             {
                                 uk.SetValue("DisplayName", "Dofus Touch Farm Manager");
                                 uk.SetValue("DisplayIcon", icoPath);
-                                uk.SetValue("DisplayVersion", "2.3.0");
+                                uk.SetValue("DisplayVersion", "2.4.0");
                                 uk.SetValue("Publisher", "Dofus Farm Project");
                                 uk.SetValue("InstallLocation", TargetDir);
                                 uk.SetValue("UninstallString", "\"" + Path.Combine(TargetDir, "uninstall.exe") + "\"");
@@ -946,8 +946,8 @@ namespace DofusStandaloneSetup
 
         private Label _lblInstances;
         private ComboBox _cmbInstances;
-        private Label _lblRam;
-        private ComboBox _cmbRam;
+        private Label _lblRamTitle;
+        private Label _lblRamBadge;
         private Label _lblCores;
         private ComboBox _cmbCores;
 
@@ -1067,18 +1067,17 @@ namespace DofusStandaloneSetup
             _cmbInstances.Items.AddRange(new object[] { "1 Instance", "2 Instances", "3 Instances", "4 Instances (Recommended)", "6 Instances", "8 Instances" });
             _cmbInstances.SelectedIndex = 3;
 
-            _lblRam = new Label { Text = "RAM per Instance:", Location = new Point(218, 134), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
-            _cmbRam = new ComboBox
+            _lblRamTitle = new Label { Text = "Memory Allocation:", Location = new Point(218, 134), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
+            _lblRamBadge = new Label
             {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(28, 30, 40),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Width = 180,
-                Location = new Point(218, 157)
+                Text = "⚡ Shared Memory (Auto)",
+                Location = new Point(218, 157),
+                Size = new Size(180, 27),
+                BackColor = Color.FromArgb(22, 38, 36),
+                ForeColor = Color.FromArgb(52, 211, 153),
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleCenter
             };
-            _cmbRam.Items.AddRange(new object[] { "512 MB", "768 MB", "1024 MB (Recommended)", "1536 MB", "2048 MB", "3072 MB", "4096 MB", "8192 MB" });
-            _cmbRam.SelectedIndex = 2;
 
             _lblCores = new Label { Text = "CPU Cores per Instance:", Location = new Point(416, 134), AutoSize = true, ForeColor = Color.FromArgb(203, 213, 225) };
             _cmbCores = new ComboBox
@@ -1188,8 +1187,8 @@ namespace DofusStandaloneSetup
             this.Controls.Add(_hwBannerPanel);
             this.Controls.Add(_lblInstances);
             this.Controls.Add(_cmbInstances);
-            this.Controls.Add(_lblRam);
-            this.Controls.Add(_cmbRam);
+            this.Controls.Add(_lblRamTitle);
+            this.Controls.Add(_lblRamBadge);
             this.Controls.Add(_lblCores);
             this.Controls.Add(_cmbCores);
             this.Controls.Add(_lblTarget);
@@ -1234,7 +1233,6 @@ namespace DofusStandaloneSetup
                             specs.CpuName, specs.HostRamGB, specs.LogicalThreads);
                         if (specs.HostRamGB >= 15.5 && !_isInstalling)
                         {
-                            _cmbRam.SelectedIndex = 3; // 1536 MB
                             _cmbCores.SelectedIndex = 1; // 2 Cores
                         }
                     }));
@@ -1265,7 +1263,6 @@ namespace DofusStandaloneSetup
             _btnBrowse.Enabled = !installing;
             _txtTarget.ReadOnly = installing;
             _cmbInstances.Enabled = !installing;
-            _cmbRam.Enabled = !installing;
             _cmbCores.Enabled = !installing;
 
             if (installing)
@@ -1320,14 +1317,7 @@ namespace DofusStandaloneSetup
                 if (m.Success) int.TryParse(m.Groups[1].Value, out instCount);
             }
             _engine.InstanceCount = instCount;
-
-            int ramMb = 1024;
-            if (_cmbRam.SelectedItem != null)
-            {
-                Match m = Regex.Match(_cmbRam.SelectedItem.ToString(), @"(\d+)");
-                if (m.Success) int.TryParse(m.Groups[1].Value, out ramMb);
-            }
-            _engine.RamMb = ramMb;
+            _engine.RamMb = 0; // 0 = dynamic shared memory
 
             int cores = 1;
             if (_cmbCores.SelectedItem != null)
