@@ -89,6 +89,10 @@ namespace DofusFarm.Engine
         public string LastGpuRenderer { get; private set; }
         public int BrowserProcessId { get; private set; }
         public WebView2 BrowserControl { get { return _webView; } }
+        internal CoreWebView2CookieManager MainCookieManager
+        {
+            get { return (_webView != null && _webView.CoreWebView2 != null) ? _webView.CoreWebView2.CookieManager : null; }
+        }
 
         public async Task<string> ExecuteScriptAsync(string script)
         {
@@ -1753,11 +1757,27 @@ namespace DofusFarm.Engine
     }
 
     /// <summary>
-    /// Specialized Mobile OAuth dialog for Ankama Connect / Google sign-in.
-    /// Runs with mobile Chrome identity (no embedded webview markers) and intercepts deep link redirects.
+    /// Specialized OAuth dialog for Ankama Connect / Google sign-in.
+    /// Runs with a stock desktop Chrome identity (no mobile/webview markers)
+    /// and intercepts deep link redirects, copying auth cookies into the game
+    /// session's cookie jar before closing.
     /// </summary>
     public class OAuthLoginForm : Form
     {
+        private static readonly string[] AuthCookieOrigins = new string[]
+        {
+            "https://account.ankama.com/",
+            "https://www.ankama.com/",
+            "https://ankama.com/",
+            "https://auth.ankama.com/",
+            "https://www.dofus-touch.com/",
+            "https://dofus-touch.com/",
+            "https://cdn.ankama.com/",
+            "https://www.cdn.ankama.com/",
+            "https://cdn.ankama-games.com/",
+            "https://dt-proxy-production-login.ankama-games.com/"
+        };
+
         private readonly string _initialUrl;
         private readonly ClientLaunchOptions _options;
         private readonly WebView2ClientForm _parentForm;
@@ -1841,14 +1861,23 @@ namespace DofusFarm.Engine
             base.OnLoad(e);
             try
             {
-                string cleanUa = (_options != null && _options.Profile != null && !string.IsNullOrEmpty(_options.Profile.UserAgent))
-                    ? _options.Profile.UserAgent
-                    : null;
-                if (!string.IsNullOrEmpty(cleanUa))
+                // Google blocks sign-in from spoofed/embedded browser identities
+                // ("This browser or app may not be secure"), so the OAuth popup
+                // presents a stock desktop Chrome identity: no mobile UA, no wv
+                // marker, no navigator disguise. The game window itself keeps the
+                // mobile disguise, but Google's pages must never see it.
+                string engineMajor = "155";
+                try
                 {
-                    cleanUa = Regex.Replace(cleanUa, @";\s*wv\b", "", RegexOptions.IgnoreCase);
-                    cleanUa = Regex.Replace(cleanUa, @"Version/[0-9.]+\s*", "", RegexOptions.IgnoreCase).Trim();
+                    string browserVersion = CoreWebView2Environment.GetAvailableBrowserVersionString();
+                    if (!string.IsNullOrEmpty(browserVersion))
+                    {
+                        int dot = browserVersion.IndexOf('.');
+                        engineMajor = dot > 0 ? browserVersion.Substring(0, dot) : browserVersion;
+                    }
                 }
+                catch { }
+                string cleanUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + engineMajor + ".0.0.0 Safari/537.36";
 
                 if (_sharedEnv != null)
                 {
@@ -1873,7 +1902,7 @@ namespace DofusFarm.Engine
                         args.AppendFormat("--proxy-server=\"{0}\" ", _options.Proxy);
                     }
 
-                    args.Append("--enable-gpu-rasterization --touch-events=enabled --disable-blink-features=AutomationControlled --disable-web-security --allow-running-insecure-content ");
+                    args.Append("--enable-gpu-rasterization --touch-events=enabled --disable-blink-features=AutomationControlled ");
                     envOptions.AdditionalBrowserArguments = args.ToString().Trim();
 
                     string oauthDataDir = Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));
@@ -1892,12 +1921,7 @@ namespace DofusFarm.Engine
                     s.UserAgent = cleanUa;
                 }
 
-                if (_options != null && !string.IsNullOrEmpty(_options.DisguiseScript))
-                {
-                    await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(_options.DisguiseScript);
-                }
-
-                _webView.CoreWebView2.NavigationStarting += (sdr, ev) =>
+                _webView.CoreWebView2.NavigationStarting += async (sdr, ev) =>
                 {
                     string u = ev.Uri;
                     _logCallback?.Invoke("[OAUTH-POPUP] Navigating: " + u);
@@ -1907,6 +1931,7 @@ namespace DofusFarm.Engine
                     {
                         ev.Cancel = true;
                         _logCallback?.Invoke("[OAUTH-POPUP] Intercepted OAuth completion code redirect: " + u);
+                        await CopyAuthCookiesToParentAsync();
                         _parentForm.HandleDeepLinkUri(u);
                         this.Close();
                         return;
@@ -1936,6 +1961,40 @@ namespace DofusFarm.Engine
             catch (Exception ex)
             {
                 _logCallback?.Invoke("[OAUTH-POPUP] Error initializing dialog: " + ex.Message);
+            }
+        }
+
+        private async Task CopyAuthCookiesToParentAsync()
+        {
+            try
+            {
+                CoreWebView2CookieManager src = (_webView != null && _webView.CoreWebView2 != null)
+                    ? _webView.CoreWebView2.CookieManager : null;
+                CoreWebView2CookieManager dst = _parentForm != null ? _parentForm.MainCookieManager : null;
+                if (src == null || dst == null) return;
+
+                int copied = 0;
+                foreach (string origin in AuthCookieOrigins)
+                {
+                    List<CoreWebView2Cookie> cookies = null;
+                    try { cookies = await src.GetCookiesAsync(origin); } catch { }
+                    if (cookies == null) continue;
+                    foreach (CoreWebView2Cookie c in cookies)
+                    {
+                        try
+                        {
+                            if (!c.IsSession && c.Expires < DateTime.Now) continue;
+                            dst.AddOrUpdateCookie(dst.CopyCookie(c));
+                            copied++;
+                        }
+                        catch { }
+                    }
+                }
+                _logCallback?.Invoke("[OAUTH-POPUP] Copied " + copied + " auth cookies into the game session");
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke("[OAUTH-POPUP] Auth cookie copy failed: " + ex.Message);
             }
         }
 
