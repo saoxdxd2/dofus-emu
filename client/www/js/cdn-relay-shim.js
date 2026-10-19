@@ -35,6 +35,17 @@
   var jsonLog = 0;
   var fetchRetryCount = 0;
 
+  // Map negative cache: some map ids answer 403 (S3 AccessDenied) on every
+  // path (relay and direct), so both the native-retry fallback and the
+  // neighbour prewarm burn connection slots on losers. Remember failures for
+  // MAP_FAILURE_TTL and skip ahead; any 200 on the id clears the entry.
+  var mapFailures = {};
+  var MAP_FAILURE_TTL = 10 * 60 * 1000;
+  // Current-map priority: after a map JSON lands, hold neighbour prewarm for
+  // a short quiet window so the settling map (and its tiles) own the pipes.
+  var currentMapQuietUntil = 0;
+  var MAP_QUIET_MS = 2500;
+
   // Machine-readable stats for the debug overlay (see debug-overlay.js).
   var stats = window.__DOFUS_CDN_STATS = window.__DOFUS_CDN_STATS || {
     installedAt: Date.now(),
@@ -50,6 +61,8 @@
     currentMapAt: 0,
     neighbourFetches: 0,
     neighbourBudgetLeft: 0,
+    neighbourQueued: 0,
+    mapFailures: 0,
     lastMaps: []
   };
 
@@ -165,6 +178,12 @@
         xhr.addEventListener("loadend", function () {
           if (xhr.__dtRelayRetried) return;
           var s = xhr.status;
+          if (xhr.__dtMapID && (s === 403 || s === 404)) {
+            // Deterministic per-id CDN denial: the native retry hits the same
+            // S3 answer, so skip it and negative-cache the map id instead.
+            markMapFailure(xhr.__dtMapID, s);
+            return;
+          }
           if (s === 0 || s >= 400) {
             xhr.__dtRelayRetried = true;
             retryCount++;
@@ -223,6 +242,12 @@
       if (nativeFallback && p && typeof p.then === "function") {
         p = p.then(function (res) {
           if (res && res.status >= 400) {
+            if (mapID && (res.status === 403 || res.status === 404)) {
+              // Deterministic per-id denial (S3 AccessDenied): the native
+              // path returns the same status. Skip the retry; the mapID
+              // branch below records the failure.
+              return res;
+            }
             fetchRetryCount++;
             stats.fetchRetries = fetchRetryCount;
             if (fetchRetryCount <= 25) diag("fetchretry #" + fetchRetryCount + " (relay gave " + res.status + ") " + nativeFallback.slice(0, 130));
@@ -237,6 +262,8 @@
             try {
               if (res && res.status === 200 && res.clone) {
                 res.clone().text().then(function (t) { prewarmMapTiles(mid, t); }, function () { });
+              } else if (res && (res.status === 403 || res.status === 404)) {
+                markMapFailure(mid, res.status);
               }
             } catch (e) { }
             return res;
@@ -328,9 +355,32 @@
     } catch (e) { return null; }
   }
 
+  function mapRecentlyFailed(id) {
+    var t = mapFailures[id];
+    return !!t && (Date.now() - t) < MAP_FAILURE_TTL;
+  }
+
+  function markMapFailure(id, status) {
+    if (!id) return;
+    var t = mapFailures[id];
+    if (t && (Date.now() - t) < 5000) return; // already marked moments ago
+    if (!t) stats.mapFailures = (stats.mapFailures || 0) + 1;
+    mapFailures[id] = Date.now();
+    diag("mapfail " + id + " status=" + status + " (negative cache " + (MAP_FAILURE_TTL / 60000) + " min)");
+  }
+
+  function clearMapFailure(id) {
+    if (id && mapFailures[id]) delete mapFailures[id];
+  }
+
   function prewarmMapTiles(id, text) {
-    if (!active || !id || !text || prewarmMaps[id]) return;
+    if (!active || !id || !text) return;
+    clearMapFailure(id);
+    if (prewarmMaps[id]) return;
     prewarmMaps[id] = true;
+    // Hold neighbour prewarm briefly: the map that just landed owns the
+    // connection pool until it has settled (current-map priority).
+    currentMapQuietUntil = Date.now() + MAP_QUIET_MS;
     var data = null;
     try { data = JSON.parse(text); } catch (e) { return; }
     var base = (window.Config && window.Config.assetsUrl) || "";
@@ -378,31 +428,58 @@
   // fetch hook above re-enters prewarmMapTiles for each fetched map; depth is
   // tracked per map id (maps the game loads itself reset to depth 0) and the
   // number of neighbour fetches is budget-capped per session.
+  //
+  // Fetches are queued and drip-fed by pumpPrewarmQueue instead of fired as
+  // one burst: earlier storms of neighbour requests (many doomed 403s, each
+  // taking seconds) saturated the pool and delayed the current map, which is
+  // exactly what we must not do.
   function warmNeighbourMaps(data, base, id) {
     if (!data || !base || prewarmNeighbourBudget <= 0) return;
     var depth = prewarmRequested[id] || 0;
     if (depth >= prewarmMaxNeighbourDepth) return;
     var dirs = ["topNeighbourId", "bottomNeighbourId", "leftNeighbourId", "rightNeighbourId"];
     for (var i = 0; i < dirs.length; i++) {
-      if (prewarmNeighbourBudget <= 0) return;
       var nid = data[dirs[i]];
       if (typeof nid !== "number" || nid <= 0) continue;
       if (prewarmMaps[nid] || prewarmRequested[nid]) continue;
-      prewarmNeighbourBudget--;
+      if (mapRecentlyFailed(nid)) continue;
       prewarmRequested[nid] = depth + 1;
+      prewarmQueue.push({ id: nid, depth: depth + 1, url: base + "maps/" + nid + ".json" });
+      stats.neighbourQueued = (stats.neighbourQueued || 0) + 1;
+    }
+    pumpPrewarmQueue();
+  }
+
+  var prewarmQueue = [];
+  var prewarmPumpTimer = null;
+
+  function pumpPrewarmQueue() {
+    if (prewarmPumpTimer) return;
+    prewarmPumpTimer = setTimeout(function () {
+      prewarmPumpTimer = null;
+      if (prewarmQueue.length === 0) return;
+      if (prewarmNeighbourBudget <= 0) { prewarmQueue.length = 0; return; }
+      if (Date.now() < currentMapQuietUntil) { pumpPrewarmQueue(); return; }
+      var item = prewarmQueue.shift();
+      if (!item) return;
+      if (prewarmMaps[item.id] || mapRecentlyFailed(item.id)) { pumpPrewarmQueue(); return; }
+      prewarmNeighbourBudget--;
       stats.neighbourFetches++;
       stats.neighbourBudgetLeft = prewarmNeighbourBudget;
-      diag("prewarm neighbour " + nid + " depth=" + (depth + 1) + " budget=" + prewarmNeighbourBudget);
+      diag("prewarm neighbour " + item.id + " depth=" + item.depth + " budget=" + prewarmNeighbourBudget);
       try {
-        var p = window.fetch(base + "maps/" + nid + ".json");
+        var p = window.fetch(item.url);
         if (p && p.then) p.then(function () { }, function () { });
       } catch (e) { }
-    }
+      pumpPrewarmQueue();
+    }, 400);
   }
 
   function prewarmFromXHR(xhr, id) {
     try {
-      if (!xhr || xhr.status !== 200) return;
+      if (!xhr) return;
+      if (xhr.status === 403 || xhr.status === 404) { markMapFailure(id, xhr.status); return; }
+      if (xhr.status !== 200) return;
       var txt = null;
       if (xhr.responseType === "" || xhr.responseType === "text") {
         txt = xhr.responseText;

@@ -586,6 +586,16 @@ type ProxyServer struct {
 	prefetchSeen       map[int64]time.Time
 	prefetchLogMu      sync.Mutex
 
+	// Persistent append handles for the diagnostic logs. The old code did an
+	// open+write+close (plus a Stat for rotation) per line, which turned map
+	// load bursts (hundreds of cache hits) into thousands of syscalls and
+	// serialized every request behind disk I/O. Handles stay open; requests.log
+	// rotates at 16 MB by in-memory size instead of stat-per-line.
+	reqLogFile      *os.File
+	reqLogSize      int64
+	reqLogRotateAt  int64
+	prefetchLogFile *os.File
+
 	// Asset mirror (see mirrorCachedFile): every cached asset is hard-linked
 	// into <cacheDir>/files/<host>/<path>. WebView2 maps that tree to
 	// https://assets.local/ so the client's wizAssets layer can load assets
@@ -598,6 +608,17 @@ type ProxyServer struct {
 	// prefetcher never download the same asset from the CDN twice at once.
 	warmMu       sync.Mutex
 	warmInflight map[string]chan struct{}
+
+	// Negative cache for deterministically denied assets (403/404): prewarm
+	// and precache stop re-requesting targets that cannot succeed, and the
+	// relay can answer them instantly without touching the pool.
+	negMu    sync.Mutex
+	negCache map[string]negEntry
+
+	// Client-request priority: count of live client relay requests currently
+	// doing upstream I/O. Prefetch workers yield while this is > 0 so the
+	// game's loads never wait behind speculative neighbour traffic.
+	clientInflight int64
 
 	// Mods pipeline (see applyModRules): rules.json inside modsDir rewrites,
 	// blocks or patches CDN responses on the fly. Rules hot-reload when the
@@ -1350,6 +1371,18 @@ func isCdnAssetHost(host string) bool {
 		strings.HasSuffix(host, ".cdn.ankama.com") || strings.HasSuffix(host, ".cdn.ankama-games.com")
 }
 
+// isStaticAnkamaHost allows the Ankama static asset host: web-shop artwork
+// (/shops/img/...) and store/news banners (/ankama/cms/images/...). The
+// virtual-origin Referer gets 403 from this host, so every relayed request
+// is re-issued with the official web-client Referer/Origin. The client only
+// fetches images from here; GET/HEAD repairs only.
+func isStaticAnkamaHost(host string) bool {
+	if i := strings.IndexByte(host, ':'); i != -1 {
+		host = host[:i]
+	}
+	return strings.EqualFold(host, "static.ankama.com")
+}
+
 // isVolatileCacheURL blocks long-term caching of bootstrap/auth JSON served by
 // the login proxies (config.json, getLanguage.json, version.json): a stale
 // session/login config would break the client for up to assetCacheTTL.
@@ -2017,7 +2050,7 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host, assetPath := rest[:slash], rest[slash:]
-	if !isCdnAssetHost(host) {
+	if !isCdnAssetHost(host) && !isStaticAnkamaHost(host) {
 		http.Error(w, "Host not allowed", http.StatusForbidden)
 		return
 	}
@@ -2047,6 +2080,16 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Recently denied upstream (403/404): answer instantly from the negative
+	// cache instead of burning a pool slot on a request that cannot succeed
+	// (some map ids answer 403 AccessDenied on every path).
+	if status, bad := p.negCacheHit(targetStr); bad {
+		setCORS()
+		w.WriteHeader(status)
+		p.requestLog("%d 0ms negative-cache %s", status, targetStr)
+		return
+	}
+
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetStr, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2072,6 +2115,10 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	// decodes it transparently, so bodies stream clean (O(32KB) chunks) into
 	// both the client and the cache file with no full-body buffering.
 
+	// Mark live client traffic: prefetch workers hold back while this is > 0
+	// (decrement runs after the response body has been streamed through).
+	atomic.AddInt64(&p.clientInflight, 1)
+	defer atomic.AddInt64(&p.clientInflight, -1)
 	resp, err := p.client.Do(outReq)
 	if err != nil {
 		p.requestLog("ERR %dms %s (%v)", time.Since(reqStart).Milliseconds(), targetStr, err)
@@ -2085,6 +2132,9 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	setCORS()
 	if resp.StatusCode == http.StatusOK {
 		setLongAssetCacheHeaders(wh)
+		p.negCacheClear(targetStr)
+	} else if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+		p.negCacheStore(targetStr, resp.StatusCode)
 	}
 	if !p.quiet {
 		log.Printf("[RELAY] %d %s", resp.StatusCode, targetStr)
@@ -2152,6 +2202,12 @@ func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (
 		_ = os.Remove(cacheFilePath + ".meta")
 	}
 
+	// Recently denied upstream (403/404): no amount of retrying helps within
+	// the TTL, so fail fast without touching the connection pool.
+	if status, bad := p.negCacheHit(target); bad {
+		return false, false, status, "negative-cached (recent upstream 4xx)"
+	}
+
 	// De-duplicate concurrent warms of the same target.
 	p.warmMu.Lock()
 	if p.warmInflight == nil {
@@ -2188,14 +2244,27 @@ func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (
 	req.Header.Set("Referer", p.referer)
 	req.Header.Set("Origin", p.refererRoot)
 	req.Header.Set("Accept", "*/*")
+	// Client priority: while the game has relay requests in flight, hold
+	// speculative warm fetches back so a slow or blocked asset can never
+	// delay a gameplay load. Bounded wait, then proceed rather than stall
+	// the warm forever.
+	for i := 0; i < 100 && atomic.LoadInt64(&p.clientInflight) > 0; i++ {
+		select {
+		case <-ctx.Done():
+			return false, false, 0, "canceled while yielding to client traffic"
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return false, false, 0, "fetch: " + err.Error()
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		p.negCacheStore(target, resp.StatusCode)
 		return false, false, resp.StatusCode, ""
 	}
+	p.negCacheClear(target)
 	tmpPath := fmt.Sprintf("%s.%d.%d.tmp", cacheFilePath, os.Getpid(), time.Now().UnixNano())
 	tf, err := os.Create(tmpPath)
 	if err != nil {
@@ -2237,6 +2306,11 @@ const (
 	prefetchQueueSize       = 1024
 	prefetchMaxTilesPerMap  = 600
 	prefetchMapJSONReadMax  = 4 << 20
+	// prefetchNegativeTTL is how long a deterministic upstream denial (403
+	// S3 AccessDenied / 404) is remembered before the target is retried. Some
+	// map ids answer 403 on every path, so re-requesting them only steals
+	// connection slots from live client traffic.
+	prefetchNegativeTTL = 10 * time.Minute
 )
 
 var (
@@ -2249,6 +2323,13 @@ type prefetchJob struct {
 	target string
 	id     int64
 	depth  int
+}
+
+// negEntry is one negative-cache record: the upstream status that failed and
+// when it was observed.
+type negEntry struct {
+	status int
+	at     time.Time
 }
 
 // mapJSONID extracts the numeric map id from an asset path ending in
@@ -2323,18 +2404,26 @@ func (p *ProxyServer) prefetchLog(format string, args ...interface{}) {
 	}
 	p.prefetchLogMu.Lock()
 	defer p.prefetchLogMu.Unlock()
-	f, err := os.OpenFile(filepath.Join(p.cacheDir, "prefetch.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return
+	if p.prefetchLogFile == nil {
+		f, err := os.OpenFile(filepath.Join(p.cacheDir, "prefetch.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return
+		}
+		p.prefetchLogFile = f
 	}
-	fmt.Fprintf(f, "%s %s\n", time.Now().Format("2006-01-02 15:04:05"), line)
-	_ = f.Close()
+	_, err := p.prefetchLogFile.WriteString(time.Now().Format("2006-01-02 15:04:05") + " " + line + "\n")
+	if err != nil {
+		_ = p.prefetchLogFile.Close()
+		p.prefetchLogFile = nil
+	}
 }
 
 // requestLog appends one line per CDN asset request handled by the relay to
 // <cacheDir>/requests.log (rotated past 16 MB). This is the ground truth for
 // post-session debugging: cache hits, slow misses, 403/404 storms and stalls
-// all show up with the exact URL.
+// all show up with the exact URL. A persistent O_APPEND handle keeps the hot
+// path at one write per line; rotation is tracked in memory and applied on
+// the next open, so no stat is needed per line.
 func (p *ProxyServer) requestLog(format string, args ...interface{}) {
 	if p.cacheDir == "" {
 		return
@@ -2342,22 +2431,104 @@ func (p *ProxyServer) requestLog(format string, args ...interface{}) {
 	logPath := filepath.Join(p.cacheDir, "requests.log")
 	p.prefetchLogMu.Lock()
 	defer p.prefetchLogMu.Unlock()
-	if fi, err := os.Stat(logPath); err == nil && fi.Size() > 16<<20 {
-		_ = os.Rename(logPath, logPath+".1")
+	if p.reqLogFile == nil {
+		var size int64
+		if fi, err := os.Stat(logPath); err == nil {
+			size = fi.Size()
+		}
+		if size > 16<<20 {
+			_ = os.Remove(logPath + ".1")
+			if err := os.Rename(logPath, logPath+".1"); err == nil {
+				size = 0
+				p.reqLogRotateAt = 16 << 20
+			} else {
+				// Cannot rotate (e.g. another relay instance holds the file):
+				// keep appending but retry only after another 4 MB instead of
+				// closing and re-opening on every line.
+				p.reqLogRotateAt = size + 4<<20
+			}
+		} else {
+			p.reqLogRotateAt = 16 << 20
+		}
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return
+		}
+		p.reqLogFile = f
+		p.reqLogSize = size
 	}
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	line := time.Now().Format("15:04:05.000") + " " + fmt.Sprintf(format, args...) + "\n"
+	n, err := p.reqLogFile.WriteString(line)
 	if err != nil {
+		_ = p.reqLogFile.Close()
+		p.reqLogFile = nil
 		return
 	}
-	fmt.Fprintf(f, "%s %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
-	_ = f.Close()
+	p.reqLogSize += int64(n)
+	if p.reqLogSize > p.reqLogRotateAt {
+		// Close now; the next call re-opens and retries the rename rotation.
+		_ = p.reqLogFile.Close()
+		p.reqLogFile = nil
+	}
+}
+
+// negCacheHit reports whether target recently failed upstream with a
+// deterministic 4xx (403/404), returning the status that was seen. Entries
+// expire after prefetchNegativeTTL.
+func (p *ProxyServer) negCacheHit(target string) (int, bool) {
+	p.negMu.Lock()
+	defer p.negMu.Unlock()
+	e, ok := p.negCache[target]
+	if !ok {
+		return 0, false
+	}
+	if time.Since(e.at) > prefetchNegativeTTL {
+		delete(p.negCache, target)
+		return 0, false
+	}
+	return e.status, true
+}
+
+// negCacheStore records a deterministic upstream denial (403/404 only).
+func (p *ProxyServer) negCacheStore(target string, status int) {
+	if status != http.StatusForbidden && status != http.StatusNotFound {
+		return
+	}
+	now := time.Now()
+	p.negMu.Lock()
+	defer p.negMu.Unlock()
+	if p.negCache == nil {
+		p.negCache = make(map[string]negEntry)
+	}
+	if len(p.negCache) > 4096 {
+		for k, v := range p.negCache {
+			if now.Sub(v.at) > prefetchNegativeTTL {
+				delete(p.negCache, k)
+			}
+		}
+		if len(p.negCache) > 4096 {
+			p.negCache = make(map[string]negEntry)
+		}
+	}
+	p.negCache[target] = negEntry{status: status, at: now}
+}
+
+// negCacheClear drops a negative entry (any successful fetch of the target).
+func (p *ProxyServer) negCacheClear(target string) {
+	p.negMu.Lock()
+	delete(p.negCache, target)
+	p.negMu.Unlock()
 }
 
 // scheduleMapPrefetch enqueues a map node for warming. Called whenever a map
 // JSON travels through the proxy/relay; a cooldown per map id keeps loops
 // (root -> neighbour -> root) from re-enqueueing the same node in a burst.
+// Recently denied ids are skipped outright (negative cache).
 func (p *ProxyServer) scheduleMapPrefetch(target string, id int64) {
 	if !p.prefetch || p.cacheDir == "" || id <= 0 {
+		return
+	}
+	if _, bad := p.negCacheHit(target); bad {
 		return
 	}
 	p.prefetchMu.Lock()

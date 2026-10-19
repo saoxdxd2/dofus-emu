@@ -1,9 +1,10 @@
 /* Dofus Touch debug overlay.
  *
- * Press F2 to toggle. Reads the machine-readable stats published by
+ * Press F2 to show. Reads the machine-readable stats published by
  * cdn-relay-shim.js (window.__DOFUS_CDN_STATS) and samples FPS + JS heap.
- * Tooling only: attaches no game hooks, sends nothing anywhere, and stays
- * hidden until toggled.
+ * Stays hidden by default; when shown it auto-hides after 5 seconds (press
+ * F2 again to hide it early). Tooling only: attaches no game hooks and
+ * sends nothing anywhere.
  */
 (function () {
   "use strict";
@@ -15,8 +16,15 @@
   var fps = 0;
   var frames = 0;
   var fpsFrom = performance.now();
+  var rafActive = false;
+  var autoHideTimer = null;
+  // How long the overlay stays on screen after F2 before hiding itself.
+  var AUTO_HIDE_MS = 5000;
 
-  (function sampleFps() {
+  // The FPS sampler only runs while the overlay is visible: a permanent
+  // requestAnimationFrame loop keeps the renderer spinning even when the
+  // panel is hidden, which costs frames on low-end machines.
+  function sampleFps() {
     frames++;
     var now = performance.now();
     if (now - fpsFrom >= 500) {
@@ -24,8 +32,20 @@
       frames = 0;
       fpsFrom = now;
     }
+    if (visible) {
+      requestAnimationFrame(sampleFps);
+    } else {
+      rafActive = false;
+    }
+  }
+
+  function ensureFpsLoop() {
+    if (rafActive) return;
+    rafActive = true;
+    frames = 0;
+    fpsFrom = performance.now();
     requestAnimationFrame(sampleFps);
-  })();
+  }
 
   function fmt(v) {
     return (v === null || v === undefined) ? "-" : String(v);
@@ -38,7 +58,8 @@
     panel.style.cssText = [
       "position:fixed",
       "top:8px",
-      "left:8px",
+      "left:50%",
+      "transform:translateX(-50%)",
       "z-index:2147483647",
       "pointer-events:none",
       "font:11px/1.5 Consolas,monospace",
@@ -56,7 +77,7 @@
   }
 
   function render() {
-    if (!panel) return;
+    if (!panel || !visible) return;
     var s = window.__DOFUS_CDN_STATS;
     var relay = window.__DOFUS_CDN_RELAY;
     var lines = [];
@@ -101,11 +122,18 @@
     ensurePanel();
     visible = true;
     panel.style.display = "block";
+    ensureFpsLoop();
     render();
+    if (autoHideTimer !== null) clearTimeout(autoHideTimer);
+    autoHideTimer = setTimeout(hide, AUTO_HIDE_MS);
   }
 
   function hide() {
     visible = false;
+    if (autoHideTimer !== null) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
     if (panel) panel.style.display = "none";
   }
 

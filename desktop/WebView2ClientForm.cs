@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -59,6 +60,26 @@ namespace DofusFarm.Engine
         private static readonly Regex CdnAssetUriRe = new Regex(
             @"^https?://(?:[a-z0-9-]+\.)*cdn\.ankama(?:-games)?\.com/(?:assets|ui|export-web)/",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        // Ankama web-shop artwork (bonus packs, store articles) and store
+        // banners/news (ankama/cms) live on static.ankama.com and answer 403
+        // when the request carries the virtual-origin Referer
+        // (https://dofus.local/...). Routed through the same repair path,
+        // which re-fetches it with the official web-client Referer/Origin
+        // (verified: 200). Only GET/HEAD/OPTIONS are repaired; everything
+        // else passes through untouched.
+        private static readonly Regex StaticAssetUriRe = new Regex(
+            @"^https?://static\.ankama\.com/",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        // Compiled once: OnWebMessageReceived runs for every bridged message.
+        private static readonly Regex WmConsoleTextRe = new Regex("\"text\"\\s*:\\s*\"((?:\\\\\"|[^\"])*)\"", RegexOptions.Compiled);
+        private static readonly Regex WmConsoleLevelRe = new Regex("\"level\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
+        private static readonly Regex WmEnabledRe = new Regex("\"enabled\"\\s*:\\s*(true|false)", RegexOptions.Compiled);
+        private static readonly Regex WmUrlRe = new Regex("\"url\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
+        private static readonly Regex WmCodeRe = new Regex("\"code\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
+        private static readonly Regex WmLoginRe = new Regex("\"login\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
+        private static readonly Regex WmPasswordRe = new Regex("\"password\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
         private static readonly string[] CdnCookieOrigins = new[]
         {
             "https://dofustouch.cdn.ankama.com/",
@@ -91,6 +112,10 @@ namespace DofusFarm.Engine
             public string Headers;
         }
 
+        // Small pool for the CDN copy buffer: asset bursts otherwise allocate
+        // a fresh 80 KB byte[] per response (gen2 churn during map loads).
+        private static readonly ConcurrentQueue<byte[]> CdnCopyBufferPool = new ConcurrentQueue<byte[]>();
+
         private WebView2 _webView;
         private Panel _toolbarPanel;
         private Label _lblStatus;
@@ -105,6 +130,13 @@ namespace DofusFarm.Engine
         private bool _autoFightEnabled = false;
         private bool _isUpdatingZoom = false;
         private double _currentZoomFactor = 1.0;
+
+        // F11 fullscreen toggle (driven by the page: WebView2 no longer
+        // implements F11 itself, so the key reaches JS and is bridged here).
+        private bool _isFullscreen = false;
+        private Rectangle _preFullscreenBounds;
+        private FormBorderStyle _preFullscreenStyle = FormBorderStyle.Sizable;
+        private FormWindowState _preFullscreenWindowState = FormWindowState.Normal;
 
         public string InstanceId { get { return _instanceId; } }
         public bool IsReady { get; private set; }
@@ -233,24 +265,50 @@ namespace DofusFarm.Engine
 
     try {
         var _cLog = console.log, _cWarn = console.warn, _cErr = console.error;
-        console.log = function() {
-            _cLog.apply(console, arguments);
-            if (window.chrome && window.chrome.webview) {
-                try { window.chrome.webview.postMessage({ type: 'CONSOLE_LOG', level: 'info', text: Array.prototype.slice.call(arguments).join(' ') }); } catch(e){}
+        // Throttled host bridge: the game's console traffic is heavy (loader
+        // chatter, per-tile diagnostics). Keep console semantics untouched,
+        // but meter what crosses into the host: info lines get a small
+        // per-second budget, repeats collapse into an [xN] summary, and
+        // warn/error always pass (bounded). Nothing is silently lost.
+        var __bridgeBudget = 30, __bridgeWindow = 0, __bridgeSeenCount = 0;
+        var __bridgeSeen = {};
+        function __bridgeSend(level, text) {
+            try {
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({ type: 'CONSOLE_LOG', level: level, text: text });
+                }
+            } catch(e){}
+        }
+        function __bridgeFlush(key, rec) {
+            if (rec.n > 1) __bridgeSend(rec.level, '[x' + rec.n + '] ' + rec.text);
+            delete __bridgeSeen[key];
+            __bridgeSeenCount--;
+        }
+        function __bridge(level, args) {
+            var now = Date.now();
+            if (now - __bridgeWindow > 1000) { __bridgeWindow = now; __bridgeBudget = 30; }
+            var text;
+            try { text = Array.prototype.slice.call(args).join(' '); } catch (e) { text = '[unserializable]'; }
+            if (text.length > 350) text = text.slice(0, 350) + '...';
+            var key = level + '|' + text;
+            var rec = __bridgeSeen[key];
+            if (rec) {
+                rec.n++;
+                if (!rec.timer) rec.timer = setTimeout(function () { rec.timer = null; __bridgeFlush(key, rec); }, 6000);
+                return;
             }
-        };
-        console.warn = function() {
-            _cWarn.apply(console, arguments);
-            if (window.chrome && window.chrome.webview) {
-                try { window.chrome.webview.postMessage({ type: 'CONSOLE_LOG', level: 'warn', text: Array.prototype.slice.call(arguments).join(' ') }); } catch(e){}
-            }
-        };
-        console.error = function() {
-            _cErr.apply(console, arguments);
-            if (window.chrome && window.chrome.webview) {
-                try { window.chrome.webview.postMessage({ type: 'CONSOLE_LOG', level: 'error', text: Array.prototype.slice.call(arguments).join(' ') }); } catch(e){}
-            }
-        };
+            var budgeted = (level === 'info');
+            if (budgeted && __bridgeBudget <= 0) return;
+            if (budgeted) __bridgeBudget--;
+            if (__bridgeSeenCount > 400) { __bridgeSeen = {}; __bridgeSeenCount = 0; }
+            rec = { n: 1, level: level, text: text, timer: null };
+            __bridgeSeen[key] = rec;
+            __bridgeSeenCount++;
+            __bridgeSend(level, text);
+        }
+        console.log = function() { _cLog.apply(console, arguments); __bridge('info', arguments); };
+        console.warn = function() { _cWarn.apply(console, arguments); __bridge('warn', arguments); };
+        console.error = function() { _cErr.apply(console, arguments); __bridge('error', arguments); };
 
         window.addEventListener('error', function(evt) {
             if (window.chrome && window.chrome.webview) {
@@ -401,6 +459,10 @@ namespace DofusFarm.Engine
     }
 })();";
 
+        private bool _skipPoolSeed;
+        private bool _explicitAccount;
+        private string _claimedLogin;
+
         public WebView2ClientForm(ClientLaunchOptions options, Action<string> logCallback)
         {
             _options = options ?? new ClientLaunchOptions();
@@ -412,7 +474,41 @@ namespace DofusFarm.Engine
             _entryUrl = _options.EntryUrl;
             _logCallback = logCallback;
 
+            ApplyPendingIdentityReset();
             InitializeForm();
+        }
+
+        private void ApplyPendingIdentityReset()
+        {
+            try
+            {
+                string flag = Path.Combine(_userDataDir, "force_fresh_identity.flag");
+                if (!File.Exists(flag)) return;
+                _skipPoolSeed = true;
+                string cleared = Path.Combine(_userDataDir, "fresh_identity.cleared");
+                if (!File.Exists(cleared))
+                {
+                    string def = Path.Combine(_userDataDir, @"EBWebView\Default");
+                    foreach (string sub in new[] { "Local Storage", "IndexedDB", "Network", "Service Worker", "Cookies", "Session Storage" })
+                    {
+                        string src = Path.Combine(def, sub);
+                        try
+                        {
+                            if (Directory.Exists(src)) FarmEngine.ForceDeleteDirectory(src);
+                            else if (File.Exists(src)) File.Delete(src);
+                        }
+                        catch { }
+                    }
+                    try { File.Delete(Path.Combine(_userDataDir, "account.identity")); } catch { }
+                    try { File.WriteAllText(cleared, DateTime.UtcNow.ToString("o")); } catch { }
+                    _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Cleared shared session storage once; a fresh guest account will be registered", _instanceId));
+                }
+                else
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Fresh-identity mode active; pool seeding stays disabled for this instance", _instanceId));
+                }
+            }
+            catch { }
         }
 
         public WebView2ClientForm(string instanceId, string displayName, string userDataDir, string entryUrl, Action<string> logCallback)
@@ -692,48 +788,85 @@ namespace DofusFarm.Engine
                 await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(CordovaShimScript);
 
                 // 3a. Account credentials injection from pool (accounts.txt)
-                if (string.IsNullOrEmpty(_options.AccountLogin))
+                bool hasConfigAccount = !string.IsNullOrEmpty(_options.AccountLogin);
+                _explicitAccount = hasConfigAccount;
+                if (!hasConfigAccount && !_skipPoolSeed)
                 {
                     int slot = 0;
                     Match mSlot = Regex.Match(_instanceId ?? "", @"(\d+)$");
                     if (mSlot.Success) int.TryParse(mSlot.Groups[1].Value, out slot);
                     var acc = FarmEngine.GetAccountForSlot(slot);
-                    if (acc.HasValue)
+                    if (acc.HasValue && !FarmEngine.IsIdentityOwnedByOtherProfile(acc.Value.Key, _instanceId))
                     {
                         _options.AccountLogin = acc.Value.Key;
                         _options.AccountPassword = acc.Value.Value;
                     }
+                    else if (acc.HasValue)
+                    {
+                        _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Pool account {1} already belongs to another instance profile; keeping this profile's own identity", _instanceId, acc.Value.Key));
+                    }
                 }
 
-                if (!string.IsNullOrEmpty(_options.AccountLogin) && !string.IsNullOrEmpty(_options.AccountPassword))
-                {
-                    string safeLogin = _options.AccountLogin.Replace("\\", "\\\\").Replace("'", "\\'");
-                    string safePass = _options.AccountPassword.Replace("\\", "\\\\").Replace("'", "\\'");
-                    string accScript = string.Format(
-                        "(function() {{\n" +
-                        "    try {{\n" +
-                        "        var raw = localStorage.getItem('dofus.1');\n" +
-                        "        var prefs = {{}};\n" +
-                        "        if (raw) {{ try {{ prefs = JSON.parse(raw); }} catch(e) {{ prefs = {{}}; }} }}\n" +
-                        "        prefs['all#guestAccount'] = {{ login: '{0}', password: '{1}' }};\n" +
-                        "        localStorage.setItem('dofus.1', JSON.stringify(prefs));\n" +
-                        "        console.log('[Auth] Pre-seeded visitor credentials for {0}');\n" +
-                        "        var fired = false;\n" +
-                        "        var tId = setInterval(function() {{\n" +
-                        "            if (fired) {{ clearInterval(tId); return; }}\n" +
-                        "            if (window.gui && window.gui.loginScreen && typeof window.gui.loginScreen.playWithGuest === 'function') {{\n" +
-                        "                fired = true;\n" +
-                        "                clearInterval(tId);\n" +
-                        "                console.log('[Auth] Automatically initiating direct guest socket login');\n" +
-                        "                setTimeout(function() {{ try {{ window.gui.loginScreen.playWithGuest(); }} catch(e) {{}} }}, 800);\n" +
-                        "            }}\n" +
-                        "        }}, 400);\n" +
-                        "    }} catch(e) {{ console.error('[Auth] Failed to seed visitor account:', e); }}\n" +
-                        "}})();",
-                        safeLogin, safePass);
-                    await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(accScript);
+                bool hasSeedAccount = !string.IsNullOrEmpty(_options.AccountLogin) && !string.IsNullOrEmpty(_options.AccountPassword);
+                string safeLogin = hasSeedAccount ? _options.AccountLogin.Replace("\\", "\\\\").Replace("'", "\\'") : "";
+                string safePass = hasSeedAccount ? _options.AccountPassword.Replace("\\", "\\\\").Replace("'", "\\'") : "";
+                string accScript = string.Format(
+                    "(function() {{\n" +
+                    "    try {{\n" +
+                    "        var seedLogin = '{0}';\n" +
+                    "        var seedPass = '{1}';\n" +
+                    "        var raw = localStorage.getItem('dofus.1');\n" +
+                    "        var prefs = {{}};\n" +
+                    "        if (raw) {{ try {{ prefs = JSON.parse(raw); }} catch(e) {{ prefs = {{}}; }} }}\n" +
+                    "        var existing = prefs['all#guestAccount'];\n" +
+                    "        if (seedLogin && !(existing && existing.login)) {{\n" +
+                    "            prefs['all#guestAccount'] = {{ login: seedLogin, password: seedPass }};\n" +
+                    "            localStorage.setItem('dofus.1', JSON.stringify(prefs));\n" +
+                    "            console.log('[Auth] Pre-seeded visitor credentials for ' + seedLogin);\n" +
+                    "        }} else if (existing && existing.login) {{\n" +
+                    "            console.log('[Auth] Keeping profile identity for ' + existing.login);\n" +
+                    "        }} else {{\n" +
+                    "            console.log('[Auth] No stored guest identity; client will register a fresh one');\n" +
+                    "        }}\n" +
+                    "        var _postIdentity = function() {{\n" +
+                    "            try {{\n" +
+                    "                if (window.chrome && window.chrome.webview) {{\n" +
+                    "                    var idAcc = (existing && existing.login) ? existing : (seedLogin ? {{ login: seedLogin, password: seedPass }} : null);\n" +
+                    "                    window.chrome.webview.postMessage({{ type: 'ACCOUNT_IDENTITY', login: idAcc ? idAcc.login : '', password: idAcc ? idAcc.password : '' }});\n" +
+                    "                    return true;\n" +
+                    "                }}\n" +
+                    "            }} catch(e) {{}}\n" +
+                    "            return false;\n" +
+                    "        }};\n" +
+                    "        if (!_postIdentity()) {{\n" +
+                    "            var _idTries = 0;\n" +
+                    "            var _idTimer = setInterval(function() {{\n" +
+                    "                if (_postIdentity() || ++_idTries > 25) {{ clearInterval(_idTimer); }}\n" +
+                    "            }}, 200);\n" +
+                    "        }}\n" +
+                    "        var already = false;\n" +
+                    "        try {{ already = !!(window.sessionStorage && sessionStorage.getItem('dfGuestLoginDone') === '1'); }} catch(e) {{}}\n" +
+                    "        if (already) {{ console.log('[Auth] Skipping auto-login: already used this session (post-logout reload)'); return; }}\n" +
+                    "        var fired = false;\n" +
+                    "        var deadline = Date.now() + 300000;\n" +
+                    "        var tId = setInterval(function() {{\n" +
+                    "            if (fired || Date.now() > deadline) {{ clearInterval(tId); return; }}\n" +
+                    "            if (window.gui && window.gui.loginScreen && typeof window.gui.loginScreen.playWithGuest === 'function') {{\n" +
+                    "                fired = true;\n" +
+                    "                clearInterval(tId);\n" +
+                    "                try {{ sessionStorage.setItem('dfGuestLoginDone', '1'); }} catch(e) {{}}\n" +
+                    "                console.log('[Auth] Automatically initiating direct guest socket login');\n" +
+                    "                setTimeout(function() {{ try {{ window.gui.loginScreen.playWithGuest(); }} catch(e) {{}} }}, 800);\n" +
+                    "            }}\n" +
+                    "        }}, 400);\n" +
+                    "    }} catch(e) {{ console.error('[Auth] Failed to seed visitor account:', e); }}\n" +
+                    "}})();",
+                    safeLogin, safePass);
+                await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(accScript);
+                if (hasSeedAccount)
                     _logCallback?.Invoke(string.Format("[{0}] Registered visitor credentials injection for {1}", _instanceId, _options.AccountLogin));
-                }
+                else
+                    _logCallback?.Invoke(string.Format("[{0}] Registered guest auto-login (profile keeps its own identity)", _instanceId));
 
                 // 3b. CDN relay: expose the local relay config, then inject the
                 // shim that rewrites CDN asset URLs through it. Inert when no
@@ -811,6 +944,7 @@ namespace DofusFarm.Engine
                 {
                     _webView.CoreWebView2.AddWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All);
                     _webView.CoreWebView2.AddWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://static.ankama.com/*", CoreWebView2WebResourceContext.All);
                 }
                 catch (Exception filtEx)
                 {
@@ -1015,8 +1149,13 @@ namespace DofusFarm.Engine
                 if (uri.Contains("access_token") || uri.Contains("refresh_token")) isTokenCall = false;
                 if (!isTokenCall && !isFailure) return;
 
+                // Body capture is expensive (full GetContentAsync round trip);
+                // pay it only for auth flows. CDN 4xx storms (doomed map ids)
+                // are already fully logged by the relay's requests.log, so
+                // those stay header-only here.
                 string body = "";
-                if (isTokenCall || isFailure)
+                bool readBody = isTokenCall || (isFailure && !CdnAssetUriRe.IsMatch(uri));
+                if (readBody)
                 {
                     try
                     {
@@ -1058,8 +1197,8 @@ namespace DofusFarm.Engine
 
                 if (json.Contains("\"type\":\"CONSOLE_LOG\""))
                 {
-                    Match mText = Regex.Match(json, "\"text\"\\s*:\\s*\"((?:\\\\\"|[^\"])*)\"");
-                    Match mLvl = Regex.Match(json, "\"level\"\\s*:\\s*\"([^\"]+)\"");
+                    Match mText = WmConsoleTextRe.Match(json);
+                    Match mLvl = WmConsoleLevelRe.Match(json);
                     string text = mText.Success ? Regex.Unescape(mText.Groups[1].Value) : json;
                     string lvl = mLvl.Success ? mLvl.Groups[1].Value.ToUpper() : "JS";
                     _logCallback?.Invoke(string.Format("[{0}] [WEB-{1}] {2}", _instanceId, lvl, text));
@@ -1070,12 +1209,16 @@ namespace DofusFarm.Engine
                 }
                 else if (json.Contains("\"type\":\"FARMBOT_STATE\""))
                 {
-                    Match m = Regex.Match(json, "\"enabled\"\\s*:\\s*(true|false)");
+                    Match m = WmEnabledRe.Match(json);
                     if (m.Success)
                     {
                         _autoFightEnabled = bool.Parse(m.Groups[1].Value);
                         UpdateAutoFightButtonState();
                     }
+                }
+                else if (json.Contains("\"type\":\"TOGGLE_FULLSCREEN\""))
+                {
+                    ToggleFullscreen();
                 }
                 else if (json.Contains("\"type\":\"diagnostics_report\""))
                 {
@@ -1083,7 +1226,7 @@ namespace DofusFarm.Engine
                 }
                 else if (json.Contains("\"type\":\"open_oauth\""))
                 {
-                    Match m = Regex.Match(json, "\"url\"\\s*:\\s*\"([^\"]+)\"");
+                    Match m = WmUrlRe.Match(json);
                     if (m.Success)
                     {
                         string oauthUrl = Regex.Unescape(m.Groups[1].Value);
@@ -1096,7 +1239,7 @@ namespace DofusFarm.Engine
                 }
                 else if (json.Contains("\"type\":\"webauth_exchange\""))
                 {
-                    Match mCode = Regex.Match(json, "\"code\"\\s*:\\s*\"([^\"]+)\"");
+                    Match mCode = WmCodeRe.Match(json);
                     string code = mCode.Success ? mCode.Groups[1].Value : null;
                     string shortCode = (code != null && code.Length > 8) ? code.Substring(0, 8) + "..." : code;
                     if (code != null && code == _lastGuestCode && !string.IsNullOrEmpty(_lastGuestTokensRaw))
@@ -1126,13 +1269,18 @@ namespace DofusFarm.Engine
                 {
                     HandleInGameChatMessage(json);
                 }
+                else if (json.Contains("\"type\":\"ACCOUNT_IDENTITY\""))
+                {
+                    HandleAccountIdentity(json);
+                }
                 else if (json.Contains("\"type\":\"GUEST_ACCOUNT_PERSIST\""))
                 {
-                    Match mLog = Regex.Match(json, "\"login\"\\s*:\\s*\"([^\"]+)\"");
-                    Match mPass = Regex.Match(json, "\"password\"\\s*:\\s*\"([^\"]+)\"");
+                    Match mLog = WmLoginRe.Match(json);
+                    Match mPass = WmPasswordRe.Match(json);
                     if (mLog.Success && mPass.Success)
                     {
                         SavePermanentAccount(mLog.Groups[1].Value, mPass.Groups[1].Value);
+                        RegisterAccountIdentity(mLog.Groups[1].Value);
                     }
                 }
             }
@@ -1140,6 +1288,88 @@ namespace DofusFarm.Engine
             {
                 _logCallback?.Invoke(string.Format("[{0}] WebMessage handling error: {1}", _instanceId, ex.Message));
             }
+        }
+
+        // Toggle this host window between normal chrome and borderless
+        // fullscreen on the screen the form currently sits on. Triggered from
+        // the page (F11 keydown -> TOGGLE_FULLSCREEN postMessage).
+        private void ToggleFullscreen()
+        {
+            try
+            {
+                if (!_isFullscreen)
+                {
+                    _preFullscreenBounds = RestoreBounds;
+                    _preFullscreenStyle = FormBorderStyle;
+                    _preFullscreenWindowState = WindowState;
+
+                    if (_toolbarPanel != null) _toolbarPanel.Visible = false;
+                    WindowState = FormWindowState.Normal;
+                    FormBorderStyle = FormBorderStyle.None;
+                    Bounds = Screen.FromControl(this).Bounds;
+                    _isFullscreen = true;
+                    _logCallback?.Invoke(string.Format("[{0}] [FULLSCREEN] Entered fullscreen (F11 to exit)", _instanceId));
+                }
+                else
+                {
+                    WindowState = FormWindowState.Normal;
+                    FormBorderStyle = _preFullscreenStyle;
+                    if (_preFullscreenBounds.Width > 100 && _preFullscreenBounds.Height > 100)
+                    {
+                        Bounds = _preFullscreenBounds;
+                    }
+                    WindowState = _preFullscreenWindowState;
+                    if (_toolbarPanel != null) _toolbarPanel.Visible = true;
+                    _isFullscreen = false;
+                    _logCallback?.Invoke(string.Format("[{0}] [FULLSCREEN] Exited fullscreen", _instanceId));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] [FULLSCREEN] Toggle error: {1}", _instanceId, ex.Message));
+            }
+        }
+
+        private void HandleAccountIdentity(string json)
+        {
+            try
+            {
+                Match mLog = WmLoginRe.Match(json);
+                if (mLog.Success) RegisterAccountIdentity(mLog.Groups[1].Value);
+            }
+            catch { }
+        }
+
+        private void RegisterAccountIdentity(string login)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(login)) return;
+                string conflict = FarmEngine.ClaimAccount(_instanceId, login);
+                if (conflict == null)
+                {
+                    if (!string.Equals(_claimedLogin, login, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _claimedLogin = login;
+                        _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Account {1} reserved for this instance", _instanceId, login));
+                    }
+                    try { File.WriteAllText(Path.Combine(_userDataDir, "account.identity"), login); } catch { }
+                    return;
+                }
+
+                _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] BLOCKED: account {1} is already live on '{2}' - closing before a simultaneous same-account login (ban risk).", _instanceId, login, conflict));
+                if (!_explicitAccount)
+                {
+                    try { File.WriteAllText(Path.Combine(_userDataDir, "force_fresh_identity.flag"), "1"); } catch { }
+                    _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] Next launch will reset this shared identity and register a fresh guest account", _instanceId));
+                }
+                else
+                {
+                    _logCallback?.Invoke(string.Format("[{0}] [ACCOUNT GUARD] This account was set manually - change it in Edit so every instance uses a unique login", _instanceId));
+                }
+                if (InvokeRequired) BeginInvoke(new Action(Close)); else Close();
+            }
+            catch { }
         }
 
         private void SavePermanentAccount(string login, string password)
@@ -1409,7 +1639,7 @@ namespace DofusFarm.Engine
                 // full WebView2 cookie jar (HttpOnly/SameSite included) and the
                 // official web-client Referer/Origin. This repairs the CDN 403s
                 // that black-screen the client on map/asset loads.
-                if (!CdnAssetUriRe.IsMatch(uri)) return;
+                if (!CdnAssetUriRe.IsMatch(uri) && !StaticAssetUriRe.IsMatch(uri)) return;
                 string method = e.Request.Method ?? "GET";
                 bool isGet = method.Equals("GET", StringComparison.OrdinalIgnoreCase);
                 bool isHead = method.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
@@ -1719,25 +1949,31 @@ namespace DofusFarm.Engine
                     sb.Append("Cache-Control: public, max-age=604800, immutable\r\n");
                 }
 
-                var body = new MemoryStream();
+                var body = new MemoryStream(
+                    resp.ContentLength > 0 && resp.ContentLength < (64L << 20) ? (int)resp.ContentLength : 0);
                 bool wantBody = method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                                 resp.StatusCode != HttpStatusCode.NoContent &&
                                 resp.StatusCode != HttpStatusCode.NotModified;
                 if (wantBody)
                 {
+                    byte[] buf;
+                    if (!CdnCopyBufferPool.TryDequeue(out buf)) buf = new byte[65536];
                     try
                     {
                         using (Stream rs = resp.GetResponseStream())
                         {
                             if (rs != null)
                             {
-                                byte[] buf = new byte[81920];
                                 int n;
                                 while ((n = rs.Read(buf, 0, buf.Length)) > 0) body.Write(buf, 0, n);
                             }
                         }
                     }
                     catch { }
+                    finally
+                    {
+                        if (CdnCopyBufferPool.Count < 32) CdnCopyBufferPool.Enqueue(buf);
+                    }
                 }
                 if (resp.StatusCode != HttpStatusCode.NotModified)
                 {
@@ -2062,9 +2298,12 @@ namespace DofusFarm.Engine
                 {
                     _lblMemory.Visible = (Width >= 620);
                 }
-                double wsMb = GetWorkingSetMb();
-                double pmMb = GetPrivateCommitMb();
-                _lblMemory.Text = string.Format("RAM: {0:F1} MB (Commit: {1:F1} MB)", wsMb, pmMb);
+                using (var proc = Process.GetCurrentProcess())
+                {
+                    _lblMemory.Text = string.Format("RAM: {0:F1} MB (Commit: {1:F1} MB)",
+                        proc.WorkingSet64 / (1024.0 * 1024.0),
+                        proc.PrivateMemorySize64 / (1024.0 * 1024.0));
+                }
             }
             catch { }
         }
@@ -2120,11 +2359,14 @@ namespace DofusFarm.Engine
                 try { _webView.CoreWebView2.WebResourceResponseReceived -= OnAuthNetResponse; } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://static.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://auth.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://account.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://dt-proxy-production-login.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://dt-proxy-production-early.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
             }
+
+            FarmEngine.ReleaseAccount(_instanceId);
 
             base.OnFormClosing(e);
             OnFormClosedByUser?.Invoke(_instanceId);
@@ -2134,6 +2376,7 @@ namespace DofusFarm.Engine
         {
             if (disposing)
             {
+                FarmEngine.ReleaseAccount(_instanceId);
                 CloseOAuthDialog();
 
                 if (_telemetryTimer != null)
@@ -2184,6 +2427,8 @@ namespace DofusFarm.Engine
         private Panel _topBar;
         private Label _lblTitle;
         private Button _btnClose;
+        private bool _deepLinkDispatched;
+        private bool _continueMimicStarted;
 
         public OAuthLoginForm(string initialUrl, ClientLaunchOptions options, WebView2ClientForm parentForm, Action<string> logCallback, CoreWebView2Environment sharedEnv)
         {
@@ -2343,6 +2588,7 @@ namespace DofusFarm.Engine
                     if (u.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase))
                     {
                         ev.Cancel = true;
+                        _deepLinkDispatched = true;
                         _logCallback?.Invoke("[OAUTH-POPUP] Intercepted OAuth completion code redirect: " + u);
                         await CopyAuthCookiesToParentAsync();
                         _parentForm.HandleDeepLinkUri(u);
@@ -2365,10 +2611,49 @@ namespace DofusFarm.Engine
                             string curUrl = _webView.CoreWebView2.Source;
                             if (!string.IsNullOrEmpty(curUrl) && curUrl.Contains("login-authorized") && curUrl.Contains("code="))
                             {
-                                _logCallback?.Invoke("[OAUTH-POPUP] login-authorized completed load on server; dispatching: " + curUrl);
-                                await CopyAuthCookiesToParentAsync();
-                                _parentForm.HandleDeepLinkUri(curUrl);
-                                this.Close();
+                                if (_continueMimicStarted)
+                                {
+                                    return;
+                                }
+                                _continueMimicStarted = true;
+                                _logCallback?.Invoke("[OAUTH-POPUP] login-authorized loaded; mimicking user CONTINUE click: " + curUrl);
+
+                                await Task.Delay(2500);
+
+                                try
+                                {
+                                    string clickJs =
+                                        "(function(){try{" +
+                                        " var all=document.querySelectorAll('a,button,input,[role=button],div,span');" +
+                                        " var best=null,bestLen=100000;" +
+                                        " for(var i=0;i<all.length;i++){" +
+                                        "  var e=all[i];var t=String(e.textContent||e.value||'').trim();" +
+                                        "  if(!t||t.length>120)continue;" +
+                                        "  if(!/continue/i.test(t))continue;" +
+                                        "  if(t.length<bestLen){best=e;bestLen=t.length;}" +
+                                        " }" +
+                                        " if(!best)return 'no-continue-control';" +
+                                        " var info=best.tagName+' cls='+String(best.className).slice(0,40)+' href='+(best.getAttribute?String(best.getAttribute('href')||''):'')+' text='+String(best.textContent||'').trim().slice(0,40);" +
+                                        " try{best.click();}catch(e){return 'click-threw: '+String(e);}" +
+                                        " return 'clicked: '+info.slice(0,240);" +
+                                        "}catch(e){return 'click-script-error: '+String(e);}})()";
+                                    string clickRes = await _webView.CoreWebView2.ExecuteScriptAsync(clickJs);
+                                    _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE click result: " + clickRes);
+                                }
+                                catch (Exception cex)
+                                {
+                                    _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE click failed: " + cex.Message);
+                                }
+
+                                await Task.Delay(4000);
+
+                                if (!_deepLinkDispatched)
+                                {
+                                    _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE produced no deep link; dispatching directly: " + curUrl);
+                                    await CopyAuthCookiesToParentAsync();
+                                    _parentForm.HandleDeepLinkUri(curUrl);
+                                    this.Close();
+                                }
                                 return;
                             }
 

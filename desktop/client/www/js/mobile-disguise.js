@@ -1094,17 +1094,25 @@
 
                 var monsters = [];
                 if (window.isoEngine && window.isoEngine.actorManager) {
-                    var actors = window.isoEngine.actorManager.getActors();
-                    for (var id in actors) {
-                        var a = actors[id];
-                        if (a && a.isMonster && a.cellId) {
-                            monsters.push({
-                                id: a.id || -1,
-                                name: a.name || 'Monster',
-                                hp: a.lifePoints || 500,
-                                cellId: a.cellId
-                            });
-                        }
+                    var am = window.isoEngine.actorManager;
+                    var ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
+                    for (var i = 0; i < ids.length; i++) {
+                        var a = am.getActor(ids[i]);
+                        if (!a || a.cellId == null) continue;
+                        var fighter = null;
+                        try { fighter = (typeof a.getFighter === 'function') ? a.getFighter() : null; } catch(e) {}
+                        var isMonster = false;
+                        try { isMonster = !!(fighter && typeof fighter.isMonster === 'function' && fighter.isMonster()); } catch(e) {}
+                        if (!isMonster) continue;
+                        var fData = (fighter && fighter.data) || {};
+                        var fStats = fData.stats || {};
+                        monsters.push({
+                            id: a.actorId != null ? a.actorId : (ids[i] || -1),
+                            name: fData.monsterName || fData.name || 'Monster',
+                            hp: fStats.lifePoints || 500,
+                            maxHp: fStats.maxLifePoints || fStats.lifePoints || 500,
+                            cellId: a.cellId
+                        });
                     }
                 }
 
@@ -1191,12 +1199,16 @@
 
             resolveOptimalTargetCell: function() {
                 if (window.isoEngine && window.isoEngine.actorManager) {
-                    var actors = window.isoEngine.actorManager.getActors();
-                    for (var id in actors) {
-                        var actor = actors[id];
-                        if (actor && actor.isMonster && actor.cellId) {
-                            return actor.cellId;
-                        }
+                    var am = window.isoEngine.actorManager;
+                    var ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
+                    for (var i = 0; i < ids.length; i++) {
+                        var actor = am.getActor(ids[i]);
+                        if (!actor || actor.cellId == null) continue;
+                        var fighter = null;
+                        try { fighter = (typeof actor.getFighter === 'function') ? actor.getFighter() : null; } catch(e) {}
+                        var isMonster = false;
+                        try { isMonster = !!(fighter && typeof fighter.isMonster === 'function' && fighter.isMonster()); } catch(e) {}
+                        if (isMonster) return actor.cellId;
                     }
                 }
                 return 250;
@@ -1218,6 +1230,21 @@
 
         FarmBot.init();
         window.__FarmBot = FarmBot;
+    } catch(e) {}
+
+    // 20b. F11 fullscreen bridge: WebView2 never handles F11 itself, so the
+    // page forwards it to the C# host (TOGGLE_FULLSCREEN) which toggles the
+    // window borderless fullscreen on the screen it currently sits on.
+    try {
+        window.addEventListener('keydown', function(e) {
+            if (e.key === 'F11' || e.keyCode === 122) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({ type: 'TOGGLE_FULLSCREEN' });
+                }
+            }
+        }, true);
     } catch(e) {}
 
     // 21. Visitor Account Persistence Hook (accounts.txt bridge)

@@ -376,6 +376,140 @@ namespace DofusStandaloneSetup
 
 
 
+        private static bool IsWebView2RuntimeInstalled()
+
+        {
+
+            string[] subKeys = new[]
+
+            {
+
+                @"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+
+                @"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+
+            };
+
+            foreach (string sub in subKeys)
+
+            {
+
+                try
+
+                {
+
+                    using (RegistryKey k = Registry.LocalMachine.OpenSubKey(sub))
+
+                    {
+
+                        if (k != null)
+
+                        {
+
+                            string pv = k.GetValue("pv") as string;
+
+                            if (!string.IsNullOrEmpty(pv) && pv != "0.0.0.0") return true;
+
+                        }
+
+                    }
+
+                }
+
+                catch { }
+
+            }
+
+            try
+
+            {
+
+                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"))
+
+                {
+
+                    if (k != null)
+
+                    {
+
+                        string pv = k.GetValue("pv") as string;
+
+                        if (!string.IsNullOrEmpty(pv) && pv != "0.0.0.0") return true;
+
+                    }
+
+                }
+
+            }
+
+            catch { }
+
+            return false;
+
+        }
+
+        private void EnsureWebView2Runtime()
+
+        {
+
+            try
+
+            {
+
+                if (IsWebView2RuntimeInstalled())
+
+                {
+
+                    Report(20, "Edge WebView2 runtime detected.");
+
+                    return;
+
+                }
+
+                string boot = Path.Combine(TargetDir, @"bin\webview2\MicrosoftEdgeWebview2Setup.exe");
+
+                if (!File.Exists(boot))
+
+                {
+
+                    Report(20, "Warning: WebView2 runtime not found and no bundled bootstrapper available.");
+
+                    return;
+
+                }
+
+                Report(20, "Installing Microsoft Edge WebView2 runtime (required for game instances)...");
+
+                ProcessStartInfo psi = new ProcessStartInfo(boot, "/silent /install");
+
+                psi.UseShellExecute = false;
+
+                psi.CreateNoWindow = true;
+
+                using (Process p = Process.Start(psi))
+
+                {
+
+                    if (p != null) p.WaitForExit(300000);
+
+                }
+
+                if (IsWebView2RuntimeInstalled()) Report(21, "Edge WebView2 runtime installed successfully.");
+
+                else Report(21, "Warning: WebView2 runtime installation did not complete; game instances may not start.");
+
+            }
+
+            catch (Exception ex)
+
+            {
+
+                try { Report(21, "WebView2 runtime bootstrap skipped: " + ex.Message); } catch { }
+
+            }
+
+        }
+
         private void Report(int pct, string msg)
 
         {
@@ -985,6 +1119,9 @@ namespace DofusStandaloneSetup
                         }
 
                     }
+
+
+                    EnsureWebView2Runtime();
 
 
 

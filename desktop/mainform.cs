@@ -1812,9 +1812,24 @@ namespace DofusFarm.UI
 
                     if (_logWriter == null)
 
-                        _logWriter = new StreamWriter(new FileStream(LogFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
+                        _logWriter = new StreamWriter(new FileStream(LogFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = false };
 
                     _logWriter.WriteLine(msg);
+
+                    // Batch flushes: a flush syscall per line dominated disk
+                    // I/O during log floods. Flush every 200 lines here, plus
+                    // the periodic sync-timer flush and the shutdown flush.
+                    _logWritesSinceFlush++;
+
+                    if (_logWritesSinceFlush >= 200)
+
+                    {
+
+                        _logWriter.Flush();
+
+                        _logWritesSinceFlush = 0;
+
+                    }
 
                 }
 

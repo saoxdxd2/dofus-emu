@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 if os.environ.get("PYTHONUNBUFFERED") != "1":
-    sys.stdout.reconfigure(line_buffering=True, write_through=True)
+    sys.stdout.reconfigure(line_buffering=True, write_through=True, encoding="utf-8")
 
 BENCH_DIR = Path("benchmarks")
 BENCH_DIR.mkdir(parents=True, exist_ok=True)
@@ -129,6 +129,19 @@ class LocalModel:
         self.model.eval()
         self.model_path = model_path
         self.id2label = self.model.config.id2label
+        # Load labels.json for proper label name mapping (LABEL_X -> actual label names)
+        labels_path = os.path.join(model_path, "labels.json")
+        if os.path.exists(labels_path):
+            try:
+                with open(labels_path, "r", encoding="utf-8") as f:
+                    labels_meta = json.load(f)
+                label_map = labels_meta.get("label_map", {})
+                if label_map:
+                    # Build mapping from LABEL_X -> actual label name
+                    # labels.json: {"NONE": 0, "FOLLOW": 1, ...} -> {0: "NONE", 1: "FOLLOW", ...}
+                    self.id2label = {int(v): k for k, v in label_map.items()}
+            except Exception:
+                pass  # Fall back to model.config.id2label
 
     def classify(self, text: str) -> dict:
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=8192, padding=True)
@@ -140,7 +153,7 @@ class LocalModel:
             logits = self.model(**inputs).logits
             probs = torch.softmax(logits, dim=-1)[0]
         pred_id = int(probs.argmax())
-        return {"predicted_label": self.id2label[str(pred_id)], "predicted_id": pred_id, "confidence": float(probs[pred_id]), "probabilities": {self.id2label[str(i)]: float(p) for i, p in enumerate(probs)}}
+        return {"predicted_label": self.id2label[pred_id], "predicted_id": pred_id, "confidence": float(probs[pred_id]), "probabilities": {self.id2label[i]: float(p) for i, p in enumerate(probs)}}
 
     def decide(self, state: str, questions: dict) -> dict:
         answers = {}
@@ -454,9 +467,9 @@ def load_models_parallel(oname, lpath):
     _status("Starting parallel model loading...")
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         futs = {}
-        if _HAS_THX01:
+        if _HAS_THX01 and oname:
             futs[ex.submit(_load_original, oname)] = "original"
-        if _HAS_TRANSFORMERS and _HAS_TORCH:
+        if _HAS_TRANSFORMERS and _HAS_TORCH and lpath:
             futs[ex.submit(_load_local, lpath)] = "local"
         for f in concurrent.futures.as_completed(futs):
             mt = futs[f]
@@ -464,13 +477,17 @@ def load_models_parallel(oname, lpath):
                 res[mt] = f.result()
                 _status(f"{mt} model loaded")
             except Exception as e:
+                import traceback
+                tb_file = open(f"C:/temp/{mt}_tb.txt", "w")
+                traceback.print_exc(file=tb_file)
+                tb_file.close()
                 _status(f"{mt} failed: {e}")
                 res[f"{mt}_error"] = str(e)
     return res
 
 def main():
     p = argparse.ArgumentParser(description="Benchmark doofz/THX-01 vs local dofus-thx01")
-    p.add_argument("--original", default="doofz/THX-01")
+    p.add_argument("--original", default=None)
     p.add_argument("--local", default="models/dofus-thx01")
     p.add_argument("--output", default="benchmarks/comparison_report.json")
     p.add_argument("--dry-run", action="store_true")
@@ -513,22 +530,26 @@ def main():
         for i, (bk, bm) in enumerate(phases):
             _status(bm)
             _progress(f"bench:{bk}", 0.0, bm, bp + i * wp)
-            if bk == "multilingual":
-                r[bk] = run_language_benchmark(m, iso)
-            elif bk == "banking77":
-                r[bk] = run_banking77_benchmark(m, iso)
-            elif bk == "emotion":
-                r[bk] = run_emotion_benchmark(m, iso)
-            elif bk == "typed_decisions":
-                r[bk] = run_typed_decisions_benchmark(m, iso)
-            elif bk == "extraction":
-                r[bk] = run_extraction_benchmark(m, iso)
-            elif bk == "dofus":
-                r[bk] = run_dofus_suite(m, is_original=iso, suite=DOFUS_BENCHMARK_SUITE)
-            elif bk == "latency":
-                r[bk] = run_latency_benchmark(m, iso)
-            elif bk == "calibration":
-                r[bk] = run_calibration_benchmark(m, iso, pred_results=r)
+            try:
+                if bk == "multilingual":
+                    r[bk] = run_language_benchmark(m, iso)
+                elif bk == "banking77":
+                    r[bk] = run_banking77_benchmark(m, iso)
+                elif bk == "emotion":
+                    r[bk] = run_emotion_benchmark(m, iso)
+                elif bk == "typed_decisions":
+                    r[bk] = run_typed_decisions_benchmark(m, iso)
+                elif bk == "extraction":
+                    r[bk] = run_extraction_benchmark(m, iso)
+                elif bk == "dofus":
+                    r[bk] = run_dofus_suite(m, is_original=iso, suite=DOFUS_BENCHMARK_SUITE)
+                elif bk == "latency":
+                    r[bk] = run_latency_benchmark(m, iso)
+                elif bk == "calibration":
+                    r[bk] = run_calibration_benchmark(m, iso, pred_results=r)
+            except Exception as e:
+                _status(f"[ERROR] Benchmark {bk} failed: {e}")
+                r[bk] = {"error": str(e)}
             _progress(f"bench:{bk}", 100.0, f"{bm} done", bp + (i + 1) * wp)
         _done()
         return r
@@ -547,6 +568,10 @@ def main():
             report["local"] = run_all(lm, False)
             _status("Local benchmarks complete")
         except Exception as e:
+            import traceback
+            tb_file = open("C:/temp/local_tb.txt", "w")
+            traceback.print_exc(file=tb_file)
+            tb_file.close()
             _status(f"[ERROR] Local failed: {e}")
             report["local_error"] = str(e)
     if "original" in report and "local" in report:
@@ -566,4 +591,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        with open("C:/temp/main_tb.txt", "w") as f:
+            traceback.print_exc(file=f)
+        print(f"FATAL: {e}")
+        raise

@@ -323,6 +323,17 @@ namespace DofusBuild
                     }
                 }
 
+                string repoWebView2Boot = Path.Combine(RepoRoot, @"bin\webview2");
+                if (Directory.Exists(repoWebView2Boot))
+                {
+                    string stageWebView2Boot = Path.Combine(stageDir, @"bin\webview2");
+                    Directory.CreateDirectory(stageWebView2Boot);
+                    foreach (string wf in Directory.GetFiles(repoWebView2Boot))
+                    {
+                        File.Copy(wf, Path.Combine(stageWebView2Boot, Path.GetFileName(wf)), true);
+                    }
+                }
+
                 // Stage desktop assets (including webview_test.html)
                 string stageAssets = Path.Combine(stageDir, "assets");
                 Directory.CreateDirectory(stageAssets);

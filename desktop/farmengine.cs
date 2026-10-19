@@ -864,7 +864,13 @@ namespace DofusFarm.Engine
                 using (var tcp = new System.Net.Sockets.TcpClient())
                 {
                     var ar = tcp.BeginConnect("127.0.0.1", WarpSocksPort, null, null);
-                    bool ok = ar.AsyncWaitHandle.WaitOne(400);
+                    // Dispose the async wait handle: this runs in launch-time
+                    // poll loops, and each undisposed handle is an OS resource
+                    // that only gets reclaimed at GC.
+                    WaitHandle wait = ar.AsyncWaitHandle;
+                    bool ok;
+                    try { ok = wait.WaitOne(400); }
+                    finally { try { wait.Close(); } catch { } }
                     if (ok && tcp.Connected)
                     {
                         tcp.EndConnect(ar);
@@ -1013,10 +1019,9 @@ namespace DofusFarm.Engine
                         _cachedAccountPoolUtc = DateTime.UtcNow;
                     }
 
-                    if (_cachedAccountPool != null && _cachedAccountPool.Length > 0)
+                    if (_cachedAccountPool != null && Math.Abs(slot) < _cachedAccountPool.Length)
                     {
-                        int idx = Math.Abs(slot) % _cachedAccountPool.Length;
-                        return _cachedAccountPool[idx];
+                        return _cachedAccountPool[Math.Abs(slot)];
                     }
                 }
             }
@@ -1035,6 +1040,63 @@ namespace DofusFarm.Engine
                 }
             }
             catch { return 0; }
+        }
+
+        private static readonly ConcurrentDictionary<string, string> _activeAccountClaims = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        public static string ClaimAccount(string instanceId, string login)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(instanceId) || string.IsNullOrEmpty(login)) return null;
+                string norm = login.Trim();
+                foreach (var kv in _activeAccountClaims)
+                {
+                    if (!string.Equals(kv.Key, instanceId, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(kv.Value, norm, StringComparison.OrdinalIgnoreCase))
+                        return kv.Key;
+                }
+                _activeAccountClaims[instanceId] = norm;
+            }
+            catch { }
+            return null;
+        }
+
+        public static void ReleaseAccount(string instanceId)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(instanceId))
+                {
+                    string removed;
+                    _activeAccountClaims.TryRemove(instanceId, out removed);
+                }
+            }
+            catch { }
+        }
+
+        public static bool IsIdentityOwnedByOtherProfile(string login, string selfInstanceId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(login)) return false;
+                string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DofusFarm", "webview2_profiles");
+                if (!Directory.Exists(root)) return false;
+                string norm = login.Trim();
+                foreach (string dir in Directory.GetDirectories(root))
+                {
+                    if (string.Equals(Path.GetFileName(dir), selfInstanceId, StringComparison.OrdinalIgnoreCase)) continue;
+                    string marker = Path.Combine(dir, "account.identity");
+                    try
+                    {
+                        if (File.Exists(marker) && string.Equals(File.ReadAllText(marker).Trim(), norm, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return false;
         }
 
         public static string GenerateRealisticMac(DeviceProfile profile, int slotIdx, string seedStr = null)
@@ -1058,7 +1120,10 @@ namespace DofusFarm.Engine
                 using (var sock = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
                 {
                     IAsyncResult ar = sock.BeginConnect(new IPEndPoint(IPAddress.Loopback, port), null, null);
-                    bool open = ar.AsyncWaitHandle.WaitOne(timeoutMs);
+                    WaitHandle wait = ar.AsyncWaitHandle;
+                    bool open;
+                    try { open = wait.WaitOne(timeoutMs); }
+                    finally { try { wait.Close(); } catch { } }
                     try { if (open) sock.EndConnect(ar); else sock.Close(); } catch { }
                     return open;
                 }
@@ -1135,14 +1200,24 @@ namespace DofusFarm.Engine
                             FileName = ProxyExePath, Arguments = sb.ToString(), WorkingDirectory = AppBaseDir,
                             CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden
                         });
-                        Thread.Sleep(250);
-                        if (proc != null && !proc.HasExited && IsLocalPortOpen(port, 250))
+                        // Poll the listen port instead of one fixed Sleep+check: a
+                        // cold start (AV scan on first run, spinning disk) can take
+                        // over a second, and the old code then killed the healthy
+                        // relay and silently fell back to the in-process proxy.
+                        // IsLocalPortOpen already waits, so no extra sleep here.
+                        if (proc != null)
                         {
-                            _proxyProcesses[port] = proc;
-                            _proxyCurrentUpstream[port] = normalizedUpstream;
-                            return true;
+                            for (int i = 0; i < 20 && !proc.HasExited; i++)
+                            {
+                                if (IsLocalPortOpen(port, 250))
+                                {
+                                    _proxyProcesses[port] = proc;
+                                    _proxyCurrentUpstream[port] = normalizedUpstream;
+                                    return true;
+                                }
+                            }
+                            if (!proc.HasExited) { try { proc.Kill(); } catch { } }
                         }
-                        if (proc != null && !proc.HasExited) { try { proc.Kill(); } catch { } }
                     }
                     catch { }
                 }

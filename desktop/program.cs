@@ -78,6 +78,23 @@ namespace DofusFarm
                 return;
             }
 
+            // Rotate an oversized log once at startup (single writer is
+            // guaranteed here by the instance mutex). Keeps DofusFarm.log from
+            // growing unbounded across sessions; a locked .1 file just skips
+            // rotation for this launch.
+            try
+            {
+                string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DofusFarm.log");
+                var logInfo = new FileInfo(logPath);
+                if (logInfo.Exists && logInfo.Length > 10 * 1024 * 1024)
+                {
+                    string prevPath = logPath + ".1";
+                    if (File.Exists(prevPath)) File.Delete(prevPath);
+                    File.Move(logPath, prevPath);
+                }
+            }
+            catch { }
+
             try
             {
                 AppDomain.CurrentDomain.UnhandledException += delegate (object sender, UnhandledExceptionEventArgs e)
