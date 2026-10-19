@@ -2340,12 +2340,10 @@ namespace DofusFarm.Engine
                         s.UserAgent = mobileUa;
                     }
 
-                    if (u.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase) ||
-                        (u.Contains("login-authorized") && (u.Contains("code=") || u.Contains("error="))))
+                    if (u.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase))
                     {
                         ev.Cancel = true;
                         _logCallback?.Invoke("[OAUTH-POPUP] Intercepted OAuth completion code redirect: " + u);
-                        await DiagnosticExchangeProbeAsync(u);
                         await CopyAuthCookiesToParentAsync();
                         _parentForm.HandleDeepLinkUri(u);
                         this.Close();
@@ -2365,6 +2363,15 @@ namespace DofusFarm.Engine
                         try
                         {
                             string curUrl = _webView.CoreWebView2.Source;
+                            if (!string.IsNullOrEmpty(curUrl) && curUrl.Contains("login-authorized") && curUrl.Contains("code="))
+                            {
+                                _logCallback?.Invoke("[OAUTH-POPUP] login-authorized completed load on server; dispatching: " + curUrl);
+                                await CopyAuthCookiesToParentAsync();
+                                _parentForm.HandleDeepLinkUri(curUrl);
+                                this.Close();
+                                return;
+                            }
+
                             if (!string.IsNullOrEmpty(curUrl) && curUrl.Contains("ankama"))
                             {
                                 string txt = await _webView.CoreWebView2.ExecuteScriptAsync("(document.body && document.body.innerText ? document.body.innerText : '').replace(/\\s+/g, ' ').slice(0, 220)");

@@ -2989,9 +2989,18 @@ namespace DofusFarm.UI
                 }
                 else
                 {
-                    Log(string.Format("WebView2 {0}: running DIRECT egress (no manual proxy configured)", inst.Name));
-                    wired = _engine.EnsureProxyRunning(localProxyPort, null, serialNo, androidId, profile);
-                    upstream = null;
+                    if (FarmEngine.IsWarpInstalled() && FarmEngine.EnsureWarpRunning(msg => Log(msg)))
+                    {
+                        upstream = FarmEngine.WarpSocksUrl;
+                        Log(string.Format("WebView2 {0}: auto-routing through portable Cloudflare WARP ({1})", inst.Name, upstream));
+                        wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
+                    }
+                    else
+                    {
+                        Log(string.Format("WebView2 {0}: running DIRECT egress (no manual proxy configured)", inst.Name));
+                        wired = _engine.EnsureProxyRunning(localProxyPort, null, serialNo, androidId, profile);
+                        upstream = null;
+                    }
                 }
 
                 if (wired)
@@ -3169,9 +3178,8 @@ namespace DofusFarm.UI
                     }
 
                 }
-
                 catch { }
-
+                try { FarmEngine.StopWarp(); } catch { }
                 finally
 
                 {

@@ -312,6 +312,17 @@ namespace DofusBuild
                     if (File.Exists(p)) File.Copy(p, Path.Combine(stageDir, b), true);
                 }
 
+                string repoWarp = Path.Combine(RepoRoot, @"bin\warp");
+                if (Directory.Exists(repoWarp))
+                {
+                    string stageWarp = Path.Combine(stageDir, @"bin\warp");
+                    Directory.CreateDirectory(stageWarp);
+                    foreach (string wf in Directory.GetFiles(repoWarp))
+                    {
+                        File.Copy(wf, Path.Combine(stageWarp, Path.GetFileName(wf)), true);
+                    }
+                }
+
                 // Stage desktop assets (including webview_test.html)
                 string stageAssets = Path.Combine(stageDir, "assets");
                 Directory.CreateDirectory(stageAssets);

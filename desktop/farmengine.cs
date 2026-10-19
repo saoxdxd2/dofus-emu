@@ -836,6 +836,137 @@ namespace DofusFarm.Engine
             catch { return 0; }
         }
 
+        private static Process _warpProcess = null;
+        private static readonly object _warpLock = new object();
+        public const int WarpSocksPort = 40000;
+        public static readonly string WarpSocksUrl = "socks5://127.0.0.1:" + WarpSocksPort;
+
+        public static bool IsWarpInstalled()
+        {
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string wireproxy = Path.Combine(baseDir, @"bin\warp\wireproxy.exe");
+                string conf = Path.Combine(baseDir, @"bin\warp\wireproxy.conf");
+                if (File.Exists(wireproxy) && File.Exists(conf)) return true;
+
+                wireproxy = Path.Combine(Environment.CurrentDirectory, @"bin\warp\wireproxy.exe");
+                conf = Path.Combine(Environment.CurrentDirectory, @"bin\warp\wireproxy.conf");
+                return File.Exists(wireproxy) && File.Exists(conf);
+            }
+            catch { return false; }
+        }
+
+        public static bool IsWarpListening()
+        {
+            try
+            {
+                using (var tcp = new System.Net.Sockets.TcpClient())
+                {
+                    var ar = tcp.BeginConnect("127.0.0.1", WarpSocksPort, null, null);
+                    bool ok = ar.AsyncWaitHandle.WaitOne(400);
+                    if (ok && tcp.Connected)
+                    {
+                        tcp.EndConnect(ar);
+                        return true;
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        public static bool EnsureWarpRunning(Action<string> logger = null)
+        {
+            if (IsWarpListening()) return true;
+
+            lock (_warpLock)
+            {
+                if (IsWarpListening()) return true;
+
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string warpDir = Path.Combine(baseDir, @"bin\warp");
+                string wireproxy = Path.Combine(warpDir, "wireproxy.exe");
+                string conf = Path.Combine(warpDir, "wireproxy.conf");
+
+                if (!File.Exists(wireproxy) || !File.Exists(conf))
+                {
+                    warpDir = Path.Combine(Environment.CurrentDirectory, @"bin\warp");
+                    wireproxy = Path.Combine(warpDir, "wireproxy.exe");
+                    conf = Path.Combine(warpDir, "wireproxy.conf");
+                }
+
+                if (!File.Exists(wireproxy) || !File.Exists(conf))
+                {
+                    logger?.Invoke("[WARP] Portable Cloudflare WARP binaries not found in bin\\warp\\");
+                    return false;
+                }
+
+                try
+                {
+                    foreach (var p in Process.GetProcessesByName("wireproxy"))
+                    {
+                        try { p.Kill(); } catch { }
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    logger?.Invoke(string.Format("[WARP] Launching portable Cloudflare WARP WireGuard tunnel (SOCKS5 127.0.0.1:{0})...", WarpSocksPort));
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = wireproxy,
+                        Arguments = "-c \"" + conf + "\"",
+                        WorkingDirectory = warpDir,
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    };
+                    _warpProcess = Process.Start(psi);
+
+                    for (int i = 0; i < 15; i++)
+                    {
+                        System.Threading.Thread.Sleep(200);
+                        if (IsWarpListening())
+                        {
+                            logger?.Invoke(string.Format("[WARP] Cloudflare WARP Anycast tunnel ACTIVE on 127.0.0.1:{0}", WarpSocksPort));
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger?.Invoke("[WARP] Failed to start wireproxy: " + ex.Message);
+                }
+            }
+            return IsWarpListening();
+        }
+
+        public static void StopWarp()
+        {
+            lock (_warpLock)
+            {
+                try
+                {
+                    if (_warpProcess != null && !_warpProcess.HasExited)
+                    {
+                        _warpProcess.Kill();
+                        _warpProcess = null;
+                    }
+                }
+                catch { }
+                try
+                {
+                    foreach (var p in Process.GetProcessesByName("wireproxy"))
+                    {
+                        try { p.Kill(); } catch { }
+                    }
+                }
+                catch { }
+            }
+        }
+
         private static KeyValuePair<string, string>[] _cachedAccountPool = null;
         private static DateTime _cachedAccountPoolUtc = DateTime.MinValue;
         private static readonly object _accountPoolLock = new object();
@@ -2016,7 +2147,7 @@ namespace DofusFarm.Engine
             int slot = Math.Max(0, (port - 5554) / 2), localProxyPort = 8880 + slot;
             string upstreamProxy = HasManualProxy(proxy)
                 ? NormalizeUpstreamProxy(proxy)
-                : null;
+                : (IsWarpInstalled() && EnsureWarpRunning(null) ? WarpSocksUrl : null);
 
             DeviceProfile instProfile = GetInstancePhoneModel(name);
             string serialNo = (instProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant();
