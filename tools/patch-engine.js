@@ -1,6 +1,19 @@
 const fs = require('fs');
+const path = require('path');
 
-let s = fs.readFileSync('desktop/client/www/build/script.js', 'utf8');
+const targetPath = path.resolve(__dirname, '../desktop/client/www/build/script.js');
+const bakPath = path.resolve(__dirname, '../desktop/client/www/build/script.js.bak');
+
+if (!fs.existsSync(bakPath)) {
+    if (!fs.existsSync(targetPath)) {
+        console.error('Target script not found at:', targetPath);
+        process.exit(1);
+    }
+    fs.copyFileSync(targetPath, bakPath);
+    console.log('Created clean backup:', bakPath);
+}
+
+let s = fs.readFileSync(bakPath, 'utf8');
 
 // 1. Patch _setupTouchInteraction
 const startTouchIdx = s.indexOf('o.prototype._setupTouchInteraction=function(){');
@@ -74,5 +87,65 @@ s = s.replace('this._guardTimer=setTimeout(function(){if(_self.onLoadedCallback)
 s = s.replace('emit("ready");_self.obsolete=!0;}}},3500);', 'emit("ready");_self.obsolete=!0;}}},1200);');
 console.log('5. Fast safety timer (1200ms) patched.');
 
-fs.writeFileSync('desktop/client/www/build/script.js', s, 'utf8');
-console.log('All changes written to desktop/client/www/build/script.js successfully!');
+// 6. Remove server log writer from logger writer map
+const logWriterOld = 'var I={console:a,server:r}';
+const logWriterNew = 'var I={console:a}';
+if (s.indexOf(logWriterOld) === -1) {
+    console.error('Patch 6: Cannot find logger writer map!');
+    process.exit(1);
+}
+s = s.replace(logWriterOld, logWriterNew);
+console.log('6. Server log writer removed from logger writer map.');
+
+// 7. Remove Adjust SDK initialize call from analytics startup sequence
+const adjustInitOld = 'N.initHaapiModule(t.logger,t.connectionManager),I.init(window.Config.analytics,N),T.initialize(t.logger,window.Config.adjust,window.Adjust,window.AdjustConfig,window.AdjustEvent),S.initialize()';
+const adjustInitNew = 'N.initHaapiModule(t.logger,t.connectionManager),I.init(window.Config.analytics,N),S.initialize()';
+if (s.indexOf(adjustInitOld) === -1) {
+    console.error('Patch 7: Cannot find Adjust SDK initialize call!');
+    process.exit(1);
+}
+s = s.replace(adjustInitOld, adjustInitNew);
+console.log('7. Adjust SDK T.initialize() call removed from startup sequence.');
+
+// 8. Void performance telemetry fetch (/logger POST with GPU/RAM/FPS data)
+const perfFetchOld = 'window.fetch(p+"/logger",{method:"post",headers:f,body:JSON.stringify({channelName:"error",message:u,data:{label:"performance",sessionId:h}})})';
+const perfFetchNew = 'Promise.resolve()';
+if (s.indexOf(perfFetchOld) === -1) {
+    console.error('Patch 8: Cannot find performance telemetry fetch!');
+    process.exit(1);
+}
+s = s.replace(perfFetchOld, perfFetchNew);
+console.log('8. Performance telemetry fetch voided.');
+
+// 9. Spoof WebGL GPU fingerprint — fixed neutral vendor/renderer strings
+const webglFnOld = 'function Qe(){var e,t=document.createElement("canvas"),i=null!==(e=t.getContext("webgl"))&&void 0!==e?e:t.getContext("experimental-webgl");if(i&&"getExtension"in i){var n=i.getExtension("WEBGL_debug_renderer_info");if(n)return{vendor:(i.getParameter(n.UNMASKED_VENDOR_WEBGL)||"").toString(),renderer:(i.getParameter(n.UNMASKED_RENDERER_WEBGL)||"").toString()}}}';
+const webglFnNew = 'function Qe(){return{vendor:"ARM",renderer:"Mali-G78"}}';
+if (s.indexOf(webglFnOld) === -1) {
+    console.error('Patch 9: Cannot find WebGL fingerprint function Qe!');
+    process.exit(1);
+}
+s = s.replace(webglFnOld, webglFnNew);
+console.log('9. WebGL GPU fingerprint spoofed to fixed ARM/Mali-G78 profile.');
+
+// 10. Void logger writer raw fetch call (belt-and-suspenders on top of fetch intercept §20)
+const logFetchOld = 'window.fetch(s+"/logger",{method:"post",headers:c,body:JSON.stringify({channelName:e,message:i.message,data:i.data})})';
+const logFetchNew = 'void 0';
+if (s.indexOf(logFetchOld) === -1) {
+    console.error('Patch 10: Cannot find logger writer fetch call!');
+    process.exit(1);
+}
+s = s.replace(logFetchOld, logFetchNew);
+console.log('10. Logger writer raw fetch call voided at source.');
+
+// 11. Short-circuit font fingerprinter probe-map builder — return empty object
+const fontProbeOld = 'd=function(){for(var e={},t=function(t){e[t]=bt.map(function(e){return c(t,e)})},i=0,n=gt;i<n.length;i++){var o=n[i];t(o)}return e}';
+const fontProbeNew = 'd=function(){return{}}';
+if (s.indexOf(fontProbeOld) === -1) {
+    console.error('Patch 11: Cannot find font fingerprinter probe-map builder!');
+    process.exit(1);
+}
+s = s.replace(fontProbeOld, fontProbeNew);
+console.log('11. Font fingerprinter probe-map builder short-circuited.');
+
+fs.writeFileSync(targetPath, s, 'utf8');
+console.log('All changes written to ' + targetPath + ' successfully!');

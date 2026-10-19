@@ -2491,8 +2491,11 @@ func feedMapIDs(spec string, fn func(id int) bool) {
 		if hi < lo {
 			hi = lo
 		}
-		if hi > 2000000 {
-			hi = 2000000
+		if hi > 2000000000 {
+			hi = 2000000000
+		}
+		if hi-lo > 200000 {
+			hi = lo + 200000
 		}
 		for id := lo; id <= hi; id++ {
 			if !fn(id) {

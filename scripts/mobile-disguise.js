@@ -843,4 +843,381 @@
             } catch(e) {}
         }, 500);
     } catch (e) {}
+
+    // 20. Fetch intercept — silence all /logger POSTs
+    try {
+        var _nativeFetch = window.fetch;
+        window.fetch = function(url, opts) {
+            var u = (typeof url === 'string') ? url : (url && url.url) || '';
+            if (u.indexOf('/logger') !== -1) {
+                return Promise.resolve(new Response(null, { status: 204, statusText: 'No Content' }));
+            }
+            return _nativeFetch.apply(this, arguments);
+        };
+    } catch(e) {}
+
+    // 21. Adjust SDK globals stub — prevent Adjust from initialising
+    try {
+        var _adjustNoop = function() {};
+        var _adjustNoopObj = {
+            trackEvent: _adjustNoop,
+            addGlobalCallbackParameter: _adjustNoop,
+            addGlobalPartnerParameter: _adjustNoop,
+            switchToOfflineMode: _adjustNoop,
+            switchBackToOnlineMode: _adjustNoop,
+            stop: _adjustNoop,
+            restart: _adjustNoop,
+            appWillOpenUrl: _adjustNoop,
+            setEnabled: _adjustNoop,
+            isEnabled: function() { return false; },
+            getAdid: function() { return null; },
+            getAttribution: function() { return null; }
+        };
+        if (!window.Adjust) window.Adjust = _adjustNoopObj;
+        if (!window.AdjustConfig) {
+            window.AdjustConfig = function() { return {}; };
+            window.AdjustConfig.LogLevel = { VERBOSE: 'verbose', DEBUG: 'debug', INFO: 'info', WARN: 'warn', ERROR: 'error', ASSERT: 'assert', SUPPRESS: 'suppress' };
+        }
+        if (!window.AdjustEvent) {
+            window.AdjustEvent = function(token) { this.token = token; };
+            window.AdjustEvent.prototype.addCallbackParameter = _adjustNoop;
+            window.AdjustEvent.prototype.addPartnerParameter = _adjustNoop;
+        }
+    } catch(e) {}
+
+    // 22. HAAPI sendKPIEvent intercept via window.dofus setter
+    try {
+        var _dofusReal = window.dofus;
+        Object.defineProperty(window, 'dofus', {
+            configurable: true,
+            get: function() { return _dofusReal; },
+            set: function(v) {
+                _dofusReal = v;
+                if (v && v.sendKPIEvent) {
+                    v.sendKPIEvent = function() { return Promise.resolve(); };
+                }
+            }
+        });
+        if (_dofusReal && _dofusReal.sendKPIEvent) {
+            _dofusReal.sendKPIEvent = function() { return Promise.resolve(); };
+        }
+    } catch(e) {}
+
+    // 23. storage.estimate() normaliser — consistent profile
+    try {
+        if (navigator.storage && navigator.storage.estimate) {
+            var _nativeEstimate = navigator.storage.estimate.bind(navigator.storage);
+            Object.defineProperty(navigator.storage, 'estimate', {
+                configurable: true,
+                writable: true,
+                value: function() {
+                    return Promise.resolve({ quota: 2147483648, usage: 104857600 });
+                }
+            });
+        }
+    } catch(e) {}
+
+    // 24. permissions.query profile normaliser — consistent 'prompt' state
+    try {
+        if (navigator.permissions && navigator.permissions.query) {
+            var _nativeQuery = navigator.permissions.query.bind(navigator.permissions);
+            navigator.permissions.query = function(descriptor) {
+                var safe = ['geolocation','notifications','push','midi','camera','microphone',
+                            'speaker','device-info','background-fetch','background-sync',
+                            'bluetooth','persistent-storage','ambient-light-sensor',
+                            'accelerometer','gyroscope','magnetometer','clipboard-read',
+                            'clipboard-write','payment-handler','idle-detection'];
+                if (descriptor && safe.indexOf(descriptor.name) !== -1) {
+                    return Promise.resolve({ state: 'prompt', onchange: null });
+                }
+                return _nativeQuery(descriptor);
+            };
+        }
+    } catch(e) {}
+
+    // 25. High-Speed Auto-Fight Pipeline with Floating HUD, F2 Hotkey, and C# Sync
+    try {
+        var FarmBot = {
+            enabled: false,
+            config: {
+                aoeSpellId: 164,       // Flèche Explosive (Cra) or primary AOE
+                autoReadyDelayMs: 20,   // Delay before GameFightTurnReadyMessage
+                autoFinishDelayMs: 15   // Delay before GameFightTurnFinishMessage
+            },
+            state: {
+                inFight: false,
+                myTurn: false
+            },
+
+            setEnabled: function(val) {
+                this.enabled = !!val;
+                this.updateHud();
+                this.syncToHost();
+                console.log('[FarmBot] Auto-fight state: ' + (this.enabled ? 'ACTIVE (Sub-20ms turns)' : 'INACTIVE (Manual play)'));
+            },
+
+            toggle: function() {
+                this.setEnabled(!this.enabled);
+            },
+
+            syncToHost: function() {
+                try {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage(JSON.stringify({
+                            type: 'FARMBOT_STATE',
+                            enabled: this.enabled
+                        }));
+                    }
+                } catch(e) {}
+            },
+
+            init: function() {
+                this.createHud();
+                this.bindKeyListeners();
+                this.waitForConnection();
+            },
+
+            createHud: function() {
+                var self = this;
+                function injectBadge() {
+                    if (document.getElementById('__farmbot_hud')) return;
+                    if (!document.body) { setTimeout(injectBadge, 300); return; }
+                    var badge = document.createElement('div');
+                    badge.id = '__farmbot_hud';
+                    badge.style.position = 'fixed';
+                    badge.style.top = '10px';
+                    badge.style.right = '12px';
+                    badge.style.zIndex = '999999';
+                    badge.style.padding = '5px 12px';
+                    badge.style.borderRadius = '16px';
+                    badge.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+                    badge.style.fontSize = '11px';
+                    badge.style.fontWeight = 'bold';
+                    badge.style.cursor = 'pointer';
+                    badge.style.userSelect = 'none';
+                    badge.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
+                    badge.style.transition = 'all 0.2s ease-in-out';
+                    badge.title = 'Click or press F2 to toggle High-Speed Auto-Fight';
+
+                    badge.onclick = function(e) {
+                        e.stopPropagation();
+                        self.toggle();
+                    };
+
+                    document.body.appendChild(badge);
+                    self.updateHud();
+                }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', injectBadge);
+                } else {
+                    injectBadge();
+                }
+            },
+
+            updateHud: function() {
+                var badge = document.getElementById('__farmbot_hud');
+                if (!badge) return;
+                if (this.enabled) {
+                    badge.textContent = '⚡ THX-01 AI: ACTIVE (F2)';
+                    badge.style.backgroundColor = '#10b981';
+                    badge.style.color = '#ffffff';
+                    badge.style.border = '1px solid #34d399';
+                    badge.style.boxShadow = '0 0 12px rgba(16,185,129,0.7)';
+                } else {
+                    badge.textContent = '⚡ THX-01 AI: OFF (F2)';
+                    badge.style.backgroundColor = 'rgba(30, 41, 59, 0.85)';
+                    badge.style.color = '#94a3b8';
+                    badge.style.border = '1px solid rgba(100, 116, 139, 0.4)';
+                    badge.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+                }
+            },
+
+            bindKeyListeners: function() {
+                var self = this;
+                window.addEventListener('keydown', function(e) {
+                    if (e.key === 'F2') {
+                        e.preventDefault();
+                        self.toggle();
+                    }
+                }, true);
+            },
+
+            waitForConnection: function() {
+                var self = this;
+                var checkInterval = setInterval(function() {
+                    if (window.dofus && window.dofus.connectionManager) {
+                        clearInterval(checkInterval);
+                        self.bindNetworkHooks(window.dofus.connectionManager);
+                    }
+                }, 300);
+            },
+
+            bindNetworkHooks: function(cm) {
+                var self = this;
+                console.log('[FarmBot] Bound to connection manager.');
+
+                cm.on('GameFightStartingMessage', function(msg) {
+                    self.state.inFight = true;
+                });
+
+                cm.on('GameFightPlacementPossiblePositionsMessage', function() {
+                    if (!self.enabled) return;
+                    setTimeout(function() {
+                        self.sendPacket('GameFightOptionToggleMessage', { option: 2 });
+                        self.sendPacket('GameFightTurnReadyMessage', { isReady: true });
+                    }, self.config.autoReadyDelayMs);
+                });
+
+                cm.on('GameFightTurnStartMessage', function(msg) {
+                    if (!self.enabled) return;
+                    if (self.isUserActor(msg.id)) {
+                        self.state.myTurn = true;
+                        self.executeOptimalTurn(cm, msg.id);
+                    }
+                });
+
+                cm.on('GameFightEndMessage', function(msg) {
+                    self.state.inFight = false;
+                    self.state.myTurn = false;
+                });
+            },
+
+            executeOptimalTurn: function(cm, fighterId) {
+                var self = this;
+                var charData = (window.gui && window.gui.playerData && window.gui.playerData.character) || {};
+                var charCell = (charData.position && charData.position.cell) || 250;
+                var charAp = charData.ap || 6;
+                var charMp = charData.mp || 3;
+                var charHp = charData.lifePoints || 400;
+                var charMaxHp = charData.maxLifePoints || 400;
+                var breed = (charData.breed && charData.breed.name) || 'Cra';
+
+                var monsters = [];
+                if (window.isoEngine && window.isoEngine.actorManager) {
+                    var actors = window.isoEngine.actorManager.getActors();
+                    for (var id in actors) {
+                        var a = actors[id];
+                        if (a && a.isMonster && a.cellId) {
+                            monsters.push({
+                                id: a.id || -1,
+                                name: a.name || 'Monster',
+                                hp: a.lifePoints || 500,
+                                cellId: a.cellId
+                            });
+                        }
+                    }
+                }
+
+                var aiPayload = {
+                    turn: 1,
+                    player: {
+                        id: fighterId,
+                        breed: breed,
+                        hp: charHp,
+                        maxHp: charMaxHp,
+                        ap: charAp,
+                        mp: charMp,
+                        cellId: charCell
+                    },
+                    monsters: monsters
+                };
+
+                // Query THX-01 ModernBERT combat decision server with 750ms abort timeout
+                var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+                var timeoutId = controller ? setTimeout(function() { try { controller.abort(); } catch(e){} }, 750) : null;
+
+                fetch('http://127.0.0.1:8892/v1/combat/decide', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(aiPayload),
+                    signal: controller ? controller.signal : undefined
+                }).then(function(resp) {
+                    if (timeoutId) clearTimeout(timeoutId);
+                    if (!resp.ok) throw new Error('AI Server ' + resp.status);
+                    return resp.json();
+                }).then(function(data) {
+                    if (data && data.status === 'ok' && Array.isArray(data.actions) && data.actions.length > 0) {
+                        console.log('[FarmBot AI] THX-01 Decision: Stance=' + data.stance + ' (Conf: ' + (data.confidence * 100).toFixed(1) + '%) -> ' + data.actions.length + ' actions');
+                        self.dispatchActionSequence(data.actions, 0);
+                    } else {
+                        self.executeFallbackBurst();
+                    }
+                }).catch(function(err) {
+                    if (timeoutId) clearTimeout(timeoutId);
+                    self.executeFallbackBurst();
+                });
+            },
+
+            dispatchActionSequence: function(actions, index) {
+                var self = this;
+                if (!this.state.myTurn) return;
+                if (index >= actions.length) {
+                    setTimeout(function() {
+                        self.sendPacket('GameFightTurnFinishMessage', { isAfk: false });
+                        self.state.myTurn = false;
+                    }, this.config.autoFinishDelayMs);
+                    return;
+                }
+
+                var act = actions[index];
+                if (act.type === 'CAST') {
+                    this.sendPacket('GameActionFightCastRequestMessage', {
+                        spellId: act.spellId,
+                        cellId: act.cellId
+                    });
+                } else if (act.type === 'MOVE') {
+                    this.sendPacket('GameActionFightMovementRequestMessage', {
+                        keyMovements: [act.cellId]
+                    });
+                }
+
+                setTimeout(function() {
+                    self.dispatchActionSequence(actions, index + 1);
+                }, 20);
+            },
+
+            executeFallbackBurst: function() {
+                var self = this;
+                var targetCell = this.resolveOptimalTargetCell();
+                this.sendPacket('GameActionFightCastRequestMessage', {
+                    spellId: this.config.aoeSpellId,
+                    cellId: targetCell
+                });
+                setTimeout(function() {
+                    self.sendPacket('GameFightTurnFinishMessage', { isAfk: false });
+                    self.state.myTurn = false;
+                }, this.config.autoFinishDelayMs);
+            },
+
+            resolveOptimalTargetCell: function() {
+                if (window.isoEngine && window.isoEngine.actorManager) {
+                    var actors = window.isoEngine.actorManager.getActors();
+                    for (var id in actors) {
+                        var actor = actors[id];
+                        if (actor && actor.isMonster && actor.cellId) {
+                            return actor.cellId;
+                        }
+                    }
+                }
+                return 250;
+            },
+
+            sendPacket: function(messageType, payload) {
+                if (window.dofus && window.dofus.connectionManager) {
+                    window.dofus.connectionManager.sendMessage(messageType, payload);
+                }
+            },
+
+            isUserActor: function(id) {
+                if (window.gui && window.gui.playerData && window.gui.playerData.character) {
+                    return window.gui.playerData.character.id === id;
+                }
+                return true;
+            }
+        };
+
+        FarmBot.init();
+        window.__FarmBot = FarmBot;
+    } catch(e) {}
+
 })();

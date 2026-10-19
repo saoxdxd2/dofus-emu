@@ -150,6 +150,8 @@ namespace DofusFarm.UI
 
         private Button _btnCascade;
 
+        private Button _btnProxies;
+
 
 
         private Label _lblBackend;
@@ -658,13 +660,23 @@ namespace DofusFarm.UI
 
             _btnCascade = CreateButton("Cascade", Color.FromArgb(40, 44, 58), Color.FromArgb(55, 62, 80), Color.White, 72, btnH, false, 532, btnY, OnCascadeClick);
 
-
+            _btnProxies = CreateButton("🎲 Proxies", Color.FromArgb(79, 70, 229), Color.FromArgb(99, 102, 241), Color.White, 84, btnH, false, 610, btnY, delegate
+            {
+                string p = Path.Combine(Environment.CurrentDirectory, "proxies.txt");
+                if (!File.Exists(p)) p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "proxies.txt");
+                try
+                {
+                    if (File.Exists(p)) Process.Start("notepad.exe", p);
+                    else MessageBox.Show("proxies.txt not found.", "Proxies Pool", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex) { MessageBox.Show("Error opening proxies.txt: " + ex.Message); }
+            });
 
             Color lblCol = Color.FromArgb(180, 185, 195);
 
-            _lblBackend = new Label { Text = "Engine:", ForeColor = lblCol, AutoSize = true, Location = new Point(620, 15) };
+            _lblBackend = new Label { Text = "Engine:", ForeColor = lblCol, AutoSize = true, Location = new Point(704, 15) };
 
-            _cmbBackend = CreateCombo(675, 12, 195, new object[] { "⚡ Standalone WebView2", "🤖 Android Emulator" }, 0);
+            _cmbBackend = CreateCombo(758, 12, 190, new object[] { "⚡ Standalone WebView2", "🤖 Android Emulator" }, 0);
 
             _cmbBackend.SelectedIndexChanged += OnBackendChanged;
 
@@ -833,6 +845,10 @@ namespace DofusFarm.UI
             _rowMenu.Items.Add(new ToolStripSeparator());
 
             _rowMenu.Items.Add("Edit Instance...", null, delegate { OnEditSelectedClick(null, EventArgs.Empty); });
+
+            _rowMenu.Items.Add("🎲 Randomize Proxy (Pin Once)", null, delegate { RandomizeSelectedInstanceProxy(); });
+
+            _rowMenu.Items.Add("🔄 Reset to Auto-Random (Default)", null, delegate { ResetSelectedInstanceProxy(); });
 
             _rowMenu.Items.Add("Clone Instance...", null, delegate { TriggerSelectedRowAction("Clone"); });
 
@@ -1694,6 +1710,8 @@ namespace DofusFarm.UI
 
                 };
 
+                WireWebView2LocalProxy(opts, inst);
+
                 _webViewBackend.Start(opts);
 
             }
@@ -2170,6 +2188,8 @@ namespace DofusFarm.UI
 
                                 };
 
+                                WireWebView2LocalProxy(opts, im);
+
                                 _webViewBackend.Start(opts);
 
                                 // Natural human stagger: 2.5s - 3.8s between client connection handshakes
@@ -2432,11 +2452,13 @@ namespace DofusFarm.UI
 
         {
 
+            if (!FarmEngine.HasManualProxy(raw)) return "";
+
             string s = (raw ?? "").Trim();
 
             if (s.StartsWith("[🌐] ")) s = s.Substring(5).Trim();
 
-            return (s.StartsWith("[⚡]") || s.Contains("127.0.0.1:8880") || s.Contains("Accelerator")) ? "" : s;
+            return s;
 
         }
 
@@ -2593,6 +2615,49 @@ namespace DofusFarm.UI
         }
 
 
+
+        private void RandomizeSelectedInstanceProxy()
+        {
+            if (_grid.SelectedRows.Count == 0) return;
+            var inst = _grid.SelectedRows[0].Tag as InstanceModel;
+            if (inst == null) return;
+
+            string rnd = FarmEngine.GetRandomProxy();
+            if (string.IsNullOrEmpty(rnd))
+            {
+                MessageBox.Show("No proxies found in proxies.txt.\r\nAdd your proxies to proxies.txt to use the randomizer.", "Proxy Pool Empty", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                _engine.UpdateInstanceConfig(inst.Name, inst.CustomName ?? inst.DisplayName, inst.RamMb, inst.Cores, inst.PhoneModelId, rnd);
+                Log(string.Format("🎲 Random proxy assigned to {0}: {1}", inst.Name, rnd));
+                RefreshGrid(true);
+            }
+            catch (Exception ex)
+            {
+                Log(string.Format("Failed to randomize proxy for {0}: {1}", inst.Name, ex.Message));
+            }
+        }
+
+        private void ResetSelectedInstanceProxy()
+        {
+            if (_grid.SelectedRows.Count == 0) return;
+            var inst = _grid.SelectedRows[0].Tag as InstanceModel;
+            if (inst == null) return;
+
+            try
+            {
+                _engine.UpdateInstanceConfig(inst.Name, inst.CustomName ?? inst.DisplayName, inst.RamMb, inst.Cores, inst.PhoneModelId, "");
+                Log(string.Format("🔄 Reset {0} to default automatic proxy randomization.", inst.Name));
+                RefreshGrid(true);
+            }
+            catch (Exception ex)
+            {
+                Log(string.Format("Failed to reset proxy for {0}: {1}", inst.Name, ex.Message));
+            }
+        }
 
         private void OpenEditDialogForInstance(InstanceModel inst)
 
@@ -2898,23 +2963,13 @@ namespace DofusFarm.UI
 
             {
 
-                string pTrim = (inst.Proxy ?? "").Trim();
-
-                bool useUpstream = pTrim.Length > 0 &&
-
-                    !pTrim.Equals("DIRECT", StringComparison.OrdinalIgnoreCase) &&
-
-                    !pTrim.Equals("[DIRECT] DIRECT", StringComparison.OrdinalIgnoreCase) &&
-
-                    !pTrim.Contains("[⚡]") &&
-
-                    !pTrim.Equals("127.0.0.1:8880", StringComparison.OrdinalIgnoreCase);
-
-                string upstream = useUpstream ? FarmEngine.NormalizeUpstreamProxy(inst.Proxy) : null;
-
-
-
                 int slot = Math.Max(0, (inst.Port - 5554) / 2), localProxyPort = 8880 + slot;
+
+                string upstream = null;
+
+                bool manualProxy = FarmEngine.HasManualProxy(inst.Proxy);
+
+                if (manualProxy) upstream = FarmEngine.NormalizeUpstreamProxy(inst.Proxy);
 
                 DeviceProfile profile = _engine.GetInstancePhoneModel(inst.Name);
 
@@ -2926,7 +2981,83 @@ namespace DofusFarm.UI
 
 
 
-                if (_engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile))
+                bool wired = false;
+
+                if (manualProxy)
+
+                {
+
+                    wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
+
+                }
+
+                else
+
+                {
+
+                    var candidates = FarmEngine.GetShuffledProxyPool();
+
+                    string lastCandidate = null;
+
+                    int maxTries = Math.Min(candidates.Length, 8);
+
+                    int tried = 0;
+
+                    if (candidates.Length == 0)
+
+                    {
+
+                        Log(string.Format("WebView2 {0}: proxies.txt empty - wiring DIRECT (no pool configured)", inst.Name));
+
+                        wired = _engine.EnsureProxyRunning(localProxyPort, null, serialNo, androidId, profile);
+
+                    }
+
+                    else foreach (var cand in candidates)
+
+                    {
+
+                        if (tried >= maxTries) break;
+
+                        tried++;
+
+                        if (!_engine.EnsureProxyRunning(localProxyPort, cand, serialNo, androidId, profile)) break;
+
+                        lastCandidate = cand;
+
+                        if (FarmEngine.PreflightProxyViaRelay(localProxyPort, 6000))
+
+                        {
+
+                            upstream = cand;
+
+                            wired = true;
+
+                            Log(string.Format("WebView2 {0}: preflight OK on {1} (attempt {2})", inst.Name, cand, tried));
+
+                            break;
+
+                        }
+
+                        Log(string.Format("WebView2 {0}: preflight failed on {1} - trying next", inst.Name, cand));
+
+                    }
+
+                    if (!wired && lastCandidate != null)
+
+                    {
+
+                        upstream = lastCandidate;
+
+                        wired = _engine.EnsureProxyRunning(localProxyPort, lastCandidate, serialNo, androidId, profile);
+
+                        Log(string.Format("WebView2 {0}: no candidate passed preflight ({1} tried) - using {2} anyway (never DIRECT while a pool exists)", inst.Name, tried, lastCandidate));
+
+                    }
+
+                }
+
+                if (wired)
 
                 {
 
@@ -2936,7 +3067,7 @@ namespace DofusFarm.UI
 
                     Log(string.Format("WebView2 {0}: relay proxy on 127.0.0.1:{1} (upstream: {2})",
 
-                        inst.Name, localProxyPort, string.IsNullOrEmpty(upstream) ? "DIRECT" : upstream));
+                        inst.Name, localProxyPort, string.IsNullOrEmpty(upstream) ? "DIRECT (proxies.txt empty)" : upstream));
 
                 }
 
@@ -3170,6 +3301,8 @@ namespace DofusFarm.UI
 
         private TextBox _txtProxy;
 
+        private Button _btnRandomProxy;
+
         private Button _btnSave;
 
         private Button _btnCancel;
@@ -3286,9 +3419,35 @@ namespace DofusFarm.UI
 
             {
 
-                Text = MainForm.NormalizeProxyForComparison(currentProxy), Location = new Point(165, y), Width = 315,
+                Text = MainForm.NormalizeProxyForComparison(currentProxy), Location = new Point(165, y), Width = 235,
 
                 BackColor = inputBg, ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Consolas", 9.5f)
+
+            };
+
+            _btnRandomProxy = new Button
+
+            {
+
+                Text = "Random", Location = new Point(406, y - 1), Size = new Size(74, 26),
+
+                BackColor = Color.FromArgb(79, 70, 229), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
+
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), Cursor = Cursors.Hand
+
+            };
+
+            _btnRandomProxy.FlatAppearance.BorderSize = 0;
+
+            _btnRandomProxy.Click += delegate
+
+            {
+
+                string rnd = FarmEngine.GetRandomProxy();
+
+                if (!string.IsNullOrEmpty(rnd)) _txtProxy.Text = rnd;
+
+                else MessageBox.Show(this, "No proxies found in proxies.txt.\r\nAdd proxies (one per line) in proxies.txt first.", "Proxy Pool Empty", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
             };
 
@@ -3296,7 +3455,7 @@ namespace DofusFarm.UI
 
             {
 
-                Text = "Format: IP:Port (leave blank to use the built-in high-speed network accelerator).",
+                Text = "Format: IP:Port (leave blank to auto-assign from proxies.txt).",
 
                 Location = new Point(165, y + 28), Size = new Size(320, 32), ForeColor = Color.FromArgb(148, 163, 184), Font = new Font("Segoe UI", 8.2f)
 
@@ -3390,7 +3549,7 @@ namespace DofusFarm.UI
 
                 lblName, _txtCustomName, lblRes, lblResVal,
 
-                lblPhone, _cmbProfiles, _btnRandomProfile, lblProxy, _txtProxy, lblProxyHint, _btnSave, _btnCancel
+                lblPhone, _cmbProfiles, _btnRandomProfile, lblProxy, _txtProxy, _btnRandomProxy, lblProxyHint, _btnSave, _btnCancel
 
             });
 

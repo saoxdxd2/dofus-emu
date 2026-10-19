@@ -35,7 +35,10 @@ namespace DofusFarm.Engine
         }
 
         private readonly ClientLaunchOptions _options;
+        public ClientLaunchOptions Options { get { return _options; } }
         private readonly string _instanceId;
+        private string _lastGuestCode;
+        private string _lastGuestTokensRaw;
         private readonly string _displayName;
         private readonly string _userDataDir;
         private readonly string _entryUrl;
@@ -93,11 +96,13 @@ namespace DofusFarm.Engine
         private Label _lblStatus;
         private Label _lblMemory;
         private Button _btnZoom;
+        private Button _btnAutoFight;
         private Button _btnDevTools;
         private Button _btnReload;
         private System.Windows.Forms.Timer _telemetryTimer;
 
         private bool _autoZoomEnabled = true;
+        private bool _autoFightEnabled = false;
         private bool _isUpdatingZoom = false;
         private double _currentZoomFactor = 1.0;
 
@@ -119,6 +124,16 @@ namespace DofusFarm.Engine
                 return await _webView.CoreWebView2.ExecuteScriptAsync(script);
             }
             return null;
+        }
+
+        // Host-performed guest token exchange result. The game's own cross-site
+        // fetch cannot carry the popup's SameSite=Lax aws-waf-token cookie, so
+        // when the host pre-exchanges the code it stores the raw token JSON
+        // here; the shim then asks for it via the webauth_exchange message.
+        public void SetGuestExchangeResult(string code, string rawTokensJson)
+        {
+            _lastGuestCode = code;
+            _lastGuestTokensRaw = rawTokensJson;
         }
 
         public async Task<bool> CaptureScreenshotAsync(string outputPath)
@@ -455,6 +470,22 @@ namespace DofusFarm.Engine
             };
             _toolbarPanel.Controls.Add(_lblMemory);
 
+            _btnAutoFight = new Button
+            {
+                Text = "⚡ THX-01: OFF",
+                Size = new Size(100, 24),
+                Location = new Point(Width - 380, 4),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(51, 65, 85),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            _btnAutoFight.FlatAppearance.BorderSize = 0;
+            _btnAutoFight.Click += (s, e) => ToggleAutoFight();
+            _toolbarPanel.Controls.Add(_btnAutoFight);
+
             _btnZoom = new Button
             {
                 Text = "🔍 Auto",
@@ -584,8 +615,8 @@ namespace DofusFarm.Engine
                 // Performance & GPU rendering flags
                 args.Append("--enable-gpu-rasterization --ignore-gpu-blocklist --use-angle=d3d11 --enable-webgl --enable-accelerated-2d-canvas ");
 
-                // Native mobile touch and automation suppression switches
-                args.Append("--touch-events=enabled --disable-blink-features=AutomationControlled ");
+                // Native mobile touch, automation suppression switches, and WebRTC IP leak shield
+                args.Append("--touch-events=enabled --disable-blink-features=AutomationControlled --force-webrtc-ip-handling-policy=disable_non_proxied_udp --disable-features=WebRtcHideLocalIpsWithMdns ");
 
                 // Allow cross-origin requests from virtual host https://dofus.local to Ankama Auth & CDN
                 args.Append("--disable-web-security --allow-running-insecure-content ");
@@ -993,6 +1024,15 @@ namespace DofusFarm.Engine
                 {
                     _webView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"pong\",\"reply\":\"Hello from C# WinForms Host!\"}");
                 }
+                else if (json.Contains("\"type\":\"FARMBOT_STATE\""))
+                {
+                    Match m = Regex.Match(json, "\"enabled\"\\s*:\\s*(true|false)");
+                    if (m.Success)
+                    {
+                        _autoFightEnabled = bool.Parse(m.Groups[1].Value);
+                        UpdateAutoFightButtonState();
+                    }
+                }
                 else if (json.Contains("\"type\":\"diagnostics_report\""))
                 {
                     OnDiagnosticReport?.Invoke(_instanceId, json);
@@ -1009,6 +1049,26 @@ namespace DofusFarm.Engine
                 else if (json.Contains("\"type\":\"close_oauth\""))
                 {
                     CloseOAuthDialog();
+                }
+                else if (json.Contains("\"type\":\"webauth_exchange\""))
+                {
+                    Match mCode = Regex.Match(json, "\"code\"\\s*:\\s*\"([^\"]+)\"");
+                    string code = mCode.Success ? mCode.Groups[1].Value : null;
+                    string shortCode = (code != null && code.Length > 8) ? code.Substring(0, 8) + "..." : code;
+                    if (code != null && code == _lastGuestCode && !string.IsNullOrEmpty(_lastGuestTokensRaw))
+                    {
+                        string raw = _lastGuestTokensRaw;
+                        _lastGuestTokensRaw = null;
+                        _webView.CoreWebView2.PostWebMessageAsJson(
+                            "{\"type\":\"webauth_tokens\",\"ok\":true,\"code\":\"" + code + "\",\"raw\":" + raw + "}");
+                        _logCallback?.Invoke(string.Format("[{0}] [WEBAUTH] Delivered pre-exchanged guest tokens to game (code {1})", _instanceId, shortCode));
+                    }
+                    else
+                    {
+                        _webView.CoreWebView2.PostWebMessageAsJson(
+                            "{\"type\":\"webauth_tokens\",\"ok\":false,\"code\":\"" + (code ?? "") + "\"}");
+                        _logCallback?.Invoke(string.Format("[{0}] [WEBAUTH] No pre-exchanged tokens for code {1}; game falls back to its own fetch", _instanceId, shortCode));
+                    }
                 }
                 else if (json.Contains("\"type\":\"MOD_WHISPER_ALERT\""))
                 {
@@ -1645,16 +1705,56 @@ namespace DofusFarm.Engine
                 string dispatchJs = string.Format(
                     "(function() {{" +
                     "  var target = '{0}';" +
-                    "  if (typeof window.__onDeepLinkCallback === 'function') {{" +
-                    "    window.__onDeepLinkCallback(target);" +
-                    "  }} else if (window.IonicDeeplink && typeof window.IonicDeeplink.fire === 'function') {{" +
-                    "    window.IonicDeeplink.fire({{ url: target }});" +
-                    "  }} else {{" +
-                    "    window.location.href = target;" +
+                    "  function diag(t) {{ try {{ if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage({{ type: 'CDN_RELAY_DIAG', text: '[DEEPLINK-DIAG] ' + t }}); }} catch (e) {{}} }}" +
+                    "  diag('enter url=' + String(target).slice(0, 140));" +
+                    "  try {{" +
+                    "    if (typeof window.__onDeepLinkCallback === 'function') {{" +
+                    "      diag('branch=www-callback');" +
+                    "      window.__onDeepLinkCallback(target);" +
+                    "      diag('branch=www-callback-returned');" +
+                    "      return 'www-callback';" +
+                    "    }} else if (window.IonicDeeplink && typeof window.IonicDeeplink.fire === 'function') {{" +
+                    "      diag('branch=ionic-fire');" +
+                    "      window.IonicDeeplink.fire({{ url: target }});" +
+                    "      diag('branch=ionic-fire-returned');" +
+                    "      return 'ionic-fire';" +
+                    "    }} else {{" +
+                    "      diag('branch=location-href');" +
+                    "      window.location.href = target;" +
+                    "      return 'location-href';" +
+                    "    }}" +
+                    "  }} catch (e) {{" +
+                    "    diag('dispatch-error ' + (e && e.message ? e.message : String(e)));" +
+                    "    return 'error:' + (e && e.message ? e.message : String(e));" +
                     "  }}" +
                     "}})();", escapedUri);
 
-                _webView.CoreWebView2.ExecuteScriptAsync(dispatchJs);
+                DispatchDeepLinkDiagnosticsAsync(normalizedUri, dispatchJs);
+            }
+        }
+
+        private async void DispatchDeepLinkDiagnosticsAsync(string normalizedUri, string dispatchJs)
+        {
+            string shortUri = normalizedUri.Length > 70 ? normalizedUri.Substring(0, 70) + "..." : normalizedUri;
+            try
+            {
+                string probeJs =
+                    "(function () { try { return JSON.stringify({" +
+                    " callbackType: typeof window.__onDeepLinkCallback," +
+                    " callbackIsCSharp: typeof window.__onDeepLinkCallback === 'function' && String(window.__onDeepLinkCallback).indexOf('window.dofus') !== -1," +
+                    " hasIonicDeeplink: !!(window.IonicDeeplink && typeof window.IonicDeeplink.fire === 'function')," +
+                    " hasWebAuth: !!(window.__webAuth && typeof window.__webAuth.connectThroughIonicDeepLink === 'function')," +
+                    " hasDofusWebAuth: !!(window.dofus && window.dofus.webAuth && typeof window.dofus.webAuth.connectThroughIonicDeepLink === 'function')" +
+                    " }); } catch (e) { return 'probe-error:' + e.message; } })();";
+                string probeResult = await _webView.CoreWebView2.ExecuteScriptAsync(probeJs);
+                _logCallback?.Invoke(string.Format("[{0}] [DEEPLINK-DIAG] probe {1} -> {2}", _instanceId, shortUri, probeResult));
+
+                string dispatchResult = await _webView.CoreWebView2.ExecuteScriptAsync(dispatchJs);
+                _logCallback?.Invoke(string.Format("[{0}] [DEEPLINK-DIAG] dispatch result: {1}", _instanceId, dispatchResult));
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] [DEEPLINK-DIAG] failed: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -1702,6 +1802,37 @@ namespace DofusFarm.Engine
                 {
                     _activeOAuthDialog = null;
                 }
+            }
+        }
+
+        private void ToggleAutoFight()
+        {
+            _autoFightEnabled = !_autoFightEnabled;
+            UpdateAutoFightButtonState();
+            if (IsReady && _webView != null && _webView.CoreWebView2 != null)
+            {
+                string js = string.Format("window.__FarmBot && window.__FarmBot.setEnabled({0});", _autoFightEnabled ? "true" : "false");
+                _webView.CoreWebView2.ExecuteScriptAsync(js);
+            }
+        }
+
+        private void UpdateAutoFightButtonState()
+        {
+            if (_btnAutoFight == null) return;
+            if (InvokeRequired)
+            {
+                Invoke(new Action(UpdateAutoFightButtonState));
+                return;
+            }
+            if (_autoFightEnabled)
+            {
+                _btnAutoFight.Text = "⚡ THX-01: ON";
+                _btnAutoFight.BackColor = Color.FromArgb(16, 185, 129);
+            }
+            else
+            {
+                _btnAutoFight.Text = "⚡ THX-01: OFF";
+                _btnAutoFight.BackColor = Color.FromArgb(51, 65, 85);
             }
         }
 
@@ -2068,16 +2199,20 @@ namespace DofusFarm.Engine
                         args.AppendFormat("--user-agent=\"{0}\" ", cleanUa);
                     }
 
-                    if (_options != null && _options.ProxyPort > 0)
+                    int oauthProxyPort = (_options != null && _options.ProxyPort > 0)
+                        ? _options.ProxyPort
+                        : (_parentForm != null && _parentForm.Options != null ? _parentForm.Options.ProxyPort : 0);
+
+                    if (oauthProxyPort > 0)
                     {
-                        args.AppendFormat("--proxy-server=\"http://127.0.0.1:{0}\" ", _options.ProxyPort);
+                        args.AppendFormat("--proxy-server=\"http://127.0.0.1:{0}\" ", oauthProxyPort);
                     }
                     else if (_options != null && !string.IsNullOrEmpty(_options.Proxy) && !_options.Proxy.Contains("DIRECT"))
                     {
                         args.AppendFormat("--proxy-server=\"{0}\" ", _options.Proxy);
                     }
 
-                    args.Append("--enable-gpu-rasterization --touch-events=enabled --disable-blink-features=AutomationControlled ");
+                    args.Append("--enable-gpu-rasterization --touch-events=enabled --disable-blink-features=AutomationControlled --force-webrtc-ip-handling-policy=disable_non_proxied_udp --disable-features=WebRtcHideLocalIpsWithMdns ");
                     envOptions.AdditionalBrowserArguments = args.ToString().Trim();
 
                     string oauthDataDir = Path.Combine(Path.GetTempPath(), "DofusFarm_OAuth_" + Guid.NewGuid().ToString("N"));
@@ -2106,6 +2241,7 @@ namespace DofusFarm.Engine
                     {
                         ev.Cancel = true;
                         _logCallback?.Invoke("[OAUTH-POPUP] Intercepted OAuth completion code redirect: " + u);
+                        await DiagnosticExchangeProbeAsync(u);
                         await CopyAuthCookiesToParentAsync();
                         _parentForm.HandleDeepLinkUri(u);
                         this.Close();
@@ -2192,6 +2328,7 @@ namespace DofusFarm.Engine
                         try
                         {
                             if (!c.IsSession && c.Expires < DateTime.Now) continue;
+                            _logCallback?.Invoke("[OAUTH-POPUP] Cookie copy: " + c.Name + " @" + c.Domain + c.Path + " sameSite=" + c.SameSite);
                             dst.AddOrUpdateCookie(dst.CopyCookie(c));
                             copied++;
                         }
@@ -2204,6 +2341,211 @@ namespace DofusFarm.Engine
             {
                 _logCallback?.Invoke("[OAUTH-POPUP] Auth cookie copy failed: " + ex.Message);
             }
+        }
+
+        private async Task DiagnosticExchangeProbeAsync(string interceptedUri)
+        {
+            try
+            {
+                Match codeMatch = Regex.Match(interceptedUri, "[?&]code=([A-Za-z0-9_\\-]+)");
+                if (!codeMatch.Success)
+                {
+                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: no code in intercepted uri");
+                    return;
+                }
+                string code = codeMatch.Groups[1].Value;
+
+                string webAuthType = "";
+                try
+                {
+                    string typeJson = await _parentForm.ExecuteScriptAsync("(function(){try{return localStorage.getItem('WEBAUTH_TYPE')||'';}catch(e){return '';}})()");
+                    if (!string.IsNullOrEmpty(typeJson) && typeJson.Length > 2) webAuthType = Regex.Unescape(typeJson.Trim('"'));
+                }
+                catch { }
+                if (webAuthType != "guest")
+                {
+                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: skipped (WEBAUTH_TYPE=" + webAuthType + ")");
+                    return;
+                }
+
+                string verifier = null;
+                try
+                {
+                    string verJson = await _parentForm.ExecuteScriptAsync("(function(){try{return localStorage.getItem('CODE_VERIFIER')||'';}catch(e){return '';}})()");
+                    if (!string.IsNullOrEmpty(verJson) && verJson.Length > 2)
+                    {
+                        verifier = Regex.Unescape(verJson.Trim('"'));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: verifier read failed: " + ex.Message);
+                }
+
+                if (string.IsNullOrEmpty(verifier))
+                {
+                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: verifier empty; aborting probe (code len " + code.Length + ")");
+                    return;
+                }
+
+                _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: guest exchange starting (code len=" + code.Length + " verifier len=" + verifier.Length + ")");
+
+                string body = "grant_type=authorization_code&client_id=18&code=" + code + "&code_verifier=" + verifier + "&redirect_uri=dofustouch://authorized";
+
+                // Test A: repeat the exchange inside the auth popup itself, where
+                // the SameSite=Lax aws-waf-token cookie is first-party.
+                string rawTokens = null;
+                try
+                {
+                    string js =
+                        "(function(){ window.__popupExchangeStatus=''; window.__popupExchangeBody='';" +
+                        " fetch('https://auth.ankama.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:'" + body + "'})" +
+                        " .then(function(r){return r.text().then(function(t){window.__popupExchangeStatus=String(r.status); window.__popupExchangeBody=t;});}," +
+                        " function(e){window.__popupExchangeStatus='ERR'; window.__popupExchangeBody=String(e);});" +
+                        " return 'started'; })()";
+                    await _webView.CoreWebView2.ExecuteScriptAsync(js);
+                    string popupStatus = "";
+                    for (int i = 0; i < 20; i++)
+                    {
+                        await Task.Delay(300);
+                        string sJson = await _webView.CoreWebView2.ExecuteScriptAsync("window.__popupExchangeStatus||''");
+                        if (!string.IsNullOrEmpty(sJson) && sJson != "\"\"")
+                        {
+                            popupStatus = Regex.Unescape(sJson.Trim('"'));
+                            break;
+                        }
+                    }
+                    string bJson = await _webView.CoreWebView2.ExecuteScriptAsync("window.__popupExchangeBody||''");
+                    string popupBody = string.IsNullOrEmpty(bJson) ? "" : Regex.Unescape(bJson.Trim('"'));
+                    bool popupOk = popupStatus == "200" && popupBody.Length > 0;
+                    string popupSnippet = popupBody.Length > 300 ? popupBody.Substring(0, 300) : popupBody;
+                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe (popup ctx): " + popupStatus + " " + (popupOk ? TokenSummary(popupBody) : popupSnippet));
+                    if (popupOk) rawTokens = popupBody;
+                }
+                catch (Exception ex)
+                {
+                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe (popup ctx) failed: " + ex.Message);
+                }
+
+                // Test B variants: host-side exchange. Native requests can send the
+                // popup's WAF cookie regardless of SameSite.
+                if (rawTokens == null)
+                {
+                    string cookieHeader = "";
+                    try
+                    {
+                        var cookies = await _webView.CoreWebView2.CookieManager.GetCookiesAsync("https://auth.ankama.com/");
+                        var sb = new StringBuilder();
+                        foreach (var c in cookies)
+                        {
+                            if (sb.Length > 0) sb.Append("; ");
+                            sb.Append(c.Name).Append('=').Append(c.Value);
+                        }
+                        cookieHeader = sb.ToString();
+                    }
+                    catch { }
+
+                    string desktopUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
+                    string mobileUa = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
+
+                    rawTokens = TryNativeExchange(body, cookieHeader, desktopUa, true, "native desktop+cookies");
+                    if (rawTokens == null) rawTokens = TryNativeExchange(body, cookieHeader, mobileUa, false, "native mobile+cookies");
+                    if (rawTokens == null) rawTokens = TryNativeExchange(body, "", mobileUa, true, "native mobile no-cookie");
+                }
+
+                if (rawTokens != null)
+                {
+                    _parentForm.SetGuestExchangeResult(code, rawTokens);
+                    _logCallback?.Invoke("[OAUTH-POPUP] exchange probe: SUCCESS - guest tokens pre-exchanged and stored for host delivery");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke("[OAUTH-POPUP] exchange probe error: " + ex.Message);
+            }
+        }
+
+        private string TryNativeExchange(string body, string cookieHeader, string userAgent, bool sendOrigin, string label)
+        {
+            try
+            {
+                var webReq = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://auth.ankama.com/token");
+                webReq.Method = "POST";
+                webReq.ContentType = "application/x-www-form-urlencoded";
+                webReq.Timeout = 15000;
+                int proxyPort = (_options != null && _options.ProxyPort > 0)
+                    ? _options.ProxyPort
+                    : (_parentForm != null && _parentForm.Options != null ? _parentForm.Options.ProxyPort : 0);
+                if (proxyPort > 0)
+                {
+                    // Keep the host-side exchange on the same per-instance egress
+                    // IP as the popup (the local Go relay with its upstream).
+                    webReq.Proxy = new System.Net.WebProxy("http://127.0.0.1:" + proxyPort);
+                }
+                if (!string.IsNullOrEmpty(userAgent)) webReq.UserAgent = userAgent;
+                if (sendOrigin) webReq.Headers["Origin"] = "https://dofus.local";
+                if (!string.IsNullOrEmpty(cookieHeader)) webReq.Headers["Cookie"] = cookieHeader;
+                byte[] bodyBytes = System.Text.Encoding.UTF8.GetBytes(body);
+                webReq.ContentLength = bodyBytes.Length;
+                using (var reqStream = webReq.GetRequestStream())
+                {
+                    reqStream.Write(bodyBytes, 0, bodyBytes.Length);
+                }
+                int status = 0;
+                string respBody = "";
+                try
+                {
+                    using (var resp = (System.Net.HttpWebResponse)webReq.GetResponse())
+                    {
+                        status = (int)resp.StatusCode;
+                        using (var rs = resp.GetResponseStream())
+                        using (var reader = new System.IO.StreamReader(rs))
+                        {
+                            respBody = reader.ReadToEnd();
+                        }
+                    }
+                }
+                catch (System.Net.WebException wex)
+                {
+                    var er = wex.Response as System.Net.HttpWebResponse;
+                    if (er == null) throw;
+                    status = (int)er.StatusCode;
+                    using (var rs = er.GetResponseStream())
+                    using (var reader = new System.IO.StreamReader(rs))
+                    {
+                        respBody = reader.ReadToEnd();
+                    }
+                    er.Close();
+                }
+                bool ok = status == 200 && !string.IsNullOrEmpty(respBody);
+                string snippet = respBody ?? "";
+                if (snippet.Length > 300) snippet = snippet.Substring(0, 300);
+                _logCallback?.Invoke("[OAUTH-POPUP] exchange probe (" + label + "): " + status + " " + (ok ? TokenSummary(respBody) : snippet));
+                return ok ? respBody : null;
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke("[OAUTH-POPUP] exchange probe (" + label + ") failed: " + ex.Message);
+                return null;
+            }
+        }
+
+        private static string TokenSummary(string json)
+        {
+            try
+            {
+                int accessLen = TokenFieldLength(json, "access_token");
+                int refreshLen = TokenFieldLength(json, "refresh_token");
+                bool hasGuestCreds = json.Contains("guest_credentials") && !json.Contains("\"guest_credentials\":null");
+                return "tokens access_len=" + accessLen + " refresh_len=" + refreshLen + " guest_credentials=" + hasGuestCreds;
+            }
+            catch { return "(token summary failed)"; }
+        }
+
+        private static int TokenFieldLength(string json, string key)
+        {
+            Match m = Regex.Match(json, "\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
+            return m.Success ? m.Groups[1].Value.Length : -1;
         }
 
         protected override void Dispose(bool disposing)

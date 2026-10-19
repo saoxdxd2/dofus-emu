@@ -65,6 +65,12 @@ namespace DofusBuild
             // 0. Compile Go Network Proxy if go.exe is available
             TryBuildGoProxy();
 
+            // 0b. Apply client bundle patches (anti-detection, telemetry silencing, and engine stability)
+            TryApplyClientPatches();
+
+            // 0c. Synchronize client runtime shims across desktop and root distributions
+            TrySyncClientShims();
+
             // 1. Compile DofusFarm.exe
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n[1/3] Compiling native C# DofusFarm.exe...");
@@ -193,6 +199,82 @@ namespace DofusBuild
             }
         }
 
+        static void TryApplyClientPatches()
+        {
+            string patchScript = Path.Combine(RepoRoot, @"tools\patch-engine.js");
+            if (!File.Exists(patchScript)) return;
+
+            string nodeExe = FindOnPath("node.exe");
+            if (nodeExe == null)
+            {
+                string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                if (!string.IsNullOrEmpty(pf))
+                {
+                    string p = Path.Combine(pf, "nodejs", "node.exe");
+                    if (File.Exists(p)) nodeExe = p;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(nodeExe))
+            {
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine("\n[0b/3] Applying client bundle anti-detection & engine patches (patch-engine.js)...");
+                Console.ResetColor();
+                int code = Run(nodeExe, string.Format("\"{0}\"", patchScript), RepoRoot);
+                if (code == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("  [OK] Client bundle patched successfully (11 patches active).");
+                    Console.ResetColor();
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("  [WARN] Client patch-engine returned exit code {0}.", code);
+                    Console.ResetColor();
+                }
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine("  [INFO] node.exe not found on PATH; skipping bundle repatch (using existing script.js).");
+                Console.ResetColor();
+            }
+        }
+
+        static void TrySyncClientShims()
+        {
+            try
+            {
+                string scriptsDir = Path.Combine(RepoRoot, "scripts");
+                string desktopJsDir = Path.Combine(RepoRoot, @"desktop\client\www\js");
+                string rootJsDir = Path.Combine(RepoRoot, @"client\www\js");
+
+                if (!Directory.Exists(desktopJsDir) || !Directory.Exists(rootJsDir)) return;
+
+                // Sync mobile-disguise.js (master in scripts)
+                string masterDisguise = Path.Combine(scriptsDir, "mobile-disguise.js");
+                if (File.Exists(masterDisguise))
+                {
+                    File.Copy(masterDisguise, Path.Combine(desktopJsDir, "mobile-disguise.js"), true);
+                    File.Copy(masterDisguise, Path.Combine(rootJsDir, "mobile-disguise.js"), true);
+                }
+
+                // Sync cordova-standalone-shim.js & cdn-relay-shim.js (master in desktop\client\www\js)
+                string masterCordova = Path.Combine(desktopJsDir, "cordova-standalone-shim.js");
+                if (File.Exists(masterCordova))
+                {
+                    File.Copy(masterCordova, Path.Combine(rootJsDir, "cordova-standalone-shim.js"), true);
+                }
+                string masterRelay = Path.Combine(desktopJsDir, "cdn-relay-shim.js");
+                if (File.Exists(masterRelay))
+                {
+                    File.Copy(masterRelay, Path.Combine(rootJsDir, "cdn-relay-shim.js"), true);
+                }
+            }
+            catch { }
+        }
+
         static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir, bool includeLegacyEmulator = false)
         {
             string tempDir = Path.GetTempPath();
@@ -222,7 +304,7 @@ namespace DofusBuild
                         File.Copy(f, Path.Combine(stageBin, Path.GetFileName(f)), true);
                 }
 
-                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "app_icon.ico", "installer_icon.ico", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
+                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "proxies.txt", "app_icon.ico", "installer_icon.ico", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
                 {
                     string p = Path.Combine(RepoRoot, b);
                     if (!File.Exists(p)) p = Path.Combine(RepoRoot, "scripts", b);
