@@ -291,7 +291,8 @@
                         throw e;
                     }
                     if (interesting && p && typeof p.then === 'function') {
-                        p.then(function (res) {
+                        var self = this, origArgs = arguments;
+                        return p.then(function (res) {
                             authDiag('fetch RESP ' + res.status + ' ' + url.slice(0, 160));
                             try {
                                 res.clone().text().then(function (t) {
@@ -335,6 +336,17 @@
                             return res;
                         }, function (err) {
                             authDiag('fetch REJECTED ' + url.slice(0, 160) + ' :: ' + (err && (err.name + ' ' + err.message) || String(err)));
+                            if (url.indexOf('create-guest') !== -1 && !window.__guestRetryDone) {
+                                window.__guestRetryDone = true;
+                                authDiag('fetch auto-retrying create-guest after transient failure...');
+                                return new Promise(function (resolve, reject) {
+                                    setTimeout(function () {
+                                        try {
+                                            origFetch.apply(self, origArgs).then(resolve, reject);
+                                        } catch (e2) { reject(e2); }
+                                    }, 500);
+                                });
+                            }
                             throw err;
                         });
                     }

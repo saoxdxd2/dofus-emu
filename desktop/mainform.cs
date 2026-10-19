@@ -2984,77 +2984,14 @@ namespace DofusFarm.UI
                 bool wired = false;
 
                 if (manualProxy)
-
                 {
-
                     wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
-
                 }
-
                 else
-
                 {
-
-                    var candidates = FarmEngine.GetShuffledProxyPool();
-
-                    string lastCandidate = null;
-
-                    int maxTries = Math.Min(candidates.Length, 8);
-
-                    int tried = 0;
-
-                    if (candidates.Length == 0)
-
-                    {
-
-                        Log(string.Format("WebView2 {0}: proxies.txt empty - wiring DIRECT (no pool configured)", inst.Name));
-
-                        wired = _engine.EnsureProxyRunning(localProxyPort, null, serialNo, androidId, profile);
-
-                    }
-
-                    else foreach (var cand in candidates)
-
-                    {
-
-                        if (tried >= maxTries) break;
-
-                        tried++;
-
-                        if (!_engine.EnsureProxyRunning(localProxyPort, cand, serialNo, androidId, profile)) break;
-
-                        lastCandidate = cand;
-
-                        if (FarmEngine.PreflightProxyViaRelay(localProxyPort, 6000))
-
-                        {
-
-                            upstream = cand;
-
-                            wired = true;
-
-                            Log(string.Format("WebView2 {0}: preflight OK on {1} (attempt {2})", inst.Name, cand, tried));
-
-                            break;
-
-                        }
-
-                        Log(string.Format("WebView2 {0}: preflight failed on {1} - trying next", inst.Name, cand));
-
-                    }
-
-                    if (!wired && lastCandidate != null)
-
-                    {
-
-                        upstream = lastCandidate;
-
-                        wired = _engine.EnsureProxyRunning(localProxyPort, lastCandidate, serialNo, androidId, profile);
-
-                        Log(string.Format("WebView2 {0}: no candidate passed preflight ({1} tried) - using {2} anyway (never DIRECT while a pool exists)", inst.Name, tried, lastCandidate));
-
-                    }
-
+                    Log(string.Format("WebView2 {0}: running DIRECT egress (no manual proxy configured)", inst.Name));
+                    wired = _engine.EnsureProxyRunning(localProxyPort, null, serialNo, androidId, profile);
+                    upstream = null;
                 }
 
                 if (wired)
@@ -3069,6 +3006,18 @@ namespace DofusFarm.UI
 
                         inst.Name, localProxyPort, string.IsNullOrEmpty(upstream) ? "DIRECT (proxies.txt empty)" : upstream));
 
+                }
+
+                var acc = FarmEngine.GetAccountForSlot(slot);
+                if (acc.HasValue)
+                {
+                    opts.AccountLogin = acc.Value.Key;
+                    opts.AccountPassword = acc.Value.Value;
+                    Log(string.Format("WebView2 {0}: assigned visitor/account from accounts.txt: {1}", inst.Name, opts.AccountLogin));
+                }
+                else
+                {
+                    Log(string.Format("WebView2 {0}: no accounts configured in accounts.txt (guest registration fallback)", inst.Name));
                 }
 
             }

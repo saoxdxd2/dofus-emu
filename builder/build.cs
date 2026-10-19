@@ -304,7 +304,7 @@ namespace DofusBuild
                         File.Copy(f, Path.Combine(stageBin, Path.GetFileName(f)), true);
                 }
 
-                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "proxies.txt", "app_icon.ico", "installer_icon.ico", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
+                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "proxies.txt", "accounts.txt", "app_icon.ico", "installer_icon.ico", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
                 {
                     string p = Path.Combine(RepoRoot, b);
                     if (!File.Exists(p)) p = Path.Combine(RepoRoot, "scripts", b);

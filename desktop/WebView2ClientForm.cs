@@ -691,6 +691,50 @@ namespace DofusFarm.Engine
                 // 3. Synchronously inject Cordova compatibility polyfill
                 await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(CordovaShimScript);
 
+                // 3a. Account credentials injection from pool (accounts.txt)
+                if (string.IsNullOrEmpty(_options.AccountLogin))
+                {
+                    int slot = 0;
+                    Match mSlot = Regex.Match(_instanceId ?? "", @"(\d+)$");
+                    if (mSlot.Success) int.TryParse(mSlot.Groups[1].Value, out slot);
+                    var acc = FarmEngine.GetAccountForSlot(slot);
+                    if (acc.HasValue)
+                    {
+                        _options.AccountLogin = acc.Value.Key;
+                        _options.AccountPassword = acc.Value.Value;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(_options.AccountLogin) && !string.IsNullOrEmpty(_options.AccountPassword))
+                {
+                    string safeLogin = _options.AccountLogin.Replace("\\", "\\\\").Replace("'", "\\'");
+                    string safePass = _options.AccountPassword.Replace("\\", "\\\\").Replace("'", "\\'");
+                    string accScript = string.Format(
+                        "(function() {{\n" +
+                        "    try {{\n" +
+                        "        var raw = localStorage.getItem('dofus.1');\n" +
+                        "        var prefs = {{}};\n" +
+                        "        if (raw) {{ try {{ prefs = JSON.parse(raw); }} catch(e) {{ prefs = {{}}; }} }}\n" +
+                        "        prefs['all#guestAccount'] = {{ login: '{0}', password: '{1}' }};\n" +
+                        "        localStorage.setItem('dofus.1', JSON.stringify(prefs));\n" +
+                        "        console.log('[Auth] Pre-seeded visitor credentials for {0}');\n" +
+                        "        var fired = false;\n" +
+                        "        var tId = setInterval(function() {{\n" +
+                        "            if (fired) {{ clearInterval(tId); return; }}\n" +
+                        "            if (window.gui && window.gui.loginScreen && typeof window.gui.loginScreen.playWithGuest === 'function') {{\n" +
+                        "                fired = true;\n" +
+                        "                clearInterval(tId);\n" +
+                        "                console.log('[Auth] Automatically initiating direct guest socket login');\n" +
+                        "                setTimeout(function() {{ try {{ window.gui.loginScreen.playWithGuest(); }} catch(e) {{}} }}, 800);\n" +
+                        "            }}\n" +
+                        "        }}, 400);\n" +
+                        "    }} catch(e) {{ console.error('[Auth] Failed to seed visitor account:', e); }}\n" +
+                        "}})();",
+                        safeLogin, safePass);
+                    await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(accScript);
+                    _logCallback?.Invoke(string.Format("[{0}] Registered visitor credentials injection for {1}", _instanceId, _options.AccountLogin));
+                }
+
                 // 3b. CDN relay: expose the local relay config, then inject the
                 // shim that rewrites CDN asset URLs through it. Inert when no
                 // ProxyPort is wired or when the page ships its own copy
@@ -1082,10 +1126,56 @@ namespace DofusFarm.Engine
                 {
                     HandleInGameChatMessage(json);
                 }
+                else if (json.Contains("\"type\":\"GUEST_ACCOUNT_PERSIST\""))
+                {
+                    Match mLog = Regex.Match(json, "\"login\"\\s*:\\s*\"([^\"]+)\"");
+                    Match mPass = Regex.Match(json, "\"password\"\\s*:\\s*\"([^\"]+)\"");
+                    if (mLog.Success && mPass.Success)
+                    {
+                        SavePermanentAccount(mLog.Groups[1].Value, mPass.Groups[1].Value);
+                    }
+                }
             }
             catch (Exception ex)
             {
                 _logCallback?.Invoke(string.Format("[{0}] WebMessage handling error: {1}", _instanceId, ex.Message));
+            }
+        }
+
+        private void SavePermanentAccount(string login, string password)
+        {
+            try
+            {
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "accounts.txt");
+                if (!File.Exists(path))
+                {
+                    string parent = Directory.GetParent(AppDomain.CurrentDomain.BaseDirectory)?.FullName;
+                    if (parent != null && File.Exists(Path.Combine(parent, "accounts.txt")))
+                        path = Path.Combine(parent, "accounts.txt");
+                }
+                string line = login + ":" + password;
+                bool alreadyExists = false;
+                if (File.Exists(path))
+                {
+                    var existing = File.ReadAllLines(path);
+                    foreach (var l in existing)
+                    {
+                        if (l.StartsWith(login + ":", StringComparison.OrdinalIgnoreCase))
+                        {
+                            alreadyExists = true;
+                            break;
+                        }
+                    }
+                }
+                if (!alreadyExists)
+                {
+                    File.AppendAllText(path, line + "\r\n");
+                    _logCallback?.Invoke(string.Format("[{0}] Auto-harvested visitor credentials into accounts.txt: {1}", _instanceId, login));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logCallback?.Invoke(string.Format("[{0}] Failed to persist visitor credentials: {1}", _instanceId, ex.Message));
             }
         }
 
@@ -2226,7 +2316,12 @@ namespace DofusFarm.Engine
                 s.IsStatusBarEnabled = false;
                 s.AreDefaultContextMenusEnabled = true;
 
-                if (!string.IsNullOrEmpty(cleanUa))
+                string mobileUa = "Mozilla/5.0 (Linux; Android 10; SM-A515F Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
+                if (!string.IsNullOrEmpty(_initialUrl) && _initialUrl.Contains("ankama"))
+                {
+                    s.UserAgent = mobileUa;
+                }
+                else if (!string.IsNullOrEmpty(cleanUa))
                 {
                     s.UserAgent = cleanUa;
                 }
@@ -2235,6 +2330,15 @@ namespace DofusFarm.Engine
                 {
                     string u = ev.Uri;
                     _logCallback?.Invoke("[OAUTH-POPUP] Navigating: " + u);
+
+                    if (u.Contains("accounts.google.com"))
+                    {
+                        s.UserAgent = cleanUa;
+                    }
+                    else if (u.Contains("ankama"))
+                    {
+                        s.UserAgent = mobileUa;
+                    }
 
                     if (u.StartsWith("dofustouch://", StringComparison.OrdinalIgnoreCase) ||
                         (u.Contains("login-authorized") && (u.Contains("code=") || u.Contains("error="))))

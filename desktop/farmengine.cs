@@ -805,12 +805,18 @@ namespace DofusFarm.Engine
         {
             try
             {
-                var req = (HttpWebRequest)WebRequest.Create("https://dt-proxy-production-login.ankama-games.com/config.json");
+                var req = (HttpWebRequest)WebRequest.Create("https://auth.ankama.com/token/create-guest");
                 req.Proxy = new WebProxy("http://127.0.0.1:" + localProxyPort);
                 req.Timeout = timeoutMs;
                 req.ReadWriteTimeout = timeoutMs;
-                req.AllowAutoRedirect = true;
-                req.UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36";
+                req.Method = "POST";
+                req.ContentType = "application/x-www-form-urlencoded";
+                req.UserAgent = "Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36";
+                req.Headers["Origin"] = "https://www.dofus-touch.com";
+                req.Referer = "https://www.dofus-touch.com/";
+                byte[] data = Encoding.UTF8.GetBytes("client_id=18");
+                req.ContentLength = data.Length;
+                using (var stm = req.GetRequestStream()) stm.Write(data, 0, data.Length);
                 using (var resp = (HttpWebResponse)req.GetResponse())
                     return (int)resp.StatusCode == 200;
             }
@@ -825,6 +831,76 @@ namespace DofusFarm.Engine
                 {
                     GetAutoProxyForSlot(0);
                     return _cachedProxyPool != null ? _cachedProxyPool.Length : 0;
+                }
+            }
+            catch { return 0; }
+        }
+
+        private static KeyValuePair<string, string>[] _cachedAccountPool = null;
+        private static DateTime _cachedAccountPoolUtc = DateTime.MinValue;
+        private static readonly object _accountPoolLock = new object();
+
+        public static KeyValuePair<string, string>? GetAccountForSlot(int slot)
+        {
+            try
+            {
+                lock (_accountPoolLock)
+                {
+                    if (_cachedAccountPool == null || (DateTime.UtcNow - _cachedAccountPoolUtc).TotalSeconds > 10)
+                    {
+                        string[] searchPaths = new[]
+                        {
+                            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "accounts.txt"),
+                            Path.Combine(Environment.CurrentDirectory, "accounts.txt")
+                        };
+
+                        string foundFile = searchPaths.FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p));
+                        if (foundFile != null)
+                        {
+                            var list = new List<KeyValuePair<string, string>>();
+                            foreach (var rawLine in File.ReadAllLines(foundFile))
+                            {
+                                string l = rawLine.Trim();
+                                if (l.Length == 0 || l.StartsWith("#") || l.StartsWith("//")) continue;
+                                int cIdx = l.IndexOf(':');
+                                if (cIdx > 0 && cIdx < l.Length - 1)
+                                {
+                                    string u = l.Substring(0, cIdx).Trim();
+                                    string p = l.Substring(cIdx + 1).Trim();
+                                    if (!string.IsNullOrEmpty(u) && !string.IsNullOrEmpty(p))
+                                    {
+                                        list.Add(new KeyValuePair<string, string>(u, p));
+                                    }
+                                }
+                            }
+                            _cachedAccountPool = list.ToArray();
+                        }
+                        else
+                        {
+                            _cachedAccountPool = new KeyValuePair<string, string>[0];
+                        }
+                        _cachedAccountPoolUtc = DateTime.UtcNow;
+                    }
+
+                    if (_cachedAccountPool != null && _cachedAccountPool.Length > 0)
+                    {
+                        int idx = Math.Abs(slot) % _cachedAccountPool.Length;
+                        return _cachedAccountPool[idx];
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        public static int GetAccountPoolCount()
+        {
+            try
+            {
+                lock (_accountPoolLock)
+                {
+                    GetAccountForSlot(0);
+                    return _cachedAccountPool != null ? _cachedAccountPool.Length : 0;
                 }
             }
             catch { return 0; }
@@ -1940,7 +2016,7 @@ namespace DofusFarm.Engine
             int slot = Math.Max(0, (port - 5554) / 2), localProxyPort = 8880 + slot;
             string upstreamProxy = HasManualProxy(proxy)
                 ? NormalizeUpstreamProxy(proxy)
-                : GetRandomProxy();
+                : null;
 
             DeviceProfile instProfile = GetInstancePhoneModel(name);
             string serialNo = (instProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant();

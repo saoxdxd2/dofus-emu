@@ -36,6 +36,10 @@ namespace DofusFarm.Engine
         public string DisguiseScript { get; set; }
         public int ProxyPort { get; set; }
 
+        // Account credentials pool
+        public string AccountLogin { get; set; }
+        public string AccountPassword { get; set; }
+
         // Shared asset cache directory (relay cache + wizAssets mirror).
         public string CacheDir { get; set; }
 

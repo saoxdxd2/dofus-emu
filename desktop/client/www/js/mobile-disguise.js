@@ -1220,4 +1220,27 @@
         window.__FarmBot = FarmBot;
     } catch(e) {}
 
+    // 21. Visitor Account Persistence Hook (accounts.txt bridge)
+    try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            var _origSetItem = window.localStorage.setItem;
+            window.localStorage.setItem = function(k, v) {
+                try {
+                    if (k === 'dofus.1' && v && window.chrome && window.chrome.webview) {
+                        var parsed = JSON.parse(v);
+                        var g = parsed && parsed['all#guestAccount'];
+                        if (g && g.login && g.password) {
+                            window.chrome.webview.postMessage({
+                                type: 'GUEST_ACCOUNT_PERSIST',
+                                login: g.login,
+                                password: g.password
+                            });
+                        }
+                    }
+                } catch(e) {}
+                return _origSetItem.apply(this, arguments);
+            };
+        }
+    } catch(e) {}
+
 })();
