@@ -104,9 +104,12 @@ def _trajectory_rows(path: Path) -> List[Tuple[str, str]]:
     return rows
 
 
-def _collect_training_data(sft: Path, synthetic: Path) -> Tuple[List[Tuple[str, str]],
+def _collect_training_data(sft: Path, synthetic: Path,
+                           distill: Optional[Path] = None) -> Tuple[List[Tuple[str, str]],
                                                                     List[Tuple[str, str]]]:
     rows = _sft_rows(sft) + _trajectory_rows(synthetic)
+    if distill is not None:
+        rows += _trajectory_rows(distill)
     seen = set()
     unique: List[Tuple[str, str]] = []
     for goal, tool in rows:
@@ -180,6 +183,9 @@ def _cache_encoder(model, items: List[Dict[str, Any]], pad_id: int,
         idx = order[start:start + batch_size]
         batch_items = [{k: v for k, v in items[i].items() if k != "target"} for i in idx]
         batch = collate_items([batch_items], pad_id)
+        device = next(model.parameters()).device
+        batch = {key: value.to(device) if torch.is_tensor(value) else value
+                 for key, value in batch.items()}
         h = model.encoder(
             input_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
@@ -229,24 +235,38 @@ def _head_logits(model, cached: List[Dict[str, Any]], device: torch.device) -> t
 
 
 @torch.no_grad()
-def _accuracy(model, cached: List[Dict[str, Any]], device: torch.device) -> Tuple[float, float]:
+def _accuracy(model, cached: List[Dict[str, Any]], device: torch.device,
+              batch_size: int = 32) -> Tuple[float, float]:
     if not cached:
         return 0.0, 0.0
     model.eval()
-    logits = _head_logits(model, cached, device)
-    targets = torch.tensor([c["target"] for c in cached], dtype=torch.long, device=device)
+    logits_parts = []
+    targets_parts = []
+    for start in range(0, len(cached), batch_size):
+        batch = cached[start:start + batch_size]
+        logits_parts.append(_head_logits(model, batch, device).cpu())
+        targets_parts.extend(c["target"] for c in batch)
+    logits = torch.cat(logits_parts, dim=0)
+    targets = torch.tensor(targets_parts, dtype=torch.long)
     loss = F.cross_entropy(logits, targets).item()
     acc = (logits.argmax(-1) == targets).float().mean().item()
     return acc, loss
 
 
-def _fit_temperature(model, cached: List[Dict[str, Any]], device: torch.device) -> float:
+def _fit_temperature(model, cached: List[Dict[str, Any]], device: torch.device,
+                     batch_size: int = 32) -> float:
     if not cached:
         return 1.0
     model.eval()
+    logits_parts = []
+    targets_parts = []
     with torch.no_grad():
-        logits = _head_logits(model, cached, device).cpu()
-    targets = torch.tensor([c["target"] for c in cached], dtype=torch.long)
+        for start in range(0, len(cached), batch_size):
+            batch = cached[start:start + batch_size]
+            logits_parts.append(_head_logits(model, batch, device).cpu())
+            targets_parts.extend(c["target"] for c in batch)
+    logits = torch.cat(logits_parts, dim=0)
+    targets = torch.tensor(targets_parts, dtype=torch.long)
     best_t, best_nll = 1.0, float("inf")
     for t in np.linspace(0.5, 5.0, 91):
         nll = F.cross_entropy(logits / float(t), targets).item()
@@ -290,6 +310,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--sft", default=str(REPO_ROOT / "data" / "agent_sft" / "train.jsonl"))
     parser.add_argument("--sft-val", default=str(REPO_ROOT / "data" / "agent_sft" / "val.jsonl"))
     parser.add_argument("--synthetic", default=str(REPO_ROOT / "trajectories" / "synthetic.jsonl"))
+    parser.add_argument("--distill", default=None,
+                        help="extra goal/tool JSONL (core-skill teacher data)")
     parser.add_argument("--output", default=str(REPO_ROOT / "models" / "finetuned" / "thx01-dofus"))
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=32)
@@ -309,11 +331,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"loading {base} on {device}", flush=True)
     agent = thx01.load(str(base), device=str(device))
     model, tok = agent.model, agent.tok
+    model.float()
     for param in model.encoder.parameters():
         param.requires_grad = False
     model.encoder.eval()
 
-    train_rows, synth_val = _collect_training_data(Path(args.sft), Path(args.synthetic))
+    train_rows, synth_val = _collect_training_data(
+        Path(args.sft), Path(args.synthetic),
+        Path(args.distill) if args.distill else None,
+    )
     train_rows = _augment(train_rows) if not args.no_augment else train_rows
     val_rows = _sft_rows(Path(args.sft_val)) + synth_val
     if not train_rows or not val_rows:
