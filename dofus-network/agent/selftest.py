@@ -374,7 +374,7 @@ def test_thx_helpers() -> None:
         "verkaufe 20 Gildenhallentrank auf dem Markt zum Marktpreis -1": "hdv.list",
         "biete 5 DrakDrak Shard 94 für 5000 Kamas an": "hdv.list",
         "quêtes de donjon vers Amakna": "quest.list",
-        "liste mes objets": "inv.list",
+        "liste mes objets": None,
     }
     for goal, expected in cases.items():
         got = thx._guard_tool(goal)

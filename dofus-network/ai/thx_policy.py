@@ -137,12 +137,8 @@ _RE_ZAAP = re.compile(r"\bzaap\s+([A-Za-zÀ-ÿ' -]{2,40})", re.IGNORECASE)
 _RE_QUEST_ID = re.compile(r"\b(?:quest|qu[eê]te|misi[oó]n|quests?)\D{0,12}(\d{1,9})\b",
                           re.IGNORECASE)
 _RE_PRICE = re.compile(
-    r"\b(?:for|at|price|prix|precio|f�r|zu|�|a|por|para|per|pour)\s+"
+    r"\b(?:for|at|price|prix|precio|für|zu|à|a|por|para|per)\s+"
     r"(\d{1,12})(?:\s*(?:kamas?|k|gold|or|oro|goldbarren))?\b",
-    re.IGNORECASE,
-)
-_RE_PRICE_CURRENCY = re.compile(
-    r"\b(\d{1,12})\s*(?:kamas?|k|gold|or|oro|goldbarren)\b",
     re.IGNORECASE,
 )
 _RE_LEVEL = re.compile(
@@ -158,12 +154,11 @@ _RE_CHAT_TO = re.compile(
     r"envoie\s+(?:un\s+)?message\s+(?:à|a)|"
     r"env[ií]a\s+(?:un\s+)?mensaje\s+(?:a|al)|"
     r"schicke\s+(?:eine\s+)?nachricht\s+(?:an|an\s+das)|"
-    r"pr[ée]viens|avisa|inform(?:a|e|iere)?|dile\s+al|"
+    r"pr[ée]viens|avisa|inform(?:a|e|iere)?|"
     r"dis\s+à|dis\s+a|di\s+a|di\s+al|sag\s+dem|sag\s+der|sag\s+zu)\s+"
     r"(?:the\s+|le\s+|la\s+|les\s+|l'|el\s+|al\s+|los\s+|las\s+|"
     r"dem\s+|der\s+|das\s+|an\s+das\s+|à\s+l'|a\s+la\s+|au\s+)?"
-    r"(?:team|guild|guilde|gremio|group|gruppe|équipe|equipe|equipo|grupo|gilde)"
-    r"\s*[:,;-]\s*(.+)$",
+    r"(?:team|guild|group|gruppe|équipe|equipe|equipo|grupo|gilde)\s*[:,;-]\s*(.+)$",
     re.IGNORECASE,
 )
 _RE_CHAT_CHANNEL = re.compile(
@@ -176,8 +171,7 @@ _RE_ARTICLE = re.compile(
     r"^\s*(?:" + "|".join(re.escape(a) for a in _ARTICLES) + r")\s+", re.IGNORECASE)
 _RE_FARM_VERB = re.compile(
     r"^\s*(?:farm(?:e|er|ing)?|farmea|farmear|r[eé]colte[rz]?|gather|harvest|minar|"
-    r"collecte[rz]?|farme|kill|hunt|chasse[rz]?|caza(?:r)?|tue|tuer|matar|t[oö]te|jage|"
-    r"va\s+farmer|ve\s+a\s+farmear|geh\s+\S+\s+farmen)\b[\s:,-]*",
+    r"collecte[rz]?|farme|kill|hunt|tue|tuer|matar|t[oö]te|jage)\b[\s:,-]*",
     re.IGNORECASE,
 )
 _RE_SAFE_STOP_GUARD = re.compile(
@@ -193,13 +187,12 @@ _RE_SAFE_STOP_GUARD = re.compile(
 )
 _RE_KNOWLEDGE_VERB_GUARD = re.compile(
     r"^\s*(?:look\s+up|search\s+for|busca(?:r)?|suche(?:n)?|trouve[rz]?|"
-    r"encuentra|encontrar|parle[- ]moi\s+de|h[áa]blame\s+de|erz[äa]hl\s+mir\s+von)\b",
+    r"encuentra|encontrar)\b",
     re.IGNORECASE,
 )
 _RE_MARKET_SCAN_GUARD = re.compile(
-    r"\b(?:pr[üu]fe|v[ée]rifie|consulta|check)\s+"
-    r"(?:den|le|el|the|au|im)?\s*(?:markt|march[ée]|mercado|market)\b|"
-    r"^\s*(?:scan|scanne|escanea)\b",
+    r"\b(?:pr[üu]fe|v[ée]rifie|consulta|check|scan|escanea|scanne)\s+"
+    r"(?:den|le|el|the|au|im)?\s*(?:markt|march[ée]|mercado|market)\b",
     re.IGNORECASE,
 )
 _RE_MARKET_LIST_GUARD = re.compile(
@@ -226,52 +219,20 @@ _RE_LIST_QUESTS_GUARD = re.compile(
 _RE_STOP_WORD = re.compile(
     r"\b(?:stop|arrête|arrete|detén|deten|stoppe|halt)\b", re.IGNORECASE)
 _RE_CHAT_GUARD = re.compile(
-    r"^\s*(?:tell|dis|dites|dile|di|diga|sag|sagt|message|envoie|env[ií]a|"
+    r"^\s*(?:tell|dis|dites|di|diga|sag|sagt|message|"
     r"send\s+(?:a\s+)?message\s+to|pr[ée]viens|avisa|inform(?:a|e|iere)?|schicke)\b.*\b"
-    r"(?:team|guild|guilde|gremio|group|gruppe|[eé]quipe|equipo|grupo|gilde)\b",
+    r"(?:team|guild|group|gruppe|[eé]quipe|equipo|grupo|gilde)\b",
     re.IGNORECASE,
 )
 _RE_CHAT_SAY_GUARD = re.compile(
-    r"^\s*(?:say|di|dile)\b|"
+    r"^\s*(?:say|di)\b|"
     r"^\s*sag\s+(?!mir\b)|"
     r"^\s*dis\s+(?!moi\b|où\b|ou\b)",
     re.IGNORECASE,
 )
-_RE_FIGHT_JOIN_GUARD = re.compile(
-    r"\b(?:join|enter|help\s+in)\b.*\b(?:fight|combat)\b|"
-    r"\b(?:rejoins|entre|aide)\b.*\bcombat\b|"
-    r"\b(?:únete|entra|participa|ayuda)\b.*\b(?:combate|pelea)\b|"
-    r"\b(?:tritt|geh|nimm|hilf)\b.*\bkampf\b",
-    re.IGNORECASE,
-)
-_RE_FIGHT_PASS_GUARD = re.compile(
-    r"\b(?:pass|skip|wait\s+for)\b.*\b(?:turn|round)\b|"
-    r"\b(?:passe|saute|attends)\b.*\b(?:tour)\b|"
-    r"\b(?:pasa|salta|espera)\b.*\b(?:turno)\b|"
-    r"\b(?:warte|überspringe|lass)\b.*\b(?:zug)\b",
-    re.IGNORECASE,
-)
-_RE_FOLLOW_GUARD = re.compile(
-    r"^\s*(?:follow|stay\s+with|keep\s+following|suis|reste\s+avec|"
-    r"continue\s+de\s+suivre|sigue\s+a|qu[eé]date\s+con|contin[úu]a\s+siguiendo|"
-    r"folge|bleib\s+bei|folge\s+weiter)\b",
-    re.IGNORECASE,
-)
-_RE_FARM_PHRASE_GUARD = re.compile(
-    r"\b(?:fang\s+an|beginne|starte)\b.*\b(?:farmen|farm)\b|"
-    r"\bcommence[rz]?\s+[àa]\s+farmer\b|"
-    r"\b(?:empieza|comienza)\s+a\s+farmear\b|"
-    r"^\s*start\s+farming\b",
-    re.IGNORECASE,
-)
-_RE_PROPOSE_GUARD = re.compile(
-    r"^\s*(?:propose|propose\s+de|offre|ofrece|biete)\b.*"
-    r"\b(?:pour|por|f[üu]r|for)\s+\d{1,7}\s*(?:kamas?|k)\b",
-    re.IGNORECASE,
-)
 _RE_ABORT_GUARD = re.compile(
-    r"^\s*(?:abort|cancel|annule[rz]?|cancela[rz]?|beende|brich|abandonne[rz]?|abandona[rz]?)\b.*\b"
-    r"(?:all|everything|plan|bot|tout|todo|alles|el\s+bot|le\s+bot|den\s+bot)\b",
+    r"^\s*(?:abort|cancel|annule[rz]?|cancela[rz]?|beende|brich)\b.*\b"
+    r"(?:all|everything|plan|bot|tout|todo|alles)\b",
     re.IGNORECASE,
 )
 _RE_LIST_ITEM_GUARD = re.compile(
@@ -286,10 +247,7 @@ _RE_PRICE_EXCLUDE = re.compile(
 )
 _RE_INV_LIST_GUARD = re.compile(
     r"\b(?:what\s+am\s+i\s+carrying|what\s+do\s+i\s+have|what'?s\s+in\s+my\s+inventory|"
-    r"show\s+my\s+(?:inventory|items)|list\s+my\s+inventory|"
-    r"qu'ai[- ]?je|que\s+dois[- ]?je|mon\s+inventaire|mes\s+objets|"
-    r"[¿]?qu[eé]\s+llevo|[¿]?qu[eé]\s+tengo|mi\s+inventario|mis\s+objetos|"
-    r"was\s+trage\s+ich|was\s+habe\s+ich|mein\s+inventar|meine\s+gegenst[aä]nde)\b",
+    r"show\s+my\s+inventory|mon\s+inventaire|mi\s+inventario|mein\s+inventar)\b",
     re.IGNORECASE,
 )
 _RE_SELL_VERB = re.compile(
@@ -300,31 +258,21 @@ _RE_ITEM_SELL = re.compile(
     re.IGNORECASE,
 )
 _RE_ITEM_LIST = re.compile(
-    r"^\s*(?:put|mets|mettre|pon|poner|auction|list|propose|offre|ofrece|biete)\s+"
+    r"^\s*(?:put|mets|mettre|pon|poner|auction|list)\s+"
     r"(?:(?:up|en\s+vente|à\s+la\s+vente|a\s+la\s+venta)\s+)?"
     r"(?:\d{1,4}\s+)?(.+?)\s+(?:(?:up)\s+)?"
-    r"(?:for|à|a|por|für|at|on|pour)\s+",
+    r"(?:for|à|a|por|für|at|on)\s+",
     re.IGNORECASE,
 )
 _CURRENCY_ITEM_WORDS = {"kama", "kamas", "k"}
-_VERB_FORMS = {
-    "mets", "vends", "vend", "vendre", "sell", "vende", "vender",
-    "propose", "proposes", "offre", "offres", "ofrece", "ofreces", "biete", "bietest",
-    "list", "liste", "listes", "pon", "pone", "poner", "scan", "scanne", "escanea",
-}
 _RE_STATE_GUARD = re.compile(
     r"\b(?:where\s+am\s+i|où\s+suis-je|dónde\s+estoy|wo\s+bin\s+ich|"
-    r"my\s+position|ma\s+position|mi\s+posici[oó]n|meine\s+position|"
-    r"my\s+current\s+map|ma\s+carte\s+actuelle|mi\s+mapa\s+actual|"
-    r"meine\s+aktuelle\s+karte|where\s+is\s+my\s+character|"
-    r"où\s+est\s+mon\s+personnage|dónde\s+est[aá]\s+mi\s+personaje|"
-    r"wo\s+ist\s+mein\s+charakter)\b",
+    r"my\s+position|ma\s+position|mi\s+posici[oó]n|meine\s+position)\b",
     re.IGNORECASE,
 )
 _RE_KNOWLEDGE_GUARD = re.compile(
     r"^\s*(?:(?:what|who)\s+is|tell\s+me\s+about|qu'est[- ]?ce\s+que|qui\s+est|"
-    r"qu[eé]\s+es|was\s+ist|wer\s+ist|parle[- ]moi\s+de|h[áa]blame\s+de|"
-    r"erz[äa]hl\s+mir\s+von)\b",
+    r"qu[eé]\s+es|was\s+ist|wer\s+ist)\b",
     re.IGNORECASE,
 )
 _RE_PRICE_QUESTION = re.compile(
@@ -402,8 +350,6 @@ def _find_entity(goal: str, kind: str) -> Optional[str]:
             for variant in _singular_variants(phrase):
                 if kind == "item" and variant in _CURRENCY_ITEM_WORDS:
                     continue
-                if kind == "item" and phrase in _VERB_FORMS and variant != phrase:
-                    continue
                 if variant in index:
                     return index[variant]
     return None
@@ -424,32 +370,20 @@ def _guard_tool(goal: str) -> Optional[str]:
         return "safe.stop"
     if _RE_ABORT_GUARD.search(goal):
         return "safe.stop"
-    if _RE_FIGHT_JOIN_GUARD.search(goal):
-        return "fight.join"
-    if _RE_FIGHT_PASS_GUARD.search(goal):
-        return "fight.pass"
     if _extract_coords(goal):
         return "nav.goto"
-    if _RE_FOLLOW_GUARD.search(goal):
-        return "nav.follow"
-    if _RE_FARM_PHRASE_GUARD.search(goal) or (
-            _RE_FARM_VERB.search(goal) and not _RE_STOP_WORD.search(goal)):
+    if _RE_FARM_VERB.search(goal) and not _RE_STOP_WORD.search(goal):
         return "farm.start"
     if _RE_INV_LIST_GUARD.search(goal) and not _RE_SELL_VERB.search(goal):
         return "inv.list"
     if _RE_STATE_GUARD.search(goal):
         return "state.snapshot"
-    if (_RE_MARKET_LIST_GUARD.search(goal) or _RE_BID_LIST_GUARD.search(goal)
-            or _RE_PROPOSE_GUARD.search(goal)):
+    if _RE_MARKET_LIST_GUARD.search(goal) or _RE_BID_LIST_GUARD.search(goal):
         return "hdv.list"
     if _RE_MARKET_SCAN_GUARD.search(goal):
         return "hdv.scan"
     if _RE_LIST_ITEM_GUARD.search(goal):
         return "hdv.list"
-    if (_RE_SELL_IMPERATIVE.search(goal)
-            and not _RE_MARKET_LIST_GUARD.search(goal)
-            and not _RE_BID_LIST_GUARD.search(goal)):
-        return "inv.sell"
     if (_RE_DUNGEON_QUEST_GUARD.search(goal)
             and not re.search(r"\b(?:advance|avance|avanza|avanciere|progress)\b",
                               goal, re.IGNORECASE)):
@@ -578,13 +512,11 @@ class ThxPolicy:
         device: str = "cpu",
         fallback: Optional[Any] = None,
         min_tool_confidence: float = 0.0,
-        use_guards: bool = True,
     ) -> None:
         self.model = model or _default_model_path()
         self.device = device
         self.fallback = fallback
         self.min_tool_confidence = min_tool_confidence
-        self.use_guards = use_guards
         self._agent: Any = None
         self.last: Dict[str, Any] = {}
 
@@ -622,7 +554,7 @@ class ThxPolicy:
         if not goal:
             return None
         started = time.perf_counter()
-        guarded = _guard_tool(goal) if self.use_guards else None
+        guarded = _guard_tool(goal)
         if guarded and (not tools or guarded in tools):
             name = guarded
             confidence = 1.0
@@ -872,15 +804,6 @@ class ThxPolicy:
         answer = _strip_question_words(_clean_phrase(answer))
         if answer and _normalize(answer) != _normalize(goal):
             return answer
-        for prefixes in (
-            ("parle-moi de", "parle moi de", "háblame de", "hablame de",
-             "erzähl mir von", "erzahl mir von", "who is", "qui est",
-             "quién es", "quien es", "wer ist", "look up", "busca", "suche",
-             "trouve", "encuentra"),
-        ):
-            candidate = _strip_question_words(_after_prefix(goal, prefixes))
-            if candidate and _normalize(candidate) != _normalize(goal):
-                return candidate
         cleaned = _strip_question_words(_clean_phrase(goal))
         return cleaned or goal
 
@@ -904,10 +827,7 @@ class ThxPolicy:
             return answer
         for prefixes in (
             ("sell", "vends", "vendre", "vend", "vender", "vende", "verkaufe"),
-            ("scan", "scanne", "escanea", "check the market for", "vérifie le marché pour",
-             "verifie le marche pour", "consulta el mercado para", "consulta el mercado por",
-             "prüfe den markt für", "pruefe den markt fuer",
-             "price of", "prix de", "prix du", "prix d'", "precio de", "preis von"),
+            ("scan", "price of", "prix de", "prix du", "prix d'", "precio de", "preis von"),
             ("list", "put", "mettre en vente", "poner en venta", "list my"),
             ("mets en vente", "pon en venta", "poner a la venta", "put up for sale"),
             ("cuánto cuesta", "cuanto cuesta", "combien vaut", "combien coûte",
@@ -919,9 +839,6 @@ class ThxPolicy:
         return None
 
     def _price(self, goal: str) -> Optional[int]:
-        match = _RE_PRICE_CURRENCY.search(goal)
-        if match:
-            return int(match.group(1))
         match = _RE_PRICE.search(goal)
         if match:
             return int(match.group(1))
