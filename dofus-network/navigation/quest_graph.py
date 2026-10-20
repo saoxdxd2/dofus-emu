@@ -19,7 +19,7 @@ import logging
 import re
 import urllib.parse
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -88,6 +88,9 @@ class QuestGuide:
             "papycha_url": self.papycha_url,
             "tips": self.tips,
         }
+
+
+_QUEST_STEP_FIELDS = {f.name for f in fields(QuestStep)}
 
 
 class QuestKnowledgeGraph:
@@ -298,9 +301,21 @@ class QuestKnowledgeGraph:
             try:
                 data = json.loads(QUESTS_CACHE_FILE.read_text(encoding="utf-8"))
                 for item in data:
+                    if not isinstance(item, dict) or "title_fr" not in item:
+                        continue  # DofusDB dump, served by agent tooling instead
                     g_id = item.get("id")
                     if g_id and g_id not in self.by_id:
-                        steps = [QuestStep(**s) for s in item.get("steps", [])]
+                        steps = []
+                        for step in item.get("steps") or []:
+                            if not isinstance(step, dict):
+                                continue
+                            payload = {
+                                key: value for key, value in step.items()
+                                if key in _QUEST_STEP_FIELDS
+                            }
+                            if "title" not in payload or "description" not in payload:
+                                continue
+                            steps.append(QuestStep(**payload))
                         g = QuestGuide(
                             id=g_id,
                             title_fr=item.get("title_fr", ""),

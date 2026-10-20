@@ -84,6 +84,7 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "EmulatorBackend.cs"),
                 Path.Combine(desktopDir, "WebView2ClientForm.cs"),
                 Path.Combine(desktopDir, "WebView2Backend.cs"),
+                Path.Combine(desktopDir, "AgentBridge.cs"),
                 Path.Combine(desktopDir, "FarmEngine.cs"),
                 Path.Combine(desktopDir, "Watchdog.cs"),
                 Path.Combine(desktopDir, "PriorityGovernor.cs"),

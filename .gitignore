@@ -100,3 +100,9 @@ __pycache__/
 dofus-network/models/**
 *_DofusFarm.exe
 
+# Agent trajectory logs (training data, stays local)
+dofus-network/trajectories/
+
+# Generated tool-use SFT corpus (training data, stays local)
+dofus-network/data/agent_sft/
+

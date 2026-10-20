@@ -78,8 +78,9 @@ def _count_json(path: Path) -> int:
     return len(payload) if isinstance(payload, list) else 0
 
 
-def sync_encyclopedia(max_monsters: int, max_spells: int) -> SourceResult:
-    """Pull real monsters/spells from the DofusDB mirror."""
+def sync_encyclopedia(max_monsters: int, max_spells: int,
+                      full_database: bool = False) -> SourceResult:
+    """Pull real monsters/spells (optionally the whole DB) from the DofusDB mirror."""
     started = time.perf_counter()
     result = SourceResult(name="dofusdb_encyclopedia", ok=True)
     try:
@@ -95,6 +96,26 @@ def sync_encyclopedia(max_monsters: int, max_spells: int) -> SourceResult:
             "monsters_trilingual": sum(
                 1 for m in monsters if m.get("name_fr") and m.get("name_en") and m.get("name_es")),
         }
+        if full_database:
+            from data.sync_full_database import (
+                sync_achievements, sync_areas, sync_dungeons, sync_items,
+                sync_npcs, sync_quests, sync_subareas,
+            )
+            full_detail: Dict[str, Any] = {}
+            for name, sync_fn in {
+                "items": sync_items,
+                "quests": sync_quests,
+                "npcs": sync_npcs,
+                "achievements": sync_achievements,
+                "dungeons": sync_dungeons,
+                "subareas": sync_subareas,
+                "areas": sync_areas,
+            }.items():
+                try:
+                    full_detail[name] = len(sync_fn())
+                except Exception as exc:  # noqa: BLE001 - one collection must not kill the rest
+                    full_detail[name] = f"failed: {type(exc).__name__}: {exc}"
+            result.detail["full_database"] = full_detail
         if result.records == 0:
             result.ok = False
             result.error = "DofusDB returned no records (mirror down or rate limited)"
@@ -249,6 +270,7 @@ def acquire(
     online_count: int = 12000,
     max_monsters: int = 2000,
     max_spells: int = 2000,
+    full_database: bool = False,
     logs_dir: Optional[Path] = None,
     skip_network: bool = False,
     skip_logs: bool = False,
@@ -259,7 +281,7 @@ def acquire(
     sources: List[SourceResult] = []
 
     if not skip_network:
-        sources.append(sync_encyclopedia(max_monsters, max_spells))
+        sources.append(sync_encyclopedia(max_monsters, max_spells, full_database=full_database))
     else:
         sources.append(SourceResult(
             name="dofusdb_encyclopedia", ok=True, detail={"skipped": True}))
@@ -331,6 +353,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--online-count", type=int, default=12000)
     parser.add_argument("--monsters", type=int, default=2000)
     parser.add_argument("--spells", type=int, default=2000)
+    parser.add_argument("--full-database", action="store_true",
+                        help="Also sync items/quests/npcs/achievements/dungeons/subareas/areas")
     parser.add_argument("--logs-dir", type=Path, default=None,
                         help="Directory of captured bot logs (*.log, *.txt, *.jsonl)")
     parser.add_argument("--skip-network", action="store_true",
@@ -350,6 +374,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         online_count=args.online_count,
         max_monsters=args.monsters,
         max_spells=args.spells,
+        full_database=args.full_database,
         logs_dir=args.logs_dir,
         skip_network=args.skip_network and not args.all,
         skip_logs=args.skip_logs,

@@ -120,6 +120,8 @@ namespace DofusFarm.UI
 
         private WebView2Backend _webViewBackend;
 
+        private AgentDirectiveBridge _agentBridge;
+
 
 
         private Panel _headerPanel;
@@ -1563,6 +1565,12 @@ namespace DofusFarm.UI
                 _webViewBackend.OnStateChanged += delegate { SafeBeginInvoke(delegate { RefreshGrid(true); }); };
 
                 _webViewBackend.Initialize();
+
+
+
+                _agentBridge = new AgentDirectiveBridge(_webViewBackend, GetInstanceIdFromSlot, Log, 8893);
+
+                _agentBridge.Start();
 
 
 
@@ -3140,6 +3148,8 @@ namespace DofusFarm.UI
 
             if (_governor != null) { _governor.OnLog -= Log; _governor.Stop(); }
 
+            if (_agentBridge != null) { try { _agentBridge.Dispose(); } catch { } _agentBridge = null; }
+
             if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch { } }
 
 
@@ -3224,6 +3234,8 @@ namespace DofusFarm.UI
             {
 
                 _isClosing = true;
+
+                if (_agentBridge != null) { try { _agentBridge.Dispose(); } catch { } _agentBridge = null; }
 
                 if (_webViewBackend != null) { try { _webViewBackend.Dispose(); } catch { } _webViewBackend = null; }
 

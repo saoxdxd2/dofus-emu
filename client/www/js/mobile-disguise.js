@@ -1232,6 +1232,193 @@
         window.__FarmBot = FarmBot;
     } catch(e) {}
 
+    // 25b. Agent directive bus — driven by the C# AgentDirectiveBridge (127.0.0.1:8893),
+    // which the Python agent (dofus-network/agent) POSTs to. window.__agentDirective
+    // receives the raw envelope {id, ts, directive, tool, args, source} and returns a
+    // JSON string; the host unwraps it and hands it back to the agent as the tool result,
+    // so every directive lands in the trajectory recorder with a real outcome.
+    try {
+        var _agentResult = function(ok, data, error) {
+            return JSON.stringify({ ok: !!ok, data: data || null, error: error || null, at: Date.now() });
+        };
+
+        var _agentSnapshot = function() {
+            var snap = { connected: false, in_fight: false };
+            try {
+                var pd = (window.gui && window.gui.playerData) || null;
+                var ch = (pd && pd.character) || {};
+                snap.connected = !!(window.dofus && window.dofus.connectionManager);
+                snap.character = {
+                    id: ch.id != null ? ch.id : null,
+                    name: ch.name || null,
+                    level: ch.level != null ? ch.level : null,
+                    breed: (ch.breed && ch.breed.name) || null
+                };
+                var pos = ch.position || {};
+                var mapId = pos.mapId;
+                try {
+                    if (mapId == null && window.isoEngine) {
+                        mapId = window.isoEngine.currentMapId || (window.isoEngine.mapData && window.isoEngine.mapData.mapId);
+                    }
+                } catch(e){}
+                snap.position = {
+                    cell: pos.cell != null ? pos.cell : null,
+                    x: pos.x != null ? pos.x : null,
+                    y: pos.y != null ? pos.y : null,
+                    map_id: mapId != null ? mapId : null
+                };
+                snap.hp = {
+                    life: ch.lifePoints != null ? ch.lifePoints : null,
+                    max: ch.maxLifePoints != null ? ch.maxLifePoints : null,
+                    ap: ch.ap != null ? ch.ap : null,
+                    mp: ch.mp != null ? ch.mp : null
+                };
+                if (window.__FarmBot) {
+                    snap.auto_fight = !!window.__FarmBot.enabled;
+                    snap.farm_state = window.__FarmBot.state || null;
+                }
+                // Inventory probe. Item GIDs are returned raw; the Python agent maps
+                // gid -> name from its local items cache (no per-item DOM work here).
+                if (pd && pd.inventory) {
+                    var inv = pd.inventory;
+                    snap.inventory = { kamas: (inv.kamas != null ? inv.kamas : null), items: [], raw_keys: null };
+                    var items = inv.objects || inv.items || null;
+                    if (Array.isArray(items)) {
+                        for (var i = 0; i < items.length; i++) {
+                            var it = items[i] || {};
+                            snap.inventory.items.push({
+                                gid: it.objectGID != null ? it.objectGID : (it.gid != null ? it.gid : null),
+                                qty: it.quantity != null ? it.quantity : (it.qty != null ? it.qty : 1)
+                            });
+                        }
+                    } else if (items && typeof items === 'object') {
+                        for (var gid in items) {
+                            if (Object.prototype.hasOwnProperty.call(items, gid)) {
+                                snap.inventory.items.push({ gid: parseInt(gid, 10) || gid, qty: items[gid] });
+                            }
+                        }
+                    } else {
+                        snap.inventory.raw_keys = Object.keys(inv).slice(0, 25);
+                    }
+                }
+            } catch(err) {
+                snap.error = err.toString();
+            }
+            return snap;
+        };
+
+        var _agentCommander = function(action) {
+            try {
+                if (typeof window.__executeCommanderDirective === 'function') {
+                    var raw = window.__executeCommanderDirective({ action: action });
+                    try { return JSON.parse(raw); } catch(e) { return { status: 'ok', action: action }; }
+                }
+            } catch(err) { return { status: 'error', message: err.toString() }; }
+            return { status: 'error', message: '__executeCommanderDirective unavailable' };
+        };
+
+        var _agentHandlers = {
+            'safe.stop': function(args) {
+                var stopped = { auto_fight: false, follow: false };
+                try {
+                    if (window.__FarmBot && window.__FarmBot.enabled) {
+                        window.__FarmBot.setEnabled(false);
+                        stopped.auto_fight = true;
+                    }
+                } catch(e){}
+                try { _activeDirectives = {}; stopped.follow = true; } catch(e){}
+                return _agentResult(true, { stopped: stopped, reason: (args && args.reason) || null });
+            },
+            'farm.start': function(args) {
+                var started = false;
+                try {
+                    if (window.__FarmBot) {
+                        window.__FarmBot.setEnabled(true);
+                        started = !!window.__FarmBot.enabled;
+                    }
+                } catch(e){}
+                return _agentResult(started, {
+                    auto_fight: started,
+                    requested: args || null,
+                    note: 'auto-fight enabled; zone walking / harvest loop is not implemented in the client yet'
+                }, started ? null : 'FarmBot unavailable');
+            },
+            'farm.stop': function() {
+                try { if (window.__FarmBot) window.__FarmBot.setEnabled(false); } catch(e){}
+                return _agentResult(true, { auto_fight: false });
+            },
+            'fight.join': function() { return _agentResult(true, _agentCommander('AUTO_JOIN_COMBAT')); },
+            'fight.pass': function() { return _agentResult(true, _agentCommander('PASS_TURN')); },
+            'nav.follow': function(args) {
+                return _agentResult(true, _agentCommander('FOLLOW'), null);
+            },
+            'inv.list': function() {
+                var snap = _agentSnapshot();
+                return _agentResult(!!snap.inventory, snap.inventory || null,
+                    snap.inventory ? null : 'inventory is not exposed by this client build (probe: playerData.inventory missing)');
+            },
+            'state.snapshot': function() { return _agentResult(true, _agentSnapshot()); },
+            'chat.say': function(args) {
+                var text = (args && args.text) || '';
+                if (!text) return _agentResult(false, null, 'chat.say needs non-empty text');
+                try {
+                    if (window.gui && window.gui.chat && typeof window.gui.chat.sendMessage === 'function') {
+                        window.gui.chat.sendMessage(text, 0);
+                        return _agentResult(true, { via: 'gui.chat', channel: 'say' });
+                    }
+                    if (window.dofus && window.dofus.connectionManager) {
+                        window.dofus.connectionManager.sendMessage('ChatClientMultiMessage',
+                            { channel: 0, content: text, parameters: [] });
+                        return _agentResult(true, { via: 'connectionManager', channel: 'say', verified: false });
+                    }
+                    return _agentResult(false, null, 'no chat transport available');
+                } catch(err) { return _agentResult(false, null, err.toString()); }
+            },
+            'quest.advance': function(args) {
+                return _agentResult(false, { quest_id: (args && args.quest_id) || null },
+                    'quest_ui_not_mapped: dialog/navigation automations for quest steps need a live mapping session');
+            },
+            'inv.sell': function(args) {
+                return _agentResult(false, { requested: args || null },
+                    'hdv_ui_not_mapped: market listing automation needs a live mapping session');
+            },
+            'hdv.scan': function(args) {
+                return _agentResult(false, { item: (args && args.item) || null },
+                    'hdv_ui_not_mapped: market price scan needs a live mapping session');
+            },
+            'hdv.list': function(args) {
+                return _agentResult(false, { item: (args && args.item) || null },
+                    'hdv_ui_not_mapped: market listing automation needs a live mapping session');
+            }
+        };
+
+        var _agentDirectiveAliases = {
+            'SAFE_STOP': 'safe.stop', 'FARM_START': 'farm.start', 'FARM_STOP': 'farm.stop',
+            'AUTO_JOIN_COMBAT': 'fight.join', 'PASS_TURN': 'fight.pass', 'FOLLOW': 'nav.follow',
+            'INV_LIST': 'inv.list', 'INV_SELL': 'inv.sell', 'HDV_SCAN': 'hdv.scan',
+            'HDV_LIST': 'hdv.list', 'CHAT_SAY': 'chat.say', 'STATE_SNAPSHOT': 'state.snapshot',
+            'QUEST_ADVANCE': 'quest.advance'
+        };
+
+        window.__agentDirective = function(payload) {
+            try {
+                if (typeof payload === 'string') payload = JSON.parse(payload);
+                payload = payload || {};
+                var key = payload.tool ? String(payload.tool).toLowerCase() : '';
+                if (!key && payload.directive) {
+                    key = _agentDirectiveAliases[String(payload.directive).toUpperCase()] || '';
+                }
+                console.log('[AgentBridge] directive:', key || payload.directive, payload);
+                var handler = _agentHandlers[key];
+                if (!handler) return _agentResult(false, null, 'no client handler for tool "' + key + '"');
+                return handler(payload.args || {});
+            } catch(err) {
+                return _agentResult(false, null, err.toString());
+            }
+        };
+        console.log('[AgentBridge] directive bus ready');
+    } catch(e) {}
+
     // 20b. F11 fullscreen bridge: WebView2 never handles F11 itself, so the
     // page forwards it to the C# host (TOGGLE_FULLSCREEN) which toggles the
     // window borderless fullscreen on the screen it currently sits on.
