@@ -1,0 +1,71 @@
+{"id":"en-01","goal":"stop everything now","tool":"safe.stop","args":{},"lang":"en"}
+{"id":"en-02","goal":"follow me","tool":"nav.follow","args":{},"lang":"en"}
+{"id":"en-03","goal":"pass the turn","tool":"fight.pass","args":{},"lang":"en"}
+{"id":"en-04","goal":"go to [12, 8]","tool":"nav.goto","args":{"x":12,"y":8},"lang":"en"}
+{"id":"en-05","goal":"zaap Astrub","tool":"nav.goto","args":{"zaap":"Astrub"},"lang":"en"}
+{"id":"en-06","goal":"list quests in Astrub","tool":"quest.list","args":{"area":"Astrub"},"lang":"en"}
+{"id":"en-07","goal":"quests for level 40 in Bonta","tool":"quest.list","args":{"area":"Bonta","level_min":40},"lang":"en"}
+{"id":"en-08","goal":"dungeon quests in Amakna","tool":"quest.list","args":{"area":"Amakna","dungeon_only":true},"lang":"en"}
+{"id":"en-09","goal":"what is a Bouftou?","tool":"knowledge.search","args":{"query":"Bouftou"},"lang":"en"}
+{"id":"en-10","goal":"farm kanigs for loot","tool":"farm.start","args":{"monster":"kanigs"},"lang":"en"}
+{"id":"en-11","goal":"stop the farm loop","tool":"farm.stop","args":{},"lang":"en"}
+{"id":"en-12","goal":"join the fight","tool":"fight.join","args":{},"lang":"en"}
+{"id":"en-13","goal":"sell all the resources in my inventory","tool":"inv.sell","args":{"all":true},"lang":"en"}
+{"id":"en-14","goal":"sell the Bouftou Wool","tool":"inv.sell","args":{"item":"Bouftou Wool"},"lang":"en"}
+{"id":"en-15","goal":"scan the price of Bouftou Wool","tool":"hdv.scan","args":{"item":"Bouftou Wool"},"lang":"en"}
+{"id":"en-16","goal":"list my Gold Ingot on the market for 500 kamas","tool":"hdv.list","args":{"item":"Gold Ingot","price_rule":"fixed","price":500},"lang":"en"}
+{"id":"en-17","goal":"advance quest 1696","tool":"quest.advance","args":{"quest_id":1696},"lang":"en"}
+{"id":"en-18","goal":"say hello in team chat","tool":"chat.say","args":{"text":"hello","channel":"team"},"lang":"en"}
+{"id":"en-19","goal":"where am I?","tool":"state.snapshot","args":{},"lang":"en"}
+{"id":"en-20","goal":"show my inventory","tool":"inv.list","args":{},"lang":"en"}
+{"id":"fr-01","goal":"arrête tout","tool":"safe.stop","args":{},"lang":"fr"}
+{"id":"fr-02","goal":"suis-moi","tool":"nav.follow","args":{},"lang":"fr"}
+{"id":"fr-03","goal":"passe le tour","tool":"fight.pass","args":{},"lang":"fr"}
+{"id":"fr-04","goal":"va en [-3, 12]","tool":"nav.goto","args":{"x":-3,"y":12},"lang":"fr"}
+{"id":"fr-05","goal":"zaap Astrub","tool":"nav.goto","args":{"zaap":"Astrub"},"lang":"fr"}
+{"id":"fr-06","goal":"liste les quêtes à Astrub","tool":"quest.list","args":{"area":"Astrub"},"lang":"fr"}
+{"id":"fr-07","goal":"quêtes de niveau 60 à Bonta","tool":"quest.list","args":{"area":"Bonta","level_min":60},"lang":"fr"}
+{"id":"fr-08","goal":"cherche Bouftou","tool":"knowledge.search","args":{"query":"Bouftou"},"lang":"fr"}
+{"id":"fr-09","goal":"farm les kanigs","tool":"farm.start","args":{"monster":"kanigs"},"lang":"fr"}
+{"id":"fr-10","goal":"rejoins le combat","tool":"fight.join","args":{},"lang":"fr"}
+{"id":"fr-11","goal":"vends tout mon inventaire","tool":"inv.sell","args":{"all":true},"lang":"fr"}
+{"id":"fr-12","goal":"scan le prix de la Laine de Bouftou","tool":"hdv.scan","args":{"item":"Laine de Bouftou"},"lang":"fr"}
+{"id":"fr-13","goal":"avance la quête 1696","tool":"quest.advance","args":{"quest_id":1696},"lang":"fr"}
+{"id":"fr-14","goal":"dis bonjour dans le chat d'équipe","tool":"chat.say","args":{"text":"bonjour","channel":"team"},"lang":"fr"}
+{"id":"fr-15","goal":"où suis-je ?","tool":"state.snapshot","args":{},"lang":"fr"}
+{"id":"fr-16","goal":"montre mon inventaire","tool":"inv.list","args":{},"lang":"fr"}
+{"id":"fr-17","goal":"quelles quêtes puis-je faire à Amakna ?","tool":"quest.list","args":{"area":"Amakna"},"lang":"fr"}
+{"id":"fr-18","goal":"arrête la boucle de farm","tool":"farm.stop","args":{},"lang":"fr"}
+{"id":"es-01","goal":"para todo","tool":"safe.stop","args":{},"lang":"es"}
+{"id":"es-02","goal":"sígueme","tool":"nav.follow","args":{},"lang":"es"}
+{"id":"es-03","goal":"pasa el turno","tool":"fight.pass","args":{},"lang":"es"}
+{"id":"es-04","goal":"ve a [7, -4]","tool":"nav.goto","args":{"x":7,"y":-4},"lang":"es"}
+{"id":"es-05","goal":"zaap Astrub","tool":"nav.goto","args":{"zaap":"Astrub"},"lang":"es"}
+{"id":"es-06","goal":"lista las misiones de Astrub","tool":"quest.list","args":{"area":"Astrub"},"lang":"es"}
+{"id":"es-07","goal":"misiones de nivel 30 en Bonta","tool":"quest.list","args":{"area":"Bonta","level_min":30},"lang":"es"}
+{"id":"es-08","goal":"busca Bouftou","tool":"knowledge.search","args":{"query":"Bouftou"},"lang":"es"}
+{"id":"es-09","goal":"farmea kanigs","tool":"farm.start","args":{"monster":"kanigs"},"lang":"es"}
+{"id":"es-10","goal":"únete al combate","tool":"fight.join","args":{},"lang":"es"}
+{"id":"es-11","goal":"vende todo el inventario","tool":"inv.sell","args":{"all":true},"lang":"es"}
+{"id":"es-12","goal":"escanea el precio de la Lana de Bouftou","tool":"hdv.scan","args":{"item":"Lana de Bouftou"},"lang":"es"}
+{"id":"es-13","goal":"avanza la misión 1696","tool":"quest.advance","args":{"quest_id":1696},"lang":"es"}
+{"id":"es-14","goal":"di hola en el chat de equipo","tool":"chat.say","args":{"text":"hola","channel":"team"},"lang":"es"}
+{"id":"es-15","goal":"¿dónde estoy?","tool":"state.snapshot","args":{},"lang":"es"}
+{"id":"es-16","goal":"muestra mi inventario","tool":"inv.list","args":{},"lang":"es"}
+{"id":"es-17","goal":"misiones de mazmorra en Amakna","tool":"quest.list","args":{"area":"Amakna","dungeon_only":true},"lang":"es"}
+{"id":"de-01","goal":"halt alles","tool":"safe.stop","args":{},"lang":"de"}
+{"id":"de-02","goal":"folge mir","tool":"nav.follow","args":{},"lang":"de"}
+{"id":"de-03","goal":"passe den Zug","tool":"fight.pass","args":{},"lang":"de"}
+{"id":"de-04","goal":"geh zu [7, -4]","tool":"nav.goto","args":{"x":7,"y":-4},"lang":"de"}
+{"id":"de-05","goal":"zaap Astrub","tool":"nav.goto","args":{"zaap":"Astrub"},"lang":"de"}
+{"id":"de-06","goal":"liste die Quests in Astrub","tool":"quest.list","args":{"area":"Astrub"},"lang":"de"}
+{"id":"de-07","goal":"Quests für Level 80 in Bonta","tool":"quest.list","args":{"area":"Bonta","level_min":80},"lang":"de"}
+{"id":"de-08","goal":"suche Bouftou","tool":"knowledge.search","args":{"query":"Bouftou"},"lang":"de"}
+{"id":"de-09","goal":"farme Kanigs","tool":"farm.start","args":{"monster":"kanigs"},"lang":"de"}
+{"id":"de-10","goal":"Kampf beitreten","tool":"fight.join","args":{},"lang":"de"}
+{"id":"de-11","goal":"verkaufe das ganze Inventar","tool":"inv.sell","args":{"all":true},"lang":"de"}
+{"id":"de-12","goal":"scanne den Preis von Bouftou-Wolle","tool":"hdv.scan","args":{"item":"Bouftou-Wolle"},"lang":"de"}
+{"id":"de-13","goal":"avanciere Quest 1696","tool":"quest.advance","args":{"quest_id":1696},"lang":"de"}
+{"id":"de-14","goal":"sag Hallo im Teamchat","tool":"chat.say","args":{"text":"Hallo","channel":"team"},"lang":"de"}
+{"id":"de-15","goal":"wo bin ich?","tool":"state.snapshot","args":{},"lang":"de"}
+{"id":"de-16","goal":"zeig mein Inventar","tool":"inv.list","args":{},"lang":"de"}

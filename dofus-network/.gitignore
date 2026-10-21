@@ -26,3 +26,9 @@ env/
 .vscode/settings.json
 .DS_Store
 Thumbs.db
+
+# Planner: generated knowledge base and learned economy state
+data/kb/dofus_kb.npz
+data/kb/dofus_names.bin
+data/kb/economy_state.json
+data/kb/schedule_state.json

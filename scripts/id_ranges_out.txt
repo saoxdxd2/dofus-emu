@@ -1,0 +1,63 @@
+ID range: 0 - 3358
+Total spells: 2000
+
+=== Spells with IDs 200-260 ===
+  id=201 name_fr='Béco du Tofu' name_en='Tofu Kiss' type_id=425
+  id=202 name_fr='Morsure du Bouftou' name_en='Gobball Bite' type_id=3555
+  id=203 name_fr='Moquerie' name_en='Mockery' type_id=186
+  id=204 name_fr='Embrochement' name_en='Skewering' type_id=425
+  id=205 name_fr='Éclair en Série' name_en='Serial Lightnings' type_id=425
+  id=206 name_fr='Écrasement Handicapant' name_en='Debilitating Crush' type_id=425
+  id=207 name_fr='Petit coup du Chafer' name_en='Chafer Slice' type_id=3560
+  id=208 name_fr='Tornade' name_en='Tornado' type_id=425
+  id=209 name_fr='Chatataque' name_en='Catatack' type_id=136
+  id=210 name_fr='Lapino de vie' name_en='Bunny Heal' type_id=425
+  id=211 name_fr='Chosse' name_en='Chosse' type_id=425
+  id=212 name_fr='Larvement' name_en='Larvage' type_id=425
+  id=213 name_fr='Frappe' name_en='Whack' type_id=425
+  id=214 name_fr='Invocation d'Arakne' name_en='Summoning of Arachnee' type_id=425
+  id=215 name_fr='Retour de flamme' name_en='Backfire' type_id=425
+  id=216 name_fr='Carapace' name_en='Carapace' type_id=425
+  id=217 name_fr='Fixation Béton' name_en='Concrete Attachment' type_id=3648
+  id=218 name_fr='Invocation de Gelée Bleuet' name_en='Summoning of Blueberry Jelly' type_id=3646
+  id=219 name_fr='Empoisonnement' name_en='Poisoning' type_id=425
+  id=220 name_fr='Effleurement' name_en='Light Touch' type_id=425
+  id=221 name_fr='Pince' name_en='Pincer' type_id=190
+  id=222 name_fr='Éventration' name_en='Rupture' type_id=425
+  id=223 name_fr='Météorite' name_en='Meteorite' type_id=425
+  id=224 name_fr='Invocation de Tofu Maléfique' name_en='Summoning of Evil Tofu' type_id=425
+  id=225 name_fr='Invocation de Gelée Menthe' name_en='Summoning of Mint Jelly' type_id=3649
+  id=226 name_fr='Invocation de Gelée Fraise' name_en='Summoning of Strawberry Jelly' type_id=3647
+  id=227 name_fr='Protection Magique' name_en='Magic Protection' type_id=425
+  id=228 name_fr='Étourderie Mortelle' name_en='Lethal Blunder' type_id=425
+  id=229 name_fr='Croutage' name_en='Flunking' type_id=425
+  id=230 name_fr='Feu Ardent' name_en='Blazing Fire' type_id=425
+  id=231 name_fr='Morsure Sylvestre' name_en='Sylvan Bite' type_id=425
+  id=232 name_fr='Agacement Bulbique' name_en='Bulbic Irritation' type_id=425
+  id=233 name_fr='Sacrifice Douloureux' name_en='Painful Sacrifice' type_id=425
+  id=234 name_fr='Coup de Pioche' name_en='Pickaxe Blow' type_id=425
+  id=235 name_fr='Jet de pierre' name_en='Stone Throwing' type_id=425
+  id=236 name_fr='Vol de Vie' name_en='Theft of Life' type_id=425
+  id=238 name_fr='Persécution' name_en='Persecution' type_id=425
+  id=239 name_fr='Lancer de Hachette' name_en='Hatchet Throwing' type_id=425
+  id=240 name_fr='Branche Paralysante' name_en='Paralysing Branch' type_id=425
+  id=241 name_fr='Reconstitution' name_en='Regeneration' type_id=425
+  id=242 name_fr='Rage' name_en='Rage' type_id=425
+  id=243 name_fr='Disruption' name_en='Disruption' type_id=425
+  id=244 name_fr='Immobilisation' name_en='Immobilisation' type_id=425
+  id=245 name_fr='Lancer de Tofu' name_en='Tofu Throwing' type_id=425
+  id=246 name_fr='Graines Magiques' name_en='Magic Seeds' type_id=425
+  id=247 name_fr='Morsure' name_en='Bite' type_id=425
+  id=248 name_fr='Force des Âmes Putrides' name_en='Strength of the Putrid Souls' type_id=425
+  id=249 name_fr='Bavouille' name_en='Dribble' type_id=3553
+  id=250 name_fr='Crachouille' name_en='Spit' type_id=3554
+  id=251 name_fr='Abolissement' name_en='Abolition' type_id=425
+  id=252 name_fr='Guérison Bouftou' name_en='Gobball Healing' type_id=3557
+  id=253 name_fr='Fureur du Bouftou' name_en='Gobball Rage' type_id=3556
+  id=254 name_fr='Cri du Mulou' name_en='Boowolf Cry' type_id=110
+  id=255 name_fr='Hypnose' name_en='Hypnosis' type_id=425
+  id=256 name_fr='Lancer de Pain' name_en='Bread Throwing' type_id=425
+  id=257 name_fr='Confusion Visuelle' name_en='Visual Confusion' type_id=425
+  id=258 name_fr='Frappe Gerbante' name_en='Puking Punch' type_id=425
+  id=259 name_fr='Mâchouillage' name_en='Chompion' type_id=3553
+  id=260 name_fr='Invocation d'Araknelle' name_en='Summoning of Arachnid' type_id=425

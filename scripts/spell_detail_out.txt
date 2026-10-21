@@ -1,0 +1,15 @@
+
+=== Trying spell id=420 ===
+Error: HTTP Error 404: NOT FOUND
+
+=== Trying spell id=4714 ===
+Error: HTTP Error 404: NOT FOUND
+
+=== Trying spell id=4716 ===
+Error: HTTP Error 404: NOT FOUND
+
+=== Trying spell id=4718 ===
+Error: HTTP Error 404: NOT FOUND
+
+=== Trying spell id=4720 ===
+Error: HTTP Error 404: NOT FOUND

@@ -347,23 +347,26 @@ def _is_fake(value: str, pools: Dict[str, Dict[str, List[str]]], kind: str, lang
 
 
 def _case(index: int, lang: str, tool: str, goal: str, args: Dict[str, Any],
-          family: str, synthetic: bool) -> Dict[str, Any]:
+          family: str, synthetic: bool, variant: int = 0) -> Dict[str, Any]:
+    prefix = "" if variant == 0 else f"v{variant}-"
     return {
-        "id": f"{lang}-{tool.replace('.', '-')}-{index:03d}",
+        "id": f"{prefix}{lang}-{tool.replace('.', '-')}-{index:03d}",
         "lang": lang,
         "tool": tool,
         "goal": goal,
         "args": args,
         "family": family,
         "synthetic_entity": synthetic,
+        "variant": variant,
     }
 
 
-def generate() -> List[Dict[str, Any]]:
+def generate(variant: int = 0) -> List[Dict[str, Any]]:
     pools = _pools()
     cases: List[Dict[str, Any]] = []
     price_values = [350, 800, 1200, 2400, 5000]
     qty_values = [1, 2, 4, 8, 12]
+    shift = variant * 7
     for tool in TOOLS:
         for lang in LANGS:
             templates = TEMPLATES[tool][lang]
@@ -372,18 +375,19 @@ def generate() -> List[Dict[str, Any]]:
                 for vi in range(5):
                     idx = len(cases)
                     synthetic = False
+                    slot = (ti * 5 + vi + shift) % 20
                     if "{entity}" in template:
                         kind = ("npc", "monster", "item", "dungeon")[ti]
-                        value = pools[lang][kind][(ti * 5 + vi) % 20]
+                        value = pools[lang][kind][slot]
                         synthetic = _is_fake(value, pools, kind, lang)
                         goal = template.format(entity=value)
                         args = {} if synthetic else {"query": value}
                     elif "{item}" in template:
                         kind = "item"
-                        value = pools[lang][kind][(ti * 5 + vi) % 20]
+                        value = pools[lang][kind][slot]
                         synthetic = _is_fake(value, pools, kind, lang)
-                        qty = qty_values[(ti + vi) % len(qty_values)]
-                        price = price_values[(ti + vi) % len(price_values)]
+                        qty = qty_values[(ti + vi + variant) % len(qty_values)]
+                        price = price_values[(ti + vi + variant) % len(price_values)]
                         goal = template.format(item=value, qty=qty, price=price)
                         if tool == "inv.sell":
                             args = {"quantity": qty} if synthetic else {
@@ -403,43 +407,44 @@ def generate() -> List[Dict[str, Any]]:
                                 args.pop("quantity", None)
                     elif "{monster}" in template:
                         kind = "monster"
-                        value = pools[lang][kind][(ti * 5 + vi) % 20]
+                        value = pools[lang][kind][slot]
                         synthetic = _is_fake(value, pools, kind, lang)
                         goal = template.format(monster=value)
                         args = {}
                     elif "{npc}" in template:
                         kind = "npc"
-                        value = pools[lang][kind][(ti * 5 + vi) % 20]
+                        value = pools[lang][kind][slot]
                         synthetic = _is_fake(value, pools, kind, lang)
                         goal = template.format(npc=value)
                         args = {}
                     elif "{area}" in template:
                         kind = "area"
-                        value = pools[lang][kind][(ti * 5 + vi) % 20]
+                        value = pools[lang][kind][slot]
                         goal = template.format(area=value)
                         args = {"area": value}
                     elif "{quest_id}" in template:
-                        qid = QUEST_IDS[(ti * 5 + vi) % len(QUEST_IDS)]
+                        qid = QUEST_IDS[(ti * 5 + vi + variant) % len(QUEST_IDS)]
                         goal = template.format(quest_id=qid)
                         args = {"quest_id": qid}
                     elif "{x}" in template:
-                        x, y = COORDS[(ti * 5 + vi) % len(COORDS)]
+                        x, y = COORDS[(ti * 5 + vi + variant) % len(COORDS)]
                         goal = template.format(x=x, y=y)
                         args = {"x": x, "y": y}
                     elif "{text}" in template:
-                        text = CHAT_TEXT[lang][vi]
+                        text = CHAT_TEXT[lang][(vi + variant) % len(CHAT_TEXT[lang])]
                         goal = template.format(text=text)
                         args = {"text": text}
                     else:
                         goal = template.format()
-                        suffix = suffixes[vi].strip()
+                        suffix = suffixes[(vi + variant) % len(suffixes)].strip()
                         if suffix:
                             goal = f"{goal.rstrip(' ?!')} {suffix}"
                             if "?" in template:
                                 goal += "?"
                         args = {}
                     cases.append(_case(idx, lang, tool, goal, args,
-                                       family=f"{tool}:{ti}", synthetic=synthetic))
+                                       family=f"{tool}:{ti}", synthetic=synthetic,
+                                       variant=variant))
     return cases
 
 
@@ -449,6 +454,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--limit", type=int, default=0, help="evaluate only the first N cases")
+    parser.add_argument("--variant", type=int, default=0,
+                        help="entity/template offset for fresh generated cases")
     parser.add_argument("--generate-only", action="store_true")
     parser.add_argument("--cases-out", default=None)
     parser.add_argument("--out", default=None)
@@ -456,7 +463,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="print at most N failures (0 = none)")
     args = parser.parse_args(argv)
 
-    cases = generate()
+    cases = generate(args.variant)
     if args.limit:
         cases = cases[: args.limit]
     print(f"generated {len(cases)} cases "

@@ -1,0 +1,14 @@
+Total spells in spells_full.json: 2000
+Spell keys: ['id', 'name_fr', 'name_en', 'name_es', 'type_id', 'spell_levels']
+Wrote scripts\output\all_spells.json
+
+=== Osamodas subset ===
+Verified Osamodas spells written to scripts\output\osa_spells.json: 4
+  id=201 | Tofu Kiss / Béco du Tofu / Pico de Tofu | type_id=425 | levels=[1001, 1002, 1003]
+  id=202 | Gobball Bite / Morsure du Bouftou / Mordedura de Jalató | type_id=3555 | levels=[1006]
+  id=214 | Summoning of Arachnee / Invocation d'Arakne / Invocación de Arakna | type_id=425 | levels=[1066, 1067, 1068]
+  id=224 | Summoning of Evil Tofu / Invocation de Tofu Maléfique / Invocación de Tofu Maléfico | type_id=425 | levels=[1116, 1117, 1118]
+
+Done. NOTE: osa_spells.json is a best-effort, non-exhaustive subset.
+A complete, accurate Osamodas-only list cannot be derived from this dataset
+because spells_full.json has no breed/class field.

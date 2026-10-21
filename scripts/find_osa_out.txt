@@ -1,0 +1,21 @@
+=== Breed section comments ===
+IOP (Breed 8)
+CRA (Breed 9)
+ENIRIPSA (Breed 7)
+FECA (Breed 1)
+ECAFLIP (Breed 6)
+SACRIER (Breed 11)
+ENUTROF (Breed 3)
+SRAM (Breed 4)
+
+=== All breed_id values with counts ===
+breed_id=1: 3 spells
+breed_id=3: 3 spells
+breed_id=4: 3 spells
+breed_id=6: 3 spells
+breed_id=7: 3 spells
+breed_id=8: 8 spells
+breed_id=9: 7 spells
+breed_id=11: 4 spells
+
+=== Osamodas (breed_id=2) spell lines ===

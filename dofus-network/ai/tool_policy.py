@@ -309,10 +309,17 @@ def _loss(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     )
 
 
+def _resolve_device(value: str) -> torch.device:
+    if value == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(value)
+
+
 def _evaluate_loss(
     model: ToolPolicyLM,
     dataset: ToolSFTDataset,
     batch_size: int,
+    device: torch.device,
 ) -> float:
     model.eval()
     total = 0.0
@@ -320,7 +327,9 @@ def _evaluate_loss(
     with torch.no_grad():
         for input_ids, labels, attention in dataset.batches(
                 batch_size, shuffle=False):
-            total += float(_loss(model(input_ids, attention), labels).item())
+            total += float(_loss(
+                model(input_ids.to(device), attention.to(device)),
+                labels.to(device)).item())
             batches += 1
     model.train()
     return total / max(batches, 1)
@@ -370,6 +379,9 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
     params = sum(p.numel() for p in model.parameters())
     print(f"model     : {params / 1e6:.2f}M parameters  "
           f"({params} raw), d={config.d_model} L={config.n_layers}")
+    device = _resolve_device(args.device)
+    model.to(device)
+    print(f"device    : {device}")
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -394,8 +406,8 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
                 args.batch_size, shuffle=True, rng=random.Random(seed + step)):
             if step >= total_steps:
                 break
-            logits = model(input_ids, attention)
-            loss = _loss(logits, labels)
+            logits = model(input_ids.to(device), attention.to(device))
+            loss = _loss(logits, labels.to(device))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -409,7 +421,7 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
                       f"lr {scheduler.get_last_lr()[0]:.2e}  "
                       f"~{tokens / elapsed:,.0f} tok/s")
             if args.eval_every and step % args.eval_every == 0:
-                val_loss = _evaluate_loss(model, val_data, args.batch_size)
+                val_loss = _evaluate_loss(model, val_data, args.batch_size, device)
                 history.append({"step": step, "epoch": epoch,
                                 "train_loss": float(loss.item()), "val_loss": val_loss})
                 print(f"  val loss {val_loss:.4f}")
@@ -421,7 +433,7 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
                         "system_prompt": system_prompt,
                     })
 
-    final_val = _evaluate_loss(model, val_data, args.batch_size)
+    final_val = _evaluate_loss(model, val_data, args.batch_size, device)
     if final_val < best_loss:
         best_loss = final_val
         _save(best_path, model, tokenizer, config, {
@@ -471,11 +483,16 @@ def _save(
     }, path)
 
 
-def load_checkpoint(path: Path) -> Tuple[ToolPolicyLM, Any, Dict[str, Any]]:
+def load_checkpoint(
+    path: Path,
+    device: Optional[torch.device] = None,
+) -> Tuple[ToolPolicyLM, Any, Dict[str, Any]]:
     blob = torch.load(path, map_location="cpu", weights_only=False)
     config = PolicyConfig(**blob["config"])
     model = ToolPolicyLM(config)
     model.load_state_dict(blob["state_dict"])
+    if device is not None:
+        model.to(device)
     model.eval()
     from tokenizers import Tokenizer
 
@@ -496,10 +513,11 @@ def generate_ids(
     max_new_tokens: int = 128,
 ) -> List[int]:
     eos = _special_id(tokenizer, EOS)
+    device = next(model.parameters()).device
     max_prompt = model.config.max_seq_len - max_new_tokens
     if len(prompt_ids) > max_prompt:
         prompt_ids = [prompt_ids[0]] + prompt_ids[-max_prompt + 1:]
-    ids = torch.tensor([prompt_ids], dtype=torch.long)
+    ids = torch.tensor([prompt_ids], dtype=torch.long, device=device)
     generated: List[int] = []
     for _ in range(max_new_tokens):
         logits = model(ids)
@@ -508,7 +526,7 @@ def generate_ids(
             break
         generated.append(next_id)
         ids = torch.cat(
-            [ids, torch.tensor([[next_id]], dtype=torch.long)], dim=1)
+            [ids, torch.tensor([[next_id]], dtype=torch.long, device=device)], dim=1)
         if ids.shape[1] >= model.config.max_seq_len:
             break
     return generated
@@ -548,7 +566,8 @@ def predict(
 
 
 def evaluate(args: argparse.Namespace) -> Dict[str, Any]:
-    model, tokenizer, meta = load_checkpoint(Path(args.checkpoint))
+    model, tokenizer, meta = load_checkpoint(
+        Path(args.checkpoint), device=_resolve_device(args.device))
     cases = tool_eval.GOLD[:args.limit] if args.limit else tool_eval.GOLD
     predictions: Dict[str, Optional[Dict[str, Any]]] = {}
     raw: Dict[str, str] = {}
@@ -629,6 +648,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--weight-decay", type=float, default=0.1)
     train_parser.add_argument("--seed", type=int, default=7)
     train_parser.add_argument("--threads", type=int, default=0)
+    train_parser.add_argument("--device", default="auto")
     train_parser.add_argument("--log-every", type=int, default=20)
     train_parser.add_argument("--smoke", action="store_true",
                               help="tiny CPU preset (90 steps)")
@@ -636,6 +656,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser = sub.add_parser("eval", help="score a checkpoint on tool_eval")
     eval_parser.add_argument("--checkpoint", default=str(DEFAULT_OUT_DIR / "model.pt"))
     eval_parser.add_argument("--limit", type=int, default=0)
+    eval_parser.add_argument("--device", default="auto")
     eval_parser.add_argument("--max-new-tokens", type=int, default=128)
     eval_parser.add_argument("--out", default=None)
     eval_parser.add_argument("--show-failures", action="store_true")
@@ -644,6 +665,7 @@ def build_parser() -> argparse.ArgumentParser:
     gen_parser = sub.add_parser("generate", help="run one goal through a checkpoint")
     gen_parser.add_argument("--checkpoint", default=str(DEFAULT_OUT_DIR / "model.pt"))
     gen_parser.add_argument("--goal", required=True)
+    gen_parser.add_argument("--device", default="auto")
     gen_parser.add_argument("--state", default=None,
                             help="optional JSON observation")
     gen_parser.add_argument("--max-new-tokens", type=int, default=128)
@@ -660,7 +682,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     elif args.command == "eval":
         evaluate(args)
     elif args.command == "generate":
-        model, tokenizer, _meta = load_checkpoint(Path(args.checkpoint))
+        model, tokenizer, _meta = load_checkpoint(
+            Path(args.checkpoint), device=_resolve_device(args.device))
         state = json.loads(args.state) if args.state else None
         call, text = predict(
             model, tokenizer, args.goal, state,

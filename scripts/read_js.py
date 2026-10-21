@@ -1,0 +1,10 @@
+import zipfile
+z = zipfile.ZipFile('scripts/apk_extract/com.ankama.dofustouch.apk')
+print('=== index.html ===')
+print(z.read('assets/www/index.html').decode('utf-8', errors='replace'))
+print()
+print('=== init.js ===')
+print(z.read('assets/www/js/init.js').decode('utf-8', errors='replace'))
+print()
+print('=== AppLoader.js ===')
+print(z.read('assets/www/js/AppLoader.js').decode('utf-8', errors='replace'))
