@@ -32,3 +32,8 @@ data/kb/dofus_kb.npz
 data/kb/dofus_names.bin
 data/kb/economy_state.json
 data/kb/schedule_state.json
+data/kb/experience.jsonl
+data/kb/posteriors.json
+data/kb/traces.jsonl
+data/kb/decision_graph.json
+data/kb/thinking_cache.json

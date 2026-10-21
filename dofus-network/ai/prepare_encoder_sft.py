@@ -50,6 +50,7 @@ from ai.data_splits import (  # noqa: E402
     split_by_skeleton,
     write_jsonl,
 )
+from ai.lang_detect import detect  # noqa: E402
 
 
 def _flat(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -64,12 +65,17 @@ def _flat(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     row_id = str(row.get("id") or hashlib.sha1(
         f"{goal}\x1f{tool}\x1f{json.dumps(args, sort_keys=True)}".encode("utf-8")
     ).hexdigest()[:16])
+    # The source corpora all say "auto". Label deterministically so per-language
+    # accuracy is measurable; the detector abstains rather than guessing.
+    lang = row.get("lang")
+    if not lang or lang == "auto":
+        lang = detect(goal).lang
     return {
         "id": row_id,
         "goal": goal,
         "tool": tool,
         "args": args,
-        "lang": row.get("lang") or "auto",
+        "lang": lang,
     }
 
 
@@ -106,7 +112,8 @@ def build(
         unique.append(row)
 
     clean, gold_stats = decontaminate(unique, drop_same_frame=drop_same_frame)
-    train, val, split_info = split_by_skeleton(clean, val_fraction=val_fraction, seed=seed)
+    train, val, split_info = split_by_skeleton(
+        clean, val_fraction=val_fraction, seed=seed, stratify_by="lang")
 
     rng = random.Random(seed)
     indist = list(train)
@@ -131,6 +138,11 @@ def build(
         "gold.jsonl": write_jsonl(out / "gold.jsonl", gold),
     }
 
+    from collections import Counter
+
+    def lang_mix(rows):
+        return dict(sorted(Counter(str(r.get("lang") or "auto") for r in rows).items()))
+
     report = {
         "inputs": [str(path) for path in inputs],
         "out": str(out),
@@ -142,6 +154,7 @@ def build(
         "train": describe(train, "train"),
         "val": describe(val, "val"),
         "gold": describe(gold, "gold"),
+        "languages": {"train": lang_mix(train), "val": lang_mix(val)},
     }
     (out / "stats.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

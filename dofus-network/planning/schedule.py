@@ -25,11 +25,16 @@ from __future__ import annotations
 import json
 import math
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from planning.economy import Economy, PlayerState
+from planning.bandit import ARMS, StrategyRanker
+from planning.economy import CostModel, Economy, PlayerState
+from planning.graph_memory import DecisionGraph
+from planning.outcome import extract
+from planning.trace import ParamUpdate, Trace, TraceLog
 from planning.kb import REPO_ROOT
 from planning.planner import EXECUTABLE_TOOLS, Goal, Plan, PlanNode, Planner
 
@@ -66,10 +71,17 @@ class ScheduleManager:
         max_age_minutes: float = 30.0,
         overrun_factor: float = 1.5,
         ranker=None,
+        graph: Optional[DecisionGraph] = None,
+        traces: Optional[TraceLog] = None,
     ) -> None:
         self.planner = planner
         self.economy = economy
         self.ranker = ranker
+        self.graph = graph if graph is not None else DecisionGraph()
+        self.traces = traces if traces is not None else TraceLog()
+        self.plan_id = ""
+        self.goal_text = ""
+        self.reasoning_ms = 0.0
         self.state_file = state_file
         self.max_age_minutes = max_age_minutes
         self.overrun_factor = overrun_factor
@@ -85,8 +97,10 @@ class ScheduleManager:
 
     # -- lifecycle -----------------------------------------------------------
 
-    def submit(self, goal: Goal, player: PlayerState) -> Plan:
+    def submit(self, goal: Goal, player: PlayerState, goal_text: str = "") -> Plan:
         self.goal = goal
+        self.goal_text = goal_text
+        self.plan_id = uuid.uuid4().hex[:12]
         self.player = player
         self.plan = self.planner.plan(goal, player)
         self.leaf_cache = self.plan.leaves()
@@ -173,54 +187,45 @@ class ScheduleManager:
         return None
 
     def report(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """Feed a tool result back. Returns ``{'status': ..., 'reason': ...}``."""
+        """Feed a tool result back: normalise -> learn -> trace -> replan decision."""
         if not self.history:
             return {"status": "ignored", "reason": "no step running"}
 
         step = self.history[-1]
         step.finished_at = time.time()
-        step.outcome = "ok" if result.get("ok") else "failed"
         elapsed = (step.finished_at - step.started_at) / 60.0
-
-        status, reason = "continue", ""
-
-        # ---- learning: this is the only place the system gets smarter -----
-        data = result.get("data") or {}
-        source = str(result.get("source") or "live")
         leaf = self.leaf_cache[self.pointer] if self.pointer < len(self.leaf_cache) else None
-        if isinstance(data, dict):
-            kills = int(data.get("kills") or 0)
-            drops = int(data.get("drops") or 0)
-            farm_minutes = float(data.get("minutes") or elapsed or 0.0)
-            item_id = leaf.meta.get("item_id") if leaf is not None else None
-            monster_id = leaf.meta.get("monster_id") if leaf is not None else None
+        source = str(result.get("source") or "live")
+        level = self.player.level if self.player else 1
 
-            # 1. drop rate: Beta posterior per item
-            if step.kind == "farm" and kills and item_id:
-                self.economy.record_drop_run(int(item_id), drops, kills, source=source)
-            # 2. throughput: Gamma posterior per monster x level band
-            if step.kind == "farm" and kills and monster_id and farm_minutes > 0:
-                self.economy.cost.record_farm(
-                    int(monster_id), self.player.level if self.player else 1,
-                    kills, farm_minutes, source=source)
-            # 3. market price: log-normal with a 3-day half-life
-            if step.kind == "buy" and data.get("price"):
-                self.economy.record_price(
-                    int(data.get("item_id") or 0), int(data["price"]), source=source)
-            # 4. strategy calibration: did this arm take as long as predicted?
-            if (self.ranker is not None and step.kind in ("buy", "farm", "craft", "quest")
-                    and elapsed > 0 and not math.isinf(step.expected_minutes)):
-                self.ranker.observe(
-                    step.kind,
-                    self.player.level if self.player else 1,
-                    step.expected_minutes,
-                    elapsed,
-                    meta={"label": step.label, "source": result.get("source", "live")},
-                )
+        # 1-3. normalise -> learn -> trace (shared with out-of-plan actions)
+        entity: Dict[str, Any] = {}
+        if leaf is not None:
+            for name in ("monster_id", "item_id", "monster_level", "quest_id", "map_id"):
+                if leaf.meta.get(name) is not None:
+                    entity[name] = leaf.meta[name]
+        ingest = self._ingest(
+            action=step.kind,
+            tool=str(result.get("tool") or (leaf.meta.get("tool") if leaf else "")),
+            args=dict(leaf.meta.get("args") or {}) if leaf else {},
+            entity=entity,
+            predicted_minutes=step.expected_minutes,
+            result=result,
+            source=source,
+            elapsed_minutes=elapsed,
+            plan_id=self.plan_id,
+            step=self.pointer,
+            cache_hit=bool(self.plan.cache_hit) if self.plan is not None else False,
+            reasoning_ms=self.reasoning_ms,
+        )
+        outcome = ingest["outcome"]
 
+        # 4. decide what happens next
+        status, reason = "continue", ""
         if not result.get("ok"):
             status, reason = "replan", "step_failed"
-        elif not math.isinf(step.expected_minutes) and elapsed > step.expected_minutes * self.overrun_factor:
+        elif (not math.isinf(step.expected_minutes)
+              and elapsed > step.expected_minutes * self.overrun_factor):
             status, reason = "replan", "overrun"
 
         self.pointer += 1
@@ -232,12 +237,159 @@ class ScheduleManager:
 
         self.economy.record_run({
             "kind": step.kind, "label": step.label,
-            "minutes": round(elapsed, 2), "kamas": int(data.get("kamas") or 0),
+            "minutes": round(elapsed, 2), "kamas": int(outcome.get("kamas")),
             "ok": bool(result.get("ok")),
         })
         self.economy.save()
+        self.traces.flush()
+        self.graph.save()
         self._persist()
-        return {"status": status, "reason": reason, "elapsed_minutes": round(elapsed, 2)}
+        return {
+            "status": status,
+            "reason": reason,
+            "elapsed_minutes": round(elapsed, 2),
+            "signal": ingest["signal"],
+            "updates": ingest["updates"],
+            "graph": ingest["graph"],
+            "residual": ingest["residual"],
+        }
+
+    def _ingest(
+        self,
+        action: str,
+        tool: str,
+        args: Dict[str, Any],
+        entity: Dict[str, Any],
+        predicted_minutes: Optional[float],
+        result: Dict[str, Any],
+        source: str = "live",
+        elapsed_minutes: float = 0.0,
+        plan_id: str = "",
+        step: int = 0,
+        cache_hit: bool = False,
+        reasoning_ms: float = 0.0,
+    ) -> Dict[str, Any]:
+        """The single learning path: payload -> outcome -> posteriors -> trace -> graph.
+
+        Every action, whether it came from a plan or not, goes through here. One
+        path means one place to audit and one place to change.
+        """
+        level = self.player.level if self.player else 1
+        outcome = extract(
+            tool=tool, args=args, result=result.get("data"),
+            ok=bool(result.get("ok")), error=result.get("error"),
+            latency_ms=float(result.get("latency_ms") or 0.0),
+        )
+        if "minutes" not in outcome.quantities and elapsed_minutes > 0:
+            # The action's own wall-clock is a real duration even when the
+            # backend did not report one.
+            outcome.quantities["minutes"] = elapsed_minutes
+        for key, value in entity.items():
+            outcome.entities.setdefault(key, value)
+
+        updates: List[ParamUpdate] = []
+        if outcome.signal == "verified" and action in ARMS:
+            updates = self._learn(action, outcome, entity, source, level,
+                                  predicted_minutes)
+
+        trace = Trace(
+            action=action, tool=tool, args=args, goal=self.goal_text,
+            entity=dict(outcome.entities),
+            predicted_minutes=(None if predicted_minutes is None
+                               or math.isinf(predicted_minutes) else predicted_minutes),
+            outcome=outcome, updates=updates, source=source,
+            plan_id=plan_id, step=step, cache_hit=cache_hit,
+            reasoning_ms=reasoning_ms,
+        )
+        graph_change = self.graph.update_from_trace(trace)
+        self.traces.append(trace)
+        return {
+            "outcome": outcome,
+            "signal": outcome.signal,
+            "updates": [update.as_dict() for update in updates],
+            "graph": graph_change,
+            "residual": trace.residual(),
+        }
+
+    def record_action(
+        self,
+        action: str,
+        tool: str,
+        args: Dict[str, Any],
+        result: Dict[str, Any],
+        entity: Optional[Dict[str, Any]] = None,
+        predicted_minutes: Optional[float] = None,
+        elapsed_minutes: float = 0.0,
+        source: str = "live",
+    ) -> Dict[str, Any]:
+        """Feed an action that did not come from the planner (chat, manual, retry)."""
+        outcome = self._ingest(
+            action=action, tool=tool, args=args, entity=entity or {},
+            predicted_minutes=predicted_minutes, result=result, source=source,
+            elapsed_minutes=elapsed_minutes, plan_id=self.plan_id or "manual",
+        )
+        self.economy.save()
+        self.traces.flush()
+        self.graph.save()
+        return {
+            "signal": outcome["signal"],
+            "updates": outcome["updates"],
+            "graph": outcome["graph"],
+            "residual": outcome["residual"],
+        }
+
+    def _learn(self, action: str, outcome, entity: Dict[str, Any], source: str,
+               level: int, predicted_minutes: Optional[float] = None) -> List[ParamUpdate]:
+        """Apply one outcome to the posteriors it is evidence about.
+
+        Each write is bracketed by a before/after read so the trace can show
+        exactly which parameter moved and by how much. Nothing is updated without
+        appearing in that list.
+        """
+        updates: List[ParamUpdate] = []
+        store = self.economy.experience
+        item_id = entity.get("item_id")
+        monster_id = entity.get("monster_id")
+        kills = outcome.get("kills")
+        drops = outcome.get("drops")
+        minutes = outcome.get("minutes")
+
+        def bump(key: str, why: str, call) -> None:
+            before = store.get(key)
+            mean_before = None if before is None else before.mean()
+            n_before = 0.0 if before is None else before.n
+            call()
+            after = store.get(key)
+            mean_after = None if after is None else after.mean()
+            n_after = 0.0 if after is None else after.n
+            if mean_after != mean_before or n_after != n_before:
+                updates.append(ParamUpdate(
+                    param=key, before=mean_before, after=mean_after,
+                    n_before=n_before, n_after=n_after, why=why))
+
+        if action == "farm" and item_id is not None and kills > 0:
+            bump(Economy.drop_key(int(item_id)), "drops / kills",
+                 lambda: self.economy.record_drop_run(
+                     int(item_id), int(drops), int(kills), source=source))
+
+        if action == "farm" and monster_id is not None and kills > 0 and minutes > 0:
+            bump(CostModel.kpm_key(int(monster_id), level), "kills / minutes",
+                 lambda: self.economy.cost.record_farm(
+                     int(monster_id), level, int(kills), minutes, source=source))
+
+        if action == "buy" and item_id is not None and outcome.get("price") > 0:
+            bump(Economy.price_key(int(item_id)), "scanned price",
+                 lambda: self.economy.record_price(
+                     int(item_id), int(outcome.get("price")), source=source))
+
+        if (self.ranker is not None and minutes > 0 and predicted_minutes
+                and not math.isinf(predicted_minutes)):
+            bump(StrategyRanker.rank_key(level, action), "observed / predicted",
+                 lambda: self.ranker.observe(
+                     action, level, predicted_minutes, minutes,
+                     meta={"source": source}))
+
+        return updates
 
     # -- drift detection -----------------------------------------------------
 

@@ -1,0 +1,335 @@
+{
+  "checkpoint": "C:\\Users\\sao\\AppData\\Local\\Temp\\opencode\\encoder_gpu_output\\encoder_policy\\model.pt",
+  "params": 30737555,
+  "config": {
+    "d_model": 512,
+    "n_layers": 7,
+    "vocab_size": 15548,
+    "max_seq_len": 256
+  },
+  "legacy_zeroed": [
+    "lex_tool.weight",
+    "lex_tool.bias"
+  ],
+  "load_seconds": 0.89,
+  "splits": {
+    "gold": {
+      "cases": 71,
+      "skipped_too_long": 0,
+      "tool_accuracy": 0.0423,
+      "call_accuracy": 0.0423,
+      "top3_tool": 0.1549,
+      "by_lang": {
+        "fr": {
+          "cases": 18,
+          "tool": 0.0556,
+          "call": 0.0556
+        },
+        "en": {
+          "cases": 20,
+          "tool": 0.1,
+          "call": 0.1
+        },
+        "es": {
+          "cases": 17,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "de": {
+          "cases": 16,
+          "tool": 0.0,
+          "call": 0.0
+        }
+      },
+      "by_tool": {
+        "chat.say": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "farm.start": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "farm.stop": {
+          "cases": 2,
+          "tool": 0.5,
+          "call": 0.5
+        },
+        "fight.join": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "fight.pass": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "hdv.list": {
+          "cases": 1,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "hdv.scan": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "inv.list": {
+          "cases": 4,
+          "tool": 0.5,
+          "call": 0.5
+        },
+        "inv.sell": {
+          "cases": 5,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "knowledge.search": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "nav.follow": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "nav.goto": {
+          "cases": 8,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "quest.advance": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "quest.list": {
+          "cases": 11,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "safe.stop": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "state.snapshot": {
+          "cases": 4,
+          "tool": 0.0,
+          "call": 0.0
+        }
+      },
+      "confidence": {
+        "mean_correct": 0.138,
+        "mean_wrong": 0.1059,
+        "separation": 0.0322
+      },
+      "latency_ms": {
+        "p50": 125.0,
+        "p95": 128.9,
+        "batches": 5
+      },
+      "failures": [
+        {
+          "id": "en-01",
+          "lang": "en",
+          "goal": "stop everything now",
+          "expected": {
+            "tool": "safe.stop",
+            "args": {}
+          },
+          "predicted": {
+            "tool": "inv.list",
+            "args": {
+              "kind": "resources"
+            }
+          }
+        },
+        {
+          "id": "en-02",
+          "lang": "en",
+          "goal": "follow me",
+          "expected": {
+            "tool": "nav.follow",
+            "args": {}
+          },
+          "predicted": {
+            "tool": "hdv.scan",
+            "args": {
+              "item": "lang"
+            }
+          }
+        },
+        {
+          "id": "en-03",
+          "lang": "en",
+          "goal": "pass the turn",
+          "expected": {
+            "tool": "fight.pass",
+            "args": {}
+          },
+          "predicted": {
+            "tool": "inv.list",
+            "args": {
+              "kind": "resources"
+            }
+          }
+        },
+        {
+          "id": "en-04",
+          "lang": "en",
+          "goal": "go to [12, 8]",
+          "expected": {
+            "tool": "nav.goto",
+            "args": {
+              "x": 12,
+              "y": 8
+            }
+          },
+          "predicted": {
+            "tool": "quest.list",
+            "args": {
+              "area": "12",
+              "dungeon_only": false,
+              "limit": 10
+            }
+          }
+        },
+        {
+          "id": "en-05",
+          "lang": "en",
+          "goal": "zaap Astrub",
+          "expected": {
+            "tool": "nav.goto",
+            "args": {
+              "zaap": "Astrub"
+            }
+          },
+          "predicted": {
+            "tool": "quest.advance",
+            "args": {}
+          }
+        },
+        {
+          "id": "en-06",
+          "lang": "en",
+          "goal": "list quests in Astrub",
+          "expected": {
+            "tool": "quest.list",
+            "args": {
+              "area": "Astrub"
+            }
+          },
+          "predicted": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "Astrub"
+            }
+          }
+        },
+        {
+          "id": "en-07",
+          "lang": "en",
+          "goal": "quests for level 40 in Bonta",
+          "expected": {
+            "tool": "quest.list",
+            "args": {
+              "area": "Bonta",
+              "level_min": 40
+            }
+          },
+          "predicted": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "40"
+            }
+          }
+        },
+        {
+          "id": "en-08",
+          "lang": "en",
+          "goal": "dungeon quests in Amakna",
+          "expected": {
+            "tool": "quest.list",
+            "args": {
+              "area": "Amakna",
+              "dungeon_only": true
+            }
+          },
+          "predicted": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "Amakna"
+            }
+          }
+        },
+        {
+          "id": "en-09",
+          "lang": "en",
+          "goal": "what is a Bouftou?",
+          "expected": {
+            "tool": "knowledge.search",
+            "args": {
+              "query": "Bouftou"
+            }
+          },
+          "predicted": {
+            "tool": "fight.join",
+            "args": {
+              "target": "Bouftou"
+            }
+          }
+        },
+        {
+          "id": "en-10",
+          "lang": "en",
+          "goal": "farm kanigs for loot",
+          "expected": {
+            "tool": "farm.start",
+            "args": {
+              "monster": "kanigs"
+            }
+          },
+          "predicted": {
+            "tool": "farm.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "en-12",
+          "lang": "en",
+          "goal": "join the fight",
+          "expected": {
+            "tool": "fight.join",
+            "args": {}
+          },
+          "predicted": {
+            "tool": "inv.list",
+            "args": {
+              "kind": "resources"
+            }
+          }
+        },
+        {
+          "id": "en-13",
+          "lang": "en",
+          "goal": "sell all the resources in my inventory",
+          "expected": {
+            "tool": "inv.sell",
+            "args": {
+              "all": true
+            }
+          },
+          "predicted": {
+            "tool": "farm.stop",
+            "args": {}
+          }
+        }
+      ]
+    }
+  }
+}

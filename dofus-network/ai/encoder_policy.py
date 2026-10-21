@@ -513,11 +513,14 @@ def decode_batch(
     tokenizer: Any,
     batch: Dict[str, torch.Tensor],
     threshold: float = 0.5,
+    output: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
+    """Decode one batch. Pass ``output`` to reuse a forward pass already computed."""
     device = next(model.parameters()).device
-    input_ids = batch["input_ids"].to(device)
-    attention_mask = batch["attention_mask"].to(device)
-    output = model(input_ids, attention_mask)
+    if output is None:
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        output = model(input_ids, attention_mask)
     tool_indices = output["tool"].argmax(dim=-1).tolist()
     presence = torch.sigmoid(output["presence"]).tolist()
     bool_values = torch.sigmoid(output["bool"]).tolist()
@@ -662,7 +665,19 @@ def load_checkpoint(
     blob = torch.load(path, map_location="cpu", weights_only=False)
     config = EncoderConfig(**blob["config"])
     model = EncoderPolicy(config)
-    model.load_state_dict(blob["state_dict"])
+    try:
+        model.load_state_dict(blob["state_dict"])
+    except RuntimeError as exc:
+        # Checkpoints do not carry an architecture version, so a head added after
+        # the run makes the file silently unusable. Say so instead of crashing
+        # with a bare key list.
+        message = str(exc)
+        missing = [line.strip() for line in message.splitlines() if "Missing key(s)" in line]
+        raise SystemExit(
+            f"{path} was trained with an older EncoderPolicy architecture.\n"
+            f"{missing[0] if missing else message.splitlines()[0]}\n"
+            "Retrain with the current code, or load with strict=False if you know "
+            "the missing heads are unused.") from exc
     if device is not None:
         model.to(device)
     model.eval()

@@ -9,6 +9,12 @@ the search frontier.
     economy.py    kamas/minute, drop-rate priors, calibration from runs
     planner.py    AND/OR best-first search: item -> buy | craft | farm | quest
     schedule.py   executes a plan, detects drift, replans
+    experience.py posteriors updated from real outcomes (the "training")
+    bandit.py     per-strategy time corrections + bounded exploration
+    outcome.py    raw tool payload -> normalised learning signal
+    trace.py      audit log: input -> decision -> outcome -> parameter deltas
+    graph_memory.py  long-term curve: edges, constraints, discoveries
+    thinking_cache.py structure reuse with re-pricing
 """
 
 from __future__ import annotations
@@ -26,6 +32,16 @@ _EXPORTS = {
     "PlanNode": ("planning.planner", "PlanNode"),
     "Goal": ("planning.planner", "Goal"),
     "ScheduleManager": ("planning.schedule", "ScheduleManager"),
+    "ExperienceStore": ("planning.experience", "ExperienceStore"),
+    "Event": ("planning.experience", "Event"),
+    "StrategyRanker": ("planning.bandit", "StrategyRanker"),
+    "band_of": ("planning.bandit", "band_of"),
+    "Outcome": ("planning.outcome", "Outcome"),
+    "extract_outcome": ("planning.outcome", "extract"),
+    "Trace": ("planning.trace", "Trace"),
+    "TraceLog": ("planning.trace", "TraceLog"),
+    "DecisionGraph": ("planning.graph_memory", "DecisionGraph"),
+    "ThinkingCache": ("planning.thinking_cache", "ThinkingCache"),
 }
 
 __all__ = sorted(_EXPORTS)

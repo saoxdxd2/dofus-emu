@@ -110,6 +110,11 @@ class StrategyRanker:
     def _key(band: str, arm: str) -> str:
         return f"rank:{band}:{arm}"
 
+    @classmethod
+    def rank_key(cls, level: int, arm: str) -> str:
+        """Public key builder, so callers never hand-build the format."""
+        return cls._key(band_of(level), arm)
+
     def _posterior(self, band: str, arm: str, create: bool = False) -> Optional[NormalPosterior]:
         key = self._key(band, arm)
         existing = self.store.get(key)

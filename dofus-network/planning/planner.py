@@ -23,6 +23,7 @@ from __future__ import annotations
 import heapq
 import itertools
 import math
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
@@ -31,6 +32,8 @@ from planning.kb import KnowledgeBase
 
 if TYPE_CHECKING:  # pragma: no cover
     from planning.bandit import StrategyRanker
+    from planning.graph_memory import DecisionGraph
+    from planning.thinking_cache import ThinkingCache
 
 # Tools the harness can actually execute today (agent/schema.py). Anything a plan
 # needs outside this set is reported as a gap instead of silently planned.
@@ -86,9 +89,29 @@ class PlanNode:
             "confidence": round(self.estimate.confidence, 2),
             "calibrated": self.estimate.calibrated,
             "detail": self.estimate.detail,
-            "meta": self.meta,
+            "meta": {k: v for k, v in self.meta.items() if not k.startswith("_")},
             "children": [child.to_dict() for child in self.children],
         }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "PlanNode":
+        """Rebuild a node from a cached structure. Estimates are placeholders —
+        the caller must re-price before trusting any number."""
+        raw_minutes = payload.get("minutes")
+        estimate = Estimate(
+            minutes=float("inf") if raw_minutes is None else float(raw_minutes),
+            kamas=int(payload.get("kamas") or 0),
+            confidence=float(payload.get("confidence") or 0.0),
+            calibrated=bool(payload.get("calibrated")),
+            detail=str(payload.get("detail") or ""),
+        )
+        return cls(
+            kind=str(payload.get("kind") or "blocked"),
+            label=str(payload.get("label") or ""),
+            estimate=estimate,
+            children=[cls.from_dict(child) for child in payload.get("children") or []],
+            meta=dict(payload.get("meta") or {}),
+        )
 
 
 @dataclass
@@ -98,6 +121,7 @@ class Plan:
     alternatives: List[PlanNode]
     player: PlayerState
     node_budget_used: int = 0
+    cache_hit: bool = False
 
     @property
     def minutes(self) -> float:
@@ -179,6 +203,7 @@ class Plan:
             "root": self.root.to_dict(),
             "alternatives": [alt.to_dict() for alt in self.alternatives],
             "node_budget_used": self.node_budget_used,
+            "cache_hit": self.cache_hit,
         }
 
 
@@ -186,19 +211,135 @@ class Planner:
     """Best-first AND/OR search over item acquisition strategies."""
 
     def __init__(self, kb: KnowledgeBase, cost: CostModel, economy: Economy,
-                 ranker: Optional["StrategyRanker"] = None) -> None:
+                 ranker: Optional["StrategyRanker"] = None,
+                 graph: Optional["DecisionGraph"] = None,
+                 cache: Optional["ThinkingCache"] = None) -> None:
         self.kb = kb
         self.cost = cost
         self.economy = economy
         # Optional: reorders feasible branches using learned corrections. Without
         # it the planner is deterministic; with it, the estimates come from play.
         self.ranker = ranker
+        # Optional: long-term memory. Prunes routes that keep failing and inflates
+        # the ones that only work sometimes.
+        self.graph = graph
+        # Optional: reuses the structure of expensive searches, re-priced.
+        self.cache = cache
         self._nodes = 0
         self._memo: Dict[Tuple[int, int, int], Optional[PlanNode]] = {}
 
     # -- public --------------------------------------------------------------
 
     def plan(self, goal: Goal, player: PlayerState) -> Plan:
+        """Cached plan: reuse the reasoning, re-price the conclusion."""
+        key: Optional[str] = None
+        if self.cache is not None:
+            from planning.bandit import band_of
+            key = self.cache.key(goal, band_of(player.level))
+            entry = self.cache.get(key)
+            if entry is not None:
+                rebuilt = self._rebuild(entry.structure, goal, player)
+                if rebuilt is not None:
+                    return rebuilt
+                self.cache.invalidate(key, "re-priced conclusion changed")
+        started = time.perf_counter()
+        plan = self._plan_uncached(goal, player)
+        if self.cache is not None and key is not None:
+            self.cache.put(
+                key,
+                {"root": plan.root.to_dict(),
+                 "alternatives": [alt.to_dict() for alt in plan.alternatives]},
+                (time.perf_counter() - started) * 1000.0)
+        return plan
+
+    def _rebuild(self, structure: Dict[str, Any], goal: Goal,
+                 player: PlayerState) -> Optional[Plan]:
+        """Rebuild a cached structure and re-price it against current beliefs."""
+        try:
+            root = PlanNode.from_dict(structure["root"])
+            alternatives = [PlanNode.from_dict(alt)
+                            for alt in structure.get("alternatives") or []]
+        except (KeyError, TypeError, ValueError):
+            return None
+        root = self._reprice(root, player)
+        alternatives = [self._reprice(alt, player) for alt in alternatives]
+        if math.isinf(root.minutes):
+            return None
+        best_alt = min((alt.minutes for alt in alternatives), default=float("inf"))
+        if best_alt < root.minutes * 0.95:
+            return None   # the conclusion changed: run the real search
+        return Plan(goal, root, alternatives, player, node_budget_used=0, cache_hit=True)
+
+    def _reprice(self, node: PlanNode, player: PlayerState) -> PlanNode:
+        """Recompute one node's estimate from the current cost model."""
+        children = [self._reprice(child, player) for child in node.children]
+        meta = dict(node.meta)
+        kind = node.kind
+        estimate = node.estimate
+
+        if kind == "farm":
+            item_id = meta.get("item_id")
+            monster_id = meta.get("monster_id")
+            qty = int(meta.get("qty") or 1)
+            monster = self.kb.monster(int(monster_id)) if monster_id is not None else None
+            if item_id is not None and monster is not None:
+                rate = self.economy.drop_rate(int(item_id))
+                kills = math.ceil(qty / max(rate, 1e-6))
+                minutes = kills * self.cost.kill_minutes(monster, player.level)
+                if monster.level > player.level + 10:
+                    minutes *= 1.6
+                if self.graph is not None:
+                    minutes *= self.graph.penalty(
+                        "farm", {"monster_id": monster.id, "monster_level": monster.level})
+                estimate = Estimate(
+                    minutes,
+                    confidence=0.4 + 0.5 * self.economy.drop_rate_confidence(int(item_id)),
+                    calibrated=self.economy.drop_rate_confidence(int(item_id)) > 0.3,
+                    detail=(f"{kills:,} kills of {monster.name} at {rate:.1%} drop"))
+                meta["kills"] = kills
+                meta["args"] = {**(meta.get("args") or {}), "kill_count": kills}
+
+        elif kind == "buy":
+            item_id = meta.get("item_id")
+            qty = int(meta.get("qty") or 1)
+            if item_id is not None:
+                unit = self.economy.price_of(int(item_id))
+                total = unit * qty
+                missing = max(0, total - player.kamas)
+                kpm, _best = self.cost.kamas_per_minute(
+                    player.level, self.economy.drop_rate(int(item_id)))
+                minutes = (missing / kpm if kpm > 0 else float("inf"))
+                if self.graph is not None:
+                    minutes *= self.graph.penalty("buy", {"item_id": int(item_id)})
+                minutes += self.cost.travel_minutes(player, 4, -19).minutes
+                estimate = Estimate(
+                    minutes, kamas=total,
+                    confidence=0.7 if self.economy.price_source(int(item_id)) == "market" else 0.45,
+                    calibrated=self.economy.price_source(int(item_id)) == "market")
+                meta["price"] = total
+                meta["missing_kamas"] = missing
+
+        elif kind == "craft":
+            combined = Estimate(0.0)
+            for child in children:
+                combined = combined.plus(child.estimate)
+            qty = int(meta.get("qty") or 1)
+            combined = combined.plus(Estimate(
+                len(children) * self.cost.CRAFT_MINUTES_PER_INGREDIENT * qty))
+            if self.graph is not None and meta.get("item_id") is not None:
+                combined = combined.scaled(
+                    self.graph.penalty("craft", {"item_id": int(meta["item_id"])}))
+            estimate = combined
+
+        elif kind == "level_up":
+            target = meta.get("item_level")
+            level_estimate = (self._level_up(player.level, int(target))
+                              if target is not None else node.estimate)
+            estimate = level_estimate.plus(children[0].estimate) if children else level_estimate
+
+        return PlanNode(kind, node.label, estimate, children=children, meta=meta)
+
+    def _plan_uncached(self, goal: Goal, player: PlayerState) -> Plan:
         self._nodes = 0
         self._memo = {}
         item = self.kb.item(goal.item_id, goal.lang)
@@ -289,6 +430,8 @@ class Planner:
         kpm, best_monster = self.cost.kamas_per_minute(player.level, self.economy.drop_rate(item_id))
         travel = self.cost.travel_minutes(player, 4, -19)  # Astrub market as a stand-in
         farm_minutes = missing / kpm if kpm > 0 else float("inf")
+        if self.graph is not None:
+            farm_minutes *= self.graph.penalty("buy", {"item_id": item_id})
 
         children: List[PlanNode] = []
         if missing > 0 and best_monster is not None:
@@ -318,6 +461,7 @@ class Planner:
         )
         return PlanNode("buy", f"buy {qty}x {name}", estimate, children=children,
                         meta={"tool": "hdv.buy", "args": {"item": name, "quantity": qty},
+                              "qty": qty,
                               "preflight_tool": "hdv.scan",
                               "preflight_args": {"item": name},
                               "item_id": item_id, "price": total,
@@ -340,6 +484,11 @@ class Planner:
             minutes = kills * per_kill
             if monster.level > player.level + 10:
                 minutes *= 1.6  # risk: deaths, retreats, corpse runs
+            if self.graph is not None:
+                entity = {"monster_id": monster.id, "monster_level": monster.level}
+                if self.graph.blocked("farm", entity, player.level):
+                    continue  # structural constraint learned from failures
+                minutes *= self.graph.penalty("farm", entity)
             confidence = 0.4 + 0.5 * self.economy.drop_rate_confidence(item_id)
             estimate = Estimate(
                 minutes,
@@ -353,6 +502,7 @@ class Planner:
                 estimate,
                 meta={"tool": "farm.start",
                       "args": {"monster": monster.name, "kill_count": kills},
+                      "item_id": item_id, "qty": qty,
                       "monster_id": monster.id, "monster_level": monster.level,
                       "kills": kills, "drop_rate": round(rate, 4)},
             )
@@ -376,11 +526,13 @@ class Planner:
         total = total.plus(Estimate(
             len(item.recipe) * self.cost.CRAFT_MINUTES_PER_INGREDIENT * qty,
             calibrated=True))
+        if self.graph is not None:
+            total = total.scaled(self.graph.penalty("craft", {"item_id": item.id}))
         return PlanNode(
             "craft", f"craft {qty}x {item.name} ({len(item.recipe)} ingredients)",
             total, children=children,
             meta={"tool": "craft.make", "args": {"item": item.name, "quantity": qty},
-                  "item_id": item.id, "ingredients": len(item.recipe)},
+                  "item_id": item.id, "qty": qty, "ingredients": len(item.recipe)},
         )
 
     def _quest_only(self, item) -> PlanNode:
@@ -390,7 +542,7 @@ class Planner:
             "quest", f"quest chain for {item.name}",
             Estimate(float("inf"), confidence=0.1, calibrated=False,
                      detail="quest-locked: no market price, no drop, no recipe in cache"),
-            meta={"tool": "quest.list",
+            meta={"tool": "quest.list", "qty": qty,
                   "args": {"level_min": item.level, "limit": 5},
                   "candidate_quests": [q.name for q in quests]},
         )

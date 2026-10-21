@@ -149,7 +149,7 @@ class CostModel:
         prior = self.prior_kills_per_minute(monster, player_level)
         if self.experience is None:
             return prior
-        posterior = self.experience.get(f"kpm:{monster.id}:{band_of(player_level)}")
+        posterior = self.experience.get(self.kpm_key(monster.id, player_level))
         if posterior is None or posterior.confidence() < 0.25:
             return prior
         weight = min(1.0, posterior.confidence())
@@ -158,6 +158,10 @@ class CostModel:
 
     def kill_minutes(self, monster: Monster, player_level: int) -> float:
         return 1.0 / self.kills_per_minute(monster, player_level)
+
+    @staticmethod
+    def kpm_key(monster_id: int, player_level: int) -> str:
+        return f"kpm:{int(monster_id)}:{band_of(player_level)}"
 
     def record_farm(self, monster_id: int, player_level: int, kills: int,
                     minutes: float, ts: Optional[float] = None,
@@ -168,7 +172,7 @@ class CostModel:
         self.experience.record(
             Event(
                 kind="gamma",
-                key=f"kpm:{monster_id}:{band_of(player_level)}",
+                key=self.kpm_key(monster_id, player_level),
                 value=kills / minutes,
                 weight=minutes,
                 ts=ts if ts is not None else __import__("time").time(),
@@ -286,7 +290,9 @@ class Economy:
     def __init__(self, cost: CostModel, experience: Optional[ExperienceStore] = None,
                  state_file: Path = STATE_FILE) -> None:
         self.cost = cost
-        self.experience = experience or ExperienceStore()
+        # Never `experience or ExperienceStore()`: an empty store is falsy because
+        # it defines __len__, which silently forks the learning state in two.
+        self.experience = experience if experience is not None else ExperienceStore()
         self.state_file = state_file
         cost.experience = self.experience
         cost.price_fn = self.price_of
@@ -305,6 +311,16 @@ class Economy:
             "runs": self.runs[-200:],
         }, indent=2), encoding="utf-8")
 
+    # -- parameter keys (owned here, so callers never hand-build them) ------
+
+    @staticmethod
+    def drop_key(item_id: int) -> str:
+        return f"drop:{int(item_id)}"
+
+    @staticmethod
+    def price_key(item_id: int) -> str:
+        return f"price:{int(item_id)}"
+
     # -- prices --------------------------------------------------------------
 
     def estimated_value(self, level: int) -> int:
@@ -312,7 +328,7 @@ class Economy:
         return int(max(50.0, scale * (max(1, level) ** exponent)))
 
     def price_source(self, item_id: int) -> str:
-        if self.experience.get(f"price:{int(item_id)}") is not None:
+        if self.experience.get(self.price_key(item_id)) is not None:
             return "market"
         pair = self.cost.kb.item_level_price(item_id)
         if pair is None:
@@ -324,8 +340,8 @@ class Economy:
         cached = self._price_cache.get(int(item_id))
         if cached is not None:
             return cached
-        posterior = self.experience.get(f"price:{int(item_id)}")
-        if posterior is not None and posterior.confidence() > 0.15:
+        posterior = self.experience.get(self.price_key(item_id))
+        if posterior is not None and posterior.confidence() > 0.0:
             value = int(posterior.mean())
             self._price_cache[int(item_id)] = value
             return value
@@ -342,7 +358,7 @@ class Economy:
         if price <= 0:
             return
         self.experience.record(
-            Event(kind="lognormal", key=f"price:{int(item_id)}", value=float(price),
+            Event(kind="lognormal", key=self.price_key(item_id), value=float(price),
                   source=source, context={"item": int(item_id)}),
             prior_median=float(self.price_of(item_id)),
             prior_strength=2.0, prior_sigma=0.5,
@@ -355,13 +371,13 @@ class Economy:
     # -- drop rate -----------------------------------------------------------
 
     def drop_rate(self, item_id: int) -> float:
-        posterior = self.experience.get(f"drop:{int(item_id)}")
+        posterior = self.experience.get(self.drop_key(item_id))
         if posterior is not None:
             return posterior.mean()
         return self.cost.DROP_RATE_PRIOR
 
     def drop_rate_confidence(self, item_id: int) -> float:
-        posterior = self.experience.get(f"drop:{int(item_id)}")
+        posterior = self.experience.get(self.drop_key(item_id))
         return 0.0 if posterior is None else posterior.confidence()
 
     def record_drop_run(self, item_id: int, drops: int, kills: int,
@@ -372,7 +388,7 @@ class Economy:
         self.experience.record(
             Event(
                 kind="beta",
-                key=f"drop:{int(item_id)}",
+                key=self.drop_key(item_id),
                 value=max(0.0, min(1.0, drops / kills)),
                 weight=float(kills),
                 source=source,

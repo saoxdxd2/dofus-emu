@@ -202,11 +202,16 @@ def split_by_skeleton(
     rows: Sequence[Dict[str, Any]],
     val_fraction: float = 0.12,
     seed: str = "dofus-encoder-v4",
+    stratify_by: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     """Group-wise split on the sentence frame.
 
     Frames are bucketed by a salted hash, so the split is deterministic and
     independent of file order. Every row of a frame lands in the same side.
+
+    ``stratify_by="lang"`` picks val frames *per language* so each language keeps
+    its share of the val set. Without it a hash split can hand 78% of val to one
+    language, which makes per-language accuracy meaningless.
     """
     if not 0.0 < val_fraction < 1.0:
         raise ValueError("val_fraction must be in (0, 1)")
@@ -218,9 +223,27 @@ def split_by_skeleton(
     train: List[Dict[str, Any]] = []
     val: List[Dict[str, Any]] = []
     cutoff = int(round(val_fraction * 100))
-    for key, group in buckets.items():
-        bucket = int(hashlib.sha1(f"{key}{seed}".encode("utf-8")).hexdigest(), 16) % 100
-        (val if bucket < cutoff else train).extend(group)
+
+    if stratify_by:
+        groups: Dict[str, List[str]] = {}
+        for key, group in buckets.items():
+            label = str(group[0].get(stratify_by) or "auto")
+            groups.setdefault(label, []).append(key)
+        for label, keys in groups.items():
+            # Deterministic order, then take the first `val_fraction` by size.
+            keys.sort(key=lambda k: hashlib.sha1(f"{k}{seed}".encode("utf-8")).hexdigest())
+            target = int(round(val_fraction * sum(len(buckets[k]) for k in keys)))
+            taken = 0
+            for key in keys:
+                if taken >= target:
+                    train.extend(buckets[key])
+                else:
+                    val.extend(buckets[key])
+                    taken += len(buckets[key])
+    else:
+        for key, group in buckets.items():
+            bucket = int(hashlib.sha1(f"{key}{seed}".encode("utf-8")).hexdigest(), 16) % 100
+            (val if bucket < cutoff else train).extend(group)
 
     # Guard: a frame must never straddle the split.
     train_frames = {frame_key(r.get("goal"), r.get("args")) for r in train}
@@ -230,6 +253,7 @@ def split_by_skeleton(
         raise AssertionError(f"{len(overlap)} frames leaked across the split")
 
     info = {
+        "stratified_by": stratify_by,
         "frames_total": len(buckets),
         "frames_train": len(train_frames),
         "frames_val": len(val_frames),
