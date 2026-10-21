@@ -121,7 +121,11 @@ class EncoderToolPolicy:
         model, tokenizer, system_prompt = self._torch  # type: ignore[misc]
         from ai.encoder_policy import EncoderDataset, decode_batch
 
-        dataset = EncoderDataset([case], tokenizer, model.config.max_seq_len, system_prompt)
+        # Live inference: the tool is predicted by the model, so the row must not
+        # be rejected for omitting ``"tool"`` (see EncoderDataset.infer).
+        dataset = EncoderDataset(
+            [case], tokenizer, model.config.max_seq_len, system_prompt, infer=True
+        )
         if not dataset.items:
             return None
         batch = next(dataset.batches(1, shuffle=False))

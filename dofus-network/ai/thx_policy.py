@@ -137,7 +137,7 @@ _RE_ZAAP = re.compile(r"\bzaap\s+([A-Za-zÀ-ÿ' -]{2,40})", re.IGNORECASE)
 _RE_QUEST_ID = re.compile(r"\b(?:quest|qu[eê]te|misi[oó]n|quests?)\D{0,12}(\d{1,9})\b",
                           re.IGNORECASE)
 _RE_PRICE = re.compile(
-    r"\b(?:for|at|price|prix|precio|f�r|zu|�|a|por|para|per|pour)\s+"
+    r"\b(?:for|at|price|prix|precio|für|zu|à|a|por|para|per)\s+"
     r"(\d{1,12})(?:\s*(?:kamas?|k|gold|or|oro|goldbarren))?\b",
     re.IGNORECASE,
 )
