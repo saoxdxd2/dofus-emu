@@ -347,6 +347,7 @@ class EncoderDataset:
         tokenizer: Any,
         max_seq_len: int,
         system_prompt: str,
+        infer: bool = False,
     ) -> None:
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
@@ -354,21 +355,29 @@ class EncoderDataset:
         self.bos_id = _special_id(tokenizer, BOS)
         self.eos_id = _special_id(tokenizer, EOS)
         self.system_prompt = system_prompt
+        self.infer = infer
         self.items: List[Dict[str, Any]] = []
         self.skipped = 0
         self.lengths: List[int] = []
         for row in rows:
-            item = self._encode_row(row)
+            item = self._encode_row(row, infer=infer)
             if item is None:
                 self.skipped += 1
                 continue
             self.items.append(item)
             self.lengths.append(len(item["input_ids"]))
 
-    def _encode_row(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _encode_row(
+        self, row: Dict[str, Any], infer: bool = False
+    ) -> Optional[Dict[str, Any]]:
         goal = str(row.get("goal") or "").strip()
         tool = str(row.get("tool") or "")
-        if not goal or tool not in TOOL_INDEX:
+        if not goal:
+            return None
+        if not infer and (not tool or tool not in TOOL_INDEX):
+            # Training/evaluation rows must declare a known tool. Inference rows
+            # do not — the tool is predicted by the model, so a live row may
+            # legitimately omit ``"tool"``.
             return None
         args = row.get("args") or {}
         user = f"Goal: {goal}"
@@ -392,7 +401,8 @@ class EncoderDataset:
         bool_mask = [0.0] * field_count
         enum_target = [-100] * field_count
         enum_mask = [0.0] * field_count
-        for field_index in FIELDS_BY_TOOL[tool]:
+        field_indices = FIELDS_BY_TOOL[tool] if tool in TOOL_INDEX else ()
+        for field_index in field_indices:
             field = FIELDS[field_index]
             value = args.get(field.name)
             if field.type == "bool":
@@ -666,8 +676,11 @@ def predict_rows(
     system_prompt: str,
     batch_size: int = 16,
     threshold: float = 0.5,
+    infer: bool = False,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
-    dataset = EncoderDataset(rows, tokenizer, model.config.max_seq_len, system_prompt)
+    dataset = EncoderDataset(
+        rows, tokenizer, model.config.max_seq_len, system_prompt, infer=infer
+    )
     predictions: Dict[str, Optional[Dict[str, Any]]] = {}
     offset = 0
     for batch in dataset.batches(batch_size, shuffle=False):
