@@ -70,6 +70,7 @@ class KaggleMCP:
         self.session: Optional[str] = None
         self._next_id = 0
         self._initialized = False
+        self._tool_schemas: Dict[str, Dict[str, Any]] = {}
 
     # -- plumbing ------------------------------------------------------------
 
@@ -135,12 +136,30 @@ class KaggleMCP:
     def tools(self) -> List[Dict[str, Any]]:
         self.initialize()
         result = self._rpc("tools/list") or {}
-        return result.get("tools") or []
+        found = result.get("tools") or []
+        self._tool_schemas = {t.get("name"): (t.get("inputSchema") or {}) for t in found}
+        return found
+
+    def _wrap_request(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Kaggle's tools take a single ``request`` object.
+
+        Passing flat arguments is a foot-gun (the server answers with a generic
+        "an error occurred"), so wrap automatically when the schema asks for it.
+        """
+        if not self._tool_schemas:
+            self.tools()
+        schema = self._tool_schemas.get(name) or {}
+        properties = schema.get("properties") or {}
+        required = schema.get("required") or []
+        if required == ["request"] and set(properties) == {"request"} and "request" not in arguments:
+            return {"request": arguments}
+        return arguments
 
     def call(self, name: str, arguments: Optional[Dict[str, Any]] = None) -> Any:
         """Invoke a tool. Returns the parsed payload (JSON if possible)."""
         self.initialize()
-        result = self._rpc("tools/call", {"name": name, "arguments": arguments or {}})
+        payload = self._wrap_request(name, arguments or {})
+        result = self._rpc("tools/call", {"name": name, "arguments": payload})
         if result is None:
             return None
         content = result.get("content") or []
@@ -173,6 +192,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     call_parser.add_argument("arguments", nargs="?", default="{}")
 
     sub.add_parser("quota", help="show accelerator quota")
+    datasets_parser = sub.add_parser("datasets", help="search datasets")
+    datasets_parser.add_argument("--search", default="")
+    datasets_parser.add_argument("--limit", type=int, default=10)
 
     args = parser.parse_args(argv)
     client = KaggleMCP()
@@ -213,6 +235,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "quota":
         print(json.dumps(client.call("get_accelerator_quota", {}), indent=2, ensure_ascii=False))
+        return 0
+
+    if args.command == "datasets":
+        payload = client.call("search_datasets",
+                              {"searchNullable": args.search, "pageSizeNullable": args.limit})
+        print(json.dumps(payload, indent=2, ensure_ascii=False)[:6000])
         return 0
     return 0
 

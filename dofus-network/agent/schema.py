@@ -20,8 +20,13 @@ Parameter ``type`` values are the training-friendly set: ``str``, ``int``,
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CAPABILITIES_FILE = REPO_ROOT / "data" / "capabilities.json"
 
 # Languages the models are expected to speak (speech, not game locale).
 SPOKEN_LANGUAGES = ("en", "fr", "es", "de")
@@ -60,7 +65,7 @@ def _p(type_name: str, doc: str, required: bool = False,
     return spec
 
 
-TOOLS: List[ToolSpec] = [
+_BUILTIN_TOOLS: List[ToolSpec] = [
     # -- knowledge -----------------------------------------------------------
     ToolSpec(
         name="knowledge.search",
@@ -259,6 +264,91 @@ TOOLS: List[ToolSpec] = [
         returns="ack",
     ),
 ]
+
+# ---------------------------------------------------------------------------
+# capability registry — actions are DATA, not code
+# ---------------------------------------------------------------------------
+#
+# The list above is only a fallback. At runtime the action space comes from
+# ``data/capabilities.json``, and the encoder's action head is derived from the
+# capability *descriptions* (see ``ai/encoder_policy.py`` anchor mode). Adding a
+# capability therefore means appending an entry and re-encoding its description —
+# no new class id, no retraining, no code change here.
+
+
+def _load_capabilities(path: Path = CAPABILITIES_FILE) -> Optional[List[ToolSpec]]:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    specs: List[ToolSpec] = []
+    for entry in payload.get("capabilities") or []:
+        name = str(entry.get("id") or "").strip()
+        if not name:
+            continue
+        params: Dict[str, Dict[str, Any]] = {}
+        for key, raw in (entry.get("params") or {}).items():
+            if not isinstance(raw, dict):
+                continue
+            spec = {
+                "type": str(raw.get("type") or "str"),
+                "doc": str(raw.get("doc") or ""),
+                "required": bool(raw.get("required")),
+            }
+            if raw.get("enum"):
+                spec["enum"] = list(raw["enum"])
+            if raw.get("default") is not None:
+                spec["default"] = raw["default"]
+            params[key] = spec
+        specs.append(ToolSpec(
+            name=name,
+            description=str(entry.get("description") or ""),
+            params=params,
+            backend=str(entry.get("backend") or "local"),
+            directive=entry.get("directive"),
+            returns=str(entry.get("returns") or ""),
+        ))
+    return specs or None
+
+
+_registry = _load_capabilities()
+TOOLS: List[ToolSpec] = _registry or _BUILTIN_TOOLS
+CAPABILITY_SOURCE: str = "registry" if _registry else "builtin"
+
+
+def capability_descriptions() -> List[str]:
+    """One description per capability, in head order. The encoder encodes these."""
+    return [spec.description or spec.name for spec in TOOLS]
+
+
+def save_capabilities(path: Path = CAPABILITIES_FILE) -> None:
+    """Persist the current action space, so growth survives a restart."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 1,
+        "languages": list(SPOKEN_LANGUAGES),
+        "capabilities": [
+            {"id": spec.name, "verb": spec.name.split(".")[0],
+             "description": spec.description, "backend": spec.backend,
+             "directive": spec.directive, "returns": spec.returns,
+             "params": spec.params}
+            for spec in TOOLS
+        ],
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def add_capability(spec: ToolSpec, path: Path = CAPABILITIES_FILE) -> int:
+    """Append a capability at runtime. Returns its index in the action head."""
+    global TOOLS, TOOLS_BY_NAME
+    if spec.name in TOOLS_BY_NAME:
+        raise ValueError(f"capability {spec.name!r} already exists")
+    TOOLS = list(TOOLS) + [spec]
+    TOOLS_BY_NAME = {item.name: item for item in TOOLS}
+    save_capabilities(path)
+    return len(TOOLS) - 1
+
 
 TOOLS_BY_NAME: Dict[str, ToolSpec] = {spec.name: spec for spec in TOOLS}
 

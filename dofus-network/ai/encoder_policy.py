@@ -104,6 +104,11 @@ class EncoderConfig:
     n_heads: int = 8
     ffn: int = 2048
     dropout: float = 0.1
+    # Anchor mode: the action head is not a learned classifier over a fixed class
+    # list. Its rows are embeddings of the capability *descriptions*, refreshed from
+    # the encoder itself. Adding an action = encoding one more description.
+    use_anchors: bool = False
+    anchor_scale: float = 10.0
 
 
 class EncoderPolicy(nn.Module):
@@ -169,26 +174,113 @@ class EncoderPolicy(nn.Module):
         else:
             pooled = hidden[:, -1]
         pooled = self.dropout(pooled)
-        lexical = self.lex_tool(self.tok_emb(input_ids))
-        if attention_mask is not None:
-            lexical_weight = attention_mask.unsqueeze(-1).to(lexical.dtype)
+        if self.config.use_anchors:
+            # Cosine similarity against capability anchors. The anchor matrix lives
+            # in ``tool_head.weight`` so loss, decoding and ONNX export are unchanged.
+            weights = F.normalize(self.tool_head.weight, dim=-1)
+            tool_logits = F.normalize(pooled, dim=-1) @ weights.t() * self.config.anchor_scale
+            lexical_tool = torch.zeros_like(tool_logits)
         else:
-            lexical_weight = torch.ones_like(lexical[..., :1])
-        lexical_tool = (lexical * lexical_weight).sum(dim=1) / (
-            lexical_weight.sum(dim=1).clamp_min(1.0))
+            lexical = self.lex_tool(self.tok_emb(input_ids))
+            if attention_mask is not None:
+                lexical_weight = attention_mask.unsqueeze(-1).to(lexical.dtype)
+            else:
+                lexical_weight = torch.ones_like(lexical[..., :1])
+            lexical_tool = (lexical * lexical_weight).sum(dim=1) / (
+                lexical_weight.sum(dim=1).clamp_min(1.0))
+            tool_logits = self.tool_head(pooled)
         field_weights = self.field_emb.weight
         start = torch.matmul(self.start_proj(hidden), field_weights.t()).transpose(1, 2)
         end = torch.matmul(self.end_proj(hidden), field_weights.t()).transpose(1, 2)
         presence = torch.matmul(pooled, field_weights.t()) + self.presence_bias
         bool_logits = torch.matmul(pooled, field_weights.t()) + self.bool_bias
         return {
-            "tool": self.tool_head(pooled) + lexical_tool,
+            # ``pooled`` is the sentence vector the capability anchors live in.
+            # Exposed so anchor refresh (and any future retrieval) can use it; the
+            # ONNX export selects its outputs explicitly and is unaffected.
+            "pooled": pooled,
+            "tool": tool_logits + lexical_tool,
             "presence": presence,
             "bool": bool_logits,
             "span_start": start,
             "span_end": end,
             "enum": [head(pooled) for head in self.enum_heads],
         }
+
+
+@torch.no_grad()
+def refresh_capability_anchors(
+    model: EncoderPolicy,
+    tokenizer: Any,
+    descriptions: Optional[Sequence[str]] = None,
+    batch_size: int = 16,
+) -> torch.Tensor:
+    """Re-derive the action head from capability descriptions.
+
+    The head's rows become embeddings of ``descriptions`` (default: the capability
+    registry order). Called periodically during training so the anchors track the
+    encoder, and once at load time for inference. Because the head is derived from
+    text, a capability added tomorrow needs no new class id and no retraining —
+    encode its description and append a row.
+    """
+    if descriptions is None:
+        from agent.schema import capability_descriptions
+
+        descriptions = capability_descriptions()
+
+    was_training = model.training
+    model.eval()
+    device = next(model.parameters()).device
+    bos_id = _special_id(tokenizer, BOS)
+    eos_id = _special_id(tokenizer, EOS)
+    vectors: List[torch.Tensor] = []
+    for start in range(0, len(descriptions), batch_size):
+        chunk = list(descriptions[start:start + batch_size])
+        encoded = tokenizer.encode_batch(chunk, add_special_tokens=False)
+        width = min(model.config.max_seq_len,
+                    max(len(enc.ids) + 2 for enc in encoded))
+        ids = torch.full((len(chunk), width), 0, dtype=torch.long, device=device)
+        mask = torch.zeros((len(chunk), width), dtype=torch.long, device=device)
+        for row, enc in enumerate(encoded):
+            seq = list(enc.ids)[: width - 2]
+            ids[row, 0] = bos_id
+            ids[row, 1:1 + len(seq)] = torch.tensor(seq, dtype=torch.long, device=device)
+            ids[row, 1 + len(seq)] = eos_id
+            mask[row, : 2 + len(seq)] = 1
+        output = model(ids, mask)
+        vectors.append(output["pooled"].detach().cpu())
+
+    anchors = torch.cat(vectors, dim=0)
+    if anchors.shape[0] != model.tool_head.weight.shape[0]:
+        raise ValueError(
+            f"capability count mismatch: {anchors.shape[0]} descriptions vs "
+            f"{model.tool_head.weight.shape[0]} head rows")
+    model.tool_head.weight.copy_(anchors.to(model.tool_head.weight.device))
+    if model.tool_head.bias is not None:
+        model.tool_head.bias.zero_()
+    if was_training:
+        model.train()
+    return anchors
+
+
+def grow_capabilities(
+    model: EncoderPolicy,
+    tokenizer: Any,
+    new_descriptions: Sequence[str],
+) -> int:
+    """Append capabilities to a live model without retraining the trunk."""
+    with torch.no_grad():
+        existing = model.tool_head.weight.detach().clone()
+        count_before = existing.shape[0]
+        # Temporarily widen the head so the refresh routine can fill it.
+        widened = torch.nn.Linear(model.config.d_model, count_before + len(new_descriptions),
+                                  bias=True).to(existing.device)
+        widened.weight.data[:count_before] = existing
+        model.tool_head = widened
+        from agent.schema import capability_descriptions
+
+        refresh_capability_anchors(model, tokenizer, capability_descriptions())
+    return count_before + len(new_descriptions)
 
 
 def _read_rows(path: Path) -> List[Dict[str, Any]]:
@@ -726,24 +818,46 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
         n_heads=args.heads,
         ffn=args.ffn,
         dropout=args.dropout,
+        use_anchors=bool(getattr(args, "anchor_mode", False)),
     )
     model = EncoderPolicy(config)
+    if config.use_anchors:
+        # The action head is derived from capability descriptions, not learned as a
+        # class list: freeze it so the encoder learns to align with the anchors, and
+        # refresh the anchors periodically so they track the encoder.
+        model.tool_head.weight.requires_grad_(False)
+        if model.tool_head.bias is not None:
+            model.tool_head.bias.requires_grad_(False)
     params = sum(parameter.numel() for parameter in model.parameters())
     device = _resolve_device(args.device)
     model.to(device)
+    if config.use_anchors:
+        from agent.schema import capability_descriptions
+
+        anchors = refresh_capability_anchors(model, tokenizer, capability_descriptions())
+        print(f"anchors   : {tuple(anchors.shape)} from capability descriptions "
+              f"(source: registry)")
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        [p for p in model.parameters() if p.requires_grad],
+        lr=args.lr, weight_decay=args.weight_decay)
     planned_steps = math.ceil(len(train_data) / args.batch_size) * max(args.epochs, 1)
     if args.max_steps > 0:
         planned_steps = min(planned_steps, args.max_steps)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(planned_steps, 1))
-    tool_weights = _tool_weights(train_rows).to(device)
+    # Inverse-frequency weighting is opt-in. It upweights rare tools, and with a
+    # short run the head collapses onto exactly those classes — which is what
+    # produced the degenerate checkpoints. Off by default in the training recipe.
+    if str(getattr(args, "tool_weights", "on")) == "on":
+        tool_weights = _tool_weights(train_rows).to(device)
+    else:
+        tool_weights = None
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     tokenizer.save(str(out_dir / "tokenizer.json"))
     best_path = out_dir / "model.pt"
     best_val_loss = float("inf")
+    best_metric = float("-inf") if getattr(args, "early_stop", "loss") != "loss" else float("inf")
     best_tool_accuracy = 0.0
     best_call_accuracy = 0.0
     best_step = 0
@@ -781,6 +895,11 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
                 print(f"  epoch {epoch} step {step}/{planned_steps} "
                       f"loss {parts['loss']:.4f} tool {parts['tool_loss']:.4f} "
                       f"span {parts['span_loss']:.4f} presence {parts['presence_loss']:.4f}")
+            anchor_every = int(getattr(args, "anchor_every", 0) or 0)
+            if config.use_anchors and anchor_every and step % anchor_every == 0:
+                from agent.schema import capability_descriptions
+
+                refresh_capability_anchors(model, tokenizer, capability_descriptions())
             if args.eval_every and (step % args.eval_every == 0 or step == planned_steps):
                 val_loss_report = _evaluate_loss(
                     model, val_data, tool_weights, args.batch_size, device)
@@ -804,8 +923,21 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
                 history.append(record)
                 print(f"  val step {step} loss {val_loss:.4f} "
                       f"tool {tool_accuracy:.3f} call {call_accuracy:.3f}")
-                improved = val_loss < best_val_loss - args.min_delta
+                # Early stopping on the metric that matters. Val loss improves while
+                # tool accuracy stays flat — that is exactly how the previous run
+                # "converged" to chance.
+                metric = str(getattr(args, "early_stop", "loss"))
+                if metric == "tool":
+                    score = tool_accuracy
+                    improved = score > best_metric + args.min_delta
+                elif metric == "call":
+                    score = call_accuracy
+                    improved = score > best_metric + args.min_delta
+                else:
+                    score = val_loss
+                    improved = score < best_metric - args.min_delta
                 if improved:
+                    best_metric = score
                     best_val_loss = val_loss
                     best_tool_accuracy = tool_accuracy
                     best_call_accuracy = call_accuracy
@@ -849,9 +981,11 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
         "epochs_completed": epochs_completed,
         "params": params,
         "config": asdict(config),
+        "capability_source": __import__("agent.schema", fromlist=["x"]).CAPABILITY_SOURCE,
         "train": train_data.stats(),
         "val": val_data.stats(),
         "best_val_loss": None if best_val_loss == float("inf") else best_val_loss,
+        "early_stop_metric": str(getattr(args, "early_stop", "loss")),
         "best_tool_accuracy": best_tool_accuracy,
         "best_call_accuracy": best_call_accuracy,
         "best_step": best_step,
@@ -932,6 +1066,15 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--device", default="auto")
     train_parser.add_argument("--limit", type=int, default=0)
     train_parser.add_argument("--log-every", type=int, default=20)
+    train_parser.add_argument("--tool-weights", choices=("on", "off"), default="off",
+                              help="inverse-frequency weighting of the tool loss (off: "
+                                   "the previous run collapsed onto rare tools with it on)")
+    train_parser.add_argument("--early-stop", choices=("loss", "tool", "call"), default="loss",
+                              help="metric that drives early stopping and best-checkpoint selection")
+    train_parser.add_argument("--anchor-mode", action="store_true",
+                              help="derive the action head from capability descriptions")
+    train_parser.add_argument("--anchor-every", type=int, default=50,
+                              help="refresh capability anchors every N steps")
     train_parser.add_argument("--smoke", action="store_true")
 
     eval_parser = sub.add_parser("eval")
