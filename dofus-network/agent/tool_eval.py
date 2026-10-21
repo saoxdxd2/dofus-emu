@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from agent.schema import TOOLS_BY_NAME  # noqa: E402
+from agent.schema import TOOLS_BY_NAME, canonicalize_args  # noqa: E402
 
 _TEXT_ARGS = {
     "query", "zaap", "npc", "name", "item", "area", "monster", "resource",
@@ -226,13 +226,21 @@ GOLD_BY_ID = {case["id"]: case for case in GOLD}
 
 
 def score_one(case: Dict[str, Any], prediction: Optional[Dict[str, Any]]) -> Tuple[bool, bool]:
+    """Score one case.
+
+    Both sides are canonicalised first (``schema.canonicalize_args``): optional
+    arguments sitting at their schema default carry no information, so emitting
+    them or omitting them must not change the score. Without this, a correct
+    ``{"item": "X"}`` loses to a lucky ``{"item": "X", "all": false,
+    "min_stock": 1, "price_rule": "median_minus_1"}``.
+    """
     if not isinstance(prediction, dict):
         return False, False
     tool = prediction.get("tool")
     if tool != case["tool"]:
         return False, False
-    expected = case.get("args") or {}
-    actual = prediction.get("args") or {}
+    expected = canonicalize_args(case["tool"], case.get("args") or {})
+    actual = canonicalize_args(case["tool"], prediction.get("args") or {})
     if not isinstance(actual, dict):
         return True, not expected
     for key, wanted in expected.items():

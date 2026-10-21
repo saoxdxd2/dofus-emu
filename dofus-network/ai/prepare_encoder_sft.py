@@ -34,6 +34,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -43,14 +44,86 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ai.data_splits import (  # noqa: E402
+    bounded_match,
     decontaminate,
     describe,
     gold_rows,
     load_jsonl,
+    normalize,
     split_by_skeleton,
     write_jsonl,
 )
 from ai.lang_detect import detect  # noqa: E402
+
+
+def sanitize_labels(
+    tool: str, goal: str, args: Dict[str, Any]
+) -> Tuple[Dict[str, Any], bool]:
+    """Make a row's label learnable, or drop the row.
+
+    Three defects, and the third is the one that hid for longest:
+
+    1. **Canonicalise.** ``validate_call`` materialises every optional field's
+       default, so ``vends Cadeau`` carried ``all=False, min_stock=1,
+       price_rule=median_minus_1`` -- three constants the player never said. The
+       model was scored wrong for correctly omitting them.
+    2. **Never label a number the goal does not contain.** The generators drew
+       ``quantity`` from ``(1,5,10,20,50)`` and ``quest_id`` from
+       ``randint(50,9999)`` even when the sentence frame had no placeholder to
+       render them. An optional field with no value in the text is dropped; a
+       *required* field with no value in the text makes the whole row
+       unlearnable, so the row is dropped.
+    3. **Never label a string the goal does not contain.** The teacher-distilled
+       corpus and ``synthetic_tools`` are two independent generators for the same
+       capability, and both invented free text: ``safe.stop`` emitted
+       ``{"reason": "entité hostile en approche"}`` for the goal ``"Arrête tout,
+       un danger approche rapidement."``. Numbers were guarded; strings were not,
+       so this family survived every earlier audit.
+
+    Returns ``(args, drop_row)``. Dropping a row is a last resort -- it costs a
+    training example -- but keeping it teaches the model to invent values.
+    """
+    from agent.schema import TOOLS_BY_NAME, DERIVED_FIELDS, canonicalize_args
+
+    args = canonicalize_args(tool, args)
+    spec = TOOLS_BY_NAME.get(tool)
+    if spec is None:
+        return args, False
+    numbers = {int(n) for n in re.findall(r"-?\d+", goal)}
+    folded = normalize(goal)
+    for key, param in spec.params.items():
+        value = args.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        if isinstance(value, int):
+            if value in numbers:
+                continue
+            if param.get("required"):
+                return args, True
+            args = {k: v for k, v in args.items() if k != key}
+            continue
+        if isinstance(value, str):
+            if not value or key in DERIVED_FIELDS:
+                continue
+            if bounded_match(folded, normalize(value)):
+                continue
+            if param.get("required"):
+                return args, True
+            args = {k: v for k, v in args.items() if k != key}
+            continue
+        if isinstance(value, (list, tuple)):
+            keep = [item for item in value
+                    if isinstance(item, str) and (not item or key in DERIVED_FIELDS
+                                                  or bounded_match(folded, normalize(item)))]
+            if len(keep) == len(value):
+                continue
+            if param.get("required"):
+                return args, True
+            if keep:
+                args = {**args, key: keep}
+            else:
+                args = {k: v for k, v in args.items() if k != key}
+    return args, False
 
 
 def _flat(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -62,6 +135,9 @@ def _flat(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     args = row.get("args")
     if not isinstance(args, dict):
         args = {}
+    args, drop = sanitize_labels(tool, goal, args)
+    if drop:
+        return None
     row_id = str(row.get("id") or hashlib.sha1(
         f"{goal}\x1f{tool}\x1f{json.dumps(args, sort_keys=True)}".encode("utf-8")
     ).hexdigest()[:16])

@@ -381,6 +381,58 @@ class KnowledgeBase:
             ))
         return result
 
+    def find_quests(self, query: str, lang: str = "fr", limit: int = 8) -> List[Quest]:
+        """Quests whose *name* matches ``query``, best first.
+
+        This is the KB half of the entity-reference resolver: the model proposes
+        a surface span, and this maps a name the corpus never showed to its id.
+        Ranking mirrors ``find_items`` (exact, then prefix, then containment) so
+        there is one matching convention in the KB rather than two.
+
+        The caller must still decide what to do with ambiguity -- resolving a
+        quest id from several ranked hits is a guess, and the post-processor
+        refuses to guess.
+        """
+        from ai.data_splits import normalize
+
+        needle = normalize(query)
+        if len(needle) < 2:
+            return []
+        hits: List[Tuple[int, int, int]] = []
+        offsets = self._arrays["quest_name_off"]
+        lengths = self._arrays["quest_name_len"]
+        for index in range(len(self.quest_id)):
+            name = self._names.get(int(offsets[index]), int(lengths[index]), lang)
+            flat = normalize(name)
+            if not flat:
+                continue
+            if flat == needle:
+                rank = 0
+            elif flat.startswith(needle):
+                rank = 1
+            elif needle in flat:
+                rank = 2
+            else:
+                continue
+            hits.append((rank, int(self.quest_id[index]), index))
+        hits.sort()
+        return [self.quest(int(quest_id), lang) for _rank, quest_id, _index in hits[:limit]]  # type: ignore[misc]
+
+    def quest(self, quest_id: int, lang: str = "fr") -> Optional[Quest]:
+        """One quest by id, or ``None``."""
+        index = self._lookup(self._quest_sorted, self._quest_order, quest_id)
+        if index is None:
+            return None
+        return Quest(
+            id=int(self.quest_id[index]),
+            level_min=int(self._arrays["quest_level_min"][index]),
+            level_max=int(self._arrays["quest_level_max"][index]),
+            is_dungeon=bool(self._arrays["quest_dungeon"][index]),
+            name=self._names.get(
+                int(self._arrays["quest_name_off"][index]),
+                int(self._arrays["quest_name_len"][index]), lang),
+        )
+
     # -- introspection -------------------------------------------------------
 
     def stats(self) -> Dict[str, Any]:

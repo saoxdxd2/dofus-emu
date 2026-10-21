@@ -90,15 +90,34 @@ _TEMPLATES: Dict[str, Dict[str, List[str]]] = {
         "es": ["sígueme", "quédate conmigo", "sigue al que da la orden"],
         "de": ["folge mir", "bleib bei mir", "folge dem Auftraggeber"],
     },
-    "farm.start": {
-        "en": ["farm {target}", "farm {target} for {kills} kills",
-               "farm {target} in {zone}"],
-        "fr": ["farm les {target}", "farm les {target} pendant {kills} kills",
+    # ``farm.start`` has two different argument keys -- ``monster`` (hunt) and
+    # ``resource`` (gather) -- and the templates above were shared by both. The
+    # goal text was therefore *identical* while the label differed, so the key
+    # was unlearnable: 120 of the solvable val cases failed for exactly this
+    # reason. The two variants now use disjoint vocabularies (hunt/fight/kill
+    # versus gather/harvest/collect), which is also what the verbs mean in the
+    # game.
+    "_farm_monster": {
+        "en": ["farm {target}", "hunt {target}", "fight {target}",
+               "farm {target} for {kills} kills", "farm {target} in {zone}"],
+        "fr": ["farm les {target}", "chasse les {target}", "combats les {target}",
+               "farm les {target} pendant {kills} kills",
                "farm les {target} dans {zone}"],
-        "es": ["farmea {target}", "farmea {target} durante {kills} muertes",
+        "es": ["farmea {target}", "caza {target}", "luche contra {target}",
+               "farmea {target} durante {kills} muertes",
                "farmea {target} en {zone}"],
-        "de": ["farme {target}", "farme {target} für {kills} Kills",
-               "farme {target} in {zone}"],
+        "de": ["farme {target}", "jage {target}", "kämpfe gegen {target}",
+               "farme {target} für {kills} Kills", "farme {target} in {zone}"],
+    },
+    "_farm_resource": {
+        "en": ["gather {target}", "harvest {target}", "collect {target}",
+               "pick {target}", "gather {target} in {zone}"],
+        "fr": ["récolte {target}", "cueille {target}", "collecte {target}",
+               "ramasse {target}", "récolte {target} dans {zone}"],
+        "es": ["recolecta {target}", "cosecha {target}", "recoge {target}",
+               "reúne {target}", "recolecta {target} en {zone}"],
+        "de": ["sammle {target}", "ernte {target}", "pflücke {target}",
+               "baue {target} ab", "sammle {target} in {zone}"],
     },
     "farm.stop": {
         "en": ["stop the farm loop", "end the farming session", "stop farming"],
@@ -252,9 +271,30 @@ def _area_name(sampler: _Sampler, lang: str) -> Optional[str]:
 
 
 def _build_safe_stop(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-    reason = sampler.rng.choice(_REASONS)
+    """Emergency stop.
+
+    Same contract as ``_build_inv_sell``. A third of the templates are bare
+    triggers (``"arrête tout"``, ``"para todo"``) with no ``{reason}`` slot, so
+    emitting a reason there asks the model to invent one. Gating on the
+    placeholder leaves those rows as ``{}`` -- which is also what the schema
+    says, since ``reason`` is optional.
+    """
     template = sampler.rng.choice(_TEMPLATES["safe.stop"][lang])
+    if "{reason}" not in template:
+        return template, {}
+    reason = sampler.rng.choice(_REASONS)
     return template.format(reason=reason), {"reason": reason}
+
+
+def _build_nav_follow(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Follow the order giver.
+
+    The templates carry no placeholder, so the only honest label is the empty
+    one. The previous ``{"name": ""}`` was a ghost sitting exactly on the schema
+    default -- ``canonicalize_args`` dropped it anyway, but a row whose gold is
+    a field the goal never mentions is noise in the corpus either way.
+    """
+    return sampler.rng.choice(_TEMPLATES["nav.follow"][lang]), {}
 
 
 def _build_nav_goto(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -268,10 +308,6 @@ def _build_nav_goto(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[st
         name = _novel_name(rng, "area")
     template = rng.choice(_NAV_ZAAP_TEMPLATES[lang])
     return template.format(name=name), {"zaap": name}
-
-
-def _build_nav_follow(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-    return sampler.rng.choice(_TEMPLATES["nav.follow"][lang]), {"name": ""}
 
 
 def _build_quest_list(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -294,16 +330,23 @@ def _build_quest_list(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[
 
 
 def _build_farm_start(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-    variant = sampler.rng.random()
-    if variant < 0.65:
+    """Start a farm loop -- either hunting a monster or gathering a resource.
+
+    The variant picks the template set *and* the argument key together, because
+    the goal text has to say which one it is. ``kill_count`` only ever appears
+    in the monster set: you do not gather a resource "for 50 kills".
+    """
+    if sampler.rng.random() < 0.65:
         target = _entity_or_novel(sampler, "monster", lang)
         args: Dict[str, Any] = {"monster": target} if target else {}
+        key = "_farm_monster"
     else:
         target = _entity_or_novel(sampler, "item", lang)
         args = {"resource": target} if target else {}
+        key = "_farm_resource"
     if not target:
         return None
-    template = sampler.rng.choice(_TEMPLATES["farm.start"][lang])
+    template = sampler.rng.choice(_TEMPLATES[key][lang])
     kills = sampler.rng.choice((20, 50, 100, 200))
     zone = ""
     if "{zone}" in template:
@@ -342,6 +385,14 @@ def _build_inv_list(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[st
 
 
 def _build_inv_sell(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Sell an item.
+
+    A label is only learnable if the value is *in the goal*. ``vends {target}``
+    carries no quantity, so emitting one anyway teaches the model to invent a
+    number it cannot see -- 744 of the 978 unsolvable val cases came from here.
+    The template's placeholders are the contract: what is not rendered is not
+    labelled.
+    """
     template = sampler.rng.choice(_TEMPLATES["inv.sell"][lang])
     price = sampler.rng.choice((50, 100, 250, 500, 1000, 5000))
     qty = sampler.rng.choice((1, 5, 10, 20, 50))
@@ -349,7 +400,9 @@ def _build_inv_sell(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[st
         target = _entity_or_novel(sampler, "item", lang)
         if not target:
             return None
-        args: Dict[str, Any] = {"item": target, "quantity": qty}
+        args: Dict[str, Any] = {"item": target}
+        if "{qty}" in template:
+            args["quantity"] = qty
         if "{price}" in template:
             args.update({"price_rule": "fixed", "price": price})
         else:
@@ -367,13 +420,21 @@ def _build_hdv_scan(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[st
 
 
 def _build_hdv_list(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """List an item on the market.
+
+    Same contract as ``_build_inv_sell``: ``mets {target} sur le marché`` states no
+    quantity and no price, so neither is labelled. Labelling a quantity the goal
+    never mentions is what made ``hdv.list`` look like a model failure.
+    """
     target = _entity_or_novel(sampler, "item", lang)
     if not target:
         return None
     template = sampler.rng.choice(_TEMPLATES["hdv.list"][lang])
     qty = sampler.rng.choice((1, 5, 10, 20, 50))
     price = sampler.rng.choice((100, 250, 500, 1000, 5000, 10000))
-    args: Dict[str, Any] = {"item": target, "quantity": qty}
+    args: Dict[str, Any] = {"item": target}
+    if "{qty}" in template:
+        args["quantity"] = qty
     if "{price}" in template:
         args.update({"price_rule": "fixed", "price": price})
     else:
@@ -393,28 +454,63 @@ def _build_state_snapshot(sampler: _Sampler, lang: str) -> Optional[Tuple[str, D
     return sampler.rng.choice(_TEMPLATES["state.snapshot"][lang]), {}
 
 
-def _build_quest_advance(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-    rng = sampler.rng
-    template = rng.choice(_TEMPLATES["quest.advance"][lang])
-    if rng.random() < 0.5:
-        quest_id = rng.randint(50, 9999)
-        return template.format(target=quest_id), {"quest_id": quest_id}
-    entries = sampler._entries("quest")
-    if not entries:
-        quest_id = rng.randint(50, 9999)
-        return template.format(target=quest_id), {"quest_id": quest_id}
-    for _ in range(20):
-        record = rng.choice(entries)[3]
+def _quest_pool(sampler: _Sampler) -> List[Tuple[int, Dict[str, str]]]:
+    """Stable ``(quest_id, {lang: name})`` pool, cached on the sampler.
+
+    Why this exists: the old builder called ``rng.choice(entries)`` per row, so a
+    quest name was paired with its id only once across the whole corpus -- 2,937
+    names against 2,126 ids, 1,546 of them unique. A model cannot learn a lookup
+    table from one example per key, and neither can the gazetteer that is supposed
+    to resolve it. A stable pool makes the pairing a *function*, and the hot
+    subset makes it repeat often enough to be learned.
+    """
+    cached = getattr(sampler, "_quest_pool_cache", None)
+    if cached is not None:
+        return cached
+    pool: List[Tuple[int, Dict[str, str]]] = []
+    seen: set[int] = set()
+    for _record_id, _haystack, _entry_names, record in sampler._entries("quest"):
         quest_id = record.get("id")
-        if not isinstance(quest_id, int):
+        if not isinstance(quest_id, int) or quest_id in seen:
             continue
         names = _names(record)
-        target = names.get(lang) or names.get("en") or str(quest_id)
-        if not _usable(str(target)):
-            target = str(quest_id)
-        return template.format(target=target), {"quest_id": quest_id}
-    quest_id = rng.randint(50, 9999)
-    return template.format(target=quest_id), {"quest_id": quest_id}
+        usable = {lang: value for lang, value in names.items() if _usable(value)}
+        if not usable:
+            continue
+        seen.add(quest_id)
+        pool.append((quest_id, usable))
+    pool.sort(key=lambda pair: pair[0])
+    sampler._quest_pool_cache = pool  # type: ignore[attr-defined]
+    return pool
+
+
+def _build_quest_advance(sampler: _Sampler, lang: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Advance a quest.
+
+    Two learnable shapes, and nothing else:
+
+    * the goal states the **id** -> the value is in the text, copy it;
+    * the goal states the **name** -> the value is an entity reference that the
+      deterministic resolver maps through the gazetteer.
+
+    Both draw from the same stable pool, so a name always means the same id. The
+    previous version emitted ``rng.randint(50, 9999)`` with a *name* in the goal,
+    which is unlearnable by construction and produced 234 unsolvable val cases.
+    """
+    rng = sampler.rng
+    template = rng.choice(_TEMPLATES["quest.advance"][lang])
+    pool = _quest_pool(sampler)
+    if not pool:
+        return None
+    # A hot subset repeats often enough for the gazetteer to learn the mapping;
+    # the long tail keeps the distribution realistic.
+    hot = pool[:max(1, len(pool) // 4)]
+    quest_id, names = rng.choice(hot if rng.random() < 0.7 else pool)
+    name = names.get(lang) or names.get("en")
+    if rng.random() < 0.4 or not name:
+        # Id-in-text: directly copyable, no resolver needed.
+        return template.format(target=quest_id), {"quest_id": quest_id}
+    return template.format(target=name), {"quest_id": quest_id}
 
 
 _BUILDERS: Dict[str, Callable[[_Sampler, str], Optional[Tuple[str, Dict[str, Any]]]]] = {

@@ -81,6 +81,41 @@ def normalize(text: Any) -> str:
     return " ".join(stripped.split()).strip()
 
 
+# Punctuation that may sit at the edge of a surface form without belonging to it.
+_EDGE_PUNCT = " \t\r\n.,;:!?\"'«»“”„‘’()[]{}<>-–—/\\|"
+
+
+def bounded_match(haystack: str, needle: str) -> bool:
+    """True if ``needle`` occurs in ``haystack`` at a **word boundary**.
+
+    A plain ``needle in haystack`` test is not good enough: the item surface
+    ``tin`` occurs inside "glimmerroot potion", so a naive containment test
+    happily resolves the wrong entity. Surfaces may contain apostrophes,
+    hyphens and accents, so ``\\b`` is unreliable -- the boundary is checked by
+    hand on the characters either side of the match.
+
+    Edge punctuation is trimmed from the needle first, because it is not part of
+    a surface form: the goal ``«Te espero junto al faro».`` carries its period
+    *outside* the closing quote, so a label of ``"Te espero junto al faro."`` is
+    present even though it is not a literal substring.
+
+    Kept here beside ``normalize`` so the corpus builder and the solvability
+    audit share one definition instead of drifting apart.
+    """
+    needle = (needle or "").strip(_EDGE_PUNCT)
+    if not needle or len(needle) < 2:
+        return False
+    start = haystack.find(needle)
+    while start != -1:
+        end = start + len(needle)
+        before_ok = start == 0 or not haystack[start - 1].isalnum()
+        after_ok = end >= len(haystack) or not haystack[end].isalnum()
+        if before_ok and after_ok:
+            return True
+        start = haystack.find(needle, start + 1)
+    return False
+
+
 def _arg_values(args: Optional[Dict[str, Any]]) -> List[Tuple[str, str]]:
     """(field name, value) pairs worth masking, longest value first."""
     pairs: List[Tuple[str, str]] = []

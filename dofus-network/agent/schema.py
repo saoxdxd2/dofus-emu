@@ -378,6 +378,15 @@ def to_json_schema() -> Dict[str, Any]:
 
 TOOL_SCHEMA: Dict[str, Any] = to_json_schema()
 
+# String fields whose value is *derived* from the goal rather than copied out of
+# it. The goal renders them through a per-language word map or an enum phrase
+# ("say hello in team chat" -> channel="team"), so a literal containment test
+# would report a false "invented label". Kept here, beside the parameter specs,
+# so the corpus builder (``ai.prepare_encoder_sft.sanitize_labels``) and the
+# solvability audit (``ai.diag_call_budget.unsolvable_reason``) agree on one
+# definition instead of drifting apart.
+DERIVED_FIELDS = frozenset({"channel", "kind", "price_rule", "lang"})
+
 
 def _coerce(type_name: str, value: Any) -> Tuple[bool, Any]:
     """Type coercion for tool args. Returns ``(ok, coerced_or_error)``."""
@@ -438,6 +447,48 @@ def _special_rules(name: str, args: Dict[str, Any]) -> Optional[str]:
         if args.get("channel") == "whisper" and not args.get("target"):
             return "chat.say on the whisper channel needs a target"
     return None
+
+
+def canonicalize_args(name: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Drop optional arguments that sit at their schema default.
+
+    Why this exists
+    ---------------
+    ``validate_call`` materialises every optional field's default, so a gold row
+    for the goal ``vends Cadeau de Compensation`` carries
+    ``{"item": ..., "all": False, "min_stock": 1, "price_rule": "median_minus_1"}``.
+    Three of those four values are constants the player never expressed. A model
+    that answers ``{"item": ...}`` is *correct* and is scored wrong; a model that
+    happens to emit all three constants is scored right. That is noise, and it is
+    most of why ``inv.sell`` looked like a 20%-call tool.
+
+    The canonical form is: required fields, plus optional fields whose value
+    differs from the schema default. It is what the model should be trained to
+    produce, what the scorer should compare against, and what the executor should
+    receive -- ``validate_call`` re-applies the defaults at execution time, so
+    nothing is lost.
+
+    Unknown tools and unknown fields are passed through untouched rather than
+    dropped, so a capability added to the registry without a default still
+    round-trips.
+    """
+    args = dict(args or {})
+    spec = TOOLS_BY_NAME.get(name)
+    if spec is None:
+        return args
+    out: Dict[str, Any] = {}
+    for key, value in args.items():
+        param = spec.params.get(key)
+        if param is None:
+            out[key] = value
+            continue
+        if param.get("required"):
+            out[key] = value
+            continue
+        default = param.get("default")
+        if default is None or value != default or type(value) is not type(default):
+            out[key] = value
+    return out
 
 
 def validate_call(name: str, args: Optional[Dict[str, Any]] = None) -> Tuple[bool, Any]:
