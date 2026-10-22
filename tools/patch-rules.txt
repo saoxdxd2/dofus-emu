@@ -44,7 +44,7 @@ new=ZW1pdCgicmVhZHkiKTtfc2VsZi5vYnNvbGV0ZT0hMDt9fX0sMTIwMCk7
 kind=replace
 core=0
 old=dmFyIEk9e2NvbnNvbGU6YSxzZXJ2ZXI6cn0=
-new=dmFyIEk9e2NvbnNvbGU6YX0=
+new=dmFyIEk9e2NvbnNvbGU6YSxzZXJ2ZXI6ZnVuY3Rpb24oKXt9fQ==
 [7]
 kind=replace
 core=0

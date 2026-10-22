@@ -173,6 +173,12 @@ class Autopilot:
             pass  # a full disk must not stop the bot from stopping cleanly
 
     def _should_stop(self) -> Optional[str]:
+        """A pre-existing stop file is reported explicitly.
+
+        Otherwise the loop exits with "done: stop file" on its first check and the
+        run looks like it did nothing -- which is exactly what a leftover file from
+        the previous session produces.
+        """
         # Only three things end a run: the goals are done, the user stops it, or
         # an explicit budget was set. There is deliberately no default timeout --
         # a session that quits on a clock leaves the character mid-task.

@@ -220,7 +220,14 @@ namespace DofusFarm
                     MessageBox.Show("UI Error: " + exMsg, "Dofus Farm Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 };
 
-                Application.Run(new MainForm());
+                // The UI thread is the only one that may host WebView2. Capture its
+                // SynchronizationContext before the message loop starts, so every
+                // later dispatch (client windows, dialogs) lands there by construction
+                // instead of by inspecting Application.OpenForms.
+                UI.UiThread.Capture();
+                var mainForm = new MainForm();
+                UI.UiThread.SetMainForm(mainForm);
+                Application.Run(mainForm);
             }
             finally
             {

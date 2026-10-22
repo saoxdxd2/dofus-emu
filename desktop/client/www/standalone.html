@@ -30,7 +30,7 @@
                 var s = val.split(/[;&]/)[0].trim();
                 return s || fallback;
             };
-            var v = clean(params.get('appVersion'), (window.appInfo && window.appInfo.version) || '3.14.2');
+            var v = clean(params.get('appVersion'), (window.appInfo && window.appInfo.version) || null);
             var b = clean(params.get('buildVersion'), window.buildVersion || '1.74.9');
             var c = clean(params.get('versionCode'), (window.appInfo && window.appInfo.versionCode) || '3014002');
             // `server` is what the game resolves its socket against. Without it

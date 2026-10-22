@@ -1,4 +1,4 @@
-// clientbundle.cs - updating the client without breaking it.
+﻿// clientbundle.cs - updating the client without breaking it.
 //
 // The client bundle is not shipped in the APK: Ankama serves manifest.json and
 // the app downloads script.js at runtime. The old updater did that correctly
@@ -210,6 +210,45 @@ namespace DofusFarm.Engine
         }
 
         /// <summary>
+        /// Point the page's asset URLs at a stamp derived from the bundle itself.
+        ///
+        /// standalone.html ships with `?v=3.14.2_mapfix10` on every script and
+        /// stylesheet. That string never changes, so after an update Chromium keeps
+        /// serving the *cached* old bundle and the update is invisible -- the page
+        /// looks broken in a way no log explains. Re-stamping on every launch makes
+        /// the cache key follow the file.
+        /// </summary>
+        private static void RewriteCacheBusters(string dir, Action<string> log)
+        {
+            try
+            {
+                string html = Path.Combine(dir, "standalone.html");
+                string script = Path.Combine(dir, @"build\script.js");
+                if (!File.Exists(html) || !File.Exists(script)) return;
+
+                string stamp;
+                using (var sha = System.Security.Cryptography.SHA1.Create())
+                using (var fs = new FileStream(script, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    byte[] hash = sha.ComputeHash(fs);
+                    stamp = BitConverter.ToString(hash).Replace("-", "").Substring(0, 10).ToLowerInvariant();
+                }
+
+                string text = File.ReadAllText(html);
+                string replaced = Regex.Replace(text, @"\?v=[0-9A-Za-z_.\-]+", "?v=" + stamp);
+                if (replaced != text)
+                {
+                    File.WriteAllText(html, replaced, new UTF8Encoding(false));
+                    log?.Invoke("[UPDATER] asset URLs re-stamped: ?v=" + stamp);
+                }
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke("[UPDATER] could not re-stamp asset URLs: " + ex.Message);
+            }
+        }
+
+        /// <summary>
         /// Bring the local bundle up to date, patch it, and only then adopt it.
         /// Returns the number of files adopted (0 = nothing changed or refused).
         /// </summary>
@@ -217,15 +256,20 @@ namespace DofusFarm.Engine
         {
             try
             {
+                string dir = BundleDir();
+                if (dir == null) return 0;
+
+                // Neither of these is an update: one repairs a broken bundle, the
+                // other keeps the page pointing at whatever is on disk. Both have to
+                // run even when auto-update is switched off.
+                SelfHeal(log);
+                RewriteCacheBusters(dir, log);
+
                 if (File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "no-client-update.flag")))
                 {
                     log?.Invoke("[UPDATER] disabled by no-client-update.flag; keeping the local bundle");
                     return 0;
                 }
-
-                string dir = BundleDir();
-                if (dir == null) return 0;
-                SelfHeal(log);
 
                 string stampPath = Path.Combine(dir, "client_version.json");
                 var known = new Dictionary<string, string>();

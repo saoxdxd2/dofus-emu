@@ -662,6 +662,20 @@ namespace DofusFarm.Engine
 
         public async Task StartAsync()
         {
+            // WebView2 needs an STA thread with a message pump. If this was reached
+            // from anywhere else (a pool thread, a ContinueWith), hand the whole
+            // startup back to the UI thread instead of letting CreateAsync fail with
+            // RPC_E_CHANGED_MODE (0x80010106) -- which surfaces as "WebView2
+            // Initialization Error" with no hint about the apartment.
+            if (!DofusFarm.UI.UiThread.OnUiThread)
+            {
+                _logCallback?.Invoke(string.Format(
+                    "[{0}] WebView2 init reached a {1} thread; moving it to the UI thread.",
+                    _instanceId, DofusFarm.UI.UiThread.Apartment()));
+                DofusFarm.UI.UiThread.Post(delegate { var ignored = StartAsync(); });
+                return;
+            }
+
             try
             {
                 _logCallback?.Invoke(string.Format("[{0}] Preparing WebView2 profile at: {1}", _instanceId, _userDataDir));
@@ -2769,8 +2783,19 @@ namespace DofusFarm.Engine
                                         " try{best.click();}catch(e){return 'click-threw: '+String(e);}" +
                                         " return 'clicked: '+info.slice(0,240);" +
                                         "}catch(e){return 'click-script-error: '+String(e);}})()";
-                                    string clickRes = await _webView.CoreWebView2.ExecuteScriptAsync(clickJs);
-                                    _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE click result: " + clickRes);
+                                    // The popup can be torn down during the 2.5 s delay
+                                    // above; ExecuteScriptAsync on a dead CoreWebView2 throws
+                                    // a NullReferenceException, which used to fill the log
+                                    // with "CONTINUE click failed" and no explanation.
+                                    if (_webView == null || _webView.CoreWebView2 == null)
+                                    {
+                                        _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE skipped: the popup closed first");
+                                    }
+                                    else
+                                    {
+                                        string clickRes = await _webView.CoreWebView2.ExecuteScriptAsync(clickJs);
+                                        _logCallback?.Invoke("[OAUTH-POPUP] CONTINUE click result: " + clickRes);
+                                    }
                                 }
                                 catch (Exception cex)
                                 {

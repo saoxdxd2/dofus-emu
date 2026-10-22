@@ -54,7 +54,7 @@
    "id": 6,
    "kind": "replace",
    "old": "var I={console:a,server:r}",
-   "new": "var I={console:a}"
+   "new": "var I={console:a,server:function(){}}"
   },
   {
    "id": 7,

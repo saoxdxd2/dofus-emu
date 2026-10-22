@@ -106,9 +106,11 @@ s = s.replace('this._guardTimer=setTimeout(function(){if(_self.onLoadedCallback)
 s = s.replace('emit("ready");_self.obsolete=!0;}}},3500);', 'emit("ready");_self.obsolete=!0;}}},1200);');
 console.log('5. Fast safety timer (1200ms) patched.');
 
-// 6. Remove server log writer from logger writer map
+// 6. Neutralise the server log writer, but KEEP its key: the logger does
+//    `new I[type]` and removing the entry made every log call raise
+//    "Unknown writer type: server" (77 of them in one session).
 const logWriterOld = 'var I={console:a,server:r}';
-const logWriterNew = 'var I={console:a}';
+const logWriterNew = 'var I={console:a,server:function(){}}';
 if (s.indexOf(logWriterOld) === -1) {
     console.error('[SKIP] Patch 6: Cannot find logger writer map!');
 }

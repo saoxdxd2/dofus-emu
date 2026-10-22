@@ -245,16 +245,19 @@ namespace DofusFarm.Engine
                 }
             };
 
-            if (Application.OpenForms.Count > 0)
+            // WebView2 must be created on the STA UI thread. `Application.OpenForms[0]`
+            // was the wrong oracle: InvokeRequired is false for a control without a
+            // handle, so this could run inline on a pool thread and fail later with
+            // RPC_E_CHANGED_MODE. UiThread.Post always targets the message loop.
+            if (DofusFarm.UI.UiThread.OnUiThread)
             {
-                Control ui = Application.OpenForms[0];
-                if (ui.InvokeRequired) ui.BeginInvoke(launchAction);
-                else launchAction();
+                launchAction();
             }
             else
             {
-                SetState(id, ClientInstanceState.Faulted);
-                OnLog?.Invoke("[WEBVIEW2-BACKEND] No UI thread available to host the client window.");
+                DofusFarm.UI.UiThread.Post(launchAction);
+                OnLog?.Invoke(string.Format("[WEBVIEW2-BACKEND] {0} queued on the UI thread (from {1})",
+                    id, DofusFarm.UI.UiThread.Apartment()));
             }
         }
 

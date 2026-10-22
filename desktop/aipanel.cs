@@ -637,6 +637,20 @@ namespace DofusFarm.UI
             string work = Path.Combine(_baseDir, "dofus-network");
             string stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DofusFarm");
             try { Directory.CreateDirectory(stateDir); } catch { }
+            // A stop file left over from a previous run makes the loop exit on its
+            // first check -- it looks like "started" and does nothing. Clearing it
+            // here is the difference between a no-op and a run.
+            try
+            {
+                string staleStop = Path.Combine(stateDir, "AUTOPILOT_STOP");
+                if (File.Exists(staleStop))
+                {
+                    File.Delete(staleStop);
+                    Append("[ai] cleared the stop file left by the previous run");
+                }
+            }
+            catch (Exception ex) { Append("[ai] could not clear the stop file: " + ex.Message); }
+
             string goalsFile = Path.Combine(stateDir, "ai_goals.txt");
             string stopFile = Path.Combine(stateDir, "AUTOPILOT_STOP");
             string logFile = Path.Combine(stateDir, "autopilot.jsonl");
