@@ -126,3 +126,7 @@ no-client-update.flag
 
 # git filter-branch scratch
 .git-rewrite/
+
+# Kaggle corpus exports are derived data; the scripts and metadata are tracked.
+dofus-network/kaggle/**/dataset/*.jsonl
+dofus-network/kaggle/**/*.onnx
