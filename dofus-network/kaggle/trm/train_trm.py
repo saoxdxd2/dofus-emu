@@ -38,6 +38,27 @@ SEED = 7
 BATCH = 4096
 
 
+def find_input(name):
+    """Locate a corpus file without assuming the mount layout.
+
+    Kaggle mounts a dataset at /kaggle/input/<slug>/ but the layout inside can
+    change (a version upload can nest the folder, and a run that starts during a
+    version switch can see an empty mount). A hardcoded path turned that into a
+    FileNotFoundError at second 9; a search turns it into a message.
+    """
+    root = Path("/kaggle/input")
+    direct = DATA / name
+    if direct.exists():
+        return direct
+    hits = sorted(root.rglob(name))
+    if hits:
+        return hits[0]
+    print("missing %s; mount contains:" % name)
+    for p in sorted(root.rglob("*"))[:40]:
+        print("  ", p)
+    raise SystemExit("corpus file not found: %s" % name)
+
+
 def read_jsonl(path):
     rows = []
     with open(path, "r", encoding="utf-8") as fh:
@@ -51,11 +72,12 @@ def read_jsonl(path):
 def load():
     # Prefer the rollout corpus (behaviour with outcomes); fall back to the
     # teacher corpus. Same feature layout, so the model does not care.
-    train_name = "rollout_train.jsonl" if (DATA / "rollout_train.jsonl").exists() else "planner_train.jsonl"
-    val_name = "rollout_val.jsonl" if (DATA / "rollout_val.jsonl").exists() else "planner_val.jsonl"
+    has_rollout = bool(list(Path("/kaggle/input").rglob("rollout_train.jsonl")))
+    train_name = "rollout_train.jsonl" if has_rollout else "planner_train.jsonl"
+    val_name = "rollout_val.jsonl" if has_rollout else "planner_val.jsonl"
     print("corpus:", train_name, val_name)
-    train = read_jsonl(DATA / train_name)
-    val = read_jsonl(DATA / val_name)
+    train = read_jsonl(find_input(train_name))
+    val = read_jsonl(find_input(val_name))
     train = [r for r in train if r.get("y", -1) >= 0]
     val = [r for r in val if r.get("y", -1) >= 0]
     x = np.asarray([r["x"] for r in train], dtype="float32")

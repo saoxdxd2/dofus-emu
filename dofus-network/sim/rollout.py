@@ -82,6 +82,8 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
         advanced = world.objectives_completed > before
 
         rows.append({
+            "ep": seed,
+            "t": len(rows),
             "quest_id": q.id,
             "step": step_idx,
             "objective_type": int(obj.get("type_id") or -1),
