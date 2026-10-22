@@ -680,8 +680,13 @@ namespace DofusFarm.UI
             // without it the loop labels with rules, which is still a valid label.
             try
             {
-                string verifier = Path.Combine(_baseDir, Path.Combine("dofus-network", "models", "verifier_baseline.json"));
-                if (File.Exists(verifier)) sb.Append(" --verifier-model \"").Append(verifier).Append("\"");
+                // Prefer the neural head; fall back to the linear baseline. Both are
+                // optional: without either, the loop labels with rules.
+                string models = Path.Combine(_baseDir, "dofus-network", "models");
+                string head = Path.Combine(models, "verifier_head.onnx");
+                string baseline = Path.Combine(models, "verifier_baseline.json");
+                string verifier = File.Exists(head) ? head : (File.Exists(baseline) ? baseline : null);
+                if (verifier != null) sb.Append(" --verifier-model \"").Append(verifier).Append("\"");
             }
             catch { }
             string instance = InstanceForTarget();

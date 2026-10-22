@@ -290,8 +290,18 @@ class Autopilot:
                 if call is None:
                     self._emit(Step(index=self._index, goal=goal, tool="-", args={},
                                     ok=False, error="policy returned no call",
-                                    latency_ms=0.0, verdict="blocked",
+                                    latency_ms=0.0, verdict="blocked", session=self.session,
+                                    source="rule",
                                     note="nothing in the policy matched this goal"))
+                    # Agent 2 must see this too. A goal the policy cannot express is
+                    # an invalid assumption, and skipping the controller here meant
+                    # the most common failure of all was invisible to it.
+                    decision = self.controller.on_step(
+                        Verdict("blocked", 0.9, None, False, "rule"),
+                        "-", False, "policy returned no call", before, None)
+                    self.controller.save()
+                    if decision.action in ("replan", "abort"):
+                        self._apply_decision(decision, goal, None)
                     print(f"[autopilot] no action for goal {goal!r}; moving on")
                     break
 
@@ -455,7 +465,8 @@ class Autopilot:
         is the thing that used to be missing entirely.
         """
         if decision.action == "retry":
-            self._forced_call = call
+            if call is not None:
+                self._forced_call = call
             return "retry"
         if decision.action == "recover" and decision.next_call:
             self._forced_call = ToolCall(tool=decision.next_call["tool"],

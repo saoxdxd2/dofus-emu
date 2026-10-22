@@ -216,6 +216,12 @@ def test_controller_changes_the_next_action() -> None:
     d2 = c4.on_step(v("advanced", drift=True), "farm.step", True, None, same, dict(same))
     check("stale (identical) observations do not replan", d2.action != "replan", d2.action)
 
+    # The most common failure in practice: the policy cannot express the goal.
+    d = Controller(state_dir=tmp, session="t6").on_step(
+        v("blocked"), "-", False, "policy returned no call", ok_obs, None)
+    check("an unexpressable goal is an invalid assumption",
+          d.cause == "invalid_assumption", d.cause)
+
     # memory: a recovery that worked becomes the preferred one
     c5 = Controller(state_dir=tmp, session="t5")
     dec = c5.on_step(v("failed"), "hdv.scan", False, "unknown id 999", ok_obs, None)

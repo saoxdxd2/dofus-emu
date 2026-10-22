@@ -182,7 +182,11 @@ class Controller:
             return "none"
 
         err = str(error or "").lower()
-        if "not_mapped" in err or "unknown tool" in err:
+        # "policy returned no call" is the most common failure in practice: the
+        # goal exists but the policy cannot express it. That is an invalid
+        # assumption about the plan, not an unknown error.
+        if ("not_mapped" in err or "unknown tool" in err
+                or "no call" in err or "no action" in err):
             return "invalid_assumption"
         if any(w in err for w in ("unknown", "not found", "no such", "invalid id",
                                   "out of range", "too far", "cannot reach")):

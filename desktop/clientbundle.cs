@@ -36,6 +36,29 @@ namespace DofusFarm.Engine
 {
     public static class ClientBundle
     {
+        /// <summary>
+        /// WebClient with a timeout. The stock one has no timeout property, so a
+        /// dead proxy made the manifest fetch block for ~100 s and then log
+        /// "The operation has timed out" -- four times in one session, each one
+        /// holding a background thread and delaying nothing visible.
+        /// </summary>
+        private sealed class TimedWebClient : WebClient
+        {
+            public int TimeoutMs = 15000;
+
+            protected override WebRequest GetWebRequest(Uri address)
+            {
+                WebRequest request = base.GetWebRequest(address);
+                if (request != null)
+                {
+                    request.Timeout = TimeoutMs;
+                    var http = request as HttpWebRequest;
+                    if (http != null) { http.ReadWriteTimeout = TimeoutMs; http.KeepAlive = false; }
+                }
+                return request;
+            }
+        }
+
         public sealed class Rule
         {
             public string Id;
@@ -180,6 +203,38 @@ namespace DofusFarm.Engine
             return true;
         }
 
+        /// <summary>One retry, because a 403 from the CDN was transient here.</summary>
+        private static string DownloadString(WebClient wc, string url)
+        {
+            Exception last = null;
+            for (int attempt = 1; attempt <= 2; attempt++)
+            {
+                try { return wc.DownloadString(url); }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    if (attempt == 1) System.Threading.Thread.Sleep(400);
+                }
+            }
+            throw last;
+        }
+
+        private static void DownloadFile(WebClient wc, string url, string dest)
+        {
+            Exception last = null;
+            for (int attempt = 1; attempt <= 2; attempt++)
+            {
+                try { wc.DownloadFile(url, dest); return; }
+                catch (Exception ex)
+                {
+                    last = ex;
+                    try { if (File.Exists(dest)) File.Delete(dest); } catch { }
+                    if (attempt == 1) System.Threading.Thread.Sleep(400);
+                }
+            }
+            throw last;
+        }
+
         /// <summary>Restore the last known-good bundle if the live one is unusable.</summary>
         public static bool SelfHeal(Action<string> log)
         {
@@ -285,14 +340,14 @@ namespace DofusFarm.Engine
                 if (rules.Count == 0)
                     log?.Invoke("[UPDATER] warning: no patch rules (" + error + "); updates will be adopted unpatched");
 
-                using (var wc = new WebClient())
+                using (var wc = new TimedWebClient())
                 {
                     if (proxyPort > 0) wc.Proxy = new WebProxy("http://127.0.0.1:" + proxyPort);
                     wc.Headers["User-Agent"] = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36";
                     wc.Encoding = Encoding.UTF8;
 
                     const string server = "https://dt-proxy-production-login.ankama-games.com";
-                    string manifest = wc.DownloadString(server + "/manifest.json");
+                    string manifest = DownloadString(wc, server + "/manifest.json");
                     var files = new Dictionary<string, string>();
                     foreach (Match m in Regex.Matches(manifest,
                                  "\"filename\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"version\"\\s*:\\s*\"([^\"]+)\""))
@@ -324,7 +379,7 @@ namespace DofusFarm.Engine
                             Directory.CreateDirectory(Path.GetDirectoryName(target));
                             try
                             {
-                                wc.DownloadFile(server + "/" + rel, target);
+                                DownloadFile(wc, server + "/" + rel, target);
                                 if (new FileInfo(target).Length == 0)
                                     throw new IOException("empty response");
                                 staged.Add(rel);
