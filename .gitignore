@@ -120,3 +120,6 @@ manual-login.flag
 no-client-update.flag
 *.session
 *.token
+
+# git filter-branch scratch
+.git-rewrite/

@@ -1,6 +1,0 @@
-tree 9d7b1fde701b18036062ec1c6eb98706c70a847c
-parent 17596c78887097df03694ccb03e10ce72590818e
-author DofusFarm <dev@localhost> 1792677667 +0100
-committer DofusFarm <dev@localhost> 1792677667 +0100
-
-Proxy supervisor, transactional updater, verifier pipeline; untrack credentials
