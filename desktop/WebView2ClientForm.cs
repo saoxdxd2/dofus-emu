@@ -844,9 +844,11 @@ namespace DofusFarm.Engine
                     "                if (_postIdentity() || ++_idTries > 25) {{ clearInterval(_idTimer); }}\n" +
                     "            }}, 200);\n" +
                     "        }}\n" +
-                    "        var already = false;\n" +
-                    "        try {{ already = !!(window.sessionStorage && sessionStorage.getItem('dfGuestLoginDone') === '1'); }} catch(e) {{}}\n" +
-                    "        if (already) {{ console.log('[Auth] Skipping auto-login: already used this session (post-logout reload)'); return; }}\n" +
+                    "        var attempts = 0, lastAt = 0;\n" +
+                    "        try {{ attempts = parseInt(sessionStorage.getItem('dfGuestTries') || '0', 10) || 0; }} catch(e) {{}}\n" +
+                    "        try {{ lastAt = parseFloat(sessionStorage.getItem('dfGuestLastAt') || '0') || 0; }} catch(e) {{}}\n" +
+                    "        if (attempts >= 5) {{ console.log('[Auth] Guest login retry budget exhausted (5 attempts)'); return; }}\n" +
+                    "        if (lastAt && Date.now() - lastAt < 20000) {{ console.log('[Auth] Guest login attempt ' + attempts + ' was ' + Math.round((Date.now()-lastAt)/1000) + 's ago; not retrying yet'); return; }}\n" +
                     "        var fired = false;\n" +
                     "        var deadline = Date.now() + 300000;\n" +
                     "        var tId = setInterval(function() {{\n" +
@@ -854,9 +856,22 @@ namespace DofusFarm.Engine
                     "            if (window.gui && window.gui.loginScreen && typeof window.gui.loginScreen.playWithGuest === 'function') {{\n" +
                     "                fired = true;\n" +
                     "                clearInterval(tId);\n" +
-                    "                try {{ sessionStorage.setItem('dfGuestLoginDone', '1'); }} catch(e) {{}}\n" +
-                    "                console.log('[Auth] Automatically initiating direct guest socket login');\n" +
+                    "                try {{\n" +
+                    "                    sessionStorage.setItem('dfGuestTries', String(attempts + 1));\n" +
+                    "                    sessionStorage.setItem('dfGuestLastAt', String(Date.now()));\n" +
+                    "                }} catch(e) {{}}\n" +
+                    "                console.log('[Auth] Automatically initiating direct guest socket login (attempt ' + (attempts + 1) + '/5)');\n" +
                     "                setTimeout(function() {{ try {{ window.gui.loginScreen.playWithGuest(); }} catch(e) {{}} }}, 800);\n" +
+                    "                var _watch = setInterval(function() {{\n" +
+                    "                    try {{\n" +
+                    "                        var ch = window.gui && window.gui.playerData && window.gui.playerData.character;\n" +
+                    "                        if (ch && ch.id != null) {{\n" +
+                    "                            clearInterval(_watch);\n" +
+                    "                            console.log('[Auth] Guest login succeeded as ' + ch.name + ' (id ' + ch.id + ')');\n" +
+                    "                        }}\n" +
+                    "                    }} catch(e) {{}}\n" +
+                    "                }}, 1000);\n" +
+                    "                setTimeout(function() {{ clearInterval(_watch); }}, 120000);\n" +
                     "            }}\n" +
                     "        }}, 400);\n" +
                     "    }} catch(e) {{ console.error('[Auth] Failed to seed visitor account:', e); }}\n" +
@@ -1190,12 +1205,20 @@ namespace DofusFarm.Engine
             try
             {
                 string json = e.WebMessageAsJson;
-                if (!json.Contains("\"type\":\"CONSOLE_LOG\""))
+                if (!json.Contains("\"type\":\"CONSOLE_LOG\"") && !json.Contains("\"type\":\"PLAY_LOG\""))
                 {
                     _logCallback?.Invoke(string.Format("[{0}] [JS->C# Message]: {1}", _instanceId, json));
                 }
 
-                if (json.Contains("\"type\":\"CONSOLE_LOG\""))
+                if (json.Contains("\"type\":\"PLAY_LOG\""))
+                {
+                    // Everything a human did, one JSON object per line. Written
+                    // verbatim: parsing here would be a second schema to keep in
+                    // sync with the page, and the whole point is that nothing is
+                    // dropped on the way to disk.
+                    PlayLog.Append(_instanceId, json);
+                }
+                else if (json.Contains("\"type\":\"CONSOLE_LOG\""))
                 {
                     Match mText = WmConsoleTextRe.Match(json);
                     Match mLvl = WmConsoleLevelRe.Match(json);
@@ -2952,6 +2975,78 @@ namespace DofusFarm.Engine
                 _webView = null;
             }
             base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>
+    /// Append-only writer for the play recorder.
+    ///
+    /// One JSON object per line, written verbatim from the page: the point of a
+    /// trace is that nothing is lost on the way to disk, and a parser here would
+    /// be a second schema to keep in sync with the recorder in the page.
+    ///
+    /// Never logs typed text -- the page does not send input values at all, so a
+    /// password cannot reach this file even by accident.
+    /// </summary>
+    internal static class PlayLog
+    {
+        private static readonly object _gate = new object();
+        private static string _dir;
+        private const long MaxBytes = 64L * 1024 * 1024;
+
+        private static string Directory_
+        {
+            get
+            {
+                if (_dir != null) return _dir;
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string candidate = Path.Combine(baseDir, "dofus-network", "trajectories");
+                try
+                {
+                    Directory.CreateDirectory(candidate);
+                    _dir = candidate;
+                }
+                catch
+                {
+                    string fallback = Path.Combine(baseDir, "trajectories");
+                    try { Directory.CreateDirectory(fallback); } catch { }
+                    _dir = fallback;
+                }
+                return _dir;
+            }
+        }
+
+        public static void Append(string instanceId, string json)
+        {
+            try
+            {
+                string safe = Regex.Replace(string.IsNullOrEmpty(instanceId) ? "default" : instanceId,
+                                            "[^A-Za-z0-9_.-]", "_");
+                string path = Path.Combine(Directory_, "play_" + safe + ".jsonl");
+                lock (_gate)
+                {
+                    try
+                    {
+                        FileInfo info = new FileInfo(path);
+                        if (info.Exists && info.Length >= MaxBytes)
+                        {
+                            string rotated = Path.Combine(
+                                Directory_,
+                                "play_" + safe + "." + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + ".jsonl");
+                            File.Move(path, rotated);
+                        }
+                    }
+                    catch { }
+                    // UTF8 without BOM: a BOM at the head of a .jsonl file breaks
+                    // every naive line parser, and this file exists to be parsed.
+                    File.AppendAllText(path, json + Environment.NewLine,
+                                       new UTF8Encoding(false));
+                }
+            }
+            catch
+            {
+                // Recording must never take the game down.
+            }
         }
     }
 }

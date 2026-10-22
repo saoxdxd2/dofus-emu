@@ -1449,6 +1449,404 @@
         // fight open". Cheap: one object build, no DOM walk.
         window.__agentSnapshot = _agentSnapshot;
 
+        // ------------------------------------------------------------------
+        // __DofusRecorder — log everything a human does.
+        //
+        // The point is one 10-minute session on a clean account that yields a
+        // complete trace: every message the client sent, every click, every key,
+        // every state change. That trace is what tells us which hooks exist and
+        // how the real flows (create account -> login -> move -> fight -> loot ->
+        // market) are sequenced, instead of guessing method names.
+        //
+        // PRIVACY, non-negotiable: input *values* are never read. A password or
+        // an account name typed into a field is not logged, only the fact that a
+        // field was used. Everything else is game state.
+        // ------------------------------------------------------------------
+        var __Rec = {
+            enabled: false,
+            sessionId: null,
+            startedAt: 0,
+            seq: 0,
+            counts: {},
+            lastState: null,
+            _hooks: [],
+            _timer: null,
+
+            _post: function(event) {
+                try {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage({
+                            type: 'PLAY_LOG',
+                            session: this.sessionId,
+                            seq: this.seq++,
+                            at: Date.now(),
+                            event: event
+                        });
+                    }
+                } catch (e) {}
+                var k = event.kind;
+                this.counts[k] = (this.counts[k] || 0) + 1;
+            },
+
+            start: function(label) {
+                if (this.enabled) return this.status();
+                this.enabled = true;
+                this.startedAt = Date.now();
+                this.sessionId = (label || 'play') + '-' + new Date().toISOString().replace(/[:.]/g, '-');
+                this.seq = 0;
+                this.counts = {};
+                this.lastState = null;
+                this._post({ kind: 'session_start', label: label || 'play',
+                             ua: navigator.userAgent, href: String(location.href).slice(0, 200),
+                             screen: { w: screen.width, h: screen.height } });
+                this._hookNetwork();
+                this._hookDom();
+                this._hookConsole();
+                this._pollState();
+                console.log('[Recorder] recording as ' + this.sessionId);
+                return this.status();
+            },
+
+            stop: function() {
+                if (!this.enabled) return this.status();
+                this._post({ kind: 'session_stop', counts: this.counts });
+                this.enabled = false;
+                for (var i = 0; i < this._hooks.length; i++) {
+                    try { this._hooks[i](); } catch (e) {}
+                }
+                this._hooks = [];
+                if (this._timer) { clearInterval(this._timer); this._timer = null; }
+                console.log('[Recorder] stopped');
+                return this.status();
+            },
+
+            status: function() {
+                return {
+                    enabled: this.enabled,
+                    session: this.sessionId,
+                    seconds: this.startedAt ? Math.round((Date.now() - this.startedAt) / 1000) : 0,
+                    counts: this.counts
+                };
+            },
+
+            // The API surface, written straight to the trace (not through
+            // _shrink: this one is meant to be big).
+            probe: function(tag) {
+                var report = null;
+                try { report = window.__DofusProbe ? window.__DofusProbe() : null; } catch (e) {}
+                try {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage({
+                            type: 'PLAY_LOG', session: this.sessionId,
+                            seq: this.seq++, at: Date.now(),
+                            event: { kind: 'probe', tag: tag || null, report: report }
+                        });
+                    }
+                } catch (e) {}
+                return report;
+            },
+
+            // -- network: every message the client sends is an action --------
+            _hookNetwork: function() {
+                var self = this;
+                var cm = (window.dofus && window.dofus.connectionManager) || null;
+                if (!cm) {
+                    // The connection manager appears after login; retry until it does.
+                    var tries = 0;
+                    var iv = setInterval(function() {
+                        tries++;
+                        if (window.dofus && window.dofus.connectionManager) {
+                            clearInterval(iv);
+                            self._hookNetwork();
+                        } else if (tries > 600) { clearInterval(iv); }
+                    }, 500);
+                    this._hooks.push(function() { clearInterval(iv); });
+                    return;
+                }
+                if (cm.__recorderHooked) return;
+                cm.__recorderHooked = true;
+
+                // Outgoing: movement, fight actions, item use, market ops, chat.
+                var originalSend = cm.sendMessage;
+                if (typeof originalSend === 'function') {
+                    cm.sendMessage = function(name, params) {
+                        try {
+                            self._post({ kind: 'send', name: String(name),
+                                         args: self._shrink(params) });
+                        } catch (e) {}
+                        return originalSend.apply(this, arguments);
+                    };
+                    self._hooks.push(function() { cm.sendMessage = originalSend; });
+                }
+
+                // Incoming: what the server told us. Wrapping the registry is
+                // version-dependent, so probe for the common shapes and fall
+                // back to reporting that we could not hook it.
+                var registry = cm._handlers || cm.handlers || cm._messageHandlers || null;
+                if (registry && typeof registry === 'object') {
+                    var wrapped = {};
+                    var names = Object.keys(registry);
+                    for (var i = 0; i < names.length; i++) {
+                        (function(name, handlers) {
+                            if (!handlers) return;
+                            var isArray = Object.prototype.toString.call(handlers) === '[object Array]';
+                            var list = isArray ? handlers : [handlers];
+                            var out = [];
+                            for (var j = 0; j < list.length; j++) {
+                                (function(fn) {
+                                    if (typeof fn !== 'function') { out.push(fn); return; }
+                                    out.push(function(msg) {
+                                        try { self._post({ kind: 'recv', name: name,
+                                                           args: self._shrink(msg) }); } catch (e) {}
+                                        return fn.apply(this, arguments);
+                                    });
+                                })(list[j]);
+                            }
+                            wrapped[name] = isArray ? out : out[0];
+                        })(names[i], registry[names[i]]);
+                    }
+                    cm._handlers = wrapped;
+                    self._post({ kind: 'hook_report', incoming: true, names: names.length });
+                } else {
+                    self._post({ kind: 'hook_report', incoming: false,
+                                 note: 'no message registry found; outgoing only',
+                                 cmKeys: Object.keys(cm).slice(0, 40) });
+                }
+            },
+
+            // -- console: what the app says about itself --------------------
+            // The loader announces every version decision here ("Looking for
+            // update", "Update available: true"). Without these lines a blocked
+            // launch is invisible: the dialog is native, the cause is a log.
+            _hookConsole: function() {
+                var self = this;
+                if (console.__recorderHooked) return;
+                console.__recorderHooked = true;
+                var levels = ['log', 'info', 'warn', 'error'];
+                var originals = {};
+                for (var i = 0; i < levels.length; i++) {
+                    (function(level) {
+                        var original = console[level];
+                        originals[level] = original;
+                        console[level] = function() {
+                            if (!self._inConsole) {
+                                self._inConsole = true;
+                                try {
+                                    var parts = [];
+                                    for (var j = 0; j < arguments.length; j++) {
+                                        var a = arguments[j];
+                                        try { parts.push(typeof a === 'string' ? a : JSON.stringify(a)); }
+                                        catch (e) { parts.push(String(a)); }
+                                    }
+                                    self._post({ kind: 'console', level: level,
+                                                 text: parts.join(' ').slice(0, 500) });
+                                } catch (e) {} finally { self._inConsole = false; }
+                            }
+                            try { return original.apply(console, arguments); } catch (e) {}
+                        };
+                    })(levels[i]);
+                }
+                this._hooks.push(function() {
+                    for (var k in originals) {
+                        if (Object.prototype.hasOwnProperty.call(originals, k)) console[k] = originals[k];
+                    }
+                    console.__recorderHooked = false;
+                });
+            },
+
+            // -- DOM: clicks and keys, never values --------------------------
+            _hookDom: function() {
+                var self = this;
+                var clickHandler = function(ev) {
+                    if (!self.enabled) return;
+                    var t = ev.target || {};
+                    self._post({
+                        kind: 'click',
+                        tag: (t.tagName || '').toLowerCase(),
+                        id: t.id || null,
+                        cls: (typeof t.className === 'string' ? t.className : '').slice(0, 80),
+                        x: ev.clientX, y: ev.clientY,
+                        // The cell under the pointer is the one piece of game
+                        // meaning a raw click has.
+                        cell: self._cellAt(ev.clientX, ev.clientY)
+                    });
+                };
+                var keyHandler = function(ev) {
+                    if (!self.enabled) return;
+                    var t = ev.target || {};
+                    self._post({
+                        kind: 'key',
+                        key: ev.key,
+                        code: ev.code,
+                        tag: (t.tagName || '').toLowerCase(),
+                        id: t.id || null,
+                        // Deliberately NOT ev.target.value.
+                        typed: (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')
+                    });
+                };
+                var visHandler = function() {
+                    if (!self.enabled) return;
+                    self._post({ kind: 'visibility', hidden: !!document.hidden });
+                };
+                document.addEventListener('click', clickHandler, true);
+                document.addEventListener('keydown', keyHandler, true);
+                document.addEventListener('visibilitychange', visHandler);
+                this._hooks.push(function() {
+                    document.removeEventListener('click', clickHandler, true);
+                    document.removeEventListener('keydown', keyHandler, true);
+                    document.removeEventListener('visibilitychange', visHandler);
+                });
+            },
+
+            _cellAt: function(x, y) {
+                try {
+                    var ie = window.isoEngine;
+                    if (ie && typeof ie.getCellFromPixel === 'function') return ie.getCellFromPixel(x, y);
+                    if (ie && typeof ie.getCellIdFromMousePosition === 'function') return ie.getCellIdFromMousePosition(x, y);
+                    if (ie && ie.mapPos && typeof ie.mapPos.getCellId === 'function') return ie.mapPos.getCellId(x, y);
+                } catch (e) {}
+                return null;
+            },
+
+            // -- state deltas: position, hp, kamas, xp, fights ----------------
+            _pollState: function() {
+                var self = this;
+                this._timer = setInterval(function() {
+                    if (!self.enabled) return;
+                    var snap;
+                    try { snap = _agentSnapshot(); } catch (e) { return; }
+                    var now = {
+                        map: snap.position && snap.position.map_id,
+                        cell: snap.position && snap.position.cell,
+                        hp: snap.hp && snap.hp.life,
+                        max: snap.hp && snap.hp.max,
+                        xp: snap.xp,
+                        level: snap.xp_level,
+                        kamas: snap.kamas,
+                        fight: snap.farm_state && snap.farm_state.inFight,
+                        inv: snap.inventory && snap.inventory.items ? snap.inventory.items.length : null
+                    };
+                    var prev = self.lastState;
+                    self.lastState = now;
+                    if (!prev) { self._post({ kind: 'state', state: now }); return; }
+                    var diff = {};
+                    var changed = false;
+                    for (var k in now) {
+                        if (!Object.prototype.hasOwnProperty.call(now, k)) continue;
+                        if (now[k] !== prev[k]) { diff[k] = { from: prev[k], to: now[k] }; changed = true; }
+                    }
+                    if (changed) {
+                        // A map change is the most informative single event: it
+                        // is the edge the world graph is built from.
+                        if (diff.map) self._post({ kind: 'map_change', from: prev.map, to: now.map, cell: now.cell });
+                        if (diff.fight) self._post({ kind: now.fight ? 'fight_start' : 'fight_end', state: now });
+                        self._post({ kind: 'state_delta', diff: diff, state: now });
+                    }
+                }, 500);
+                this._hooks.push(function() { clearInterval(self._timer); });
+            },
+
+            // Keep a message small enough to survive the bridge without
+            // exploding on a circular object graph.
+            _shrink: function(value) {
+                try {
+                    var text = JSON.stringify(value);
+                    if (text && text.length <= 600) return value;
+                    if (text) return { _truncated: true, preview: text.slice(0, 600) };
+                } catch (e) {
+                    return { _unserialisable: String(e) };
+                }
+                return null;
+            }
+        };
+
+        window.__DofusRecorder = __Rec;
+
+        // Auto-start: a session that has to be switched on by hand is a session
+        // that is not recorded when it matters. `localStorage.recorderOff = '1'`
+        // disables it for a machine that must not log.
+        try {
+            if (localStorage.getItem('recorderOff') !== '1') {
+                setTimeout(function() {
+                    try { __Rec.start('auto'); } catch (e) {
+                        console.log('[Recorder] autostart failed: ' + e);
+                    }
+                    // Probe twice: once immediately (pre-login surface) and once
+                    // after the game has had time to build its world, so the
+                    // trace shows what exists at each stage.
+                    setTimeout(function() { try { __Rec.probe('early'); } catch (e) {} }, 2000);
+                    setTimeout(function() { try { __Rec.probe('loaded'); } catch (e) {} }, 25000);
+                }, 1500);
+            }
+        } catch (e) {}
+
+        // ------------------------------------------------------------------
+        // __DofusProbe — one call, the whole API surface we have to code against.
+        // ------------------------------------------------------------------
+        window.__DofusProbe = function() {
+            function shape(obj, depth) {
+                if (!obj) return null;
+                var out = { type: typeof obj, keys: [] };
+                try {
+                    var keys = Object.keys(obj);
+                    out.keys = keys.slice(0, 60);
+                    out.functions = keys.filter(function(k) {
+                        try { return typeof obj[k] === 'function'; } catch (e) { return false; }
+                    }).slice(0, 60);
+                    out.count = keys.length;
+                } catch (e) { out.error = String(e); }
+                if (depth > 0 && obj) {
+                    out.children = {};
+                    var kids = ['playerData', 'isoEngine', 'dofus', 'gui', 'connectionManager',
+                                'actorManager', 'mapData', 'mapPos', 'fighter', 'character',
+                                'inventory', 'spells', 'inventoryViewer', 'chat'];
+                    for (var i = 0; i < kids.length; i++) {
+                        var name = kids[i];
+                        try {
+                            if (obj[name] !== undefined) out.children[name] = shape(obj[name], depth - 1);
+                        } catch (e) {}
+                    }
+                }
+                return out;
+            }
+            var report = {
+                at: Date.now(),
+                href: String(location.href).slice(0, 200),
+                ua: navigator.userAgent,
+                globals: {
+                    gui: shape(window.gui, 2),
+                    dofus: shape(window.dofus, 2),
+                    isoEngine: shape(window.isoEngine, 2),
+                    farmbot: !!window.__FarmBot,
+                    agentDirective: typeof window.__agentDirective
+                },
+                snapshot: null,
+                map: null,
+                dom: { canvases: document.getElementsByTagName('canvas').length,
+                       iframes: document.getElementsByTagName('iframe').length,
+                       inputs: document.getElementsByTagName('input').length }
+            };
+            try { report.snapshot = _agentSnapshot(); } catch (e) { report.snapshotError = String(e); }
+            try {
+                var ie = window.isoEngine;
+                if (ie && ie.mapData) {
+                    report.map = {
+                        id: ie.mapData.mapId || ie.currentMapId || null,
+                        cells: (ie.mapData.cells || []).length,
+                        neighbours: ie.mapData.topNeighbourId != null ? {
+                            top: ie.mapData.topNeighbourId, bottom: ie.mapData.bottomNeighbourId,
+                            left: ie.mapData.leftNeighbourId, right: ie.mapData.rightNeighbourId
+                        } : null,
+                        cellKeys: (ie.mapData.cells && ie.mapData.cells[0])
+                            ? Object.keys(ie.mapData.cells[0]) : null
+                    };
+                }
+            } catch (e) { report.mapError = String(e); }
+            try { console.log('[Probe] ' + JSON.stringify(report)); } catch (e) {}
+            return report;
+        };
+
+
         var _agentCommander = function(action) {
             try {
                 if (typeof window.__executeCommanderDirective === 'function') {

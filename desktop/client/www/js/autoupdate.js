@@ -193,6 +193,14 @@ var CDV_PATH = 'cdvfile://localhost/persistent/data/';
 
 	function check() {
 		console.log('Looking for update');
+		// Escape hatch for a machine that must not touch the network.
+		try {
+			if (localStorage.getItem('skipUpdateCheck') === '1') {
+				console.log('[AUTOUPDATE] skipped by localStorage.skipUpdateCheck');
+				isLoaded = true;
+				return Promise.resolve();
+			}
+		} catch (e) {}
 		// Check if there is an update compared to the manifest in cache
 		return loader.check().then(function () {
 			if (loader.corruptNewManifest) {
@@ -202,11 +210,30 @@ var CDV_PATH = 'cdvfile://localhost/persistent/data/';
 		}).then(function () {
 			var hasUpdate = loader.update(false);
 			console.log('Update available:', hasUpdate);
-			if (isLoaded) {
-				// If update detected while in game
-				if (hasUpdate) {
-					window.cordova.fireDocumentEvent('sourceUpdated');
+			try {
+				var m = loader.manifest || {};
+				console.log('[AUTOUPDATE] manifest version ' +
+					JSON.stringify(m.version || m.buildVersion || m.meta || null) +
+					' server ' + (window.appInfo && window.appInfo.server));
+			} catch (e) {}
+			if (hasUpdate) {
+				// The native app fired `sourceUpdated` here so the Java layer
+				// could show "new version available, restart?". There is no Java
+				// layer in this host, so that dialog either never appears or
+				// blocks the session. Applying it ourselves is what the user
+				// asked for: take the update, reload once, never ask.
+				//
+				// Guarded by sessionStorage so a server that keeps advertising a
+				// newer build than it serves cannot loop the client.
+				var applied = 0;
+				try { applied = parseInt(sessionStorage.getItem('autoUpdateApplied') || '0', 10) || 0; } catch (e) {}
+				if (applied < 2) {
+					try { sessionStorage.setItem('autoUpdateApplied', String(applied + 1)); } catch (e) {}
+					console.log('[AUTOUPDATE] applying update silently (attempt ' + (applied + 1) + ')');
+					window.location.reload();
+					return;
 				}
+				console.log('[AUTOUPDATE] update still advertised after 2 reloads; continuing on the local copy');
 			}
 			isLoaded = true;
 		});

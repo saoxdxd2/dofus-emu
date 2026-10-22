@@ -261,9 +261,19 @@ namespace DofusBuild
                     File.Copy(masterDisguise, Path.Combine(rootJsDir, "mobile-disguise.js"), true);
                 }
 
+                // Sync autoupdate.js (master in client\www\js -> live copy in
+                // desktop\client\www\js). The runtime serves desktop\client\www,
+                // so an edit that only touches client\www never reaches the game:
+                // that is exactly how the "new version, restart?" fix shipped to
+                // a folder nobody loads.
+                string masterAutoUpdate = Path.Combine(rootJsDir, "autoupdate.js");
+                if (File.Exists(masterAutoUpdate))
+                {
+                    File.Copy(masterAutoUpdate, Path.Combine(desktopJsDir, "autoupdate.js"), true);
+                }
+
                 // Sync cordova-standalone-shim.js & cdn-relay-shim.js (master in desktop\client\www\js)
-                string masterCordova = Path.Combine(desktopJsDir, "cordova-standalone-shim.js");
-                if (File.Exists(masterCordova))
+                string masterCordova = Path.Combine(desktopJsDir, "cordova-standalone-shim.js");                if (File.Exists(masterCordova))
                 {
                     File.Copy(masterCordova, Path.Combine(rootJsDir, "cordova-standalone-shim.js"), true);
                 }
