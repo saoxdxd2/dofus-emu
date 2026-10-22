@@ -164,7 +164,7 @@
 
     var _appVersion = (window.appInfo && window.appInfo.version) || cfg('__DEVICE_APP_VERSION__', '3.14.2');
     var _versionCode = (window.appInfo && window.appInfo.versionCode) || cfg('__DEVICE_VERSION_CODE__', '3014002');
-    var _buildVersion = window.buildVersion || cfg('__DEVICE_BUILD_VERSION__', '1.74.8');
+    var _buildVersion = window.buildVersion || cfg('__DEVICE_BUILD_VERSION__', '1.74.9');
 
     var FROZEN_LANGUAGES = Object.freeze ? Object.freeze(['fr-FR', 'fr', 'en-US', 'en']) : ['fr-FR', 'fr', 'en-US', 'en'];
     var navOverrides = {
@@ -859,29 +859,46 @@
     // 21. Adjust SDK globals stub — prevent Adjust from initialising
     try {
         var _adjustNoop = function() {};
-        var _adjustNoopObj = {
-            trackEvent: _adjustNoop,
-            addGlobalCallbackParameter: _adjustNoop,
-            addGlobalPartnerParameter: _adjustNoop,
-            switchToOfflineMode: _adjustNoop,
-            switchBackToOnlineMode: _adjustNoop,
-            stop: _adjustNoop,
-            restart: _adjustNoop,
-            appWillOpenUrl: _adjustNoop,
-            setEnabled: _adjustNoop,
-            isEnabled: function() { return false; },
-            getAdid: function() { return null; },
-            getAttribution: function() { return null; }
-        };
+        // Every method, not a hand-written list. Build 1.74.9 calls
+        // `Adjust.create(config)` during boot and the old literal did not define
+        // `create`, so the init chain threw one step further along than before
+        // ("r.create is not a function"). A Proxy cannot go out of date when the
+        // SDK grows a method.
+        var _adjustNoopObj = new Proxy({}, {
+            get: function(t, key) {
+                if (key === 'then') return undefined;
+                if (key === 'isEnabled') return function() { return false; };
+                if (key === 'getAdid' || key === 'getAttribution') return function() { return null; };
+                return _adjustNoop;
+            }
+        });
         if (!window.Adjust) window.Adjust = _adjustNoopObj;
         if (!window.AdjustConfig) {
-            window.AdjustConfig = function() { return {}; };
+            // Client build 1.74.9 calls `new AdjustConfig(...)` then
+            // `h.setLogLevel(...)` during boot. Returning a bare `{}` made that
+            // throw "h.setLogLevel is not a function", which killed initialisation
+            // and left the game on a black screen. A Proxy answers every method
+            // the SDK might call, so no version of the init chain can throw here.
+            window.AdjustConfig = function() {
+                return new Proxy({}, {
+                    get: function(t, key) {
+                        if (key === 'then') return undefined;
+                        return _adjustNoop;
+                    }
+                });
+            };
             window.AdjustConfig.LogLevel = { VERBOSE: 'verbose', DEBUG: 'debug', INFO: 'info', WARN: 'warn', ERROR: 'error', ASSERT: 'assert', SUPPRESS: 'suppress' };
         }
         if (!window.AdjustEvent) {
-            window.AdjustEvent = function(token) { this.token = token; };
-            window.AdjustEvent.prototype.addCallbackParameter = _adjustNoop;
-            window.AdjustEvent.prototype.addPartnerParameter = _adjustNoop;
+            window.AdjustEvent = function(token) {
+                return new Proxy({ token: token }, {
+                    get: function(t, key) {
+                        if (key === 'then') return undefined;
+                        if (key === 'token') return token;
+                        return _adjustNoop;
+                    }
+                });
+            };
         }
     } catch(e) {}
 
@@ -1094,32 +1111,125 @@
 
             createHud: function() {
                 var self = this;
+                var POS_KEY = '__dofusfarm_hud_pos';
+
+                function clampIntoView(x, y, el) {
+                    var w = el.offsetWidth || 180, h = el.offsetHeight || 26;
+                    var maxX = Math.max(0, window.innerWidth - w - 2);
+                    var maxY = Math.max(0, window.innerHeight - h - 2);
+                    return { x: Math.min(Math.max(0, x), maxX), y: Math.min(Math.max(0, y), maxY) };
+                }
+
                 function injectBadge() {
                     if (document.getElementById('__farmbot_hud')) return;
                     if (!document.body) { setTimeout(injectBadge, 300); return; }
-                    var badge = document.createElement('div');
-                    badge.id = '__farmbot_hud';
-                    badge.style.position = 'fixed';
-                    badge.style.top = '10px';
-                    badge.style.right = '12px';
-                    badge.style.zIndex = '999999';
-                    badge.style.padding = '5px 12px';
-                    badge.style.borderRadius = '16px';
-                    badge.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-                    badge.style.fontSize = '11px';
-                    badge.style.fontWeight = 'bold';
-                    badge.style.cursor = 'pointer';
-                    badge.style.userSelect = 'none';
-                    badge.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
-                    badge.style.transition = 'all 0.2s ease-in-out';
-                    badge.title = 'Click or press F2 to toggle High-Speed Auto-Fight';
 
-                    badge.onclick = function(e) {
+                    var hud = document.createElement('div');
+                    hud.id = '__farmbot_hud';
+                    hud.style.position = 'fixed';
+                    hud.style.zIndex = '999999';
+                    hud.style.display = 'flex';
+                    hud.style.alignItems = 'center';
+                    hud.style.gap = '6px';
+                    hud.style.padding = '4px 6px 4px 10px';
+                    hud.style.borderRadius = '14px';
+                    hud.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+                    hud.style.fontSize = '11px';
+                    hud.style.fontWeight = 'bold';
+                    hud.style.userSelect = 'none';
+                    hud.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
+                    hud.style.cursor = 'grab';
+                    hud.style.touchAction = 'none';
+                    hud.style.opacity = '0.92';
+
+                    var label = document.createElement('span');
+                    label.id = '__farmbot_hud_label';
+                    label.style.cursor = 'pointer';
+                    label.title = 'Click to toggle the fight AI, drag to move. F2 also toggles.';
+                    hud.appendChild(label);
+
+                    // One click starts the autonomous loop from inside the game
+                    // window: the host runs the same autopilot the AI page does.
+                    var auto = document.createElement('span');
+                    auto.id = '__farmbot_hud_auto';
+                    auto.textContent = '▶ Auto';
+                    auto.title = 'Start the autonomous AI loop';
+                    auto.style.cursor = 'pointer';
+                    auto.style.padding = '2px 7px';
+                    auto.style.borderRadius = '10px';
+                    auto.style.background = 'rgba(37,99,235,0.9)';
+                    auto.style.color = '#fff';
+                    auto.onclick = function(e) {
                         e.stopPropagation();
-                        self.toggle();
+                        auto.textContent = '...';
+                        try {
+                            window.chrome.webview.postMessage(JSON.stringify({
+                                type: 'AI_REQUEST', action: 'start_auto'
+                            }));
+                        } catch (err) {}
+                        setTimeout(function() { auto.textContent = '▶ Auto'; }, 2500);
                     };
+                    hud.appendChild(auto);
 
-                    document.body.appendChild(badge);
+                    // --- position: restored from the last drag -----------------
+                    var pos = null;
+                    try { pos = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) {}
+                    document.body.appendChild(hud);
+                    if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+                        var c = clampIntoView(pos.x, pos.y, hud);
+                        hud.style.left = c.x + 'px';
+                        hud.style.top = c.y + 'px';
+                    } else {
+                        hud.style.right = '12px';
+                        hud.style.top = '10px';
+                    }
+
+                    // --- drag ---------------------------------------------------
+                    var dragging = false, moved = false, offX = 0, offY = 0;
+                    hud.addEventListener('pointerdown', function(e) {
+                        if (e.target === auto) return;
+                        var r = hud.getBoundingClientRect();
+                        offX = e.clientX - r.left;
+                        offY = e.clientY - r.top;
+                        dragging = true;
+                        moved = false;
+                        hud.style.cursor = 'grabbing';
+                        try { hud.setPointerCapture(e.pointerId); } catch (err) {}
+                    });
+                    hud.addEventListener('pointermove', function(e) {
+                        if (!dragging) return;
+                        if (!moved && (Math.abs(e.movementX) > 2 || Math.abs(e.movementY) > 2)) moved = true;
+                        if (!moved) return;
+                        var c = clampIntoView(e.clientX - offX, e.clientY - offY, hud);
+                        hud.style.right = 'auto';
+                        hud.style.left = c.x + 'px';
+                        hud.style.top = c.y + 'px';
+                    });
+                    hud.addEventListener('pointerup', function(e) {
+                        if (!dragging) return;
+                        dragging = false;
+                        hud.style.cursor = 'grab';
+                        try { hud.releasePointerCapture(e.pointerId); } catch (err) {}
+                        if (moved) {
+                            var r = hud.getBoundingClientRect();
+                            try {
+                                localStorage.setItem(POS_KEY, JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }));
+                            } catch (err) {}
+                        } else {
+                            self.toggle();
+                        }
+                    });
+                    hud.addEventListener('pointercancel', function() { dragging = false; hud.style.cursor = 'grab'; });
+
+                    // Keep it on screen when the window is resized.
+                    window.addEventListener('resize', function() {
+                        if (!hud.style.left) return;
+                        var r = hud.getBoundingClientRect();
+                        var c = clampIntoView(r.left, r.top, hud);
+                        hud.style.left = c.x + 'px';
+                        hud.style.top = c.y + 'px';
+                    });
+
                     self.updateHud();
                 }
                 if (document.readyState === 'loading') {
@@ -1130,20 +1240,21 @@
             },
 
             updateHud: function() {
-                var badge = document.getElementById('__farmbot_hud');
-                if (!badge) return;
+                var hud = document.getElementById('__farmbot_hud');
+                var label = document.getElementById('__farmbot_hud_label');
+                if (!hud || !label) return;
                 if (this.enabled) {
-                    badge.textContent = '⚡ THX-01 AI: ACTIVE (F2)';
-                    badge.style.backgroundColor = '#10b981';
-                    badge.style.color = '#ffffff';
-                    badge.style.border = '1px solid #34d399';
-                    badge.style.boxShadow = '0 0 12px rgba(16,185,129,0.7)';
+                    label.textContent = 'DofusFarm AI: ON';
+                    hud.style.backgroundColor = '#10b981';
+                    hud.style.color = '#ffffff';
+                    hud.style.border = '1px solid #34d399';
+                    hud.style.boxShadow = '0 0 12px rgba(16,185,129,0.7)';
                 } else {
-                    badge.textContent = '⚡ THX-01 AI: OFF (F2)';
-                    badge.style.backgroundColor = 'rgba(30, 41, 59, 0.85)';
-                    badge.style.color = '#94a3b8';
-                    badge.style.border = '1px solid rgba(100, 116, 139, 0.4)';
-                    badge.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+                    label.textContent = 'DofusFarm AI: OFF';
+                    hud.style.backgroundColor = 'rgba(30, 41, 59, 0.85)';
+                    hud.style.color = '#94a3b8';
+                    hud.style.border = '1px solid rgba(100, 116, 139, 0.4)';
+                    hud.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
                 }
             },
 
@@ -1249,7 +1360,7 @@
                     monsters: monsters
                 };
 
-                // Query THX-01 ModernBERT combat decision server with 750ms abort timeout
+                // Query DofusFarm combat decision server with 750ms abort timeout
                 var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
                 var timeoutId = controller ? setTimeout(function() { try { controller.abort(); } catch(e){} }, 750) : null;
 
@@ -1264,7 +1375,7 @@
                     return resp.json();
                 }).then(function(data) {
                     if (data && data.status === 'ok' && Array.isArray(data.actions) && data.actions.length > 0) {
-                        console.log('[FarmBot AI] THX-01 Decision: Stance=' + data.stance + ' (Conf: ' + (data.confidence * 100).toFixed(1) + '%) -> ' + data.actions.length + ' actions');
+                        console.log('[FarmBot AI] Decision: Stance=' + data.stance + ' (Conf: ' + (data.confidence * 100).toFixed(1) + '%) -> ' + data.actions.length + ' actions');
                         self.dispatchActionSequence(data.actions, 0);
                     } else {
                         self.executeFallbackBurst();
@@ -1359,6 +1470,143 @@
     try {
         var _agentResult = function(ok, data, error) {
             return JSON.stringify({ ok: !!ok, data: data || null, error: error || null, at: Date.now() });
+        };
+
+        // Send a protocol message through the game's own connection manager.
+        //
+        // Every payload below was taken from a recorded session (see
+        // docs/PROTOCOL_NOTES.md), never inferred from the bundle: a hand-built
+        // message that the server disagrees with is a desync, and the client has
+        // no way to recover from one.
+        var _cmSend = function(name, args) {
+            try {
+                var cm = window.dofus && window.dofus.connectionManager;
+                if (!cm) return { ok: false, error: 'connectionManager unavailable' };
+                cm.sendMessage(name, args);
+                return { ok: true };
+            } catch (e) {
+                return { ok: false, error: String(e) };
+            }
+        };
+
+        // The interactive elements on the current map, as {elemId, skillInstanceUid}.
+        // Harvest is `InteractiveUseRequestMessage` with exactly these two fields.
+        var _interactives = function() {
+            var out = [];
+            try {
+                var ie = window.isoEngine;
+                var list = (ie && (ie.interactiveElements || (ie.mapData && ie.mapData.interactiveElements))) || null;
+                if (list && typeof list === 'object') {
+                    for (var k in list) {
+                        if (!Object.prototype.hasOwnProperty.call(list, k)) continue;
+                        var el = list[k] || {};
+                        var elemId = el.id != null ? el.id : (el.elemId != null ? el.elemId : parseInt(k, 10));
+                        if (elemId == null || isNaN(elemId)) continue;
+                        out.push({
+                            elemId: elemId,
+                            skillInstanceUid: el.skillInstanceUid != null ? el.skillInstanceUid : null,
+                            cell: el.cell != null ? el.cell : (el.position != null ? el.position.cell : null)
+                        });
+                    }
+                }
+            } catch (e) {}
+            return out;
+        };
+
+        // Inventory lookup by name, so hdv.list / inv.sell can take a name like
+        // every other verb instead of an internal uid.
+        var _findItem = function(name) {
+            var items = [];
+            try {
+                var inv = window.gui && window.gui.playerData && window.gui.playerData.inventory;
+                var bag = (inv && (inv.items || inv.objects)) || null;
+                if (bag && typeof bag === 'object') {
+                    for (var k in bag) {
+                        if (!Object.prototype.hasOwnProperty.call(bag, k)) continue;
+                        var it = bag[k] || {};
+                        items.push({ uid: it.objectUID != null ? it.objectUID : (it.uid != null ? it.uid : parseInt(k, 10)),
+                                     gid: it.objectGID != null ? it.objectGID : (it.gid != null ? it.gid : null),
+                                     quantity: it.quantity != null ? it.quantity : (it.count != null ? it.count : 1),
+                                     name: it.name || it.itemName || '' });
+                    }
+                }
+            } catch (e) {}
+            if (!name) return items;
+            var needle = String(name).toLowerCase();
+            for (var i = 0; i < items.length; i++) {
+                if (String(items[i].name).toLowerCase() === needle) return [items[i]];
+            }
+            for (var j = 0; j < items.length; j++) {
+                if (String(items[j].name).toLowerCase().indexOf(needle) !== -1) return [items[j]];
+            }
+            return [];
+        };
+
+        // -- market price cache ------------------------------------------------
+        //
+        // Prices do not come back with the request that asks for them. A scan
+        // sends ExchangeBidHouseTypeMessage / ExchangeBidHouseListMessage and the
+        // numbers arrive later as ExchangeBidHouseInListAddedMessage; the server
+        // also answers ObjectAveragePricesGetMessage with one table covering every
+        // item on the server. Both land here, and nothing else does: this cache
+        // only ever holds values the server actually sent, tagged with when and
+        // from which message, so a listing can say where its price came from.
+        var __PriceCache = {
+            average: {},      // gid -> average price across the server
+            listings: {},     // gid -> [{uid, price, quantity}] seen in a category
+            averageAt: 0,
+            listingAt: 0,
+            absorb: function(name, msg) {
+                if (!msg || typeof msg !== 'object') return;
+                if (name === 'ObjectAveragePricesMessage') {
+                    var ids = msg.ids, prices = msg.prices;
+                    if (Object.prototype.toString.call(ids) !== '[object Array]') return;
+                    if (Object.prototype.toString.call(prices) !== '[object Array]') return;
+                    for (var i = 0; i < ids.length && i < prices.length; i++) {
+                        var gid = Number(ids[i]), price = Number(prices[i]);
+                        if (gid > 0 && price > 0) this.average[gid] = price;
+                    }
+                    this.averageAt = Date.now();
+                    return;
+                }
+                if (name === 'ExchangeBidHouseInListAddedMessage') {
+                    var g = Number(msg.objectGID);
+                    if (!(g > 0)) return;
+                    var p = msg.prices, q = msg.quantities;
+                    if (Object.prototype.toString.call(p) !== '[object Array]') return;
+                    var rows = [];
+                    for (var j = 0; j < p.length; j++) {
+                        var price = Number(p[j]);
+                        if (!(price > 0)) continue;
+                        rows.push({ uid: msg.objectUID != null ? Number(msg.objectUID) : null,
+                                    price: price,
+                                    quantity: q && q[j] != null ? Number(q[j]) : 1 });
+                    }
+                    if (rows.length) {
+                        this.listings[g] = rows;
+                        this.listingAt = Date.now();
+                    }
+                }
+            },
+            stats: function(gid) {
+                var rows = this.listings[gid] || [];
+                if (!rows.length) return null;
+                var prices = rows.map(function(r) { return r.price; }).sort(function(a, b) { return a - b; });
+                var mid = Math.floor(prices.length / 2);
+                return {
+                    count: prices.length,
+                    min: prices[0],
+                    median: prices.length % 2 ? prices[mid] : Math.round((prices[mid - 1] + prices[mid]) / 2),
+                    max: prices[prices.length - 1],
+                    source: 'listing',
+                    age_ms: Date.now() - this.listingAt
+                };
+            },
+            averageOf: function(gid) {
+                var price = this.average[gid];
+                if (!(price > 0)) return null;
+                return { average: price, source: 'average', age_ms: Date.now() - this.averageAt };
+            }
         };
 
         var _agentSnapshot = function() {
@@ -1567,22 +1815,45 @@
                 cm.__recorderHooked = true;
 
                 // Outgoing: movement, fight actions, item use, market ops, chat.
-                var originalSend = cm.sendMessage;
-                if (typeof originalSend === 'function') {
-                    cm.sendMessage = function(name, params) {
-                        try {
-                            self._post({ kind: 'send', name: String(name),
-                                         args: self._shrink(params) });
-                        } catch (e) {}
-                        return originalSend.apply(this, arguments);
-                    };
-                    self._hooks.push(function() { cm.sendMessage = originalSend; });
+                // Both entry points exist on this client and the login path does
+                // not use the one we wrapped first, which is why an earlier trace
+                // had no `send` events at all.
+                var sendMethods = ['sendMessage', 'send'];
+                for (var s = 0; s < sendMethods.length; s++) {
+                    (function(method) {
+                        var original = cm[method];
+                        if (typeof original !== 'function') return;
+                        cm[method] = function(name, params) {
+                            try {
+                                self._post({ kind: 'send', via: method, name: String(name),
+                                             args: self._shrink(params) });
+                            } catch (e) {}
+                            return original.apply(this, arguments);
+                        };
+                        self._hooks.push(function() { cm[method] = original; });
+                    })(sendMethods[s]);
                 }
 
-                // Incoming: what the server told us. Wrapping the registry is
-                // version-dependent, so probe for the common shapes and fall
-                // back to reporting that we could not hook it.
-                var registry = cm._handlers || cm.handlers || cm._messageHandlers || null;
+                // The connect call itself: what address does the client think it
+                // is dialling? Everything upstream of this (appInfo.server,
+                // config.json, serversData) is guesswork until this is recorded.
+                if (typeof cm.connect === 'function') {
+                    var origConnect = cm.connect;
+                    cm.connect = function() {
+                        try {
+                            self._post({ kind: 'connect', args: self._shrink(
+                                Array.prototype.slice.call(arguments)) });
+                        } catch (e) {}
+                        return origConnect.apply(this, arguments);
+                    };
+                    self._hooks.push(function() { cm.connect = origConnect; });
+                }
+
+                // Incoming: what the server told us. This client keeps its
+                // handlers in `eventHandlers` (confirmed by the probe); the other
+                // names are kept as fallbacks for older builds.
+                var registry = cm.eventHandlers || cm._handlers || cm.handlers
+                    || cm._messageHandlers || null;
                 if (registry && typeof registry === 'object') {
                     var wrapped = {};
                     var names = Object.keys(registry);
@@ -1596,8 +1867,17 @@
                                 (function(fn) {
                                     if (typeof fn !== 'function') { out.push(fn); return; }
                                     out.push(function(msg) {
+                                        // Market prices land here before anything
+                                        // else can use them; the recorder post is
+                                        // capped, the cache is not.
+                                        try {
+                                            if (name === 'ObjectAveragePricesMessage'
+                                                || name === 'ExchangeBidHouseInListAddedMessage') {
+                                                __PriceCache.absorb(name, msg);
+                                            }
+                                        } catch (e) {}
                                         try { self._post({ kind: 'recv', name: name,
-                                                           args: self._shrink(msg) }); } catch (e) {}
+                                                           args: self._shrink(msg, 6000) }); } catch (e) {}
                                         return fn.apply(this, arguments);
                                     });
                                 })(list[j]);
@@ -1605,8 +1885,16 @@
                             wrapped[name] = isArray ? out : out[0];
                         })(names[i], registry[names[i]]);
                     }
-                    cm._handlers = wrapped;
-                    self._post({ kind: 'hook_report', incoming: true, names: names.length });
+                    // Write back to the property we actually wrapped: assigning
+                    // to `_handlers` while the client reads `eventHandlers` left
+                    // the game dispatching to the originals and produced no
+                    // incoming events in the trace.
+                    if (cm.eventHandlers === registry) cm.eventHandlers = wrapped;
+                    else if (cm._handlers === registry) cm._handlers = wrapped;
+                    else if (cm.handlers === registry) cm.handlers = wrapped;
+                    else cm._messageHandlers = wrapped;
+                    self._post({ kind: 'hook_report', incoming: true, names: names.length,
+                                 slot: cm.eventHandlers === wrapped ? 'eventHandlers' : 'other' });
                 } else {
                     self._post({ kind: 'hook_report', incoming: false,
                                  note: 'no message registry found; outgoing only',
@@ -1748,11 +2036,19 @@
 
             // Keep a message small enough to survive the bridge without
             // exploding on a circular object graph.
-            _shrink: function(value) {
+            //
+            // The cap is per direction: outgoing calls are small and a 600-char
+            // preview is plenty, but incoming map state (actors, NPCs,
+            // interactive elements) is the payload the client verbs are written
+            // against -- truncating it at 600 left us with `_truncated: true` and
+            // no NPC ids at all. Incoming gets a much larger budget.
+            _shrink: function(value, cap) {
+                var limit = cap || 600;
                 try {
                     var text = JSON.stringify(value);
-                    if (text && text.length <= 600) return value;
-                    if (text) return { _truncated: true, preview: text.slice(0, 600) };
+                    if (text && text.length <= limit) return value;
+                    if (text) return { _truncated: true, length: text.length,
+                                       preview: text.slice(0, limit) };
                 } catch (e) {
                     return { _unserialisable: String(e) };
                 }
@@ -1827,6 +2123,20 @@
                        inputs: document.getElementsByTagName('input').length }
             };
             try { report.snapshot = _agentSnapshot(); } catch (e) { report.snapshotError = String(e); }
+            // Where the client thinks the game server is. Without this the only
+            // symptom of a wrong target is a bare LOGIN_ERROR.
+            try {
+                var sd = null;
+                try { sd = JSON.parse(JSON.stringify(window.gui && window.gui.serversData)); } catch (e) { sd = String(e); }
+                report.server = {
+                    appInfoServer: (window.appInfo && window.appInfo.server) || null,
+                    appInfoVersion: (window.appInfo && window.appInfo.version) || null,
+                    buildVersion: window.buildVersion || null,
+                    serversData: JSON.stringify(sd).slice(0, 800),
+                    connectionState: (window.dofus && window.dofus.connectionManager)
+                        ? (window.dofus.connectionManager.connectionState || null) : null
+                };
+            } catch (e) { report.serverError = String(e); }
             try {
                 var ie = window.isoEngine;
                 if (ie && ie.mapData) {
@@ -1872,6 +2182,7 @@
             'farm.start': function(args) {
                 var started = false;
                 var s = null;
+                var harvest = null;
                 try {
                     if (window.__FarmBot) {
                         window.__FarmBot.resetSession();
@@ -1880,8 +2191,30 @@
                         s = window.__FarmBot.sessionSummary();
                     }
                 } catch(e){}
+                // Harvesting is `InteractiveUseRequestMessage {elemId,
+                // skillInstanceUid}` -- captured 2026-10-22 while gathering. If the
+                // agent asked for a resource, take the nearest interactive element
+                // on this map; walking to it is still the client's job.
+                if (started && args && (args.resource || args.monster)) {
+                    var list = _interactives();
+                    var target = null;
+                    for (var i = 0; i < list.length; i++) {
+                        if (list[i].skillInstanceUid != null) { target = list[i]; break; }
+                    }
+                    if (target) {
+                        var r = _cmSend('InteractiveUseRequestMessage',
+                            { elemId: target.elemId, skillInstanceUid: target.skillInstanceUid });
+                        harvest = r.ok
+                            ? { elem_id: target.elemId, skill_instance_uid: target.skillInstanceUid, cell: target.cell }
+                            : { error: r.error };
+                    } else {
+                        harvest = { error: 'no interactive element on this map',
+                                    candidates: list.length };
+                    }
+                }
                 return _agentResult(started, {
                     auto_fight: started,
+                    harvest: harvest,
                     requested: args || null,
                     session: s,
                     // Flat copies: this is the shape the learning contract reads
@@ -1891,7 +2224,7 @@
                     minutes: s ? s.minutes : null,
                     kamas: s ? s.kamas : null,
                     xp: s ? s.xp : null,
-                    note: 'auto-fight enabled; zone walking / harvest loop is not implemented in the client yet'
+                    note: 'auto-fight enabled; harvest fires on the nearest interactive element when a resource is requested'
                 }, started ? null : 'FarmBot unavailable');
             },
             'farm.stop': function() {
@@ -1940,20 +2273,150 @@
                 } catch(err) { return _agentResult(false, null, err.toString()); }
             },
             'quest.advance': function(args) {
-                return _agentResult(false, { quest_id: (args && args.quest_id) || null },
-                    'quest_ui_not_mapped: dialog/navigation automations for quest steps need a live mapping session');
+                // Two ways to advance, both captured on 2026-10-22:
+                //   explicit objective -> QuestObjectiveValidationMessage
+                //   otherwise          -> talk to the NPC (npcActionId 3) and let
+                //                         the dialog drive the step.
+                var questId = (args && (args.quest_id || args.questId)) || null;
+                var objectiveId = (args && (args.objective_id || args.objectiveId)) || null;
+                if (questId && objectiveId) {
+                    var r = _cmSend('QuestObjectiveValidationMessage',
+                        { questId: Number(questId), objectiveId: Number(objectiveId) });
+                    return _agentResult(r.ok, { quest_id: Number(questId), objective_id: Number(objectiveId) },
+                        r.ok ? null : r.error);
+                }
+                var npc = null;
+                try {
+                    var am = window.isoEngine && window.isoEngine.actorManager;
+                    var actors = (am && (am.actors || am.actorList)) || null;
+                    if (actors) {
+                        for (var k in actors) {
+                            if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
+                            var a = actors[k] || {};
+                            var nid = a.npcId != null ? a.npcId : (a.staticInfos && a.staticInfos.npcId);
+                            if (nid != null && nid > 0) { npc = { npcId: nid, cell: a.cellId || (a.position && a.position.cell) }; break; }
+                        }
+                    }
+                } catch (e) {}
+                if (!npc) {
+                    return _agentResult(false, { quest_id: questId },
+                        'no NPC on this map to talk to; pass objective_id to validate directly');
+                }
+                var mapId = null;
+                try { mapId = window.isoEngine.currentMapId || (window.isoEngine.mapData && window.isoEngine.mapData.mapId) || null; } catch (e) {}
+                var talk = _cmSend('NpcGenericActionRequestMessage',
+                    { npcId: npc.npcId, npcActionId: 3, npcMapId: mapId });
+                return _agentResult(talk.ok, { quest_id: questId, npc_id: npc.npcId, map_id: mapId },
+                    talk.ok ? null : talk.error);
             },
             'inv.sell': function(args) {
-                return _agentResult(false, { requested: args || null },
-                    'hdv_ui_not_mapped: market listing automation needs a live mapping session');
+                // Same wire call as hdv.list; resolved through the map, not `this`,
+                // because handlers are invoked as bare functions.
+                return _agentHandlers['hdv.list'](args);
             },
             'hdv.scan': function(args) {
-                return _agentResult(false, { item: (args && args.item) || null },
-                    'hdv_ui_not_mapped: market price scan needs a live mapping session');
+                // ExchangeBidHouseTypeMessage opens a category, then
+                // ExchangeBidHouseListMessage lists it. Both need an open
+                // exchange: the server ignores them otherwise, which is why this
+                // reports the missing precondition instead of pretending.
+                //
+                // Prices arrive asynchronously (ExchangeBidHouseInListAddedMessage,
+                // ObjectAveragePricesMessage) and are cached by __PriceCache. If
+                // the cache already has a number for this item, return it --
+                // asking the server again would just cost a round trip.
+                var type = (args && (args.type || args.category)) || null;
+                var id = (args && (args.id || args.item_type)) || null;
+                var itemName = (args && args.item) || null;
+                var gid = args && args.gid != null ? Number(args.gid) : null;
+
+                if (gid == null && itemName) {
+                    var found = _findItem(itemName);
+                    if (found.length && found[0].gid != null) gid = Number(found[0].gid);
+                }
+
+                if (gid != null) {
+                    var stats = __PriceCache.stats(gid) || __PriceCache.averageOf(gid);
+                    if (stats) {
+                        return _agentResult(true, { gid: gid, item: itemName, stats: stats,
+                            note: 'cached from a server message; age_ms says how fresh' });
+                    }
+                }
+
+                if (type == null && id == null) {
+                    // No category given but we know the item: ask for the whole
+                    // average table, which is one message and covers every item.
+                    if (gid != null || itemName) {
+                        var ra = _cmSend('ObjectAveragePricesGetMessage', {});
+                        if (!ra.ok) return _agentResult(false, { item: itemName }, ra.error);
+                        return _agentResult(true, { gid: gid, item: itemName,
+                            sent: [{ message: 'ObjectAveragePricesGetMessage' }],
+                            note: 'average table requested; call hdv.scan again once it arrives' });
+                    }
+                    return _agentResult(false, null, 'hdv.scan needs an item, a category type or an item type id');
+                }
+
+                var sent = [];
+                if (type != null) {
+                    var r1 = _cmSend('ExchangeBidHouseTypeMessage', { type: Number(type) });
+                    if (!r1.ok) return _agentResult(false, null, r1.error);
+                    sent.push({ message: 'ExchangeBidHouseTypeMessage', type: Number(type) });
+                }
+                if (id != null) {
+                    var r2 = _cmSend('ExchangeBidHouseListMessage', { id: Number(id) });
+                    if (!r2.ok) return _agentResult(false, null, r2.error);
+                    sent.push({ message: 'ExchangeBidHouseListMessage', id: Number(id) });
+                }
+                return _agentResult(true, { gid: gid, item: itemName, sent: sent,
+                    note: 'category opened; prices arrive as ExchangeBidHouseInListAddedMessage and are cached for the next hdv.scan' });
             },
             'hdv.list': function(args) {
-                return _agentResult(false, { item: (args && args.item) || null },
-                    'hdv_ui_not_mapped: market listing automation needs a live mapping session');
+                var itemName = (args && args.item) || null;
+                var price = args && (args.price != null ? Number(args.price) : null);
+                var qty = args && (args.quantity != null ? Number(args.quantity) : 1);
+                if (!itemName) return _agentResult(false, null, 'hdv.list needs an item name');
+
+                var matches = _findItem(itemName);
+                if (!matches.length) return _agentResult(false, { item: itemName }, 'item not in inventory');
+                if (matches.length > 1 && !matches[0].uid) {
+                    return _agentResult(false, { item: itemName, matches: matches.length }, 'ambiguous item name');
+                }
+                var entry = matches[0];
+                var uid = entry.uid;
+
+                // Price resolution. An explicit price always wins. Otherwise use a
+                // number the SERVER sent (cached by __PriceCache) and say so in
+                // `price_source`; never invent one. A listing at a made-up price is
+                // money lost quietly, which is the one failure nobody notices.
+                var priceSource = 'explicit';
+                var rule = (args && args.price_rule) || 'median_minus_1';
+                if (price == null || !isFinite(price) || price <= 0) {
+                    if (rule === 'fixed') {
+                        // `fixed` means the caller knows the number. If it did not
+                        // supply one there is nothing to resolve, so refuse.
+                        return _agentResult(false, { item: itemName },
+                            'hdv.list price_rule=fixed needs an explicit price');
+                    }
+                    var st = entry.gid != null
+                        ? (__PriceCache.stats(entry.gid) || __PriceCache.averageOf(entry.gid))
+                        : null;
+                    if (!st) {
+                        return _agentResult(false, { item: itemName, gid: entry.gid },
+                            'hdv.list needs a price: none was given and no measured market price is cached for this item (run hdv.scan first)');
+                    }
+                    var basis = st.median || st.average;
+                    price = Math.max(1, basis - 1);
+                    priceSource = rule + ':' + st.source;
+                }
+
+                var have = entry.quantity != null ? Number(entry.quantity) : null;
+                if (have != null && have > 0 && qty > have) qty = have;
+
+                var r = _cmSend('ExchangeObjectMovePricedMessage',
+                    { objectUID: uid, quantity: qty, price: price });
+                return _agentResult(r.ok, { item: entry.name, object_uid: uid, quantity: qty,
+                    price: price, price_source: priceSource,
+                    note: 'listing_open: the sale depends on a buyer, not on us' },
+                    r.ok ? null : r.error);
             }
         };
 

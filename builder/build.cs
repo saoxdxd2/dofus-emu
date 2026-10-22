@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -83,11 +83,16 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "IClientBackend.cs"),
                 Path.Combine(desktopDir, "EmulatorBackend.cs"),
                 Path.Combine(desktopDir, "WebView2ClientForm.cs"),
+                Path.Combine(desktopDir, "ClientBundle.cs"),
                 Path.Combine(desktopDir, "WebView2Backend.cs"),
                 Path.Combine(desktopDir, "AgentBridge.cs"),
                 Path.Combine(desktopDir, "FarmEngine.cs"),
+                Path.Combine(desktopDir, "ProxySupervisor.cs"),
                 Path.Combine(desktopDir, "Watchdog.cs"),
                 Path.Combine(desktopDir, "PriorityGovernor.cs"),
+                Path.Combine(desktopDir, "AiPanel.cs"),
+                Path.Combine(desktopDir, "NetSettings.cs"),
+                Path.Combine(desktopDir, "Pages.cs"),
                 Path.Combine(desktopDir, "MainForm.cs"),
                 Path.Combine(desktopDir, "Program.cs")
             };
@@ -315,12 +320,19 @@ namespace DofusBuild
                         File.Copy(f, Path.Combine(stageBin, Path.GetFileName(f)), true);
                 }
 
-                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "proxies.txt", "accounts.txt", "app_icon.ico", "installer_icon.ico", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
+                foreach (string b in new[] { "DofusFarm.exe", "uninstall.exe", "dofus-net-proxy.exe", "proxies.txt", "accounts.txt", "network.ini", @"tools\patch-rules.txt", "app_icon.ico", "installer_icon.ico", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" })
                 {
                     string p = Path.Combine(RepoRoot, b);
                     if (!File.Exists(p)) p = Path.Combine(RepoRoot, "scripts", b);
                     if (!File.Exists(p)) p = Path.Combine(RepoRoot, "desktop", "lib", "webview2", b);
-                    if (File.Exists(p)) File.Copy(p, Path.Combine(stageDir, b), true);
+                    if (File.Exists(p))
+                    {
+                        string dest = Path.Combine(stageDir, b);
+                        string destDir = Path.GetDirectoryName(dest);
+                        if (!string.IsNullOrEmpty(destDir) && !Directory.Exists(destDir))
+                            Directory.CreateDirectory(destDir);
+                        File.Copy(p, dest, true);
+                    }
                 }
 
                 string repoWarp = Path.Combine(RepoRoot, @"bin\warp");
@@ -495,6 +507,8 @@ namespace DofusBuild
                     Path.Combine(desktopDir, "IClientBackend.cs"),
                     Path.Combine(desktopDir, "PriorityGovernor.cs"),
                     Path.Combine(desktopDir, "FarmEngine.cs"),
+                    Path.Combine(desktopDir, "ProxySupervisor.cs"),
+                    Path.Combine(desktopDir, "NetSettings.cs"),
                     Path.Combine(desktopDir, "Installer.cs")
                 };
                 string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";

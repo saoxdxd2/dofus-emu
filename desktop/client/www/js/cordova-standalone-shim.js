@@ -204,9 +204,58 @@
         }
     };
 
+    // Analytics globals. Client build 1.74.9 initialises the Adjust SDK during
+    // boot: `T.initialize(logger, Config.adjust, window.Adjust,
+    // window.AdjustConfig, window.AdjustEvent)`. Those globals come from the
+    // cordova-plugin-adjust JS, which this standalone page never loads, so
+    // `AdjustConfig` was a bare object and `h.setLogLevel` threw during
+    // initialize -- an uncaught TypeError that left the game on a black screen.
+    // A no-op stub is the right shape here: analytics is telemetry, not gameplay,
+    // and every method returns a function so the SDK's init chain cannot throw.
+    try {
+        if (!window.Adjust || typeof window.Adjust.create !== 'function') {
+            var _adjustNoop = new Proxy({}, {
+                get: function (t, key) {
+                    if (key === 'then') return undefined;
+                    return function () {};
+                }
+            });
+            window.Adjust = window.Adjust || _adjustNoop;
+            window.AdjustConfig = window.AdjustConfig || function () { return _adjustNoop; };
+            window.AdjustEvent = window.AdjustEvent || function () { return _adjustNoop; };
+            console.log('[CordovaShim] Adjust analytics stubbed (no native SDK in this host)');
+        }
+    } catch (e) {
+        console.error('[CordovaShim] Adjust stub failed:', e);
+    }
+
     // Native bridge mock for cordova.exec
     window._cordovaNative = {
         exec: function (secret, service, action, callbackId, argsJson) {
+            // Every plugin call is logged. Before this, an unimplemented service
+            // silently answered `null` and the only symptom was a generic
+            // LOGIN_ERROR several layers away -- which is how a missing socket
+            // service could look like a network problem for hours. Anything the
+            // host does not implement now names itself in the trace.
+            var known = (service === 'AppSettings') || (service === 'AppInfo')
+                || (service === 'Device') || (service === 'NetworkStatus');
+            try {
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({
+                        type: 'PLAY_LOG', session: 'cordova-exec', seq: 0,
+                        at: Date.now(),
+                        event: { kind: 'exec', service: String(service),
+                                 action: String(action), known: known,
+                                 args: String(argsJson || '').slice(0, 200) }
+                    });
+                }
+            } catch (e) {}
+            if (!known) {
+                try {
+                    console.error('[CordovaShim] UNIMPLEMENTED exec service="' + service +
+                                  '" action="' + action + '" -> answered null');
+                } catch (e) {}
+            }
             setTimeout(function () {
                 if (!window.cordova || !window.cordova.callbackFromNative) return;
                 if (service === 'AppSettings' && action === 'get') {

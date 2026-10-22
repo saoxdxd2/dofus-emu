@@ -217,23 +217,14 @@ var CDV_PATH = 'cdvfile://localhost/persistent/data/';
 					' server ' + (window.appInfo && window.appInfo.server));
 			} catch (e) {}
 			if (hasUpdate) {
-				// The native app fired `sourceUpdated` here so the Java layer
-				// could show "new version available, restart?". There is no Java
-				// layer in this host, so that dialog either never appears or
-				// blocks the session. Applying it ourselves is what the user
-				// asked for: take the update, reload once, never ask.
-				//
-				// Guarded by sessionStorage so a server that keeps advertising a
-				// newer build than it serves cannot loop the client.
-				var applied = 0;
-				try { applied = parseInt(sessionStorage.getItem('autoUpdateApplied') || '0', 10) || 0; } catch (e) {}
-				if (applied < 2) {
-					try { sessionStorage.setItem('autoUpdateApplied', String(applied + 1)); } catch (e) {}
-					console.log('[AUTOUPDATE] applying update silently (attempt ' + (applied + 1) + ')');
-					window.location.reload();
-					return;
-				}
-				console.log('[AUTOUPDATE] update still advertised after 2 reloads; continuing on the local copy');
+				// Keep the loader's original behaviour: swap the manifest, do not
+				// touch the page. An earlier version reloaded here on the theory
+				// that the "new version, restart?" prompt came from this path; the
+				// prompt turned out to be the client's reaction to a failed login,
+				// and the reload only made things worse -- it restarted the page
+				// before the auth module finished initialising (webAuth=undefined
+				// in the trace), so every attempt failed the same way.
+				console.log('[AUTOUPDATE] manifest updated in place; no reload');
 			}
 			isLoaded = true;
 		});

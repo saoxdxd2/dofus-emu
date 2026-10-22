@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -25,6 +25,9 @@ namespace DofusFarm.Engine
 
         public event Action<string> OnLog;
         public event Action<string, ClientInstanceState> OnStateChanged;
+
+        /// <summary>Forwards in-page AI requests (the HUD's Auto button) to the host.</summary>
+        public event Action<string, string> OnAiRequest;
 
         public bool IsSupported(out string failureReason)
         {
@@ -161,7 +164,7 @@ namespace DofusFarm.Engine
                 if (foundClient)
                 {
                     options.EntryUrl = string.Format(
-                        "https://dofus.local/standalone.html?appVersion={0}&buildVersion={1}&versionCode={2}",
+                        "https://dofus.local/standalone.html?buildVersion={1}&versionCode={2}&appVersion={0}",
                         Uri.EscapeDataString(options.AppVersion),
                         Uri.EscapeDataString(options.BuildVersion),
                         Uri.EscapeDataString(options.VersionCode));
@@ -199,6 +202,11 @@ namespace DofusFarm.Engine
                     {
                         _latestDiagnostics[instId] = json;
                         OnLog?.Invoke(string.Format("[WEBVIEW2-TELEMETRY] [{0}]: Received capability probe report.", instId));
+                    };
+                    form.OnAiRequest += (instId, action) =>
+                    {
+                        var handler = OnAiRequest;
+                        if (handler != null) handler(instId, action);
                     };
                     form.OnFormClosedByUser += instId =>
                     {

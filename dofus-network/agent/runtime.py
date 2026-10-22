@@ -59,6 +59,13 @@ _RE_SELL = re.compile(
     r"\b(sell|vends|vend(?:re)?|vender|vende)\b(?:\s+(.+?))?"
     r"(?:\s+(?:for|at|price|prix|precio|kamas?|at market|market price)\b.*)?$",
     re.IGNORECASE)
+# "list the bread on the market" -- deliberately narrow: it needs both a
+# listing verb and a market word, so "list my quests" cannot be read as a sale.
+_RE_LIST_MARKET = re.compile(
+    r"\b(?:list|put|place|mettre|poner)\b(?:\s+up)?\s+(?:the\s+|le\s+|la\s+|les\s+|el\s+|los\s+)?"
+    r"(.{2,40}?)\s+(?:on|in|at|au|sur|en|al)\s+(?:the\s+)?"
+    r"(?:market|hdv|h[oô]tel de vente|subasta)\b",
+    re.IGNORECASE)
 _RE_SCAN = re.compile(r"(?:scan|price of|prix (?:de|du|d'|des)|precio de)\s+(.{2,60})$", re.IGNORECASE)
 _RE_QUEST = re.compile(r"\b(qu[eê]tes?|quests?|misi[oó]nes?)\b", re.IGNORECASE)
 _RE_QUEST_ADVANCE = re.compile(
@@ -223,6 +230,19 @@ class RulePolicy:
         match = _RE_ZAAP.search(goal)
         if match:
             return ToolCall("nav.goto", {"zaap": match.group(1).strip()}, goal)
+
+        match = _RE_LIST_MARKET.search(goal)
+        if match:
+            item = match.group(1).strip(" .,!?:;")
+            quantity = 1
+            # "put 3 bread on the market" states a quantity before the item.
+            lead = re.match(r"^(\d{1,4})\s+(.+)$", item)
+            if lead:
+                quantity, item = int(lead.group(1)), lead.group(2).strip()
+            return ToolCall(
+                "hdv.list",
+                {"item": item, "quantity": quantity, "price_rule": "median_minus_1"},
+                goal)
 
         match = _RE_SELL.search(goal)
         if match:

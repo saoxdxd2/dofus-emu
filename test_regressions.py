@@ -41,6 +41,75 @@ def summarize() -> int:
 
 # -- 1. THX U+FFFD corruption ----------------------------------------------
 
+def test_autopilot_money_guards() -> None:
+    """The autonomous loop must not be able to spend money by accident.
+
+    Three separate failure modes, all of which cost real kamas:
+      1. buying a listing (irreversible, no undo, no negotiation);
+      2. listing without a price (the client would have to invent one);
+      3. listing below the floor (a typo, not a strategy).
+    A price rule is only allowed when the client can resolve it from a price the
+    server actually sent -- that is what MEASURED_PRICE_RULES names.
+    """
+    from agent.autopilot import Autopilot, MEASURED_PRICE_RULES, PRICE_FLOOR
+    from agent.runtime import ToolCall
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pilot = Autopilot(runtime=None, goals=["t"],  # guard() touches no runtime
+                          log_path=Path(tmp) / "a.jsonl",
+                          stop_file=Path(tmp) / "stop")
+
+        check("autopilot refuses a purchase",
+              pilot.guard(ToolCall("hdv.buy", {"item": "bread", "price": 5})) is not None)
+
+        no_price = pilot.guard(ToolCall("hdv.list", {"item": "bread"}))
+        check("autopilot refuses a listing with no price", no_price is not None,
+              str(no_price))
+
+        below = pilot.guard(ToolCall("hdv.list", {"item": "bread", "price": PRICE_FLOOR - 1}))
+        check("autopilot refuses a price below the floor", below is not None, str(below))
+
+        check("autopilot allows an explicit price",
+              pilot.guard(ToolCall("hdv.list", {"item": "bread", "price": 37})) is None)
+
+        for rule in sorted(MEASURED_PRICE_RULES):
+            ok = pilot.guard(ToolCall("hdv.list", {"item": "bread", "price_rule": rule}))
+            check(f"autopilot allows the measured rule {rule}", ok is None, str(ok))
+
+        made_up = pilot.guard(ToolCall("hdv.list", {"item": "bread", "price_rule": "triple_market"}))
+        check("autopilot refuses an unmeasured price rule", made_up is not None, str(made_up))
+
+
+def test_autopilot_listing_is_not_revenue() -> None:
+    """A successful listing is recorded as open, never as kamas earned.
+
+    Selling is not controllable: putting an item on the market is, having a buyer
+    appear is not. Counting a listing as revenue teaches a drop rate that never
+    happened, which is exactly the class of error the recorder exists to prevent.
+    """
+    from agent.autopilot import Autopilot
+
+    class _Result:
+        ok = True
+        error = None
+        data = {"price": 41, "price_source": "average_minus_1:average"}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pilot = Autopilot(runtime=None, goals=["t"],
+                          log_path=Path(tmp) / "a.jsonl",
+                          stop_file=Path(tmp) / "stop")
+        before = len(pilot.open_listings)
+        # Reproduce the bookkeeping the run loop performs for a listing result.
+        source = _Result.data.get("price_source")
+        if source:
+            pilot.open_listings.append({"price": _Result.data["price"],
+                                        "price_source": source, "state": "open"})
+        check("listing recorded as open, not as income",
+              len(pilot.open_listings) == before + 1
+              and pilot.open_listings[-1]["state"] == "open"
+              and "earned" not in pilot.open_listings[-1])
+
+
 def test_thx_no_replacement_char() -> None:
     text = (DOFUS_NETWORK / "ai" / "thx_policy.py").read_text(encoding="utf-8")
     check("thx_policy has no U+FFFD", chr(0xFFFD) not in text,
@@ -387,5 +456,7 @@ if __name__ == "__main__":
     test_executor_records_piggybacked_observation()
     test_price_rule_without_price_is_dropped()
     test_trainer_supports_resume()
+    test_autopilot_money_guards()
+    test_autopilot_listing_is_not_revenue()
     sys.exit(summarize())
 

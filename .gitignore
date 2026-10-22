@@ -106,3 +106,17 @@ dofus-network/trajectories/
 # Generated tool-use SFT corpus (training data, stays local)
 dofus-network/data/agent_sft/
 
+
+# ---------------------------------------------------------------------------
+# SECRETS - never commit these. accounts.txt and proxies.txt were tracked before
+# 2026-10-22 and their history still contains real credentials: see HANDOVER.md.
+# ---------------------------------------------------------------------------
+accounts.txt
+proxies.txt
+proxies_*.txt
+network.ini
+ai_settings.ini
+manual-login.flag
+no-client-update.flag
+*.session
+*.token

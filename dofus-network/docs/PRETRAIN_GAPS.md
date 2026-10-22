@@ -1,5 +1,10 @@
 # Pre-training gaps — what must exist before a training run means anything
 
+> **Status moved to `PLAN.md` §4.** Two items here changed on 2026-10-22: the
+> `models/dofus-thx01` path bug is moot (the THX checkpoints were deleted; the
+> encoder is the only model), and W4 (sentinel on ONNX instead of torch) is still
+> open — it is the remaining unlock for a ~150 MB installer.
+
 Ordered by what actually blocks progress. Everything below was verified against
 the code and the 1,611 logged records, not assumed.
 

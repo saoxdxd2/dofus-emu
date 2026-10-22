@@ -31,9 +31,15 @@
                 return s || fallback;
             };
             var v = clean(params.get('appVersion'), (window.appInfo && window.appInfo.version) || '3.14.2');
-            var b = clean(params.get('buildVersion'), window.buildVersion || '1.74.8');
+            var b = clean(params.get('buildVersion'), window.buildVersion || '1.74.9');
             var c = clean(params.get('versionCode'), (window.appInfo && window.appInfo.versionCode) || '3014002');
-            window.appInfo = { version: v, identifier: 'com.ankama.dofustouch', build: v, versionCode: c };
+            // `server` is what the game resolves its socket against. Without it
+            // the client falls back to the page origin (https://dofus.local),
+            // which is a WebView2 virtual host that exists only for HTTP: the
+            // socket then dials a name nothing can route, and the only symptom
+            // is a bare LOGIN_ERROR.
+            window.appInfo = { version: v, identifier: 'com.ankama.dofustouch', build: v, versionCode: c,
+                               server: 'https://dt-proxy-production-login.ankama-games.com' };
             window.buildVersion = b;
         })();
     </script>

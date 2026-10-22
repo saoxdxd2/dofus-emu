@@ -34,7 +34,7 @@ namespace DofusFarm.Engine
         private const string StoreUrl = "https://play.google.com/store/apps/details?id=com.ankama.dofustouch&hl=en";
         public const string DefaultAppVersion = "3.14.2";
         public const string DefaultVersionCode = "3014002";
-        public const string DefaultBuildVersion = "1.74.8";
+        public const string DefaultBuildVersion = "1.74.9";
 
         private static readonly object _lock = new object();
         private static DofusVersionInfo _cachedResolved = null;

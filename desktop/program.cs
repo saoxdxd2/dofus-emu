@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -64,8 +64,113 @@ namespace DofusFarm
         }
 
         [STAThread]
+        /// <summary>
+        /// Headless check of the runtime bundle patcher: apply tools\patch-rules.txt
+        /// to the unpatched script.js.bak and compare with the live script.js that
+        /// the build produced. If they differ, the rules are not what the build
+        /// applied, and an update would ship a bundle nobody verified.
+        ///
+        ///   DofusFarm.exe --bundle-selftest   (exit 0 = identical)
+        ///
+        /// Writes its result to bundle-selftest.txt because this is a winexe.
+        /// </summary>
+        private static int BundleSelfTest()
+        {
+            var sb = new System.Text.StringBuilder();
+            try
+            {
+                string dir = Engine.ClientBundle.BundleDir();
+                if (dir == null) { sb.AppendLine("FAIL: client/www not found"); return Finish(sb, 2); }
+
+                string error;
+                var rules = Engine.ClientBundle.LoadRules(out error);
+                sb.AppendLine("rules: " + rules.Count + (error != null ? " (" + error + ")" : ""));
+                if (rules.Count == 0) return Finish(sb, 2);
+
+                string live = Path.Combine(dir, @"build\script.js");
+                string bak = Path.Combine(dir, @"build\script.js.bak");
+                if (!File.Exists(live) || !File.Exists(bak))
+                {
+                    sb.AppendLine("SKIP: need both script.js and script.js.bak");
+                    return Finish(sb, 2);
+                }
+
+                string js = File.ReadAllText(bak, System.Text.Encoding.UTF8);
+                System.Collections.Generic.List<string> matched, skipped;
+                js = Engine.ClientBundle.ApplyPatches(js, rules, out matched, out skipped);
+                sb.AppendLine("matched: " + string.Join(", ", matched.ToArray()));
+                foreach (string s2 in skipped) sb.AppendLine("skipped: " + s2);
+
+                string patched = File.ReadAllText(live, System.Text.Encoding.UTF8);
+                bool same = string.Equals(js, patched, StringComparison.Ordinal);
+                sb.AppendLine("patched " + js.Length + " chars, live " + patched.Length + " chars");
+                sb.AppendLine(same ? "RESULT: IDENTICAL" : "RESULT: DIFFERENT");
+                return Finish(sb, same ? 0 : 1);
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("ERROR: " + ex);
+                return Finish(sb, 3);
+            }
+        }
+
+        private static int Finish(System.Text.StringBuilder sb, int code)
+        {
+            return Finish(sb, code, "bundle-selftest.txt");
+        }
+
+        private static int Finish(System.Text.StringBuilder sb, int code, string fileName)
+        {
+            try
+            {
+                File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, fileName), sb.ToString());
+            }
+            catch { }
+            return code;
+        }
+
+        /// <summary>
+        /// Headless check of the live AI pill: read the last step the loop wrote and
+        /// format it exactly as the nav strip does. Writes ai-status-selftest.txt.
+        ///
+        ///   DofusFarm.exe --ai-status-selftest [--running]
+        /// </summary>
+        private static int AiStatusSelfTest(bool running)
+        {
+            var sb = new System.Text.StringBuilder();
+            try
+            {
+                string line = UI.AiPanel.ReadLastStepLine();
+                sb.AppendLine("last step line: " + (line == null ? "(none)" : line.Substring(0, Math.Min(160, line.Length))));
+                sb.AppendLine("idle form  : " + UI.AiPanel.FormatStatus(false, line));
+                sb.AppendLine("running form: " + UI.AiPanel.FormatStatus(true, line));
+                sb.AppendLine("no log     : " + UI.AiPanel.FormatStatus(false, null));
+                sb.AppendLine("first step : " + UI.AiPanel.FormatStatus(true, null));
+                return Finish(sb, line == null ? 1 : 0, "ai-status-selftest.txt");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("ERROR: " + ex);
+                return Finish(sb, 3, "ai-status-selftest.txt");
+            }
+        }
+
         static void Main(string[] args)
         {
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "--bundle-selftest", StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.Exit(BundleSelfTest());
+                return;
+            }
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "--ai-status-selftest", StringComparison.OrdinalIgnoreCase))
+            {
+                bool running = Array.IndexOf(args, "--running") >= 0;
+                Environment.Exit(AiStatusSelfTest(running));
+                return;
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

@@ -34,6 +34,12 @@ var (
 	bufPool = sync.Pool{
 		New: func() interface{} { return make([]byte, 32*1024) },
 	}
+	// Logged once, the first time the upstream fails at runtime.
+	upstreamFallbackOnce sync.Once
+	// Logged once, the first time the virtual host is remapped.
+	virtualHostRewriteOnce sync.Once
+	// Where `dofus.local` is sent. Overridden by -login-host.
+	loginHost = "dt-proxy-production-login.ankama-games.com"
 	reHeadOpen   = regexp.MustCompile(`(?i)<head[^>]*>`)
 	reHeadClose  = regexp.MustCompile(`(?i)</head>`)
 	reHtmlOpen   = regexp.MustCompile(`(?i)<html[^>]*>`)
@@ -358,6 +364,37 @@ func ensureHostPort(addr, defPort string) string {
 	return addr
 }
 
+// upstreamHealthy mirrors whether the last probe of the SOCKS upstream succeeded.
+// It exists so a dial can tell "the tunnel is up, this destination failed" from
+// "the tunnel is down, do not even try" and log accordingly.
+var upstreamHealthy atomic.Bool
+
+// upstreamReachable probes the upstream's TCP port. It says nothing about whether
+// the tunnel can carry traffic -- only that WARP's listener exists.
+func upstreamReachable(u *url.URL, timeout time.Duration) (bool, error) {
+	conn, err := net.DialTimeout("tcp", ensureHostPort(u.Host, "1080"), timeout)
+	if err != nil {
+		return false, err
+	}
+	conn.Close()
+	return true, nil
+}
+
+// watchUpstream polls the upstream after a failed startup probe and logs the
+// transitions, so proxy.log records "WARP came back at HH:MM:SS" instead of
+// leaving a reader to guess whether an outage ended.
+func watchUpstream(u *url.URL, raw string) {
+	for {
+		time.Sleep(5 * time.Second)
+		ok, err := upstreamReachable(u, 1500*time.Millisecond)
+		if ok && !upstreamHealthy.Swap(true) {
+			log.Printf("[UPSTREAM] %s is reachable again; dials resume", raw)
+		} else if !ok && upstreamHealthy.Swap(false) {
+			log.Printf("[UPSTREAM] %s went away (%v); failing closed until it returns", raw, err)
+		}
+	}
+}
+
 func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.Duration) (net.Conn, error) {
 	proxyAddr := ensureHostPort(proxyURL.Host, "1080")
 	targetHost, targetPortStr, err := net.SplitHostPort(targetHostPort)
@@ -572,6 +609,12 @@ type ProxyServer struct {
 	disguiseBytes  []byte
 	client         *http.Client
 	telemetry      ProxyTelemetry
+
+	// allowDirect is the opt-out from the fail-closed rule. It is off unless the
+	// host passes -allow-direct (network.ini fail_closed=0). When on, a dead
+	// upstream falls back to a direct dial instead of refusing the request --
+	// which means Ankama sees the real IP. That is the user's call, not ours.
+	allowDirect bool
 
 	// Neighbour map prefetch (see scheduleMapPrefetch): when a map JSON is
 	// served, the surrounding maps' JSONs and tiles are warmed into the same
@@ -887,10 +930,94 @@ func (p *ProxyServer) dialUpstreamOrDirect(ctx context.Context, dest string) (ne
 }
 
 func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error) {
+	// The client resolves its socket target against the page origin, which in
+	// this host is the virtual host `https://dofus.local/`. So the game asks the
+	// proxy to open `dofus.local:443` -- a name that exists only inside WebView2's
+	// resource mapping and can never be dialled. WARP answers SOCKS5 code 1 and
+	// the game reports a bare LOGIN_ERROR.
+	//
+	// This is the whole login failure: the destination is the emulator's own
+	// virtual host, not an Ankama address. Map it to the real login host, which
+	// is where the client's config.json points anyway.
+	if host, port, splitErr := net.SplitHostPort(dest); splitErr == nil {
+		switch strings.ToLower(host) {
+		case "dofus.local", "dofus.localhost", "localhost":
+			if host != "localhost" {
+				mapped := net.JoinHostPort(loginHost, port)
+				virtualHostRewriteOnce.Do(func() {
+					log.Printf("[ROUTE] %s -> %s (the client resolved its socket against the page origin)",
+						dest, mapped)
+				})
+				dest = mapped
+			}
+		}
+	}
+
 	if p.upstreamURL != nil {
 		scheme := strings.ToLower(p.upstreamURL.Scheme)
 		if strings.HasPrefix(scheme, "socks5") {
-			return dialUpstreamSocks5(p.upstreamURL, dest, 6*time.Second)
+			// Resolve the destination locally before handing it to the upstream.
+			// WARP's SOCKS proxy cannot resolve Ankama's game domains: measured
+			// on this machine, CONNECT by hostname to
+			// dt-proxy-production-login.ankama-games.com answers 0x04 (host
+			// unreachable) while CONNECT by IP answers 0x00 and carries traffic.
+			// The direct path below already resolves locally for the same class
+			// of problem, so this makes the two paths agree.
+			target := dest
+			if host, port, splitErr := net.SplitHostPort(dest); splitErr == nil {
+				if ips, lookupErr := p.resolver.Lookup(ctx, host); lookupErr == nil && len(ips) > 0 {
+					target = net.JoinHostPort(ips[0].String(), port)
+				}
+			}
+			// Retry briefly before declaring the tunnel dead. A network change
+			// (wifi -> ethernet, VPN re-handshake) drops WARP for a few seconds
+			// and the very next dial fails with SOCKS5 code 0; one retry is the
+			// difference between "the page reloads itself" and "Server busy".
+			// Three attempts, ~4.5 s worst case, and still never a direct dial.
+			var conn net.Conn
+			var err error
+			for attempt := 0; attempt < 3; attempt++ {
+				if attempt > 0 {
+					time.Sleep(time.Duration(attempt) * 1500 * time.Millisecond)
+				}
+				conn, err = dialUpstreamSocks5(p.upstreamURL, target, 6*time.Second)
+				if err == nil {
+					upstreamHealthy.Store(true)
+					return conn, nil
+				}
+			}
+			upstreamHealthy.Store(false)
+			// Fail closed by default. WARP exists to keep the real IP away from
+			// Ankama, so a dead upstream must NOT be papered over with a direct
+			// connection -- that would silently trade the user's IP for uptime.
+			//
+			// -allow-direct (network.ini fail_closed=0) is the explicit opt-out.
+			// It still logs loudly every time it happens, because the whole point
+			// of this proxy is that the user can tell the difference.
+			if p.allowDirect {
+				upstreamFallbackOnce.Do(func() {
+					log.Printf("[UPSTREAM] dial to %s via %s failed (%v); -allow-direct is set, so falling "+
+						"back to a DIRECT connection. Ankama will see this machine's real IP.",
+						dest, p.upstreamURL.Redacted(), err)
+				})
+				host, portStr, splitErr := net.SplitHostPort(dest)
+				if splitErr != nil {
+					host, portStr = dest, "443"
+				}
+				target := dest
+				if ips, lookupErr := p.resolver.Lookup(ctx, host); lookupErr == nil && len(ips) > 0 {
+					target = net.JoinHostPort(ips[0].String(), portStr)
+				}
+				return (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", target)
+			}
+			upstreamFallbackOnce.Do(func() {
+				log.Printf("[UPSTREAM] dial to %s via %s failed (%v); refusing to fall back to a direct "+
+					"connection because that would expose the real IP. Start WARP in proxy mode "+
+					"(warp-cli mode proxy && warp-cli connect) and relaunch.",
+					dest, p.upstreamURL.Redacted(), err)
+			})
+			return nil, fmt.Errorf("upstream %s unavailable and direct dial disabled: %w",
+				p.upstreamURL.Redacted(), err)
 		}
 		defPort := "80"
 		if scheme == "https" {
@@ -3022,13 +3149,96 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.CopyBuffer(w, bodyReader, buf)
 }
 
+// configArgValue finds "-name value" or "-name=value" in args. Used only for
+// -config, which has to be read before flag.Parse so its values can become the
+// defaults of every other flag.
+func configArgValue(args []string, name string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-"+name || a == "--"+name {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		for _, prefix := range []string{"-" + name + "=", "--" + name + "="} {
+			if strings.HasPrefix(a, prefix) {
+				return strings.TrimPrefix(a, prefix)
+			}
+		}
+	}
+	return ""
+}
+
+// loadIniConfig reads a flat key=value file. Sections ([proxy]) are accepted and
+// ignored, so the same file can hold other settings. Missing file = empty map,
+// never an error: -config is a convenience, the flags still work alone.
+func loadIniConfig(path string) map[string]string {
+	out := map[string]string{}
+	if path == "" {
+		return out
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("[CONFIG] %s not readable (%v); using flags only", path, err)
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "[") {
+			continue
+		}
+		eq := strings.Index(line, "=")
+		if eq <= 0 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(line[:eq]))
+		val := strings.TrimSpace(line[eq+1:])
+		out[key] = val
+	}
+	return out
+}
+
 func main() {
-	port := flag.Int("port", 8880, "Local listening port for HTTP/CONNECT proxy")
-	host := flag.String("host", "127.0.0.1", "Host address to bind the proxy server to")
-	upstream := flag.String("upstream", "", "Upstream proxy URL (optional, e.g. http://ip:port or socks5://ip:port)")
-	dnsServer := flag.String("dns", "", "Custom DNS server to query (optional, default: system DNS)")
-	cacheDir := flag.String("cache", "proxy_cache", "Directory to cache static game assets (optional)")
-	quiet := flag.Bool("quiet", false, "Quiet mode (suppress request logs)")
+	// -config lets one file describe the whole relay, so it can be configured
+	// without the GUI (and without editing the launch command).
+	cfgPath := configArgValue(os.Args[1:], "config")
+	cfg := loadIniConfig(cfgPath)
+	defStr := func(key, fallback string) string {
+		if v, ok := cfg[key]; ok && v != "" {
+			return v
+		}
+		return fallback
+	}
+	defInt := func(key string, fallback int) int {
+		if v, ok := cfg[key]; ok && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				return n
+			}
+		}
+		return fallback
+	}
+	defBool := func(key string, fallback bool) bool {
+		if v, ok := cfg[key]; ok && v != "" {
+			switch strings.ToLower(v) {
+			case "1", "true", "yes", "on":
+				return true
+			case "0", "false", "no", "off":
+				return false
+			}
+		}
+		return fallback
+	}
+
+	port := flag.Int("port", defInt("port", 8880), "Local listening port for HTTP/CONNECT proxy")
+	host := flag.String("host", defStr("host", "127.0.0.1"), "Host address to bind the proxy server to")
+	upstream := flag.String("upstream", defStr("upstream", ""), "Upstream proxy URL (optional, e.g. http://ip:port or socks5://ip:port)")
+	dnsServer := flag.String("dns", defStr("dns", ""), "Custom DNS server to query (optional, default: system DNS)")
+	cacheDir := flag.String("cache", defStr("cache", "proxy_cache"), "Directory to cache static game assets (optional)")
+	quiet := flag.Bool("quiet", defBool("quiet", false), "Quiet mode (suppress request logs)")
+	logPath := flag.String("log", defStr("log", ""), "Explicit log file (default: <cache>/proxy.log when -quiet is set)")
+	allowDirect := flag.Bool("allow-direct", defBool("allow_direct", false),
+		"Fall back to a DIRECT connection when the upstream dies (EXPOSES THE REAL IP; off by default)")
+	configFlag := flag.String("config", cfgPath, "INI file with defaults for every flag (key=value, sections ignored)")
 	token := flag.String("token", "", "Optional local bearer authentication token")
 	serial := flag.String("serial", "", "Hardware serial number to interpolate into disguise scripts")
 	uuid := flag.String("uuid", "", "Device UUID to interpolate into disguise scripts")
@@ -3038,7 +3248,7 @@ func main() {
 	glVendor := flag.String("gl-vendor", "", "OpenGL vendor string to interpolate (e.g. Qualcomm)")
 	glRenderer := flag.String("gl-renderer", "", "OpenGL renderer string to interpolate (e.g. Adreno (TM) 620)")
 	maxTextureSize := flag.String("texture-size", "", "Maximum GL texture size to interpolate (e.g. 16384)")
-	referer := flag.String("referer", "https://www.dofus-touch.com/", "Referer/Origin sent on CDN asset fetches (hotlink protection bypass)")
+	referer := flag.String("referer", defStr("referer", "https://www.dofus-touch.com/"), "Referer/Origin sent on CDN asset fetches (hotlink protection bypass)")
 	assetsURL := flag.String("assets-url", "", "Assets base URL for map precaching, e.g. https://dofustouch.cdn.ankama.com/assets/<version>")
 	precacheSpec := flag.String("precache-maps", "", "Map IDs to precache into -cache, e.g. \"1-20000\" or \"7442,10354\" (requires -assets-url)")
 	precacheWorkers := flag.Int("precache-workers", 4, "Parallel workers for -precache-maps")
@@ -3050,12 +3260,82 @@ func main() {
 	crawlMax := flag.Int("crawl-max", 0, "Stop the crawl after this many maps (0 = unlimited)")
 	crawlRate := flag.Float64("crawl-rate", 3, "Max upstream CDN requests per second during the crawl")
 	crawlTiles := flag.Bool("crawl-tiles", false, "Also warm tile images for every crawled map")
-	modsDir := flag.String("mods-dir", "", "Directory containing a mods rules.json (default: <cache>/mods)")
+	modsDir := flag.String("mods-dir", defStr("mods_dir", ""), "Directory containing a mods rules.json (default: <cache>/mods)")
+	loginHostFlag := flag.String("login-host", "", "Host that the client's virtual origin (dofus.local) is mapped to (default: the production login proxy)")
 	flag.Parse()
+	if *loginHostFlag != "" {
+		loginHost = *loginHostFlag
+	}
 
 	log.SetFlags(log.Ldate | log.Ltime)
+	// -quiet silences the console, which is right for a background proxy but made
+	// every failure invisible: the host launches this with -quiet, so an upstream
+	// refusal left no trace anywhere. Keep it quiet on the console and write to a
+	// file next to the cache instead.
+	if *configFlag != "" {
+		log.Printf("[CONFIG] loaded %s", *configFlag)
+	}
+	target := *logPath
+	if target == "" && *quiet && *cacheDir != "" {
+		target = filepath.Join(*cacheDir, "proxy.log")
+	}
+	if target != "" {
+		if dir := filepath.Dir(target); dir != "" {
+			_ = os.MkdirAll(dir, 0o755)
+		}
+		if f, err := os.OpenFile(target, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			log.SetOutput(f)
+			log.Printf("[CONFIG] logging to %s", target)
+		} else {
+			log.Printf("[CONFIG] cannot open %s: %v", target, err)
+		}
+	}
 	resolver := NewFastDNSResolver(*dnsServer, 10*time.Minute)
+
+	// Upstream health check. The upstream is Cloudflare WARP's SOCKS proxy on
+	// 127.0.0.1:40000, which only listens while WARP is connected *and* in proxy
+	// mode. It is not optional: the whole point of WARP here is to keep the real
+	// IP away from Ankama, so a missing upstream must stop the proxy rather than
+	// silently connect direct. Failing loudly costs a relaunch; failing open
+	// costs the user's address.
+	// Upstream health check.
+	//
+	// The upstream is Cloudflare WARP's SOCKS proxy on 127.0.0.1:40000, which only
+	// listens while WARP is connected *and* in proxy mode. It is not optional:
+	// the whole point of WARP here is to keep the real IP away from Ankama.
+	//
+	// It used to `os.Exit(2)` when the upstream was down. That was wrong in one
+	// specific, repeatable way: WARP drops its tunnel whenever the machine changes
+	// network (wifi <-> ethernet), then takes tens of seconds to reconnect. Exiting
+	// turned a 40-second outage into a dead instance that showed the client's
+	// "Server busy" screen, and the user had to relaunch by hand.
+	//
+	// Now: keep listening and keep failing closed. The port is open, so the host's
+	// readiness probe succeeds and no in-process fallback is started; every dial is
+	// still refused while the upstream is down, so nothing can leak; and the
+	// instance starts working by itself the moment WARP returns.
+	if *upstream != "" {
+		if u, err := url.Parse(*upstream); err == nil {
+			if ok, dialErr := upstreamReachable(u, 1500*time.Millisecond); ok {
+				upstreamHealthy.Store(true)
+				log.Printf("[UPSTREAM] %s reachable", *upstream)
+			} else {
+				upstreamHealthy.Store(false)
+				log.Printf("[UPSTREAM] %s is NOT reachable (%v).", *upstream, dialErr)
+				log.Printf("[UPSTREAM] Listening anyway and failing closed: every dial is refused until " +
+					"WARP is back, so no request can go direct and the real IP stays hidden.")
+				log.Printf("[UPSTREAM] WARP drops its tunnel on a network change (wifi/ethernet) and usually " +
+					"returns within a minute. Fix now: warp-cli mode proxy && warp-cli connect")
+				go watchUpstream(u, *upstream)
+			}
+		}
+	}
 	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, *token, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize, *referer)
+	proxy.allowDirect = *allowDirect
+	if *allowDirect {
+		log.Printf("[UPSTREAM] -allow-direct is ON: if the tunnel dies, traffic will go direct and " +
+			"Ankama will see this machine's real IP.")
+	}
 	proxy.prefetch = *prefetchNeighbours
 	proxy.prefetchRadius = *prefetchRadius
 	if proxy.prefetchRadius < 1 {

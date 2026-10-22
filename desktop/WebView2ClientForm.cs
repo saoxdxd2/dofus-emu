@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -80,6 +80,7 @@ namespace DofusFarm.Engine
         private static readonly Regex WmCodeRe = new Regex("\"code\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
         private static readonly Regex WmLoginRe = new Regex("\"login\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
         private static readonly Regex WmPasswordRe = new Regex("\"password\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
+        private static readonly Regex WmActionRe = new Regex("\"action\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Compiled);
         private static readonly string[] CdnCookieOrigins = new[]
         {
             "https://dofustouch.cdn.ankama.com/",
@@ -186,6 +187,11 @@ namespace DofusFarm.Engine
         }
 
         public event Action<string, string> OnDiagnosticReport;
+
+        /// <summary>(instanceId, action) requests raised from inside the page, e.g.
+        /// the in-game badge's Auto button. The page cannot start processes; the
+        /// host does.</summary>
+        public event Action<string, string> OnAiRequest;
         public event Action<string> OnFormClosedByUser;
 
         // Embedded Cordova compatibility shim: emulates Cordova runtime so Dofus Touch / hybrid web assets run standalone
@@ -202,7 +208,7 @@ namespace DofusFarm.Engine
         };
     }
     if (!window.buildVersion) {
-        window.buildVersion = '1.74.8';
+        window.buildVersion = '1.74.9';
     }
 
     if (!window.IonicDeeplink) {
@@ -773,7 +779,7 @@ namespace DofusFarm.Engine
 
                 // 1. Synchronously inject early dynamic version state
                 string dynamicVerScript = string.Format(
-                    "(function() {{ window.appInfo = window.appInfo || {{}}; window.appInfo.version = '{0}'; window.appInfo.build = '{0}'; window.appInfo.versionCode = '{1}'; window.appInfo.identifier = 'com.ankama.dofustouch'; window.buildVersion = '{2}'; }})();",
+                    "(function() {{ window.appInfo = window.appInfo || {{}}; window.appInfo.version = '{0}'; window.appInfo.build = '{0}'; window.appInfo.versionCode = '{1}'; window.appInfo.identifier = 'com.ankama.dofustouch'; window.buildVersion = '{2}'; window.appInfo.server = 'https://dt-proxy-production-login.ankama-games.com'; }})();",
                     _options.AppVersion, _options.VersionCode, _options.BuildVersion);
                 await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(dynamicVerScript);
 
@@ -815,6 +821,9 @@ namespace DofusFarm.Engine
                     "    try {{\n" +
                     "        var seedLogin = '{0}';\n" +
                     "        var seedPass = '{1}';\n" +
+                    "        // After a rejected guest the pool entry is dead; re-seeding it on the\n" +
+                    "        // reload would undo the self-heal and replay the same failure.\n" +
+                    "        try {{ if (sessionStorage.getItem('dfSkipSeed') === '1') {{ seedLogin = ''; seedPass = ''; }} }} catch(e) {{}}\n" +
                     "        var raw = localStorage.getItem('dofus.1');\n" +
                     "        var prefs = {{}};\n" +
                     "        if (raw) {{ try {{ prefs = JSON.parse(raw); }} catch(e) {{ prefs = {{}}; }} }}\n" +
@@ -874,10 +883,75 @@ namespace DofusFarm.Engine
                     "                setTimeout(function() {{ clearInterval(_watch); }}, 120000);\n" +
                     "            }}\n" +
                     "        }}, 400);\n" +
+                    "        // Self-healing identity. A guest account is temporary by design: when\n" +
+                    "        // the server rejects it the client only says LOGIN_ERROR, and the\n" +
+                    "        // seeded identity in localStorage keeps being replayed forever, so the\n" +
+                    "        // instance can never log in again. Clear it once per tab session and\n" +
+                    "        // reload, which makes the client register a brand-new guest.\n" +
+                    "        try {{\n" +
+                    "            if (!window.__dfSelfHeal) {{\n" +
+                    "                window.__dfSelfHeal = true;\n" +
+                    "                var _origInfo = console.info;\n" +
+                    "                console.info = function() {{\n" +
+                    "                    try {{\n" +
+                    "                        var msg = Array.prototype.slice.call(arguments).join(' ');\n" +
+                    "                        if (msg.indexOf('LOGIN_ERROR') >= 0 && !sessionStorage.getItem('dfGuestReset')) {{\n" +
+                    "                            sessionStorage.setItem('dfGuestReset', '1');\n" +
+                    "                            try {{ sessionStorage.setItem('dfSkipSeed', '1'); }} catch(e) {{}}\n" +
+                    "                            try {{ sessionStorage.removeItem('dfGuestTries'); sessionStorage.removeItem('dfGuestLastAt'); }} catch(e) {{}}\n" +
+                    "                            var raw2 = localStorage.getItem('dofus.1');\n" +
+                    "                            var cleared = false;\n" +
+                    "                            if (raw2) {{\n" +
+                    "                                try {{\n" +
+                    "                                    var p2 = JSON.parse(raw2);\n" +
+                    "                                    if (p2['all#guestAccount']) {{ delete p2['all#guestAccount']; cleared = true; }}\n" +
+                    "                                    localStorage.setItem('dofus.1', JSON.stringify(p2));\n" +
+                    "                                }} catch(e) {{}}\n" +
+                    "                            }}\n" +
+                    "                            console.log('[Auth] Guest identity rejected by the server; ' +\n" +
+                    "                                (cleared ? 'cleared it' : 'nothing stored to clear') +\n" +
+                    "                                ', reloading to register a fresh guest');\n" +
+                    "                            setTimeout(function() {{ try {{ location.reload(); }} catch(e) {{}} }}, 600);\n" +
+                    "                        }}\n" +
+                    "                    }} catch(e) {{}}\n" +
+                    "                    return _origInfo.apply(console, arguments);\n" +
+                    "                }};\n" +
+                    "            }}\n" +
+                    "        }} catch(e) {{}}\n" +
                     "    }} catch(e) {{ console.error('[Auth] Failed to seed visitor account:', e); }}\n" +
                     "}})();",
                     safeLogin, safePass);
-                await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(accScript);
+                // Manual-login escape hatch. Drop `manual-login.flag` next to the
+                // exe and the host injects nothing at all: no credential seeding,
+                // no automatic guest login, no self-heal. The client shows its own
+                // login screen and the player signs in by hand, which is the only
+                // way to tell "our automation is broken" apart from "the account is
+                // dead". The recorder still runs, so the manual login is captured.
+                bool manualLogin = false;
+                try
+                {
+                    manualLogin = File.Exists(Path.Combine(
+                        AppDomain.CurrentDomain.BaseDirectory, "manual-login.flag"));
+                }
+                catch { }
+                if (manualLogin)
+                {
+                    _logCallback?.Invoke(string.Format(
+                        "[{0}] manual-login.flag present: skipping credential seeding and auto-login",
+                        _instanceId));
+                    // Clear any guest identity the profile still carries. A stale
+                    // `[GUEST]...` entry is replayed on every reload and overrides
+                    // a real OAuth login, so the session never survives.
+                    await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
+                        "(function(){try{var raw=localStorage.getItem('dofus.1');if(!raw)return;" +
+                        "var p=JSON.parse(raw);if(p&&p['all#guestAccount']){" +
+                        "delete p['all#guestAccount'];localStorage.setItem('dofus.1',JSON.stringify(p));" +
+                        "console.log('[Auth] manual-login: cleared stored guest identity');}}catch(e){}})();");
+                }
+                else
+                {
+                    await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(accScript);
+                }
                 if (hasSeedAccount)
                     _logCallback?.Invoke(string.Format("[{0}] Registered visitor credentials injection for {1}", _instanceId, _options.AccountLogin));
                 else
@@ -1023,7 +1097,7 @@ namespace DofusFarm.Engine
                     if (targetUrl.Contains("standalone.html") && !targetUrl.Contains("appVersion="))
                     {
                         string sep = targetUrl.Contains("?") ? "&" : "?";
-                        targetUrl += string.Format("{0}appVersion={1}&buildVersion={2}&versionCode={3}",
+                        targetUrl += string.Format("{0}buildVersion={2}&versionCode={3}&appVersion={1}",
                             sep,
                             Uri.EscapeDataString(_options.AppVersion),
                             Uri.EscapeDataString(_options.BuildVersion),
@@ -1031,6 +1105,14 @@ namespace DofusFarm.Engine
                     }
 
                     _logCallback?.Invoke(string.Format("[{0}] Navigating to: {1}", _instanceId, targetUrl));
+                    // Background: a manifest check must never delay the first paint,
+                    // and a 403 from the CDN must not stall navigation either.
+                    var updaterLog = _logCallback;
+                    int updaterPort = _options.ProxyPort;
+                    System.Threading.ThreadPool.QueueUserWorkItem(delegate
+                    {
+                        ClientBundle.EnsureUpToDate(updaterPort, updaterLog);
+                    });
                     _webView.CoreWebView2.Navigate(targetUrl);
                 }
             }
@@ -1200,6 +1282,25 @@ namespace DofusFarm.Engine
             }
         }
 
+        /// <summary>
+        /// Keep the game bundle in step with what the server serves.
+        ///
+        /// The client is not shipped in the APK: `build/script.js` is downloaded
+        /// at runtime, and a cached copy silently goes stale when Ankama ships a
+        /// new build. That is exactly what broke login: the cached bundle reported
+        /// buildVersion 1.74.8 while the server had moved to 1.74.9, so the login
+        /// socket was dropped and the client showed "a new version is available".
+        ///
+        /// The server publishes `manifest.json` with a version per file, so the
+        /// check is one small request: compare, download only what changed. All
+        /// traffic goes through the instance proxy, so the update never bypasses
+        /// WARP. Any failure is logged and ignored -- a stale client must not stop
+        /// the instance from launching.
+        /// </summary>
+        // The updater lives in ClientBundle now: it downloads to a staging tree,
+        // re-applies the build-time patches, validates the result and only then
+        // swaps files. See clientbundle.cs for why that matters.
+
         private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             try
@@ -1237,6 +1338,14 @@ namespace DofusFarm.Engine
                     {
                         _autoFightEnabled = bool.Parse(m.Groups[1].Value);
                         UpdateAutoFightButtonState();
+                    }
+                }
+                else if (json.Contains("\"type\":\"AI_REQUEST\""))
+                {
+                    Match mAction = WmActionRe.Match(json);
+                    if (mAction.Success && OnAiRequest != null)
+                    {
+                        OnAiRequest(_instanceId, mAction.Groups[1].Value);
                     }
                 }
                 else if (json.Contains("\"type\":\"TOGGLE_FULLSCREEN\""))

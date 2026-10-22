@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -309,7 +309,7 @@ namespace DofusFarm.Engine
             if (string.IsNullOrEmpty(rawJs)) return "";
             string av = !string.IsNullOrEmpty(appVersion) ? appVersion : "3.14.2";
             string vc = !string.IsNullOrEmpty(versionCode) ? versionCode : "3014002";
-            string bv = !string.IsNullOrEmpty(buildVersion) ? buildVersion : "1.74.8";
+            string bv = !string.IsNullOrEmpty(buildVersion) ? buildVersion : "1.74.9";
 
             return new StringBuilder(rawJs, rawJs.Length + 256)
                 .Replace("__DEVICE_UUID__", uuid ?? "ca8ea76b0fe32f85")
@@ -688,6 +688,11 @@ namespace DofusFarm.Engine
         {
             if (!HasManualProxy(raw)) return null;
             string s = raw.Trim();
+            // Inline comments are allowed in proxies.txt; a trailing "# exit 1.2.3.4"
+            // must never become part of the URL.
+            int hash = s.IndexOf('#');
+            if (hash >= 0) s = s.Substring(0, hash).Trim();
+            if (s.Length == 0) return null;
             if (s.StartsWith("[🌐] ")) s = s.Substring(5).Trim();
 
             string scheme = "http", rest = s;
@@ -700,6 +705,190 @@ namespace DofusFarm.Engine
                 if (p.Length == 4) return string.Format("{0}://{1}:{2}@{3}:{4}", scheme, Uri.EscapeDataString(p[2]), Uri.EscapeDataString(p[3]), p[0], p[1]);
             }
             return string.Format("{0}://{1}", scheme, rest);
+        }
+
+        /// <summary>TCP-check the listener named by a proxy URL (used for SOCKS,
+        /// which WebProxy cannot test end to end).</summary>
+        public static bool PortOpenPublic(string proxyUrl)
+        {
+            try
+            {
+                Uri u = new Uri(proxyUrl);
+                int port = u.IsDefaultPort ? (u.Scheme.StartsWith("socks") ? 1080 : 8080) : u.Port;
+                return IsLocalPortOpen(port, 300) || ProbeTcp(u.Host, port, 1200);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// What a running relay was started with. Kept so the supervisor can rebuild
+        /// the relay on the SAME port after a failover: the client keeps pointing at
+        /// 127.0.0.1:8880+slot and simply reconnects, instead of showing "Server
+        /// busy" until the user relaunches.
+        /// </summary>
+        public sealed class RelaySpec
+        {
+            public string Serial;
+            public string Uuid;
+            public DeviceProfile Profile;
+        }
+
+        private static readonly Dictionary<int, RelaySpec> _relaySpecs = new Dictionary<int, RelaySpec>();
+
+        /// <summary>Recreate every tracked relay against a new upstream.</summary>
+        public void RebuildAllRelays(string newUpstream, Action<string> log)
+        {
+            List<int> ports;
+            lock (_proxyLock) { ports = new List<int>(_relaySpecs.Keys); }
+            foreach (int port in ports)
+            {
+                RelaySpec spec;
+                lock (_proxyLock) { _relaySpecs.TryGetValue(port, out spec); }
+                if (spec == null) continue;
+                try
+                {
+                    lock (_proxyLock) { StopProxyInternal(port); }
+                    bool ok = EnsureProxyRunning(port, newUpstream, spec.Serial, spec.Uuid, spec.Profile);
+                    if (log != null)
+                        log(string.Format("[PROXY] relay {0} rebuilt on {1}: {2}", port,
+                            string.IsNullOrEmpty(newUpstream) ? "DIRECT" : newUpstream, ok ? "up" : "FAILED"));
+                }
+                catch (Exception ex)
+                {
+                    if (log != null) log("[PROXY] relay rebuild failed on " + port + ": " + ex.Message);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Ask an HTTP proxy to fetch a tiny URL and return the exit IP.
+        ///
+        /// This is the only honest test of a proxy: a TCP connect proves the port
+        /// is open, not that the proxy will carry TLS to a third party. Returns
+        /// null on any failure.
+        /// </summary>
+        public static string TestHttpProxy(string proxyUrl, int timeoutMs)
+        {
+            string ignored;
+            return TestHttpProxy(proxyUrl, timeoutMs, out ignored);
+        }
+
+        /// <summary>Same test, but says why it failed. A silent false is useless
+        /// when the whole point is diagnosing an egress.</summary>
+        public static string TestHttpProxy(string proxyUrl, int timeoutMs, out string error)
+        {
+            error = null;
+            try
+            {
+                // .NET Framework's default is TLS 1.0, and every endpoint we test
+                // speaks 1.2+. Without this the probe fails on a proxy that works.
+                try
+                {
+                    ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+                }
+                catch { }
+
+                var req = (HttpWebRequest)WebRequest.Create("https://api.ipify.org");
+                req.Proxy = new WebProxy(proxyUrl);
+                req.Timeout = timeoutMs;
+                req.ReadWriteTimeout = timeoutMs;
+                req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+                req.KeepAlive = false;
+                using (var resp = (HttpWebResponse)req.GetResponse())
+                using (var sr = new StreamReader(resp.GetResponseStream()))
+                {
+                    string body = sr.ReadToEnd().Trim();
+                    if (body.Length == 0 || body.Length >= 64) { error = "unexpected body"; return null; }
+                    return body;
+                }
+            }
+            catch (WebException wex)
+            {
+                error = wex.Status.ToString();
+                try
+                {
+                    var hr = wex.Response as HttpWebResponse;
+                    if (hr != null) error += " HTTP " + (int)hr.StatusCode;
+                }
+                catch { }
+                if (!string.IsNullOrEmpty(wex.Message)) error += ": " + wex.Message;
+                return null;
+            }
+            catch (Exception ex) { error = ex.Message; return null; }
+        }
+
+        /// <summary>
+        /// Test every entry in proxies.txt in parallel and rewrite the file with
+        /// only the ones that actually carry traffic. The old file is kept as
+        /// proxies.txt.bak. Dead public proxies are the normal state of a free
+        /// pool, so this is a routine maintenance action, not an error path.
+        /// </summary>
+        public static string ScanProxyPool(string baseDir, int timeoutMs, out int live, out int total, Action<string> log)
+        {
+            live = 0;
+            total = 0;
+            string path = null;
+            foreach (string cand in new[]
+            {
+                Path.Combine(baseDir ?? ".", "proxies.txt"),
+                Path.Combine(Environment.CurrentDirectory, "proxies.txt")
+            })
+            {
+                if (!string.IsNullOrEmpty(cand) && File.Exists(cand)) { path = cand; break; }
+            }
+            if (path == null) return "proxies.txt not found.";
+
+            var entries = new List<string>();
+            foreach (string raw in File.ReadAllLines(path))
+            {
+                string l = raw.Trim();
+                if (l.Length == 0 || l.StartsWith("#") || l.StartsWith("//")) continue;
+                string n = NormalizeUpstreamProxy(l);
+                if (!string.IsNullOrEmpty(n)) entries.Add(n);
+            }
+            total = entries.Count;
+            if (total == 0) return "proxies.txt has no entries.";
+
+            var alive = new string[total];
+            var done = new CountdownEvent(total);
+            for (int i = 0; i < total; i++)
+            {
+                int idx = i;
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    try
+                    {
+                        string ip = TestHttpProxy(entries[idx], timeoutMs);
+                        if (ip != null) alive[idx] = entries[idx] + "\n#   exit " + ip;
+                    }
+                    catch { }
+                    finally { try { done.Signal(); } catch { } }
+                });
+            }
+            done.Wait(timeoutMs + 4000);
+
+            var liveList = new List<string>();
+            foreach (string a in alive) if (a != null) liveList.Add(a);
+            live = liveList.Count;
+
+            try
+            {
+                if (File.Exists(path)) File.Copy(path, path + ".bak", true);
+                var sb = new StringBuilder();
+                sb.AppendLine("# proxies.txt - rewritten by Settings > Network > Scan proxies");
+                sb.AppendLine("# " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " | live " + live + " / " + total +
+                              " | old file kept as proxies.txt.bak");
+                foreach (string l in liveList) sb.AppendLine(l);   // may contain a comment line
+                File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                if (log != null) log("[NET] could not rewrite proxies.txt: " + ex.Message);
+            }
+
+            string report = live + " of " + total + " proxies carry traffic.";
+            if (log != null) log("[NET] proxy scan: " + report + " proxies.txt rewritten (backup: proxies.txt.bak)");
+            return report;
         }
 
         private static string[] _cachedProxyPool = null;
@@ -836,132 +1025,244 @@ namespace DofusFarm.Engine
             catch { return 0; }
         }
 
-        private static Process _warpProcess = null;
-        private static readonly object _warpLock = new object();
-        public const int WarpSocksPort = 40000;
-        public static readonly string WarpSocksUrl = "socks5://127.0.0.1:" + WarpSocksPort;
+        private static Process _tunnelProcess = null;
+        private static readonly object _tunnelLock = new object();
 
+        /// <summary>The tunnel process this host started (wireproxy). Null in
+        /// system-WARP mode, where the service owns the process.</summary>
         public static bool IsWarpInstalled()
         {
             try
             {
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string wireproxy = Path.Combine(baseDir, @"bin\warp\wireproxy.exe");
-                string conf = Path.Combine(baseDir, @"bin\warp\wireproxy.conf");
-                if (File.Exists(wireproxy) && File.Exists(conf)) return true;
-
-                wireproxy = Path.Combine(Environment.CurrentDirectory, @"bin\warp\wireproxy.exe");
-                conf = Path.Combine(Environment.CurrentDirectory, @"bin\warp\wireproxy.conf");
-                return File.Exists(wireproxy) && File.Exists(conf);
+                string conf;
+                string exe = ResolveWireproxyPath(out conf);
+                return !string.IsNullOrEmpty(exe) && File.Exists(exe) && File.Exists(conf);
             }
             catch { return false; }
         }
 
+        /// <summary>Where wireproxy.exe and its config actually live.</summary>
+        public static string ResolveWireproxyPath(out string confPath)
+        {
+            confPath = null;
+            var s = NetworkSettings.For(NetworkSettings.AppBase);
+            string dir = Path.Combine(NetworkSettings.AppBase, @"bin\warp");
+            string exe = Path.Combine(dir, "wireproxy.exe");
+            if (!File.Exists(exe))
+            {
+                dir = Path.Combine(Environment.CurrentDirectory, @"bin\warp");
+                exe = Path.Combine(dir, "wireproxy.exe");
+            }
+
+            string conf = s.WireproxyConf;
+            if (string.IsNullOrEmpty(conf)) conf = Path.Combine(dir, "wireproxy.conf");
+            else if (!Path.IsPathRooted(conf)) conf = Path.Combine(dir, conf);
+            confPath = conf;
+            return exe;
+        }
+
         public static bool IsWarpListening()
+        {
+            return IsLocalPortOpen(NetworkSettings.For(NetworkSettings.AppBase).SocksPort, 400);
+        }
+
+        /// <summary>True when whatever this mode uses for egress is listening.</summary>
+        public static bool IsTunnelListening()
+        {
+            var s = NetworkSettings.For(NetworkSettings.AppBase);
+            if (!s.IsTunnelMode) return false;
+            return IsLocalPortOpen(s.SocksPort, 400);
+        }
+
+        /// <summary>
+        /// wireproxy.conf ships with a fixed BindAddress. Rewrite the [Socks5]
+        /// section into a runtime copy so the configured port is the port that
+        /// actually gets bound, without editing the file the installer shipped.
+        /// </summary>
+        private static string BuildRuntimeConf(string confPath, int socksPort)
         {
             try
             {
-                using (var tcp = new System.Net.Sockets.TcpClient())
+                if (!File.Exists(confPath)) return null;
+                var lines = new List<string>(File.ReadAllLines(confPath));
+                int socksHeader = -1;
+                for (int i = 0; i < lines.Count; i++)
                 {
-                    var ar = tcp.BeginConnect("127.0.0.1", WarpSocksPort, null, null);
-                    // Dispose the async wait handle: this runs in launch-time
-                    // poll loops, and each undisposed handle is an OS resource
-                    // that only gets reclaimed at GC.
-                    WaitHandle wait = ar.AsyncWaitHandle;
-                    bool ok;
-                    try { ok = wait.WaitOne(400); }
-                    finally { try { wait.Close(); } catch { } }
-                    if (ok && tcp.Connected)
+                    if (lines[i].Trim().Equals("[Socks5]", StringComparison.OrdinalIgnoreCase)) { socksHeader = i; break; }
+                }
+                string bindLine = "BindAddress = 127.0.0.1:" + socksPort;
+                if (socksHeader < 0)
+                {
+                    lines.Add("[Socks5]");
+                    lines.Add(bindLine);
+                }
+                else
+                {
+                    bool replaced = false;
+                    for (int i = socksHeader + 1; i < lines.Count; i++)
                     {
-                        tcp.EndConnect(ar);
-                        return true;
+                        string t = lines[i].Trim();
+                        if (t.StartsWith("[") && t.EndsWith("]")) break;
+                        if (t.StartsWith("BindAddress", StringComparison.OrdinalIgnoreCase))
+                        {
+                            lines[i] = bindLine;
+                            replaced = true;
+                            break;
+                        }
                     }
+                    if (!replaced) lines.Insert(socksHeader + 1, bindLine);
+                }
+
+                string runtime = Path.Combine(Path.GetDirectoryName(confPath) ?? ".", "wireproxy.runtime.conf");
+                File.WriteAllLines(runtime, lines.ToArray());
+                return runtime;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Start whatever the configured egress mode needs. Safe to call
+        /// per instance launch: it returns immediately when the port is open.</summary>
+        public static bool EnsureTunnel(Action<string> logger = null)
+        {
+            var s = NetworkSettings.For(NetworkSettings.AppBase);
+            string mode = NetworkSettings.NormalizeMode(s.Mode);
+
+            // auto may use the tunnel, so it must be allowed to start it. Only the
+            // modes that cannot carry a tunnel (custom/direct) bail out here.
+            if (mode != NetworkSettings.ModeWireproxy &&
+                mode != NetworkSettings.ModeWarp &&
+                mode != NetworkSettings.ModeAuto) return false;
+
+            if (IsLocalPortOpen(s.SocksPort, 250)) return true;
+
+            lock (_tunnelLock)
+            {
+                if (IsLocalPortOpen(s.SocksPort, 250)) return true;
+                if (mode == NetworkSettings.ModeWarp) return EnsureSystemWarp(s, logger);
+                return EnsureWireproxy(s, logger);
+            }
+        }
+
+        private static bool EnsureWireproxy(NetworkSettings s, Action<string> logger)
+        {
+            string conf;
+            string exe = ResolveWireproxyPath(out conf);
+            if (!File.Exists(exe) || !File.Exists(conf))
+            {
+                if (logger != null)
+                    logger("[NET] bin\\warp\\wireproxy.exe or its .conf is missing - " +
+                           "WireGuard mode cannot start. Switch the mode in Settings > Network, " +
+                           "or restore the portable WARP files.");
+                return false;
+            }
+
+            try
+            {
+                foreach (var p in Process.GetProcessesByName("wireproxy"))
+                {
+                    try { p.Kill(); } catch { }
                 }
             }
             catch { }
+
+            try
+            {
+                string runtimeConf = BuildRuntimeConf(conf, s.SocksPort) ?? conf;
+                if (logger != null)
+                    logger(string.Format("[NET] starting userspace WireGuard tunnel (SOCKS5 127.0.0.1:{0}, no routing changes)...", s.SocksPort));
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = "-c \"" + runtimeConf + "\"",
+                    WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                _tunnelProcess = Process.Start(psi);
+
+                for (int i = 0; i < 30; i++)
+                {
+                    Thread.Sleep(200);
+                    if (IsLocalPortOpen(s.SocksPort, 200))
+                    {
+                        if (logger != null)
+                            logger(string.Format("[NET] WireGuard tunnel ACTIVE on 127.0.0.1:{0} (system network untouched).", s.SocksPort));
+                        return true;
+                    }
+                }
+                if (logger != null) logger("[NET] wireproxy started but never bound its SOCKS port - check bin\\warp\\wireproxy.conf.");
+            }
+            catch (Exception ex)
+            {
+                if (logger != null) logger("[NET] failed to start wireproxy: " + ex.Message);
+            }
+            return IsLocalPortOpen(s.SocksPort, 250);
+        }
+
+        private static string WarpCliPath()
+        {
+            try
+            {
+                string cli = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                    "Cloudflare", "Cloudflare WARP", "warp-cli.exe");
+                if (File.Exists(cli)) return cli;
+                string cli2 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                    "Cloudflare", "Cloudflare WARP", "warp-cli.exe");
+                return File.Exists(cli2) ? cli2 : null;
+            }
+            catch { return null; }
+        }
+
+        private static bool EnsureSystemWarp(NetworkSettings s, Action<string> logger)
+        {
+            string cli = WarpCliPath();
+            if (cli == null)
+            {
+                if (logger != null) logger("[NET] system WARP mode is selected but warp-cli.exe was not found. " +
+                                           "Switch to WireGuard mode in Settings > Network.");
+                return false;
+            }
+            if (logger != null) logger("[NET] system WARP mode: this takes over ALL Windows traffic (routing + DNS).");
+            RunWarpCli(cli, "mode proxy", logger);
+            RunWarpCli(cli, "connect", logger);
+            for (int i = 0; i < 40; i++)
+            {
+                Thread.Sleep(500);
+                if (IsLocalPortOpen(s.SocksPort, 200))
+                {
+                    if (logger != null) logger(string.Format("[NET] system WARP is up on 127.0.0.1:{0}.", s.SocksPort));
+                    return true;
+                }
+            }
+            if (logger != null) logger("[NET] system WARP did not come up within 20 s.");
             return false;
         }
 
         public static bool EnsureWarpRunning(Action<string> logger = null)
         {
-            if (IsWarpListening()) return true;
-
-            lock (_warpLock)
-            {
-                if (IsWarpListening()) return true;
-
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string warpDir = Path.Combine(baseDir, @"bin\warp");
-                string wireproxy = Path.Combine(warpDir, "wireproxy.exe");
-                string conf = Path.Combine(warpDir, "wireproxy.conf");
-
-                if (!File.Exists(wireproxy) || !File.Exists(conf))
-                {
-                    warpDir = Path.Combine(Environment.CurrentDirectory, @"bin\warp");
-                    wireproxy = Path.Combine(warpDir, "wireproxy.exe");
-                    conf = Path.Combine(warpDir, "wireproxy.conf");
-                }
-
-                if (!File.Exists(wireproxy) || !File.Exists(conf))
-                {
-                    logger?.Invoke("[WARP] Portable Cloudflare WARP binaries not found in bin\\warp\\");
-                    return false;
-                }
-
-                try
-                {
-                    foreach (var p in Process.GetProcessesByName("wireproxy"))
-                    {
-                        try { p.Kill(); } catch { }
-                    }
-                }
-                catch { }
-
-                try
-                {
-                    logger?.Invoke(string.Format("[WARP] Launching portable Cloudflare WARP WireGuard tunnel (SOCKS5 127.0.0.1:{0})...", WarpSocksPort));
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = wireproxy,
-                        Arguments = "-c \"" + conf + "\"",
-                        WorkingDirectory = warpDir,
-                        CreateNoWindow = true,
-                        UseShellExecute = false,
-                        WindowStyle = ProcessWindowStyle.Hidden
-                    };
-                    _warpProcess = Process.Start(psi);
-
-                    for (int i = 0; i < 15; i++)
-                    {
-                        System.Threading.Thread.Sleep(200);
-                        if (IsWarpListening())
-                        {
-                            logger?.Invoke(string.Format("[WARP] Cloudflare WARP Anycast tunnel ACTIVE on 127.0.0.1:{0}", WarpSocksPort));
-                            return true;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger?.Invoke("[WARP] Failed to start wireproxy: " + ex.Message);
-                }
-            }
-            return IsWarpListening();
+            // Kept as the old entry point; the mode now decides what "WARP" means.
+            return EnsureTunnel(logger);
         }
 
-        public static void StopWarp()
+        /// <summary>Stop the tunnel this host started. System WARP is left alone
+        /// unless <paramref name="alsoDisconnectSystemWarp"/> is set, because
+        /// disconnecting it changes the machine's network.</summary>
+        public static void StopTunnel(bool alsoDisconnectSystemWarp = false)
         {
-            lock (_warpLock)
+            lock (_tunnelLock)
             {
                 try
                 {
-                    if (_warpProcess != null && !_warpProcess.HasExited)
+                    if (_tunnelProcess != null && !_tunnelProcess.HasExited)
                     {
-                        _warpProcess.Kill();
-                        _warpProcess = null;
+                        _tunnelProcess.Kill();
                     }
                 }
                 catch { }
+                _tunnelProcess = null;
+
                 try
                 {
                     foreach (var p in Process.GetProcessesByName("wireproxy"))
@@ -970,7 +1271,107 @@ namespace DofusFarm.Engine
                     }
                 }
                 catch { }
+
+                if (alsoDisconnectSystemWarp)
+                {
+                    string cli = WarpCliPath();
+                    if (cli != null) RunWarpCli(cli, "disconnect", null);
+                }
             }
+        }
+
+        /// <summary>Legacy name used by older call sites.</summary>
+        public static void StopWarp()
+        {
+            StopTunnel(false);
+        }
+
+        /// <summary>
+        /// Put the machine's own network back. System WARP installs an adapter and
+        /// rewrites routing/DNS, so after a tunnel drop the PC can lose internet
+        /// until the client is disconnected -- that is the "cloudflared ripped my
+        /// WiFi" failure. This disconnects it, flushes DNS and probes the result.
+        /// Only ever runs because the user pressed the button.
+        /// </summary>
+        public static string RepairNetwork(Action<string> logger = null)
+        {
+            var sb = new StringBuilder();
+            string cli = WarpCliPath();
+            if (cli != null)
+            {
+                sb.AppendLine("warp-cli disconnect: " + RunWarpCli(cli, "disconnect", logger));
+            }
+            else
+            {
+                sb.AppendLine("warp-cli: not installed (nothing to disconnect)");
+            }
+
+            // The service keeps WFP leak-protection filters installed even while the
+            // tunnel is "Disconnected", which is what turns a dropped WARP into a
+            // machine with no internet at all. Stop it so Windows is on its own.
+            sb.AppendLine("sc stop CloudflareWARP: " + RunShell("sc.exe", "stop CloudflareWARP"));
+
+            sb.AppendLine("ipconfig /flushdns: " + RunShell("ipconfig", "/flushdns"));
+
+            bool dns = false;
+            try
+            {
+                var addrs = Dns.GetHostAddresses("auth.ankama.com");
+                dns = addrs != null && addrs.Length > 0;
+                sb.AppendLine("DNS auth.ankama.com: " + (dns ? "resolves (" + addrs[0] + ")" : "FAILED"));
+            }
+            catch (Exception ex) { sb.AppendLine("DNS auth.ankama.com: FAILED (" + ex.Message + ")"); }
+
+            bool tcp = ProbeTcp("1.1.1.1", 443, 2500);
+            sb.AppendLine("TCP 1.1.1.1:443: " + (tcp ? "reachable" : "FAILED"));
+
+            sb.AppendLine(dns && tcp
+                ? "Result: normal network looks healthy."
+                : "Result: normal network is still broken. Disable Cloudflare WARP in Windows Settings > Network, then reboot.");
+            return sb.ToString();
+        }
+
+        private static bool ProbeTcp(string host, int port, int timeoutMs)
+        {
+            try
+            {
+                using (var c = new TcpClient())
+                {
+                    IAsyncResult ar = c.BeginConnect(host, port, null, null);
+                    WaitHandle w = ar.AsyncWaitHandle;
+                    bool ok;
+                    try { ok = w.WaitOne(timeoutMs); }
+                    finally { try { w.Close(); } catch { } }
+                    if (!ok) return false;
+                    c.EndConnect(ar);
+                    return true;
+                }
+            }
+            catch { return false; }
+        }
+
+        private static string RunShell(string exe, string args)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = args,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using (var p = Process.Start(psi))
+                {
+                    if (p == null) return "could not start";
+                    string outp = (p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd()).Trim();
+                    p.WaitForExit(8000);
+                    return string.IsNullOrEmpty(outp) ? "ok" : outp.Replace("\r", " ").Replace("\n", " ");
+                }
+            }
+            catch (Exception ex) { return "failed: " + ex.Message; }
         }
 
         private static KeyValuePair<string, string>[] _cachedAccountPool = null;
@@ -1131,9 +1532,243 @@ namespace DofusFarm.Engine
             catch { return false; }
         }
 
+        /// <summary>
+        /// Does the tunnel actually carry traffic, or is it just listening?
+        ///
+        /// A bound SOCKS port proves nothing: wireproxy binds it before the
+        /// WireGuard handshake completes, so a blocked UDP path (some ISPs drop
+        /// 2408/1018) looks perfectly healthy to a port probe while every CONNECT
+        /// fails. This performs a real SOCKS5 CONNECT to a literal IP, which needs
+        /// no DNS, and reports whether the tunnel answered with success.
+        /// </summary>
+        public static bool ProbeSocksEgress(int port, string destHost, int destPort, int timeoutMs)
+        {
+            try
+            {
+                using (var tcp = new TcpClient())
+                {
+                    IAsyncResult ar = tcp.BeginConnect("127.0.0.1", port, null, null);
+                    WaitHandle w = ar.AsyncWaitHandle;
+                    bool ok;
+                    try { ok = w.WaitOne(Math.Min(timeoutMs, 3000)); }
+                    finally { try { w.Close(); } catch { } }
+                    if (!ok) return false;
+                    tcp.EndConnect(ar);
+
+                    tcp.ReceiveTimeout = timeoutMs;
+                    var st = tcp.GetStream();
+                    st.Write(new byte[] { 5, 1, 0 }, 0, 3);
+                    var reply = new byte[2];
+                    if (st.Read(reply, 0, 2) != 2 || reply[0] != 5 || reply[1] != 0) return false;
+
+                    IPAddress ip;
+                    if (!IPAddress.TryParse(destHost, out ip)) return false;
+                    byte[] addr = ip.GetAddressBytes();
+                    var req = new byte[4 + addr.Length + 2];
+                    req[0] = 5; req[1] = 1; req[2] = 0; req[3] = (byte)(addr.Length == 4 ? 1 : 4);
+                    Array.Copy(addr, 0, req, 4, addr.Length);
+                    req[req.Length - 2] = (byte)(destPort >> 8);
+                    req[req.Length - 1] = (byte)(destPort & 0xFF);
+                    st.Write(req, 0, req.Length);
+
+                    var head = new byte[4];
+                    if (st.Read(head, 0, 4) != 4) return false;
+                    return head[0] == 5 && head[1] == 0;   // 0x00 = succeeded
+                }
+            }
+            catch { return false; }
+        }
+
+        // Tunnel repair gate: at most one reconnect attempt every 20 s, so four
+        // instances starting together do not spawn four tunnels.
+        private static readonly object _warpGate = new object();
+        private static DateTime _lastWarpRepairUtc = DateTime.MinValue;
+
+        /// <summary>
+        /// Make sure the local SOCKS upstream is alive before an instance is
+        /// pointed at it.
+        ///
+        /// A tunnel drops whenever the machine changes network -- plugging in
+        /// ethernet, going back to wifi, a VPN re-handshake -- and takes tens of
+        /// seconds to come back. The relay fails closed during that window
+        /// (correctly: it must never dial direct), so the client shows its
+        /// "Server busy" screen. This restarts the tunnel first, using whichever
+        /// mode is configured, and does nothing at all when the port is already up.
+        /// </summary>
+        private void EnsureUpstreamAlive(string normalizedUpstream)
+        {
+            if (string.IsNullOrEmpty(normalizedUpstream)) return;
+            Uri u;
+            if (!Uri.TryCreate(normalizedUpstream, UriKind.Absolute, out u)) return;
+            bool isLocal = string.Equals(u.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(u.Host, "localhost", StringComparison.OrdinalIgnoreCase);
+            if (!isLocal) return;                       // only our own tunnel, never a rented proxy
+            int port = u.IsDefaultPort ? 1080 : u.Port;
+
+            if (IsLocalPortOpen(port, 150)) return;     // healthy, nothing to do
+
+            NetworkSettings s = NetworkSettings.For(AppBaseDir);
+            if (!s.IsTunnelMode) return;                // custom/direct: the upstream is not ours to fix
+
+            lock (_warpGate)
+            {
+                if (IsLocalPortOpen(port, 150)) return;
+                if ((DateTime.UtcNow - _lastWarpRepairUtc).TotalSeconds < 20) return;
+                _lastWarpRepairUtc = DateTime.UtcNow;
+
+                Log(string.Format("[NET] upstream SOCKS port {0} is down ({1}). Restarting the tunnel...",
+                    port, NetworkSettings.ModeLabel(s.Mode)));
+                if (EnsureTunnel(Log))
+                {
+                    Log(string.Format("[NET] tunnel is back; port {0} is listening.", port));
+                    return;
+                }
+                Log(s.FailClosed
+                    ? "[NET] tunnel did not come back. Instances keep failing closed (never direct)."
+                    : "[NET] tunnel did not come back; fail_closed=0 so instances will run direct and expose this IP.");
+            }
+        }
+
+        private static string RunWarpCli(string cli, string args, Action<string> logger)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = cli,
+                    Arguments = args,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using (var p = Process.Start(psi))
+                {
+                    if (p == null) return "could not start";
+                    string outp = (p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd()).Trim();
+                    p.WaitForExit(8000);
+                    if (!string.IsNullOrEmpty(outp) && logger != null)
+                    {
+                        logger("[NET] warp-cli " + args + ": " + outp.Replace("\r", " ").Replace("\n", " "));
+                    }
+                    return string.IsNullOrEmpty(outp) ? "ok" : outp.Replace("\r", " ").Replace("\n", " ");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (logger != null) logger("[NET] warp-cli " + args + " failed: " + ex.Message);
+                return "failed: " + ex.Message;
+            }
+        }
+
+        /// <summary>The decision about how one instance should leave the machine.</summary>
+        public sealed class UpstreamChoice
+        {
+            public string Url;      // null = direct
+            public bool Ok;         // false = refuse to launch (fail closed)
+            public bool Direct;     // true = deliberately no upstream
+            public string Reason;
+        }
+
+        /// <summary>
+        /// Resolve the egress for one instance from network.ini. This is the only
+        /// place that decides between tunnel / custom / direct, so the Android
+        /// launcher and the WebView2 launcher cannot drift apart.
+        /// </summary>
+        public static UpstreamChoice ResolveUpstream(string instProxy, int slot, Action<string> logger)
+        {
+            var c = new UpstreamChoice();
+            NetworkSettings s = NetworkSettings.For(NetworkSettings.AppBase);
+
+            // A per-instance proxy always wins: it is the most specific setting.
+            if (HasManualProxy(instProxy))
+            {
+                c.Url = NormalizeUpstreamProxy(instProxy);
+                c.Ok = !string.IsNullOrEmpty(c.Url);
+                c.Reason = "per-instance proxy";
+                return c;
+            }
+
+            string mode = NetworkSettings.NormalizeMode(s.Mode);
+
+            // auto: the supervisor owns the decision. It has already tested every
+            // candidate for real and refused anything that does not change the IP.
+            if (mode == NetworkSettings.ModeAuto)
+            {
+                ProxyCandidate pick = ProxySupervisor.Instance.EnsureActive(false);
+                if (pick != null)
+                {
+                    c.Url = pick.Url;
+                    c.Ok = true;
+                    c.Reason = "auto: " + pick.Label;
+                    return c;
+                }
+                if (s.FailClosed)
+                {
+                    c.Ok = false;
+                    c.Reason = "auto mode found no healthy egress (tunnel blocked, pool dead)";
+                    return c;
+                }
+                c.Direct = true;
+                c.Ok = true;
+                c.Reason = "auto mode with nothing healthy and fail_closed=0";
+                return c;
+            }
+
+            if (mode == NetworkSettings.ModeDirect)
+            {
+                c.Direct = true;
+                c.Ok = true;
+                c.Reason = "direct (configured in network.ini)";
+                return c;
+            }
+
+            if (mode == NetworkSettings.ModeCustom)
+            {
+                string u = string.IsNullOrEmpty(s.Upstream) ? GetAutoProxyForSlot(slot) : NormalizeUpstreamProxy(s.Upstream);
+                if (!string.IsNullOrEmpty(u))
+                {
+                    c.Url = u;
+                    c.Ok = true;
+                    c.Reason = string.IsNullOrEmpty(s.Upstream) ? "proxies.txt round-robin" : "custom upstream";
+                    return c;
+                }
+                if (s.FailClosed)
+                {
+                    c.Ok = false;
+                    c.Reason = "custom mode but no upstream is set and proxies.txt is empty";
+                    return c;
+                }
+                c.Direct = true;
+                c.Ok = true;
+                c.Reason = "custom mode with no upstream and fail_closed=0";
+                return c;
+            }
+
+            // wireproxy / warp
+            if (EnsureTunnel(logger))
+            {
+                c.Url = s.SocksUrl;
+                c.Ok = true;
+                c.Reason = NetworkSettings.ModeLabel(mode);
+                return c;
+            }
+            if (s.FailClosed)
+            {
+                c.Ok = false;
+                c.Reason = "tunnel is not listening and fail_closed=1 (this is the safe setting)";
+                return c;
+            }
+            c.Direct = true;
+            c.Ok = true;
+            c.Reason = "tunnel down and fail_closed=0 - running direct, real IP exposed";
+            return c;
+        }
+
         public bool EnsureProxyRunning(int port = 8880, string upstream = null, string serialNo = null, string androidId = null, DeviceProfile deviceProfile = null)
         {
             string normalizedUpstream = NormalizeUpstreamProxy(upstream);
+            EnsureUpstreamAlive(normalizedUpstream);
             lock (_proxyLock)
             {
                 Process existingProc;
@@ -1173,6 +1808,7 @@ namespace DofusFarm.Engine
 
                 if (File.Exists(ProxyExePath))
                 {
+                    NetworkSettings net = NetworkSettings.For(AppBaseDir);
                     var sb = new StringBuilder().AppendFormat("-port {0} -cache \"{1}\" -quiet", port, Path.Combine(AppBaseDir, "asset_cache"));
                     if (!string.IsNullOrEmpty(normalizedUpstream))
                     {
@@ -1180,6 +1816,12 @@ namespace DofusFarm.Engine
                         Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, normalizedUpstream));
                     }
                     else Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
+
+                    // Only ever set when the user turned fail_closed off: it lets a
+                    // dying tunnel fall back to a direct dial instead of refusing.
+                    if (!net.FailClosed) sb.Append(" -allow-direct");
+                    if (!string.IsNullOrEmpty(net.LogPath)) sb.AppendFormat(" -log \"{0}\"", net.LogPath);
+                    if (!string.IsNullOrEmpty(net.ExtraArgs)) sb.Append(" ").Append(net.ExtraArgs.Trim());
 
                     if (!string.IsNullOrEmpty(serialNo)) sb.AppendFormat(" -serial \"{0}\"", serialNo);
                     if (!string.IsNullOrEmpty(androidId)) sb.AppendFormat(" -uuid \"{0}\"", androidId);
@@ -1213,6 +1855,7 @@ namespace DofusFarm.Engine
                                 {
                                     _proxyProcesses[port] = proc;
                                     _proxyCurrentUpstream[port] = normalizedUpstream;
+                                    _relaySpecs[port] = new RelaySpec { Serial = serialNo, Uuid = androidId, Profile = deviceProfile };
                                     return true;
                                 }
                             }
@@ -1229,6 +1872,7 @@ namespace DofusFarm.Engine
                     {
                         _inProcProxies[port] = inProc;
                         _proxyCurrentUpstream[port] = normalizedUpstream;
+                        _relaySpecs[port] = new RelaySpec { Serial = serialNo, Uuid = androidId, Profile = deviceProfile };
                         Log(string.Format("[🛡️ Net-Spoof] Active C# Network Spoofing Proxy listening on 127.0.0.1:{0} ({1}).", port, deviceProfile != null ? deviceProfile.Model : "Mobile"));
                         return true;
                     }
@@ -2219,10 +2863,22 @@ namespace DofusFarm.Engine
             CleanLocks(avdDir);
             EnsureOverlay(avdDir);
 
-            int slot = Math.Max(0, (port - 5554) / 2), localProxyPort = 8880 + slot;
-            string upstreamProxy = HasManualProxy(proxy)
-                ? NormalizeUpstreamProxy(proxy)
-                : (IsWarpInstalled() && EnsureWarpRunning(null) ? WarpSocksUrl : null);
+            int slot = Math.Max(0, (port - 5554) / 2);
+            NetworkSettings net = NetworkSettings.For(AppBaseDir);
+            int localProxyPort = net.BasePort + slot;
+
+            // One resolver for every launch path. If it says no, the instance does
+            // not start at all: starting it with no egress would either leak the
+            // real IP or show "Server busy" ten seconds later anyway.
+            UpstreamChoice choice = ResolveUpstream(proxy, slot, Log);
+            if (!choice.Ok)
+            {
+                Log(string.Format("[NET] {0} not started: {1}. Fix it in Settings > Network.", name, choice.Reason));
+                return;
+            }
+            string upstreamProxy = choice.Url;
+            Log(string.Format("[NET] {0}: egress {1} ({2})", name,
+                choice.Direct ? "DIRECT" : upstreamProxy, choice.Reason));
 
             DeviceProfile instProfile = GetInstancePhoneModel(name);
             string serialNo = (instProfile.SerialPrefix ?? "R58M") + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant();

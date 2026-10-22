@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 using System.Collections.Concurrent;
 
@@ -158,8 +158,6 @@ namespace DofusFarm.UI
 
         private Label _lblBackend;
 
-        private ComboBox _cmbBackend;
-
 
 
         private Label _lblGpu;
@@ -200,11 +198,25 @@ namespace DofusFarm.UI
 
 
 
-        private Panel _commanderPanel;
+        private AiPanel _aiPanel;
 
-        private ComboBox _cmbCmdTarget;
+        private Panel _navPanel;
 
-        private TextBox _txtCmdOrder;
+        private Panel _pageHost;
+
+        private Panel _pageInstances;
+
+        private SettingsPage _pageSettings;
+        private Label _aiLive;
+        private System.Windows.Forms.Timer _aiLiveTimer;
+
+        private ShortcutsPage _pageShortcuts;
+
+        private LogsPage _pageLogs;
+
+        private readonly List<Button> _navButtons = new List<Button>();
+
+        private int _navIndex;
 
 
 
@@ -676,11 +688,10 @@ namespace DofusFarm.UI
 
             Color lblCol = Color.FromArgb(180, 185, 195);
 
-            _lblBackend = new Label { Text = "Engine:", ForeColor = lblCol, AutoSize = true, Location = new Point(704, 15) };
-
-            _cmbBackend = CreateCombo(758, 12, 190, new object[] { "⚡ Standalone WebView2", "🤖 Android Emulator" }, 0);
-
-            _cmbBackend.SelectedIndexChanged += OnBackendChanged;
+            // There is no engine selector any more: WebView2 is the only backend.
+            // The Android/QEMU path is still compiled (FarmEngine needs it for the
+            // legacy launch helpers) but nothing in the UI can select it.
+            _lblBackend = new Label { Text = "Engine: WebView2", ForeColor = lblCol, AutoSize = true, Location = new Point(704, 15) };
 
 
 
@@ -736,7 +747,7 @@ namespace DofusFarm.UI
 
                 _btnLaunchFarm, _btnStopAll, _btnAddSlot, _btnEditSelected, _btnDeleteSelected,
 
-                _btnRelayout, _btnCascade, _lblBackend, _cmbBackend,
+                _btnRelayout, _btnCascade, _lblBackend,
 
                 _lblGpu, _cmbGpu, _lblRamBadge, _lblEngineNotice
 
@@ -842,7 +853,6 @@ namespace DofusFarm.UI
 
             _rowMenu.Items.Add("⚡ Launch in Standalone WebView2", null, delegate { LaunchSelectedInWebView2(); });
 
-            _rowMenu.Items.Add("🤖 Launch in Android Emulator", null, delegate { LaunchSelectedInEmulator(); });
 
             _rowMenu.Items.Add(new ToolStripSeparator());
 
@@ -876,95 +886,6 @@ namespace DofusFarm.UI
 
 
 
-            _commanderPanel = new Panel { Dock = DockStyle.Bottom, Height = 42, BackColor = Color.FromArgb(20, 22, 28), Padding = new Padding(14, 6, 14, 6) };
-
-
-
-            var lblCommander = new Label
-
-            {
-
-                Text = "🤖 AI Commander:",
-
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-
-                ForeColor = Color.FromArgb(129, 140, 248),
-
-                AutoSize = true,
-
-                Location = new Point(14, 11)
-
-            };
-
-
-
-            _cmbCmdTarget = CreateCombo(134, 8, 130, new object[] { "All Slots (1-4)", "Slot #1", "Slot #2", "Slot #3", "Slot #4" }, 0);
-
-
-
-            var btnCmdJoin = CreateButton("⚔ Join Fight", Color.FromArgb(30, 58, 138), Color.FromArgb(37, 99, 235), Color.White, 86, 26, false, 270, 8, delegate { DispatchQuickAction("AUTO_JOIN_COMBAT"); });
-
-            var btnCmdPass = CreateButton("⏩ Pass Turn", Color.FromArgb(146, 64, 14), Color.FromArgb(180, 83, 9), Color.White, 86, 26, false, 360, 8, delegate { DispatchQuickAction("PASS_TURN"); });
-
-            var btnCmdFollow = CreateButton("👣 Follow", Color.FromArgb(22, 101, 52), Color.FromArgb(21, 128, 61), Color.White, 72, 26, false, 450, 8, delegate { DispatchQuickAction("FOLLOW"); });
-
-            var btnCmdStop = CreateButton("⏹ Stop", Color.FromArgb(127, 29, 29), Color.FromArgb(185, 28, 28), Color.White, 64, 26, false, 526, 8, delegate { DispatchQuickAction("STOP"); });
-
-
-
-            _txtCmdOrder = new TextBox
-
-            {
-
-                Location = new Point(598, 8),
-
-                Height = 26,
-
-                Width = 510,
-
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-
-                BackColor = Color.FromArgb(28, 30, 40),
-
-                ForeColor = Color.White,
-
-                BorderStyle = BorderStyle.FixedSingle,
-
-                Font = new Font("Segoe UI", 9f)
-
-            };
-
-            _txtCmdOrder.KeyDown += delegate(object s, KeyEventArgs ke)
-
-            {
-
-                if (ke.KeyCode == Keys.Enter)
-
-                {
-
-                    ke.SuppressKeyPress = true;
-
-                    ExecuteNaturalOrder(_cmbCmdTarget.SelectedIndex, _txtCmdOrder.Text.Trim());
-
-                }
-
-            };
-
-
-
-            var btnSendCmd = CreateButton("Send Order", Color.FromArgb(37, 99, 235), Color.FromArgb(59, 130, 246), Color.White, 86, 26, true, 1116, 8, delegate
-
-            {
-
-                ExecuteNaturalOrder(_cmbCmdTarget.SelectedIndex, _txtCmdOrder.Text.Trim());
-
-            });
-
-            btnSendCmd.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-
-
-
-            _commanderPanel.Controls.AddRange(new Control[] { lblCommander, _cmbCmdTarget, btnCmdJoin, btnCmdPass, btnCmdFollow, btnCmdStop, _txtCmdOrder, btnSendCmd });
 
 
 
@@ -996,7 +917,9 @@ namespace DofusFarm.UI
 
             _statusPanel.Controls.AddRange(new Control[] { _lblStatusText, lblFocus, _btnFocus1, _btnFocus2, _btnFocus3, _btnFocus4 });
 
-            Controls.AddRange(new Control[] { _grid, _commanderPanel, _statusPanel, _toolbarPanel, _headerPanel });
+            BuildPages();
+
+            Controls.AddRange(new Control[] { _pageHost, _statusPanel, _navPanel, _headerPanel });
 
 
 
@@ -1110,169 +1033,150 @@ namespace DofusFarm.UI
 
 
 
-        private void DispatchQuickAction(string action)
-
+        /// <summary>
+        /// Panel shortcuts. Handled before any control sees the key, so F5 works
+        /// whether the focus is in the grid, the goal box or a button.
+        /// </summary>
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-
-            int slotIdx = _cmbCmdTarget != null ? _cmbCmdTarget.SelectedIndex : 0;
-
-            string targetId = GetInstanceIdFromSlot(slotIdx);
-
-            DispatchCommanderAction(targetId, action, "Quick button order");
-
+            if (_aiPanel != null && _aiPanel.HandleShortcut(keyData)) return true;
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
-
-
-        private void ExecuteNaturalOrder(int slotIndex, string orderText)
-
+        /// <summary>
+        /// Build the page shell. The window used to be one long column -- header,
+        /// toolbar, grid, a 184 px AI strip, status bar -- so the instance list,
+        /// which is what you actually watch, kept losing rows to panels touched
+        /// once a session. Each job gets a page now, and the main page is just the
+        /// grid.
+        /// </summary>
+        private void BuildPages()
         {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
 
-            if (string.IsNullOrWhiteSpace(orderText)) return;
+            _pageInstances = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(16, 17, 22) };
+            _pageInstances.Controls.Add(_grid);
+            _pageInstances.Controls.Add(_toolbarPanel);
 
-            string targetId = GetInstanceIdFromSlot(slotIndex);
-
-            string targetLabel = slotIndex == 0 ? "All Instances" : ("Slot #" + slotIndex);
-
-
-
-            SafeBeginInvoke(delegate
-
+            _aiPanel = new AiPanel(baseDir, GetInstanceIdFromSlot, delegate { return _grid.Rows.Count; }, Log);
+            _pageSettings = new SettingsPage(baseDir, Log, delegate
             {
-
-                if (_lblStatusText != null && !IsDisposed)
-
-                    _lblStatusText.Text = string.Format("🤖 [AI Commander] Analyzing: \"{0}\" for {1}...", orderText, targetLabel);
-
+                // Changing the egress invalidates every relay that is already
+                // running: they hold the old upstream in their command line.
+                try { _engine.StopAllProxies(); } catch { }
             });
+            _pageShortcuts = new ShortcutsPage(baseDir, _aiPanel.Settings, delegate { _aiPanel.SaveSettings(); });
 
-            Log(string.Format("🤖 [AI Commander] Processing user directive: \"{0}\" for target: {1}", orderText, targetLabel));
-
-
-
-            ThreadPool.QueueUserWorkItem(delegate
-
+            // One line at startup that says how traffic will leave: the first
+            // question in every "nothing loads" report.
+            try
             {
+                NetworkSettings startupNet = NetworkSettings.For(baseDir);
+                Log("[NET] egress: " + startupNet.Summary + "  |  relay " + startupNet.BasePort + "+slot  |  " +
+                    (startupNet.FailClosed ? "fail closed" : "will fall back to direct"));
+            }
+            catch { }
+            _pageLogs = new LogsPage(baseDir);
 
-                string directive = null;
+            _pageHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(20, 22, 28) };
+            _pageHost.Controls.Add(_pageInstances);
+            _pageHost.Controls.Add(_aiPanel);
+            _pageHost.Controls.Add(_pageSettings);
+            _pageHost.Controls.Add(_pageShortcuts);
+            _pageHost.Controls.Add(_pageLogs);
 
-                string explanation = null;
-
-                try
-
-                {
-
-                    using (var client = new System.Net.WebClient())
-
-                    {
-
-                        client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
-
-                        string payload = string.Format("{{\"command\":\"{0}\",\"target_slot\":\"{1}\"}}", JsonEscape(orderText), JsonEscape(targetId));
-
-                        string res = client.UploadString("http://127.0.0.1:8890/sentinel/parse_command", "POST", payload);
-
-                        if (!string.IsNullOrEmpty(res))
-
-                        {
-
-                            Match mDir = Regex.Match(res, "\"directive\"\\s*:\\s*\"([^\"]+)\"");
-
-                            if (mDir.Success) directive = mDir.Groups[1].Value;
-
-                            Match mExp = Regex.Match(res, "\"explanation\"\\s*:\\s*\"([^\"]+)\"");
-
-                            if (mExp.Success) explanation = mExp.Groups[1].Value;
-
-                        }
-
-                    }
-
-                }
-
-                catch { }
-
-
-
-                // High-performance heuristic fallback if singleton sentinel is streaming weights
-
-                if (string.IsNullOrEmpty(directive))
-
-                {
-
-                    string low = orderText.ToLowerInvariant();
-
-                    if (low.Contains("join") || low.Contains("combat") || low.Contains("fight")) directive = "AUTO_JOIN_COMBAT";
-
-                    else if (low.Contains("pass") || low.Contains("tour") || low.Contains("turn")) directive = "PASS_TURN";
-
-                    else if (low.Contains("follow") || low.Contains("suis")) directive = "FOLLOW";
-
-                    else if (low.Contains("stop") || low.Contains("pause")) directive = "STOP";
-
-                    else if (low.Contains("farm") || low.Contains("mob")) directive = "AUTO_FARM";
-
-                    else directive = "AUTO_FARM";
-
-                    explanation = "Direct heuristic fallback match";
-
-                }
-
-
-
-                SafeBeginInvoke(delegate
-
-                {
-
-                    DispatchCommanderAction(targetId, directive, explanation ?? orderText);
-
-                });
-
-            });
-
-        }
-
-
-
-        private void DispatchCommanderAction(string targetId, string action, string reason)
-
-        {
-
-            if (string.IsNullOrEmpty(action)) return;
-
-
-
-            string escapedAction = JsonEscape(action), escapedTarget = JsonEscape(targetId);
-
-            string js = string.Format("window.__executeCommanderDirective && window.__executeCommanderDirective({{\"action\":\"{0}\",\"target\":\"{1}\"}});", escapedAction, escapedTarget);
-
-
-
-            if (_webViewBackend != null)
-
+            _navPanel = new Panel
             {
+                Dock = DockStyle.Top,
+                Height = 46,
+                BackColor = Color.FromArgb(18, 19, 25),
+                Padding = new Padding(14, 6, 14, 6)
+            };
 
-                _webViewBackend.ExecuteScriptOnInstance(targetId, js);
-
+            string[] names = new string[] { "Instances", "AI", "Settings", "Shortcuts", "Logs" };
+            int x = 14;
+            for (int i = 0; i < names.Length; i++)
+            {
+                int index = i;
+                var b = new Button();
+                b.Text = names[i];
+                b.Location = new Point(x, 7);
+                b.Size = new Size(112, 30);
+                b.FlatStyle = FlatStyle.Flat;
+                b.FlatAppearance.BorderSize = 0;
+                b.BackColor = Color.FromArgb(26, 28, 36);
+                b.ForeColor = Color.FromArgb(203, 213, 225);
+                b.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+                b.Cursor = Cursors.Hand;
+                b.Click += delegate { ShowPage(index); };
+                _navPanel.Controls.Add(b);
+                _navButtons.Add(b);
+                x += 116;
             }
 
+            // The AI state has to be visible from every page, not only from the AI
+            // page: a loop running in the background with no indication is how you
+            // end up with two loops and one character.
+            _aiLive = new Label();
+            _aiLive.Text = "AI idle";
+            _aiLive.AutoSize = false;
+            _aiLive.TextAlign = ContentAlignment.MiddleRight;
+            // Dock.Right, not a computed X: at BuildPages time the nav panel has
+            // not been laid out yet, so Width is 0 and the label lands off-screen.
+            _aiLive.Width = 360;
+            _aiLive.Dock = DockStyle.Right;
+            _aiLive.ForeColor = Color.FromArgb(148, 163, 184);
+            _aiLive.Font = new Font("Consolas", 8.5f);
+            _navPanel.Controls.Add(_aiLive);
 
+            _aiLiveTimer = new System.Windows.Forms.Timer();
+            _aiLiveTimer.Interval = 1000;
+            _aiLiveTimer.Tick += delegate { RefreshAiLive(); };
+            _aiLiveTimer.Start();
 
-            string info = string.Format("🤖 [AI Commander] Directive [{0}] dispatched to {1} ({2})", action, targetId, reason);
-
-            Log(info);
-
-            if (_lblStatusText != null && !IsDisposed)
-
-            {
-
-                _lblStatusText.Text = info;
-
-            }
-
+            ShowPage(0);
         }
 
+        /// <summary>One tick: read the loop's own state and paint it.</summary>
+        private void RefreshAiLive()
+        {
+            try
+            {
+                if (_aiPanel == null || _aiLive == null || _aiLive.IsDisposed) return;
+                bool running = _aiPanel.RunningNow;
+                string text = _aiPanel.LiveStatusText();
+                if (_aiLive.Text != text) _aiLive.Text = text;
+                Color want = running ? Color.FromArgb(74, 222, 128) : Color.FromArgb(148, 163, 184);
+                if (_aiLive.ForeColor != want) _aiLive.ForeColor = want;
 
+                // The nav button carries the same signal, so the eye finds it even
+                // when the pill is cropped on a narrow window.
+                if (_navButtons.Count > 1 && _navIndex != 1)
+                {
+                    _navButtons[1].ForeColor = running ? Color.FromArgb(74, 222, 128)
+                                                       : Color.FromArgb(203, 213, 225);
+                }
+            }
+            catch { }
+        }
+
+        private void ShowPage(int index)
+        {
+            if (_pageHost == null || index < 0 || index >= _pageHost.Controls.Count) return;
+            _navIndex = index;
+            for (int i = 0; i < _pageHost.Controls.Count; i++)
+                _pageHost.Controls[i].Visible = (i == index);
+            for (int i = 0; i < _navButtons.Count; i++)
+            {
+                bool active = (i == index);
+                _navButtons[i].BackColor = active ? Color.FromArgb(37, 99, 235) : Color.FromArgb(26, 28, 36);
+                _navButtons[i].ForeColor = active ? Color.White : Color.FromArgb(203, 213, 225);
+            }
+            // Pages that show live state refresh when opened, not on a hidden timer.
+            if (index == 1 && _aiPanel != null) _aiPanel.RefreshTargets();
+            if (index == 2 && _pageSettings != null) _pageSettings.ReloadState();
+            if (index == 4 && _pageLogs != null) _pageLogs.Reload();
+        }
 
         private Button CreateFocusButton(string text, int x, int slotIdx)
 
@@ -1564,9 +1468,38 @@ namespace DofusFarm.UI
 
                 _webViewBackend.OnStateChanged += delegate { SafeBeginInvoke(delegate { RefreshGrid(true); }); };
 
+                // The in-game HUD's Auto button asks the host to start the loop:
+                // the page has no business spawning python, and this keeps the
+                // shortcut, the AI page and the badge on exactly one code path.
+                _webViewBackend.OnAiRequest += delegate(string instId, string action)
+                {
+                    SafeBeginInvoke(delegate
+                    {
+                        Log("[AI] in-game badge requested: " + action + " (" + instId + ")");
+                        if (string.Equals(action, "start_auto", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ShowPage(1);
+                            _aiPanel.StartAuto(true);
+                        }
+                    });
+                };
+
                 _webViewBackend.Initialize();
 
 
+
+                // One owner for egress: it probes every candidate, keeps the best,
+                // and rebuilds the running relays (same ports) when it has to switch.
+                ProxySupervisor.Instance.Bind(_engine, Log);
+                ProxySupervisor.Instance.OnActiveChanged += delegate(ProxyCandidate pick)
+                {
+                    SafeBeginInvoke(delegate
+                    {
+                        Log("[PROXY] switching egress to " + pick.Label);
+                        try { _engine.RebuildAllRelays(pick.Url, Log); } catch { }
+                    });
+                };
+                ProxySupervisor.Instance.Start();
 
                 _agentBridge = new AgentDirectiveBridge(_webViewBackend, GetInstanceIdFromSlot, Log, 8893);
 
@@ -1574,11 +1507,7 @@ namespace DofusFarm.UI
 
 
 
-                _activeBackend = (_cmbBackend != null && _cmbBackend.SelectedIndex == 1)
-
-                    ? (IClientBackend)_emulatorBackend
-
-                    : (IClientBackend)_webViewBackend;
+                _activeBackend = (IClientBackend)_webViewBackend;
 
                 if (_governor != null) _governor.Backend = _activeBackend;
 
@@ -1634,50 +1563,6 @@ namespace DofusFarm.UI
 
 
 
-        private void OnBackendChanged(object sender, EventArgs e)
-
-        {
-
-            if (_cmbBackend.SelectedIndex == 0)
-
-            {
-
-                _activeBackend = _webViewBackend;
-
-                if (_governor != null) _governor.Backend = _activeBackend;
-
-                _lblEngineNotice.Text = "⚡ Standalone WebView2 enabled with hardware WebGL & per-slot user-data isolation.";
-
-                _lblEngineNotice.ForeColor = Color.FromArgb(56, 189, 248);
-
-                Log("[ENGINE] Switched active backend to Standalone WebView2.");
-
-            }
-
-            else
-
-            {
-
-                _activeBackend = _emulatorBackend;
-
-                if (_governor != null) _governor.Backend = _activeBackend;
-
-                _lblEngineNotice.Text = "🤖 Android Emulator backend enabled (QEMU + ADB fallback).";
-
-                _lblEngineNotice.ForeColor = Color.FromArgb(251, 191, 36);
-
-                Log("[ENGINE] Switched active backend to Android Emulator (Legacy).");
-
-            }
-
-            RefreshGrid(true);
-
-        }
-
-
-
-
-
         private void LaunchSelectedInWebView2()
 
         {
@@ -1718,73 +1603,9 @@ namespace DofusFarm.UI
 
                 };
 
-                WireWebView2LocalProxy(opts, inst);
-
-                _webViewBackend.Start(opts);
+                if (WireWebView2LocalProxy(opts, inst)) _webViewBackend.Start(opts);
 
             }
-
-            RefreshGrid(true);
-
-        }
-
-
-
-        private void LaunchSelectedInEmulator()
-
-        {
-
-            if (_grid.SelectedRows.Count == 0) return;
-
-            var inst = _grid.SelectedRows[0].Tag as InstanceModel;
-
-            if (inst == null) return;
-
-            if (inst.IsRunning)
-
-            {
-
-                _emulatorBackend.Stop(inst.Name);
-
-            }
-
-            else
-
-            {
-
-                var opts = new ClientLaunchOptions
-
-                {
-
-                    InstanceId = inst.Name,
-
-                    DisplayName = inst.CustomName ?? inst.DisplayName,
-
-                    SlotPort = inst.Port,
-
-                    RamMb = inst.RamMb > 0 ? inst.RamMb : GetSelectedRam(),
-
-                    Cores = inst.Cores > 0 ? inst.Cores : GetSelectedCores(),
-
-                    Proxy = inst.Proxy
-
-                };
-
-                _emulatorBackend.Start(opts);
-
-            }
-
-            RefreshGrid(true);
-
-        }
-
-
-
-        protected override void OnShown(EventArgs e)
-
-        {
-
-            base.OnShown(e);
 
             RefreshGrid(true);
 
@@ -2211,9 +2032,7 @@ namespace DofusFarm.UI
 
                                 };
 
-                                WireWebView2LocalProxy(opts, im);
-
-                                _webViewBackend.Start(opts);
+                                if (WireWebView2LocalProxy(opts, im)) _webViewBackend.Start(opts);
 
                                 // Natural human stagger: 2.5s - 3.8s between client connection handshakes
 
@@ -2872,9 +2691,7 @@ namespace DofusFarm.UI
 
                                     };
 
-                                    WireWebView2LocalProxy(opts, inst);
-
-                                    _webViewBackend.Start(opts);
+                                    if (WireWebView2LocalProxy(opts, inst)) _webViewBackend.Start(opts);
 
                                 }
 
@@ -2978,7 +2795,13 @@ namespace DofusFarm.UI
 
         // Android instances.
 
-        private void WireWebView2LocalProxy(ClientLaunchOptions opts, InstanceModel inst)
+        /// <summary>
+        /// Returns false when the instance must NOT be started. Fail-closed has to
+        /// cover the launch too: if the egress could not be wired and the mode is
+        /// not "direct", starting the client anyway would put the real IP on the
+        /// wire, which is the one thing the proxy exists to prevent.
+        /// </summary>
+        private bool WireWebView2LocalProxy(ClientLaunchOptions opts, InstanceModel inst)
 
         {
 
@@ -2986,44 +2809,31 @@ namespace DofusFarm.UI
 
             {
 
-                int slot = Math.Max(0, (inst.Port - 5554) / 2), localProxyPort = 8880 + slot;
-
-                string upstream = null;
-
-                bool manualProxy = FarmEngine.HasManualProxy(inst.Proxy);
-
-                if (manualProxy) upstream = FarmEngine.NormalizeUpstreamProxy(inst.Proxy);
-
+                NetworkSettings net = NetworkSettings.For(_engine.AppBaseDir);
+                int slot = Math.Max(0, (inst.Port - 5554) / 2), localProxyPort = net.BasePort + slot;
                 DeviceProfile profile = _engine.GetInstancePhoneModel(inst.Name);
-
                 string serialPrefix = (profile != null && !string.IsNullOrEmpty(profile.SerialPrefix)) ? profile.SerialPrefix : "R58M";
-
                 string serialNo = serialPrefix + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant();
-
                 string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLowerInvariant();
 
-
-
-                bool wired = false;
-
-                if (manualProxy)
+                // network.ini decides the egress; a per-instance proxy still wins.
+                FarmEngine.UpstreamChoice choice = FarmEngine.ResolveUpstream(inst.Proxy, slot, Log);
+                if (!choice.Ok)
                 {
-                    wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
+                    Log(string.Format("WebView2 {0}: not started - {1}. Fix it in Settings > Network.", inst.Name, choice.Reason));
+                    return false;
                 }
-                else
+                string upstream = choice.Url;
+                Log(string.Format("WebView2 {0}: egress {1} ({2})", inst.Name,
+                    choice.Direct ? "DIRECT" : upstream, choice.Reason));
+
+                bool wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
+
+                if (!wired && !choice.Direct)
                 {
-                    if (FarmEngine.IsWarpInstalled() && FarmEngine.EnsureWarpRunning(msg => Log(msg)))
-                    {
-                        upstream = FarmEngine.WarpSocksUrl;
-                        Log(string.Format("WebView2 {0}: auto-routing through portable Cloudflare WARP ({1})", inst.Name, upstream));
-                        wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
-                    }
-                    else
-                    {
-                        Log(string.Format("WebView2 {0}: running DIRECT egress (no manual proxy configured)", inst.Name));
-                        wired = _engine.EnsureProxyRunning(localProxyPort, null, serialNo, androidId, profile);
-                        upstream = null;
-                    }
+                    Log(string.Format("WebView2 {0}: relay did not start on port {1}; refusing to launch with a direct " +
+                                      "connection (fail closed).", inst.Name, localProxyPort));
+                    return false;
                 }
 
                 if (wired)
@@ -3040,8 +2850,29 @@ namespace DofusFarm.UI
 
                 }
 
-                var acc = FarmEngine.GetAccountForSlot(slot);
-                if (acc.HasValue)
+                // Manual-login mode: do not hand the instance an account from
+                // accounts.txt. Otherwise a successful Google/OAuth login is
+                // overwritten on the next reload by whatever guest this slot was
+                // assigned -- the guest identity is persisted into the profile and
+                // replayed, so the real session never survives the reload.
+                bool manualLogin = false;
+                try
+                {
+                    manualLogin = System.IO.File.Exists(
+                        System.IO.Path.Combine(_engine.AppBaseDir, "manual-login.flag"));
+                }
+                catch { }
+
+                System.Collections.Generic.KeyValuePair<string, string>? acc = null;
+                if (!manualLogin) acc = FarmEngine.GetAccountForSlot(slot);
+                if (manualLogin)
+                {
+                    Log(string.Format("WebView2 {0}: manual-login.flag present - no account assigned from accounts.txt (sign in by hand)",
+                        inst.Name));
+                    opts.AccountLogin = null;
+                    opts.AccountPassword = null;
+                }
+                else if (acc.HasValue)
                 {
                     opts.AccountLogin = acc.Value.Key;
                     opts.AccountPassword = acc.Value.Value;
@@ -3052,6 +2883,7 @@ namespace DofusFarm.UI
                     Log(string.Format("WebView2 {0}: no accounts configured in accounts.txt (guest registration fallback)", inst.Name));
                 }
 
+                return true;
             }
 
             catch (Exception ex)
@@ -3059,7 +2891,7 @@ namespace DofusFarm.UI
             {
 
                 Log(string.Format("WebView2 proxy wiring failed for {0}: {1}", inst.Name, ex.Message));
-
+                return false;
             }
 
         }
@@ -3081,6 +2913,12 @@ namespace DofusFarm.UI
         protected override void OnFormClosing(FormClosingEventArgs e)
 
         {
+            try { if (_aiLiveTimer != null) { _aiLiveTimer.Stop(); _aiLiveTimer.Dispose(); _aiLiveTimer = null; } } catch { }
+
+            // Persist the AI panel's mode, budgets and shortcuts. Doing it here
+            // rather than on every keystroke keeps the file from being rewritten
+            // while the loop is starting up.
+            try { if (_aiPanel != null) _aiPanel.SaveSettings(); } catch { }
 
             if (e.CloseReason == CloseReason.UserClosing && !_isClosing)
 

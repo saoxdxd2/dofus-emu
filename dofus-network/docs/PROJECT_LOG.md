@@ -4,7 +4,10 @@ One document that keeps the thinking, not just the results. Every entry says wha
 was decided, **why**, and what would change our mind. Numbers are measured on this
 machine; anything unmeasured is marked as such.
 
-Last updated: 2026-10-22.
+> **Status lives in `PLAN.md`.** That file is the single source of truth for what is
+> true now and what happens next. This log keeps the reasoning behind it.
+
+Last updated: 2026-10-22 (after the client-update incident).
 
 ---
 
@@ -51,10 +54,26 @@ INT8 is bit-identical to fp32 on the serving path (gold 0.944/0.775 both), at
 2,696 maps, 1,509,760 cells (**1,150,576 walkable, 76.2%**), 336,785 static
 sprites, 10,782 directed edges, 46 MB raw / 2.2 MB index with per-map walk masks.
 
+### Client (rebuilt after the 1.74.9 incident)
+
+The game bundle is **1.74.9**, downloaded from the server by `EnsureClientUpToDate`
+through the instance proxy. Login works (guest and Google). Window resize works
+again (patch 0 guards `resizeWideScreen`). 11 patches active; patch 4
+(`launchMapTransition`) is skipped because its markers moved in the new build.
+
+### Protocol
+
+Two real sessions captured (1.16 MB and 9.2 MB): character creation, map entry,
+movement, fights, NPC dialog, quest validation, **market buy/list**, **zaap**.
+Full payloads in `PROTOCOL_NOTES.md`. Harvest is the one action still uncaptured.
+
 ### What is still stubbed in the client
 
 `farm.start` toggles auto-fight but does not walk or harvest; `hdv.*` and
-`quest.advance` return `*_ui_not_mapped`. These three are what stand between the
+`quest.advance` return `*_ui_not_mapped`. Market and quest are now **buildable**
+from captured traffic; harvest is blocked on one recording.
+
+These three are what stand between the
 current build and real logs.
 
 ---
@@ -74,6 +93,45 @@ current build and real logs.
 | D9 | No evolutionary weight search | a farm episode is minutes; one generation ≈ 33 h on moving content | evaluation becomes cheap |
 | D10 | MoE deferred | +30 MB of INT8 weights for capacity 21k rows cannot feed | one trunk demonstrably underfits two domains |
 | D11 | hdv through the in-game UI, not an API | the UI is the precise source; external feeds drift and break | the UI mapping proves unstable |
+| D12 | **Auto-update the client bundle at launch** | the bundle is not shipped in the APK; a cached copy silently goes stale, and 1.74.8 vs 1.74.9 took the whole stack down for a night | the server ever publishes a manifest we cannot parse |
+| D13 | **Patches fail soft; a match over 60 KB is refused** | one stale boundary used to abort the run and discard every other patch; on 1.74.9 patch 4 matched a 5.3 MB span and would have destroyed the bundle | a patch that needs to match a genuinely huge block |
+| D14 | **Every unsupported native SDK gets a Proxy stub** | the client adds calls we do not ship (Adjust `setLogLevel`, `Adjust.create`); a hand-written method list goes stale immediately | the SDK turns out to affect gameplay, not telemetry |
+| D15 | **Drive the client's own path/tap instead of reimplementing movement** | `keyMovements` is the client's encoded path; recomputing it duplicates obstacles and map edges | a path the client refuses to compute |
+| D16 | **Egress is a setting, never an assumption** | Cloudflare's *system* WARP rewrites Windows routing and DNS for the whole PC, so a dropped tunnel took the user's WiFi with it. `wireproxy.exe` binds a local SOCKS5 and touches nothing else | the userspace tunnel cannot carry the game traffic |
+| D17 | **No wall-clock or step budget in the AI loop** | a goal-driven loop should end when the goals are met; a timer turns a working run into a half-finished one. `0` = unlimited in both the panel and `agent.autopilot` | a goal that can never be satisfied keeps the loop alive forever |
+| D18 | **One proxy supervisor owns egress; `auto` is the default** | the choice of upstream was spread over three places that could disagree, and when the ISP blocked WARP's UDP nothing started at all. A single supervisor probes every candidate for real, rejects any whose exit IP is our own, and rebuilds the running relays on the same ports when it switches | a candidate that passes the probe but still fails inside the game |
+| D19 | **A bound SOCKS port is not a working tunnel** | wireproxy binds before the WireGuard handshake completes, so a UDP-blocked ISP looks healthy to a port check. Both the supervisor and the Settings test do a real CONNECT | a tunnel whose handshake succeeds but whose CONNECT is refused |
+| D20 | **The verifier ships as rules, not as a model** | waiting for a dataset inverted the dependency: the loop must run and fail to produce labels. Rules give the baseline the model has to beat, and every rule/model/human disagreement is a training sample | a rule baseline the model cannot beat on the same session |
+| D21 | **The client updater re-applies the build-time patches** | the bundle is patched at build time; the runtime updater used to replace `script.js` with the server's raw copy, so every patch vanished on the first server update — that is the recurring "the update broke it" failure. Rules now live in `tools/patch-rules.txt`, generated from `patch-engine.js`, applied to a staging tree, validated, and only then committed | a bundle that passes validation and still renders black |
+
+### Network configuration (D16)
+
+`network.ini` next to the exe is the single source of truth for how instances
+leave the machine. Both launchers (WebView2 and the legacy Android path) resolve
+through `FarmEngine.ResolveUpstream`, so they cannot disagree.
+
+| mode | what runs | touches Windows routing? |
+|---|---|---|
+| `wireproxy` (default) | `bin\warp\wireproxy.exe` → SOCKS5 on `socks_port` | no |
+| `warp` | installed Cloudflare WARP client via `warp-cli` | **yes, all of it** |
+| `custom` | `upstream=` URL, or `proxies.txt` round-robin | no |
+| `direct` | nothing | no, and the real IP is exposed |
+
+Other keys: `base_port` (relay port for slot N = base + N), `fail_closed`
+(1 = refuse rather than ever dial direct), `extra_args` (raw flags passed to
+`dofus-net-proxy.exe`), `wireproxy_conf`, `log_path`.
+
+The relay itself is configurable the same way from the command line:
+`dofus-net-proxy.exe -config network.ini` reads `port`, `host`, `upstream`,
+`dns`, `cache`, `quiet`, `log`, `allow_direct`, `referer`, `mods_dir` as flag
+defaults, so it can be run and tuned without the GUI. `-allow-direct` is the
+only switch that can make a dead tunnel fall back to a direct dial; it is off
+unless `fail_closed=0`, and it logs every time it fires.
+
+Recovery after a system-WARP failure is explicit: Settings → Network →
+**Repair my network** runs `warp-cli disconnect`, flushes DNS and probes
+`auth.ankama.com` + `1.1.1.1:443`, because WARP's adapter can leave a machine
+with no DNS at all once it is disabled.
 
 ---
 
@@ -285,11 +343,17 @@ against the real API instead of a guess.
 
 ## 6. Next, in order
 
-1. Finish the three client verbs (`farm.start` walking, `hdv.*`, `quest.advance`)
-   so the agent can actually earn and trade.
-2. Run the pipeline live with **no TRM** and collect logs — real goals, real
-   outcomes, real residuals. Everything downstream is starved without this.
-3. Payload fix (§3.2): exclude `models/`, drop torch from the runtime.
-4. Second agent, residual head first, trained on the residuals from (2).
-5. Fleet ingest + signed checkpoints (§3.3), once there is something worth
-   protecting and data worth aggregating.
+The authoritative list is `PLAN.md` §4. In short:
+
+1. **Market verbs** (`hdv.scan` / `hdv.list` / `inv.sell`) — protocol complete:
+   `ExchangeBidHouseTypeMessage` → `ExchangeBidHouseListMessage` →
+   `ExchangeBidHouseBuyMessage {uid, qty, price}`, list with
+   `ExchangeObjectMovePricedMessage {objectUID, quantity, price}`.
+2. **Quest verb** (`quest.advance`) — `NpcGenericActionRequestMessage {npcActionId:3}`
+   → `NpcDialogReplyMessage` → `QuestObjectiveValidationMessage`.
+3. **One harvest capture**, then the third verb.
+4. Run the pipeline live with **no TRM** and collect agent logs — the observation
+   piggyback is tested but has never run under a live directive.
+5. Payload fix: drop torch from the runtime (setup is already 288 MB after the
+   checkpoint cleanup, so this is now optional rather than urgent).
+6. Second agent (residual head), then fleet ingest.
