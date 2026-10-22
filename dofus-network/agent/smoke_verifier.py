@@ -319,10 +319,20 @@ def test_structural_failures_are_not_retried() -> None:
     check("no client is structural",
           error_class("client directive failed: instance 'x' is not an active client window")
           == "structural")
-    check("a timeout is transient", error_class("The operation has timed out") == "transient")
-    check("resisted is transient", error_class("resisted") == "transient")
+    check("a timeout is a transport failure",
+          error_class("The operation has timed out") == "transport")
+    check("an in-game refusal is an action failure",
+          error_class("resisted") == "action")
 
     tmp = Path(tempfile.mkdtemp())
+
+    # The measured claim: after an in-game refusal, continuing beats re-issuing.
+    c3 = Controller(state_dir=tmp, session="tz")
+    d3 = c3.on_step(Verdict("failed", 0.9, None, False, "rule"), "farm.start", False,
+                    "resisted", {}, {})
+    check("an in-game refusal continues instead of retrying", d3.action == "continue",
+          "%s/%s" % (d3.action, d3.cause))
+
     c = Controller(state_dir=tmp, session="tx")
     d = c.on_step(Verdict("failed", 0.9, None, False, "rule"), "state.snapshot", False,
                   "client directive failed: no client instance is running", {}, {})
@@ -332,7 +342,7 @@ def test_structural_failures_are_not_retried() -> None:
     c2 = Controller(state_dir=tmp, session="ty")
     d2 = c2.on_step(Verdict("failed", 0.9, None, False, "rule"), "farm.start", False,
                     "The operation has timed out", {}, {})
-    check("a transient failure still retries once", d2.action == "retry",
+    check("a transport failure still retries once", d2.action == "retry",
           "%s/%s" % (d2.action, d2.cause))
 
 

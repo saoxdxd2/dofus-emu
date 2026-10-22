@@ -5,7 +5,7 @@ process exited; the headline is what the run actually produced.
 
 | kernel | what it tests | status | result |
 |---|---|---|---|
-| `thx-02-trm-hard-world` | TRM on the noisy world (stochastic actions, stale/partial observations) | QUEUED | — |
+| `thx-02-trm-hard-world` | TRM on the noisy world (stochastic actions, stale/partial observations) | COMPLETE | acc 0.8830 @ step 1 |
 | `thx-02-trm-repair-v3` | TRM recursion (K=12) on 99k behavioural rows | COMPLETE | acc 1.0000 @ step 1 |
 | `thx-02-plan-chunk-3-steps-ahead` | GRU over 3 states -> next 3 tools | COMPLETE | exact 0.9682  per-step [0.9859, 0.982, 0.9748] |
 | `thx-02-trm-repair-v2-99k-rows-k-12` | TRM v2 — died on the dataset mount path | CANCEL_ACKNOWLEDGED | — |
@@ -13,6 +13,5 @@ process exited; the headline is what the run actually produced.
 
 ## Questions still open
 
-- **thx-02-trm-hard-world** — does recursion help once the first pass is no longer enough? (QUEUED)
 - **thx-02-trm-repair-v2-99k-rows-k-12** — (superseded by v3) (CANCEL_ACKNOWLEDGED)
 - **thx-02-trm-plan-repair** — (superseded by v3) (ERROR)

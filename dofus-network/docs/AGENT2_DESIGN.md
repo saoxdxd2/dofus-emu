@@ -191,7 +191,26 @@ Accuracy rises and overconfidence collapses across rounds — the claim in the p
 reproduced on this task. The harness prints a warning above ECE 0.15 and refuses to
 let such a model veto actions.
 
-**D35 — Recursion is rejected on this task; chunking is kept.**
+**D35 — Recursion is rejected. Twice, on two different worlds.**
+
+| world | data | TRM result |
+|---|---|---|
+| deterministic | 89,152 rows | 1.0000 at k=1, ECE 0.000 |
+| **noisy** (15% refusal, stale/partial obs) | 105,522 rows | **0.8830 at k=1**, flat to k=12, ECE 0.034 |
+
+The second run is the one that settles it: accuracy is *identical* at every one of the
+twelve recursion steps, `gain from step 1 to 12: +0.0000`. Twelve passes of a GRU cell
+over a latent produced the same answer as one. Recursion is not slow learning here; it
+is no learning. Drop it.
+
+The same run also exposed a **data** limit that matters more than the model: the noisy
+corpus contains only two tools (farm.start 62.1%, quest.advance 37.9%) out of the
+registry's eighteen, because the planner rarely emits anything else. 0.8830 against a
+62.1% majority means the model learned something real — and that the ceiling is the
+corpus, not the capacity. A model cannot choose an action that never appears in its
+data.
+
+
 Two GPU runs on a T4, 89k behavioural rows, measured rather than argued:
 
 | model | params | result |
