@@ -38,6 +38,31 @@ SEED = 7
 BATCH = 4096
 
 
+def write_diagnostics():
+    """Leave a file behind, because the log is the only thing the CLI cannot fetch.
+
+    A failing Kaggle script that prints a traceback gives you a message and no
+    evidence. Writing the mount tree to /kaggle/working means `kaggle kernels
+    output` returns the answer even when the run dies.
+    """
+    try:
+        root = Path("/kaggle/input")
+        tree = []
+        if root.exists():
+            for p in sorted(root.rglob("*"))[:200]:
+                tree.append({"path": str(p), "dir": p.is_dir(),
+                             "size": p.stat().st_size if p.is_file() else None})
+        payload = {"input_exists": root.exists(), "entries": tree,
+                   "cwd": str(Path.cwd()), "argv": __import__("sys").argv}
+        (OUT / "diagnostics.json").write_text(json.dumps(payload, indent=1),
+                                              encoding="utf-8")
+        print("mount entries:", len(tree))
+        for row in tree[:10]:
+            print("  ", row["path"])
+    except Exception as exc:  # noqa: BLE001
+        print("diagnostics failed:", exc)
+
+
 def find_input(name):
     """Locate a corpus file without assuming the mount layout.
 
@@ -133,6 +158,7 @@ def main():
     torch.manual_seed(SEED)
     np.random.seed(SEED)
     print("torch", torch.__version__, "cuda", torch.cuda.is_available())
+    write_diagnostics()
 
     x, y, w, vx, vy = load()
     print("train %d  val %d  features %d  classes %d" % (len(y), len(vy), x.shape[1], y.max() + 1))
@@ -169,7 +195,8 @@ def main():
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
-            epoch_loss += float(loss) * len(idx)
+            epoch_loss += float(loss.detach()) * len(idx)
+            last_logits, last_targets = outs[-1], ty[idx]
         sched.step()
         loss = torch.tensor(epoch_loss / max(1, n))
 
@@ -182,7 +209,10 @@ def main():
                     acc = float((o.argmax(1) == wy).float().mean())
                     p = torch.softmax(o, dim=1).cpu().numpy()
                     per_step.append((k + 1, acc, ece(p, vy)))
-                train_acc = float((outs[-1].argmax(1) == ty).float().mean())
+                # `outs` is the last *batch* now, not the whole dataset. Comparing it
+                # with the full target tensor is a shape error, and a loud one only
+                # because the batch happened to be smaller than the corpus.
+                train_acc = float((last_logits.argmax(1) == last_targets).float().mean())
 
             line = "epoch %3d  loss %.4f  train %.4f  |  " % (epoch, float(loss), train_acc)
             line += "  ".join("k%d %.4f/%.3f" % (k, a, e) for k, a, e in per_step)
