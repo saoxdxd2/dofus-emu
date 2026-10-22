@@ -162,9 +162,34 @@
         level: getLazyBatteryLevel
     });
 
-    var _appVersion = (window.appInfo && window.appInfo.version) || cfg('__DEVICE_APP_VERSION__', '3.14.2');
-    var _versionCode = (window.appInfo && window.appInfo.versionCode) || cfg('__DEVICE_VERSION_CODE__', '3014002');
-    var _buildVersion = window.buildVersion || cfg('__DEVICE_BUILD_VERSION__', '1.74.9');
+    // Version resolution, most trustworthy first. There is deliberately no
+    // hardcoded constant at the end: the client version changes with every
+    // bundle update, and announcing a stale one is worse than announcing none.
+    //
+    //   1. what the client itself already knows (loader, Config, buildVersion)
+    //   2. what the host injected (it resolves from the installed bundle, or from
+    //      client-version.ini if the user pinned one)
+    //   3. nothing - the fields are left alone so the client keeps its own
+    var _injected = {
+        app: cfg('__DEVICE_APP_VERSION__', ''),
+        code: cfg('__DEVICE_VERSION_CODE__', ''),
+        build: cfg('__DEVICE_BUILD_VERSION__', '')
+    };
+    var _appVersion = (window.appInfo && window.appInfo.version) || _injected.app || null;
+    var _versionCode = (window.appInfo && window.appInfo.versionCode) || _injected.code || null;
+    var _buildVersion = window.buildVersion || _injected.build || null;
+    if (!_appVersion) {
+        try {
+            var _cfgObj = window.Config || {};
+            _appVersion = _cfgObj.appVersion || _cfgObj.version || null;
+        } catch (e) {}
+    }
+    if (!_buildVersion) {
+        try {
+            var _m = document.querySelector && document.querySelector('meta[name="build-version"]');
+            if (_m && _m.content) _buildVersion = _m.content;
+        } catch (e) {}
+    }
 
     var FROZEN_LANGUAGES = Object.freeze ? Object.freeze(['fr-FR', 'fr', 'en-US', 'en']) : ['fr-FR', 'fr', 'en-US', 'en'];
     var navOverrides = {
@@ -177,11 +202,13 @@
     };
     for (var nk in navOverrides) { if (navOverrides[nk] !== undefined) defineProp(navigator, nk, navOverrides[nk]); }
     try {
-        window.appInfo = window.appInfo || { build: _appVersion, version: _appVersion, identifier: 'com.ankama.dofustouch', versionCode: _versionCode };
-        if (!window.appInfo.version) window.appInfo.version = _appVersion;
-        if (!window.appInfo.build) window.appInfo.build = _appVersion;
-        if (!window.appInfo.versionCode) window.appInfo.versionCode = _versionCode;
-        if (!window.buildVersion) window.buildVersion = _buildVersion;
+        window.appInfo = window.appInfo || { identifier: 'com.ankama.dofustouch' };
+        // Only fill what is known: writing null would erase the client's own
+        // value and the page would then have no version at all.
+        if (!window.appInfo.version && _appVersion) window.appInfo.version = _appVersion;
+        if (!window.appInfo.build && _appVersion) window.appInfo.build = _appVersion;
+        if (!window.appInfo.versionCode && _versionCode) window.appInfo.versionCode = _versionCode;
+        if (!window.buildVersion && _buildVersion) window.buildVersion = _buildVersion;
     } catch (e) {}
 
     try {

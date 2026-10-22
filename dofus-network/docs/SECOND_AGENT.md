@@ -88,23 +88,95 @@ nothing about generalisation. A real number needs live or human labels.
 The features (`agent.verifier.features`) are shared by trainer and runtime on
 purpose: two implementations of a feature set is how train/serve skew starts.
 
-## 4. What is still missing
+## 4. The loop is now closed (what changed)
 
-1. **A real session.** Nothing here needs to be designed; it needs `autopilot.jsonl`
-   to exist. That is a run, not a feature.
-2. **The neural head.** The dataset builder and the baseline exist; what is
-   missing is `ai/train_verifier.py` (head on the encoder trunk, INT8 ONNX export
-   with the same bit-identical check as the policy). `Verifier._load_model`
-   already takes an `.onnx` artifact — the interface is done, the model is not.
-3. **A measured veto threshold.** `--veto-threshold` exists but defaults to 0
-   (never veto). It should be set from ECE on a held-out session, not guessed.
-4. **Drift → real replan.** The loop prints `REPLAN`; wiring it to
-   `ScheduleManager.replan("drop_rate_drift")` is the next line of code, and it
-   needs a live plan to be meaningful.
-5. **Memory measurement.** 16 MB (8M INT8) + 4 MB assumed; never measured with
-   two sessions in one process.
+The question that exposed the gap: *when the actor does something wrong, does
+agent 2 change what it does next, or does it only record a verdict and print
+REPLAN?* Until this session: only record and print. Now:
 
-## 5. Falsifiers
+```
+verdict  ->  Controller.on_step(...)  ->  Decision
+                                         continue | retry | recover | replan | abort
+                        |
+                        +--> _forced_call  (the actor's next call is replaced)
+                        +--> on_replan     (the host/scheduler is asked to replan)
+```
+
+`agent/controller.py` owns what the actor must not carry:
+
+| state | purpose |
+| --- | --- |
+| objective + progress | how far along the current goal is |
+| strategy table | which recovery works, per failure cause (Wilson lower bound) |
+| failure memory | per-tool consecutive failures |
+| freshness gate | whether an observation is evidence at all |
+
+**Failure causes** are separated because they need different responses:
+`wrong_target` / `stale_state` / `incomplete` / `invalid_assumption` / `plan_wrong`.
+
+**Rules of authority** (each one tested):
+
+* first failure → `retry` the same call, once;
+* second → `recover` with a concrete different call (`state.snapshot`);
+* `not_mapped` → `replan` immediately: the tool cannot express the goal;
+* three consecutive failures of one tool → `replan` (`plan_wrong`);
+* two **fresh** drifts → `replan`; drift on a stale/identical observation is not
+  evidence and does not count;
+* drift outranks "advanced": a step can move the character and still contradict
+  the plan;
+* `abort` when there is no recovery.
+
+`Controller.observe_outcome` credits the previous decision with the next step's
+result, so the strategy table learns which recovery works instead of being
+written once and never revised. State persists to
+`%LOCALAPPDATA%\DofusFarm\controller\<session>.json`.
+
+## 5. Labels: weight, do not just count
+
+Rule verdicts are heuristics, not ground truth. `ai/build_verifier_sft.py` now
+carries a per-row `label_weight` — human 1.0, model 0.6, rule 0.3 — and both
+trainers multiply the loss by it. A thousand confident rule labels no longer
+drown ten human corrections. `--min-confidence` drops uncertain rows entirely.
+
+## 6. Veto threshold: a trade, not a number from ECE
+
+Both trainers now print a sweep: for each threshold, **% of real failures
+prevented** and **% of good actions blocked**. Choosing the threshold is a
+decision about that trade, and the table makes the cost visible instead of
+hiding it behind calibration alone.
+
+## 7. Measured memory (replaces the 137 MB assumption)
+
+`ai/measure_rss.py`, embedded runtime, both artifacts loaded in one process:
+
+| step | RSS |
+| --- | --- |
+| python only | 17.5 MB |
+| + numpy | 27.3 MB |
+| + onnxruntime | 43.9 MB |
+| + encoder_int8.onnx (25 MB file) | 83.9 MB |
+| + verifier_head.onnx | 84.0 MB |
+| after first inference | **95.3 MB** |
+
+The second agent costs **~0.1 MB** as built (33 features → 128 → 64 → 4, 52 KB),
+not the 16 MB a transformer head would have needed. The 137 MB design budget
+holds with ~42 MB spare.
+
+## 8. What is still missing
+
+1. **A live session.** Everything above is exercised offline. One real run with
+   a character is still the gate for numbers that mean anything.
+2. **Labels from the game.** The head trains, exports and loads, but on
+   rule-labelled synthetic data: it learns the rule function. Point the builder
+   at a live `autopilot.jsonl` and the same command produces a model whose score
+   is a measurement.
+3. **The planner's persistent objective.** The controller tracks progress for a
+   session; `ScheduleManager` still does not own quest/objective state across
+   restarts, so a replan currently means "ask the host", not "rebuild the plan".
+4. **Experience affecting strategy choice beyond recovery.** The strategy table
+   covers recovery per cause; it does not yet rank *plans*.
+
+## 9. Falsifiers
 
 - If the rule verdict and the model disagree on >30% of steps and the human gold
   set sides with the rules, the verifier is not worth 16 MB.

@@ -1,5 +1,7 @@
-last step line: {"index": 41, "goal": "farm the bread", "tool": "hdv.list", "args": {}, "ok": true, "error": null, "latency_ms": 812.0, "verdict": "advanced", "residual_s": 0.3
-idle form  : AI stopped - last step 42
-running form: AI running - step 42 - hdv.list advanced (model)
-no log     : AI idle
-first step : AI running - waiting for the first step
+rules: 13
+matched: 0, 1, 2, 3, 6, 7, 8, 9, 10, 11
+skipped: 4: end marker missing
+skipped: 5: needle missing
+skipped: 51: needle missing
+patched 5362093 chars, live 5362093 chars
+RESULT: IDENTICAL

@@ -5,10 +5,6 @@ packet through a local proxy that never leaks your address, and drives the game
 with a small language model plus a deterministic planner — including an
 autonomous loop that chooses its own actions and labels the outcome.
 
-**Continuing this project?** Read [`HANDOVER.md`](HANDOVER.md) first — it has the
-read order, the invariants, the four verification commands, the work queue, and a
-security item that needs attention before anything else.
-
 Nothing here is affiliated with Ankama. It is a personal automation project: the
 client is the real one, the account is yours, and everything it does is something
 a human could do by hand. Use it at your own risk, on accounts you are willing to
@@ -693,7 +689,23 @@ learning the rule function. A real number needs live or human labels.
 Each label is `verdict` (advanced / noop / failed / blocked) + `residual_s` +
 `drift` + `source`. Drift is three explainable contradictions: kamas dropped
 without a purchase, the map changed on a non-movement tool, the observation lost
-fields it had before. Two in a row prints `REPLAN`.
+fields it had before.
+
+**The label changes what happens next.** `agent/controller.py` is the second agent
+proper: it owns the objective, the progress, a per-cause strategy table and the
+failure memory, and it returns a decision the loop must obey —
+
+| decision | when | effect on the actor |
+|---|---|---|
+| `continue` | step advanced | ask the policy as usual |
+| `retry` | first failure of a tool | same call once more |
+| `recover` | second failure | a concrete different call (`state.snapshot`) |
+| `replan` | `not_mapped`, 3 failures of one tool, or two **fresh** drifts | host/scheduler asked to replan |
+| `abort` | no recovery left | the goal stops |
+
+Failure **causes** are separated (`wrong_target`, `stale_state`, `incomplete`,
+`invalid_assumption`, `plan_wrong`) because each needs a different response, and
+drift on a stale or identical observation is not counted as evidence.
 
 The rule baseline is deliberate: waiting for a dataset inverts the dependency.
 The loop has to run and fail first, and the labels fall out of it — every
@@ -795,6 +807,20 @@ engine selector was removed.
 -login-host <host>    target of the dofus.local remap
 ```
 
+### `client-version.ini` (optional)
+
+Pins the version the page announces, without a rebuild:
+
+```ini
+app=3.15.0
+code=3015000
+build=1.75.2
+```
+
+Without it the version is resolved from the installed bundle
+(`DynamicVersionResolver`), and if that fails the field is left alone rather than
+filled with a stale constant. `mobile-disguise.js` never invents a version.
+
 ### Environment
 
 | variable | effect |
@@ -877,7 +903,8 @@ pre-flight cannot veto without a model.
 * **No verifier model yet.** The rules are the baseline; the ONNX hook is inert.
 * **Drift prints `REPLAN`; it does not yet call the scheduler.** One line of
   wiring, needs a live plan to mean anything.
-* **Memory for two models in one process is assumed (≈137 MB), not measured.**
+* **Two models in one process measured at 95.3 MB** (`ai/measure_rss.py`), so the
+  137 MB design budget holds — but only on this machine, with these artifacts.
 * **Legacy Android path is unmaintained** and excluded from the default build.
 
 ---
@@ -899,7 +926,6 @@ pre-flight cannot veto without a model.
 | `dofus-network/docs/BENCH_30M.md` | encoder benchmark, 30-minute run |
 | `dofus-network/docs/ARCH_REASSESSMENT.md` | what changed and why |
 | `dofus-network/docs/AI_ANALYSIS.md` | analysis of the model behaviour |
-| `HANDOVER.md` (root) | how to pick the project up cold: read order, invariants, traps, queue |
 
 ---
 

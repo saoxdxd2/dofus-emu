@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
+from agent.controller import Controller, Decision
 from agent.verifier import Verdict, Verifier
 from agent.schema import TOOL_SCHEMA, validate_call
 
@@ -133,6 +134,15 @@ class Autopilot:
         self.max_steps = max_steps
         self.session = uuid.uuid4().hex[:8]
         self.verifier = Verifier(model_path=verifier_model, veto_threshold=veto_threshold)
+        # Agent 2: owns the objective, the strategy table and the failure memory.
+        # The verifier answers "did that work"; the controller decides what the
+        # actor does next, which is the part that used to be missing.
+        self.controller = Controller(session=self.session)
+        self.controller.set_objective("; ".join(goals))
+        self.controller.load()
+        self.on_replan = None            # set by the host: (reason, decision) -> None
+        self._forced_call: Optional[ToolCall] = None
+        self._pending: Optional[Decision] = None
         self._drift_streak = 0
         self.replan_requested = 0
         self.deadline = time.time() + minutes * 60.0 if minutes > 0 else 0.0
@@ -265,7 +275,12 @@ class Autopilot:
                     return self.summary(reason)
 
                 before = self.observe()
-                call = self.runtime.policy.choose(goal, before or {}, tools)
+                if self._forced_call is not None:
+                    call = self._forced_call
+                    self._forced_call = None
+                    print(f"[autopilot] agent2 directs: {call.tool} {call.args}")
+                else:
+                    call = self.runtime.policy.choose(goal, before or {}, tools)
                 if call is None:
                     self._emit(Step(index=self._index, goal=goal, tool="-", args={},
                                     ok=False, error="policy returned no call",
@@ -362,13 +377,23 @@ class Autopilot:
                     except Exception:  # noqa: BLE001 - a UI callback must not kill the run
                         pass
 
-                if v.drift:
-                    self._drift_streak += 1
-                    if self._drift_streak >= 2:
-                        self.replan_requested += 1
-                        print("[autopilot] REPLAN: observation contradicted the plan twice in a row")
-                else:
-                    self._drift_streak = 0
+                # ---- agent 2 decides what happens next ----------------------
+                # First credit the previous decision with this outcome, then ask
+                # for a new one. Without the credit step the strategy table never
+                # learns which recovery works, and the controller degrades into a
+                # counter that happens to have opinions.
+                if self._pending is not None:
+                    self.controller.observe_outcome(self._pending, v)
+                    self._pending = None
+
+                decision = self.controller.on_step(v, call.tool, result.ok, result.error,
+                                                   before, after)
+                self._pending = decision
+                self.controller.save()
+
+                outcome = self._apply_decision(decision, goal, call)
+                if outcome == "abort":
+                    break
 
                 if not result.ok:
                     failures += 1
@@ -416,6 +441,35 @@ class Autopilot:
         except Exception:  # noqa: BLE001
             pass
 
+    def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
+        """Turn agent 2's decision into what the actor does on the next step.
+
+        Separate from the loop so it can be tested without a client: this is the
+        join between "we noticed something" and "we changed what happens", and it
+        is the thing that used to be missing entirely.
+        """
+        if decision.action == "retry":
+            self._forced_call = call
+            return "retry"
+        if decision.action == "recover" and decision.next_call:
+            self._forced_call = ToolCall(tool=decision.next_call["tool"],
+                                         args=dict(decision.next_call.get("args") or {}),
+                                         goal=goal)
+            return "recover"
+        if decision.action == "replan":
+            self.replan_requested += 1
+            print(f"[autopilot] REPLAN ({decision.cause}): {decision.reason}")
+            if self.on_replan is not None:
+                try:
+                    self.on_replan(decision.reason, decision)
+                except Exception:  # noqa: BLE001 - a host callback must not kill the run
+                    pass
+            return "replan"
+        if decision.action == "abort":
+            print(f"[autopilot] agent2 aborts {goal!r}: {decision.reason}")
+            return "abort"
+        return "continue"
+
     def summary(self, reason: str) -> Dict[str, Any]:
         counts: Dict[str, int] = {}
         for step in self.steps:
@@ -430,6 +484,7 @@ class Autopilot:
             "verdicts": counts,
             "label_sources": sources,
             "replan_requested": self.replan_requested,
+            "controller": self.controller.stats(),
             "open_listings": len(self.open_listings),
             "log": str(self.log_path),
             "elapsed_s": round(self.steps[-1].at - self.steps[0].at, 1) if len(self.steps) > 1 else 0.0,

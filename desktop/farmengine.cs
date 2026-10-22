@@ -307,9 +307,54 @@ namespace DofusFarm.Engine
         internal static string InterpolateDisguise(string rawJs, string uuid, string serial, DeviceProfile p, string defaultUa = "", string appVersion = null, string versionCode = null, string buildVersion = null)
         {
             if (string.IsNullOrEmpty(rawJs)) return "";
-            string av = !string.IsNullOrEmpty(appVersion) ? appVersion : "3.14.2";
-            string vc = !string.IsNullOrEmpty(versionCode) ? versionCode : "3014002";
-            string bv = !string.IsNullOrEmpty(buildVersion) ? buildVersion : "1.74.9";
+
+            // The version must never be a literal in here. Ankama ships new
+            // bundles (3.14.2 -> 3.14.3 -> ...) and a disguise that keeps
+            // announcing the old one is a mismatch the server can see. Resolve it
+            // from the bundle that is actually installed, in this order:
+            //   1. an explicit argument (the caller knows better),
+            //   2. client-version.ini next to the exe (manual pin, no rebuild),
+            //   3. DynamicVersionResolver (reads the installed client),
+            //   4. empty, which tells the page "unknown" instead of lying.
+            string av = appVersion, vc = versionCode, bv = buildVersion;
+            try
+            {
+                string overridePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client-version.ini");
+                if (File.Exists(overridePath))
+                {
+                    foreach (string raw in File.ReadAllLines(overridePath))
+                    {
+                        string line = raw.Trim();
+                        if (line.Length == 0 || line.StartsWith("#") || line.StartsWith(";")) continue;
+                        int eq = line.IndexOf('=');
+                        if (eq <= 0) continue;
+                        string key = line.Substring(0, eq).Trim().ToLowerInvariant();
+                        string val = line.Substring(eq + 1).Trim();
+                        if (key == "app" && string.IsNullOrEmpty(av)) av = val;
+                        else if (key == "code" && string.IsNullOrEmpty(vc)) vc = val;
+                        else if (key == "build" && string.IsNullOrEmpty(bv)) bv = val;
+                    }
+                }
+            }
+            catch { }
+
+            if (string.IsNullOrEmpty(av) || string.IsNullOrEmpty(vc) || string.IsNullOrEmpty(bv))
+            {
+                try
+                {
+                    DofusVersionInfo resolved = DynamicVersionResolver.ResolveVersion(null, false, null);
+                    if (resolved != null)
+                    {
+                        if (string.IsNullOrEmpty(av)) av = resolved.AppVersion;
+                        if (string.IsNullOrEmpty(vc)) vc = resolved.VersionCode;
+                        if (string.IsNullOrEmpty(bv)) bv = resolved.BuildVersion;
+                    }
+                }
+                catch { }
+            }
+            av = av ?? "";
+            vc = vc ?? "";
+            bv = bv ?? "";
 
             return new StringBuilder(rawJs, rawJs.Length + 256)
                 .Replace("__DEVICE_UUID__", uuid ?? "ca8ea76b0fe32f85")

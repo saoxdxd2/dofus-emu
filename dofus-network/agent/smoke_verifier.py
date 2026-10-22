@@ -167,6 +167,127 @@ def test_baseline_model() -> None:
     check("human beats the model", r.source == "human" and r.verdict == "blocked", r.source)
 
 
+def test_controller_changes_the_next_action() -> None:
+    """The point of the whole exercise: does agent 2 alter what happens next?"""
+    print("\n== agent 2 controller ==")
+    from agent.controller import Controller
+    from agent.runtime import ToolCall
+
+    tmp = Path(tempfile.mkdtemp())
+
+    def v(verdict, drift=False):
+        return Verdict(verdict, 0.8, None, drift, "rule")
+
+    c = Controller(state_dir=tmp, session="t1")
+    ok_obs = base_obs()
+
+    d = c.on_step(v("failed"), "hdv.list", False, "connection reset", ok_obs, None)
+    check("first failure -> retry, not silence", d.action == "retry", d.action)
+    check("retry keeps the same call", d.next_call is None, str(d.next_call))
+
+    d = c.on_step(v("failed"), "hdv.list", False, "connection reset", ok_obs, None)
+    check("second failure -> a different action", d.action == "recover", d.action)
+    check("recover names a concrete next call",
+          d.next_call is not None and d.next_call.get("tool") == "state.snapshot",
+          str(d.next_call))
+
+    d = c.on_step(v("blocked"), "quest.advance", False, "not_mapped: npc 4211", ok_obs, None)
+    check("not_mapped -> replan immediately (the plan is wrong, not the call)",
+          d.action == "replan" and d.cause == "invalid_assumption", "%s/%s" % (d.action, d.cause))
+
+    c2 = Controller(state_dir=tmp, session="t2")
+    for _ in range(3):
+        d = c2.on_step(v("failed"), "farm.start", False, "cannot reach", ok_obs, None)
+    check("three failures of one tool -> replan", d.action == "replan", d.action)
+    check("cause is plan_wrong after repetition", d.cause in ("plan_wrong", "wrong_target"), d.cause)
+
+    # drift authority, with the freshness gate
+    c3 = Controller(state_dir=tmp, session="t3")
+    c3.on_step(v("advanced"), "farm.step", True, None, ok_obs, base_obs(cell=101))
+    d1 = c3.on_step(v("advanced", drift=True), "farm.step", True, None, base_obs(cell=101), base_obs(cell=102))
+    d2 = c3.on_step(v("advanced", drift=True), "farm.step", True, None, base_obs(cell=102), base_obs(cell=103))
+    check("two fresh drifts -> replan", d2.action == "replan" and d2.cause == "stale_state",
+          "%s/%s" % (d2.action, d2.cause))
+
+    c4 = Controller(state_dir=tmp, session="t4")
+    same = base_obs()
+    c4.on_step(v("advanced"), "farm.step", True, None, same, dict(same))
+    d1 = c4.on_step(v("advanced", drift=True), "farm.step", True, None, same, dict(same))
+    d2 = c4.on_step(v("advanced", drift=True), "farm.step", True, None, same, dict(same))
+    check("stale (identical) observations do not replan", d2.action != "replan", d2.action)
+
+    # memory: a recovery that worked becomes the preferred one
+    c5 = Controller(state_dir=tmp, session="t5")
+    dec = c5.on_step(v("failed"), "hdv.scan", False, "unknown id 999", ok_obs, None)
+    c5.observe_outcome(dec, v("advanced"))
+    strat, score = c5._best_strategy("wrong_target")
+    check("successful recovery is remembered", score > 0.0 and strat != "", "%s %.2f" % (strat, score))
+
+    c5.save()
+    c6 = Controller(state_dir=tmp, session="t5")
+    c6.load()
+    check("state survives a restart", any(k.startswith("wrong_target") for k in c6._strategies),
+          str(list(c6._strategies)))
+
+
+def test_loop_applies_the_decision() -> None:
+    """The join: a decision must actually change the actor's next call."""
+    print("\n== loop wiring ==")
+    from agent.controller import Decision
+    from agent.runtime import ToolCall
+
+    tmp = Path(tempfile.mkdtemp())
+    ap = Autopilot(runtime=object(), goals=["g"], log_path=tmp / "a.jsonl",
+                   stop_file=tmp / "S", max_steps=1)
+    call = ToolCall(tool="hdv.list", args={"item": 1}, goal="g")
+
+    out = ap._apply_decision(Decision("recover", "wrong_target", "x",
+                                      {"tool": "state.snapshot", "args": {}}, "recover"), "g", call)
+    check("recover sets a forced call", out == "recover" and ap._forced_call is not None,
+          str(ap._forced_call))
+    check("forced call is the recovery, not the original",
+          ap._forced_call.tool == "state.snapshot", ap._forced_call.tool)
+
+    ap._forced_call = None
+    out = ap._apply_decision(Decision("retry", "unknown", "x", None, "retry"), "g", call)
+    check("retry re-issues the same call", out == "retry" and ap._forced_call.tool == "hdv.list",
+          str(ap._forced_call))
+
+    seen = []
+    ap.on_replan = lambda reason, d: seen.append(d.cause)
+    ap._apply_decision(Decision("replan", "plan_wrong", "3 failures", None, "replan"), "g", call)
+    check("replan reaches the host callback", seen == ["plan_wrong"] and ap.replan_requested == 1,
+          str(seen))
+
+    out = ap._apply_decision(Decision("abort", "plan_wrong", "x", None, "abort"), "g", call)
+    check("abort stops the goal", out == "abort", out)
+
+
+def test_onnx_head() -> None:
+    """The neural head must load through onnxruntime and predict like the model."""
+    print("\n== onnx head ==")
+    path = REPO_ROOT / "models" / "verifier_head.onnx"
+    if not path.exists():
+        print("  [SKIP] no models/verifier_head.onnx")
+        return
+    try:
+        import onnxruntime  # noqa: F401
+    except Exception:
+        print("  [SKIP] onnxruntime not installed (use runtimes\\python)")
+        return
+
+    v = Verifier(model_path=path, human_path=Path(tempfile.gettempdir()) / "nonexistent_human.jsonl")
+    check("onnx head loaded", hasattr(v._session, "run"), v.model_note)
+
+    r = v.label("hdv.list", {}, True, None, base_obs(), base_obs(cell=101), 100.0)
+    check("onnx labels an advance", r.source == "model" and r.verdict == "advanced",
+          "%s/%s p=%s" % (r.source, r.verdict, r.confidence))
+
+    r = v.label("hdv.list", {}, False, "connection reset", base_obs(), None, 100.0)
+    check("onnx labels a failure", r.source == "model" and r.verdict == "failed",
+          "%s/%s" % (r.source, r.verdict))
+
+
 def test_preflight_is_inert_without_a_model() -> None:
     print("\n== pre-flight ==")
     v = Verifier(human_path=Path(tempfile.gettempdir()) / "nonexistent_human.jsonl")
@@ -181,6 +302,9 @@ def main() -> int:
     test_human_override()
     test_loop_wiring()
     test_baseline_model()
+    test_onnx_head()
+    test_controller_changes_the_next_action()
+    test_loop_applies_the_decision()
     test_preflight_is_inert_without_a_model()
 
     failed = [r for r in RESULTS if not r[1]]

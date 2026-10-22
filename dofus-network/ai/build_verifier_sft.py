@@ -41,6 +41,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 VERDICTS = ("advanced", "noop", "failed", "blocked")
+
+# How much a label from each source is worth when training. A rule verdict is a
+# heuristic; a human verdict is the only real ground truth. Without this, a
+# thousand confident rule labels drown the ten corrections that actually matter.
+SOURCE_WEIGHT = {"human": 1.0, "model": 0.6, "rule": 0.3}
 DEFAULT_OUT = REPO_ROOT / "data" / "verifier_sft"
 
 
@@ -84,8 +89,12 @@ def _target(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def build_example(row: Dict[str, Any], idx: int) -> Tuple[Optional[Dict[str, Any]], str]:
+def build_example(row: Dict[str, Any], idx: int,
+                  min_confidence: float = 0.0) -> Tuple[Optional[Dict[str, Any]], str]:
     """One step -> one example, or (None, reason) when it cannot be used."""
+    conf = row.get("confidence")
+    if min_confidence > 0 and isinstance(conf, (int, float)) and conf < min_confidence:
+        return None, "below confidence floor"
     target = _target(row)
     if target is None:
         return None, "no verdict"
@@ -116,18 +125,20 @@ def build_example(row: Dict[str, Any], idx: int) -> Tuple[Optional[Dict[str, Any
         "obs_before": before,
         "obs_after": after,
         "label_source": row.get("source", "rule"),
+        "label_weight": SOURCE_WEIGHT.get(row.get("source", "rule"), 0.3),
+        "confidence": row.get("confidence"),
         "target": target,
     }, ""
 
 
-def collect(paths: Sequence[Path]) -> Tuple[List[Dict[str, Any]], Counter]:
+def collect(paths: Sequence[Path], min_confidence: float = 0.0) -> Tuple[List[Dict[str, Any]], Counter]:
     examples: List[Dict[str, Any]] = []
     dropped: Counter = Counter()
     for path in paths:
         rows = read_jsonl(path)
         for i, row in enumerate(rows):
             row.setdefault("_source_file", path.stem)
-            ex, why = build_example(row, i)
+            ex, why = build_example(row, i, min_confidence)
             if ex is None:
                 dropped[why] += 1
                 continue
@@ -254,6 +265,7 @@ def describe(name: str, rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "verdict_pct": {k: round(100.0 * v / total, 1) for k, v in verdicts.items()},
         "tools": dict(tools.most_common()),
         "label_sources": dict(sources),
+        "label_weight_sum": round(sum(r.get("label_weight", 0.0) for r in rows), 2),
         "drift_rate": round(drift / total, 3),
         "sessions": len({r["session"] for r in rows}),
     }
@@ -271,6 +283,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--oversample", type=int, default=3,
                     help="repeat rare classes in train by this factor (1 = off)")
+    ap.add_argument("--min-confidence", type=float, default=0.0,
+                    help="drop rows whose label confidence is below this (rule labels carry one)")
     ap.add_argument("--selfcheck", action="store_true",
                     help="generate a synthetic session with the real verifier and use it")
     ap.add_argument("--selfcheck-count", type=int, default=240)
@@ -279,7 +293,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.selfcheck:
         rows = selfcheck_steps(args.selfcheck_count, args.seed)
-        examples, dropped = collect_from_rows(rows, "selfcheck")
+        examples, dropped = collect_from_rows(rows, "selfcheck", args.min_confidence)
     else:
         paths: List[Path] = []
         if args.input:
@@ -293,7 +307,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("no input found (looked for %s). Run the loop, or use --selfcheck."
                   % ", ".join(str(p) for p in (args.input or ["%LOCALAPPDATA%\\DofusFarm\\autopilot.jsonl"])))
             return 2
-        examples, dropped = collect(paths)
+        examples, dropped = collect(paths, args.min_confidence)
 
     if not examples:
         print("no usable examples. dropped: %s" % dict(dropped))
@@ -309,6 +323,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "train": describe("train", train_bal),
         "val": describe("val", val),
         "oversample": args.oversample,
+        "min_confidence": args.min_confidence,
         "val_fraction": args.val_fraction,
         "seed": args.seed,
     }
@@ -325,12 +340,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
-def collect_from_rows(rows: Sequence[Dict[str, Any]], source: str) -> Tuple[List[Dict[str, Any]], Counter]:
+def collect_from_rows(rows: Sequence[Dict[str, Any]], source: str,
+                      min_confidence: float = 0.0) -> Tuple[List[Dict[str, Any]], Counter]:
     examples: List[Dict[str, Any]] = []
     dropped: Counter = Counter()
     for i, row in enumerate(rows):
         row.setdefault("_source_file", source)
-        ex, why = build_example(row, i)
+        ex, why = build_example(row, i, min_confidence)
         if ex is None:
             dropped[why] += 1
             continue

@@ -146,7 +146,9 @@ namespace DofusFarm
                 sb.AppendLine("running form: " + UI.AiPanel.FormatStatus(true, line));
                 sb.AppendLine("no log     : " + UI.AiPanel.FormatStatus(false, null));
                 sb.AppendLine("first step : " + UI.AiPanel.FormatStatus(true, null));
-                return Finish(sb, line == null ? 1 : 0, "ai-status-selftest.txt");
+                // Exit 0 even with no log: "no loop has run yet" is a valid state,
+                // not a failure of the formatter.
+                return Finish(sb, 0, "ai-status-selftest.txt");
             }
             catch (Exception ex)
             {

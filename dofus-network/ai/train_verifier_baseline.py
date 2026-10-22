@@ -48,9 +48,10 @@ def read_rows(path: Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def vectorise(rows: Sequence[Dict[str, Any]]) -> Tuple[List[List[float]], List[int]]:
+def vectorise(rows: Sequence[Dict[str, Any]]) -> Tuple[List[List[float]], List[int], List[float]]:
     xs: List[List[float]] = []
     ys: List[int] = []
+    ws: List[float] = []
     for r in rows:
         t = r.get("target") or {}
         vid = t.get("verdict_id")
@@ -63,7 +64,8 @@ def vectorise(rows: Sequence[Dict[str, Any]]) -> Tuple[List[List[float]], List[i
                            r.get("obs_before"), r.get("obs_after"),
                            r.get("latency_ms") or 0.0))
         ys.append(int(vid))
-    return xs, ys
+        ws.append(float(r.get("label_weight", 0.3)))
+    return xs, ys, ws
 
 
 def softmax(logits: Sequence[float]) -> List[float]:
@@ -78,7 +80,7 @@ def predict(w: List[List[float]], b: List[float], x: Sequence[float]) -> List[fl
 
 
 def train(xs: List[List[float]], ys: List[int], epochs: int, lr: float,
-          l2: float, seed: int) -> Tuple[List[List[float]], List[float]]:
+          l2: float, seed: int, ws: Optional[List[float]] = None) -> Tuple[List[List[float]], List[float]]:
     rng = random.Random(seed)
     n_feat = len(xs[0])
     n_cls = len(VERDICTS)
@@ -101,10 +103,11 @@ def train(xs: List[List[float]], ys: List[int], epochs: int, lr: float,
         total = 0.0
         for i in order:
             x, y = xs[i], ys[i]
+            sample_w = ws[i] if ws else 1.0
             p = predict(w, b, x)
-            total += -math.log(max(1e-9, p[y])) * weights[y]
+            total += -math.log(max(1e-9, p[y])) * weights[y] * sample_w
             for c in range(n_cls):
-                g = (p[c] - (1.0 if c == y else 0.0)) * weights[y]
+                g = (p[c] - (1.0 if c == y else 0.0)) * weights[y] * sample_w
                 if g == 0.0:
                     continue
                 wc = w[c]
@@ -141,6 +144,40 @@ def evaluate(w: List[List[float]], b: List[float],
     }
 
 
+def sweep_veto(w: List[List[float]], b: List[float],
+               xs: List[List[float]], ys: List[int]) -> List[Dict[str, Any]]:
+    """Cost of a veto, not just its accuracy.
+
+    A verifier that blocks harmful actions but also blocks many good ones makes
+    the agent worse. For each threshold: how many real failures would be
+    prevented, and how many working actions would be blocked instead. The right
+    threshold is a decision about that trade, not about ECE.
+    """
+    failed_ids = {VERDICTS.index("failed"), VERDICTS.index("blocked")}
+    advanced_id = VERDICTS.index("advanced")
+    rows = []
+    total_failed = sum(1 for y in ys if y in failed_ids) or 1
+    total_advanced = sum(1 for y in ys if y == advanced_id) or 1
+
+    for step in range(5, 20):
+        t = step / 20.0
+        prevented = blocked_good = 0
+        for x, y in zip(xs, ys):
+            p = predict(w, b, x)
+            best = p.index(max(p))
+            if best in failed_ids and p[best] >= t:
+                if y in failed_ids:
+                    prevented += 1
+                elif y == advanced_id:
+                    blocked_good += 1
+        rows.append({
+            "threshold": round(t, 2),
+            "failures_prevented_pct": round(100.0 * prevented / total_failed, 1),
+            "good_actions_blocked_pct": round(100.0 * blocked_good / total_advanced, 1),
+        })
+    return rows
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -159,22 +196,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("missing %s - run ai/build_verifier_sft first" % args.train)
         return 2
 
-    xs, ys = vectorise(read_rows(args.train))
+    xs, ys, ws = vectorise(read_rows(args.train))
     if not xs:
         print("no usable training rows")
         return 1
     print("train: %d examples, %d features, classes %s" % (len(xs), len(xs[0]), list(VERDICTS)))
 
-    w, b = train(xs, ys, args.epochs, args.lr, args.l2, args.seed)
+    w, b = train(xs, ys, args.epochs, args.lr, args.l2, args.seed, ws)
     metrics = {"train": evaluate(w, b, xs, ys)}
 
     if args.val and args.val.exists():
-        vxs, vys = vectorise(read_rows(args.val))
+        vxs, vys, _ = vectorise(read_rows(args.val))
         if vxs:
             metrics["val"] = evaluate(w, b, vxs, vys)
             print("val accuracy: %.4f on %d examples" % (metrics["val"]["accuracy"], len(vxs)))
             for name, row in metrics["val"]["per_class"].items():
                 print("  %-9s support %3d  recall %s" % (name, row["support"], row["recall"]))
+            metrics["veto_sweep"] = sweep_veto(w, b, vxs, vys)
+            print("veto trade-off (threshold / failures prevented / good actions blocked):")
+            for row in metrics["veto_sweep"]:
+                print("  %.2f  %5.1f%%  %5.1f%%" % (row["threshold"],
+                                                    row["failures_prevented_pct"],
+                                                    row["good_actions_blocked_pct"]))
 
     payload = {
         "kind": "verifier-baseline",

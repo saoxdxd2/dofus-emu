@@ -240,7 +240,9 @@ class Verifier:
         self.veto_threshold = float(veto_threshold)
         self._session: Any = None
         self._baseline: Optional[Dict[str, Any]] = None
+        self._onnx_input: str = "features"
         self.model_min_confidence = 0.5
+        self.model_error = ""
         self._model_note = "no verifier model (rules only)"
         if model_path:
             self._session = self._load_model(Path(model_path))
@@ -273,7 +275,8 @@ class Verifier:
                 self._model_note = "model not found: %s (rules only)" % path
                 return None
             session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-            self._model_note = "model %s" % path.name
+            self._onnx_input = session.get_inputs()[0].name
+            self._model_note = "onnx %s (%d features)" % (path.name, session.get_inputs()[0].shape[-1])
             return session
         except Exception as exc:  # noqa: BLE001 - a missing model must not stop the loop
             self._model_note = "model unavailable (%s); rules only" % exc
@@ -291,6 +294,27 @@ class Verifier:
         Returning None on low confidence is deliberate: the rules are a decent
         baseline, and a linear model's 0.35 is not a reason to overrule them.
         """
+        # `_session` is the ONNX session or the string "baseline"; only a real
+        # session has run(). Checking `is not None` alone sent the baseline down
+        # the ONNX path, where it raised and silently fell back to the rules.
+        if self._session is not None and hasattr(self._session, "run"):
+            try:
+                import numpy as np
+                x = np.asarray([features(tool, ok, error, before, after, latency_ms)],
+                               dtype="float32")
+                logits = self._session.run(None, {self._onnx_input: x})[0][0]
+                m = float(max(logits))
+                ex = [math.exp(float(z) - m) for z in logits]
+                total = sum(ex) or 1.0
+                probs = [e / total for e in ex]
+                best = max(range(len(probs)), key=lambda i: probs[i])
+                if probs[best] < self.model_min_confidence:
+                    return None
+                return Verdict(VERDICTS[best], round(probs[best], 3), None, False, "model",
+                               ("onnx p=%.2f" % probs[best],))
+            except Exception:
+                return None
+
         if self._baseline is None:
             return None
         try:
@@ -309,7 +333,8 @@ class Verifier:
                 return None
             return Verdict(classes[best], round(conf, 3), None, False, "model",
                            ("model p=%.2f" % conf,))
-        except Exception:
+        except Exception as exc:
+            self.model_error = repr(exc)
             return None
 
     # -- public ------------------------------------------------------------
