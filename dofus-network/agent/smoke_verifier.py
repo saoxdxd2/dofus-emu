@@ -422,26 +422,57 @@ def test_knowledge_changes_the_plan() -> None:
     store = KnowledgeStore(tmp / "k.jsonl")
     planner = QuestPlanner(level_hint=60, store=store)
 
-    qid = None
+    # A talk objective the KB does not place on a map: the plan has no travel of its
+    # own, so any nav.goto after this point can only come from the learned fact.
+    found = None
     for q, data in planner.quests.items():
-        objs = (data["steps"][0].get("objectives") or [])
-        if objs and objs[0].get("type_id") in (1, 9):
-            qid = q
+        for si, step in enumerate(data["steps"]):
+            for oi, o in enumerate(step.get("objectives") or []):
+                if o.get("type_id") in (1, 9) and not o.get("map_id"):
+                    found = (q, si, oi)
+                    break
+            if found:
+                break
+        if found:
             break
-    if qid is None:
-        print("  [SKIP] no talk-first quest in the KB")
+    if found is None:
+        print("  [SKIP] no unplaced talk objective in the KB")
         return
 
-    obj = planner.quests[qid]["steps"][0]["objectives"][0]
+    qid, si, oi = found
+    obj = planner.quests[qid]["steps"][si]["objectives"][oi]
     npc = _json.loads(str(obj["params"]).replace("'", '"'))["parameter0"]
     obs = {"map_id": None, "inventory": {}}
 
-    before = [c["tool"] for c in planner.plan_objective(planner.quests[qid], 0, obj, obs)]
+    before = [c["tool"] for c in planner.plan_objective(planner.quests[qid], si, obj, obs)]
     store.remember("npc_map", "npc:%d" % npc, 4242, source="human", confidence=0.9)
-    after = [c["tool"] for c in planner.plan_objective(planner.quests[qid], 0, obj, obs)]
+    after = [c["tool"] for c in planner.plan_objective(planner.quests[qid], si, obj, obs)]
 
-    check("a learned npc_map adds travel to the plan", after != before and after[0] == "nav.goto",
+    check("a learned npc_map adds travel to the plan",
+          "nav.goto" not in before and bool(after) and after[0] == "nav.goto",
           "%s -> %s" % (before, after))
+
+    # And the other half of the contract: when the objective itself names a map,
+    # travel does not need to be learned at all.
+    placed = None
+    for q, data in planner.quests.items():
+        for si2, step in enumerate(data["steps"]):
+            for oi2, o in enumerate(step.get("objectives") or []):
+                if o.get("map_id") and o.get("type_id") in (1, 9):
+                    placed = (q, si2, oi2)
+                    break
+            if placed:
+                break
+        if placed:
+            break
+    if placed:
+        q2, si3, oi3 = placed
+        obj2 = planner.quests[q2]["steps"][si3]["objectives"][oi3]
+        plan = planner.plan_objective(planner.quests[q2], si3, obj2,
+                                      {"map_id": None, "inventory": {}})
+        check("an objective that names a map travels there unasked",
+              bool(plan) and plan[0]["tool"] == "nav.goto",
+              "%s" % [c["tool"] for c in plan])
 
 
 def test_idle_trainer_respects_the_lock() -> None:

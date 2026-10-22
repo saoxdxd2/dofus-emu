@@ -66,8 +66,8 @@ class RulePolicy:
 
 
 def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
-        verbose: bool = False) -> Dict[str, Any]:
-    world = World(level=level, seed=seed, max_steps=steps)
+        verbose: bool = False, noise: bool = False) -> Dict[str, Any]:
+    world = World(level=level, seed=seed, max_steps=steps, noise=noise)
     goal = GOALS[0]
     while world.steps < steps:
         obs = world.observe()
@@ -75,12 +75,19 @@ def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
         if call is None:
             break
         ok, note = world.step(call.tool, call.args)
+        # Report the outcome back to the policy. A policy that cannot see whether its
+        # last call worked cannot learn a repair, and one that guesses from an
+        # observation delta is being trained on a different signal than it is served.
+        reporter = getattr(policy, "note_result", None)
+        if reporter is not None:
+            reporter(call.tool, ok, note, obs)
         if verbose and world.steps % 50 == 0:
             print("  step %4d  %-14s %-5s %s" % (world.steps, call.tool,
                                                  "ok" if ok else "no", note[:50]))
     score = world.score()
     score["policy"] = type(policy).__name__
     score["level"] = level
+    score["noise"] = noise
     return score
 
 
@@ -93,6 +100,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--steps", type=int, default=500)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--noise", action="store_true",
+                    help="stochastic actions, stale and partial observations")
     args = ap.parse_args(argv)
 
     if args.policy == "planner":
@@ -107,7 +116,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         policy = RulePolicy()
 
-    score = run(policy, args.level, args.steps, args.seed, args.verbose)
+    score = run(policy, args.level, args.steps, args.seed, args.verbose, args.noise)
     print(json.dumps(score, indent=1))
     return 0
 

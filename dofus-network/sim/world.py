@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from agent.features import objective_type
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
 
@@ -45,6 +47,16 @@ AREA_TYPES = {5}
 KILL_TYPES = {0, 6, 14, 16}
 DELIVER_TYPES = {2, 3, 12}
 CRAFT_TYPES = {17}
+
+# Type 6 says "defeat X *in a fight*"; the open-world types do not. Keeping them
+# apart is what gives fight.join a job that farm.start cannot do, and a tool that
+# cannot be told from another tool is not a decision, it is noise in the label space.
+FIGHT_TYPES = {6}
+OPEN_KILL_TYPES = KILL_TYPES - FIGHT_TYPES
+
+# A stack limit is the only reason to ever sell something. Without it inv.sell is a
+# tool with no state effect, which means no counterfactual can ever prefer it.
+DEFAULT_CAPACITY = 40
 
 
 def _load(name: str) -> Any:
@@ -111,6 +123,7 @@ class World:
         self.map_id: Optional[int] = None
         self.kamas = 5000
         self.inventory: Dict[int, int] = {}
+        self.capacity = DEFAULT_CAPACITY
         self.quests_done: Set[int] = set()
         self.active: Dict[int, int] = {}          # quest id -> step index
         self.objectives_done: Set[Tuple[int, int, int]] = set()
@@ -129,6 +142,10 @@ class World:
         self.obs_lag = obs_lag
         self.obs_drop = obs_drop
         self._previous_obs: Optional[Dict[str, Any]] = None
+        # Set by a read action: the next observation is served from the client, not
+        # from the stale cache. This is the whole value of reading.
+        self._force_fresh = False
+        self.last_obs_kind = "fresh"
 
     def clone(self) -> "World":
         """A copy that shares the knowledge base but not the mutable state.
@@ -159,6 +176,9 @@ class World:
         twin.obs_lag = self.obs_lag
         twin.obs_drop = self.obs_drop
         twin._previous_obs = self._previous_obs
+        twin._force_fresh = self._force_fresh
+        twin.last_obs_kind = self.last_obs_kind
+        twin.capacity = self.capacity
         return twin
 
     # -- observations ------------------------------------------------------
@@ -166,25 +186,56 @@ class World:
     def observe(self) -> Dict[str, Any]:
         obs = self._observe_now()
         if not self.noise:
+            self.last_obs_kind = "fresh"
+            return obs
+        # A read was just executed: the client answers with the truth. This is the
+        # only thing a read action buys, and without it every read tool is provably
+        # worthless and the corpus teaches "never look".
+        if self._force_fresh:
+            self._force_fresh = False
+            self._previous_obs = dict(obs)
+            self.last_obs_kind = "fresh"
             return obs
         # Stale: the client re-serves the previous snapshot while an animation plays.
         if self._previous_obs is not None and self.rng.random() < self.obs_lag:
+            self.last_obs_kind = "stale"
             return dict(self._previous_obs)
         # Partial: a field the UI has not refreshed yet reads as absent.
         if self.rng.random() < self.obs_drop:
             obs = dict(obs)
             obs["inventory"] = {}
+            self.last_obs_kind = "partial"
+        else:
+            self.last_obs_kind = "fresh"
         self._previous_obs = dict(obs)
         return obs
 
     def _observe_now(self) -> Dict[str, Any]:
+        cur = self.current_objective()
+        tracker = None
+        if cur is not None:
+            q, step_idx, obj_idx, obj = cur
+            tracker = {"quest_id": q.id, "step": step_idx, "objective_id": obj.get("id"),
+                       "type_id": objective_type(obj),
+                       "map_id": self._required_map(obj)}
         return {
             "level": self.level,
             "map_id": self.map_id,
             "kamas": self.kamas,
             "inventory": dict(self.inventory),
-            "quests_done": sorted(self.quests_done)[-20:],
+            "inventory_capacity": self.capacity,
+            # The whole set, not the last 20. Truncating it here was a silent
+            # correctness bug: the planner treats this list as "which quests are
+            # finished", so after twenty quests the twenty-first became invisible,
+            # got picked again, and the loop spent the rest of its budget re-accepting
+            # a finished quest. Every score in the simulator was capped by it.
+            "quests_done": sorted(self.quests_done),
+            "quests_done_count": len(self.quests_done),
             "quests_active": dict(self.active),
+            # The quest tracker, exactly as the client shows it. Without this the
+            # policy has to guess which objective inside the current step is open,
+            # and a guess that is wrong is indistinguishable from a bad tool.
+            "current_objective": tracker,
             "objectives_completed": self.objectives_completed,
             "quests_completed": self.quests_completed,
         }
@@ -242,6 +293,27 @@ class World:
 
     # -- tools -------------------------------------------------------------
 
+    def _required_map(self, obj: Dict[str, Any]) -> Optional[int]:
+        """The map this objective has to be done on, when the KB names one.
+
+        ``map_id: 0`` is the KB's "no map", not map zero. Treating it as a real
+        destination produced a hundred failed `nav.goto 0` calls in a row.
+        """
+        m = obj.get("map_id")
+        if m is None and obj.get("type_id") in MAP_TYPES:
+            m = _params(obj).get("parameter0")
+        try:
+            m = int(m) if m is not None else None
+        except (TypeError, ValueError):
+            return None
+        return m if m else None
+
+    def _wrong_map(self, obj: Dict[str, Any]) -> Optional[str]:
+        need = self._required_map(obj)
+        if need is not None and self.map_id != need:
+            return "wrong map: need %d, on %s" % (need, self.map_id)
+        return None
+
     def step(self, tool: str, args: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
         """Apply one tool call. Returns (ok, note)."""
         args = dict(args or {})
@@ -267,12 +339,24 @@ class World:
         return ok, note
 
     def _tool_nav_goto(self, args: Dict[str, Any]) -> Tuple[bool, str]:
-        target = args.get("map_id") or args.get("mapId")
+        target = args.get("map_id")
+        if target is None:
+            target = args.get("mapId")
         if target is None and "x" in args and "y" in args:
             target = int(args["x"]) * 1000 + int(args["y"])   # synthetic id
-        if target is None:
+        if not target:
             return False, "no destination"
         self.map_id = int(target)
+        # Arriving is a state change the client can see immediately.
+        self._force_fresh = True
+        current = self.current_objective()
+        if current is not None:
+            quest, step_idx, obj_idx, obj = current
+            if obj.get("type_id") in MAP_TYPES and self._required_map(obj) == int(target):
+                # "Find the map: X" is satisfied by standing on it. Without this the
+                # objective is uncompletable and the planner travels in circles.
+                self._complete_objective(quest, step_idx, obj_idx)
+                return True, "arrived; map objective done"
         return True, "moved"
 
     def _tool_nav_walk(self, args: Dict[str, Any]) -> Tuple[bool, str]:
@@ -282,6 +366,8 @@ class World:
         return True, "followed"
 
     def _tool_quest_list(self, args: Dict[str, Any]) -> Tuple[bool, str]:
+        # A read: it returns the truth and clears the stale cache.
+        self._force_fresh = True
         return True, "listed %d active" % len(self.active)
 
     def _tool_quest_advance(self, args: Dict[str, Any]) -> Tuple[bool, str]:
@@ -311,12 +397,38 @@ class World:
         q, step_idx, obj_idx, obj = current
         if q.id != quest.id:
             return False, "another quest is open first (%s)" % q.id
+        # A tool may only complete the kind of objective it is for. Before this
+        # guard, quest.advance completed whatever was open — a kill, a delivery,
+        # anything — so every tool worked and the tool choice was not a decision.
+        if obj.get("type_id") not in (TALK_TYPES | DELIVER_TYPES):
+            return False, "quest.advance cannot complete objective type %s" % obj.get("type_id")
+        wrong = self._wrong_map(obj)
+        if wrong:
+            return False, wrong
         if npc is not None and obj.get("type_id") in TALK_TYPES:
             expected = _params(obj).get("parameter0")
             if expected is not None and int(npc) != int(expected):
                 return False, "wrong npc: wanted %s" % expected
+        if obj.get("type_id") in DELIVER_TYPES:
+            item = self._deliver_item(obj)
+            if item is not None and not self.inventory.get(item):
+                return False, "item %s not carried" % item
+            if item is not None:
+                self.inventory[item] -= 1
+                if self.inventory[item] <= 0:
+                    self.inventory.pop(item, None)
         self._complete_objective(q, step_idx, obj_idx)
         return True, "objective done"
+
+    @staticmethod
+    def _deliver_item(obj: Dict[str, Any]) -> Optional[int]:
+        p = _params(obj)
+        t = obj.get("type_id")
+        item = p.get("parameter1") if t == 3 else p.get("parameter0")
+        try:
+            return int(item) if item is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _tool_farm_start(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         """Kill objectives need a monster on the current map; here one kill is one step."""
@@ -329,14 +441,21 @@ class World:
             # Gathering for a delivery is the same kind of step as a kill: one
             # action, one step of progress, no objective completed yet.
             item = int(args["item"])
+            if len(self.inventory) >= self.capacity and item not in self.inventory:
+                return False, "inventory full"
+            if self.map_id is None:
+                return False, "nowhere: no map loaded"
             self.inventory[item] = self.inventory.get(item, 0) + 1
             return True, "gathered item %d" % item
+        if t in FIGHT_TYPES:
+            # A quest that says "in a fight" cannot be finished by farming in the
+            # open world. Keeping the two apart is what makes fight.join a decision.
+            return False, "this objective needs a fight (fight.join)"
         if t not in KILL_TYPES:
             return False, "current objective is not a kill"
-        if t == 16:
-            need_map = obj.get("map_id")
-            if need_map and self.map_id != int(need_map):
-                return False, "wrong map for this fight"
+        wrong = self._wrong_map(obj)
+        if wrong:
+            return False, wrong
         self._complete_objective(quest, step_idx, obj_idx)
         return True, "killed"
 
@@ -344,11 +463,15 @@ class World:
         return True, "stopped"
 
     def _tool_inv_list(self, args: Dict[str, Any]) -> Tuple[bool, str]:
+        self._force_fresh = True
         return True, "inventory: %d stacks" % len(self.inventory)
 
     def _tool_inv_sell(self, args: Dict[str, Any]) -> Tuple[bool, str]:
+        if not self.inventory:
+            return False, "nothing to sell"
         self.kamas += 100 * max(1, len(self.inventory))
         self.inventory.clear()
+        self._force_fresh = True
         return True, "sold"
 
     def _tool_hdv_scan(self, args: Dict[str, Any]) -> Tuple[bool, str]:
@@ -358,13 +481,24 @@ class World:
         return True, "listed"
 
     def _tool_state_snapshot(self, args: Dict[str, Any]) -> Tuple[bool, str]:
+        self._force_fresh = True
         return True, "snapshot"
 
     def _tool_chat_say(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         return True, "said"
 
     def _tool_fight_join(self, args: Dict[str, Any]) -> Tuple[bool, str]:
-        return True, "joined"
+        current = self.current_objective()
+        if current is None:
+            return False, "no fight to join"
+        quest, step_idx, obj_idx, obj = current
+        if obj.get("type_id") not in FIGHT_TYPES:
+            return False, "current objective is not a fight"
+        wrong = self._wrong_map(obj)
+        if wrong:
+            return False, wrong
+        self._complete_objective(quest, step_idx, obj_idx)
+        return True, "won the fight"
 
     def _tool_fight_pass(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         return True, "passed"
@@ -373,15 +507,39 @@ class World:
         return True, "stopped"
 
     def _tool_knowledge_search(self, args: Dict[str, Any]) -> Tuple[bool, str]:
+        # Deliberately does NOT refresh the client observation: it reads the local
+        # cache, which cannot tell you where you are standing.
         return True, "searched"
 
     # -- scoring -----------------------------------------------------------
 
+    def stall(self, limit: int = 12) -> Dict[str, Any]:
+        """Did the policy loop?
+
+        A score that hides a loop is not a score. The planner used to spend 450 of
+        500 steps re-accepting one finished quest and the report still said "21
+        quests"; the number was true and the story it told was false.
+        """
+        best, run, at = 0, 0, 0
+        tool = ""
+        for i in range(1, len(self.history)):
+            prev, cur = self.history[i - 1], self.history[i]
+            if prev["tool"] == cur["tool"] and prev.get("args") == cur.get("args"):
+                run += 1
+            else:
+                run = 1
+            if run > best:
+                best, at, tool = run, i, cur["tool"]
+        return {"max_repeat": best, "repeat_tool": tool,
+                "repeat_at_step": at, "stalled": best >= limit}
+
     def score(self) -> Dict[str, Any]:
+        stall = self.stall()
         return {
             "steps": self.steps,
             "objectives": self.objectives_completed,
             "quests": self.quests_completed,
             "quests_per_1000_steps": round(1000.0 * self.quests_completed / max(1, self.steps), 2),
             "objectives_per_100_steps": round(100.0 * self.objectives_completed / max(1, self.steps), 2),
+            **stall,
         }

@@ -20,10 +20,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.planner import QuestPlanner, _params
+from agent.planner import QuestPlanner, _params, args_for_tool
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MODEL = REPO_ROOT / "models" / "planner_student.onnx"
+DEFAULT_MODEL = REPO_ROOT / "models" / "tool_policy.onnx"
 
 
 class NNPlanner(QuestPlanner):
@@ -32,6 +32,8 @@ class NNPlanner(QuestPlanner):
         self.tools: List[str] = []
         self.session = None
         self.input_name = "features"
+        self.expected_features = 0
+        self._warned = False
         self.note = "no model (deterministic planner)"
         path = Path(model_path or DEFAULT_MODEL)
         if path.exists():
@@ -40,10 +42,14 @@ class NNPlanner(QuestPlanner):
                 self.session = ort.InferenceSession(str(path),
                                                     providers=["CPUExecutionProvider"])
                 self.input_name = self.session.get_inputs()[0].name
+                self.expected_features = int(self.session.get_inputs()[0].shape[1])
                 meta = path.with_suffix(".json")
                 if meta.exists():
-                    self.tools = json.loads(meta.read_text(encoding="utf-8")).get("tools") or []
-                self.note = "planner student %s" % path.name
+                    payload = json.loads(meta.read_text(encoding="utf-8"))
+                    self.tools = payload.get("tools") or []
+                    self.expected_features = int(payload.get("features")
+                                                 or self.expected_features)
+                self.note = "tool policy %s (%d tools)" % (path.name, len(self.tools))
             except Exception as exc:  # noqa: BLE001
                 self.note = "model unusable (%s); deterministic fallback" % exc
 
@@ -55,36 +61,29 @@ class NNPlanner(QuestPlanner):
             return None
         try:
             import numpy as np
-            from ai.train_planner_student import features
+            from agent.features import objective_features
             level = int(quest.get("level_min") or 1)
-            x = np.asarray([features(obj, level, step_idx, obs)], dtype="float32")
+            x = np.asarray([objective_features(obj, level, step_idx, obs,
+                                               self.tracker.ctx())], dtype="float32")
+            if x.shape[1] != self.expected_features:
+                raise ValueError("model wants %d features, featuriser gives %d"
+                                 % (self.expected_features, x.shape[1]))
             logits = self.session.run(None, {self.input_name: x})[0][0]
             return self.tools[int(max(range(len(logits)), key=lambda i: logits[i]))]
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            # A shape mismatch used to be swallowed here and the planner silently fell
+            # back to the if-chain, which looks like "the model is no better than the
+            # rules" instead of "the model is not running". Say it once, out loud.
+            if not self._warned:
+                self.note = "model unusable (%s); deterministic fallback" % exc
+                self._warned = True
             return None
 
     # -- arguments (plumbing) ----------------------------------------------
 
     def _args_for(self, tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
                   obs: Dict[str, Any]) -> Dict[str, Any]:
-        p = _params(obj)
-        t = obj.get("type_id")
-        if tool == "nav.goto":
-            target = p.get("parameter0") if t in (4,) else obj.get("map_id")
-            return {"map_id": int(target)} if target else {}
-        if tool == "quest.advance":
-            npc = p.get("parameter0") if t in (1, 9, 3) else p.get("parameter1")
-            args: Dict[str, Any] = {"quest_id": int(quest["id"])}
-            if npc is not None:
-                args["npc_id"] = int(npc)
-            return args
-        if tool == "farm.start":
-            if t in (2, 3, 12):
-                item = p.get("parameter1") if t == 3 else p.get("parameter0")
-                return {"item": int(item)} if item is not None else {}
-            monster = p.get("parameter0")
-            return {"monster": int(monster)} if monster is not None else {}
-        return {}
+        return args_for_tool(tool, quest, obj, obs)
 
     def plan_objective(self, quest: Dict[str, Any], step_idx: int,
                        obj: Dict[str, Any], obs: Dict[str, Any]) -> List[Dict[str, Any]]:

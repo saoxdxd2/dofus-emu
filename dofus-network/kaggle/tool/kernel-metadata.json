@@ -1,0 +1,15 @@
+{
+ "id": "tajdinenizar/thx-02-tool-policy",
+ "title": "THX-02 tool policy",
+ "code_file": "run.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_internet": false,
+ "keywords": ["gpu", "agent"],
+ "dataset_sources": ["tajdinenizar/thx-02-sim-toolkit"],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": []
+}

@@ -1,21 +1,40 @@
 # now.md — where this project stands, and what happens next
 
-Written 2026-10-22, end of a long session. Everything below is either **measured**
-(a number from a run) or **explicitly marked as unknown**. If a claim has no number,
-it is a hypothesis and says so.
+Written 2026-10-22, second session. **Supersedes the earlier version: four of its
+numbers were produced by bugs.** The correction comes first because it changes the
+plan. Everything below is either measured (a number from a run) or marked unknown.
+
+---
+
+## 0. What the previous version got wrong
+
+| it said | what was actually happening |
+|---|---|
+| "planner completes **21 quests / 21 objectives** in 500 steps" | It completed 21, then spent 429 steps re-accepting quest 458, which it had already finished. `sim/world.py` truncated `quests_done` to the last 20 entries and the planner treats that list as the set of finished quests, so the 21st became invisible. After the fix: **119 quests / 148 objectives in 400 steps**. |
+| "the corpus covers **2 of 18 tools** — a generator bug" | The generator could only emit what the teacher emitted, and the teacher emitted two tools because **every tool could complete every objective**: `quest.advance` completed a kill, a delivery, anything. The tool choice was not a decision, so there was nothing to learn. |
+| "**0.8830** accuracy, real learning over a 62% majority" | Measured on a corpus where objective type 0 — 5,669 open-world kills, the most common objective in the KB — was encoded as *unknown*, because `int(obj.get("type_id") or -1)` turns 0 into −1. That line existed in eight files. |
+| "the simulator is deterministic given the features" | True, and it also silently accepted impossible calls and had no way to notice a loop. `score()` now reports `max_repeat` and `stalled`. |
+
+None of that was a modelling problem. It was the world disagreeing with itself, and
+the model faithfully learning the disagreement.
 
 ---
 
 ## 1. In one paragraph
 
-The client works, the agent loop runs, and the planner completes quests in a symbolic
-world (21 vs 0 for the rule policy). Three ideas were tested on GPU today and two were
-rejected by their own results: recursion buys nothing (twice, on two worlds), and a
-learned value model loses to the constant "always continue". What survived is smaller
-and more useful: a filtered fact — **retry is the wrong default after a failure** — and
-a controller that now distinguishes three kinds of failure. The binding constraint is
-no longer modelling. It is **data coverage** (the corpus contains 2 of 18 tools) and
-**the absence of a live session** where actions actually fail.
+The client works, the agent loop runs, and the learned tool policy now **beats the
+hand-written teacher** in the noisy simulator: 99.6 vs 96.9 quests per 400 steps over
+seven seeds, and 97.5% of the progress an oracle would have extracted per decision.
+Getting there required no new modelling idea. It required fixing the world: the
+teacher's score was capped by a paging bug, the tool space was collapsed because any
+tool could do anything, the most common objective type was encoded as "unknown", and
+reads could not repair a stale observation. With those fixed, a 48,594-parameter
+network trained on 32k counterfactual rows lifts validation accuracy from the
+teacher's 0.814 to 0.896 and its decision gain from 0.686 to 0.719. What remains is
+**not** capacity, data volume, or recursion — all three have now been tested and
+rejected. It is that **40% of states map to more than one tool given these 41
+features**, which is a feature problem, and that **no live session exists** to check
+whether any of it transfers.
 
 ---
 
@@ -26,88 +45,118 @@ no longer modelling. It is **data coverage** (the corpus contains 2 of 18 tools)
 | Client launches, no black screen | STA fix + bundle patches; `START: UI thread apartment: STA` in the log |
 | Bundle patcher reproducible | `--bundle-selftest` → IDENTICAL, 13 rules |
 | Agent loop end-to-end | `inv.list ok advanced 141ms -> 23 items` against the live bridge |
-| Planner completes quests | sim: **21 quests / 21 objectives** in 500 steps; random 0, rule 0 |
-| Learned planner matches the teacher | `NNPlanner` 21 vs teacher 21; val 1.00 on held-out objective types |
-| Knowledge is editable, not memorised | store + `knowledge.remember/forget`; a learned `npc_map` changes the plan with no retraining |
-| Verifier is calibrated | val acc 1.0000, ECE **0.0075** after resume rounds (was 0.3105 at scratch) |
-| Failure taxonomy | 3 classes, tested against the real error strings |
-| Test suite | **73 checks, 0 failed** (`python -m agent.smoke_verifier`) |
+| Planner completes quests | sim, deterministic, L60, 400 steps: **119 quests / 148 objectives**; random 0, rule 0 |
+| Planner does not loop | `max_repeat: 1`, `stalled: false` across L20/L60/L100 |
+| Tool policy beats the teacher | 7 seeds, `--noise`, 400 steps: **99.6 vs 96.9 quests**, 109.4 vs 104.4 objectives |
+| Tool policy beats copying the teacher | val acc **0.8962** vs teacher-agreement **0.8140** (+8.2 pts), 41→192→192→18, 48,594 params |
+| The decision, not the label, is what improved | gain per decision **0.7192** vs teacher 0.6861, oracle 0.7380 → **97.5% of oracle** |
+| Verifier is calibrated | val acc 1.0000, ECE **0.0075** after resume rounds |
+| Tool policy is calibrated | ECE **0.0100** |
+| Test suite | **79 checks, 0 failed** (`python agent/smoke_verifier.py`) |
 
-**18 tools** registered in `data/capabilities.json` (single source; the encoder's action
-head is derived from it, so any 16-tool model is now shape-incompatible).
+**18 tools** in `data/capabilities.json`; `agent/features.py` reads that file, so the
+action head is 18-wide by construction. The stale 16-tool encoder head is now only a
+historical artifact.
 
 ---
 
 ## 3. What is proven dead (do not rebuild these)
 
-**Recursion (TRM, K=12, deep supervision).** Two runs:
+**Recursion (TRM, K=12, deep supervision).** Two runs, two worlds:
 
 | world | data | result |
 |---|---|---|
 | deterministic | 89,152 rows | 1.0000 at **k=1**, ECE 0.000 |
 | noisy (15% refusal, stale/partial obs) | 105,522 rows | 0.8830 at **k=1**, flat to k=12, **+0.0000 gain** |
 
-Twelve passes of a GRU cell produced the same answer as one. The paper's claim needs a
-task where one pass is insufficient; tool selection is a lookup.
+Twelve passes of a GRU cell produced the same answer as one. Tool selection is a
+lookup; the paper's claim needs a task where one pass is insufficient.
 
-**The learned value model.** 1,500 counterfactual states, 11 features:
+**The learned value model.** 1,500 counterfactual states, 11 features: regret 0.062
+for the model, 0.058 for the best constant ("always continue"), 0.133 for the shipped
+"always retry". It did not earn its place and `models/decision_value.onnx` is not
+wired in.
 
-| policy | regret (gain left on the table) |
-|---|---|
-| always continue | **0.058** |
-| always retry (what shipped) | 0.133 |
-| learned model | 0.062 — *does not beat the best constant* |
+**The "first failure → retry" rule.** 2.3× worse than continuing in the simulator; in
+the real client 0 of 9 retries worked, because they were retrying an absent client.
 
-`models/decision_value.onnx` exists but **is not wired in**. It did not earn its place.
+**Soft targets from the fork's gain distribution.** The corpus stores the full gain
+vector, so training on the distribution instead of the argmax looked obviously right.
+Measured: decision gain 0.7031 vs 0.7028 for hard targets (**+0.0003**), and ECE
+0.1762 vs 0.0122. Rejected by its own result; `--targets soft` is kept only so the
+comparison is reproducible.
 
-**The "first failure → retry" rule.** 2.3× worse than continuing, in the simulator; and
-in the real client, 0 of 9 retries worked (because they were retrying an absent client).
+**More data.** 32k → 90k rows (2.8×): validation accuracy +0.002, simulator score
+**−0.9 quests**. Data volume is not the lever. The 32k model is the one that ships.
 
 ---
 
 ## 4. What is blocked, and by what
 
-1. **The corpus covers 2 of 18 tools.** The noisy corpus is 62.1% `farm.start`, 37.9%
-   `quest.advance` — no `nav.goto`, no reads. A model cannot choose an action that never
-   appears in its data. This is a generator bug in `sim/rollout.py`, not a model problem.
-2. **No live session.** 41 real steps exist, 15 failures, and **14 of those 15 are
-   structural** ("no client instance"), so they cannot rank recovery strategies. The
-   reality check refuses to draw a conclusion below 30 genuine failures, and correctly.
-3. **The simulator is deterministic given the features** (until `--noise`), so scores
-   there measure the world, not the agent. Every number must now be quoted at `--noise`.
+1. **The label is ambiguous, and that is now the ceiling.** 40.1% of validation states
+   whose exact 41-feature vector also appears in training carry **more than one
+   label**. A majority-vote lookup agrees with the held-out label 87.2% of the time on
+   those states. The model is at 89.6% overall, i.e. at the ceiling this featurisation
+   allows. No capacity, data, or recursion removes it — the label depends on
+   information the features do not carry (what the plan does next, and the noise draw).
+2. **The world only needs four verbs.** Label mix: `farm.start` 36%, `quest.advance`
+   32%, `nav.goto` 24%, `fight.join` 4.6% — 96.9% of all decisions. The old P0
+   criterion ("≥5 tools at ≥5% of rows") was a guess made before anyone had measured
+   what the world requires; the measured answer is four. Forcing a fifth would mean
+   inventing value for tools that have none.
+3. **Six of the eighteen tools are placeholders in the world.** `hdv.scan`,
+   `hdv.list`, `chat.say`, `knowledge.search`, `knowledge.remember`,
+   `knowledge.forget` have no state effect, so no counterfactual can ever prefer them.
+   The model correctly never emits them, and therefore never learns *when* to.
+4. **No live session.** 41 real steps, 15 failures, **14 of 15 structural** ("no client
+   instance"), so they cannot rank recovery strategies. `ai/reality_check.py` refuses
+   to conclude below 30 genuine failures, and correctly.
+5. **The fork cannot see a stale-belief mistake.** A read (`inv.list`) wins only when
+   the stale observation would have changed the *choice*. In the fork the action and
+   its arguments are fixed by the caller, so acting on a stale observation usually
+   still works. Reads are therefore 1.2% of labels — possibly understated by the
+   method, not by the world.
 
 ---
 
 ## 5. The plan, in order
 
-### P0 — fix the corpus (no GPU needed, highest value)
-Make `sim/rollout.py` exercise the whole action space: emit `nav.goto` when the
-objective names a map, record read-only calls, and let the planner pick `replan` when
-the current quest is unreachable. Regenerate, check the class histogram.
-**Done when:** ≥5 tools each ≥5% of rows. **Falsifier:** if the planner still only ever
-emits two tools, the planner is the bottleneck, not the generator.
+### P0 — the corpus — DONE (with one criterion revised)
+`sim/tool_choice.py` forks the world once per candidate tool, runs the teacher five
+steps, and labels the tool with the best **objectives per step**. 18-wide label space,
+41 shared features, 5% trivial rows.
+**Result:** 4 tools ≥5% (not 5), 96.9% of mass, teacher agreement 81%.
+**Falsifier as written:** "if the planner still only emits two tools, the planner is
+the bottleneck". It emitted four once the world stopped letting one tool do everything.
+
+### P0.5 — the label ceiling (next, no GPU needed)
+40.1% of states are ambiguous. Find out which half is fixable:
+(a) the plan's next step — knowable, and not in the features today;
+(b) the noise draw — not knowable, and it should be smoothed, not learned.
+**Done when:** a feature set that drops the ambiguity below 25% at equal accuracy.
+**Falsifier:** if neither addition moves it, the label is noise-dominated and the
+corpus should shrink to the states where the fork actually discriminates.
 
 ### P1 — one real session (needs the client running)
 20–30 steps of `farm` / `go to` / `open inventory` with the loop attached, then
 `python ai/reality_check.py`.
-**Done when:** ≥30 genuine (non-structural) failures. **Falsifier:** if the real ranking
-contradicts the simulator, the simulator's noise model is wrong and gets fixed before
-any further training.
+**Done when:** ≥30 genuine (non-structural) failures. **Falsifier:** if the real
+ranking contradicts the simulator, the simulator's noise model is wrong and gets fixed
+before any further training.
 
 ### P2 — the decision model, second attempt
-Only after P0 gives label variance. Same harness, same metric (regret), same rule:
-it ships only if it beats **both** constants.
+Only after P1 gives label variance. Same harness, same metric (regret), same rule: it
+ships only if it beats **both** constants.
 **Falsifier:** if it still loses, the decision is not learnable from these 11 features
-and the next move is richer features (tool id, error class, history), not a bigger net.
+and the next move is richer features, not a bigger net.
 
 ### P3 — plan chunks in the runtime
-`plan_chunk.onnx` (1.79M, exact 0.9682, per-horizon 0.9859/0.9820/0.9748) predicts the
-next 3 tools. Wire it as a *hint* the controller can veto, and measure whether it
-reduces replans per quest. **Falsifier:** if replans don't drop, the chunk is decoration.
+`plan_chunk.onnx` (1.79M, exact 0.9682) predicts the next 3 tools. Wire it as a hint
+the controller can veto, and measure replans per quest. **Falsifier:** if replans don't
+drop, the chunk is decoration.
 
 ### P4 — the ladder (value → search), only if P2 succeeds
-Counterfactual forks already exist. The next rungs are a value function trained on
-forks, then 1-ply search at inference. Do not start this before P2 has a positive result.
+Do not start before P2 has a positive result.
 
 ---
 
@@ -116,29 +165,31 @@ forks, then 1-ply search at inference. Do not start this before P2 has a positiv
 ```
 dofus-network/
   agent/
-    autopilot.py        the loop: plan → execute → verify → decide (owns autopilot.lock)
-    planner.py          KB → plan. Deterministic translation (the *teacher*)
-    planner_nn.py       same interface, tool choice from models/planner_student.onnx
-    controller.py       agent 2: continue/retry/recover/replan + error taxonomy
-    verifier.py         did the step work? rules + optional ONNX head
-    knowledge_store.py  discovered facts (provenance, disputes, expiry) — not weights
-    executor.py         local / sentinel / directive backends
-    schema.py           18 tools, validated (registry = data/capabilities.json)
+    features.py          THE featuriser: 41 dims, 18 tools from capabilities.json,
+                         ObsTracker (stale/partial inference), objective_type()
+    autopilot.py         the loop: plan → execute → verify → decide
+    planner.py           KB → plan. Deterministic teacher + fork() + note_result()
+    planner_nn.py        same interface, tool from models/tool_policy.onnx
+    controller.py        continue/retry/recover/replan + error taxonomy
+    verifier.py          did the step work? rules + optional ONNX head
+    knowledge_store.py   discovered facts, not weights
   sim/
-    world.py            symbolic world; noise=True adds refusals + stale/partial obs
-    run.py              planner | nn | random | rule → quests per 1000 steps
-    rollout.py          behavioural corpus (features → tool → did it advance?)
-    decisions.py        counterfactual corpus: fork the world, label the best decision
+    world.py             symbolic world; noise=True; map preconditions; reads repair
+                         stale observations; stall detection in score()
+    tool_choice.py       COUNTERFACTUAL tool corpus: fork per candidate, label by
+                         objectives-per-step (this replaced rollout.py for training)
+    rollout.py           the old imitation corpus — superseded, kept for comparison
+    decisions.py         counterfactual repair corpus (continue/retry/recover/replan)
+    run.py               planner | nn | random | rule → quests per N steps, --noise
   ai/
-    train_planner_student.py   teacher → student (26 KB)
-    train_value.py             value model + regret vs constants
-    self_improve.py            resume → train N seconds → score acc & ECE → keep best
-    idle_trainer.py            trains only when no loop holds the lock; candidate only
-    kaggle_report.py           status of every kernel; --fetch pulls results
-    reality_check.py           real failures → can they rank recovery strategies?
-  models/                planner_student, verifier_head, plan_chunk, decision_value
-  docs/AGENT2_DESIGN.md  38 decisions (D25–D38) with the numbers behind them
-  docs/KAGGLE_RUNS.md    generated: every kernel, status, headline result
+    train_tool_policy.py 18-way trainer + capacity sweep; self-contained for Kaggle
+    train_planner_student.py  the old 5-tool student (superseded)
+    self_improve.py      resume → train N seconds → score acc & ECE → keep best
+    reality_check.py     real failures → can they rank recovery strategies?
+  kaggle/
+    toolkit/             the simulator + KB, shipped as a private dataset
+    tool/                the kernel that generates a corpus then trains on it
+  models/tool_policy.onnx  48,594 params, 18 tools, 41 features
 ```
 
 ---
@@ -147,32 +198,31 @@ dofus-network/
 
 ```bash
 # tests
-cd dofus-network && python -m agent.smoke_verifier
+cd dofus-network && python agent/smoke_verifier.py
 
-# simulator scoreboard
-python sim/run.py --policy planner --level 60 --steps 500
-python sim/run.py --policy rule    --level 60 --steps 500
+# simulator scoreboard (always quote --noise)
+python sim/run.py --policy planner --level 60 --steps 400
+python sim/run.py --policy nn      --level 60 --steps 400 --noise
 
-# corpora
-python sim/rollout.py --parallel 6 --minutes 5 --noise --out data/hard_sft
-python sim/decisions.py --states 1500 --out data/decision_sft
+# the counterfactual corpus (6 workers, ~4 min → ~32k rows)
+python sim/tool_choice.py --episodes 400 --steps 80 --noise --parallel 6 --minutes 4 --out data/tool_sft
 
-# training (local, CPU, seconds)
-python ai/train_planner_student.py
-python ai/train_value.py --epochs 300
-python ai/self_improve.py --task verifier --rounds 3 --round-seconds 40
+# training (local, CPU, ~40 s)
+python ai/train_tool_policy.py --data data/tool_sft --out models/tool_policy.onnx --epochs 60
 
-# kaggle
+# capacity sweep (the GPU question)
+python ai/train_tool_policy.py --data data/tool_sft --sweep --device cuda
+
+# kaggle: generate + train in one kernel
+kaggle kernels push -p kaggle/tool
 python ai/kaggle_report.py --fetch --md
-
-# reality
-python ai/reality_check.py
 ```
 
-Kaggle: account `tajdinenizar`, credential at `~/.kaggle/kaggle.json` (outside the repo).
-Private datasets: `thx-02-planner-corpus`, `thx-02-seq-corpus`, `thx-02-hard-corpus`.
+Kaggle: account `tajdinenizar`, credential at `~/.kaggle/kaggle.json` (outside the
+repo). Private datasets: `thx-02-sim-toolkit` (code + KB), `thx-02-tool-corpus`.
 Pushing a new version of a *queued* kernel returns 409; the kernel `id` must equal its
-real slug. Datasets mount at `/kaggle/input/datasets/<owner>/<slug>/`.
+real slug. Datasets mount at `/kaggle/input/datasets/<owner>/<slug>/`, and the CLI
+uploads each directory as a **zip**, so the kernel unpacks whatever it finds.
 
 ---
 
@@ -180,9 +230,13 @@ real slug. Datasets mount at `/kaggle/input/datasets/<owner>/<slug>/`.
 
 1. Does the real game rank recovery decisions the way the simulator does? **Unknown.**
    Needs P1.
-2. Is the planner's curriculum (fewest objectives first) good, or just convenient?
-   Never compared against any alternative.
-3. The encoder has never been retrained for 18 tools. Its action head is now stale.
-4. The `knowledge_store` has never been exercised by a live session — no discoveries yet.
-5. `--noise` parameters (0.15 / 0.20 / 0.10) were chosen by hand, not fitted to the
-   client's observed failure rate.
+2. Of the 40% ambiguous states, how much is "the plan's next step is not a feature"
+   and how much is the noise draw? The first is fixable, the second should be smoothed.
+   **Unknown, and it is the next measurement.**
+3. Are reads genuinely worth 1.2% of decisions, or does the fork understate them
+   because it fixes the action before the stale observation can mislead the choice?
+4. The shipping curriculum (fewest objectives first) is now known to bias the state
+   distribution — that is why the corpus needed objective-type steering. Nobody has
+   compared the shipping curriculum against an alternative.
+5. Six tools have no effect in the world. When should an agent sell, scan the market,
+   or record a discovered fact? Nothing in this project can answer that yet.

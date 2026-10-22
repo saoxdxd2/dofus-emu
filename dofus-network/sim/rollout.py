@@ -34,6 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent.features import objective_type  # noqa: E402
 from agent.planner import QuestPlanner  # noqa: E402
 from ai.train_planner_student import TOOLS, features  # noqa: E402
 from sim.world import World  # noqa: E402
@@ -86,7 +87,7 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             "t": len(rows),
             "quest_id": q.id,
             "step": step_idx,
-            "objective_type": int(obj.get("type_id") or -1),
+            "objective_type": objective_type(obj),
             "x": features(obj, q.level, step_idx, obs),
             "y": TOOLS.index(call.tool) if call.tool in TOOLS else -1,
             "tool": call.tool,

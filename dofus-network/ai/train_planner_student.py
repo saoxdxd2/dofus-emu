@@ -33,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent.features import objective_type  # noqa: E402
 from agent.planner import QuestPlanner  # noqa: E402
 
 # The tools the planner is allowed to choose. Order is part of the artifact.
@@ -54,7 +55,7 @@ def features(obj: Dict[str, Any], quest_level: int, step_index: int,
         except ValueError:
             params = {}
 
-    t = int(obj.get("type_id") or -1)
+    t = objective_type(obj)
     vec: List[float] = []
     for known in OBJECTIVE_TYPES:
         vec.append(1.0 if t == known else 0.0)
@@ -105,7 +106,7 @@ def _state_variants(obj: Dict[str, Any], level: int) -> List[Dict[str, Any]]:
         except ValueError:
             params = {}
 
-    t = int(obj.get("type_id") or -1)
+    t = objective_type(obj)
     target_map = obj.get("map_id") or (params.get("parameter0") if t == 4 else None)
     base = {"level": level, "map_id": None, "inventory": {}}
     variants = [dict(base, inventory={}, map_id=None)]
@@ -147,7 +148,7 @@ def build_dataset(max_quests: int = 1200) -> Tuple[List[List[float]], List[int],
                         continue
                     xs.append(features(obj, level, step_idx, state))
                     ys.append(TOOLS.index(tool))
-                    ts.append(int(obj.get("type_id") or -1))
+                    ts.append(objective_type(obj))
     return xs, ys, ts
 
 

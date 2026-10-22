@@ -21,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ai.train_planner_student import TOOLS, _state_variants, build_dataset, features  # noqa: E402
+from agent.features import objective_type  # noqa: E402
 from agent.planner import QuestPlanner  # noqa: E402
 
 
@@ -41,7 +42,7 @@ def rows(max_quests: int = 1200) -> List[Dict[str, Any]]:
                     out.append({
                         "quest_id": qid,
                         "step": step_idx,
-                        "objective_type": int(obj.get("type_id") or -1),
+                        "objective_type": objective_type(obj),
                         "x": features(obj, level, step_idx, state),
                         "y": TOOLS.index(calls[0]["tool"]),
                         "tool": calls[0]["tool"],

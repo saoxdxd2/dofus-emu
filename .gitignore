@@ -135,3 +135,10 @@ dofus-network/data/hard_sft/*.jsonl
 dofus-network/data/seq_sft/*.jsonl
 dofus-network/kaggle/runs/**/*.onnx
 dofus-network/data/decision_sft/*.jsonl
+
+# Counterfactual tool corpus (training data, stays local)
+dofus-network/data/tool_sft/*.jsonl
+dofus-network/data/tool_sft_v2/*.jsonl
+dofus-network/data/tool_sft_all/*.jsonl
+# the shipped tool policy is small and is the artifact, so it is tracked
+!dofus-network/models/tool_policy.onnx

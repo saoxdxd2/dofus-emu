@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent.features import objective_type  # noqa: E402
 from agent.planner import QuestPlanner  # noqa: E402
 from sim.world import World  # noqa: E402
 
@@ -42,7 +43,7 @@ def features(world: World, planner: QuestPlanner, streak: int,
     """What the decider is allowed to see: state, history, and nothing hidden."""
     obs = world.observe()
     current = world.current_objective()
-    t = int(current[3].get("type_id") or -1) if current else -1
+    t = objective_type(current[3]) if current else -1
     inv = obs.get("inventory") or {}
     return [
         min(1.0, world.level / 200.0),
