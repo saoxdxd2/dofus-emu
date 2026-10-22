@@ -199,6 +199,12 @@ def objective_features(obj: Dict[str, Any], quest_level: int, step_index: int,
     vec.append(min(1.0, len(inv) / 20.0))
     vec.append(has_needed)
     vec.append(on_target)
+    # How far the objective is, not just whether we are on it. Once travel costs
+    # something, "travel now" and "act now" have different prices depending on
+    # distance, and a 0/1 on_target cannot tell one hop from three areas away — so a
+    # model without this could not learn when travelling is worth it, and any negative
+    # result about planning would be confounded by the missing input.
+    vec.append(min(1.0, travel_hops(state.get("map_id"), target_map) / 3.0))
     vec.append(1.0 if state.get("map_id") else 0.0)
     vec.append(min(1.0, (state.get("level") or 1) / 200.0))
 
@@ -232,7 +238,7 @@ FEATURE_NAMES: List[str] = (
     ["type_%d" % t for t in OBJECTIVE_TYPES] + ["type_other"]
     + ["has_param0", "has_param1", "n_params", "obj_map", "obj_coords"]
     + ["quest_level", "step_index"]
-    + ["inv_stacks", "has_needed", "on_target", "map_known", "level"]
+    + ["inv_stacks", "has_needed", "on_target", "hops_to_target", "map_known", "level"]
     + ["objectives_done", "quests_done", "active_count"]
     + ["fail_streak", "last_ok", "last_tool"]
     + ["err_%s" % s for s in ERROR_SLOTS]

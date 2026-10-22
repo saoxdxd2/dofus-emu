@@ -22,19 +22,17 @@ the model faithfully learning the disagreement.
 
 ## 1. In one paragraph
 
-The client works, the agent loop runs, and the learned tool policy now **beats the
-hand-written teacher** in the noisy simulator: 99.6 vs 96.9 quests per 400 steps over
-seven seeds, and 97.5% of the progress an oracle would have extracted per decision.
-Getting there required no new modelling idea. It required fixing the world: the
-teacher's score was capped by a paging bug, the tool space was collapsed because any
-tool could do anything, the most common objective type was encoded as "unknown", and
-reads could not repair a stale observation. With those fixed, a 48,594-parameter
-network trained on 32k counterfactual rows lifts validation accuracy from the
-teacher's 0.814 to 0.896 and its decision gain from 0.686 to 0.719. What remains is
-**not** capacity, data volume, or recursion — all three have now been tested and
-rejected. It is that **40% of states map to more than one tool given these 41
-features**, which is a feature problem, and that **no live session exists** to check
-whether any of it transfers.
+The client works, the agent loop runs, and the simulator now charges for travel — which
+is the first time it has disagreed with its own teacher. That change was worth making
+because it invalidated the previous conclusion: the learned tool policy that won 2.8%
+in a free-travel world is **19% worse** once movement costs steps, because its errors
+concentrate on the one action whose price just went up. Its earlier win was an artefact
+of cheap mistakes, so it is not wired in. What survives is a great deal of measurement
+infrastructure and four separate negative results (capacity 138×, data 2.8×, recursion
+K=12, and now the tool policy itself), all pointing the same way: **the teacher's exact
+precondition checks are worth more than a learned approximation of them.** A model can
+only add value where the teacher has *no rule at all* — after a failure — and that
+needs labels from a live session, which still does not exist.
 
 ---
 
@@ -93,6 +91,28 @@ comparison is reproducible.
 label. Scoring the *mean cumulative* gain instead was supposed to fix that. Measured
 on the same seeds: ambiguity 34.5% vs 27.7%, simulator 98.6 vs 99.6 quests. It made
 both worse. Default stays `rate`.
+
+**The learned tool policy as a replacement for the teacher.** This one reverses an
+earlier claim, and it is the most important entry here. In the free-travel world the
+policy won 99.6 vs 96.9 quests. In the priced world it loses badly:
+
+| policy | quests / 400 steps, 7 seeds, `--noise --travel-cost` |
+|---|---|
+| teacher (nearest ordering) | **82.6** |
+| learned (nearest ordering) | 66.7 (−19%) |
+| hybrid: teacher travels, model acts | 82.9 (+0.4%, i.e. nothing) |
+
+The mechanism is exact. 357 of its errors are spurious `nav.goto` (recall 0.95,
+precision 0.73). When travel is free, over-travelling is cheap insurance and being on
+the right map is a precondition, so the habit is nearly harmless. When travel costs up
+to three steps, that same habit is the most expensive mistake available. Suppressing
+travel at decode time makes it far worse (66.7 → 12.0), because most of its travel
+calls are necessary — so this is not a threshold that can be tuned.
+
+The lesson generalises past this model: **it won only because its mistakes were
+cheap.** The teacher's precondition checks are exact, and tool choice is mostly
+preconditions, so a model at 81% cannot replace it. `models/tool_policy.onnx` is
+therefore **not wired in**, on the same rule that retired `decision_value.onnx`.
 
 **More data.** 32k → 90k rows (2.8×): validation accuracy +0.002, simulator score
 **−0.9 quests**. Data volume is not the lever.
@@ -211,11 +231,12 @@ quarter of its states and the corpus should simply drop them.
 ranking contradicts the simulator, the simulator's noise model is wrong and gets fixed
 before any further training.
 
-### P2 — the decision model, second attempt
-Only after P1 gives label variance. Same harness, same metric (regret), same rule: it
-ships only if it beats **both** constants.
-**Falsifier:** if it still loses, the decision is not learnable from these 11 features
-and the next move is richer features, not a bigger net.
+### P2 — the decision model, second attempt (this is now the *only* live model target)
+Not the tool choice: the teacher already does that exactly. The only place a model can
+add value is where the teacher has no rule — what to do **after a failure**.
+**Done when:** it beats both constants on real failures. **Falsifier:** if it loses,
+the decision is not learnable from these 11 features and the next move is richer
+features, not a bigger net. Blocked on P1 for labels.
 
 ### P3 — plan chunks in the runtime
 `plan_chunk.onnx` (1.79M, exact 0.9682) predicts the next 3 tools. Wire it as a hint
