@@ -51,6 +51,14 @@ VERDICTS = ("advanced", "noop", "failed", "blocked")
 # the dataset builder and the model features cannot drift apart.
 STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size")
 
+# Tools that only read. A query cannot "change the world", so scoring it as
+# `noop` was wrong: it made every successful lookup look like a failure, and the
+# controller dutifully retried, recovered and gave up. `quest.list` returning
+# data IS success.
+READ_ONLY_TOOLS = frozenset({
+    "knowledge.search", "quest.list", "inv.list", "hdv.scan", "state.snapshot",
+})
+
 # Tools that are *supposed* to change the map / the cell. Used by drift only.
 MOVE_TOOLS = ("farm.step", "farm.start", "nav.walk", "nav.goto", "travel.zaap")
 
@@ -369,6 +377,11 @@ class Verifier:
                                ("tool not mapped to a client message",))
             return Verdict("failed", 0.85, residual, False, "rule",
                            (err[:120] or "call returned not-ok",))
+
+        if tool in READ_ONLY_TOOLS:
+            # The call returned without error: for a query that is the whole job.
+            return Verdict("advanced", 0.9, residual, False, "rule",
+                           ("query answered: " + tool,))
 
         changed = _changed(before, after)
         drift, why = self._drift(tool, before, after, changed)

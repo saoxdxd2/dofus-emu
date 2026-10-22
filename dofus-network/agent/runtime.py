@@ -67,6 +67,10 @@ _RE_LIST_MARKET = re.compile(
     r"(?:market|hdv|h[oô]tel de vente|subasta)\b",
     re.IGNORECASE)
 _RE_SCAN = re.compile(r"(?:scan|price of|prix (?:de|du|d'|des)|precio de)\s+(.{2,60})$", re.IGNORECASE)
+# "open inventory", "show my bag" -- a plain read of the inventory. It had no
+# pattern at all, so the most obvious first thing a user types returned nothing.
+_RE_INVENTORY = re.compile(
+    r"\b(inventory|inventaire|inventario|backpack|sac|bag|stuff)\b", re.IGNORECASE)
 _RE_QUEST = re.compile(r"\b(qu[eê]tes?|quests?|misi[oó]nes?)\b", re.IGNORECASE)
 _RE_QUEST_ADVANCE = re.compile(
     r"\b(advance|continue|proceed|next step|prochaine étape|siguiente paso|"
@@ -256,7 +260,15 @@ class RulePolicy:
 
         match = _RE_SCAN.search(goal)
         if match:
-            return ToolCall("hdv.scan", {"item": match.group(1).strip(" .,!?:;")}, goal)
+            item = match.group(1).strip(" .,!?:;")
+            # "scan hdv for pain" captured "hdv for pain" -- the item is what
+            # follows the market word, not the market word itself.
+            item = re.sub(r"^(?:the\s+)?(?:hdv|market|march[eé]|mercado)\s+(?:for|pour|para|de)\s+",
+                          "", item, flags=re.IGNORECASE)
+            return ToolCall("hdv.scan", {"item": item.strip(" .,!?:;")}, goal)
+
+        if _RE_INVENTORY.search(goal) and not _RE_SELL.search(goal):
+            return ToolCall("inv.list", {}, goal)
 
         if _RE_QUEST.search(goal):
             args = {}

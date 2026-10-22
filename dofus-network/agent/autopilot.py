@@ -142,6 +142,7 @@ class Autopilot:
         self.controller.load()
         self.on_replan = None            # set by the host: (reason, decision) -> None
         self._forced_call: Optional[ToolCall] = None
+        self._hinted = False
         self._pending: Optional[Decision] = None
         self._drift_streak = 0
         self.replan_requested = 0
@@ -303,6 +304,12 @@ class Autopilot:
                     if decision.action in ("replan", "abort"):
                         self._apply_decision(decision, goal, None)
                     print(f"[autopilot] no action for goal {goal!r}; moving on")
+                    if not self._hinted:
+                        self._hinted = True
+                        print("[autopilot] the rule policy understands, for example: "
+                              "'open inventory', 'list quests', 'farm', 'go to [4,-19]', "
+                              "'sell all', 'scan hdv for <item>', 'join fight', 'stop'. "
+                              "Anything else needs the encoder policy (--policy encoder).")
                     break
 
                 refusal = self.guard(call)
