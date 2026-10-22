@@ -690,6 +690,15 @@ def _load_goals(args: argparse.Namespace) -> List[str]:
 def _build_policy(args: argparse.Namespace):
     if args.policy == "rule":
         return RulePolicy()
+    if args.policy == "planner":
+        from agent.planner_nn import NNPlanner
+
+        # The learned planner: same interface, tool choice comes from the student
+        # model instead of an if-chain. Falls back to the deterministic planner when
+        # no model is present, which is what makes it safe to try.
+        planner = NNPlanner(level_hint=int(args.level_hint), store=None)
+        print(f"[autopilot] policy: {planner.note}")
+        return planner
     if args.policy == "encoder":
         from ai.encoder_serve import EncoderToolPolicy  # imported lazily: needs onnxruntime
 
@@ -719,7 +728,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="pre-flight veto confidence (0 = never veto; needs a model)")
     parser.add_argument("--interval", type=float, default=0.0, help="seconds between steps (0 = as fast as the client answers)")
     parser.add_argument("--steps-per-goal", type=int, default=8)
-    parser.add_argument("--policy", choices=("rule", "encoder"), default="rule")
+    parser.add_argument("--policy", choices=("rule", "encoder", "planner"), default="rule")
+    parser.add_argument("--level-hint", type=int, default=60,
+                        help="character level, for the planner's curriculum")
     parser.add_argument("--model-dir", default=str(REPO_ROOT / "models" / "encoder30_v15"))
     parser.add_argument("--instance", default="default")
     parser.add_argument("--directive-url", default="http://127.0.0.1:8893/directive")

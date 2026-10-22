@@ -155,6 +155,42 @@ machine is idle and the run has just produced data — that is the only moment
 training costs nothing. It writes `verifier_head.candidate.onnx`, never the live
 artifact: adopting a model is a deliberate act.
 
+**D33 — The tool choice is learned, not an if-chain.**
+`plan_objective` used to be `if t in MAP_TYPES ... elif t in TALK_TYPES ...`. That is
+a hardcoded rule: correct until a new objective type or a renamed parameter makes it
+silently wrong, with no way to improve except editing code. It is now a small
+network (`ai/train_planner_student.py`, 25 KB, 33 features → 5 tools) trained on the
+table's decisions and served by `agent/planner_nn.py`. The table stays only as the
+*teacher* that generates data; at runtime the model chooses.
+
+Measured: **21 quests vs 21** — the student matches the teacher in the simulator,
+and 1.00 accuracy on objective types it never saw (3, 6, 14 held out).
+
+The lesson from getting there is worth keeping: the first student scored **0** while
+the teacher scored 21, with 99% tool accuracy. Two causes, both data, not model:
+a missing feature (whether the needed item is already carried) and a corpus with
+only one state per objective, so the decision boundary was invisible. A model cannot
+learn a distinction that is not in its inputs.
+
+**D34 — Every model resumes, under a time budget, and is scored on calibration.**
+`ai/self_improve.py` runs rounds: resume from the last checkpoint → train for N
+seconds → score on held-out data → keep the best by `accuracy - 0.5 × ECE`.
+The penalty exists because accuracy alone rewards a model that is right and certain
+on the easy half; ECE measures that, and temperature scaling (fitted on validation)
+is the cheapest correction.
+
+Measured on the verifier head, 3 rounds × 40 epochs:
+
+| round | accuracy | ECE | calibrated ECE | T |
+|---|---|---|---|---|
+| 1 (scratch) | 0.9833 | **0.3105** | 0.2086 | 0.55 |
+| 2 (resume) | 1.0000 | 0.0253 | 0.0074 | 0.55 |
+| 3 (resume) | 1.0000 | 0.0075 | 0.0012 | 0.55 |
+
+Accuracy rises and overconfidence collapses across rounds — the claim in the paper,
+reproduced on this task. The harness prints a warning above ECE 0.15 and refuses to
+let such a model veto actions.
+
 **D30 — The simulator is the training ground, the game is the exam.**
 A symbolic simulator over the KB (maps, NPCs, monsters, inventory, quest
 objectives) generates thousands of episodes per hour on CPU. The game generates

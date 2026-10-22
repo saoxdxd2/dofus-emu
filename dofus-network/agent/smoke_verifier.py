@@ -311,6 +311,31 @@ def test_onnx_head() -> None:
           "%s/%s" % (r.source, r.verdict))
 
 
+def test_learned_planner_matches_the_teacher() -> None:
+    """The tool choice is a model now; it must not be worse than the if-chain."""
+    print("\n== learned planner ==")
+    try:
+        from agent.planner_nn import NNPlanner
+        from sim.run import run
+        from agent.planner import QuestPlanner
+    except Exception as exc:  # noqa: BLE001
+        print("  [SKIP] %s" % exc)
+        return
+
+    nn = NNPlanner(level_hint=60)
+    if nn.session is None:
+        print("  [SKIP] %s" % nn.note)
+        return
+
+    teacher = run(QuestPlanner(level_hint=60), level=60, steps=200)
+    student = run(NNPlanner(level_hint=60), level=60, steps=200)
+    check("the learned planner still completes quests", student["quests"] > 0,
+          "%d quests" % student["quests"])
+    check("and is not worse than the hardcoded table",
+          student["quests"] >= teacher["quests"],
+          "%d vs %d" % (student["quests"], teacher["quests"]))
+
+
 def test_knowledge_store() -> None:
     """Knowledge lives in the store, so the model can stay small."""
     print("\n== knowledge store ==")
@@ -456,6 +481,7 @@ def main() -> int:
     test_baseline_model()
     test_onnx_head()
     test_step_summary()
+    test_learned_planner_matches_the_teacher()
     test_knowledge_store()
     test_knowledge_changes_the_plan()
     test_idle_trainer_respects_the_lock()

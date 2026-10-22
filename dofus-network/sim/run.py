@@ -87,7 +87,8 @@ def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--policy", choices=("planner", "random", "rule"), default="planner")
+    ap.add_argument("--policy", choices=("planner", "nn", "random", "rule"),
+                    default="planner")
     ap.add_argument("--level", type=int, default=60)
     ap.add_argument("--steps", type=int, default=500)
     ap.add_argument("--seed", type=int, default=7)
@@ -97,6 +98,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.policy == "planner":
         from agent.planner import QuestPlanner
         policy: Any = QuestPlanner(level_hint=args.level)
+    elif args.policy == "nn":
+        from agent.planner_nn import NNPlanner
+        policy = NNPlanner(level_hint=args.level)
+        print("# %s" % policy.note)
     elif args.policy == "random":
         policy = RandomPolicy(args.seed)
     else:

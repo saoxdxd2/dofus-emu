@@ -136,6 +136,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--dropout", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--no-int8", action="store_true", help="skip the quantised export")
+    ap.add_argument("--init", type=Path, default=None,
+                    help="checkpoint to resume from (round N starts where N-1 stopped)")
+    ap.add_argument("--save-pt", type=Path, default=None,
+                    help="also write the torch state dict, so the next round can resume")
     args = ap.parse_args(argv)
 
     try:
@@ -170,6 +174,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sample_w = torch.from_numpy((w * class_w[y]).astype("float32"))
 
     model = build_model(x.shape[1], args.hidden, args.dropout)
+    if args.init is not None and args.init.exists():
+        # Warm start: the point of resuming is that round N keeps what round N-1
+        # learned instead of rediscovering it from scratch under a time budget.
+        try:
+            state = torch.load(str(args.init), map_location="cpu")
+            model.load_state_dict(state)
+            print("resumed from %s" % args.init)
+        except Exception as exc:  # noqa: BLE001
+            print("could not resume from %s: %s" % (args.init, exc))
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
     tx = torch.from_numpy(x)
@@ -254,6 +267,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             metrics["int8_path"] = str(int8)
         except Exception as exc:  # noqa: BLE001
             print("int8 export skipped: %s" % exc)
+
+    if args.save_pt is not None:
+        args.save_pt.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), str(args.save_pt))
+        print("wrote %s (resumable state)" % args.save_pt)
 
     sidecar = args.out.with_suffix(".json")
     sidecar.write_text(json.dumps({"kind": "verifier-head", "classes": list(VERDICTS),
