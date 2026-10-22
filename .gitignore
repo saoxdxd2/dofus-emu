@@ -131,3 +131,6 @@ no-client-update.flag
 dofus-network/kaggle/**/dataset/*.jsonl
 dofus-network/kaggle/**/*.onnx
 dofus-network/data/rollout_sft/*.jsonl
+dofus-network/data/hard_sft/*.jsonl
+dofus-network/data/seq_sft/*.jsonl
+dofus-network/kaggle/runs/**/*.onnx

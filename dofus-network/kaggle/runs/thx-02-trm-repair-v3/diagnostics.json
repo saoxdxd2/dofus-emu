@@ -1,0 +1,44 @@
+{
+ "input_exists": true,
+ "entries": [
+  {
+   "path": "/kaggle/input/datasets",
+   "dir": true,
+   "size": null
+  },
+  {
+   "path": "/kaggle/input/datasets/tajdinenizar",
+   "dir": true,
+   "size": null
+  },
+  {
+   "path": "/kaggle/input/datasets/tajdinenizar/thx-02-planner-corpus",
+   "dir": true,
+   "size": null
+  },
+  {
+   "path": "/kaggle/input/datasets/tajdinenizar/thx-02-planner-corpus/planner_train.jsonl",
+   "dir": false,
+   "size": 1812177
+  },
+  {
+   "path": "/kaggle/input/datasets/tajdinenizar/thx-02-planner-corpus/planner_val.jsonl",
+   "dir": false,
+   "size": 256346
+  },
+  {
+   "path": "/kaggle/input/datasets/tajdinenizar/thx-02-planner-corpus/rollout_train.jsonl",
+   "dir": false,
+   "size": 22187830
+  },
+  {
+   "path": "/kaggle/input/datasets/tajdinenizar/thx-02-planner-corpus/rollout_val.jsonl",
+   "dir": false,
+   "size": 2484100
+  }
+ ],
+ "cwd": "/kaggle/working",
+ "argv": [
+  "/kaggle/src/script.py"
+ ]
+}

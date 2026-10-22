@@ -29,6 +29,12 @@ DOC = REPO_ROOT / "docs" / "KAGGLE_RUNS.md"
 # Every job this project has ever pushed, with what it was meant to answer.
 JOBS: List[Dict[str, Any]] = [
     {
+        "slug": "thx-02-trm-hard-world",
+        "what": "TRM on the noisy world (stochastic actions, stale/partial observations)",
+        "metric": "trm_repair_metrics.json",
+        "question": "does recursion help once the first pass is no longer enough?",
+    },
+    {
         "slug": "thx-02-trm-repair-v3",
         "what": "TRM recursion (K=12) on 99k behavioural rows",
         "metric": "trm_repair_metrics.json",

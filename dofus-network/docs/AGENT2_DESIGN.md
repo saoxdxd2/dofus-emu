@@ -191,6 +191,34 @@ Accuracy rises and overconfidence collapses across rounds — the claim in the p
 reproduced on this task. The harness prints a warning above ECE 0.15 and refuses to
 let such a model veto actions.
 
+**D35 — Recursion is rejected on this task; chunking is kept.**
+Two GPU runs on a T4, 89k behavioural rows, measured rather than argued:
+
+| model | params | result |
+|---|---|---|
+| TRM (K=12 recursion, deep supervision) | 4.23M | **1.0000 at k=1**, ECE 0.000 at every step |
+| plan chunk (GRU, 3 states → 3 tools) | 1.79M | exact 0.9682, per-horizon 0.9859 / 0.9820 / 0.9748 |
+
+The TRM result is a clean negative and worth stating plainly: **recursion bought
+nothing because the first pass was already perfect.** The paper's claim needs a task
+where one pass is insufficient; single-tool classification is a lookup, and a 4M
+model solves it in one step. Twelve recursions were 12× the compute for zero gain.
+
+The chunk model is kept because it answers a different question and degrades the way a
+real plan does: 98.6% on the next call, 97.5% three calls out. That 1.1-point decay is
+the honest cost of planning ahead.
+
+**D36 — The simulator is now the bottleneck, not the model.**
+Both runs hit ~1.0, which does not mean the agents can play. It means the symbolic
+world is *deterministic given the features*, so a small model can learn its rule
+exactly. This is the same trap as the verifier's first 1.0: a perfect score on a task
+whose answer was in the inputs.
+
+Therefore the next work is **not** more parameters or more rows. It is making the world
+hard enough to be worth learning: stochastic success, delayed observations, and
+partial state — the three things that make the real game hard. A model that scores
+0.97 on a noisy world is worth more than one that scores 1.00 on a deterministic one.
+
 **D30 — The simulator is the training ground, the game is the exam.**
 A symbolic simulator over the KB (maps, NPCs, monsters, inventory, quest
 objectives) generates thousands of episodes per hour on CPU. The game generates

@@ -1,0 +1,91 @@
+{
+ "history": 3,
+ "horizon": 3,
+ "params": 1790223,
+ "windows": {
+  "train": 67196,
+  "val": 7526
+ },
+ "per_horizon_accuracy": [
+  0.9859,
+  0.982,
+  0.9748
+ ],
+ "exact_match": 0.9682,
+ "best_epoch": 30,
+ "history_curve": [
+  {
+   "epoch": 5,
+   "per_horizon": [
+    0.9849,
+    0.9799,
+    0.9733
+   ],
+   "exact": 0.9644
+  },
+  {
+   "epoch": 10,
+   "per_horizon": [
+    0.9858,
+    0.9804,
+    0.9733
+   ],
+   "exact": 0.9649
+  },
+  {
+   "epoch": 15,
+   "per_horizon": [
+    0.9856,
+    0.9804,
+    0.9748
+   ],
+   "exact": 0.9657
+  },
+  {
+   "epoch": 20,
+   "per_horizon": [
+    0.9858,
+    0.9805,
+    0.974
+   ],
+   "exact": 0.9659
+  },
+  {
+   "epoch": 25,
+   "per_horizon": [
+    0.9851,
+    0.9815,
+    0.9739
+   ],
+   "exact": 0.9669
+  },
+  {
+   "epoch": 30,
+   "per_horizon": [
+    0.9859,
+    0.982,
+    0.9748
+   ],
+   "exact": 0.9682
+  },
+  {
+   "epoch": 35,
+   "per_horizon": [
+    0.9856,
+    0.9808,
+    0.9748
+   ],
+   "exact": 0.9661
+  },
+  {
+   "epoch": 40,
+   "per_horizon": [
+    0.9859,
+    0.982,
+    0.9748
+   ],
+   "exact": 0.9682
+  }
+ ],
+ "gpu": "Tesla T4"
+}

@@ -84,7 +84,9 @@ class World:
     """Symbolic state + a `step()` that applies a tool call."""
 
     def __init__(self, level: int = 60, seed: int = 7,
-                 max_steps: int = 2000, kb_limit: Optional[int] = None) -> None:
+                 max_steps: int = 2000, kb_limit: Optional[int] = None,
+                 noise: bool = False, action_fail: float = 0.15,
+                 obs_lag: float = 0.20, obs_drop: float = 0.10) -> None:
         self.rng = random.Random(seed)
         raw = _load("quests_full.json")
         if kb_limit:
@@ -118,9 +120,33 @@ class World:
         self.quests_completed = 0
         self.history: List[Dict[str, Any]] = []
 
+        # A deterministic world is a lookup table: a small model learns it exactly
+        # and the score stops meaning anything. These three knobs are the parts of
+        # the real game that make it hard, and they are off by default so existing
+        # numbers stay comparable.
+        self.noise = noise
+        self.action_fail = action_fail
+        self.obs_lag = obs_lag
+        self.obs_drop = obs_drop
+        self._previous_obs: Optional[Dict[str, Any]] = None
+
     # -- observations ------------------------------------------------------
 
     def observe(self) -> Dict[str, Any]:
+        obs = self._observe_now()
+        if not self.noise:
+            return obs
+        # Stale: the client re-serves the previous snapshot while an animation plays.
+        if self._previous_obs is not None and self.rng.random() < self.obs_lag:
+            return dict(self._previous_obs)
+        # Partial: a field the UI has not refreshed yet reads as absent.
+        if self.rng.random() < self.obs_drop:
+            obs = dict(obs)
+            obs["inventory"] = {}
+        self._previous_obs = dict(obs)
+        return obs
+
+    def _observe_now(self) -> Dict[str, Any]:
         return {
             "level": self.level,
             "map_id": self.map_id,
@@ -195,6 +221,15 @@ class World:
         handler = getattr(self, "_tool_" + tool.replace(".", "_"), None)
         if handler is None:
             return False, "no simulator for tool %r" % tool
+
+        if self.noise and tool in ("farm.start", "quest.advance") \
+                and self.rng.random() < self.action_fail:
+            # The real reason is invisible: a resisted skill, a mob that moved, a
+            # dialogue that did not open. The agent must retry or verify, not assume.
+            self.history.append({"tool": tool, "args": args, "ok": False,
+                                 "note": "resisted", "map": self.map_id})
+            return False, "resisted"
+
         ok, note = handler(args)
         self.history.append({"tool": tool, "args": args, "ok": ok, "note": note,
                              "map": self.map_id})

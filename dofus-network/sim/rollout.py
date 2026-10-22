@@ -50,8 +50,8 @@ def _perturb(world: World, rng: random.Random) -> None:
 
 
 def episode(level: int, steps: int, seed: int, rng: random.Random,
-            deadline: float = 0.0) -> List[Dict[str, Any]]:
-    world = World(level=level, seed=seed, max_steps=steps)
+            deadline: float = 0.0, noise: bool = False) -> List[Dict[str, Any]]:
+    world = World(level=level, seed=seed, max_steps=steps, noise=noise)
     planner = QuestPlanner(level_hint=level)
     rows: List[Dict[str, Any]] = []
 
@@ -107,6 +107,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--levels", type=int, nargs="+", default=[20, 40, 60, 80, 100])
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "data" / "rollout_sft")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--noise", action="store_true",
+                    help="stochastic actions, stale and partial observations")
     ap.add_argument("--deadline-epoch", type=float, default=0.0,
                     help="stop starting new episodes after this unix time")
     ap.add_argument("--parallel", type=int, default=1,
@@ -128,7 +130,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     with train_path.open("w", encoding="utf-8") as tr, val_path.open("w", encoding="utf-8") as va:
         for i in range(args.episodes):
             level = args.levels[i % len(args.levels)]
-            rows = episode(level, args.steps, args.seed + i, rng, args.deadline_epoch)
+            rows = episode(level, args.steps, args.seed + i, rng, args.deadline_epoch,
+                           args.noise)
             target = va if i % 10 == 0 else tr
             name = "val" if i % 10 == 0 else "train"
             for row in rows:
@@ -170,6 +173,8 @@ def _parallel(args: argparse.Namespace) -> int:
                "--episodes", str(args.episodes), "--steps", str(args.steps),
                "--seed", str(args.seed + i * 977),
                "--out", str(root / ("w%d" % i))]
+        if args.noise:
+            cmd.append("--noise")
         if deadline:
             cmd += ["--deadline-epoch", "%.0f" % deadline]
         procs.append(subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
