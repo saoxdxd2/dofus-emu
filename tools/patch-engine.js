@@ -22,8 +22,12 @@ let s = fs.readFileSync(bakPath, 'utf8');
 //    the game window can no longer be resized.
 const resizeNeedle = 'var c=l.gui.shortcutBarManager.shortcutBars.playerBar';
 if (s.indexOf(resizeNeedle) !== -1) {
+    // menuBar is built at a different moment than shortcutBarManager, and
+    // resizeWideScreen calls menuBar.computeMinimumSize() further down. Guarding
+    // only shortcutBarManager let the function through with d=undefined and threw
+    // "Cannot read properties of undefined (reading 'computeMinimumSize')".
     s = s.replace(resizeNeedle,
-        'if(!l||!l.gui||!l.gui.shortcutBarManager)return;var c=l.gui.shortcutBarManager.shortcutBars.playerBar');
+        'if(!l||!l.gui||!l.gui.shortcutBarManager||!l.gui.menuBar)return;var c=l.gui.shortcutBarManager.shortcutBars.playerBar');
     console.log('0. resizeWideScreen guarded.');
 } else {
     console.error('[SKIP] resizeWideScreen needle not found');
@@ -110,7 +114,7 @@ console.log('5. Fast safety timer (1200ms) patched.');
 //    `new I[type]` and removing the entry made every log call raise
 //    "Unknown writer type: server" (77 of them in one session).
 const logWriterOld = 'var I={console:a,server:r}';
-const logWriterNew = 'var I={console:a,server:function(){}}';
+const logWriterNew = 'var I={console:a,server:function(){this.addChannel=function(){}}}';
 if (s.indexOf(logWriterOld) === -1) {
     console.error('[SKIP] Patch 6: Cannot find logger writer map!');
 }

@@ -44,7 +44,9 @@ def main() -> None:
     m0 = re.search(r"const resizeNeedle = '([^']*)';", src)
     if not m0:
         raise SystemExit("patch 0 needle not found")
-    m0r = re.search(r"'if\(!l\|\|!l\.gui\|\|!l\.gui\.shortcutBarManager\)return;var c=[^']*'", src)
+    # Match whatever guard the engine installs: it grew a menuBar check, and a
+    # rigid pattern silently stopped extracting the rule.
+    m0r = re.search(r"'(if\(!l.*?shortcutBars\.playerBar)'", src, re.S)
     if not m0r:
         raise SystemExit("patch 0 replacement not found")
     rules.append({

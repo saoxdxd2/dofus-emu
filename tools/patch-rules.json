@@ -7,7 +7,7 @@
    "kind": "replace",
    "core": true,
    "old": "var c=l.gui.shortcutBarManager.shortcutBars.playerBar",
-   "new": "if(!l||!l.gui||!l.gui.shortcutBarManager)return;var c=l.gui.shortcutBarManager.shortcutBars.playerBar"
+   "new": "if(!l||!l.gui||!l.gui.shortcutBarManager||!l.gui.menuBar)return;var c=l.gui.shortcutBarManager.shortcutBars.playerBar"
   },
   {
    "id": 1,
@@ -54,7 +54,7 @@
    "id": 6,
    "kind": "replace",
    "old": "var I={console:a,server:r}",
-   "new": "var I={console:a,server:function(){}}"
+   "new": "var I={console:a,server:function(){this.addChannel=function(){}}}"
   },
   {
    "id": 7,

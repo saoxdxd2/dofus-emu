@@ -2489,52 +2489,11 @@
         }, true);
     } catch(e) {}
 
-    // 20c. shortcutBarManager boot guard.
-    //     Some client builds read gui.shortcutBarManager.shortcutBars during boot
-    //     and on resize, before the manager exists -- 18 uncaught TypeErrors in one
-    //     session ("Cannot read properties of undefined (reading 'shortcutBars')").
-    //     A stub absorbs those reads; the real manager replaces it on assignment.
-    try {
-        var _sbmDone = false;
-        var _installSbmGuard = function() {
-            try {
-                var g = window.gui;
-                if (!g || _sbmDone) return;
-                var existing = Object.getOwnPropertyDescriptor(g, 'shortcutBarManager');
-                if (existing && (existing.get || existing.value)) { _sbmDone = true; return; }
-
-                var _bar = new Proxy(function() {}, {
-                    get: function(t, k) { return k === 'then' ? undefined : _bar; },
-                    apply: function() { return undefined; }
-                });
-                var _mgr = new Proxy(function() {}, {
-                    get: function(t, k) {
-                        if (k === 'then') return undefined;
-                        if (k === 'shortcutBars') return { playerBar: _bar, heroBar: _bar };
-                        return _mgr;
-                    },
-                    apply: function() { return undefined; }
-                });
-
-                Object.defineProperty(g, 'shortcutBarManager', {
-                    configurable: true,
-                    get: function() { return _mgr; },
-                    set: function(v) {
-                        try {
-                            Object.defineProperty(g, 'shortcutBarManager',
-                                { value: v, writable: true, configurable: true });
-                        } catch (e) {}
-                    }
-                });
-                _sbmDone = true;
-            } catch (e) {}
-        };
-        var _sbmTimer = setInterval(function() {
-            _installSbmGuard();
-            if (_sbmDone) { try { clearInterval(_sbmTimer); } catch (e) {} }
-        }, 40);
-        setTimeout(function() { try { clearInterval(_sbmTimer); } catch (e) {} }, 30000);
-    } catch (e) {}
+    // 20c. (removed) A shortcutBarManager stub lived here for one build. It was a
+    // mistake: making the manager look present defeated the guard in patch 0, so
+    // resizeWideScreen ran against a half-built GUI and threw on
+    // menuBar.computeMinimumSize. The guard in the bundle now checks menuBar too;
+    // nothing should fake that object into existence.
 
     // 21. Visitor Account Persistence Hook (accounts.txt bridge)
     try {
