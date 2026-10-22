@@ -123,3 +123,6 @@ no-client-update.flag
 
 # git filter-branch scratch
 .git-rewrite/
+
+# git filter-branch scratch
+.git-rewrite/
