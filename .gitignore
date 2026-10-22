@@ -130,3 +130,4 @@ no-client-update.flag
 # Kaggle corpus exports are derived data; the scripts and metadata are tracked.
 dofus-network/kaggle/**/dataset/*.jsonl
 dofus-network/kaggle/**/*.onnx
+dofus-network/data/rollout_sft/*.jsonl

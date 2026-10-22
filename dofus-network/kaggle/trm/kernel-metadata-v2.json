@@ -1,0 +1,20 @@
+{
+ "id": "tajdinenizar/thx-02-trm-repair-v2",
+ "title": "THX-02 TRM repair v2 (99k rows, K=12)",
+ "code_file": "train_trm.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_internet": false,
+ "keywords": [
+  "gpu",
+  "trm"
+ ],
+ "dataset_sources": [
+  "tajdinenizar/thx-02-planner-corpus"
+ ],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": []
+}

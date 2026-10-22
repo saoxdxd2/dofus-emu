@@ -30,11 +30,12 @@ import torch.nn.functional as F
 
 DATA = Path("/kaggle/input/thx-02-planner-corpus")
 OUT = Path("/kaggle/working")
-STEPS = 6
-HIDDEN = 512
-LATENT = 256
-EPOCHS = 80
+STEPS = 12          # recursion depth: the paper's "think longer", now 12 steps
+HIDDEN = 1024
+LATENT = 512
+EPOCHS = 60
 SEED = 7
+BATCH = 4096
 
 
 def read_jsonl(path):
@@ -48,13 +49,27 @@ def read_jsonl(path):
 
 
 def load():
-    train = read_jsonl(DATA / "planner_train.jsonl")
-    val = read_jsonl(DATA / "planner_val.jsonl")
+    # Prefer the rollout corpus (behaviour with outcomes); fall back to the
+    # teacher corpus. Same feature layout, so the model does not care.
+    train_name = "rollout_train.jsonl" if (DATA / "rollout_train.jsonl").exists() else "planner_train.jsonl"
+    val_name = "rollout_val.jsonl" if (DATA / "rollout_val.jsonl").exists() else "planner_val.jsonl"
+    print("corpus:", train_name, val_name)
+    train = read_jsonl(DATA / train_name)
+    val = read_jsonl(DATA / val_name)
+    train = [r for r in train if r.get("y", -1) >= 0]
+    val = [r for r in val if r.get("y", -1) >= 0]
     x = np.asarray([r["x"] for r in train], dtype="float32")
     y = np.asarray([r["y"] for r in train], dtype="int64")
+    # Behavioural rows carry the outcome. An action that completed the objective is
+    # a better label than one that did not, and this is the cheapest way to use
+    # that: weight, don't filter. Filtering would throw away exactly the states
+    # where the teacher is wrong, which are the ones worth learning.
+    w = np.asarray([1.0 if r.get("advanced", True) else 0.5 for r in train], dtype="float32")
     vx = np.asarray([r["x"] for r in val], dtype="float32")
     vy = np.asarray([r["y"] for r in val], dtype="int64")
-    return x, y, vx, vy
+    adv_rate = float(np.mean([1.0 if r.get("advanced", True) else 0.0 for r in train]))
+    print("outcome-weighted: %.1f%% of training actions advanced" % (100 * adv_rate))
+    return x, y, w, vx, vy
 
 
 class TRM(nn.Module):
@@ -97,11 +112,12 @@ def main():
     np.random.seed(SEED)
     print("torch", torch.__version__, "cuda", torch.cuda.is_available())
 
-    x, y, vx, vy = load()
+    x, y, w, vx, vy = load()
     print("train %d  val %d  features %d  classes %d" % (len(y), len(vy), x.shape[1], y.max() + 1))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tx, ty = torch.from_numpy(x).to(device), torch.from_numpy(y).to(device)
+    tw = torch.from_numpy(w).to(device)
     wx, wy = torch.from_numpy(vx).to(device), torch.from_numpy(vy).to(device)
 
     model = TRM(x.shape[1]).to(device)
@@ -115,16 +131,25 @@ def main():
     history = []
     started = time.time()
 
+    n = tx.size(0)
     for epoch in range(1, EPOCHS + 1):
         model.train()
-        opt.zero_grad()
-        outs = model(tx)
-        # Deep supervision: every recursion step is a training signal, so early
-        # steps learn to be useful rather than waiting for the last one.
-        loss = sum(F.cross_entropy(o, ty) for o in outs) / len(outs)
-        loss.backward()
-        opt.step()
+        perm = torch.randperm(n, device=device)
+        epoch_loss = 0.0
+        for start in range(0, n, BATCH):
+            idx = perm[start:start + BATCH]
+            opt.zero_grad()
+            outs = model(tx[idx])
+            # Deep supervision: every recursion step is a training signal, so early
+            # steps learn to be useful rather than waiting for the last one.
+            loss = sum(F.cross_entropy(o, ty[idx], reduction="none") for o in outs) / len(outs)
+            loss = (loss * tw[idx]).mean()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            epoch_loss += float(loss) * len(idx)
         sched.step()
+        loss = torch.tensor(epoch_loss / max(1, n))
 
         if epoch % 5 == 0 or epoch == EPOCHS:
             model.eval()
