@@ -72,10 +72,32 @@ historical artifact.
 Twelve passes of a GRU cell produced the same answer as one. Tool selection is a
 lookup; the paper's claim needs a task where one pass is insufficient.
 
-**The learned value model.** 1,500 counterfactual states, 11 features: regret 0.062
-for the model, 0.058 for the best constant ("always continue"), 0.133 for the shipped
-"always retry". It did not earn its place and `models/decision_value.onnx` is not
-wired in.
+**The repair decision (second attempt, in the priced world, with better features).**
+The one place the teacher has no rule, so the one place a model could still earn its
+place. Rebuilt the corpus properly — the old `retry` arm replayed the tool with *empty
+arguments*, which is not a retry, and it made retry look far worse than it is — and
+took the features from 11 to 24 (error class, which tool failed, hops to the objective,
+bag full, observation freshness). 2,500 post-failure states.
+
+| policy | regret (progress left on the table, lower is better) |
+|---|---|
+| always continue | **0.2480** |
+| always retry | 0.3120 |
+| always recover | 0.6667 |
+| always replan | 1.0480 |
+| learned | 0.2560 — *loses* |
+
+And it loses where it matters too: on the 120 validation rows where the decisions
+actually differ, continue is 0.6417 and the model is 0.6500. It never predicts retry,
+recover or replan — it collapses to "always continue" and pays a small tax for the
+occasions it deviates.
+
+The reason is structural, not statistical: **every failure the simulator can produce is
+transient.** A resisted action succeeds on the next attempt 85% of the time, so
+"continue" is the correct response to all of them, and it is a constant. The failures
+that genuinely need a decision — no client, wrong map, missing item — never occur here,
+and the taxonomy already classifies those exactly. `models/decision.onnx` is not wired
+in.
 
 **The "first failure → retry" rule.** 2.3× worse than continuing in the simulator; in
 the real client 0 of 9 retries worked, because they were retrying an absent client.
@@ -140,6 +162,22 @@ down-weights ties — the column above is not a fair fight, and accuracy is.
 ---
 
 ## 4. What is blocked, and by what
+
+0. **The simulator is exhausted.** Not "hard", not "needs more data" — exhausted. Every
+   learned policy it can justify has now been tried and lost, and the two failures have
+   the same cause: the world's only non-teacher signal is noise, and noise is best
+   answered by a constant.
+
+   | target | best model | best rule | verdict |
+   |---|---|---|---|
+   | which tool | 66.7 quests | 82.6 (teacher) | model loses 19% |
+   | repair after failure | regret 0.2560 | 0.2480 (always continue) | model loses |
+
+   Tool choice is precondition checking, and the teacher's checks are exact. Repair
+   decisions are only interesting when a failure is *persistent*, and nothing in this
+   world is persistent. To get a learnable signal the world would need failure modes
+   that a decision can actually fix — which is what the real client has and the
+   simulator does not.
 
 0. **The world is built from the teacher's own rules, so it can only teach noise.**
    This is the real blocker, and it subsumes the rest. Every number this simulator
@@ -224,19 +262,23 @@ dividing by a small integer, not of the world being indifferent.
 **Falsifier:** if neither moves the tie rate, the world really is indifferent in a
 quarter of its states and the corpus should simply drop them.
 
-### P1 — one real session (needs the client running)
+### P1 — one real session (the only door left)
+Not "the next step after the simulator". The simulator is finished as a source of
+learning signal: it can score a policy, and it can no longer improve one. What it
+cannot produce is a *persistent* failure, and a persistent failure is the only thing a
+learned repair decision could fix.
+
 20–30 steps of `farm` / `go to` / `open inventory` with the loop attached, then
 `python ai/reality_check.py`.
 **Done when:** ≥30 genuine (non-structural) failures. **Falsifier:** if the real
-ranking contradicts the simulator, the simulator's noise model is wrong and gets fixed
-before any further training.
+failures turn out to be as transient as the simulated ones, then no learned decision is
+worth building and the controller's rule stays.
 
-### P2 — the decision model, second attempt (this is now the *only* live model target)
-Not the tool choice: the teacher already does that exactly. The only place a model can
-add value is where the teacher has no rule — what to do **after a failure**.
-**Done when:** it beats both constants on real failures. **Falsifier:** if it loses,
-the decision is not learnable from these 11 features and the next move is richer
-features, not a bigger net. Blocked on P1 for labels.
+### P2 — the decision model, third attempt — ONLY with P1's labels
+Same harness, same metric (regret), same rule: it ships only if it beats every
+constant. Two attempts have now failed on simulated failures, both for the same reason.
+A third attempt on the same data would be the fourth time this project measures the
+same thing and gets the same answer.
 
 ### P3 — plan chunks in the runtime
 `plan_chunk.onnx` (1.79M, exact 0.9682) predicts the next 3 tools. Wire it as a hint

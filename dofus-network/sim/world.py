@@ -123,6 +123,16 @@ class World:
 
         self.level = level
         self.map_id: Optional[int] = None
+        # A player is always standing somewhere. Starting at `None` meant every
+        # gather and delivery failed with "nowhere: no map loaded" until some
+        # objective happened to name a map — and under the diverse curriculum, whose
+        # first objectives are often deliveries with no map, that never happened. The
+        # agent was not failing to plan; it was standing in the void. Start on the
+        # lowest-numbered quest's start map, which is a real map from the KB.
+        for _q in sorted(self.quests.values(), key=lambda x: x.id):
+            if _q.start_map:
+                self.map_id = int(_q.start_map)
+                break
         self.kamas = 5000
         self.inventory: Dict[int, int] = {}
         self.capacity = DEFAULT_CAPACITY
