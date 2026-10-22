@@ -48,10 +48,12 @@ whether any of it transfers.
 | Planner completes quests | sim, deterministic, L60, 400 steps: **119 quests / 148 objectives**; random 0, rule 0 |
 | Planner does not loop | `max_repeat: 1`, `stalled: false` across L20/L60/L100 |
 | Tool policy beats the teacher | 7 seeds, `--noise`, 400 steps: **99.6 vs 96.9 quests**, 109.4 vs 104.4 objectives |
-| Tool policy beats copying the teacher | val acc **0.8962** vs teacher-agreement **0.8140** (+8.2 pts), 41→192→192→18, 48,594 params |
-| The decision, not the label, is what improved | gain per decision **0.7192** vs teacher 0.6861, oracle 0.7380 → **97.5% of oracle** |
+| Tool policy beats copying the teacher | val acc **0.8986** vs teacher-agreement **0.8235** (+7.5 pts), 41→192→192→18, 48,594 params |
+| The decision, not the label, is what improved | gain per decision **0.6965** vs teacher 0.6659, oracle 0.7149 → **97.4% of oracle** |
+| Where the label is meaningful, it is near-perfect | margin > 0.1 (60.6% of val): accuracy **0.9691**; exact ties (22.7%): 0.7611 |
+| Rare tools are learned, not ignored | macro-F1 **0.5321** after down-weighting tie rows (was 0.28) |
 | Verifier is calibrated | val acc 1.0000, ECE **0.0075** after resume rounds |
-| Tool policy is calibrated | ECE **0.0100** |
+| Tool policy is calibrated | ECE **0.0242** |
 | Test suite | **79 checks, 0 failed** (`python agent/smoke_verifier.py`) |
 
 **18 tools** in `data/capabilities.json`; `agent/features.py` reads that file, so the
@@ -86,19 +88,34 @@ Measured: decision gain 0.7031 vs 0.7028 for hard targets (**+0.0003**), and ECE
 0.1762 vs 0.0122. Rejected by its own result; `--targets soft` is kept only so the
 comparison is reproducible.
 
+**A smoother fork score (`--score cummean`).** The rate score can only take the values
+1, 1/2, 1/3, 1/4, 1/5, so candidates tie constantly and the tie-break decides the
+label. Scoring the *mean cumulative* gain instead was supposed to fix that. Measured
+on the same seeds: ambiguity 34.5% vs 27.7%, simulator 98.6 vs 99.6 quests. It made
+both worse. Default stays `rate`.
+
 **More data.** 32k → 90k rows (2.8×): validation accuracy +0.002, simulator score
-**−0.9 quests**. Data volume is not the lever. The 32k model is the one that ships.
+**−0.9 quests**. Data volume is not the lever.
 
 ---
 
 ## 4. What is blocked, and by what
 
-1. **The label is ambiguous, and that is now the ceiling.** 40.1% of validation states
-   whose exact 41-feature vector also appears in training carry **more than one
-   label**. A majority-vote lookup agrees with the held-out label 87.2% of the time on
-   those states. The model is at 89.6% overall, i.e. at the ceiling this featurisation
-   allows. No capacity, data, or recursion removes it — the label depends on
-   information the features do not carry (what the plan does next, and the noise draw).
+1. **The label is ambiguous, and it is now measured rather than suspected.** 40.1% of
+   validation states whose exact 41-feature vector also appears in training carry more
+   than one label. **23.8% of the corpus is an exact tie**: the top two candidates
+   scored the same, so the label is my tie-break, not the world. Splitting the model's
+   accuracy by that margin is the whole story:
+
+   | margin between top two | share of val | accuracy |
+   |---|---|---|
+   | exact tie (0.0) | 22.7% | 0.7611 |
+   | small (≤ 0.1) | 16.7% | 0.8538 |
+   | clear (> 0.1) | 60.6% | **0.9691** |
+
+   Where the fork has an opinion, the model is at 96.9%. The ten-point gap to the
+   headline is entirely rows where the world had no preference. No capacity, data, or
+   recursion removes that; the fix is either a better tie-break or fewer ties.
 2. **The world only needs four verbs.** Label mix: `farm.start` 36%, `quest.advance`
    32%, `nav.goto` 24%, `fight.join` 4.6% — 96.9% of all decisions. The old P0
    criterion ("≥5 tools at ≥5% of rows") was a guess made before anyone had measured
@@ -130,12 +147,14 @@ steps, and labels the tool with the best **objectives per step**. 18-wide label 
 the bottleneck". It emitted four once the world stopped letting one tool do everything.
 
 ### P0.5 — the label ceiling (next, no GPU needed)
-40.1% of states are ambiguous. Find out which half is fixable:
-(a) the plan's next step — knowable, and not in the features today;
-(b) the noise draw — not knowable, and it should be smoothed, not learned.
-**Done when:** a feature set that drops the ambiguity below 25% at equal accuracy.
-**Falsifier:** if neither addition moves it, the label is noise-dominated and the
-corpus should shrink to the states where the fork actually discriminates.
+23.8% of rows are exact ties and another 16.7% are within noise. Two ways to attack:
+(a) **a better tie-break** — right now ties go to the teacher, which is defensible but
+unmeasured against "prefer the cheaper tool" or "prefer the one that worked last time";
+(b) **fewer ties** — the rate score quantises to 1/k, so most ties are an artefact of
+dividing by a small integer, not of the world being indifferent.
+**Done when:** exact ties below 10% with the simulator score unchanged or better.
+**Falsifier:** if neither moves the tie rate, the world really is indifferent in a
+quarter of its states and the corpus should simply drop them.
 
 ### P1 — one real session (needs the client running)
 20–30 steps of `farm` / `go to` / `open inventory` with the loop attached, then

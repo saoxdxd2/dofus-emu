@@ -97,7 +97,16 @@ def load_split(path: Path, feature_count: Optional[int] = None
             xs.append(x)
             ys.append(int(row["y"]))
             teacher.append(tool_index.get(row.get("teacher") or "", -1))
-            trivial.append(0.35 if row.get("trivial") else 1.0)
+            # Two reasons a row carries less signal than it appears to:
+            #  * every candidate scored zero (trivial): the label is the tie-break;
+            #  * the top two are within noise (margin): the label is *also* the
+            #    tie-break, and 23% of this corpus is an exact tie. Measured on rows
+            #    the fork could actually separate, the model is at 0.969; the whole
+            #    gap to 0.90 overall lives in these rows, so they are down-weighted
+            #    rather than deleted (they still teach preconditions).
+            margin = float(row.get("margin") or 0.0)
+            mw = 0.20 if margin <= 0.0 else (0.60 if margin <= 0.10 else 1.0)
+            trivial.append((0.35 if row.get("trivial") else 1.0) * mw)
             vec = [0.0] * len(DEFAULT_TOOLS)
             for name, value in (row.get("gains") or {}).items():
                 i = tool_index.get(name)

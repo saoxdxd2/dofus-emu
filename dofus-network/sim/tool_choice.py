@@ -94,15 +94,23 @@ def candidates(teacher_tool: str, obj: Dict[str, Any], rng: random.Random,
 
 
 def _fork_score(world: World, planner: QuestPlanner, tool: str, args: Dict[str, Any],
-                depth: int) -> Tuple[float, List[int]]:
+                depth: int, mode: str = "rate") -> Tuple[float, List[int]]:
     """Fork once, and score the candidate by progress *per step*.
 
     Total progress over a fixed horizon does not discriminate: with three steps
     available, a wasted read still finishes the objective, so every candidate ties and
     the label collapses back into "what the teacher did". What separates them is the
-    rate — one objective in one step beats one objective in three. So the score is the
-    best cumulative-progress-per-step over the prefixes of the fork, which is the same
-    quantity the simulator's own scoreboard reports.
+    rate — one objective in one step beats one objective in three.
+
+    Two ways to compute it, and the difference matters:
+
+    * ``rate`` — max(cumulative / steps). Coarse: it can only take the values 1, 1/2,
+      1/3, 1/4, 1/5, so candidates land on the same number constantly and the
+      tie-break, not the world, decides the label. Measured: 83% of soul-stone rows
+      were ambiguous under this score.
+    * ``cummean`` — mean cumulative gain over the horizon. Rewards speed and also
+      rewards *not stalling*: finishing at step 2 scores 0.8, at step 3 scores 0.6.
+      Continuous, so fewer ties and less of the label decided by a coin flip.
     """
     base = world.objectives_completed
     cum: List[int] = []
@@ -116,6 +124,8 @@ def _fork_score(world: World, planner: QuestPlanner, tool: str, args: Dict[str, 
             break
         twin.step(call.tool, call.args)
         cum.append(twin.objectives_completed - base)
+    if mode == "cummean":
+        return (sum(cum) / float(max(1, len(cum)))), cum
     best = 0.0
     for i, done in enumerate(cum, start=1):
         if done > 0:
@@ -147,7 +157,8 @@ def _perturb(world: World, rng: random.Random) -> None:
 
 def episode(level: int, steps: int, seed: int, rng: random.Random,
             noise: bool = True, depth: int = DEPTH,
-            focus: Optional[int] = None) -> List[Dict[str, Any]]:
+            focus: Optional[int] = None,
+            score_mode: str = "rate") -> List[Dict[str, Any]]:
     world = World(level=level, seed=seed, max_steps=steps, noise=noise)
     planner = QuestPlanner(level_hint=level, curriculum="random", seed=seed,
                            focus=focus)
@@ -177,11 +188,16 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
         base = world.objectives_completed
         for tool in candidates(call.tool, obj, rng):
             args = args_for_tool(tool, planner.quests.get(quest.id) or {"id": quest.id}, obj, obs)
-            score, cum = _fork_score(world, planner, tool, args, depth)
+            score, cum = _fork_score(world, planner, tool, args, depth, score_mode)
             gains[tool] = round(score, 4)
             notes[tool] = ",".join(str(c) for c in cum)
 
         best = max(gains.values())
+        # Margin matters: a row where the top two candidates are 0.02 apart carries
+        # almost no signal, and the trainer should know that. Recorded per row so the
+        # weight can be set from data rather than from a hunch.
+        ordered = sorted(gains.values(), reverse=True)
+        margin = ordered[0] - ordered[1] if len(ordered) > 1 else ordered[0]
         winner = next(t for t in gains if gains[t] == best)
         # Ties go to the teacher: when several tools work equally well, the corpus
         # should not invent a preference that the world does not have.
@@ -206,6 +222,7 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             # the preconditions but carries no counterfactual information, and the
             # trainer weights it down rather than pretending it is evidence.
             "trivial": best <= 0.0,
+            "margin": round(margin, 4),
             "gains": gains,
             "curves": notes,
             "ok": bool(ok), "advanced": bool(advanced), "note": note[:60],
@@ -226,6 +243,7 @@ def _parallel(args: argparse.Namespace) -> int:
         cmd = [sys.executable, str(Path(__file__).resolve()),
                "--episodes", str(args.episodes), "--steps", str(args.steps),
                "--seed", str(args.seed + i * 977), "--depth", str(args.depth),
+               "--score", args.score,
                "--levels", *[str(x) for x in args.levels],
                "--focus", *[str(x) for x in args.focus],
                "--out", str(root / ("w%d" % i))]
@@ -280,6 +298,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--deadline-epoch", type=float, default=0.0)
     ap.add_argument("--parallel", type=int, default=1)
     ap.add_argument("--minutes", type=float, default=0.0)
+    ap.add_argument("--score", choices=("rate", "cummean"), default="rate",
+                    help="how a fork is scored: max progress per step, or mean "
+                         "cumulative progress (finer, fewer ties)")
     ap.add_argument("--focus", type=int, nargs="+", default=[0, 1, 3, 6, 9, 2, 12, 14, 16, 4],
                     help="objective types to steer episodes at, cycled; keeps the "
                          "corpus from collapsing onto whatever the shortest quests do")
@@ -299,7 +320,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         level = args.levels[i % len(args.levels)]
         focus = focus_cycle[i % len(focus_cycle)] if focus_cycle else None
         rows.extend(episode(level, args.steps, args.seed + i, rng, args.noise,
-                            args.depth, focus))
+                            args.depth, focus, args.score))
 
     split = int(len(rows) * 0.9)
     for name, part in (("train", rows[:split]), ("val", rows[split:])):
@@ -317,6 +338,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "seconds": round(time.time() - started, 1),
         "rows_per_s": round(len(rows) / max(0.001, time.time() - started), 1),
         "agreement_with_teacher": round(sum(1 for r in rows if r["agrees"]) / total, 3),
+        "score_mode": args.score,
+        "mean_margin": round(sum(r.get("margin") or 0 for r in rows) / total, 4),
+        "near_ties": round(sum(1 for r in rows if (r.get("margin") or 0) <= 0.05) / total, 3),
         "trivial_rate": round(trivial / total, 3),
         "tools": {k: round(100.0 * v / total, 1) for k, v in tools.most_common()},
         "covered": sum(1 for v in tools.values() if v / total >= 0.05),
