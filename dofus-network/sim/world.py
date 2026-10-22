@@ -130,6 +130,37 @@ class World:
         self.obs_drop = obs_drop
         self._previous_obs: Optional[Dict[str, Any]] = None
 
+    def clone(self) -> "World":
+        """A copy that shares the knowledge base but not the mutable state.
+
+        Needed to ask "what would have happened if I had replanned instead?" --
+        counterfactual labels are the only honest way to learn a decision, and they
+        require a cheap fork. The quest dict is ~2,000 entries and never mutates, so
+        it is shared by reference; everything that changes is copied.
+        """
+        twin = object.__new__(World)
+        twin.rng = random.Random(self.rng.random())
+        twin.quests = self.quests
+        twin.npc_ids = self.npc_ids
+        twin.level = self.level
+        twin.map_id = self.map_id
+        twin.kamas = self.kamas
+        twin.inventory = dict(self.inventory)
+        twin.quests_done = set(self.quests_done)
+        twin.active = dict(self.active)
+        twin.objectives_done = set(self.objectives_done)
+        twin.steps = self.steps
+        twin.max_steps = self.max_steps
+        twin.objectives_completed = self.objectives_completed
+        twin.quests_completed = self.quests_completed
+        twin.history = list(self.history[-20:])
+        twin.noise = self.noise
+        twin.action_fail = self.action_fail
+        twin.obs_lag = self.obs_lag
+        twin.obs_drop = self.obs_drop
+        twin._previous_obs = self._previous_obs
+        return twin
+
     # -- observations ------------------------------------------------------
 
     def observe(self) -> Dict[str, Any]:

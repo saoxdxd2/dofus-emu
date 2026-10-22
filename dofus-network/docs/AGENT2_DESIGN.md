@@ -227,6 +227,73 @@ simulator; validate on real sessions, never train on them directly.
 
 ---
 
+## 3b. What the GPU runs actually taught us
+
+Three results, in the order they arrived, each one shrinking the problem:
+
+1. **A 4M model solves "which tool for this objective" in one pass** (1.0000 at k=1,
+   ECE 0.000). Recursion, depth and capacity are all wasted on a lookup.
+2. **A 1.8M GRU predicts three calls ahead at 96.8% exact** — so chunking works, and
+   the 1.1-point decay from step 1 to 3 is the real cost of planning ahead.
+3. **Both scored ~1.0 because the world was deterministic.** The number measured the
+   simulator, not the agent. With noise switched on the success rate fell from 74% to
+   40% — that is the task worth learning.
+
+So the learnable object is not the tool mapping. It is **the decision to continue,
+retry, recover or replan**, under partial information, after a failure whose cause is
+invisible. That decision is where uncertainty actually lives, and it is the one thing
+the rule controller currently guesses with thresholds.
+
+The literature agrees, and it is recent and specific:
+* *Continue or Replan? Bernoulli-Continuation Policy Learning for Adaptive Horizon
+  Execution* (2026) treats "keep executing the chunk vs replan" as **its own policy**,
+  not as a by-product of the action model.
+* *Recova* (NVIDIA/UCSD, 2026) exists because VLA training data is almost entirely
+  successful trajectories from clean initial states — the failure states are missing.
+  We have the opposite problem and the fix: our simulator can manufacture them.
+* *Rewind-IL* (2026) shows failure detection for chunked policies is a separate,
+  calibratable signal (conformal prediction on inter-chunk disagreement).
+
+And for the training method, the honest baseline comes from *Should We Ever Prefer
+Decision Transformer for Offline RL?* (arXiv:2507.10174): **Filtered Behaviour
+Cloning** — a 2-layer MLP trained only on high-performing trajectories — matches or
+beats Decision Transformer, trains 3x faster with half the parameters. If a filtered
+MLP beats our sequence models, that is the answer, and it is cheap.
+
+**D37 — Train the decision, not the lookup.**
+The next corpus is `(state, chunk progress, failure history) → decision`, labelled by
+**outcome** (did an objective complete within N steps), not by imitation of the
+controller's thresholds. Baselines, in order of complexity: filtered BC → weighted BC
+→ chunk model → DT. Each must beat the previous *on quests completed in the noisy
+world*, never on decision accuracy.
+
+### The first counterfactual result (300 post-failure states)
+
+`sim/decisions.py` forks the noisy world four ways and measures what each decision is
+actually worth over three steps:
+
+| decision | mean objectives gained | states where it gained nothing |
+|---|---|---|
+| **continue** | **0.396** | 65% |
+| retry | 0.302 | 73% |
+| recover | 0.286 | 71% |
+| replan | 0.294 | 71% |
+
+**Retrying — the rule the shipped controller applies to every first failure — is the
+worst option after a failure in this world**, and continuing is 31% better than it.
+That is not an argument that retry is always wrong (a dropped packet is worth
+retrying); it is an argument that the decision cannot be a constant. A hardcoded
+"first failure → retry" is a bet placed once and never settled.
+
+Caveat, stated before it is convenient: this is the symbolic world at 15% action
+failure. The ranking is a property of that world, and the real game may rank
+differently. What transfers is the *method* — fork, measure, then decide.
+
+**D38 — Report the noisy score, always.**
+A score on the deterministic world is a self-test. Every future number is quoted at
+`--noise`, where success is 40%, because that is the only setting where a better
+policy can be distinguished from a better fit.
+
 ## 4. Architecture
 
 ```
