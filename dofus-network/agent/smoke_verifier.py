@@ -311,6 +311,40 @@ def test_onnx_head() -> None:
           "%s/%s" % (r.source, r.verdict))
 
 
+def test_planner_beats_the_rule_policy() -> None:
+    """The number the whole design rests on: a plan completes quests, a rule does not."""
+    print("\n== planner vs rule (symbolic world) ==")
+    try:
+        from sim.run import RulePolicy, run
+        from agent.planner import QuestPlanner
+    except Exception as exc:  # noqa: BLE001
+        print("  [SKIP] %s" % exc)
+        return
+
+    planner = run(QuestPlanner(level_hint=60), level=60, steps=200)
+    rule = run(RulePolicy(), level=60, steps=200)
+
+    check("the planner completes quests", planner["quests"] > 0,
+          "%d quests in 200 steps" % planner["quests"])
+    check("the rule policy does not", rule["quests"] == 0, "%d quests" % rule["quests"])
+    check("planner is strictly better", planner["quests"] > rule["quests"],
+          "%d vs %d" % (planner["quests"], rule["quests"]))
+
+    # Every call the planner emits must name ids that exist, or the plan is fiction.
+    from sim.world import World
+    world = World(level=60, max_steps=40)
+    p = QuestPlanner(level_hint=60)
+    bad = 0
+    for _ in range(30):
+        call = p.choose("do all the quests", world.observe(), None)
+        if call is None:
+            break
+        if call.tool == "quest.advance" and call.args.get("quest_id") not in p.quests:
+            bad += 1
+        world.step(call.tool, call.args)
+    check("planner only names quests that exist", bad == 0, "%d invalid" % bad)
+
+
 def test_preflight_is_inert_without_a_model() -> None:
     print("\n== pre-flight ==")
     v = Verifier(human_path=Path(tempfile.gettempdir()) / "nonexistent_human.jsonl")
@@ -327,6 +361,7 @@ def main() -> int:
     test_baseline_model()
     test_onnx_head()
     test_step_summary()
+    test_planner_beats_the_rule_policy()
     test_controller_changes_the_next_action()
     test_loop_applies_the_decision()
     test_preflight_is_inert_without_a_model()
