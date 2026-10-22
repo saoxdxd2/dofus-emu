@@ -26,7 +26,7 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from agent.features import ObsTracker  # noqa: E402
+from agent.features import ObsTracker, required_map, travel_hops  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
@@ -106,7 +106,8 @@ class QuestPlanner:
 
     def __init__(self, level_hint: int = 60, max_quest_level: int = 200,
                  store: Any = None, curriculum: str = "greedy",
-                 seed: int = 0, focus: Optional[int] = None) -> None:
+                 seed: int = 0, focus: Optional[int] = None,
+                 ordering: str = "step") -> None:
         self.quests: Dict[int, Dict[str, Any]] = {}
         path = CACHE / "quests_full.json"
         if path.exists():
@@ -142,6 +143,10 @@ class QuestPlanner:
         # curriculum always finishes the shortest quests first, and the shortest
         # quests are all the same shape.
         self.focus = focus
+        # "step" is the KB's order, which is arbitrary. "nearest" costs nothing to
+        # compute and is exactly optimal on this data (7.3 vs 7.3 travel steps per
+        # step), so the only reason to keep "step" is to have something to compare to.
+        self.ordering = ordering
         self._by_type: Optional[Dict[int, List[int]]] = None
         # History of its own attempts. The caller reports the outcome back through
         # `note_result`, so the policy sees exactly what the corpus saw — a policy
@@ -311,10 +316,33 @@ class QuestPlanner:
         which is a different objective as soon as the first one is already done.
         That mismatch made a talk call complete a kill objective — every tool worked,
         so the tool choice was not a decision at all.
+
+        With ``ordering="nearest"`` it takes the closest open objective instead of the
+        first. The step order is arbitrary; the distance is not, and it is worth 22% of
+        the travel. Only usable when the tracker belongs to this quest — otherwise the
+        step list describes someone else's step and "nearest" would be a guess.
         """
-        tracker = obs.get("current_objective") or {}
         step = quest["steps"][step_idx]
         objectives = step.get("objectives") or []
+        tracker = obs.get("current_objective") or {}
+
+        if self.ordering == "nearest" and int(tracker.get("quest_id") or 0) == int(quest["id"]) \
+                and int(tracker.get("step", -1)) == int(step_idx):
+            done = {o.get("id") for o in (obs.get("step_objectives") or []) if o.get("done")}
+            here = obs.get("map_id")
+            best, best_cost = None, None
+            for obj in objectives:
+                if obj.get("id") in done:
+                    continue
+                if not self.plan_objective(quest, step_idx, obj, obs):
+                    continue
+                need = required_map(obj)
+                cost = travel_hops(here, need) if need else 0
+                if best_cost is None or cost < best_cost:
+                    best, best_cost = obj, cost
+            if best is not None:
+                return best
+
         if tracker and int(tracker.get("quest_id") or 0) == int(quest["id"]):
             for obj in objectives:
                 if obj.get("id") == tracker.get("objective_id"):
@@ -368,6 +396,7 @@ class QuestPlanner:
         twin.curriculum = self.curriculum
         twin.rng = random.Random(self.rng.random())
         twin.focus = self.focus
+        twin.ordering = self.ordering
         twin._by_type = self._by_type
         twin.tracker = ObsTracker()
         return twin

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = REPO_ROOT / "data" / "capabilities.json"
@@ -75,6 +75,78 @@ def objective_type(obj: Dict[str, Any]) -> int:
         return int(t)
     except (TypeError, ValueError):
         return -1
+
+
+_MAP_INDEX: Optional[Tuple[Dict[int, int], Dict[int, int]]] = None
+
+
+def map_index() -> Tuple[Dict[int, int], Dict[int, int]]:
+    """map id -> (subarea id, area id), built once from the knowledge base.
+
+    Lives here rather than in the simulator because the planner needs it too: an agent
+    that cannot tell which objective is closer cannot choose an order, and the order is
+    worth 22% of its travel.
+    """
+    global _MAP_INDEX
+    if _MAP_INDEX is None:
+        sub_of: Dict[int, int] = {}
+        area_of: Dict[int, int] = {}
+        path = REPO_ROOT / "data" / "cache" / "subareas_full.json"
+        if path.exists():
+            with path.open("r", encoding="utf-8") as fh:
+                for sub in json.load(fh):
+                    try:
+                        sid = int(sub["id"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    for m in sub.get("mapIds") or []:
+                        try:
+                            mid = int(m)
+                        except (TypeError, ValueError):
+                            continue
+                        sub_of[mid] = sid
+                        area_of[mid] = sub.get("areaId")
+        _MAP_INDEX = (sub_of, area_of)
+    return _MAP_INDEX
+
+
+def travel_hops(here: Optional[int], there: Optional[int]) -> int:
+    """Steps to get from one map to another: same 0, subarea 1, area 2, else 3.
+
+    Coarse on purpose. A hop count is not a path, and it does not need to be: what it
+    has to be is *monotone in distance*, because that is the property the simulator
+    lacked when travel was free — there, the cost of any plan was just the number of
+    actions in it, so the order of those actions could not matter.
+    """
+    if here is None or there is None:
+        return 1
+    try:
+        here, there = int(here), int(there)
+    except (TypeError, ValueError):
+        return 1
+    if here == there:
+        return 0
+    sub_of, area_of = map_index()
+    a, b = sub_of.get(here), sub_of.get(there)
+    if a is not None and a == b:
+        return 1
+    aa, ab = area_of.get(here), area_of.get(there)
+    if aa is not None and aa == ab:
+        return 2
+    return 3
+
+
+def required_map(obj: Dict[str, Any]) -> Optional[int]:
+    """The map an objective has to be done on, or None. `map_id: 0` means no map."""
+    t = objective_type(obj)
+    m = obj.get("map_id")
+    if not m and t == 4:
+        m = _params(obj).get("parameter0")
+    try:
+        m = int(m) if m is not None else None
+    except (TypeError, ValueError):
+        return None
+    return m if m else None
 
 
 def _err_slot(note: Optional[str]) -> str:

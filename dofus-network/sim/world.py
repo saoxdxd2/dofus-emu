@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from agent.features import objective_type
+from agent.features import (objective_type, required_map,  # noqa: F401
+                            travel_hops)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
@@ -65,38 +66,6 @@ def _load(name: str) -> Any:
         return []
     with path.open("r", encoding="utf-8") as fh:
         return json.load(fh)
-
-
-_MAP_INDEX: Optional[Tuple[Dict[int, int], Dict[int, int]]] = None
-
-
-def map_index() -> Tuple[Dict[int, int], Dict[int, int]]:
-    """map id -> (subarea id, area id), built once from the KB.
-
-    This is the difference between a world where the teacher is optimal and one where
-    it is not. With travel free, "one objective at a time, re-plan every step" cannot
-    be beaten. With travel costing hops, the order of objectives starts to matter: the
-    KB puts 8.91 placed objectives per quest across 2.73 subareas, so a planner that
-    batches by subarea saves 6.18 travel steps per quest — 69% of the act budget.
-    """
-    global _MAP_INDEX
-    if _MAP_INDEX is None:
-        sub_of: Dict[int, int] = {}
-        area_of: Dict[int, int] = {}
-        for sub in _load("subareas_full.json"):
-            try:
-                sid = int(sub["id"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            for m in sub.get("mapIds") or []:
-                try:
-                    mid = int(m)
-                except (TypeError, ValueError):
-                    continue
-                sub_of[mid] = sid
-                area_of[mid] = sub.get("areaId")
-        _MAP_INDEX = (sub_of, area_of)
-    return _MAP_INDEX
 
 
 def _params(obj: Dict[str, Any]) -> Dict[str, Any]:
@@ -221,27 +190,8 @@ class World:
         return twin
 
     def travel_hops(self, here: Optional[int], there: Optional[int]) -> int:
-        """How many steps it takes to get from one map to another.
-
-        Coarse on purpose: same map 0, same subarea 1, same area 2, anything else 3
-        (a zaap hop). The KB has 15,400 maps in 567 subareas across 67 areas, so this
-        is a real geography and not a guess — but a hop count is not a path. What it
-        has to be is *monotone in distance*, because that is the property the teacher
-        lacks: under free travel, the cost of any plan is the number of actions in it.
-        """
-        if here is None or there is None:
-            return 1
-        here, there = int(here), int(there)
-        if here == there:
-            return 0
-        sub_of, area_of = map_index()
-        a, b = sub_of.get(here), sub_of.get(there)
-        if a is not None and a == b:
-            return 1
-        aa, ab = area_of.get(here), area_of.get(there)
-        if aa is not None and aa == ab:
-            return 2
-        return 3
+        """Steps to get from one map to another. One implementation, in features."""
+        return travel_hops(here, there)
 
     # -- observations ------------------------------------------------------
 
@@ -275,11 +225,24 @@ class World:
     def _observe_now(self) -> Dict[str, Any]:
         cur = self.current_objective()
         tracker = None
+        step_objs: List[Dict[str, Any]] = []
         if cur is not None:
             q, step_idx, obj_idx, obj = cur
             tracker = {"quest_id": q.id, "step": step_idx, "objective_id": obj.get("id"),
                        "type_id": objective_type(obj),
                        "map_id": self._required_map(obj)}
+            # Every objective in the open step, with its status. The tracker names one
+            # of them; without the whole list a policy can only continue the first,
+            # which makes "do the nearby one first" inexpressible — and that order is
+            # worth 22% of its travel.
+            step = q.steps[step_idx]
+            for oi, o in enumerate(step.get("objectives") or []):
+                key = (q.id, step["id"], o.get("id"))
+                step_objs.append({
+                    "id": o.get("id"), "type_id": objective_type(o),
+                    "map_id": self._required_map(o),
+                    "done": key in self.objectives_done,
+                })
         return {
             "level": self.level,
             "map_id": self.map_id,
@@ -298,6 +261,7 @@ class World:
             # policy has to guess which objective inside the current step is open,
             # and a guess that is wrong is indistinguishable from a bad tool.
             "current_objective": tracker,
+            "step_objectives": step_objs,
             "objectives_completed": self.objectives_completed,
             "quests_completed": self.quests_completed,
         }
@@ -361,14 +325,7 @@ class World:
         ``map_id: 0`` is the KB's "no map", not map zero. Treating it as a real
         destination produced a hundred failed `nav.goto 0` calls in a row.
         """
-        m = obj.get("map_id")
-        if m is None and obj.get("type_id") in MAP_TYPES:
-            m = _params(obj).get("parameter0")
-        try:
-            m = int(m) if m is not None else None
-        except (TypeError, ValueError):
-            return None
-        return m if m else None
+        return required_map(obj)
 
     def _wrong_map(self, obj: Dict[str, Any]) -> Optional[str]:
         need = self._required_map(obj)
@@ -417,11 +374,12 @@ class World:
             self.steps += max(0, hops - 1)
         current = self.current_objective()
         if current is not None:
-            quest, step_idx, obj_idx, obj = current
-            if obj.get("type_id") in MAP_TYPES and self._required_map(obj) == int(target):
+            picked = self._target(current[0], "map", int(target), MAP_TYPES)
+            if picked is not None:
                 # "Find the map: X" is satisfied by standing on it. Without this the
                 # objective is uncompletable and the planner travels in circles.
-                self._complete_objective(quest, step_idx, obj_idx)
+                step_idx, obj_idx, _ = picked
+                self._complete_objective(current[0], step_idx, obj_idx)
                 return True, "arrived; map objective done (%d hops)" % hops
         return True, "moved (%d hops)" % hops
 
@@ -435,6 +393,68 @@ class World:
         # A read: it returns the truth and clears the stale cache.
         self._force_fresh = True
         return True, "listed %d active" % len(self.active)
+
+    def _open_objectives(self, quest: Quest) -> List[Tuple[int, int, Dict[str, Any]]]:
+        """The objectives of the quest's current step that are not yet done.
+
+        Only the current step: steps are sequential in the KB and the world advances
+        `active[quest]` only when every objective in the step is finished, so there is
+        nothing to do in a later step yet.
+        """
+        idx = self.active.get(quest.id)
+        if idx is None or idx >= len(quest.steps):
+            return []
+        step = quest.steps[idx]
+        out: List[Tuple[int, int, Dict[str, Any]]] = []
+        for oi, obj in enumerate(step.get("objectives") or []):
+            key = (quest.id, step["id"], obj.get("id"))
+            if key not in self.objectives_done:
+                out.append((idx, oi, obj))
+        return out
+
+    @staticmethod
+    def _npc_of(obj: Dict[str, Any]) -> Optional[int]:
+        p = _params(obj)
+        t = objective_type(obj)
+        npc = p.get("parameter0") if t in (1, 9, 3) else p.get("parameter1")
+        try:
+            return int(npc) if npc is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _monster_of(obj: Dict[str, Any]) -> Optional[int]:
+        p = _params(obj)
+        m = p.get("parameter0")
+        try:
+            return int(m) if m is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _target(self, quest: Quest, want: str, value: Any,
+                types: Set[int]) -> Optional[Tuple[int, int, Dict[str, Any]]]:
+        """Which open objective this call is about.
+
+        The agent names the thing it walked to — an NPC, a monster, an item, a map —
+        and that names the objective. The world used to apply every call to "the first
+        open objective", which meant the policy could not choose an order even when it
+        could see one: with seven objectives in a step spread over three subareas, the
+        order is worth 22% of travel, and it was not expressible.
+        """
+        if value is None:
+            return None
+        for step_idx, obj_idx, obj in self._open_objectives(quest):
+            if objective_type(obj) not in types:
+                continue
+            if want == "npc" and self._npc_of(obj) == int(value):
+                return step_idx, obj_idx, obj
+            if want == "monster" and self._monster_of(obj) == int(value):
+                return step_idx, obj_idx, obj
+            if want == "item" and self._deliver_item(obj) == int(value):
+                return step_idx, obj_idx, obj
+            if want == "map" and self._required_map(obj) == int(value):
+                return step_idx, obj_idx, obj
+        return None
 
     def _tool_quest_advance(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         qid = args.get("quest_id") or args.get("quest")
@@ -457,25 +477,17 @@ class World:
 
         self.active.setdefault(quest.id, 0)
 
-        current = self.current_objective()
-        if current is None:
-            return False, "no open objective"
-        q, step_idx, obj_idx, obj = current
-        if q.id != quest.id:
-            return False, "another quest is open first (%s)" % q.id
+        picked = self._target(quest, "npc", npc, TALK_TYPES | DELIVER_TYPES)
+        if picked is None:
+            return False, "no open objective for npc %s" % npc
+        step_idx, obj_idx, obj = picked
         # A tool may only complete the kind of objective it is for. Before this
         # guard, quest.advance completed whatever was open — a kill, a delivery,
         # anything — so every tool worked and the tool choice was not a decision.
-        if obj.get("type_id") not in (TALK_TYPES | DELIVER_TYPES):
-            return False, "quest.advance cannot complete objective type %s" % obj.get("type_id")
         wrong = self._wrong_map(obj)
         if wrong:
             return False, wrong
-        if npc is not None and obj.get("type_id") in TALK_TYPES:
-            expected = _params(obj).get("parameter0")
-            if expected is not None and int(npc) != int(expected):
-                return False, "wrong npc: wanted %s" % expected
-        if obj.get("type_id") in DELIVER_TYPES:
+        if objective_type(obj) in DELIVER_TYPES:
             item = self._deliver_item(obj)
             if item is not None and not self.inventory.get(item):
                 return False, "item %s not carried" % item
@@ -483,7 +495,7 @@ class World:
                 self.inventory[item] -= 1
                 if self.inventory[item] <= 0:
                     self.inventory.pop(item, None)
-        self._complete_objective(q, step_idx, obj_idx)
+        self._complete_objective(quest, step_idx, obj_idx)
         return True, "objective done"
 
     @staticmethod
@@ -501,9 +513,12 @@ class World:
         current = self.current_objective()
         if current is None:
             return False, "nothing to kill for"
-        quest, step_idx, obj_idx, obj = current
-        t = obj.get("type_id")
-        if t in DELIVER_TYPES and args.get("item") is not None:
+        quest = current[0]
+
+        if args.get("item") is not None:
+            picked = self._target(quest, "item", args["item"], DELIVER_TYPES)
+            if picked is None:
+                return False, "no open delivery wants item %s" % args["item"]
             # Gathering for a delivery is the same kind of step as a kill: one
             # action, one step of progress, no objective completed yet.
             item = int(args["item"])
@@ -513,17 +528,32 @@ class World:
                 return False, "nowhere: no map loaded"
             self.inventory[item] = self.inventory.get(item, 0) + 1
             return True, "gathered item %d" % item
-        if t in FIGHT_TYPES:
-            # A quest that says "in a fight" cannot be finished by farming in the
-            # open world. Keeping the two apart is what makes fight.join a decision.
-            return False, "this objective needs a fight (fight.join)"
-        if t not in KILL_TYPES:
-            return False, "current objective is not a kill"
-        wrong = self._wrong_map(obj)
-        if wrong:
-            return False, wrong
-        self._complete_objective(quest, step_idx, obj_idx)
-        return True, "killed"
+
+        if args.get("monster") is not None:
+            picked = self._target(quest, "monster", args["monster"], KILL_TYPES)
+            if picked is None:
+                return False, "no open objective for monster %s" % args["monster"]
+            step_idx, obj_idx, obj = picked
+            if objective_type(obj) in FIGHT_TYPES:
+                # A quest that says "in a fight" cannot be finished by farming in the
+                # open world. Keeping the two apart is what makes fight.join a decision.
+                return False, "this objective needs a fight (fight.join)"
+            wrong = self._wrong_map(obj)
+            if wrong:
+                return False, wrong
+            self._complete_objective(quest, step_idx, obj_idx)
+            return True, "killed"
+
+        # No argument: fall back to the first open kill, which is what an older caller
+        # (and the app's one-shot "farm" verb) means.
+        for step_idx, obj_idx, obj in self._open_objectives(quest):
+            if objective_type(obj) in OPEN_KILL_TYPES:
+                wrong = self._wrong_map(obj)
+                if wrong:
+                    return False, wrong
+                self._complete_objective(quest, step_idx, obj_idx)
+                return True, "killed"
+        return False, "current objective is not a kill"
 
     def _tool_farm_stop(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         return True, "stopped"
@@ -557,9 +587,18 @@ class World:
         current = self.current_objective()
         if current is None:
             return False, "no fight to join"
-        quest, step_idx, obj_idx, obj = current
-        if obj.get("type_id") not in FIGHT_TYPES:
+        quest = current[0]
+        picked = None
+        if args.get("monster") is not None:
+            picked = self._target(quest, "monster", args["monster"], FIGHT_TYPES)
+        if picked is None:
+            for step_idx, obj_idx, obj in self._open_objectives(quest):
+                if objective_type(obj) in FIGHT_TYPES:
+                    picked = (step_idx, obj_idx, obj)
+                    break
+        if picked is None:
             return False, "current objective is not a fight"
+        step_idx, obj_idx, obj = picked
         wrong = self._wrong_map(obj)
         if wrong:
             return False, wrong

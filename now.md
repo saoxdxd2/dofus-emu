@@ -136,12 +136,18 @@ down-weights ties — the column above is not a fair fight, and accuracy is.
    the teacher" and "the world doesn't".
 
    The remaining planning headroom is smaller than it looked: reordering a step's
-   objectives nearest-first saves **22% of travel steps**, and nearest-neighbour is
-   *exactly optimal* on this data (7.3 vs 7.3 steps per step). So ordering is worth
-   ~12% of total steps and is solved by ten lines of heuristic — a learned model has
-   nothing to add there. What it can add is ordering *under uncertainty*, which is the
-   one place the sim can now produce a label the teacher gets wrong for a reason that
-   is not a dice roll.
+   objectives nearest-first saves **22% of travel steps** offline, but in the actual
+   loop it is worth **+2%** (61.0 vs 59.8 quests per 600 steps, 5 seeds), and
+   nearest-neighbour is *exactly optimal* on this data (7.3 vs 7.3 steps per step). So
+   ordering is a ten-line heuristic, not a research problem.
+
+   **And the shipping curriculum never faces it.** With "fewest objectives first",
+   only **11 of 400 steps** have more than one open objective — the shortest quests are
+   the ones with one objective per step. With the corpus generator's diverse
+   curriculum it is 1,500 of 3,000. So "fewest objectives first" does not merely
+   prefer short quests; it systematically selects the quests with no ordering decision
+   in them. That is open question #4, answered: it is convenient, and it hides the
+   planning problem.
 
 1. **The label is ambiguous, and it is now measured rather than suspected.** 40.1% of
    validation states whose exact 41-feature vector also appears in training carry more
