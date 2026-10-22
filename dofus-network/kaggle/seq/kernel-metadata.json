@@ -1,6 +1,6 @@
 {
- "id": "tajdinenizar/thx-02-plan-chunk",
- "title": "THX-02 plan chunk (3 steps ahead)",
+ "id": "tajdinenizar/thx-02-plan-chunk-3-steps-ahead",
+ "title": "THX-02 plan chunk 3 steps ahead",
  "code_file": "train_seq.py",
  "language": "python",
  "kernel_type": "script",

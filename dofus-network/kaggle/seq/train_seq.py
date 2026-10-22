@@ -70,7 +70,11 @@ def read_jsonl(path):
 class PlanChunk(nn.Module):
     def __init__(self, d_in, hidden=HIDDEN, layers=LAYERS, horizon=HORIZON, n_cls=5):
         super().__init__()
-        self.proj = nn.Linear(d_in, hidden)
+        # The input is HISTORY states flattened, so the projection is per *step*,
+        # not across the whole window: projecting (b, 3, 26) with a 78-wide matrix
+        # is a shape error, and an easy one to write.
+        self.per_step = d_in // HISTORY
+        self.proj = nn.Linear(self.per_step, hidden)
         self.gru = nn.GRU(hidden, hidden, num_layers=layers, batch_first=True)
         self.head = nn.Linear(hidden, horizon * n_cls)
         self.horizon = horizon
