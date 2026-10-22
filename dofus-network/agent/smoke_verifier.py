@@ -311,6 +311,31 @@ def test_onnx_head() -> None:
           "%s/%s" % (r.source, r.verdict))
 
 
+def test_structural_failures_are_not_retried() -> None:
+    """Real data: 9 of 15 client failures were 'no active client', 0/9 retries worked."""
+    print("\n== error taxonomy ==")
+    from agent.controller import Controller, error_class
+
+    check("no client is structural",
+          error_class("client directive failed: instance 'x' is not an active client window")
+          == "structural")
+    check("a timeout is transient", error_class("The operation has timed out") == "transient")
+    check("resisted is transient", error_class("resisted") == "transient")
+
+    tmp = Path(tempfile.mkdtemp())
+    c = Controller(state_dir=tmp, session="tx")
+    d = c.on_step(Verdict("failed", 0.9, None, False, "rule"), "state.snapshot", False,
+                  "client directive failed: no client instance is running", {}, {})
+    check("a structural failure replans instead of retrying",
+          d.action == "replan" and d.cause == "unavailable", "%s/%s" % (d.action, d.cause))
+
+    c2 = Controller(state_dir=tmp, session="ty")
+    d2 = c2.on_step(Verdict("failed", 0.9, None, False, "rule"), "farm.start", False,
+                    "The operation has timed out", {}, {})
+    check("a transient failure still retries once", d2.action == "retry",
+          "%s/%s" % (d2.action, d2.cause))
+
+
 def test_learned_planner_matches_the_teacher() -> None:
     """The tool choice is a model now; it must not be worse than the if-chain."""
     print("\n== learned planner ==")
@@ -481,6 +506,7 @@ def main() -> int:
     test_baseline_model()
     test_onnx_head()
     test_step_summary()
+    test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()
     test_knowledge_store()
     test_knowledge_changes_the_plan()

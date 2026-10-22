@@ -102,6 +102,31 @@ class StrategyStat:
         return max(0.0, (centre - margin) / denom)
 
 
+STRUCTURAL_MARKERS = (
+    "no client instance", "not an active client", "unknown tool",
+    "not_mapped", "no local handler", "no sentinel handler",
+    "no simulator for tool", "needs quest_id", "requires quest_id",
+)
+TRANSIENT_MARKERS = (
+    "timed out", "timeout", "refused", "reset by peer", "resisted",
+    "temporarily", "connection aborted", "502", "503", "504",
+)
+
+
+def error_class(error: Optional[str]) -> str:
+    """Structural failures are permanent for this call; transient ones are not.
+
+    The distinction is the difference between retrying and looping. It has to be
+    made on the message because the transport flattens everything into a string.
+    """
+    text = str(error or "").lower()
+    if any(marker in text for marker in STRUCTURAL_MARKERS):
+        return "structural"
+    if any(marker in text for marker in TRANSIENT_MARKERS):
+        return "transient"
+    return "unknown"
+
+
 class Controller:
     """Persistent strategic state for one session."""
 
@@ -267,6 +292,19 @@ class Controller:
             return Decision("replan", "plan_wrong",
                             "%s failed %d times in a row" % (tool, consecutive),
                             None, "replan", 0.7)
+
+        # A structural failure cannot be fixed by asking again. Real data from the
+        # client: 9 of 15 recorded failures were "instance is not an active client
+        # window", and every retry of them failed too -- 0 for 9. Retrying an
+        # unavailable environment is not resilience, it is a loop.
+        kind = error_class(error)
+        if kind == "structural":
+            self._bump("replan", "unavailable", False)
+            self.replans += 1
+            self._failures[tool] = 0
+            return Decision("replan", "unavailable",
+                            "%s cannot succeed here (%s); retrying would be a loop"
+                            % (tool, str(error)[:60]), None, "replan", 0.9)
 
         # Pick the recovery the history says works best for this cause.
         strategy, score = self._best_strategy(cause)
