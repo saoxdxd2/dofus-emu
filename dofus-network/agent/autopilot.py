@@ -55,7 +55,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
 from agent.controller import Controller, Decision
-from agent.verifier import Verdict, Verifier
+from agent.verifier import READ_ONLY_TOOLS, Verdict, Verifier
 from agent.schema import TOOL_SCHEMA, validate_call
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -272,6 +272,7 @@ class Autopilot:
         budget = "unlimited" if self.max_steps <= 0 else (str(self.max_steps) + " steps")
         print(f"[autopilot] {len(self.goals)} goal(s), {budget}"
               f"{' (dry run)' if self.dry_run else ''}")
+        self._warn_if_no_bridge()
 
         for goal in self.goals:
             failures = 0
@@ -340,9 +341,12 @@ class Autopilot:
                 result = self.runtime.executor.execute(
                     call.tool, call.args, instance=self.runtime.instance,
                     goal=goal, source="live", observation=before)
+                # Stop the clock before observing. `observe()` can cost seconds when
+                # it has to ask a dead bridge, and counting that as the action's
+                # latency made every step look slow for the wrong reason.
+                latency_ms = (time.perf_counter() - started) * 1000.0
                 after = self.observe()
-                v = self._verdict(result, before, after, call=call,
-                                  latency_ms=(time.perf_counter() - started) * 1000.0)
+                v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
                 verdict = v.verdict
 
                 note = ""
@@ -374,7 +378,10 @@ class Autopilot:
                     args=dict(call.args),
                     ok=bool(result.ok),
                     error=None if result.ok else str(result.error),
-                    latency_ms=(time.perf_counter() - started) * 1000.0,
+                    # The action's own latency, not the action plus the observation
+                    # that followed it. Recomputed here it silently included the
+                    # post-step snapshot, so a 200 ms query printed as 6 s.
+                    latency_ms=latency_ms,
                     verdict=verdict,
                     residual_s=v.residual_s,
                     drift=v.drift,
@@ -447,7 +454,13 @@ class Autopilot:
 
                 # A goal that produced a real world change is done; repeating it
                 # would just re-list the same item.
-                if verdict == "advanced" and call.tool in LISTING_TOOLS:
+                #
+                # A query counts as done after one successful call too: "open
+                # inventory" asked to *see* the inventory, and it was seen. Without
+                # this the loop re-read the same list for the whole step budget,
+                # which is what "the AI does nothing" looked like from outside.
+                if verdict == "advanced" and (call.tool in LISTING_TOOLS
+                                              or call.tool in READ_ONLY_TOOLS):
                     break
 
                 if self.interval:
@@ -467,6 +480,30 @@ class Autopilot:
                                           source="live")
         except Exception:  # noqa: BLE001
             pass
+
+    def _warn_if_no_bridge(self) -> None:
+        """Say it once, up front, instead of grinding 6 s per directive.
+
+        Without this, starting the loop with no client open looks like a hang: each
+        call waits for the HTTP timeout, the controller retries, and three failures
+        per goal take ~18 s before anything is printed.
+        """
+        # A TCP connect is not enough: a force-killed host leaves a listening socket
+        # that accepts connections and never answers, which makes every directive
+        # wait for the full HTTP timeout. Ask for a response instead.
+        import urllib.error
+        import urllib.request
+
+        try:
+            urllib.request.urlopen("http://127.0.0.1:8893/", timeout=1.5)
+            return
+        except urllib.error.HTTPError:
+            return  # it answered, even if with 404
+        except Exception:  # noqa: BLE001 - timeout, refused, reset: all mean "not there"
+            pass
+        print("[autopilot] WARNING: no client bridge on 127.0.0.1:8893 - "
+              "directives will fail until an instance is running. "
+              "Local tools (quest.list, knowledge.search) still work.")
 
     def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
         """Turn agent 2's decision into what the actor does on the next step.
