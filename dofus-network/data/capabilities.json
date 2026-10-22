@@ -1,444 +1,510 @@
 {
-  "version": 1,
-  "note": "Capability registry: actions are DATA, not code. The encoder's action head is derived from these descriptions, so adding a capability means appending an entry and re-encoding it — no retraining, no new class id.",
-  "languages": [
-    "en",
-    "fr",
-    "es",
-    "de"
-  ],
-  "capabilities": [
-    {
-      "id": "knowledge.search",
-      "verb": "knowledge",
-      "description": "Look up game knowledge (monsters, spells, quests, items, NPCs, achievements, dungeons) in the local DofusDB cache. Use before claiming any game fact.",
-      "backend": "local",
-      "directive": null,
-      "returns": "list of compact records with 'id', 'name' (localised dict) and key fields",
-      "params": {
-        "query": {
-          "type": "str",
-          "doc": "Free-text name or keyword, any of the 4 languages.",
-          "required": true
-        },
-        "kind": {
-          "type": "str",
-          "doc": "Entity kind to search, or 'any'.",
-          "required": false,
-          "enum": [
-            "any",
-            "monster",
-            "spell",
-            "quest",
-            "item",
-            "npc",
-            "achievement",
-            "dungeon"
-          ],
-          "default": "any"
-        },
-        "limit": {
-          "type": "int",
-          "doc": "Max results.",
-          "required": false,
-          "default": 5
-        }
-      }
+ "version": 1,
+ "note": "Capability registry: actions are DATA, not code. The encoder's action head is derived from these descriptions, so adding a capability means appending an entry and re-encoding it — no retraining, no new class id.",
+ "languages": [
+  "en",
+  "fr",
+  "es",
+  "de"
+ ],
+ "capabilities": [
+  {
+   "id": "knowledge.search",
+   "verb": "knowledge",
+   "description": "Look up game knowledge (monsters, spells, quests, items, NPCs, achievements, dungeons) in the local DofusDB cache. Use before claiming any game fact.",
+   "backend": "local",
+   "directive": null,
+   "returns": "list of compact records with 'id', 'name' (localised dict) and key fields",
+   "params": {
+    "query": {
+     "type": "str",
+     "doc": "Free-text name or keyword, any of the 4 languages.",
+     "required": true
     },
-    {
-      "id": "nav.goto",
-      "verb": "nav",
-      "description": "Travel to a target position. Exactly one of: [x,y] coordinates, a zaap name, an NPC, or a map id.",
-      "backend": "sentinel",
-      "directive": null,
-      "returns": "navigation path with steps; the client bridge then walks it",
-      "params": {
-        "x": {
-          "type": "int",
-          "doc": "Target X coordinate.",
-          "required": false
-        },
-        "y": {
-          "type": "int",
-          "doc": "Target Y coordinate.",
-          "required": false
-        },
-        "zaap": {
-          "type": "str",
-          "doc": "Zaap name, any language.",
-          "required": false
-        },
-        "npc": {
-          "type": "str",
-          "doc": "NPC name to travel to.",
-          "required": false
-        },
-        "map_id": {
-          "type": "int",
-          "doc": "Raw map id.",
-          "required": false
-        },
-        "lang": {
-          "type": "str",
-          "doc": "Reply language.",
-          "required": false,
-          "enum": [
-            "fr",
-            "en",
-            "es",
-            "de"
-          ],
-          "default": "fr"
-        },
-        "from_x": {
-          "type": "int",
-          "doc": "Current X (default 4).",
-          "required": false
-        },
-        "from_y": {
-          "type": "int",
-          "doc": "Current Y (default -19).",
-          "required": false
-        }
-      }
+    "kind": {
+     "type": "str",
+     "doc": "Entity kind to search, or 'any'.",
+     "required": false,
+     "enum": [
+      "any",
+      "monster",
+      "spell",
+      "quest",
+      "item",
+      "npc",
+      "achievement",
+      "dungeon"
+     ],
+     "default": "any"
     },
-    {
-      "id": "nav.follow",
-      "verb": "nav",
-      "description": "Follow a character on the current map and through map changes. Empty name means 'follow the order giver'.",
-      "backend": "directive",
-      "directive": "FOLLOW",
-      "returns": "directive ack",
-      "params": {
-        "name": {
-          "type": "str",
-          "doc": "Character name to follow; empty = the order giver.",
-          "required": false,
-          "default": ""
-        }
-      }
-    },
-    {
-      "id": "quest.list",
-      "verb": "quest",
-      "description": "List quests suitable for a level (and optionally an area), with start position and step objectives.",
-      "backend": "local",
-      "directive": null,
-      "returns": "list of quests with id, localised name, level range and step objectives",
-      "params": {
-        "area": {
-          "type": "str",
-          "doc": "Area or subarea name filter, any language (e.g. 'astrub').",
-          "required": false
-        },
-        "level_min": {
-          "type": "int",
-          "doc": "Player level lower bound.",
-          "required": false
-        },
-        "level_max": {
-          "type": "int",
-          "doc": "Player level upper bound.",
-          "required": false
-        },
-        "dungeon_only": {
-          "type": "bool",
-          "doc": "Only dungeon quests.",
-          "required": false,
-          "default": false
-        },
-        "limit": {
-          "type": "int",
-          "doc": "Max results.",
-          "required": false,
-          "default": 10
-        }
-      }
-    },
-    {
-      "id": "quest.advance",
-      "verb": "quest",
-      "description": "Execute the next actionable step of a quest: navigate, talk to the NPC, harvest, or fight as the step objective requires.",
-      "backend": "directive",
-      "directive": "QUEST_ADVANCE",
-      "returns": "per-step progress report",
-      "params": {
-        "quest_id": {
-          "type": "int",
-          "doc": "Quest id from quest.list.",
-          "required": true
-        },
-        "step_id": {
-          "type": "int",
-          "doc": "Optional step id; defaults to the current step.",
-          "required": false
-        }
-      }
-    },
-    {
-      "id": "farm.start",
-      "verb": "farm",
-      "description": "Start a farm loop: kill monster groups and/or harvest resources, looting according to the filter, optionally auto-selling.",
-      "backend": "directive",
-      "directive": "FARM_START",
-      "returns": "farm session id and live counters",
-      "params": {
-        "monster": {
-          "type": "str",
-          "doc": "Monster (family) name to farm, any language.",
-          "required": false
-        },
-        "resource": {
-          "type": "str",
-          "doc": "Resource to harvest instead (herbs, ore, wood...).",
-          "required": false
-        },
-        "zone": {
-          "type": "str",
-          "doc": "Area/subarea to stay inside, any language.",
-          "required": false
-        },
-        "map_id": {
-          "type": "int",
-          "doc": "Farm on one specific map.",
-          "required": false
-        },
-        "kill_count": {
-          "type": "int",
-          "doc": "Stop after this many kills.",
-          "required": false,
-          "default": 100
-        },
-        "duration_min": {
-          "type": "int",
-          "doc": "Stop after this many minutes.",
-          "required": false
-        },
-        "loot_filter": {
-          "type": "str_list",
-          "doc": "Item names to keep; others can be dropped.",
-          "required": false
-        },
-        "auto_sell": {
-          "type": "bool",
-          "doc": "Auto-list kept loot on the market when bags fill.",
-          "required": false,
-          "default": false
-        }
-      }
-    },
-    {
-      "id": "farm.stop",
-      "verb": "farm",
-      "description": "Stop the active farm loop and return to a safe idle state.",
-      "backend": "directive",
-      "directive": "FARM_STOP",
-      "returns": "final farm counters",
-      "params": {}
-    },
-    {
-      "id": "fight.join",
-      "verb": "fight",
-      "description": "Join a fight: the current one, a nearby group, or a named target.",
-      "backend": "directive",
-      "directive": "AUTO_JOIN_COMBAT",
-      "returns": "fight state",
-      "params": {
-        "target": {
-          "type": "str",
-          "doc": "Optional monster/player name; default current group.",
-          "required": false
-        }
-      }
-    },
-    {
-      "id": "fight.pass",
-      "verb": "fight",
-      "description": "Pass the current combat turn.",
-      "backend": "directive",
-      "directive": "PASS_TURN",
-      "returns": "ack",
-      "params": {}
-    },
-    {
-      "id": "inv.list",
-      "verb": "inv",
-      "description": "List inventory contents, optionally filtered by kind.",
-      "backend": "directive",
-      "directive": "INV_LIST",
-      "returns": "items with id, name, quantity, unit weight",
-      "params": {
-        "kind": {
-          "type": "str",
-          "doc": "Inventory slice.",
-          "required": false,
-          "enum": [
-            "all",
-            "resources",
-            "equipment",
-            "consumables",
-            "quest_items"
-          ],
-          "default": "all"
-        }
-      }
-    },
-    {
-      "id": "inv.sell",
-      "verb": "inv",
-      "description": "Sell inventory items on the market (HDV) at a price rule. Default rule is median market price minus 1 kama.",
-      "backend": "directive",
-      "directive": "INV_SELL",
-      "returns": "per-item listing report (price used, quantity, market depth)",
-      "params": {
-        "item": {
-          "type": "str",
-          "doc": "Item name; omit when all=true.",
-          "required": false
-        },
-        "all": {
-          "type": "bool",
-          "doc": "Consider the whole inventory.",
-          "required": false,
-          "default": false
-        },
-        "quantity": {
-          "type": "int",
-          "doc": "Units to sell. Default 1: a bare \"sell X\" sells one unit, never the whole stack.",
-          "required": false,
-          "default": 1
-        },
-        "min_stock": {
-          "type": "int",
-          "doc": "Keep at least this many units.",
-          "required": false,
-          "default": 1
-        },
-        "price_rule": {
-          "type": "str",
-          "doc": "Pricing rule.",
-          "required": false,
-          "enum": [
-            "median_minus_1",
-            "undercut",
-            "fixed"
-          ],
-          "default": "median_minus_1"
-        },
-        "price": {
-          "type": "int",
-          "doc": "Price per unit when price_rule=fixed.",
-          "required": false
-        }
-      }
-    },
-    {
-      "id": "hdv.scan",
-      "verb": "hdv",
-      "description": "Scan the market (HDV) for an item and return price statistics (min/median/max over current listings).",
-      "backend": "directive",
-      "directive": "HDV_SCAN",
-      "returns": "price stats and listing count",
-      "params": {
-        "item": {
-          "type": "str",
-          "doc": "Item name, any language.",
-          "required": true
-        }
-      }
-    },
-    {
-      "id": "hdv.list",
-      "verb": "hdv",
-      "description": "List an item for sale on the market at an explicit or rule-based price.",
-      "backend": "directive",
-      "directive": "HDV_LIST",
-      "returns": "listing confirmations",
-      "params": {
-        "item": {
-          "type": "str",
-          "doc": "Item name, any language.",
-          "required": true
-        },
-        "quantity": {
-          "type": "int",
-          "doc": "Units to list.",
-          "required": false,
-          "default": 1
-        },
-        "price_rule": {
-          "type": "str",
-          "doc": "Pricing rule.",
-          "required": false,
-          "enum": [
-            "median_minus_1",
-            "undercut",
-            "fixed"
-          ],
-          "default": "median_minus_1"
-        },
-        "price": {
-          "type": "int",
-          "doc": "Price per unit when price_rule=fixed.",
-          "required": false
-        }
-      }
-    },
-    {
-      "id": "chat.say",
-      "verb": "chat",
-      "description": "Send a chat message.",
-      "backend": "directive",
-      "directive": "CHAT_SAY",
-      "returns": "ack",
-      "params": {
-        "text": {
-          "type": "str",
-          "doc": "Message text.",
-          "required": true
-        },
-        "channel": {
-          "type": "str",
-          "doc": "Chat channel.",
-          "required": false,
-          "enum": [
-            "say",
-            "team",
-            "guild",
-            "whisper"
-          ],
-          "default": "say"
-        },
-        "target": {
-          "type": "str",
-          "doc": "Recipient for whisper.",
-          "required": false
-        }
-      }
-    },
-    {
-      "id": "state.snapshot",
-      "verb": "state",
-      "description": "Request a structured snapshot of current game state (position, map, HP, inventory summary, active fight).",
-      "backend": "directive",
-      "directive": "STATE_SNAPSHOT",
-      "returns": "observation dict recorded into the trajectory log",
-      "params": {}
-    },
-    {
-      "id": "safe.stop",
-      "verb": "safe",
-      "description": "Emergency stop: halt farm/fight loops, stop acting, log out of dangerous situations. Always available.",
-      "backend": "directive",
-      "directive": "SAFE_STOP",
-      "returns": "ack",
-      "params": {
-        "reason": {
-          "type": "str",
-          "doc": "Why the stop was triggered.",
-          "required": false
-        }
-      }
+    "limit": {
+     "type": "int",
+     "doc": "Max results.",
+     "required": false,
+     "default": 5
     }
-  ]
+   }
+  },
+  {
+   "id": "nav.goto",
+   "verb": "nav",
+   "description": "Travel to a target position. Exactly one of: [x,y] coordinates, a zaap name, an NPC, or a map id.",
+   "backend": "sentinel",
+   "directive": null,
+   "returns": "navigation path with steps; the client bridge then walks it",
+   "params": {
+    "x": {
+     "type": "int",
+     "doc": "Target X coordinate.",
+     "required": false
+    },
+    "y": {
+     "type": "int",
+     "doc": "Target Y coordinate.",
+     "required": false
+    },
+    "zaap": {
+     "type": "str",
+     "doc": "Zaap name, any language.",
+     "required": false
+    },
+    "npc": {
+     "type": "str",
+     "doc": "NPC name to travel to.",
+     "required": false
+    },
+    "map_id": {
+     "type": "int",
+     "doc": "Raw map id.",
+     "required": false
+    },
+    "lang": {
+     "type": "str",
+     "doc": "Reply language.",
+     "required": false,
+     "enum": [
+      "fr",
+      "en",
+      "es",
+      "de"
+     ],
+     "default": "fr"
+    },
+    "from_x": {
+     "type": "int",
+     "doc": "Current X (default 4).",
+     "required": false
+    },
+    "from_y": {
+     "type": "int",
+     "doc": "Current Y (default -19).",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "nav.follow",
+   "verb": "nav",
+   "description": "Follow a character on the current map and through map changes. Empty name means 'follow the order giver'.",
+   "backend": "directive",
+   "directive": "FOLLOW",
+   "returns": "directive ack",
+   "params": {
+    "name": {
+     "type": "str",
+     "doc": "Character name to follow; empty = the order giver.",
+     "required": false,
+     "default": ""
+    }
+   }
+  },
+  {
+   "id": "quest.list",
+   "verb": "quest",
+   "description": "List quests suitable for a level (and optionally an area), with start position and step objectives.",
+   "backend": "local",
+   "directive": null,
+   "returns": "list of quests with id, localised name, level range and step objectives",
+   "params": {
+    "area": {
+     "type": "str",
+     "doc": "Area or subarea name filter, any language (e.g. 'astrub').",
+     "required": false
+    },
+    "level_min": {
+     "type": "int",
+     "doc": "Player level lower bound.",
+     "required": false
+    },
+    "level_max": {
+     "type": "int",
+     "doc": "Player level upper bound.",
+     "required": false
+    },
+    "dungeon_only": {
+     "type": "bool",
+     "doc": "Only dungeon quests.",
+     "required": false,
+     "default": false
+    },
+    "limit": {
+     "type": "int",
+     "doc": "Max results.",
+     "required": false,
+     "default": 10
+    }
+   }
+  },
+  {
+   "id": "quest.advance",
+   "verb": "quest",
+   "description": "Execute the next actionable step of a quest: navigate, talk to the NPC, harvest, or fight as the step objective requires.",
+   "backend": "directive",
+   "directive": "QUEST_ADVANCE",
+   "returns": "per-step progress report",
+   "params": {
+    "quest_id": {
+     "type": "int",
+     "doc": "Quest id from quest.list.",
+     "required": true
+    },
+    "step_id": {
+     "type": "int",
+     "doc": "Optional step id; defaults to the current step.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "farm.start",
+   "verb": "farm",
+   "description": "Start a farm loop: kill monster groups and/or harvest resources, looting according to the filter, optionally auto-selling.",
+   "backend": "directive",
+   "directive": "FARM_START",
+   "returns": "farm session id and live counters",
+   "params": {
+    "monster": {
+     "type": "str",
+     "doc": "Monster (family) name to farm, any language.",
+     "required": false
+    },
+    "resource": {
+     "type": "str",
+     "doc": "Resource to harvest instead (herbs, ore, wood...).",
+     "required": false
+    },
+    "zone": {
+     "type": "str",
+     "doc": "Area/subarea to stay inside, any language.",
+     "required": false
+    },
+    "map_id": {
+     "type": "int",
+     "doc": "Farm on one specific map.",
+     "required": false
+    },
+    "kill_count": {
+     "type": "int",
+     "doc": "Stop after this many kills.",
+     "required": false,
+     "default": 100
+    },
+    "duration_min": {
+     "type": "int",
+     "doc": "Stop after this many minutes.",
+     "required": false
+    },
+    "loot_filter": {
+     "type": "str_list",
+     "doc": "Item names to keep; others can be dropped.",
+     "required": false
+    },
+    "auto_sell": {
+     "type": "bool",
+     "doc": "Auto-list kept loot on the market when bags fill.",
+     "required": false,
+     "default": false
+    }
+   }
+  },
+  {
+   "id": "farm.stop",
+   "verb": "farm",
+   "description": "Stop the active farm loop and return to a safe idle state.",
+   "backend": "directive",
+   "directive": "FARM_STOP",
+   "returns": "final farm counters",
+   "params": {}
+  },
+  {
+   "id": "fight.join",
+   "verb": "fight",
+   "description": "Join a fight: the current one, a nearby group, or a named target.",
+   "backend": "directive",
+   "directive": "AUTO_JOIN_COMBAT",
+   "returns": "fight state",
+   "params": {
+    "target": {
+     "type": "str",
+     "doc": "Optional monster/player name; default current group.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "fight.pass",
+   "verb": "fight",
+   "description": "Pass the current combat turn.",
+   "backend": "directive",
+   "directive": "PASS_TURN",
+   "returns": "ack",
+   "params": {}
+  },
+  {
+   "id": "inv.list",
+   "verb": "inv",
+   "description": "List inventory contents, optionally filtered by kind.",
+   "backend": "directive",
+   "directive": "INV_LIST",
+   "returns": "items with id, name, quantity, unit weight",
+   "params": {
+    "kind": {
+     "type": "str",
+     "doc": "Inventory slice.",
+     "required": false,
+     "enum": [
+      "all",
+      "resources",
+      "equipment",
+      "consumables",
+      "quest_items"
+     ],
+     "default": "all"
+    }
+   }
+  },
+  {
+   "id": "inv.sell",
+   "verb": "inv",
+   "description": "Sell inventory items on the market (HDV) at a price rule. Default rule is median market price minus 1 kama.",
+   "backend": "directive",
+   "directive": "INV_SELL",
+   "returns": "per-item listing report (price used, quantity, market depth)",
+   "params": {
+    "item": {
+     "type": "str",
+     "doc": "Item name; omit when all=true.",
+     "required": false
+    },
+    "all": {
+     "type": "bool",
+     "doc": "Consider the whole inventory.",
+     "required": false,
+     "default": false
+    },
+    "quantity": {
+     "type": "int",
+     "doc": "Units to sell. Default 1: a bare \"sell X\" sells one unit, never the whole stack.",
+     "required": false,
+     "default": 1
+    },
+    "min_stock": {
+     "type": "int",
+     "doc": "Keep at least this many units.",
+     "required": false,
+     "default": 1
+    },
+    "price_rule": {
+     "type": "str",
+     "doc": "Pricing rule.",
+     "required": false,
+     "enum": [
+      "median_minus_1",
+      "undercut",
+      "fixed"
+     ],
+     "default": "median_minus_1"
+    },
+    "price": {
+     "type": "int",
+     "doc": "Price per unit when price_rule=fixed.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "hdv.scan",
+   "verb": "hdv",
+   "description": "Scan the market (HDV) for an item and return price statistics (min/median/max over current listings).",
+   "backend": "directive",
+   "directive": "HDV_SCAN",
+   "returns": "price stats and listing count",
+   "params": {
+    "item": {
+     "type": "str",
+     "doc": "Item name, any language.",
+     "required": true
+    }
+   }
+  },
+  {
+   "id": "hdv.list",
+   "verb": "hdv",
+   "description": "List an item for sale on the market at an explicit or rule-based price.",
+   "backend": "directive",
+   "directive": "HDV_LIST",
+   "returns": "listing confirmations",
+   "params": {
+    "item": {
+     "type": "str",
+     "doc": "Item name, any language.",
+     "required": true
+    },
+    "quantity": {
+     "type": "int",
+     "doc": "Units to list.",
+     "required": false,
+     "default": 1
+    },
+    "price_rule": {
+     "type": "str",
+     "doc": "Pricing rule.",
+     "required": false,
+     "enum": [
+      "median_minus_1",
+      "undercut",
+      "fixed"
+     ],
+     "default": "median_minus_1"
+    },
+    "price": {
+     "type": "int",
+     "doc": "Price per unit when price_rule=fixed.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "chat.say",
+   "verb": "chat",
+   "description": "Send a chat message.",
+   "backend": "directive",
+   "directive": "CHAT_SAY",
+   "returns": "ack",
+   "params": {
+    "text": {
+     "type": "str",
+     "doc": "Message text.",
+     "required": true
+    },
+    "channel": {
+     "type": "str",
+     "doc": "Chat channel.",
+     "required": false,
+     "enum": [
+      "say",
+      "team",
+      "guild",
+      "whisper"
+     ],
+     "default": "say"
+    },
+    "target": {
+     "type": "str",
+     "doc": "Recipient for whisper.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "state.snapshot",
+   "verb": "state",
+   "description": "Request a structured snapshot of current game state (position, map, HP, inventory summary, active fight).",
+   "backend": "directive",
+   "directive": "STATE_SNAPSHOT",
+   "returns": "observation dict recorded into the trajectory log",
+   "params": {}
+  },
+  {
+   "id": "safe.stop",
+   "verb": "safe",
+   "description": "Emergency stop: halt farm/fight loops, stop acting, log out of dangerous situations. Always available.",
+   "backend": "directive",
+   "directive": "SAFE_STOP",
+   "returns": "ack",
+   "params": {
+    "reason": {
+     "type": "str",
+     "doc": "Why the stop was triggered.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "knowledge.remember",
+   "verb": "knowledge",
+   "description": "Record something you discovered that the cache does not know (an NPC's map, a drop, a price, a quest prerequisite). Facts keep their provenance, so a wrong one can be corrected or forgotten. Never use this to copy the cache.",
+   "backend": "local",
+   "directive": null,
+   "returns": "{'changed': bool, 'note': str}",
+   "params": {
+    "kind": {
+     "type": "str",
+     "doc": "Fact kind.",
+     "required": true,
+     "enum": [
+      "npc_map",
+      "monster_drop",
+      "item_source",
+      "price",
+      "quest_prereq",
+      "route",
+      "other"
+     ]
+    },
+    "key": {
+     "type": "str",
+     "doc": "Stable key, e.g. 'npc:447'.",
+     "required": true
+    },
+    "value": {
+     "type": "str",
+     "doc": "The fact as text or JSON, e.g. '12345' or '{\"map\": 123}'.",
+     "required": true
+    },
+    "confidence": {
+     "type": "float",
+     "doc": "0-1; 0.9 if you saw it, 0.5 if inferred.",
+     "required": false,
+     "default": 0.5
+    }
+   }
+  },
+  {
+   "id": "knowledge.forget",
+   "verb": "knowledge",
+   "description": "Delete a fact that turned out to be wrong. Use it instead of storing a contradicting value, so the store stays small.",
+   "backend": "local",
+   "directive": null,
+   "returns": "{'removed': bool}",
+   "params": {
+    "kind": {
+     "type": "str",
+     "doc": "Fact kind.",
+     "required": true
+    },
+    "key": {
+     "type": "str",
+     "doc": "Key of the fact to remove.",
+     "required": true
+    },
+    "reason": {
+     "type": "str",
+     "doc": "Why it is wrong (kept in the log).",
+     "required": false,
+     "default": ""
+    }
+   }
+  }
+ ]
 }

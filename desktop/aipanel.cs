@@ -880,6 +880,10 @@ namespace DofusFarm.UI
                 {
                     int code = p.ExitCode;
                     Append("[ai] loop finished (exit " + code.ToString() + ")");
+                    // The machine is now idle and the run just produced data: this is
+                    // the only moment training is free. It writes a *candidate*; it
+                    // never replaces the model that was just used.
+                    TryIdleTraining();
                     if (_log != null) _log("[AI] loop finished (exit " + code.ToString() + ")");
                 }
             }
@@ -964,6 +968,40 @@ namespace DofusFarm.UI
             }
             catch { }
             return null;
+        }
+
+        /// <summary>
+        /// Fire-and-forget the idle trainer. It refuses on its own if a loop holds
+        /// the lock or a client bridge is answering, so this stays a hint.
+        /// </summary>
+        private void TryIdleTraining()
+        {
+            try
+            {
+                string python = ResolvePython();
+                string script = Path.Combine(_baseDir, Path.Combine("dofus-network", "ai", "idle_trainer.py"));
+                if (python == null || !File.Exists(script)) return;
+
+                var psi = new ProcessStartInfo();
+                psi.FileName = python;
+                psi.Arguments = "\"" + script + "\" --once --max-seconds 90";
+                psi.WorkingDirectory = Path.Combine(_baseDir, "dofus-network");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                var proc = new Process();
+                proc.StartInfo = psi;
+                proc.OutputDataReceived += delegate(object s2, DataReceivedEventArgs e)
+                { if (e.Data != null) Append("[train] " + e.Data); };
+                proc.ErrorDataReceived += delegate(object s2, DataReceivedEventArgs e)
+                { if (e.Data != null) Append("[train!] " + e.Data); };
+                proc.Start();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+                Append("[ai] idle trainer started (candidate only)");
+            }
+            catch (Exception ex) { Append("[ai] idle trainer not started: " + ex.Message); }
         }
 
         private void SetRunningUi(bool running)

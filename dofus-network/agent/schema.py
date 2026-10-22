@@ -82,6 +82,36 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
         backend="local",
         returns="list of compact records with 'id', 'name' (localised dict) and key fields",
     ),
+    ToolSpec(
+        name="knowledge.remember",
+        description="Record something you discovered that the cache does not know "
+                    "(an NPC's map, a drop, a price, a quest prerequisite). Facts are "
+                    "stored with provenance, so a wrong one can be corrected or "
+                    "forgotten later. Never use this to copy the cache.",
+        params={
+            "kind": _p("str", "Fact kind.", required=True,
+                       enum=["npc_map", "monster_drop", "item_source", "price",
+                             "quest_prereq", "route", "other"]),
+            "key": _p("str", "Stable key, e.g. 'npc:447' or 'item:1746'.", required=True),
+            "value": _p("str", "The fact as text or JSON, e.g. '12345'.", required=True),
+            "confidence": _p("float", "0-1. Use 0.9 for something you saw, 0.5 for an inference.",
+                             default=0.5),
+        },
+        backend="local",
+        returns="{'changed': bool, 'note': str}",
+    ),
+    ToolSpec(
+        name="knowledge.forget",
+        description="Delete a fact that turned out to be wrong. Use it instead of "
+                    "remembering a contradicting value, so the store stays small.",
+        params={
+            "kind": _p("str", "Fact kind.", required=True),
+            "key": _p("str", "Key of the fact to remove.", required=True),
+            "reason": _p("str", "Why it is wrong (kept in the log).", default=""),
+        },
+        backend="local",
+        returns="{'removed': bool}",
+    ),
     # -- navigation ----------------------------------------------------------
     ToolSpec(
         name="nav.goto",

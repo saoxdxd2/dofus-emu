@@ -51,7 +51,8 @@ def _params(obj: Dict[str, Any]) -> Dict[str, Any]:
 class QuestPlanner:
     """A policy that plans over the quest graph."""
 
-    def __init__(self, level_hint: int = 60, max_quest_level: int = 200) -> None:
+    def __init__(self, level_hint: int = 60, max_quest_level: int = 200,
+                 store: Any = None) -> None:
         self.quests: Dict[int, Dict[str, Any]] = {}
         path = CACHE / "quests_full.json"
         if path.exists():
@@ -63,6 +64,9 @@ class QuestPlanner:
         self.max_quest_level = max_quest_level
         self.current_quest: Optional[int] = None
         self._order: Optional[List[int]] = None
+        # Discovered facts (npc -> map, for example) change plans without any
+        # retraining. This is the point of keeping knowledge out of the weights.
+        self.store = store
 
     # -- curriculum --------------------------------------------------------
 
@@ -114,9 +118,22 @@ class QuestPlanner:
             # objective types that name a map.
             if npc is None:
                 return []
-            return [{"tool": "quest.advance",
-                     "args": {"quest_id": int(quest["id"]), "npc_id": int(npc)},
-                     "why": "objective %d: talk" % t}]
+            calls = []
+            # If the agent has discovered where this NPC is, travel first. The KB
+            # has no npc -> map table; the store fills that gap at runtime.
+            target = None
+            if self.store is not None:
+                try:
+                    target = self.store.get("npc_map", "npc:%d" % int(npc))
+                except Exception:  # noqa: BLE001
+                    target = None
+            if target and here != target:
+                calls.append({"tool": "nav.goto", "args": {"map_id": int(target)},
+                              "why": "travelled to npc %d (learned fact)" % int(npc)})
+            calls.append({"tool": "quest.advance",
+                          "args": {"quest_id": int(quest["id"]), "npc_id": int(npc)},
+                          "why": "objective %d: talk" % t})
+            return calls
 
         if t in KILL_TYPES:
             monster = p.get("parameter0")

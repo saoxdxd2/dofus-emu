@@ -268,6 +268,18 @@ class Autopilot:
     # -- the loop ------------------------------------------------------------
 
     def run(self) -> Dict[str, Any]:
+        """Own the lock for the whole run, however it ends.
+
+        A loop that dies without clearing its lock would block the idle trainer
+        forever, so the release is in a `finally`, not on the happy path.
+        """
+        self._write_lock()
+        try:
+            return self._run()
+        finally:
+            self._clear_lock()
+
+    def _run(self) -> Dict[str, Any]:
         tools = [t["name"] for t in TOOL_SCHEMA["tools"]]
         budget = "unlimited" if self.max_steps <= 0 else (str(self.max_steps) + " steps")
         print(f"[autopilot] {len(self.goals)} goal(s), {budget}"
@@ -479,6 +491,30 @@ class Autopilot:
             self.runtime.executor.execute("safe.stop", {}, instance=self.runtime.instance,
                                           source="live")
         except Exception:  # noqa: BLE001
+            pass
+
+    def _write_lock(self) -> None:
+        """Mark that a loop owns the account.
+
+        The idle trainer refuses to touch the CPU or the artifacts while this
+        exists: training during a live run is how you get a half-updated model and
+        a ban in the same afternoon.
+        """
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            lock = self.log_path.parent / "autopilot.lock"
+            lock.write_text(json.dumps({"session": self.session,
+                                        "pid": os.getpid(),
+                                        "started": time.time()}), encoding="utf-8")
+            self._lock_path = lock
+        except OSError:
+            self._lock_path = None
+
+    def _clear_lock(self) -> None:
+        try:
+            if getattr(self, "_lock_path", None) is not None:
+                self._lock_path.unlink(missing_ok=True)
+        except OSError:
             pass
 
     def _warn_if_no_bridge(self) -> None:

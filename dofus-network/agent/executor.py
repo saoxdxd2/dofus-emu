@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent.recorder import TrajectoryRecorder
+from agent.knowledge_store import KnowledgeStore
 from agent.schema import TOOLS_BY_NAME, validate_call
 
 logger = logging.getLogger("dofus.agent.executor")
@@ -259,6 +260,7 @@ class ToolExecutor:
         directive_url: str = "http://127.0.0.1:8893/directive",
         cache_dir: Path = DEFAULT_CACHE_DIR,
         timeout: float = 6.0,
+        knowledge_store: Optional[Path] = None,
         recorder: Optional[TrajectoryRecorder] = None,
     ) -> None:
         self.sentinel_url = sentinel_url.rstrip("/")
@@ -266,6 +268,9 @@ class ToolExecutor:
         self.timeout = float(timeout)
         self.recorder = recorder
         self.knowledge = _KnowledgeIndex(Path(cache_dir))
+        # Discovered facts live here, not in the model and not in the cache. The
+        # path is injectable so a test never writes to the user's real store.
+        self.store = KnowledgeStore(knowledge_store)
         self._zaaps_cache: Optional[List[Dict[str, Any]]] = None
         self._geo_index: Optional[Dict[str, Any]] = None
 
@@ -375,6 +380,10 @@ class ToolExecutor:
                 return self._knowledge_search(args, source)
             if tool == "quest.list":
                 return self._quest_list(args, source)
+            if tool == "knowledge.remember":
+                return self._knowledge_remember(args, source)
+            if tool == "knowledge.forget":
+                return self._knowledge_forget(args, source)
             return ToolResult(tool=tool, ok=False, error=f"no local handler for {tool}", source=source)
         if spec.backend == "sentinel":
             if tool == "nav.goto":
@@ -385,6 +394,26 @@ class ToolExecutor:
         return ToolResult(tool=tool, ok=False, error=f"unknown backend '{spec.backend}'", source=source)
 
     # -- local handlers ------------------------------------------------------
+
+    def _knowledge_remember(self, args: Dict[str, Any], source: str) -> ToolResult:
+        """Store a discovered fact. The model learns *when* to do this; the store
+        keeps the fact, so the model does not have to remember it."""
+        value = args.get("value")
+        try:
+            value = json.loads(value) if isinstance(value, str) else value
+        except (ValueError, TypeError):
+            pass                      # plain text is a perfectly good fact
+        changed, note = self.store.remember(
+            str(args.get("kind", "")), str(args.get("key", "")), value,
+            source="observed", confidence=float(args.get("confidence", 0.5) or 0.5))
+        return ToolResult(tool="knowledge.remember", ok=True, source=source,
+                          data={"changed": changed, "note": note})
+
+    def _knowledge_forget(self, args: Dict[str, Any], source: str) -> ToolResult:
+        removed = self.store.forget(str(args.get("kind", "")), str(args.get("key", "")),
+                                    str(args.get("reason", "")))
+        return ToolResult(tool="knowledge.forget", ok=True, source=source,
+                          data={"removed": removed})
 
     def _knowledge_search(self, args: Dict[str, Any], source: str) -> ToolResult:
         hits = self.knowledge.search(

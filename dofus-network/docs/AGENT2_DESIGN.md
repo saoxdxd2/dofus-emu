@@ -134,6 +134,27 @@ strategy table. Training happens offline on the accumulated data (Kaggle), and t
 artifact is swapped in between sessions. This is Voyager's lesson, and it is also
 what makes "trains while playing" true without being reckless.
 
+**D31 — Knowledge is data the harness owns; the model learns to manage it.**
+The model must not memorise the KB (24,000 items, 1,976 quests, 6,472 NPCs) — it
+would be huge, stale on the next patch, and impossible to correct. Instead:
+* facts live in `agent/knowledge_store.py`, an append-only log with provenance;
+* the model gets two tools — `knowledge.remember` and `knowledge.forget` — and
+  learns *when* to use them, which is a small, transferable skill;
+* the planner reads the store before planning, so a discovery changes behaviour
+  **without any training**;
+* the store stays small by construction: only discoveries are stored (never a copy
+  of the cache), weak sources cannot overwrite strong ones, three disputes delete a
+  fact, and unused facts expire.
+
+This is the cost argument in one line: a fact is a row, not a weight.
+
+**D32 — Training is free because it runs when nothing else does.**
+The loop writes `autopilot.lock` while it runs; `ai/idle_trainer.py` refuses to
+start if that lock exists or a client bridge is answering. When the loop ends, the
+machine is idle and the run has just produced data — that is the only moment
+training costs nothing. It writes `verifier_head.candidate.onnx`, never the live
+artifact: adopting a model is a deliberate act.
+
 **D30 — The simulator is the training ground, the game is the exam.**
 A symbolic simulator over the KB (maps, NPCs, monsters, inventory, quest
 objectives) generates thousands of episodes per hour on CPU. The game generates

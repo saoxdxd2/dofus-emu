@@ -311,6 +311,101 @@ def test_onnx_head() -> None:
           "%s/%s" % (r.source, r.verdict))
 
 
+def test_knowledge_store() -> None:
+    """Knowledge lives in the store, so the model can stay small."""
+    print("\n== knowledge store ==")
+    from agent.knowledge_store import KnowledgeStore
+
+    tmp = Path(tempfile.mkdtemp())
+    store = KnowledgeStore(tmp / "k.jsonl")
+
+    changed, note = store.remember("npc_map", "npc:447", 12345, source="observed", confidence=0.8)
+    check("a discovered fact is stored", changed and note == "added", note)
+    check("it can be read back", store.get("npc_map", "npc:447") == 12345)
+
+    changed, note = store.remember("npc_map", "npc:447", 12345)
+    check("the same fact confirms instead of duplicating", not changed, note)
+    check("confirmation raises confidence", store._facts[("npc_map", "npc:447")].confidence > 0.8)
+
+    # A weaker source must not overwrite a stronger one.
+    changed, note = store.remember("npc_map", "npc:447", 999, source="guess", confidence=0.2)
+    check("a guess cannot overwrite an observation", not changed and "disputed" in note, note)
+    check("the value is unchanged", store.get("npc_map", "npc:447") == 12345)
+
+    # A human correction wins.
+    changed, note = store.remember("npc_map", "npc:447", 777, source="human", confidence=0.9)
+    check("a human correction wins", changed and store.get("npc_map", "npc:447") == 777, note)
+
+    check("forget removes it", store.forget("npc_map", "npc:447", "wrong"))
+    check("and it is gone", store.get("npc_map", "npc:447") is None)
+
+    # Persistence: a restart must not lose what was learned.
+    store.remember("price", "item:1746", 1200)
+    again = KnowledgeStore(tmp / "k.jsonl")
+    check("facts survive a restart", again.get("price", "item:1746") == 1200)
+
+    # A contradicted fact dies instead of lingering forever.
+    store.remember("route", "a->b", 3, source="observed", confidence=0.9)
+    for _ in range(3):
+        store.remember("route", "a->b", 4, source="guess", confidence=0.1)
+    check("three disputes drop the fact", store.get("route", "a->b") is None)
+
+
+def test_knowledge_changes_the_plan() -> None:
+    """Discovered knowledge must change behaviour without retraining."""
+    print("\n== knowledge affects the plan ==")
+    from agent.knowledge_store import KnowledgeStore
+    from agent.planner import QuestPlanner
+    import json as _json
+
+    tmp = Path(tempfile.mkdtemp())
+    store = KnowledgeStore(tmp / "k.jsonl")
+    planner = QuestPlanner(level_hint=60, store=store)
+
+    qid = None
+    for q, data in planner.quests.items():
+        objs = (data["steps"][0].get("objectives") or [])
+        if objs and objs[0].get("type_id") in (1, 9):
+            qid = q
+            break
+    if qid is None:
+        print("  [SKIP] no talk-first quest in the KB")
+        return
+
+    obj = planner.quests[qid]["steps"][0]["objectives"][0]
+    npc = _json.loads(str(obj["params"]).replace("'", '"'))["parameter0"]
+    obs = {"map_id": None, "inventory": {}}
+
+    before = [c["tool"] for c in planner.plan_objective(planner.quests[qid], 0, obj, obs)]
+    store.remember("npc_map", "npc:%d" % npc, 4242, source="human", confidence=0.9)
+    after = [c["tool"] for c in planner.plan_objective(planner.quests[qid], 0, obj, obs)]
+
+    check("a learned npc_map adds travel to the plan", after != before and after[0] == "nav.goto",
+          "%s -> %s" % (before, after))
+
+
+def test_idle_trainer_respects_the_lock() -> None:
+    """Training must never run while a loop owns the account."""
+    print("\n== idle trainer ==")
+    try:
+        import ai.idle_trainer as trainer
+    except Exception as exc:  # noqa: BLE001
+        print("  [SKIP] %s" % exc)
+        return
+
+    tmp = Path(tempfile.mkdtemp())
+    old_lock, old_steps = trainer.LOCK, trainer.STEPS
+    trainer.LOCK = tmp / "autopilot.lock"
+    trainer.STEPS = tmp / "autopilot.jsonl"
+    try:
+        trainer.LOCK.write_text("{}", encoding="utf-8")
+        why = trainer.busy_reason()
+        check("a held lock blocks training", why is not None and "lock" in why, str(why))
+        trainer.LOCK.unlink()
+    finally:
+        trainer.LOCK, trainer.STEPS = old_lock, old_steps
+
+
 def test_planner_beats_the_rule_policy() -> None:
     """The number the whole design rests on: a plan completes quests, a rule does not."""
     print("\n== planner vs rule (symbolic world) ==")
@@ -361,6 +456,9 @@ def main() -> int:
     test_baseline_model()
     test_onnx_head()
     test_step_summary()
+    test_knowledge_store()
+    test_knowledge_changes_the_plan()
+    test_idle_trainer_respects_the_lock()
     test_planner_beats_the_rule_policy()
     test_controller_changes_the_next_action()
     test_loop_applies_the_decision()

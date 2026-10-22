@@ -676,6 +676,29 @@ priority order:
 | source | when | what it is |
 |---|---|---|
 | **human** | a reviewer wrote a verdict | `verdicts_human.jsonl`, wins over both |
+### Knowledge is data, not weights
+
+The model is not a database. Facts live in `agent/knowledge_store.py` — an
+append-only log with provenance, confidence and a delete path — and the model
+learns *when to write to it*, not what to memorise:
+
+| tool | what it does |
+|---|---|
+| `knowledge.search` | look something up in the DofusDB cache |
+| `knowledge.remember` | record a discovery (`npc_map`, `monster_drop`, `price`, `route`, …) |
+| `knowledge.forget` | delete a fact that turned out to be wrong |
+
+Rules that keep it small and honest: only discoveries go in (never a copy of the
+cache), every fact carries its source (human > observed > derived > guess), a
+weaker source can only *dispute* a stronger one, three disputes drop the fact, and
+unused facts expire after 45 days. The planner reads the store, so a learned
+`npc_map` changes the next plan with no retraining:
+
+```
+before: [quest.advance]
+after : [nav.goto, quest.advance]      # after remembering where NPC 6404 is
+```
+
 | **model** | `--verifier-model` points at an artifact | `.json` = shipped 33-feature baseline, `.onnx` = neural head |
 | **rule** | always | the baseline the model has to beat |
 
@@ -921,7 +944,7 @@ pre-flight cannot veto without a model.
 | `dofus-network/docs/PIPELINE.md` | data pipeline end to end |
 | `dofus-network/docs/PRETRAIN_GAPS.md` | what the pretraining is still missing |
 | `dofus-network/docs/LATENT_AND_ONLINE_LEARNING.md` | latent bus and online updates |
-| `dofus-network/docs/CAPABILITY_REGISTRY.md` | the 16 tools and their contracts |
+| `dofus-network/docs/CAPABILITY_REGISTRY.md` | the 18 tools and their contracts |
 | `dofus-network/docs/EXPERIENCE_LEARNING.md` | experience/replay design |
 | `dofus-network/docs/BENCH_30M.md` | encoder benchmark, 30-minute run |
 | `dofus-network/docs/ARCH_REASSESSMENT.md` | what changed and why |
