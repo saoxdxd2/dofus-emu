@@ -311,6 +311,47 @@ def test_onnx_head() -> None:
           "%s/%s" % (r.source, r.verdict))
 
 
+def test_exploration_is_opt_in() -> None:
+    """A deterministic rule logs one action per state; no overlap, nothing to learn.
+
+    Every attempt to learn the repair decision from simulated failures has failed
+    because "continue" is right 79% of the time there. Learning it from real failures
+    needs the alternatives to actually be taken sometimes, which costs real steps in a
+    real game — so it is off by default and never applies to a structural failure,
+    which the taxonomy has already settled with evidence (0 of 9 retries worked).
+    """
+    print("\n== exploration ==")
+    from agent.controller import Controller
+
+    tmp = Path(tempfile.mkdtemp())
+
+    def once(**kw):
+        c = Controller(state_dir=tmp, session="tx", **kw)
+        return c.on_step(Verdict("failed", 0.9, None, False, "rule"), "farm.start",
+                         False, "timed out", {"a": 1}, {"a": 2})
+
+    d = once()
+    check("exploration is off by default", not d.explored, "%s explored=%s"
+          % (d.action, d.explored))
+
+    c = Controller(state_dir=tmp, session="ty", explore=1.0, seed=5)
+    actions = [c.on_step(Verdict("failed", 0.9, None, False, "rule"), "farm.start",
+                         False, "timed out", {"a": 1}, {"a": 2}) for _ in range(12)]
+    check("with explore=1.0 the action varies",
+          len({x.action for x in actions}) > 1,
+          "%s" % sorted({x.action for x in actions}))
+    check("explored decisions say so", all(x.explored for x in actions),
+          "%d of %d" % (sum(x.explored for x in actions), len(actions)))
+
+    cs = Controller(state_dir=tmp, session="tz", explore=1.0, seed=5)
+    structural = [cs.on_step(Verdict("failed", 0.9, None, False, "rule"), "farm.start",
+                             False, "no client instance is running", {}, {})
+                  for _ in range(6)]
+    check("a structural failure is never explored",
+          all(x.action == "replan" and not x.explored for x in structural),
+          "%s" % sorted({(x.action, x.explored) for x in structural}))
+
+
 def test_structural_failures_are_not_retried() -> None:
     """Real data: 9 of 15 client failures were 'no active client', 0/9 retries worked."""
     print("\n== error taxonomy ==")
@@ -547,6 +588,7 @@ def main() -> int:
     test_baseline_model()
     test_onnx_head()
     test_step_summary()
+    test_exploration_is_opt_in()
     test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()
     test_knowledge_store()

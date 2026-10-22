@@ -268,11 +268,21 @@ learning signal: it can score a policy, and it can no longer improve one. What i
 cannot produce is a *persistent* failure, and a persistent failure is the only thing a
 learned repair decision could fix.
 
-20–30 steps of `farm` / `go to` / `open inventory` with the loop attached, then
-`python ai/reality_check.py`.
-**Done when:** ≥30 genuine (non-structural) failures. **Falsifier:** if the real
-failures turn out to be as transient as the simulated ones, then no learned decision is
-worth building and the controller's rule stays.
+**The session has to explore, or it produces nothing learnable.** The controller's rule
+is deterministic, so a plain session logs one action per state; logged data with no
+overlap cannot rank alternatives. `--explore 0.3` takes a different repair on 30% of
+failures (never a structural one — that case is settled by evidence, 0 of 9 retries
+worked) and marks the decision `explored: true` so the dataset can tell.
+
+```bash
+python agent/autopilot.py --goal "farm" --steps 30 --explore 0.3
+python ai/reality_check.py
+```
+
+**Done when:** ≥30 genuine (non-structural) failures *and* at least two of the four
+repairs observed on the same cause. **Falsifier:** if the real failures turn out to be
+as transient as the simulated ones, then no learned decision is worth building and the
+controller's rule stays.
 
 ### P2 — the decision model, third attempt — ONLY with P1's labels
 Same harness, same metric (regret), same rule: it ships only if it beats every

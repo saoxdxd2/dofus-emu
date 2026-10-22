@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -70,6 +71,7 @@ class Decision:
     next_call: Optional[Dict[str, Any]] = None
     strategy: str = ""
     confidence: float = 0.5
+    explored: bool = False      # chosen to gather data, not because the rule says so
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -148,13 +150,23 @@ class Controller:
 
     def __init__(self, state_dir: Optional[Path] = None, session: str = "",
                  max_retries: int = 1, drift_to_replan: int = 2,
-                 failure_to_replan: int = 3) -> None:
+                 failure_to_replan: int = 3, explore: float = 0.0,
+                 seed: int = 0) -> None:
         self.session = session
         self.state_dir = Path(state_dir) if state_dir else Path(
             os.environ.get("LOCALAPPDATA", str(Path.home()))) / "DofusFarm" / "controller"
         self.max_retries = max_retries
         self.drift_to_replan = drift_to_replan
         self.failure_to_replan = failure_to_replan
+        # Exploration exists for one reason: a deterministic rule logs one action per
+        # state, and logged data with no overlap cannot rank the alternatives. Every
+        # attempt to learn this decision from simulated failures has failed because
+        # "continue" is right 79% of the time there; learning from *real* failures
+        # requires actually taking the other actions sometimes. Zero by default — it
+        # costs real steps in a real game, so it is a deliberate choice made when
+        # collecting, not a default.
+        self.explore = float(explore)
+        self._rng = random.Random(seed)
 
         self.objective = ""
         self.progress = 0.0
@@ -250,6 +262,35 @@ class Controller:
     # -- decision ---------------------------------------------------------
 
     def on_step(self, verdict: Any, tool: str, ok: bool, error: Optional[str],
+                before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]],
+                now: Optional[float] = None) -> Decision:
+        decision = self._decide(verdict, tool, ok, error, before, after, now)
+        return self._maybe_explore(decision, error)
+
+    def _maybe_explore(self, decision: Decision, error: Optional[str]) -> Decision:
+        """Occasionally take a different repair, so the log can rank them later.
+
+        Never for a structural failure: those are the one case the taxonomy has
+        already settled with real evidence (0 of 9 retries of an absent client
+        worked), and spending a step to re-confirm it is not exploration, it is
+        relearning something already known.
+        """
+        if not self.explore or decision.action not in ("retry", "recover", "replan"):
+            return decision
+        if error_class(error) == "structural":
+            return decision
+        if self._rng.random() >= self.explore:
+            return decision
+        alternatives = [a for a in ("retry", "recover", "replan") if a != decision.action]
+        alt = self._rng.choice(alternatives)
+        hint = RECOVERY.get(decision.cause) if alt == "recover" else None
+        return Decision(alt, decision.cause,
+                        "exploring %s instead of %s (data collection)"
+                        % (alt, decision.action),
+                        dict(hint) if hint else None, "explore",
+                        decision.confidence, True)
+
+    def _decide(self, verdict: Any, tool: str, ok: bool, error: Optional[str],
                 before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]],
                 now: Optional[float] = None) -> Decision:
         now = time.time() if now is None else now

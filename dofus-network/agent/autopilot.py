@@ -126,6 +126,8 @@ class Autopilot:
         on_step=None,
         verifier_model: Optional[Path] = None,
         veto_threshold: float = 0.0,
+        explore: float = 0.0,
+        explore_seed: int = 0,
     ) -> None:
         self.runtime = runtime
         self.goals = list(goals)
@@ -137,7 +139,8 @@ class Autopilot:
         # Agent 2: owns the objective, the strategy table and the failure memory.
         # The verifier answers "did that work"; the controller decides what the
         # actor does next, which is the part that used to be missing.
-        self.controller = Controller(session=self.session)
+        self.controller = Controller(session=self.session, explore=explore,
+                                     seed=explore_seed)
         self.controller.set_objective("; ".join(goals))
         self.controller.load()
         self.on_replan = None            # set by the host: (reason, decision) -> None
@@ -736,6 +739,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--directive-url", default="http://127.0.0.1:8893/directive")
     parser.add_argument("--log", default=str(DEFAULT_LOG))
     parser.add_argument("--stop-file", default=str(DEFAULT_STOP))
+    parser.add_argument("--explore", type=float, default=0.0,
+                        help="fraction of repair decisions to take at random, so a "
+                             "session produces data that can rank the alternatives. "
+                             "Costs real steps; 0 by default")
     parser.add_argument("--dry-run", action="store_true",
                         help="choose and guard, but never send a directive")
     return parser
@@ -764,6 +771,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         interval=args.interval,
         steps_per_goal=args.steps_per_goal,
         dry_run=args.dry_run,
+        explore=args.explore,
     )
     try:
         summary = pilot.run()
