@@ -1,5 +1,5 @@
-last step line: (none)
-idle form  : AI idle
-running form: AI running - waiting for the first step
+last step line: {"index": 3, "goal": "plz do all the quests", "tool": "state.snapshot", "args": {}, "ok": false, "error": "client directive failed: instance 'dofus-05' is not a
+idle form  : AI stopped - last step 4
+running form: AI running - step 4 - state.snapshot failed (model)
 no log     : AI idle
 first step : AI running - waiting for the first step

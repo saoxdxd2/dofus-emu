@@ -63,7 +63,6 @@ namespace DofusFarm
             catch { }
         }
 
-        [STAThread]
         /// <summary>
         /// Headless check of the runtime bundle patcher: apply tools\patch-rules.txt
         /// to the unpatched script.js.bak and compare with the live script.js that
@@ -157,6 +156,10 @@ namespace DofusFarm
             }
         }
 
+        // This attribute must sit directly on the entry point. It was left attached
+        // to a helper method inserted above Main, so the process started in MTA and
+        // every WebView2 init failed with RPC_E_CHANGED_MODE (0x80010106).
+        [STAThread]
         static void Main(string[] args)
         {
             if (args != null && args.Length > 0 &&
@@ -225,6 +228,8 @@ namespace DofusFarm
                 // later dispatch (client windows, dialogs) lands there by construction
                 // instead of by inspecting Application.OpenForms.
                 UI.UiThread.Capture();
+                SafeLogFatal("START", "UI thread apartment: " + UI.UiThread.Apartment()
+                    + " (WebView2 requires STA)");
                 var mainForm = new MainForm();
                 UI.UiThread.SetMainForm(mainForm);
                 Application.Run(mainForm);
