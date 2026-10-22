@@ -158,8 +158,10 @@ def _perturb(world: World, rng: random.Random) -> None:
 def episode(level: int, steps: int, seed: int, rng: random.Random,
             noise: bool = True, depth: int = DEPTH,
             focus: Optional[int] = None,
-            score_mode: str = "rate") -> List[Dict[str, Any]]:
-    world = World(level=level, seed=seed, max_steps=steps, noise=noise)
+            score_mode: str = "rate",
+            travel_cost: bool = False) -> List[Dict[str, Any]]:
+    world = World(level=level, seed=seed, max_steps=steps, noise=noise,
+                  travel_cost=travel_cost)
     planner = QuestPlanner(level_hint=level, curriculum="random", seed=seed,
                            focus=focus)
     rows: List[Dict[str, Any]] = []
@@ -298,6 +300,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--deadline-epoch", type=float, default=0.0)
     ap.add_argument("--parallel", type=int, default=1)
     ap.add_argument("--minutes", type=float, default=0.0)
+    ap.add_argument("--travel-cost", action="store_true",
+                    help="travel costs hops instead of one free step")
     ap.add_argument("--score", choices=("rate", "cummean"), default="rate",
                     help="how a fork is scored: max progress per step, or mean "
                          "cumulative progress (finer, fewer ties)")
@@ -320,7 +324,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         level = args.levels[i % len(args.levels)]
         focus = focus_cycle[i % len(focus_cycle)] if focus_cycle else None
         rows.extend(episode(level, args.steps, args.seed + i, rng, args.noise,
-                            args.depth, focus, args.score))
+                            args.depth, focus, args.score, args.travel_cost))
 
     split = int(len(rows) * 0.9)
     for name, part in (("train", rows[:split]), ("val", rows[split:])):

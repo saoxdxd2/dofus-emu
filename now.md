@@ -121,6 +121,28 @@ down-weights ties — the column above is not a fair fight, and accuracy is.
 
 ## 4. What is blocked, and by what
 
+0. **The world is built from the teacher's own rules, so it can only teach noise.**
+   This is the real blocker, and it subsumes the rest. Every number this simulator
+   produces is "how well does X imitate the teacher, plus handle the injected noise" —
+   which is why the learned policy's entire advantage is +2.8% (99.6 vs 96.9 quests).
+   The docstring admits the cause: *movement cost is abstracted away*. Travel is one
+   free step from anywhere to anywhere, which makes "one objective at a time, re-plan
+   every step" provably optimal.
+
+   `World(travel_cost=True)` now charges hops (same map 0, same subarea 1, same area 2,
+   otherwise 3, from the KB's 15,400 maps in 567 subareas across 67 areas). Measured at
+   L60/400 steps: the teacher drops **119 → 97 quests (−18%)**. That 18% was being
+   given away for free, and it is the size of the gap between "the world agrees with
+   the teacher" and "the world doesn't".
+
+   The remaining planning headroom is smaller than it looked: reordering a step's
+   objectives nearest-first saves **22% of travel steps**, and nearest-neighbour is
+   *exactly optimal* on this data (7.3 vs 7.3 steps per step). So ordering is worth
+   ~12% of total steps and is solved by ten lines of heuristic — a learned model has
+   nothing to add there. What it can add is ordering *under uncertainty*, which is the
+   one place the sim can now produce a label the teacher gets wrong for a reason that
+   is not a dice roll.
+
 1. **The label is ambiguous, and it is now measured rather than suspected.** 40.1% of
    validation states whose exact 41-feature vector also appears in training carry more
    than one label. **23.8% of the corpus is an exact tie**: the top two candidates

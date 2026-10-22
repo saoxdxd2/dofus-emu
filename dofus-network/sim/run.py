@@ -66,8 +66,10 @@ class RulePolicy:
 
 
 def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
-        verbose: bool = False, noise: bool = False) -> Dict[str, Any]:
-    world = World(level=level, seed=seed, max_steps=steps, noise=noise)
+        verbose: bool = False, noise: bool = False,
+        travel_cost: bool = False) -> Dict[str, Any]:
+    world = World(level=level, seed=seed, max_steps=steps, noise=noise,
+                  travel_cost=travel_cost)
     goal = GOALS[0]
     while world.steps < steps:
         obs = world.observe()
@@ -88,6 +90,7 @@ def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
     score["policy"] = type(policy).__name__
     score["level"] = level
     score["noise"] = noise
+    score["travel_cost"] = travel_cost
     return score
 
 
@@ -102,6 +105,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--noise", action="store_true",
                     help="stochastic actions, stale and partial observations")
+    ap.add_argument("--travel-cost", action="store_true",
+                    help="travel costs hops instead of one free step; without it the "
+                         "teacher is optimal by construction and nothing can beat it")
     args = ap.parse_args(argv)
 
     if args.policy == "planner":
@@ -116,7 +122,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         policy = RulePolicy()
 
-    score = run(policy, args.level, args.steps, args.seed, args.verbose, args.noise)
+    score = run(policy, args.level, args.steps, args.seed, args.verbose, args.noise,
+                args.travel_cost)
     print(json.dumps(score, indent=1))
     return 0
 

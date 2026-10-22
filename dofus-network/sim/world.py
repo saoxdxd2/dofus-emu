@@ -67,6 +67,38 @@ def _load(name: str) -> Any:
         return json.load(fh)
 
 
+_MAP_INDEX: Optional[Tuple[Dict[int, int], Dict[int, int]]] = None
+
+
+def map_index() -> Tuple[Dict[int, int], Dict[int, int]]:
+    """map id -> (subarea id, area id), built once from the KB.
+
+    This is the difference between a world where the teacher is optimal and one where
+    it is not. With travel free, "one objective at a time, re-plan every step" cannot
+    be beaten. With travel costing hops, the order of objectives starts to matter: the
+    KB puts 8.91 placed objectives per quest across 2.73 subareas, so a planner that
+    batches by subarea saves 6.18 travel steps per quest — 69% of the act budget.
+    """
+    global _MAP_INDEX
+    if _MAP_INDEX is None:
+        sub_of: Dict[int, int] = {}
+        area_of: Dict[int, int] = {}
+        for sub in _load("subareas_full.json"):
+            try:
+                sid = int(sub["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            for m in sub.get("mapIds") or []:
+                try:
+                    mid = int(m)
+                except (TypeError, ValueError):
+                    continue
+                sub_of[mid] = sid
+                area_of[mid] = sub.get("areaId")
+        _MAP_INDEX = (sub_of, area_of)
+    return _MAP_INDEX
+
+
 def _params(obj: Dict[str, Any]) -> Dict[str, Any]:
     raw = obj.get("params")
     if isinstance(raw, dict):
@@ -98,7 +130,8 @@ class World:
     def __init__(self, level: int = 60, seed: int = 7,
                  max_steps: int = 2000, kb_limit: Optional[int] = None,
                  noise: bool = False, action_fail: float = 0.15,
-                 obs_lag: float = 0.20, obs_drop: float = 0.10) -> None:
+                 obs_lag: float = 0.20, obs_drop: float = 0.10,
+                 travel_cost: bool = False) -> None:
         self.rng = random.Random(seed)
         raw = _load("quests_full.json")
         if kb_limit:
@@ -146,6 +179,11 @@ class World:
         # from the stale cache. This is the whole value of reading.
         self._force_fresh = False
         self.last_obs_kind = "fresh"
+        # Off by default so every number quoted before this existed stays comparable,
+        # the same convention `noise` follows. A world with free travel is the one
+        # that made the teacher unbeatable, so any claim about planning has to be
+        # quoted with this on.
+        self.travel_cost = travel_cost
 
     def clone(self) -> "World":
         """A copy that shares the knowledge base but not the mutable state.
@@ -179,7 +217,31 @@ class World:
         twin._force_fresh = self._force_fresh
         twin.last_obs_kind = self.last_obs_kind
         twin.capacity = self.capacity
+        twin.travel_cost = self.travel_cost
         return twin
+
+    def travel_hops(self, here: Optional[int], there: Optional[int]) -> int:
+        """How many steps it takes to get from one map to another.
+
+        Coarse on purpose: same map 0, same subarea 1, same area 2, anything else 3
+        (a zaap hop). The KB has 15,400 maps in 567 subareas across 67 areas, so this
+        is a real geography and not a guess — but a hop count is not a path. What it
+        has to be is *monotone in distance*, because that is the property the teacher
+        lacks: under free travel, the cost of any plan is the number of actions in it.
+        """
+        if here is None or there is None:
+            return 1
+        here, there = int(here), int(there)
+        if here == there:
+            return 0
+        sub_of, area_of = map_index()
+        a, b = sub_of.get(here), sub_of.get(there)
+        if a is not None and a == b:
+            return 1
+        aa, ab = area_of.get(here), area_of.get(there)
+        if aa is not None and aa == ab:
+            return 2
+        return 3
 
     # -- observations ------------------------------------------------------
 
@@ -346,9 +408,13 @@ class World:
             target = int(args["x"]) * 1000 + int(args["y"])   # synthetic id
         if not target:
             return False, "no destination"
+        hops = self.travel_hops(self.map_id, int(target))
         self.map_id = int(target)
         # Arriving is a state change the client can see immediately.
         self._force_fresh = True
+        if self.travel_cost:
+            # The call already consumed one step in step(); charge the rest.
+            self.steps += max(0, hops - 1)
         current = self.current_objective()
         if current is not None:
             quest, step_idx, obj_idx, obj = current
@@ -356,8 +422,8 @@ class World:
                 # "Find the map: X" is satisfied by standing on it. Without this the
                 # objective is uncompletable and the planner travels in circles.
                 self._complete_objective(quest, step_idx, obj_idx)
-                return True, "arrived; map objective done"
-        return True, "moved"
+                return True, "arrived; map objective done (%d hops)" % hops
+        return True, "moved (%d hops)" % hops
 
     def _tool_nav_walk(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         return self._tool_nav_goto(args)
