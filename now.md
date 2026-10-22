@@ -97,6 +97,26 @@ both worse. Default stays `rate`.
 **More data.** 32k → 90k rows (2.8×): validation accuracy +0.002, simulator score
 **−0.9 quests**. Data volume is not the lever.
 
+**Capacity.** Kaggle T4 sweep, 189k rows, five architectures, same corpus and seed:
+
+| params | shape | val acc | macro-F1 | ECE |
+|---|---|---|---|---|
+| 8,018 | h64 d2 | 0.8961 | 0.2859 | 0.0076 |
+| 48,594 | h192 d2 | 0.9005 | 0.2867 | 0.0074 |
+| 293,394 | h512 d2 | 0.9007 | 0.2867 | 0.0066 |
+| 1,111,058 | h1024 d2 | 0.9008 | 0.2871 | 0.0080 |
+| 818,706 | h512 d4 | 0.9006 | 0.2864 | 0.0113 |
+
+**138× the parameters buys +0.0045 accuracy.** The 8k model is within half a point of
+the million-parameter one. This is the same answer recursion got, from the other
+direction, and it is the third independent measurement that the task is short of
+labels rather than of capacity.
+
+*Caveat, because it matters for the macro-F1 column:* that corpus was generated before
+the margin field existed, so no tie-weighting was applied and the rare classes were
+never learned. The shipped local model gets macro-F1 **0.53** on 28k rows *because* it
+down-weights ties — the column above is not a fair fight, and accuracy is.
+
 ---
 
 ## 4. What is blocked, and by what
@@ -232,9 +252,12 @@ python ai/train_tool_policy.py --data data/tool_sft --out models/tool_policy.onn
 # capacity sweep (the GPU question)
 python ai/train_tool_policy.py --data data/tool_sft --sweep --device cuda
 
-# kaggle: generate + train in one kernel
+# kaggle: generate + train + sweep in one kernel (~28 min: 26 generating, 2 training)
 kaggle kernels push -p kaggle/tool
-python ai/kaggle_report.py --fetch --md
+
+# the output is ~4.5 MB (model + reports). It used to be 134 MB because the corpus
+# was written to /kaggle/working; that is fixed, and the corpus now goes to /tmp.
+kaggle kernels output tajdinenizar/thx-02-tool-policy -p /tmp/kout
 ```
 
 Kaggle: account `tajdinenizar`, credential at `~/.kaggle/kaggle.json` (outside the
@@ -242,6 +265,14 @@ repo). Private datasets: `thx-02-sim-toolkit` (code + KB), `thx-02-tool-corpus`.
 Pushing a new version of a *queued* kernel returns 409; the kernel `id` must equal its
 real slug. Datasets mount at `/kaggle/input/datasets/<owner>/<slug>/`, and the CLI
 uploads each directory as a **zip**, so the kernel unpacks whatever it finds.
+
+**Keep the output small.** The training kernel first wrote its 189k-row corpus into
+`/kaggle/working`, which made the output 134 MB and cost two things that had nothing
+to do with the experiment: `kaggle kernels output` broke twice on the 100 MB+ file
+(`IncompleteRead`), and a dependent kernel that only wanted the 4 MB model had to
+mount all 134 MB and sat in RUNNING for ten minutes. The corpus now goes to `/tmp`;
+the artifact is the model. A script kernel still takes 1–2 minutes to provision and
+convert to HTML, so "it's just a file copy" is never just a file copy.
 
 ---
 

@@ -27,7 +27,14 @@ import time
 from pathlib import Path
 
 WORK = Path("/kaggle/working")
-DATA = WORK / "corpus"
+# The corpus goes to scratch, NOT to the output directory.
+#
+# Writing 134 MB of jsonl into /kaggle/working made the output 134 MB, which had two
+# costs that had nothing to do with the experiment: `kaggle kernels output` broke twice
+# on the 100 MB+ file with IncompleteRead, and a dependent kernel that only wanted the
+# 4 MB model had to mount the whole thing and sat in RUNNING for ten minutes. The
+# artifact is the model; the corpus is reproducible in 26 minutes from the toolkit.
+DATA = Path("/tmp/corpus")
 MINUTES = 26
 WORKERS = 4
 EPISODES = 900
@@ -81,12 +88,23 @@ def write_diagnostics(toolkit: Path) -> None:
 
 def generate(toolkit: Path) -> dict:
     print("\n== stage 1: generate the corpus ==", flush=True)
-    DATA.mkdir(parents=True, exist_ok=True)
+    try:
+        DATA.mkdir(parents=True, exist_ok=True)
+        probe = DATA / ".writable"
+        probe.write_text("x", encoding="utf-8")
+        probe.unlink()
+        out_dir = DATA
+    except OSError:
+        # Some images restrict /tmp. Falling back to the output directory is correct
+        # but makes the run slow to collect, so say so rather than doing it silently.
+        out_dir = WORK / "corpus"
+        print("WARNING: /tmp is not writable; the corpus will inflate the output "
+              "directory to ~%d MB" % 150, flush=True)
     cmd = [sys.executable, str(toolkit / "sim" / "tool_choice.py"),
            "--episodes", str(EPISODES), "--steps", str(STEPS),
            "--noise", "--parallel", str(WORKERS),
            "--minutes", str(MINUTES), "--seed", "2026",
-           "--out", str(DATA)]
+           "--out", str(out_dir)]
     env = dict(os.environ, PYTHONPATH=str(toolkit))
     started = time.time()
     proc = subprocess.run(cmd, cwd=str(toolkit), env=env,
@@ -95,8 +113,11 @@ def generate(toolkit: Path) -> dict:
     if proc.returncode != 0:
         print("STDERR:", proc.stderr[-4000:])
     print("generate took %.0fs" % (time.time() - started), flush=True)
-    stats_path = DATA / "stats.json"
-    return json.loads(stats_path.read_text(encoding="utf-8")) if stats_path.exists() else {}
+    stats_path = out_dir / "stats.json"
+    stats = json.loads(stats_path.read_text(encoding="utf-8")) if stats_path.exists() else {}
+    # The statistics are small and are the part worth keeping.
+    (WORK / "corpus_stats.json").write_text(json.dumps(stats, indent=1), encoding="utf-8")
+    return stats
 
 
 def train(toolkit: Path) -> None:
