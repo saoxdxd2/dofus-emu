@@ -147,6 +147,8 @@ class KnowledgeBase:
         self._item_order = np.argsort(self.item_id).astype(np.int32)
         self._monster_sorted = np.sort(self.monster_id)
         self._monster_order = np.argsort(self.monster_id).astype(np.int32)
+        self._quest_sorted = np.sort(self.quest_id)
+        self._quest_order = np.argsort(self.quest_id).astype(np.int32)
 
     @staticmethod
     def _lookup(sorted_ids: np.ndarray, order: np.ndarray, value: int) -> Optional[int]:
@@ -381,6 +383,92 @@ class KnowledgeBase:
             ))
         return result
 
+    def _quest_name_index(self) -> Dict[str, Dict[str, List[int]]]:
+        """``{lang: {normalised name: [quest ids]}}``, built on first use.
+
+        ``find_quests`` is called once per name-bearing row when a corpus is
+        sanitised, and a linear scan over 1,976 quests per call made that pass
+        take four minutes. An exact-name index makes the common case O(1); the
+        ranking scan below still handles prefixes and containment.
+
+        The language list comes from ``LANGS``, the same constant the name blob
+        was built with. It used to be read back from the ``langs`` array, which
+        stores ``NAME_SEP.join(LANGS)`` as raw bytes -- ``tolist()`` there yields
+        integers, so the decoded list was nonsense and the index silently
+        covered French only. ``quests_named_in`` needs every language, because a
+        goal in German names a quest by its German name.
+        """
+        cached = getattr(self, "_quest_name_index_cache", None)
+        if cached is not None:
+            return cached
+        from ai.data_splits import normalize
+
+        index: Dict[str, Dict[str, List[int]]] = {}
+        offsets = self._arrays["quest_name_off"]
+        lengths = self._arrays["quest_name_len"]
+        for lang in LANGS:
+            table: Dict[str, List[int]] = {}
+            for position in range(len(self.quest_id)):
+                name = self._names.get(int(offsets[position]),
+                                       int(lengths[position]), lang)
+                flat = normalize(name)
+                if flat:
+                    table.setdefault(flat, []).append(int(self.quest_id[position]))
+            index[lang] = table
+        self._quest_name_index_cache = index  # type: ignore[attr-defined]
+        return index
+
+    def quests_named_in(self, goal: str, lang: str = "fr") -> List[Tuple[str, int]]:
+        """``(name, quest_id)`` for every quest whose name appears inside ``goal``.
+
+        This is the reverse of ``find_quests`` and it is the direction a real
+        goal needs. ``find_quests`` answers "which quest is this span?" once the
+        caller has already isolated the span; a goal is a whole sentence --
+        ``mach mit Quest Ghulsaison weiter``, ``fais l'etape suivante de la
+        quete Offrande`` -- and no amount of lead-verb stripping reliably
+        recovers the span from it, because the quest noun can sit anywhere in
+        the sentence and the name can contain commas and apostrophes.
+
+        Scanning the *other* way -- for each known name, ask whether it occurs
+        in the goal at a word boundary -- needs no span extraction at all and
+        cannot be fooled by a verb phrase. It is also how a player reads it.
+
+        The result is a candidate list, not an answer: the caller applies the
+        longest-match rule and refuses when two quests share it. Maximal munch
+        is a tokenisation principle, not a guess -- when the goal says "Rose a
+        lys", the quest literally named "Rose a lys" is the one it means.
+        """
+        from ai.data_splits import bounded_match, normalize
+
+        folded = normalize(goal)
+        if not folded:
+            return []
+        found: List[Tuple[str, int]] = []
+        for table_lang, table in self._quest_name_index().items():
+            if lang and table_lang != lang:
+                continue
+            for flat, ids in table.items():
+                if len(flat) < 2:
+                    continue
+                if bounded_match(folded, flat):
+                    found.extend((flat, quest_id) for quest_id in ids)
+        return found
+
+    def resolve_quest_reference(self, goal: str, lang: str = "fr") -> Optional[int]:
+        """The quest a goal names, or ``None`` when it names none or several.
+
+        Longest match wins; ties are refused. ``None`` therefore means either
+        "this goal does not name a quest" or "it names two quests equally
+        well", and both must cost the caller the fill -- a resolver that picks
+        one of two candidates is guessing.
+        """
+        candidates = self.quests_named_in(goal, lang)
+        if not candidates:
+            return None
+        longest = max(len(name) for name, _quest_id in candidates)
+        best = {quest_id for name, quest_id in candidates if len(name) == longest}
+        return best.pop() if len(best) == 1 else None
+
     def find_quests(self, query: str, lang: str = "fr", limit: int = 8) -> List[Quest]:
         """Quests whose *name* matches ``query``, best first.
 
@@ -398,6 +486,9 @@ class KnowledgeBase:
         needle = normalize(query)
         if len(needle) < 2:
             return []
+        exact = self._quest_name_index().get(lang, {}).get(needle)
+        if exact is not None:
+            return [self.quest(quest_id, lang) for quest_id in exact[:limit]]
         hits: List[Tuple[int, int, int]] = []
         offsets = self._arrays["quest_name_off"]
         lengths = self._arrays["quest_name_len"]

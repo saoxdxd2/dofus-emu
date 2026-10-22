@@ -489,8 +489,6 @@ class EncoderDataset:
             yield {
                 "input_ids": input_ids,
                 "attention_mask": attention,
-                "tool": torch.tensor(
-                    [TOOL_INDEX[item["tool"]] for item in chunk], dtype=torch.long),
                 "span_start": torch.tensor(
                     [item["span_start"] for item in chunk], dtype=torch.long),
                 "span_end": torch.tensor(
@@ -509,6 +507,16 @@ class EncoderDataset:
                     [item["enum_mask"] for item in chunk], dtype=torch.float),
                 "lengths": torch.tensor(
                     [len(item["input_ids"]) for item in chunk], dtype=torch.long),
+                # ``_encode_row(infer=True)`` deliberately lets a live row omit
+                # ``"tool"`` -- the tool is what the model predicts. Indexing it
+                # here raised ``KeyError: ''`` on every serving call, which the
+                # self-test's stubbed ``_predict`` could not see. The sentinel is
+                # never a training target: ``compute_loss`` only ever receives
+                # rows that declare a tool, and ``decode_batch`` reads the tool
+                # from the model's own output.
+                "tool": torch.tensor(
+                    [TOOL_INDEX.get(item["tool"], -1) for item in chunk],
+                    dtype=torch.long),
             }
 
 
@@ -642,8 +650,14 @@ def decode_batch(
                 args[field.name] = bool(bool_values[row_index][field_index] >= 0.5)
                 continue
             if presence[row_index][field_index] < threshold:
-                if field.default is not None:
-                    args[field.name] = field.default
+                # Absent. The presence head was *trained* to say 0 here
+                # (``presence_target = 0.0``), so emitting the schema default
+                # instead would contradict the model's own answer: the call then
+                # claims the player stated a value they never stated. That
+                # materialisation was costing 1,507 of 3,056 val rows (49 pp) of
+                # exact-match accuracy and leaking defaults into every recorded
+                # trajectory. ``validate_call`` re-applies the default for the
+                # executor, so nothing downstream needs it here.
                 continue
             span = _best_span(
                 output["span_start"][row_index, field_index],
@@ -651,8 +665,6 @@ def decode_batch(
                 length,
             )
             if span is None:
-                if field.default is not None:
-                    args[field.name] = field.default
                 continue
             text = tokenizer.decode(
                 batch["input_ids"][row_index, span[0]:span[1] + 1].tolist(),
@@ -660,8 +672,6 @@ def decode_batch(
             )
             parsed = _parse_span(text, field)
             if parsed is None:
-                if field.default is not None:
-                    args[field.name] = field.default
                 continue
             args[field.name] = parsed
         results.append({"tool": tool, "args": args})
@@ -817,6 +827,23 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
         val_rows = val_rows[:max(1, args.limit // 4)]
     system_prompt = SYSTEM_PROMPTS[args.system]
     tokenizer = load_tokenizer_source(Path(args.tokenizer))
+    # Continuation. The checkpoint's tokenizer and architecture win over the
+    # command line: resuming with a different vocab trains the trunk against a
+    # head that can never line up with it, and the loss curve looks plausible
+    # while it happens. Weights are loaded with strict=False so a checkpoint
+    # written before a head existed still resumes, with the gap printed.
+    resume_blob: Optional[Dict[str, Any]] = None
+    resume_meta: Dict[str, Any] = {}
+    if getattr(args, "resume", None):
+        from tokenizers import Tokenizer as _ResumeTokenizer
+
+        resume_blob = torch.load(Path(args.resume), map_location="cpu",
+                                 weights_only=False)
+        resume_meta = resume_blob.get("meta") or {}
+        tokenizer = _ResumeTokenizer.from_str(resume_blob["tokenizer_json"])
+        print(f"resume    : {args.resume} (step {resume_meta.get('step')}, "
+              f"tool {resume_meta.get('tool_accuracy')}, "
+              f"call {resume_meta.get('call_accuracy')})")
     train_data = EncoderDataset(
         train_rows, tokenizer, args.max_seq_len, system_prompt)
     val_data = EncoderDataset(
@@ -833,7 +860,23 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
         dropout=args.dropout,
         use_anchors=bool(getattr(args, "anchor_mode", False)),
     )
+    if resume_blob is not None:
+        saved = EncoderConfig(**resume_blob["config"])
+        mismatched = [name for name in ("d_model", "n_layers", "n_heads", "ffn",
+                                        "vocab_size", "max_seq_len", "use_anchors")
+                      if getattr(saved, name) != getattr(config, name)]
+        if mismatched:
+            print("resume    : architecture taken from the checkpoint "
+                  f"({', '.join(mismatched)} differed on the command line)")
+        config = saved
     model = EncoderPolicy(config)
+    if resume_blob is not None:
+        missing, unexpected = model.load_state_dict(resume_blob["state_dict"], strict=False)
+        if missing or unexpected:
+            print(f"resume    : loaded with gaps -- missing {sorted(missing)[:4]}, "
+                  f"unexpected {sorted(unexpected)[:4]}")
+        else:
+            print("resume    : weights loaded, no key mismatch")
     if config.use_anchors:
         # The action head is derived from capability descriptions, not learned as a
         # class list: freeze it so the encoder learns to align with the anchors, and
@@ -844,7 +887,10 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
     params = sum(parameter.numel() for parameter in model.parameters())
     device = _resolve_device(args.device)
     model.to(device)
-    if config.use_anchors:
+    if config.use_anchors and resume_blob is None:
+        # On a resume the saved head *is* the anchor set from the previous run;
+        # recomputing it here would move the training target on step 0, which is
+        # the exact non-stationarity that made v9/v10 oscillate.
         from agent.schema import capability_descriptions
 
         anchors = refresh_capability_anchors(model, tokenizer, capability_descriptions())
@@ -856,8 +902,25 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
     planned_steps = math.ceil(len(train_data) / args.batch_size) * max(args.epochs, 1)
     if args.max_steps > 0:
         planned_steps = min(planned_steps, args.max_steps)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(planned_steps, 1))
+    # On a resume the counters start at the checkpoint's step, so the schedule has
+    # to be planned in the same coordinate system. v15 was planned for 2,748 steps
+    # while running from 1,500 to 3,000, so the cosine never annealed and the run
+    # plateaued at 0.704 instead of converging.
+    planned_steps += int((resume_meta or {}).get("step") or 0)
+    # Linear warmup before the cosine decay. ``docs/BENCH_30M.md`` asked for this
+    # in the same breath as the lower peak lr, and only the lr was implemented:
+    # run v9 jumped straight to 1e-4 from step 0, thrashed for the first ~600
+    # steps (train_loss 2.39 -> 1.44 -> 1.69 -> 1.52) and never recovered. With no
+    # warmup the Adam moments are still cold at peak lr, so the first few hundred
+    # updates are effectively random and every later epoch inherits the damage.
+    warmup_steps = max(1, int(round(args.warmup_frac * planned_steps)))
+    cosine_steps = max(planned_steps - warmup_steps, 1)
+    warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.05, end_factor=1.0, total_iters=warmup_steps)
+    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=cosine_steps)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup, cosine], milestones=[warmup_steps])
     # Inverse-frequency weighting is opt-in. It upweights rare tools, and with a
     # short run the head collapses onto exactly those classes — which is what
     # produced the degenerate checkpoints. Off by default in the training recipe.
@@ -882,6 +945,26 @@ def train(args: argparse.Namespace) -> Dict[str, Any]:
     history: List[Dict[str, Any]] = []
     started = time.time()
     step = 0
+    if resume_meta:
+        # Continue the counters, not just the weights. Restarting them at zero
+        # means the first eval of the resumed run always "improves" on nothing,
+        # so a continuation can never be stopped early for being worse than the
+        # checkpoint it started from.
+        step = int(resume_meta.get("step") or 0)
+        best_step = step
+        best_epoch = int(resume_meta.get("epoch") or 0)
+        best_tool_accuracy = float(resume_meta.get("tool_accuracy") or 0.0)
+        best_call_accuracy = float(resume_meta.get("call_accuracy") or 0.0)
+        best_val_loss = float(resume_meta.get("val_loss") or float("inf"))
+        metric_name = str(getattr(args, "early_stop", "loss"))
+        if metric_name == "call":
+            best_metric = best_call_accuracy
+        elif metric_name == "tool":
+            best_metric = best_tool_accuracy
+        else:
+            best_metric = best_val_loss
+        print(f"resume    : continuing from step {step} "
+              f"(best tool {best_tool_accuracy:.3f} / call {best_call_accuracy:.3f})")
     model.train()
     print(f"train     : {json.dumps(train_data.stats())}")
     print(f"val       : {json.dumps(val_data.stats())}")
@@ -1058,6 +1141,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--sft-dir", default=str(REPO_ROOT / "data" / "core_sft_v3"))
     train_parser.add_argument("--tokenizer", required=True)
     train_parser.add_argument("--out", default=str(REPO_ROOT / "models" / "encoder_policy"))
+    train_parser.add_argument("--resume", default=None,
+                              help="checkpoint to continue from. Its tokenizer and "
+                                   "architecture win over the command line; the "
+                                   "optimizer restarts (fresh AdamW moments) and the "
+                                   "step/metric counters continue from the checkpoint.")
     train_parser.add_argument("--system", choices=("encoder", "compact", "full"), default="encoder")
     train_parser.add_argument("--max-seq-len", type=int, default=256)
     train_parser.add_argument("--dim", type=int, default=512)
@@ -1073,6 +1161,9 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--min-delta", type=float, default=0.01)
     train_parser.add_argument("--target-loss", type=float, default=0.0)
     train_parser.add_argument("--lr", type=float, default=3e-4)
+    train_parser.add_argument("--warmup-frac", type=float, default=0.05,
+                              help="fraction of planned steps spent warming the "
+                                   "lr up linearly to its peak; 0 disables warmup")
     train_parser.add_argument("--weight-decay", type=float, default=0.01)
     train_parser.add_argument("--seed", type=int, default=7)
     train_parser.add_argument("--threads", type=int, default=0)

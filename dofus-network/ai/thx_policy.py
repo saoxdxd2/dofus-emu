@@ -148,6 +148,17 @@ _RE_PRICE_CURRENCY = re.compile(
 _RE_LEVEL = re.compile(
     r"\b(?:level|niveau|nivel|level|stufe)\s+(\d{1,3})\b", re.IGNORECASE)
 _RE_DUNGEON = re.compile(r"\b(dungeon|donjon|mazmorra|donjons|dungeons)\b", re.IGNORECASE)
+_RE_QUEST = re.compile(r"\b(qu[eê]tes?|quests?|misi[oó]nes?)\b", re.IGNORECASE)
+_RE_QUEST_ADVANCE = re.compile(
+    r"\b(advance|continue|proceed|next step|prochaine étape|siguiente paso|"
+    r"weiter|fortsetzen|étape suivante|avance|continua|continúa)\b", re.IGNORECASE)
+
+
+def _is_quest_advance_intent(goal: str) -> bool:
+    """See ``RulePolicy._is_quest_advance_intent`` — kept local so the neural
+    policy applies the same §C guard without constructing a RulePolicy. The
+    schedule's objective only confirms a quest.advance the player asked for."""
+    return bool(_RE_QUEST.search(goal)) and bool(_RE_QUEST_ADVANCE.search(goal))
 _RE_ALL = re.compile(r"\b(all|tout|tous|toute|everything|todo|toda|ganze|ganzen)\b",
                      re.IGNORECASE)
 _RE_CHAT_PREFIX = re.compile(
@@ -622,10 +633,19 @@ class ThxPolicy:
         goal: str,
         observation: Optional[Dict[str, Any]] = None,
         tools: Optional[List[str]] = None,
+        objective: Optional[Dict[str, Any]] = None,
     ) -> Optional[ToolCall]:
         goal = (goal or "").strip()
         if not goal:
             return None
+        # §C: honor a schedule-chosen quest step by confirming its quest_id, but
+        # only when the goal is a quest-advance instruction. The objective is
+        # context the schedule owns, not a command override -- a stop or sell goal
+        # must keep resolving to its own tool.
+        if (objective and objective.get("tool") == "quest.advance"
+                and objective.get("quest_id") is not None
+                and _is_quest_advance_intent(goal)):
+            return ToolCall("quest.advance", {"quest_id": objective["quest_id"]}, goal)
         started = time.perf_counter()
         guarded = _guard_tool(goal) if self.use_guards else None
         if guarded and (not tools or guarded in tools):

@@ -157,6 +157,290 @@
   }
  },
  "names": {
+  "text": {
+   "danke": {
+    "danke": 29
+   },
+   "thanks": {
+    "thanks": 30
+   },
+   "need help?": {
+    "need help?": 30
+   },
+   "merci": {
+    "merci": 30
+   },
+   "bonjour": {
+    "bonjour": 30
+   },
+   "gracias": {
+    "gracias": 30
+   },
+   "on my way": {
+    "on my way": 32
+   },
+   "wait": {
+    "wait": 30
+   },
+   "hallo": {
+    "Hallo": 30
+   },
+   "hola": {
+    "hola": 30
+   },
+   "hello": {
+    "hello": 30
+   },
+   "listo": {
+    "listo": 3
+   },
+   "ataca ahora": {
+    "ataca ahora": 3
+   },
+   "voy en camino": {
+    "voy en camino": 3
+   },
+   "esperame": {
+    "espérame": 3
+   },
+   "necesito ayuda": {
+    "necesito ayuda": 3
+   },
+   "besoin de 3 fioles de vyral.": {
+    "Besoin de 3 fioles de Vyral.": 1
+   },
+   "vends arme rare 500 pieces": {
+    "Vends arme rare 500 pièces": 1
+   },
+   "le prix est de 750 pieces.": {
+    "Le prix est de 750 pièces.": 1
+   },
+   "rendez-vous aux coordonnees 12, 24": {
+    "Rendez-vous aux coordonnées 12, 24": 1
+   },
+   "retrouvons-nous au portail.": {
+    "Retrouvons-nous au portail.": 1
+   },
+   "je t'attends a l'entree.": {
+    "Je t'attends à l'entrée.": 1
+   },
+   "je recrute pour une expedition.": {
+    "Je recrute pour une expédition.": 1
+   },
+   "qui veut faire une quete ?": {
+    "Qui veut faire une quête ?": 1
+   },
+   "attention piege ici !": {
+    "Attention piège ici !": 1
+   },
+   "je suis pret.": {
+    "Je suis prêt.": 1
+   },
+   "aide necessaire pour le boss xyphos": {
+    "Aide nécessaire pour le boss Xyphos": 1
+   },
+   "j'arrive": {
+    "j'arrive": 3
+   },
+   "pret": {
+    "prêt": 3
+   },
+   "besoin d'aide": {
+    "besoin d'aide": 3
+   },
+   "attaque maintenant": {
+    "attaque maintenant": 3
+   },
+   "attends-moi": {
+    "attends-moi": 3
+   },
+   "brauche hilfe": {
+    "brauche Hilfe": 4
+   },
+   "bin unterwegs": {
+    "bin unterwegs": 4
+   },
+   "warte auf mich": {
+    "warte auf mich": 4
+   },
+   "greif jetzt an": {
+    "greif jetzt an": 4
+   },
+   "bereit": {
+    "bereit": 4
+   },
+   "bitte nicht ziehen!": {
+    "Bitte nicht ziehen!": 1
+   },
+   "ich suche eine gruppe.": {
+    "Ich suche eine Gruppe.": 1
+   },
+   "pass auf dich auf.": {
+    "Pass auf dich auf.": 1
+   },
+   "wer ist online?": {
+    "Wer ist online?": 1
+   },
+   "treffpunkt ist der turm.": {
+    "Treffpunkt ist der Turm.": 1
+   },
+   "gegner gesichtet!": {
+    "Gegner gesichtet!": 1
+   },
+   "hallo zusammen!": {
+    "Hallo zusammen!": 1
+   },
+   "angriff in funf sekunden.": {
+    "Angriff in fünf Sekunden.": 1
+   },
+   "handelsware zum verkauf.": {
+    "Handelsware zum Verkauf.": 1
+   },
+   "die expedition beginnt jetzt.": {
+    "Die Expedition beginnt jetzt.": 1
+   },
+   "wir brauchen heilung!": {
+    "Wir brauchen Heilung!": 1
+   },
+   "ich bin zuruck.": {
+    "Ich bin zurück.": 2
+   },
+   "willkommen neu!": {
+    "Willkommen neu!": 1
+   },
+   "angriff auf mein signal.": {
+    "Angriff auf mein Signal.": 1
+   },
+   "hast du den schlussel?": {
+    "Hast du den Schlüssel?": 1
+   },
+   "wir haben gewonnen!": {
+    "Wir haben gewonnen!": 1
+   },
+   "le devolvi el amuleto.": {
+    "Le devolví el amuleto.": 1
+   },
+   "la reunion empieza en diez minutos.": {
+    "La reunión empieza en diez minutos.": 1
+   },
+   "¿puedes ayudarme con el jefe final, por favor?": {
+    "¿Puedes ayudarme con el jefe final, por favor?": 1
+   },
+   "¿tienes el mapa de krynn?": {
+    "¿Tienes el mapa de Krynn?": 1
+   },
+   "la reunion es a las ocho.": {
+    "La reunión es a las ocho.": 1
+   },
+   "necesitamos un tanque con escudo de runas, por favor.": {
+    "Necesitamos un tanque con escudo de runas, por favor.": 1
+   },
+   "busco grupo para zarvok.": {
+    "Busco grupo para Zarvok.": 1
+   },
+   "ya estoy listo.": {
+    "Ya estoy listo.": 1
+   },
+   "felicitaciones a kaelen por alcanzar el nivel cincuenta.": {
+    "Felicitaciones a Kaelen por alcanzar el nivel cincuenta.": 1
+   },
+   "tenemos nueva reclamacion de territorio.": {
+    "Tenemos nueva reclamación de territorio.": 1
+   },
+   "la guardia de thalmyr aguarda en la cima.": {
+    "La guardia de Thalmyr aguarda en la cima.": 1
+   },
+   "¿alguien vende un escudo de zyrak?": {
+    "¿Alguien vende un escudo de Zyrak?": 1
+   },
+   "reunanse en las coordenadas 12, 34.": {
+    "Reúnanse en las coordenadas 12, 34.": 1
+   },
+   "me retiro por hoy.": {
+    "Me retiro por hoy.": 1
+   },
+   "el capitan dravenor llegara en 10 minutos.": {
+    "El capitán Dravenor llegará en 10 minutos.": 1
+   },
+   "nos vemos en el portal.": {
+    "Nos vemos en el portal.": 1
+   },
+   "llegue tarde.": {
+    "Llegué tarde.": 1
+   },
+   "estamos reclutando.": {
+    "Estamos reclutando.": 1
+   },
+   "el gran orphion ha vuelto.": {
+    "El gran Orphion ha vuelto.": 1
+   },
+   "necesitamos sanador urgente, por favor.": {
+    "Necesitamos sanador urgente, por favor.": 1
+   },
+   "¡se busca grupo para mazmorra!": {
+    "¡Se busca grupo para mazmorra!": 1
+   },
+   "me necesitan.": {
+    "Me necesitan.": 1
+   },
+   "¿tienes el mapa de las ruinas flotantes?": {
+    "¿Tienes el mapa de las ruinas flotantes?": 1
+   },
+   "te debo 200 monedas por la escarcha eterna.": {
+    "Te debo 200 monedas por la escarcha eterna.": 1
+   },
+   "vendo elixir de sigilo por 500 monedas.": {
+    "Vendo elixir de sigilo por 500 monedas.": 1
+   },
+   "¿aceptas el desafio del duelo?": {
+    "¿Aceptas el desafío del duelo?": 1
+   },
+   "regalo un cetro de mistwell.": {
+    "Regalo un cetro de Mistwell.": 1
+   },
+   "who wants to hunt miststalkers?": {
+    "who wants to hunt Miststalkers?": 1
+   },
+   "wait for me": {
+    "wait for me": 2
+   },
+   "ready": {
+    "ready": 2
+   },
+   "need help": {
+    "need help": 2
+   },
+   "attack now": {
+    "attack now": 2
+   },
+   "the vornak egg hatched": {
+    "the Vornak egg hatched": 1
+   },
+   "we found a hidden cave": {
+    "we found a hidden cave": 1
+   },
+   "the portal is open": {
+    "the portal is open": 1
+   },
+   "do you have extra potions?": {
+    "do you have extra potions?": 1
+   },
+   "the market is busy": {
+    "the market is busy": 1
+   },
+   "asking about the rare spawn": {
+    "asking about the rare spawn": 1
+   },
+   "thanks for the help": {
+    "thanks for the help": 1
+   },
+   "looking for a zylthar group": {
+    "looking for a Zylthar group": 1
+   },
+   "looking for dungeon party": {
+    "looking for dungeon party": 1
+   }
+  },
   "zaap": {
    "thal'zir": {
     "Thal'Zir": 1
@@ -22614,6 +22898,41 @@
    },
    "moonpetal tonic": {
     "Moonpetal Tonic": 1
+   }
+  },
+  "reason": {
+   "low hp": {
+    "low hp": 5
+   },
+   "out of potions": {
+    "out of potions": 5
+   },
+   "too many monsters": {
+    "too many monsters": 5
+   },
+   "it's dangerous": {
+    "it's dangerous": 5
+   },
+   "halt all farming loops": {
+    "halt all farming loops": 1
+   },
+   "dangerous spot": {
+    "dangerous spot": 1
+   },
+   "incoming ozmord raiders": {
+    "incoming Ozmord raiders": 1
+   },
+   "cease all activity": {
+    "cease all activity": 1
+   },
+   "need to exit now": {
+    "need to exit now": 2
+   },
+   "hostile territory detected": {
+    "hostile territory detected": 1
+   },
+   "surrounded by moonshade creatures": {
+    "surrounded by Moonshade creatures": 1
    }
   },
   "target": {

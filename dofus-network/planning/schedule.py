@@ -450,3 +450,29 @@ class ScheduleManager:
             "replans": self.replans,
             "missing_tools": self.plan.missing_tools(),
         }
+
+    def active_objective(self) -> Optional[Dict[str, Any]]:
+        """The step the planner currently wants executed, without advancing it.
+
+        Returns ``{"tool", "args", "why", "quest_id"?}`` for the leaf at the
+        current pointer, or ``None`` when the plan is idle/exhausted. The agent
+        runtime reads this as structured context (§C) so a ``quest.advance``
+        decision confirms the schedule's chosen ``quest_id`` rather than guessing
+        it. Unlike ``tick()``, this does not advance the pointer or record a step.
+        """
+        if self.plan is None or not self.leaf_cache or self.pointer >= len(self.leaf_cache):
+            return None
+        leaf = self.leaf_cache[self.pointer]
+        if leaf.kind == "blocked":
+            return None
+        tool = leaf.meta.get("tool")
+        if not tool or tool not in EXECUTABLE_TOOLS:
+            preflight = leaf.meta.get("preflight_tool")
+            if not preflight or preflight not in EXECUTABLE_TOOLS:
+                return None
+            tool = preflight
+        args = dict(leaf.meta.get("args") or {})
+        obj: Dict[str, Any] = {"tool": tool, "args": args, "why": leaf.label}
+        if tool == "quest.advance" and args.get("quest_id") is not None:
+            obj["quest_id"] = args["quest_id"]
+        return obj

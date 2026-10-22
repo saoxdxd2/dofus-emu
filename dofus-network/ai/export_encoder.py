@@ -180,22 +180,67 @@ def export_graph(checkpoint: Path, out: Path, seq_len: int, opset: int) -> int:
     mask = torch.ones((1, seq_len), dtype=torch.long)
     started = time.perf_counter()
     with torch.inference_mode():
-        torch.onnx.export(
-            wrapper,
-            (ids, mask),
-            str(out),
-            input_names=["input_ids", "attention_mask"],
-            output_names=_output_names(),
-            opset_version=opset,
-            do_constant_folding=True,
-            dynamo=True,
-            external_data=False,
-        )
+        try:
+            # Preferred path: the dynamo exporter traces shapes symbolically and
+            # needs onnxscript, which is a *separate* package from onnx.
+            torch.onnx.export(
+                wrapper,
+                (ids, mask),
+                str(out),
+                input_names=["input_ids", "attention_mask"],
+                output_names=_output_names(),
+                opset_version=opset,
+                do_constant_folding=True,
+                dynamo=True,
+                external_data=False,
+            )
+            backend = "dynamo"
+        except (ImportError, ModuleNotFoundError) as exc:
+            # Kaggle's image ships torch + onnx but not onnxscript, so the
+            # dynamo path dies at import time and the whole export is lost --
+            # including the INT8 artifact the deployment measurement needs.
+            # The TorchScript exporter needs neither.
+            print(f"dynamo exporter unavailable ({exc}); "
+                  f"falling back to the TorchScript exporter", flush=True)
+            # The fused ``aten::_transformer_encoder_layer_fwd`` has no ONNX
+            # translation, so the legacy exporter aborts the whole graph with
+            # ``UnsupportedOperatorError``. ``nn.TransformerEncoderLayer`` picks
+            # that op whenever ``torch.backends.mha.get_fastpath_enabled()`` is
+            # True, which it is by default. Turning it off makes the layer run
+            # its decomposed path, which traces to ordinary ONNX ops. It is a
+            # process-global switch, so restore it as soon as the trace is done.
+            fastpath = torch.backends.mha.get_fastpath_enabled()
+            torch.backends.mha.set_fastpath_enabled(False)
+            try:
+                torch.onnx.export(
+                    wrapper,
+                    (ids, mask),
+                    str(out),
+                    input_names=["input_ids", "attention_mask"],
+                    output_names=_output_names(),
+                    opset_version=opset,
+                    do_constant_folding=True,
+                    # Must be explicit: ``dynamo`` defaults to True from torch
+                    # 2.9 on, so omitting it silently re-enters the path that
+                    # just failed.
+                    dynamo=False,
+                    dynamic_axes={
+                        "input_ids": {0: "batch", 1: "seq"},
+                        "attention_mask": {0: "batch", 1: "seq"},
+                        **{name: {0: "batch"} for name in _output_names()},
+                    },
+                )
+                backend = "torchscript"
+            finally:
+                torch.backends.mha.set_fastpath_enabled(fastpath)
     onnx_model = onnx.load(str(out))
     onnx.checker.check_model(onnx_model)
+    graph_batch = (onnx_model.graph.input[0].type.tensor_type.shape.dim[0].dim_param
+                   or "fixed")
     print(
         f"exported {out} in {time.perf_counter() - started:.1f}s "
-        f"({out.stat().st_size / 1e6:.1f} MB)",
+        f"({out.stat().st_size / 1e6:.1f} MB) via {backend}, "
+        f"batch dim {graph_batch}",
         flush=True,
     )
     return sum(parameter.numel() for parameter in model.parameters())

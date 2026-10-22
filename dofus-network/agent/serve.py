@@ -7,9 +7,19 @@ Endpoints:
     GET  /agent/prompt          full and compact system prompts (SFT/serving)
     GET  /agent/stats           recorder counters
     GET  /agent/trajectory      last N records (?limit=50)
-    POST /agent/execute         {"tool": ..., "args": {...}, "instance", "goal", "source"}
-    POST /agent/goal            {"text"|"goal": ..., "instance", "observation"}
+    POST /agent/execute         {"tool": ..., "args": {...}, "instance", "goal",
+                                 "source", "observation"?}
+    POST /agent/goal            {"text"|"goal": ..., "instance", "observation"?}
     POST /agent/observe         {"observation": {...}, "instance", "goal"}
+
+Observations are a stream, not a per-request field. ``/agent/observe`` pushes a
+game-state snapshot and makes it current; every later ``/agent/execute`` and
+``/agent/goal`` records that snapshot alongside the action, tagged with its age
+and with ``observation_source`` = ``"carried"``. Passing ``observation`` in the
+request body instead stamps it as ``"call"`` and age 0. Either way the step
+record carries the state the decision was made against, which is what the
+observation-conditioned SFT pairs need -- before this, all 2,759 recorded steps
+had ``observation: null``.
 
 The C# bridge (added next) will long-poll a directive queue here; until then
 the service is useful on its own: it executes knowledge and navigation calls,
@@ -105,6 +115,12 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 "tools": len(TOOL_SCHEMA["tools"]),
                 "languages": TOOL_SCHEMA["languages"],
                 "policy": type(self.server.runtime.policy).__name__,
+                # Observations pushed since start, and how stale the current one
+                # is. Zero observations with non-zero steps means the bridge is
+                # not streaming state and every recorded pair is
+                # observation-blind.
+                "observations_seen": self.server.runtime.observations_seen,
+                "observation_age_ms": self.server.runtime.current_observation()[1],
                 "recorder": self.server.recorder.stats(),
             })
         elif path == "/agent/tools":
@@ -141,12 +157,17 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             if not tool:
                 self._send_json(400, {"error": "missing 'tool'"})
                 return
-            result = self.server.executor.execute(
+            # ``observation`` is optional on purpose: the runtime keeps the
+            # freshest snapshot pushed to /agent/observe and stamps it (with its
+            # age and provenance) onto the step record, so a bridge that streams
+            # state does not have to repeat it in every action body.
+            result = self.server.runtime.execute_tool(
                 tool,
                 args,
                 instance=payload.get("instance"),
                 goal=payload.get("goal"),
                 source=str(payload.get("source", "live")),
+                observation=payload.get("observation"),
             )
             self._send_json(200, result.as_dict())
         elif path == "/agent/goal":
@@ -165,7 +186,10 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             if not isinstance(observation, dict):
                 self._send_json(400, {"error": "missing 'observation' object"})
                 return
-            record = self.server.recorder.observation(
+            # Routed through the runtime, not the recorder: the snapshot has to
+            # become the runtime's *current* observation so later /agent/execute
+            # and /agent/goal calls can be stamped with it.
+            record = self.server.runtime.observe(
                 observation,
                 goal=payload.get("goal"),
                 source=str(payload.get("source", "live")),
@@ -191,6 +215,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--thx-device", default="cpu")
     parser.add_argument("--thx-fallback", action="store_true",
                         help="fall back to RulePolicy when THX-01 is invalid or unsure")
+    parser.add_argument("--schedule", action="store_true",
+                        help="wire ScheduleManager.active_objective as policy context (§C)")
     return parser
 
 
@@ -215,6 +241,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
     runtime = AgentRuntime(
         executor=executor, recorder=recorder, policy=policy, instance=args.instance)
+    if args.schedule:
+        try:
+            from planning.schedule import ScheduleManager
+            from planning.planner import Planner
+            from planning.economy import Economy
+
+            sm = ScheduleManager(Planner(), Economy())
+            sm.restore()
+            runtime.objective_provider = sm.active_objective
+            logger.info("§C objective context wired from ScheduleManager")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("schedule wiring failed: %s; running without objective context", exc)
 
     server = AgentHTTPServer((args.host, args.port), runtime, recorder)
     logger.info(f"Dofus agent service listening on http://{args.host}:{args.port} "

@@ -1,0 +1,61 @@
+{
+  "val_indist": {
+    "raw": {
+      "cases": 797,
+      "tool": 0.9649,
+      "strict": 0.3174,
+      "exact": 0.7654,
+      "gate": 0.793,
+      "unsolvable": 0
+    },
+    "serving": {
+      "cases": 797,
+      "tool": 0.9649,
+      "strict": 0.409,
+      "exact": 0.862,
+      "gate": 0.8833,
+      "unsolvable": 0
+    }
+  },
+  "val": {
+    "raw": {
+      "cases": 3065,
+      "tool": 0.9312,
+      "strict": 0.3015,
+      "exact": 0.5057,
+      "gate": 0.6865,
+      "unsolvable": 0
+    },
+    "serving": {
+      "cases": 3065,
+      "tool": 0.9312,
+      "strict": 0.4333,
+      "exact": 0.644,
+      "gate": 0.8137,
+      "unsolvable": 0
+    }
+  },
+  "gold": {
+    "raw": {
+      "cases": 71,
+      "tool": 0.8732,
+      "strict": 0.2958,
+      "exact": 0.5775,
+      "gate": 0.7183,
+      "unsolvable": 0
+    },
+    "serving": {
+      "cases": 71,
+      "tool": 0.8732,
+      "strict": 0.2958,
+      "exact": 0.5775,
+      "gate": 0.7183,
+      "unsolvable": 0
+    }
+  },
+  "gates": {
+    "val_tool_gt_71": true,
+    "val_gate_gt_40": true,
+    "gold_gate_gt_56": true
+  }
+}

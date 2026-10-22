@@ -263,6 +263,76 @@ def test_runtime(tmp: Path) -> None:
     stats = recorder.stats()
     check("runtime trajectory captured", stats["lines"] >= 2, json.dumps(stats["tools"]))
 
+    # -- the observation stream ------------------------------------------------
+    # Every one of the 2,759 recorded steps had observation == null. These
+    # checks pin the fix: a pushed snapshot reaches the step record, is tagged
+    # with its provenance and age, and a snapshot passed with the request
+    # overrides the carried one.
+    runtime.observe({"map": 1234, "cell": 300, "hp": 100}, goal="watch the farm")
+    result = runtime.handle_goal("stop everything now")
+    steps = [json.loads(line) for line in
+             (tmp / "runtime.jsonl").read_text(encoding="utf-8").splitlines()
+             if json.loads(line).get("kind") == "step"]
+    last = steps[-1]
+    check("carried observation reaches the step record",
+          last.get("observation") == {"map": 1234, "cell": 300, "hp": 100},
+          json.dumps(last.get("observation")))
+    check("carried observation is tagged",
+          last.get("observation_source") == "carried", str(last.get("observation_source")))
+    check("carried observation carries an age",
+          isinstance(last.get("observation_age_ms"), (int, float)),
+          str(last.get("observation_age_ms")))
+
+    fresh = {"map": 9999, "cell": 42, "hp": 55}
+    runtime.execute_tool("knowledge.search", {"query": "bouftou"}, goal="what is that",
+                         observation=fresh)
+    last = steps[-1] = [json.loads(line) for line in
+                        (tmp / "runtime.jsonl").read_text(encoding="utf-8").splitlines()
+                        if json.loads(line).get("kind") == "step"][-1]
+    check("per-call observation wins over the carried one",
+          last.get("observation") == fresh, json.dumps(last.get("observation")))
+    check("per-call observation is tagged call",
+          last.get("observation_source") == "call", str(last.get("observation_source")))
+    check("per-call observation has age zero",
+          last.get("observation_age_ms") == 0.0, str(last.get("observation_age_ms")))
+
+    runtime.handle_goal("stop everything now", observation={"map": 7, "cell": 7, "hp": 7})
+    last = [json.loads(line) for line in
+            (tmp / "runtime.jsonl").read_text(encoding="utf-8").splitlines()
+            if json.loads(line).get("kind") == "step"][-1]
+    check("handle_goal observation is fresh, not carried",
+          last.get("observation_source") == "call"
+          and last.get("observation_age_ms") == 0.0
+          and last.get("observation", {}).get("map") == 7,
+          json.dumps({k: last.get(k) for k in
+                      ("observation_source", "observation_age_ms")}))
+    check("observation counter advances", runtime.observations_seen >= 2,
+          str(runtime.observations_seen))
+
+    # -- §C: schedule objective as structured context -------------------------
+    # The policy must confirm the quest_id the planner already chose, not guess
+    # one from prose that never contained it.
+    provider = lambda: {"tool": "quest.advance", "quest_id": 1935, "why": "step 4 of plan"}
+    call = policy.choose("advance the quest please", objective=provider())
+    check("quest.advance confirms schedule's quest_id via objective",
+          call is not None and call.tool == "quest.advance"
+          and call.args.get("quest_id") == 1935,
+          f"{call.tool} {call.args}" if call else "no call")
+    call = policy.choose("advance the quest please")
+    check("without objective, quest.advance is never guessed from prose",
+          not (call is not None and call.tool == "quest.advance"),
+          f"{call.tool} {call.args}" if call else "no call")
+    call = policy.choose("stop everything now", objective=provider())
+    check("non-quest objective does not hijack other tools",
+          call is not None and call.tool == "safe.stop",
+          f"{call.tool} {call.args}" if call else "no call")
+    # end-to-end: the runtime threads the objective_provider result into decide()
+    runtime.objective_provider = provider  # type: ignore[assignment]
+    result = runtime.handle_goal("please continue the quest")
+    check("handle_goal threads the objective into the policy (§C e2e)",
+          result.tool == "quest.advance", str(result.tool))
+    runtime.objective_provider = None
+
 
 def test_tool_dataset(tmp: Path) -> None:
     print("\n== tool-use dataset ==")
@@ -420,6 +490,305 @@ def test_thx_helpers() -> None:
     check("item lookup skips currency", found not in ("Kama", "Kamas"), f"got {found!r}")
 
 
+def _find_checkpoint() -> Optional[Path]:
+    """An encoder checkpoint to exercise the real inference path with.
+
+    Looked up rather than hard-coded, because the checkpoint lives wherever the
+    last training run put it and the check is worthless if it silently skips on a
+    machine that has one. ``None`` means genuinely absent.
+    """
+    import os
+
+    candidates = [
+        Path(os.environ.get("DOFUS_ENCODER_CKPT", "")) if os.environ.get(
+            "DOFUS_ENCODER_CKPT") else None,
+        REPO_ROOT / "models" / "encoder30" / "model.pt",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Temp" / "opencode"
+        / "encoder_policy" / "model.pt",
+        Path("C:/Users/sao/kaggle_outputs/encoder30/model.pt"),
+    ]
+    for candidate in candidates:
+        if candidate and candidate.exists():
+            return candidate
+    return None
+
+
+def _supplement_rows() -> List[Dict[str, Any]]:
+    """The focused ``quest.advance`` supplement, if it has been generated.
+
+    Used for checks that must run against real generator output rather than
+    hand-picked examples -- which goals the language detector abstains on is
+    not something a test should assume.
+    """
+    import json
+
+    path = REPO_ROOT / "trajectories" / "synthetic_quests.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in
+            path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_postprocess_serving() -> None:
+    """The serving path must apply ``clean_call`` -- the measured gains live or
+    die with this wiring, and the batch benchmark alone cannot see it."""
+    print("\n== post-processing in the serving path ==")
+    from ai.encoder_serve import EncoderToolPolicy
+    from ai.postprocess import clean_call, extract_text
+
+    class StubPolicy(EncoderToolPolicy):
+        """``_predict`` replaced by a script, so no model is needed."""
+
+        def __init__(self, script, **kwargs):
+            self.backend = "stub"
+            self.device = "cpu"
+            self.fallback = None
+            self.fill_reply_language = True
+            self.postprocess = kwargs.get("postprocess", True)
+            self.gazetteer = kwargs.get("gazetteer")
+            self.kb = kwargs.get("kb")
+            self.calls = self.refused = self.invalid = self.fallbacks = 0
+            self.total_ms = self.postprocess_ms = self.repaired = 0
+            self._script = list(script)
+
+        def _predict(self, goal, observation):
+            return self._script.pop(0) if self._script else None
+
+    # -- rule 1: a missing required field is filled only when the goal grounds it.
+    got = clean_call("hdv.list", {"item": "Parchemins"}, "liste 3 Parchemins de Vaelor")
+    check("clean_call leaves a shorter span alone (prefix collision is a guess)",
+          got == {"item": "Parchemins"}, str(got))
+    got = clean_call("nav.goto", {}, "va à [12, -8]")
+    check("clean_call reads a coordinate pair",
+          got == {"x": 12, "y": -8}, str(got))
+    got = clean_call("farm.start", {}, "farm pendant 45 minutes")
+    check("clean_call never fills an optional int from a lone number",
+          got == {}, str(got))
+
+    # -- rule 2 on numbers: a truncated id is the same defect as a truncated
+    #       span, and gets the same repair. Measured: 21 of 344 id-bearing
+    #       quest.advance val rows came back as a strict prefix of the id the
+    #       goal states (807 -> 80, 5340 -> 53).
+    got = clean_call("quest.advance", {"quest_id": 80}, "continue quest 807")
+    check("clean_call restores digits the decoder dropped",
+          got == {"quest_id": 807}, str(got))
+    got = clean_call("quest.advance", {"quest_id": 53}, "continue quest 5340")
+    check("clean_call restores a dropped digit pair",
+          got == {"quest_id": 5340}, str(got))
+    # A value the goal actually states is grounded and must not be "repaired",
+    # even though a longer number is also present.
+    got = clean_call("quest.list", {"level_min": 5}, "quests de niveau 5 à 55")
+    check("clean_call keeps a number the goal states",
+          got == {"level_min": 5}, str(got))
+    # The schema default is the canonical "not stated". Rewriting it invents a
+    # number -- this is the guard that was missing on the first measurement,
+    # where min_stock:1 became 1698 from an unrelated quest id in the goal.
+    got = clean_call("inv.sell", {"item": "RhuQuor Essence", "min_stock": 1},
+                     "vends RhuQuor Essence 14")
+    check("clean_call never rewrites a value at its schema default",
+          got.get("min_stock") == 1, str(got))
+    # Two candidate extensions is a guess, and rule 3 forbids guessing.
+    got = clean_call("quest.advance", {"quest_id": 5}, "quête 55 puis quête 57")
+    check("clean_call refuses when two numbers extend the value",
+          got.get("quest_id") == 5, str(got))
+
+    # -- rule 1 on free text: an elision apostrophe is not a quote. Reading
+    #       "l'équipe" as a quoted span made extract_text return "équipe : j"
+    #       for "préviens l'équipe : j'arrive", and "urgence s" for
+    #       "arrêt d'urgence s'il te plaît" -- the second of which invented a
+    #       safe.stop reason out of a bare trigger.
+    check("extract_text ignores an elision apostrophe",
+          extract_text("préviens l'équipe : j'arrive") == "j'arrive",
+          str(extract_text("préviens l'équipe : j'arrive")))
+    check("extract_text returns None for a bare trigger",
+          extract_text("arrêt d'urgence s'il te plaît") is None,
+          str(extract_text("arrêt d'urgence s'il te plaît")))
+    check("extract_text strips guillemets",
+          extract_text("chuchucha a Quetzin: «Te espero junto al faro».")
+          == "Te espero junto al faro",
+          str(extract_text("chuchucha a Quetzin: «Te espero junto al faro».")))
+
+    # -- rule 3: refuse to guess. A span the gazetteer cannot ground is kept.
+    got = clean_call("hdv.list", {"item": "Zzzz Unknown Thing"}, "liste Zzzz Unknown Thing")
+    check("clean_call keeps an ungroundable span", got == {"item": "Zzzz Unknown Thing"}, str(got))
+
+    # -- the wiring: post-processing runs between _predict and validate_call.
+    gaz = kb = None
+    try:
+        from ai.gazetteer import Gazetteer
+        gaz = Gazetteer()
+    except Exception:
+        skip("serving-path gazetteer", "gazetteer unavailable")
+    try:
+        from planning.kb import KnowledgeBase
+        if KnowledgeBase().stats()["quests"]:
+            kb = KnowledgeBase()
+    except Exception:
+        skip("serving-path KB", "knowledge base unavailable")
+
+    policy = StubPolicy(
+        [{"tool": "nav.goto", "args": {}}],
+        gazetteer=gaz, kb=kb,
+    )
+    call = policy.choose("va à [12, -8]", tools=["nav.goto"])
+    check("serving path fills coordinates the model omitted",
+          call is not None and call.args.get("x") == 12 and call.args.get("y") == -8,
+          str(call.args if call else None))
+    check("serving path counts the repair", policy.repaired == 1, str(policy.repaired))
+    stats = policy.stats()["postprocess"]
+    check("serving path reports the resolvers it holds",
+          stats["enabled"] and stats["mean_ms"] is not None, json.dumps(stats))
+
+    off = StubPolicy([{"tool": "nav.goto", "args": {}}], postprocess=False)
+    call = off.choose("va à [12, -8]", tools=["nav.goto"])
+    # With post-processing off the coordinates stay missing, ``validate_call``
+    # rejects the call, and with no fallback the agent refuses. That refusal is
+    # the honest outcome -- it is also exactly what the wiring prevents.
+    check("postprocess=False leaves the call invalid (agent refuses)",
+          call is None and off.invalid == 1, f"call={call} invalid={off.invalid}")
+
+    # -- the real torch ``_predict``, not the stub. ``StubPolicy`` replaces
+    #       ``_predict`` with a script, so every check above runs whether or not
+    #       the genuine inference path works -- and it did not:
+    #       ``EncoderDataset.batches`` indexed ``TOOL_INDEX[item["tool"]]``
+    #       unconditionally, which raised ``KeyError: ''`` on the first live goal
+    #       because ``_encode_row(infer=True)`` deliberately lets an inference row
+    #       omit the tool. A serving path that crashes on every call scores
+    #       perfectly in the tests, which is the worst possible failure mode.
+    checkpoint = _find_checkpoint()
+    if checkpoint is None:
+        skip("live torch serving path", "no encoder checkpoint on disk")
+    else:
+        from ai.encoder_serve import EncoderToolPolicy
+
+        live = EncoderToolPolicy(
+            checkpoint=checkpoint,
+            tokenizer=checkpoint.parent / "tokenizer.json",
+            policy_json=checkpoint.parent / "policy.json",
+            device="cpu",
+        )
+        errors = []
+        for goal in ("continue quest 807", "va à [12, -8]", "arrête tout"):
+            try:
+                result = live.choose(goal, tools=None)
+            except Exception as exc:  # a crash here is the bug, not the check
+                errors.append(f"{goal!r} raised {type(exc).__name__}: {exc}")
+                continue
+            if result is None:
+                errors.append(f"{goal!r} refused")
+        check("live torch serving path answers without raising",
+              not errors, "; ".join(errors[:3]))
+        check("live serving path reports latency",
+              live.stats()["mean_ms"] is not None, json.dumps(live.stats()))
+
+    # -- resolver order: gazetteer first, KB only on a unique exact match.
+    if gaz is not None:
+        # What the gazetteer actually learned: every quest.advance goal in the
+        # corpus states the id ("work on quest 18"), so the tail map can only
+        # echo digits that are already in the goal. It cannot resolve a *name*.
+        resolved = gaz.lookup_quest_id("work on quest 18")
+        check("gazetteer resolves a quest id the goal states",
+              resolved == 18, str(resolved))
+        check("gazetteer cannot invent a quest id from a name",
+              gaz.lookup_quest_id("avance la quête Oscuras intenciones") is None)
+    if kb is not None:
+        q = kb.quest(int(kb.quest_id[0]))
+        hits = kb.find_quests(q.name, "fr", 3)
+        check("KB find_quests round-trips a quest name",
+              len(hits) == 1 and hits[0].id == q.id,
+              f"{q.name!r} -> {[h.name for h in hits]}")
+        check("KB quest() returns None for an unknown id", kb.quest(2 ** 31) is None)
+        # The name -> id path the gazetteer cannot do: the KB holds the game's
+        # own quest names, per language, so it resolves a name the goal states.
+        goal = f"avance la quête {q.name}"
+        got = clean_call("quest.advance", {}, goal, gaz, kb, lang="fr")
+        check("KB resolves a quest name the gazetteer cannot",
+              got == {"quest_id": q.id}, str(got))
+
+    # -- a reason is filled only when the goal states one. The whole-goal
+    #       fallback invented a reason for every bare trigger and turned 16
+    #       correct safe.stop calls into wrong ones while *raising* the
+    #       release-gate score, because containment forgave it.
+    if gaz is not None:
+        for goal, want in (
+            ("parada de emergencia: low hp", {"reason": "low hp"}),
+            ("stopp, too many monsters!", {"reason": "too many monsters"}),
+            ("Notstopp bitte", {}),
+            ("Stopp alle Aktionen, Notfall.", {}),
+            ("arrêt d'urgence s'il te plaît", {}),
+        ):
+            got = clean_call("safe.stop", {}, goal, gaz, kb, lang="fr")
+            check(f"reason from {goal!r} -> {want}", got == want, str(got))
+        # Ambiguity is a refusal, not a guess: "Premi" prefixes five quests, so
+        # no resolver may pick one.
+        ambiguous = "Premi"
+        got_amb = clean_call("quest.advance", {}, f"avance la quête {ambiguous}",
+                             gaz, kb, lang="fr")
+        check("clean_call refuses an ambiguous quest name", got_amb == {}, str(got_amb))
+        check("clean_call refuses a name absent from the KB",
+              clean_call("quest.advance", {}, "avance la quête Zzzz Inexistante",
+                         gaz, kb, lang="fr") == {})
+
+    # -- the resolver scans the goal for a known name instead of trying to
+    #       isolate a span. Lead-verb stripping recovered 263 of 695
+    #       name-bearing corpus rows; the scan recovers 657, because the quest
+    #       noun sits mid-sentence in half the templates and names contain
+    #       commas. These lock in the cases the stripping got wrong.
+    if kb is not None:
+        from ai.postprocess import resolve_quest_id
+        probe = kb.find_quests("Wogew", "fr", 1)
+        if probe:
+            qid, qname = probe[0].id, probe[0].name
+            for goal, lang in (
+                (f"mach mit Quest {qname} weiter", "de"),        # noun mid-sentence
+                (f"fais l'étape suivante de la quête {qname}", "fr"),
+                (f"do the next step of quest {qname}", "en"),
+                (f"erledige den nächsten Schritt von Quest {qname}", "de"),
+            ):
+                got = resolve_quest_id(goal, kb, lang)
+                check(f"resolver reads a name out of {goal[:34]!r}",
+                      got == qid, f"got {got} want {qid}")
+        # The detector abstains on some goals, and a miss in the goal's own
+        # language must not be a miss overall -- otherwise every "auto" row is
+        # dropped for a reason that has nothing to do with the label. Take real
+        # abstaining rows from the supplement corpus rather than assuming which
+        # goals abstain, and count only the ones that actually name a quest: an
+        # id-in-text goal has no name to find, and must resolve to nothing.
+        import re as _re
+
+        from ai.lang_detect import detect as _detect
+        mishandled = []
+        for row in _supplement_rows():
+            goal, want = row["goal"], row["args"].get("quest_id")
+            if _detect(goal).lang != "auto":
+                continue
+            if _re.search(r"(?<!\d)" + str(want) + r"(?!\d)", goal):
+                # An id-in-text goal names no quest; anything the resolver
+                # returns here was invented.
+                if resolve_quest_id(goal, kb, "auto") is not None:
+                    mishandled.append(("invented a name from a bare id", goal))
+                continue
+            got = resolve_quest_id(goal, kb, "auto")
+            if got == want:
+                continue
+            if not kb.quests_named_in(goal, None):
+                mishandled.append(("found no name in any language", goal))
+            elif got is not None:
+                mishandled.append((f"resolved to {got}, not {want}", goal))
+            # else: candidates exist but are not unique -- a correct refusal,
+            # the same one a player would have to make.
+        check("resolver survives a detector abstention",
+              not mishandled, "; ".join(f"{why}: {g!r}" for why, g in mishandled[:3]))
+        # 34 distinct KB rows share the name "Merry Kwismas" in all five
+        # languages. A player could not resolve that either; the resolver must
+        # refuse rather than pick one of them.
+        check("resolver refuses a name the KB duplicates",
+              resolve_quest_id("advance quest Merry Kwismas", kb, "en") is None)
+        # An id-in-text goal names no quest, so there is nothing to resolve.
+        check("resolver finds no name in an id-bearing goal",
+              resolve_quest_id("avance la quête 393", kb, "fr") is None)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="dofus-agent-selftest-"))
     print(f"agent selftest — temp dir {tmp}")
@@ -434,6 +803,7 @@ def main() -> int:
         test_synthetic_tools(tmp)
         test_tool_eval()
         test_thx_helpers()
+        test_postprocess_serving()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

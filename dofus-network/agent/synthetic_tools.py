@@ -538,13 +538,21 @@ def generate(
     root: Path = REPO_ROOT / "trajectories",
     instance: str = "synthetic",
     dry_run: bool = False,
+    tools: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     rng = random.Random(seed)
     recorder = TrajectoryRecorder(root=root, instance=instance)
     executor = ToolExecutor()
     sampler = _Sampler(executor, rng)
 
-    tools = list(SYNTHETIC_TOOLS)
+    # A tool filter lets one generator serve a *focused* supplement: the v4
+    # corpus inherited zero name-bearing quest.advance rows from its parent, so
+    # that half of the capability has to be produced on purpose rather than
+    # hoped for in a mixed sample.
+    tools = list(tools) if tools else list(SYNTHETIC_TOOLS)
+    unknown = [tool for tool in tools if tool not in SYNTHETIC_TOOLS]
+    if unknown:
+        raise SystemExit(f"not a synthetic tool: {', '.join(unknown)}")
     plan: List[Tuple[str, str]] = []
     for lang in LANGS:
         for tool in tools:
@@ -607,11 +615,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--root", default=str(REPO_ROOT / "trajectories"))
     parser.add_argument("--instance", default="synthetic")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--tools", default=None,
+                        help="comma-separated subset of the synthetic tools "
+                             "(default: all of them)")
     args = parser.parse_args(argv)
 
     summary = generate(
         count=args.count, seed=args.seed, root=Path(args.root),
-        instance=args.instance, dry_run=args.dry_run)
+        instance=args.instance, dry_run=args.dry_run,
+        tools=[t.strip() for t in args.tools.split(",")] if args.tools else None)
 
     print(f"generated : {summary['total']} (unique {summary['ok']}, "
           f"invalid {summary['invalid']}, no entity {summary['no_entity']})")

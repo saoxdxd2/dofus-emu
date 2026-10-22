@@ -285,6 +285,80 @@ def test_executor_invalid_call_no_crash() -> None:
     check("half-xy nav.goto -> ok=False", result.ok is False, str(result.as_dict()))
 
 
+def test_executor_records_piggybacked_observation() -> None:
+    """A live directive carries the game state; it must reach the recorder.
+
+    The defect this guards is silent rather than loud: `observation` was null in
+    100% of the logged records, which makes every state-conditioned decision
+    unlearnable. If the bridge stops attaching `snapshot`, or the executor stops
+    reading it, the corpus rots with no error anywhere -- so assert it here.
+    """
+    from agent.executor import ToolExecutor, ToolResult
+    from agent.recorder import TrajectoryRecorder
+
+    snap = {"connected": True, "position": {"cell": 402, "map_id": 1234},
+            "hp": {"life": 120, "max": 300}, "xp": 1500}
+    root = Path(tempfile.mkdtemp())
+    recorder = TrajectoryRecorder(root=root, instance="obs")
+    executor = ToolExecutor(recorder=recorder)
+
+    executor._dispatch = lambda tool, args, source="live", instance=None: ToolResult(
+        tool=tool, ok=True, source="live", directive="STATE_SNAPSHOT",
+        data={"snapshot": snap})
+    executor.execute("state.snapshot", {}, goal="where am i")
+
+    steps = [r for r in recorder.tail(10) if r.get("kind") == "step"]
+    check("observation recorded from bridge snapshot",
+          bool(steps) and steps[-1].get("observation") == snap,
+          str(steps[-1].get("observation") if steps else None)[:120])
+    check("piggybacked observation has age 0",
+          bool(steps) and steps[-1].get("observation_age_ms") == 0.0,
+          str(steps[-1].get("observation_age_ms") if steps else None))
+
+    # the bridge reply itself must surface the snapshot on the ToolResult
+    executor._http_json = lambda *a, **k: (
+        True, {"ok": True, "result": {"ok": True}, "snapshot": snap})
+    result = executor._directive("STATE_SNAPSHOT", "state.snapshot", {}, "live")
+    check("directive result exposes the snapshot",
+          isinstance(result.data, dict) and result.data.get("snapshot") == snap,
+          str(result.data)[:160])
+
+
+def test_price_rule_without_price_is_dropped() -> None:
+    """`price_rule=fixed` with no price must not kill an otherwise-correct call.
+
+    Measured on v11: 459 of 800 val rows in one contiguous block were
+    `hdv.list {item, price_rule: "fixed"}` from goals that state no price. The
+    cross-parameter rule correctly refuses to list at an invented price, but the
+    refusal discarded a correct tool choice and a correct item span over one
+    optional field. Dropping the field restores the label's own canonical form.
+    """
+    from ai.postprocess import clean_call
+
+    goal = "put TorNiFen Ore on the market"
+    cleaned = clean_call("hdv.list", {"price_rule": "fixed", "item": "TorNiFen Ore"}, goal)
+    ok, result = validate_call("hdv.list", cleaned)
+    check("hdv.list fixed-without-price is executable",
+          ok and result.get("price_rule") == "median_minus_1", str(result))
+
+    # a stated price keeps the rule: the model emits `price` as an int then
+    kept = clean_call("hdv.list",
+                      {"price_rule": "fixed", "price": 5000, "item": "Bouftou Wool"},
+                      "sell Bouftou Wool at 5000")
+    ok2, result2 = validate_call("hdv.list", kept)
+    check("hdv.list fixed-with-price keeps the rule",
+          ok2 and result2.get("price_rule") == "fixed", str(kept))
+
+
+def test_trainer_supports_resume() -> None:
+    """A continuation run must be expressible, and must not reset its counters."""
+    parser = ep.build_parser()
+    args = parser.parse_args([
+        "train", "--tokenizer", "t.json", "--resume", "prev.pt", "--epochs", "4"])
+    check("train --resume parses", getattr(args, "resume", None) == "prev.pt",
+          str(getattr(args, "resume", None)))
+
+
 if __name__ == "__main__":
     test_thx_no_replacement_char()
     test_thx_price_pattern_clean()
@@ -310,5 +384,8 @@ if __name__ == "__main__":
     test_best_span_basic()
     test_recorder_redaction_and_stats()
     test_executor_invalid_call_no_crash()
+    test_executor_records_piggybacked_observation()
+    test_price_rule_without_price_is_dropped()
+    test_trainer_supports_resume()
     sys.exit(summarize())
 

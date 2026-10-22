@@ -157,12 +157,36 @@ class TrajectoryRecorder:
         latency_ms: Optional[float] = None,
         goal: Optional[str] = None,
         observation: Optional[Dict[str, Any]] = None,
+        observation_age_ms: Optional[float] = None,
+        observation_source: str = "call",
         source: str = "live",
     ) -> Dict[str, Any]:
+        """Append one executed step.
+
+        ``observation`` is the game state the decision was made against.
+        ``observation_age_ms`` is how old that snapshot was when the call was
+        made, and ``observation_source`` says where it came from:
+
+        ``"call"``
+            the caller passed it with this very request
+        ``"carried"``
+            it is the most recent snapshot pushed to ``/agent/observe`` (or to
+            ``handle_goal``) and reused for this step
+
+        Both fields exist because an observation that is not fresh is a
+        *different* training example: pairing a stale snapshot with the action
+        taken later teaches the model to ignore the observation. A consumer
+        that wants clean observation->action pairs filters on
+        ``observation_age_ms``; without the age recorded, that filter cannot be
+        written and the staleness is invisible.
+        """
         return self.log("step", {
             "goal": goal,
             "source": source,
             "observation": observation,
+            "observation_age_ms": (round(observation_age_ms, 1)
+                                   if observation_age_ms is not None else None),
+            "observation_source": observation_source,
             "tool": tool,
             "args": args,
             "ok": ok,

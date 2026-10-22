@@ -148,8 +148,14 @@ namespace DofusFarm.Engine
                 }
 
                 string decoded = DecodeJsResult(raw);
+                // Piggyback the game state on the response. The Python recorder
+                // needs the state the action was taken against, and this is the
+                // only moment it is provably fresh (age 0). A separate poll
+                // would be a second clock and a second source of truth.
+                string snapshot = CaptureSnapshot(form);
                 string response = "{\"ok\":true,\"id\":" + JsonQuote(id) + ",\"target\":" + JsonQuote(target)
-                    + ",\"result\":" + (LooksLikeJson(decoded) ? decoded : JsonQuote(decoded)) + "}";
+                    + ",\"result\":" + (LooksLikeJson(decoded) ? decoded : JsonQuote(decoded))
+                    + ",\"snapshot\":" + snapshot + "}";
                 WriteResponse(stream, 200, response);
                 Log("[AGENT] " + label + " -> " + target + " ok");
             }
@@ -172,6 +178,26 @@ namespace DofusFarm.Engine
         }
 
         // -- script execution ---------------------------------------------------
+
+        // Game state immediately after the directive ran, as a JSON object or
+        // the literal `null`. 2 s budget: building the snapshot is a pure object
+        // read in the page, so a timeout means the page is wedged, not that the
+        // snapshot is expensive.
+        private string CaptureSnapshot(WebView2ClientForm form)
+        {
+            try
+            {
+                string raw = RunOnForm(form,
+                    "window.__agentSnapshot ? window.__agentSnapshot() : null", 2000);
+                if (raw == null) return "null";
+                string decoded = DecodeJsResult(raw);
+                return LooksLikeJson(decoded) ? decoded : "null";
+            }
+            catch
+            {
+                return "null";
+            }
+        }
 
         private string RunOnForm(WebView2ClientForm form, string script, int timeoutMs)
         {

@@ -28,7 +28,10 @@ What this module does
 4. **read a coordinate pair** the goal states;
 5. **fill a lone number into a *required* int field** — never into an optional
    one, because an unstated optional value is a schema default, not a mystery;
-6. **resolve opaque identifiers** — gazetteer first, KB only on a unique exact
+6. **restore digits the decoder dropped** — a value that is a strict prefix of a
+   number the goal states is the same truncation defect as family 1, and gets
+   the same repair;
+7. **resolve opaque identifiers** — gazetteer first, KB only on a unique exact
    match.
 
 What it deliberately does not do
@@ -120,18 +123,34 @@ def parse_number(text: str) -> Optional[int]:
 # free-text extraction
 # ---------------------------------------------------------------------------
 
-_QUOTED = re.compile(r"[\"'\u201c\u201e](.+?)[\"'\u201d\u201c]", re.DOTALL)
+# A quote is a *paired* delimiter. A bare apostrophe is not one: French and
+# Spanish elision ("l'équipe", "d'urgence", "s'il") puts an apostrophe between
+# two letters, and the previous single-character class read it as an opening
+# quote -- so "préviens l'équipe : j'arrive" extracted "équipe : j" and
+# "arrêt d'urgence s'il te plaît" extracted "urgence s". Both are garbage, and
+# the second one invented a ``safe.stop`` reason out of a bare trigger.
+_DQUOTE = re.compile("[\"“]([^\"”]{1,200})[\"”]")
+_GUILLEMET = re.compile("«([^»]{1,200})»")
+_SQUOTE = re.compile("(?<![A-Za-zÀ-ÿ])[']([^']{1,200})['](?![A-Za-zÀ-ÿ])")
 _AFTER_COLON = re.compile(r"[:：]\s*(.+)$", re.DOTALL)
+_QUOTE_CHARS = " \t\r\n.,;:!?\"'«»“”„‘’"
 
 
 def extract_text(goal: str) -> Optional[str]:
-    """Quoted text first, then anything after a colon."""
-    match = _QUOTED.search(goal or "")
-    if match and match.group(1).strip():
-        return match.group(1).strip()
-    match = _AFTER_COLON.search(goal or "")
-    if match and match.group(1).strip():
-        return match.group(1).strip(" .,!?;")
+    """The clause the goal isolates: quoted text first, then after a colon.
+
+    Returns ``None`` when the goal isolates nothing, which is the answer for a
+    bare trigger like ``"arrête tout"``. Callers must not substitute the whole
+    goal for a missing clause -- that is how a post-processor invents values.
+    """
+    goal = goal or ""
+    for pattern in (_GUILLEMET, _DQUOTE, _SQUOTE):
+        match = pattern.search(goal)
+        if match and match.group(1).strip(_QUOTE_CHARS):
+            return match.group(1).strip(_QUOTE_CHARS)
+    match = _AFTER_COLON.search(goal)
+    if match and match.group(1).strip(_QUOTE_CHARS):
+        return match.group(1).strip(_QUOTE_CHARS)
     return None
 
 
@@ -176,6 +195,58 @@ def strip_price_rule(text: str) -> str:
 _ARTICLES = re.compile(
     r"^(?:le |la |les |l['’]|un |une |des |du |de |d['’]|the |a |an |el |los |las |"
     r"del |de |der |die |das |den |dem |ein |eine )", re.IGNORECASE)
+
+# The two quest indexes are keyed differently, and the difference matters. The
+# gazetteer's is keyed on the goal tail *with* the quest noun ("work on quest
+# 18"), because that is how the corpus writes it. The KB's is keyed on the
+# quest's own name, so the noun has to come off before the lookup.
+_QUEST_NOUN = re.compile(
+    r"^(?:qu[eê]tes?|quests?|misi[oó]n(?:es)?|mission(?:en)?|aufgabe(?:n)?)\s+",
+    re.IGNORECASE,
+)
+
+
+def quest_tail(goal: str) -> str:
+    """The quest *name* a goal states: verbs, articles and the quest noun gone.
+
+    Kept for the gazetteer side, which is keyed on the goal tail. It is *not*
+    used to resolve a quest id, because the quest noun can sit anywhere in a
+    goal ("mach mit Quest Ghulsaison weiter", "fais l'etape suivante de la
+    quete Offrande") and a name can contain commas, so no amount of lead-verb
+    stripping recovers the span reliably. ``resolve_quest_id`` scans the other
+    way and needs no span at all.
+    """
+    value = clean_span(_LEAD_VERBS.sub("", goal or "").strip(" .,!?:;"))
+    for _ in range(3):
+        trimmed = _QUEST_NOUN.sub("", value)
+        if trimmed == value:
+            break
+        value = clean_span(trimmed)
+    return value
+
+
+def resolve_quest_id(goal: str, kb: Any, lang: Optional[str] = None) -> Optional[int]:
+    """The quest a goal names, or ``None`` -- shared by serving and the corpus
+    builder so the two cannot drift apart.
+
+    The goal's own language is tried first. A miss there is not a miss: the
+    language detector abstains on short goals (``detect`` answers ``auto``), and
+    a goal may name a quest by a name the KB holds only in another language.
+    Scanning every language is safe, because a false hit needs a *unique*
+    cross-language quest name to occur inside a goal that names no quest --
+    measured at 0 in 465 id-bearing goals on this corpus.
+
+    ``None`` means either "names no quest" or "names several equally well", and
+    both must cost the caller the fill. The KB holds 34 distinct quest rows
+    that share the name "Merry Kwismas" in all five languages; a player could
+    not resolve that either, and neither may the resolver.
+    """
+    if kb is None:
+        return None
+    quest_id = kb.resolve_quest_reference(goal, lang)
+    if quest_id is not None or not lang:
+        return quest_id
+    return kb.resolve_quest_reference(goal, None)
 
 
 def clean_span(text: str) -> str:
@@ -225,12 +296,61 @@ def _coords_from_goal(goal: str) -> Optional[Tuple[int, int]]:
     return None
 
 
+def _repair_truncated_numbers(
+    cleaned: Dict[str, Any], params: Dict[str, Any], goal: str
+) -> None:
+    """Restore digits the decoder dropped, in place.
+
+    The fixed character budget truncates *numbers* exactly as it truncates
+    spans: measured on v8's predictions against the 3,056-row val, 21 of the
+    344 id-bearing ``quest.advance`` rows come back as a strict prefix of the id
+    the goal states -- ``807 -> 80``, ``5340 -> 53``, ``3183 -> 318``. The full
+    number is in the goal, so this is the same repair as the truncated-span rule
+    above: same fact, complete.
+
+    Two guards, because a prefix is also a perfectly good value:
+
+    * **a value sitting at its schema default is never rewritten.** The model was
+      trained to materialise defaults for fields the player did not state, the
+      canonical comparator forgives exactly that, and the number is therefore the
+      canonical "absent" -- not a truncation. Rewriting ``min_stock: 1`` into
+      ``1698`` because the goal mentions an unrelated quest id invents a number
+      and cost 115 val rows the first time this rule was measured without the
+      guard.
+    * **the model's value must appear nowhere in the goal.** "niveau 5 à 55"
+      states 5; a model that answered 5 is right and must not be "repaired" to
+      55. This is the collision the span rule refuses for the same reason.
+
+    And exactly one number in the goal may extend the value: two candidates is a
+    guess, and rule 3 forbids guessing.
+    """
+    stated = [int(n) for n in re.findall(r"\d+", strip_price_rule(goal or ""))]
+    if not stated:
+        return
+    for key, value in list(cleaned.items()):
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        param = params.get(key)
+        if param is None or param.get("type") != "int":
+            continue
+        if value == param.get("default"):
+            continue  # the schema default means "not stated"; never rewrite it
+        if value in stated:
+            continue  # the goal says this number; the model is grounded
+        digits = str(value)
+        longer = [n for n in stated
+                  if str(n).startswith(digits) and len(str(n)) > len(digits)]
+        if len(longer) == 1:
+            cleaned[key] = longer[0]
+
+
 def clean_call(
     tool: str,
     args: Dict[str, Any],
     goal: str,
     gazetteer: Any = None,
     kb: Any = None,
+    lang: str = "fr",
 ) -> Dict[str, Any]:
     """Return a cleaned copy of ``args``.
 
@@ -243,8 +363,9 @@ def clean_call(
        schema default.
     2. **Never overwrite a model value, never add a field the model did not
        emit** -- except to repair a truncated span with the gazetteer's canonical
-       form for a surface that *is* in the goal, and to coerce a string to its
-       declared type. Both replace a value with the same fact in the right shape.
+       form for a surface that *is* in the goal, to repair a truncated number
+       with the digits the goal states, and to coerce a string to its declared
+       type. Both repairs replace a value with the same fact in the right shape.
     3. **Refuse to guess.** If nothing grounds the value, the argument is left
        exactly as the model produced it. A wrong call the agent can detect beats
        a plausible one it cannot.
@@ -319,12 +440,24 @@ def clean_call(
     #       states the reason *after* the colon, so filling ``reason`` with the
     #       whole goal string is both sloppy and -- because the release
     #       comparator accepts containment for text arguments -- silently
-    #       unrewarding. Only fall back to the whole goal when the goal states
-    #       no clause at all.
+    #       unrewarding.
+    #
+    #       When the goal isolates no clause, ``reason`` is filled only from a
+    #       *known* reason phrase, which is what the gazetteer's phrase table
+    #       holds. The earlier whole-goal fallback invented a reason for every
+    #       bare trigger -- "Notstopp bitte" became reason="Notstopp bitte" --
+    #       and turned 16 correct ``safe.stop`` calls into wrong ones while
+    #       *raising* the release-gate score, because containment forgave it.
+    #       A bare trigger gets no reason: the player did not state one.
     if declared("reason") and not cleaned.get("reason"):
-        text = extract_text(goal) or clean_span(goal)
+        text = extract_text(goal)
+        if text is None and gazetteer is not None:
+            text = gazetteer.lookup_name("reason", goal)
         if text:
             cleaned["reason"] = text[:200]
+    # ``chat.say`` text has no such table: its vocabulary is two-letter greetings
+    # ("gg", "ok") that no bounded matcher can ground, and the model never omits
+    # it. Only the clause the goal isolates counts.
     if declared("text") and not cleaned.get("text"):
         text = extract_text(goal)
         if text:
@@ -351,9 +484,14 @@ def clean_call(
                 cleaned[field] = value
                 break
 
+    # -- 5b. digits the decoder dropped. Runs *after* the lone-number fill so a
+    #       field that fill just grounded is not re-examined, and only rewrites a
+    #       value that is a strict prefix of a number the goal states.
+    _repair_truncated_numbers(cleaned, params, goal)
+
     # -- 6. resolve opaque identifiers. Gazetteer first (train-grounded), KB only
-    #       as a unique exact match -- taking the first of several ranked hits
-    #       is a guess, and rule 3 forbids it.
+    #       as a unique match -- taking the first of several ranked hits is a
+    #       guess, and rule 3 forbids it.
     for field in ("quest_id", "map_id"):
         if not declared(field) or cleaned.get(field) is not None:
             continue
@@ -364,10 +502,7 @@ def clean_call(
             if resolved is None:
                 resolved = gazetteer.lookup_id(field, goal)
         if resolved is None and kb is not None and field == "quest_id":
-            tail = clean_span(_LEAD_VERBS.sub("", goal).strip(" .,!?:;"))
-            matches = kb.find_quests(tail, "fr", 3) if tail else []
-            if len(matches) == 1:
-                resolved = matches[0][0]
+            resolved = resolve_quest_id(goal, kb, lang)
         if resolved is not None:
             try:
                 cleaned[field] = int(resolved)
@@ -376,4 +511,20 @@ def clean_call(
 
     # -- 7. drop anything the capability does not declare: post-processing may not
     #        add arguments the tool never had.
-    return {key: value for key, value in cleaned.items() if key in params}
+    cleaned = {key: value for key, value in cleaned.items() if key in params}
+
+    # -- 8. an unexecutable price rule. `price_rule=fixed` without an integer price
+    #        fails `validate_call`, and the failure costs the whole call: a correct
+    #        tool choice and a correct item span thrown away over one optional
+    #        field. Measured on v11's val split, 459 of 800 rows in one block were
+    #        exactly this -- the goal says "put X on the market", states no price,
+    #        and the model still emits `fixed`.
+    #
+    #        Dropping the field is not guessing a price; it is declining to state
+    #        one, which is what the gold label does too (the schema default then
+    #        applies at execution). A goal that *did* state a price keeps the rule,
+    #        because the model then emits `price` as an int and this branch is not
+    #        taken.
+    if cleaned.get("price_rule") == "fixed" and not isinstance(cleaned.get("price"), int):
+        cleaned.pop("price_rule", None)
+    return cleaned

@@ -45,6 +45,13 @@ DEFAULT_GAZETTEER = Path(__file__).resolve().parent.parent / "data" / "gazetteer
 ID_FIELDS = ("quest_id", "map_id", "item_id", "monster_id")
 # Fields whose canonical value is a display name (normalise spelling/case).
 NAME_FIELDS = ("monster", "item", "zaap", "npc", "query", "zone", "target")
+# Fields whose value is a short closed-vocabulary phrase the corpus renders
+# verbatim into the goal. They are learned like names so that a post-processor
+# can fill them from the goal *only* when the goal states one of them -- the
+# alternative, filling ``reason`` from whatever text follows the verb, invented
+# a reason for every bare "arrête tout" and turned 16 correct calls into wrong
+# ones.
+PHRASE_FIELDS = ("reason", "text")
 
 
 def _surface_forms(goal: str, value: str) -> List[str]:
@@ -112,7 +119,7 @@ def build(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             # (c) string fields: align on the surface form as written.
             if key in ID_FIELDS:
                 field_map = id_map.setdefault(key, {})
-            elif key in NAME_FIELDS:
+            elif key in NAME_FIELDS or key in PHRASE_FIELDS:
                 field_map = name_map.setdefault(key, {})
             else:
                 continue

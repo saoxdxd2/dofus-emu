@@ -307,6 +307,8 @@ class ToolExecutor:
         goal: Optional[str] = None,
         source: str = "live",
         observation: Optional[Dict[str, Any]] = None,
+        observation_age_ms: Optional[float] = None,
+        observation_source: str = "call",
     ) -> ToolResult:
         started = time.perf_counter()
         ok, validated = validate_call(tool, args)
@@ -314,7 +316,8 @@ class ToolExecutor:
             result = ToolResult(
                 tool=tool, ok=False, error=str(validated), source=source,
                 latency_ms=(time.perf_counter() - started) * 1000.0)
-            self._record(tool, args or {}, result, goal, observation)
+            self._record(tool, args or {}, result, goal, observation,
+                         observation_age_ms, observation_source)
             return result
 
         try:
@@ -323,7 +326,17 @@ class ToolExecutor:
             result = ToolResult(
                 tool=tool, ok=False, error=f"{type(exc).__name__}: {exc}", source=source)
         result.latency_ms = (time.perf_counter() - started) * 1000.0
-        self._record(tool, validated, result, goal, observation)
+        # A live directive carries the game state it ran against: the C# bridge
+        # attaches a snapshot to every /directive response. Use it when the
+        # caller did not supply a fresher one -- this is what turns
+        # `observation: null` into a usable training row, at age 0, without a
+        # second polling clock.
+        if observation is None and isinstance(result.data, dict):
+            snap = result.data.get("snapshot")
+            if isinstance(snap, dict) and snap:
+                observation, observation_age_ms, observation_source = snap, 0.0, "call"
+        self._record(tool, validated, result, goal, observation,
+                     observation_age_ms, observation_source)
         return result
 
     # -- internals -----------------------------------------------------------
@@ -335,6 +348,8 @@ class ToolExecutor:
         result: ToolResult,
         goal: Optional[str],
         observation: Optional[Dict[str, Any]],
+        observation_age_ms: Optional[float] = None,
+        observation_source: str = "call",
     ) -> None:
         if self.recorder is None:
             return
@@ -347,6 +362,8 @@ class ToolExecutor:
             latency_ms=result.latency_ms,
             goal=goal,
             observation=observation,
+            observation_age_ms=observation_age_ms,
+            observation_source=observation_source,
             source=result.source,
         )
 
@@ -638,6 +655,11 @@ class ToolExecutor:
             tool=tool, ok=bridge_ok, source=source, directive=directive,
             data={"directive_payload": payload, "response": response},
         )
+        # The bridge attaches the game state it ran against. Keep it on the
+        # result so `execute()` can record it as the observation, and so a
+        # caller that wants the raw state does not have to re-poll the client.
+        if isinstance(response, dict) and isinstance(response.get("snapshot"), dict):
+            result.data["snapshot"] = response["snapshot"]
         if not bridge_ok:
             result.error = f"client directive failed: {bridge_error or 'unknown error'}"
         return result

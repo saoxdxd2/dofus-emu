@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from agent.executor import ToolExecutor, ToolResult
 from agent.recorder import TrajectoryRecorder
@@ -39,7 +40,11 @@ class Policy(Protocol):
         goal: str,
         observation: Dict[str, Any],
         tools: List[str],
+        objective: Optional[Dict[str, Any]] = None,
     ) -> Optional[ToolCall]:
+        """``objective`` is structured context from the schedule manager (§C):
+        when the planner has already chosen a quest step, ``quest.advance`` must
+        confirm that ``quest_id`` rather than guess it from the goal prose."""
         ...
 
 
@@ -56,6 +61,9 @@ _RE_SELL = re.compile(
     re.IGNORECASE)
 _RE_SCAN = re.compile(r"(?:scan|price of|prix (?:de|du|d'|des)|precio de)\s+(.{2,60})$", re.IGNORECASE)
 _RE_QUEST = re.compile(r"\b(qu[eê]tes?|quests?|misi[oó]nes?)\b", re.IGNORECASE)
+_RE_QUEST_ADVANCE = re.compile(
+    r"\b(advance|continue|proceed|next step|prochaine étape|siguiente paso|"
+    r"weiter|fortsetzen|étape suivante|avance|continua|continúa)\b", re.IGNORECASE)
 _RE_QUEST_PREP = (
     r"(?:\bin der\b|\ben el\b|\ben la\b|\ben los\b|\ben las\b"
     r"|\bde la\b|\bde los\b|\bde las\b"
@@ -114,15 +122,32 @@ class RulePolicy:
 
     # -- policy API ----------------------------------------------------------
 
+    def _is_quest_advance_intent(self, goal: str) -> bool:
+        """A quest-advance instruction, as opposed to 'list quests' or any other
+        goal. Used by §C so the schedule's objective only confirms a quest.advance
+        the player actually asked for, and never hijacks an unrelated command."""
+        return bool(_RE_QUEST.search(goal)) and bool(_RE_QUEST_ADVANCE.search(goal))
+
     def choose(
         self,
         goal: str,
         observation: Optional[Dict[str, Any]] = None,
         tools: Optional[List[str]] = None,
+        objective: Optional[Dict[str, Any]] = None,
     ) -> Optional[ToolCall]:
         goal = (goal or "").strip()
         if not goal:
             return None
+
+        # §C: the schedule manager has already chosen the active quest step. When
+        # the goal is an explicit quest-advance instruction, confirm the schedule's
+        # quest_id instead of decoding it from prose -- but only then. A stop or
+        # sell command must keep resolving to its own tool; the objective is
+        # context, not a command override.
+        if (objective and objective.get("tool") == "quest.advance"
+                and objective.get("quest_id") is not None
+                and self._is_quest_advance_intent(goal)):
+            return ToolCall("quest.advance", {"quest_id": objective["quest_id"]}, goal)
 
         engine_call = self._choose_with_engine(goal)
         if engine_call is not None:
@@ -239,6 +264,7 @@ class AgentRuntime:
         policy: Optional[Policy] = None,
         directive_url: str = "http://127.0.0.1:8893/directive",
         instance: str = "default",
+        objective_provider: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
     ) -> None:
         self.recorder = recorder or TrajectoryRecorder(instance=instance)
         self.executor = executor or ToolExecutor(
@@ -246,6 +272,71 @@ class AgentRuntime:
         self.executor.recorder = self.recorder
         self.policy: Policy = policy or RulePolicy()
         self.instance = instance
+        # §C hook: returns the schedule manager's active objective (a dict like
+        # {"tool": "quest.advance", "quest_id": 1935, ...}) or None. When set,
+        # the policy receives it as structured context on every decision.
+        self.objective_provider = objective_provider
+        # The most recent game-state snapshot the harness pushed, and when. The
+        # executor stamps these onto every step it records, so a bridge that
+        # streams observations does not have to repeat the whole state in the
+        # body of every action request -- which is how the observation column
+        # ended up null in all 2,759 recorded steps.
+        self.last_observation: Optional[Dict[str, Any]] = None
+        self.last_observation_ts: float = 0.0
+        self.observations_seen: int = 0
+
+    # -- observation stream --------------------------------------------------
+
+    def observe(
+        self,
+        observation: Dict[str, Any],
+        goal: Optional[str] = None,
+        source: str = "live",
+    ) -> Dict[str, Any]:
+        """Accept a pushed game-state snapshot and remember it as current."""
+        self.last_observation = observation
+        self.last_observation_ts = time.time()
+        self.observations_seen += 1
+        return self.recorder.observation(observation, goal=goal, source=source)
+
+    def current_observation(self) -> tuple[Optional[Dict[str, Any]], Optional[float], str]:
+        """``(observation, age_ms, provenance)`` for the freshest snapshot.
+
+        Provenance is ``"call"`` when the snapshot arrived with the request
+        being served and ``"carried"`` when it is reused from an earlier push.
+        A caller that already holds a fresh observation never consults this.
+        """
+        if not self.last_observation:
+            return None, None, "call"
+        age_ms = (time.time() - self.last_observation_ts) * 1000.0
+        return self.last_observation, round(age_ms, 1), "carried"
+
+    def execute_tool(
+        self,
+        tool: str,
+        args: Optional[Dict[str, Any]] = None,
+        instance: Optional[str] = None,
+        goal: Optional[str] = None,
+        source: str = "live",
+        observation: Optional[Dict[str, Any]] = None,
+    ) -> ToolResult:
+        """Execute one tool call, recording the observation it was made against.
+
+        An explicit ``observation`` wins and is marked ``"call"``. Otherwise the
+        runtime reuses the freshest pushed snapshot and marks it ``"carried"``,
+        together with its age, so a downstream consumer can tell a fresh pairing
+        from a stale one.
+        """
+        if observation is not None:
+            return self.executor.execute(
+                tool, args, instance=instance, goal=goal, source=source,
+                observation=observation, observation_age_ms=0.0,
+                observation_source="call")
+        carried, age_ms, provenance = self.current_observation()
+        return self.executor.execute(
+            tool, args, instance=instance, goal=goal, source=source,
+            observation=carried, observation_age_ms=age_ms,
+            observation_source=provenance)
 
     def handle_goal(
         self,
@@ -256,13 +347,27 @@ class AgentRuntime:
         """Resolve one natural-language goal into a tool call and execute it."""
         instance = instance or self.instance
         if observation:
-            self.recorder.observation(observation, goal=goal)
+            self.observe(observation, goal=goal)
+            carried, age_ms, provenance = observation, 0.0, "call"
+        else:
+            carried, age_ms, provenance = self.current_observation()
 
-        call = self.policy.choose(goal, observation or {}, tool_names())
+        # §C: pull the schedule manager's active objective and hand it to the
+        # policy as structured context. quest.advance then confirms the step the
+        # planner already chose instead of guessing an id from the goal prose.
+        objective = self.objective_provider() if self.objective_provider else None
+
+        # The policy sees whatever the recorder will see. Passing the empty dict
+        # here while the step record carries a snapshot would make the logged
+        # input and the logged decision disagree.
+        call = self.policy.choose(goal, carried or {}, tool_names(), objective=objective)
         if call is None:
             record = self.recorder.log("goal_unresolved", {
                 "goal": goal,
                 "policy": type(self.policy).__name__,
+                "observation": carried,
+                "observation_age_ms": age_ms,
+                "observation_source": provenance,
             })
             return ToolResult(
                 tool="none", ok=False,
@@ -276,5 +381,7 @@ class AgentRuntime:
             call.args,
             instance=instance,
             goal=goal,
-            observation=observation,
+            observation=carried,
+            observation_age_ms=age_ms,
+            observation_source=provenance,
         )

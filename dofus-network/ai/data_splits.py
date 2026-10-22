@@ -244,9 +244,11 @@ def split_by_skeleton(
     Frames are bucketed by a salted hash, so the split is deterministic and
     independent of file order. Every row of a frame lands in the same side.
 
-    ``stratify_by="lang"`` picks val frames *per language* so each language keeps
-    its share of the val set. Without it a hash split can hand 78% of val to one
-    language, which makes per-language accuracy meaningless.
+    ``stratify_by="lang"`` hashes each frame inside its own language group, so
+    each language keeps its share of the val set and a frame's side never
+    depends on how many other rows the corpus holds. Without it a hash split
+    can hand 78% of val to one language, which makes per-language accuracy
+    meaningless.
     """
     if not 0.0 < val_fraction < 1.0:
         raise ValueError("val_fraction must be in (0, 1)")
@@ -260,21 +262,18 @@ def split_by_skeleton(
     cutoff = int(round(val_fraction * 100))
 
     if stratify_by:
-        groups: Dict[str, List[str]] = {}
+        # Each frame is assigned independently inside its own language group,
+        # so a frame's side depends only on its key -- never on how many other
+        # rows the corpus holds. The previous version filled a row-count target
+        # per language, which meant adding rows to one capability reshuffled
+        # every other capability's val membership: adding 1,122 quest.advance
+        # rows moved fight.join from 181 val rows to 9, and a per-tool number
+        # measured on 9 rows is noise, not a measurement.
         for key, group in buckets.items():
             label = str(group[0].get(stratify_by) or "auto")
-            groups.setdefault(label, []).append(key)
-        for label, keys in groups.items():
-            # Deterministic order, then take the first `val_fraction` by size.
-            keys.sort(key=lambda k: hashlib.sha1(f"{k}{seed}".encode("utf-8")).hexdigest())
-            target = int(round(val_fraction * sum(len(buckets[k]) for k in keys)))
-            taken = 0
-            for key in keys:
-                if taken >= target:
-                    train.extend(buckets[key])
-                else:
-                    val.extend(buckets[key])
-                    taken += len(buckets[key])
+            bucket = int(hashlib.sha1(
+                f"{label}\x1f{key}{seed}".encode("utf-8")).hexdigest(), 16) % 100
+            (val if bucket < cutoff else train).extend(group)
     else:
         for key, group in buckets.items():
             bucket = int(hashlib.sha1(f"{key}{seed}".encode("utf-8")).hexdigest(), 16) % 100

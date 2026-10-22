@@ -949,6 +949,121 @@
                 myTurn: false
             },
 
+            // Farm session counters. The learning loop is only as good as the
+            // outcome data: `farm.start` used to return an ack with no numbers,
+            // so every live session produced `unverified` and taught nothing.
+            // Everything here is measured by diffing the client's own state
+            // around a fight, never inferred from a plan.
+            session: {
+                startedAt: null,
+                fights: 0,
+                wins: 0,
+                losses: 0,
+                kills: 0,
+                xp: 0,
+                kamas: 0,
+                drops: {},          // gid -> quantity gained
+                _pre: null,
+                _monsters: 0
+            },
+
+            resetSession: function() {
+                this.session = {
+                    startedAt: Date.now(), fights: 0, wins: 0, losses: 0, kills: 0,
+                    xp: 0, kamas: 0, drops: {}, _pre: null, _monsters: 0
+                };
+                return this.sessionSummary();
+            },
+
+            sessionSummary: function() {
+                var s = this.session || {};
+                var minutes = s.startedAt ? (Date.now() - s.startedAt) / 60000 : 0;
+                var drops = s.drops || {};
+                var dropTotal = 0;
+                for (var g in drops) { if (Object.prototype.hasOwnProperty.call(drops, g)) dropTotal += drops[g]; }
+                return {
+                    fights: s.fights || 0,
+                    wins: s.wins || 0,
+                    losses: s.losses || 0,
+                    kills: s.kills || 0,
+                    drops: drops,
+                    drop_count: dropTotal,
+                    xp: s.xp || 0,
+                    kamas: s.kamas || 0,
+                    minutes: Math.round(minutes * 100) / 100,
+                    kills_per_minute: minutes > 0.05 ? Math.round((s.kills || 0) / minutes * 100) / 100 : null,
+                    xp_per_minute: minutes > 0.05 ? Math.round((s.xp || 0) / minutes) : null,
+                    kamas_per_minute: minutes > 0.05 ? Math.round((s.kamas || 0) / minutes) : null
+                };
+            },
+
+            countMonsters: function() {
+                var count = 0;
+                try {
+                    if (window.isoEngine && window.isoEngine.actorManager) {
+                        var am = window.isoEngine.actorManager;
+                        var ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
+                        for (var i = 0; i < ids.length; i++) {
+                            var a = am.getActor(ids[i]);
+                            var fighter = null;
+                            try { fighter = (a && typeof a.getFighter === 'function') ? a.getFighter() : null; } catch(e) {}
+                            var isMonster = false;
+                            try { isMonster = !!(fighter && typeof fighter.isMonster === 'function' && fighter.isMonster()); } catch(e) {}
+                            if (isMonster) count += 1;
+                        }
+                    }
+                } catch(e) {}
+                return count;
+            },
+
+            openFight: function() {
+                var s = this.session;
+                s._pre = _agentSnapshot();
+                s._monsters = this.countMonsters();
+            },
+
+            closeFight: function() {
+                var s = this.session;
+                s.fights += 1;
+                var pre = s._pre;
+                var post = _agentSnapshot();
+                s._pre = null;
+
+                var xpGain = null;
+                var kamasGain = null;
+                if (pre && post) {
+                    if (pre.xp != null && post.xp != null && post.xp >= pre.xp) xpGain = post.xp - pre.xp;
+                    if (pre.kamas != null && post.kamas != null && post.kamas >= pre.kamas) kamasGain = post.kamas - pre.kamas;
+                    // Item deltas are the drops. Only gains count: a sale is a
+                    // negative delta and must never be recorded as a drop.
+                    var preItems = (pre.inventory && pre.inventory.items) || [];
+                    var postItems = (post.inventory && post.inventory.items) || [];
+                    var before = {};
+                    var i;
+                    for (i = 0; i < preItems.length; i++) before[preItems[i].gid] = preItems[i].qty;
+                    for (i = 0; i < postItems.length; i++) {
+                        var gid = postItems[i].gid;
+                        var delta = postItems[i].qty - (before[gid] || 0);
+                        if (delta > 0) s.drops[gid] = (s.drops[gid] || 0) + delta;
+                    }
+                }
+
+                // A fight that yields no xp was lost or abandoned. Recording the
+                // kills as kills in that case would teach a drop rate that never
+                // happened, so it is counted as a loss instead.
+                var monsters = s._monsters || 0;
+                if (xpGain != null && xpGain > 0) {
+                    s.wins += 1;
+                    s.kills += monsters;
+                    s.xp += xpGain;
+                } else {
+                    s.losses += 1;
+                }
+                if (kamasGain != null && kamasGain > 0) s.kamas += kamasGain;
+                s._monsters = 0;
+                return this.sessionSummary();
+            },
+
             setEnabled: function(val) {
                 this.enabled = !!val;
                 this.updateHud();
@@ -1058,6 +1173,7 @@
 
                 cm.on('GameFightStartingMessage', function(msg) {
                     self.state.inFight = true;
+                    self.openFight();
                 });
 
                 cm.on('GameFightPlacementPossiblePositionsMessage', function() {
@@ -1079,6 +1195,9 @@
                 cm.on('GameFightEndMessage', function(msg) {
                     self.state.inFight = false;
                     self.state.myTurn = false;
+                    try { self.closeFight(); } catch(e) {
+                        console.log('[FarmBot] closeFight failed: ' + e);
+                    }
                 });
             },
 
@@ -1273,9 +1392,25 @@
                     ap: ch.ap != null ? ch.ap : null,
                     mp: ch.mp != null ? ch.mp : null
                 };
+                // XP is what makes a farm measurable: it is the only quantity the
+                // client reports on every kill, and a fight that yields 0 xp is a
+                // fight that was lost or abandoned. Read several candidate keys
+                // because the field name differs across client builds.
+                snap.xp = (ch.experience != null ? ch.experience
+                          : (ch.xp != null ? ch.xp
+                          : (ch.experiencePoints != null ? ch.experiencePoints : null)));
+                snap.xp_level = (ch.experienceLevel != null ? ch.experienceLevel : (ch.level != null ? ch.level : null));
+                snap.kamas = (pd && pd.inventory && pd.inventory.kamas != null)
+                    ? pd.inventory.kamas : null;
                 if (window.__FarmBot) {
                     snap.auto_fight = !!window.__FarmBot.enabled;
                     snap.farm_state = window.__FarmBot.state || null;
+                    // Running counters ride along with every observation, so a
+                    // session's progress is reconstructible from the log alone.
+                    try {
+                        snap.farm_session = (window.__FarmBot.sessionSummary
+                            ? window.__FarmBot.sessionSummary() : null);
+                    } catch(e) { snap.farm_session = null; }
                 }
                 // Inventory probe. Item GIDs are returned raw; the Python agent maps
                 // gid -> name from its local items cache (no per-item DOM work here).
@@ -1307,6 +1442,13 @@
             return snap;
         };
 
+        // Exposed so the host can attach the game state to every directive
+        // response. Without this the Python recorder logs `observation: null`
+        // for every action, which is the difference between "the bot moved" and
+        // "the bot moved because it was standing on cell 402 at 120 HP with a
+        // fight open". Cheap: one object build, no DOM walk.
+        window.__agentSnapshot = _agentSnapshot;
+
         var _agentCommander = function(action) {
             try {
                 if (typeof window.__executeCommanderDirective === 'function') {
@@ -1331,21 +1473,46 @@
             },
             'farm.start': function(args) {
                 var started = false;
+                var s = null;
                 try {
                     if (window.__FarmBot) {
+                        window.__FarmBot.resetSession();
                         window.__FarmBot.setEnabled(true);
                         started = !!window.__FarmBot.enabled;
+                        s = window.__FarmBot.sessionSummary();
                     }
                 } catch(e){}
                 return _agentResult(started, {
                     auto_fight: started,
                     requested: args || null,
+                    session: s,
+                    // Flat copies: this is the shape the learning contract reads
+                    // (planning/outcome.py -> data.kills / data.drops / ...).
+                    kills: s ? s.kills : null,
+                    drops: s ? s.drop_count : null,
+                    minutes: s ? s.minutes : null,
+                    kamas: s ? s.kamas : null,
+                    xp: s ? s.xp : null,
                     note: 'auto-fight enabled; zone walking / harvest loop is not implemented in the client yet'
                 }, started ? null : 'FarmBot unavailable');
             },
             'farm.stop': function() {
-                try { if (window.__FarmBot) window.__FarmBot.setEnabled(false); } catch(e){}
-                return _agentResult(true, { auto_fight: false });
+                var s = null;
+                try {
+                    if (window.__FarmBot) {
+                        window.__FarmBot.setEnabled(false);
+                        s = window.__FarmBot.sessionSummary();
+                    }
+                } catch(e){}
+                return _agentResult(true, {
+                    auto_fight: false,
+                    session: s,
+                    kills: s ? s.kills : null,
+                    drops: s ? s.drop_count : null,
+                    minutes: s ? s.minutes : null,
+                    kamas: s ? s.kamas : null,
+                    xp: s ? s.xp : null
+                });
             },
             'fight.join': function() { return _agentResult(true, _agentCommander('AUTO_JOIN_COMBAT')); },
             'fight.pass': function() { return _agentResult(true, _agentCommander('PASS_TURN')); },

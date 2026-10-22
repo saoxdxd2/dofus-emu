@@ -136,15 +136,16 @@ def decode_outputs(
             continue
 
         if float(presence_p[0, index]) < threshold:
-            if default is not None:
-                args[name] = default
+            # Absent -- and absent means absent. See ``decode_batch`` in
+            # ai/encoder_policy.py: materialising the schema default here
+            # contradicts the presence head's own training target and cost
+            # 49 pp of exact-match accuracy. ``validate_call`` re-applies the
+            # default for the executor.
             continue
 
         span = best_span(np.asarray(span_start)[0, index], np.asarray(span_end)[0, index],
                          length, max_span=max_span)
         if span is None:
-            if default is not None:
-                args[name] = default
             continue
         args.setdefault("__span__", {})[name] = span
 
@@ -237,8 +238,9 @@ class OnnxEncoder:
             parsed = parse_span(text, str(field.get("type")))
             if parsed is not None:
                 args[name] = parsed
-            elif field.get("default") is not None:
-                args[name] = field["default"]
+            # An unparseable span is an absence, not a default: the model said
+            # the field is present but could not read a value out of it, and
+            # inventing the schema default would claim the player stated one.
         return {"tool": decoded["tool"], "args": args}
 
     def predict_rows(self, rows: Sequence[Dict[str, Any]]) -> Dict[str, Optional[Dict[str, Any]]]:
@@ -285,7 +287,12 @@ def _selftest() -> int:
     ok = (decoded["tool"] == "inv.sell"
           and decoded["args"].get("price_rule") == "fixed"
           and decoded["args"].get("all") is False
-          and decoded["args"]["__span__"]["item"] == (3, 4))
+          and decoded["args"]["__span__"]["item"] == (3, 4)
+          # An absent field must be absent from the args, not materialised as
+          # its schema default: the presence head's target for absence is 0,
+          # and emitting a default contradicts it.
+          and "monster" not in decoded["args"]
+          and "monster" not in decoded["args"].get("__span__", {}))
     print("decoder selftest:", "PASS" if ok else "FAIL", json.dumps(
         {k: v for k, v in decoded.items() if k != "args"}, ensure_ascii=False))
     print("  args:", decoded["args"])
