@@ -356,9 +356,15 @@ class Verifier:
         if human is not None:
             return human
 
-        model = self._model_label(tool, ok, error, before, after, latency_ms)
-        if model is not None:
-            return model
+        # A query that returned ok is a success by definition. No model may
+        # overrule that: the shipped head was trained on labels produced by the
+        # *old* rule that scored queries as `noop`, so it confidently calls a
+        # successful inventory read a failure (p=0.63). A model that contradicts a
+        # definitional rule is stale, not smarter.
+        if tool not in READ_ONLY_TOOLS:
+            model = self._model_label(tool, ok, error, before, after, latency_ms)
+            if model is not None:
+                return model
 
         return self._rule(tool, args, ok, error, before, after, latency_ms, expected_s)
 

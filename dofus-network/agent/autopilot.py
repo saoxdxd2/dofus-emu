@@ -390,8 +390,12 @@ class Autopilot:
                 self._index += 1
 
                 mark = "ok" if result.ok else "FAIL"
+                # Say what came back, not just that it came back. Without this the
+                # panel shows "inv.list ok advanced 165ms" forever and the user has
+                # no way to tell a working query from a silent no-op.
+                detail = _summarise(result)
                 print(f"[autopilot] {self._index:3d} {call.tool:14s} {mark:4s} "
-                      f"{verdict:8s} {step.latency_ms:6.0f}ms"
+                      f"{verdict:8s} {step.latency_ms:6.0f}ms{detail}"
                       f"{'' if result.ok else '  ' + str(result.error)[:80]}")
 
                 if self.on_step:
@@ -515,6 +519,50 @@ class Autopilot:
         }
         print(f"[autopilot] done: {reason} | {counts} | {len(self.open_listings)} open listing(s)")
         return data
+
+
+def _summarise(result: Any) -> str:
+    """A short, human-readable trace of what a tool returned.
+
+    Best effort on purpose: a result shape we do not recognise must not break the
+    print, because this line is the only window the user has into the loop.
+    """
+    try:
+        data = getattr(result, "data", None)
+        if data is None:
+            return ""
+        # A directive result is an envelope: {directive_payload, response, snapshot}.
+        # Unwrap it, or the summary shows request bookkeeping instead of the answer.
+        for _ in range(3):
+            if not isinstance(data, dict):
+                break
+            inner = None
+            for key in ("response", "result", "data", "value"):
+                if key in data and data[key] is not None:
+                    inner = data[key]
+                    break
+            if inner is None or inner is data:
+                break
+            data = inner
+        if isinstance(data, dict):
+            for key in ("items", "inventory", "quests", "listings", "results"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    return "  -> %d %s" % (len(value), key)
+            bits = []
+            for key in ("kamas", "cell", "map_id", "inventory_size", "count", "name"):
+                if key in data and data[key] is not None:
+                    bits.append("%s=%s" % (key, data[key]))
+                if len(bits) >= 3:
+                    break
+            if bits:
+                return "  -> " + ", ".join(bits)
+        if isinstance(data, list):
+            return "  -> %d row(s)" % len(data)
+        text = str(data)
+        return "  -> " + (text[:60] + ("..." if len(text) > 60 else ""))
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _compact(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:

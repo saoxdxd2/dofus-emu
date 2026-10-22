@@ -167,6 +167,23 @@ def test_baseline_model() -> None:
     check("human beats the model", r.source == "human" and r.verdict == "blocked", r.source)
 
 
+def test_step_summary() -> None:
+    """The panel line must say what came back, not just that something did."""
+    print("\n== step summary ==")
+    from agent.autopilot import _summarise
+
+    class R:
+        def __init__(self, data):
+            self.data = data
+
+    envelope = {"directive_payload": {"id": "x"}, "response": {"ok": True,
+                "result": {"items": [{"gid": 1}] * 23}}}
+    check("directive envelope is unwrapped", _summarise(R(envelope)) == "  -> 23 items",
+          _summarise(R(envelope)))
+    check("empty result prints nothing", _summarise(R(None)) == "", repr(_summarise(R(None))))
+    check("unknown shape does not raise", isinstance(_summarise(R({"weird": 1})), str))
+
+
 def test_controller_changes_the_next_action() -> None:
     """The point of the whole exercise: does agent 2 alter what happens next?"""
     print("\n== agent 2 controller ==")
@@ -309,6 +326,7 @@ def main() -> int:
     test_loop_wiring()
     test_baseline_model()
     test_onnx_head()
+    test_step_summary()
     test_controller_changes_the_next_action()
     test_loop_applies_the_decision()
     test_preflight_is_inert_without_a_model()
