@@ -6,6 +6,31 @@ plan. Everything below is either measured (a number from a run) or marked unknow
 
 ---
 
+## For the morning: read MORNING.md first
+
+It has the exact order of operations (one reload, one command) and a table of every fix
+made on the night of 2026-10-23 with the symptom each one removes. This document is the
+long-form record; MORNING.md is the checklist.
+
+### The night of 2026-10-23, in one paragraph
+
+The simulator was exhausted as a learning source, so the work moved to the live client,
+and there the pattern that finally worked was **read the client's own code instead of
+assuming**. Seven interfaces were being used wrongly, and every one of them failed
+silently: the snapshot read `playerData.character` (does not exist) instead of
+`characterBaseInformations` and `position.mapId`; the verifier compared flat keys against
+a nested snapshot, so **every step scored `noop` including real map changes**; the
+observation carried no quest state at all, so the planner could not tell which objective
+was current; `nav.goto` sent a blind `ChangeMapMessage` instead of driving the client's
+own pathfinder; `quest.advance` ignored `npc_id`, scanned `actor.staticInfos` instead of
+`actor.data.staticInfos`, sent the template id where the wire wants `contextualId`, and
+had no way to answer a dialog; `fight.join` clicked a DOM selector that does not exist
+instead of sending `GameRolePlayAttackMonsterRequestMessage`; and `--directive-url`
+defaulted to a literal 8893, so the bridge's published port was ignored. On top of that
+the loop ran eight steps per goal and exited 0 no matter what "unlimited" said, and a
+successful read ended the session. None of this was a modelling problem. The agent was
+never unable to plan; it was unable to *see*, and then unable to *act*.
+
 ## 0. What the previous version got wrong
 
 | it said | what was actually happening |
