@@ -1315,11 +1315,60 @@ namespace DofusFarm.Engine
         // re-applies the build-time patches, validates the result and only then
         // swaps files. See clientbundle.cs for why that matters.
 
+        /// <summary>Decode one level of JSON string wrapping, if present.
+        /// Leaves a plain object untouched, so both conventions end up identical.</summary>
+        private static string UnwrapJsonString(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return raw;
+            string t = raw.Trim();
+            if (t.Length < 2 || t[0] != '"' || t[t.Length - 1] != '"') return raw;
+            var sb = new StringBuilder(t.Length);
+            for (int i = 1; i < t.Length - 1; i++)
+            {
+                char c = t[i];
+                if (c != '\\' || i + 1 >= t.Length - 1) { sb.Append(c); continue; }
+                char n = t[++i];
+                switch (n)
+                {
+                    case '"': sb.Append('"'); break;
+                    case '\\': sb.Append('\\'); break;
+                    case 'n': sb.Append('\n'); break;
+                    case 'r': sb.Append('\r'); break;
+                    case 't': sb.Append('\t'); break;
+                    case 'b': sb.Append('\b'); break;
+                    case 'f': sb.Append('\f'); break;
+                    case 'u':
+                        if (i + 4 < t.Length)
+                        {
+                            int code;
+                            if (int.TryParse(t.Substring(i + 1, 4), System.Globalization.NumberStyles.HexNumber,
+                                             System.Globalization.CultureInfo.InvariantCulture, out code))
+                            {
+                                sb.Append((char)code);
+                                i += 4;
+                            }
+                            else sb.Append(n);
+                        }
+                        else sb.Append(n);
+                        break;
+                    default: sb.Append(n); break;
+                }
+            }
+            return sb.ToString();
+        }
+
         private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             try
             {
-                string json = e.WebMessageAsJson;
+                // Two conventions live in this codebase: postMessage(obj), which arrives
+                // as an object, and postMessage(JSON.stringify(obj)), which arrives as a
+                // JSON *string* containing the object — escaped, with \" everywhere.
+                // Every branch below matches on "type":"X", so the second form never
+                // matched anything and was silently dropped. The in-game badge used it,
+                // which is why clicking it produced log lines and no effect: the
+                // AI_REQUEST arrived, was printed, and fell through every branch.
+                string json = UnwrapJsonString(e.WebMessageAsJson);
                 if (!json.Contains("\"type\":\"CONSOLE_LOG\"") && !json.Contains("\"type\":\"PLAY_LOG\""))
                 {
                     _logCallback?.Invoke(string.Format("[{0}] [JS->C# Message]: {1}", _instanceId, json));

@@ -1125,10 +1125,15 @@
             aiToggle: function() {
                 try {
                     if (!(window.chrome && window.chrome.webview)) return;
-                    window.chrome.webview.postMessage(JSON.stringify({
+                    // Post the OBJECT, not JSON.stringify(obj). The stringified form
+                    // arrives in C# as a JSON string with escaped quotes, and every
+                    // type check there matches on "type":"X" — so it fell through
+                    // silently. Posting the object makes the message readable by the
+                    // host as-is, including on builds that predate the fix.
+                    window.chrome.webview.postMessage({
                         type: 'AI_REQUEST',
                         action: this.aiRunning ? 'stop_all' : 'start_auto'
-                    }));
+                    });
                 } catch (e) {}
             },
 
@@ -1156,10 +1161,10 @@
             syncToHost: function() {
                 try {
                     if (window.chrome && window.chrome.webview) {
-                        window.chrome.webview.postMessage(JSON.stringify({
+                        window.chrome.webview.postMessage({
                             type: 'FARMBOT_STATE',
                             enabled: this.enabled
-                        }));
+                        });
                     }
                 } catch(e) {}
             },
@@ -1224,9 +1229,9 @@
                         e.stopPropagation();
                         auto.textContent = '...';
                         try {
-                            window.chrome.webview.postMessage(JSON.stringify({
+                            window.chrome.webview.postMessage({
                                 type: 'AI_REQUEST', action: 'start_auto'
-                            }));
+                            });
                         } catch (err) {}
                         setTimeout(function() { auto.textContent = '▶ Auto'; }, 2500);
                     };

@@ -419,6 +419,26 @@ def test_bridge_port_is_discovered() -> None:
         bridge.state_dir = original        # type: ignore[assignment]
 
 
+def test_host_messages_are_not_double_encoded() -> None:
+    """A postMessage that stringifies arrives escaped, and the host drops it.
+
+    Two conventions had grown up side by side: postMessage(obj) and
+    postMessage(JSON.stringify(obj)). Every C# branch matches on "type":"X", so the
+    second form never matched anything — the in-game badge sent AI_REQUEST that way and
+    the host logged it and did nothing. One convention, checked here, so the two cannot
+    drift apart again.
+    """
+    print("\n== host message encoding ==")
+    js = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
+    if not js.exists():
+        print("  [SKIP] client script not found")
+        return
+    text = js.read_text(encoding="utf-8")
+    bad = text.count("postMessage(JSON.stringify")
+    check("no postMessage double-encodes its payload", bad == 0,
+          "%d occurrence(s)" % bad if bad else "object form only")
+
+
 def test_every_declared_tool_exists_in_the_client() -> None:
     """The capabilities file is a contract; nothing checked it against the client.
 
@@ -718,6 +738,7 @@ def main() -> int:
     test_session_log_becomes_a_dataset()
     test_bridge_port_is_discovered()
     test_every_declared_tool_exists_in_the_client()
+    test_host_messages_are_not_double_encoded()
     test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()
     test_knowledge_store()
