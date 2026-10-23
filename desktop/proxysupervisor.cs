@@ -26,6 +26,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -66,6 +67,15 @@ namespace DofusFarm.Engine
         // The upstream the relays are actually built with. Compared against the new pick to
         // decide whether a switch is real.
         private string _lastAppliedUrl;
+
+        // The egress this machine used last time, and the address it presented.
+        //
+        // Reconnecting from a different address is what the server treats as a hijacked session,
+        // so the address has to survive a restart, not just a probe cycle. It also makes the
+        // start fast: one probe of a known URL instead of waiting for a full round of thirteen.
+        private string _pinnedUrl;
+        private string _pinnedExitIp;
+        private bool _pinLoaded;
         private DateTime _lastRefreshUtc = DateTime.MinValue;
         private string _directIp;
         private FarmEngine _engine;
@@ -129,6 +139,43 @@ namespace DofusFarm.Engine
 
         /// <summary>The egress to use right now. Never returns a dead candidate;
         /// may return null, which means "do not launch".</summary>
+        private static string PinPath()
+        {
+            try { return Path.Combine(NetworkSettings.AppBase, "asset_cache", "egress_pin.txt"); }
+            catch { return null; }
+        }
+
+        private void LoadPin()
+        {
+            if (_pinLoaded) return;
+            _pinLoaded = true;
+            try
+            {
+                string path = PinPath();
+                if (path == null || !File.Exists(path)) return;
+                string[] parts = File.ReadAllText(path).Split('|');
+                if (parts.Length >= 1 && parts[0].Trim().StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    _pinnedUrl = parts[0].Trim();
+                if (parts.Length >= 2) _pinnedExitIp = parts[1].Trim();
+            }
+            catch { }
+        }
+
+        private void SavePin(string url, string exitIp)
+        {
+            try
+            {
+                string path = PinPath();
+                if (path == null || string.IsNullOrEmpty(url)) return;
+                string dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(path, url + "|" + (exitIp ?? "") + "|" + DateTime.UtcNow.ToString("o"));
+                _pinnedUrl = url;
+                _pinnedExitIp = exitIp;
+            }
+            catch { }
+        }
+
         public ProxyCandidate EnsureActive(bool forceRefresh)
         {
             ProxyCandidate current = Active;
@@ -138,6 +185,36 @@ namespace DofusFarm.Engine
                 if ((DateTime.UtcNow - current.CheckedUtc).TotalSeconds < Math.Max(15, RefreshSeconds))
                     return current;
             }
+            // A pin from the previous run, still answering: use it and start immediately.
+            //
+            // This is the fast path and the stable one. Waiting for a full probe round cost up to
+            // ProbeTimeoutMs + 5s before the first client could connect, and the egress it landed
+            // on was often a different address than the one the last session used — which is the
+            // reconnect-from-a-new-IP pattern the server closes.
+            if (!forceRefresh)
+            {
+                LoadPin();
+                if (!string.IsNullOrEmpty(_pinnedUrl))
+                {
+                    ProxyCandidate pin = Probe(_pinnedUrl, "pinned");
+                    if (pin.Healthy)
+                    {
+                        lock (_gate)
+                        {
+                            _candidates.Clear();
+                            _candidates.Add(pin);
+                            _active = pin;
+                            _lastAppliedUrl = pin.Url;
+                            _lastRefreshUtc = DateTime.UtcNow;
+                        }
+                        Log("egress pinned to " + pin.Label + " (same address as last session)");
+                        return pin;
+                    }
+                    Log("pinned egress " + _pinnedUrl + " no longer answers; probing the pool");
+                    _pinnedUrl = null;
+                }
+            }
+
             return Refresh();
         }
 
@@ -331,7 +408,11 @@ namespace DofusFarm.Engine
                     // oscillates around the threshold.
                     changed = best != null &&
                               !string.Equals(_lastAppliedUrl, best.Url, StringComparison.OrdinalIgnoreCase);
-                    if (changed) _lastAppliedUrl = best.Url;
+                    if (changed)
+                    {
+                        _lastAppliedUrl = best.Url;
+                        SavePin(best.Url, best.ExitIp);
+                    }
                     _active = best;
                     _lastRefreshUtc = DateTime.UtcNow;
                 }

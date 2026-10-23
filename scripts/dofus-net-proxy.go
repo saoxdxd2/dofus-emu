@@ -4078,7 +4078,12 @@ func main() {
 	// spike: a soft memory limit makes the collector work earlier as the heap approaches it, and
 	// a lower GOGC keeps the steady state tighter. The cost is a little more CPU, which this
 	// process has spare.
-	debug.SetGCPercent(50)
+	// Limit only, no GOGC override.
+	//
+	// Setting GOGC to 50 as well bounded the peak but made long sessions slower: with a large
+	// live asset cache the collector ran constantly and every request paid for it. The soft
+	// memory limit alone does what is actually wanted — normal collection until the heap
+	// approaches the ceiling, then collect harder.
 	debug.SetMemoryLimit(384 << 20)
 
 	if trimmed := strings.TrimSpace(*exitProxy); trimmed != "" {
