@@ -164,13 +164,19 @@ def main(argv=None) -> int:
                          "%.0f%%" % (100 * row["degradation"]) if row["degradation"] is not None
                          else "-"))
 
-    scored = [r for r in rows if r.get("degradation") is not None]
+    scored = [r for r in rows if not r.get("error")]
 
-    # Lower is better. Loss dominates, then predicted degradation, then latency: a proxy that
-    # drops one ping in six will end a session, and no amount of speed compensates.
+    # Rank on what was measured, not on what was predicted.
+    #
+    # The model's window was built from pings a few hundred milliseconds apart, and its
+    # training data is RIPE Atlas at roughly a minute apart — `log_gap_seconds` is one of its
+    # ten features, so the cadence is not a detail, it is an input. On a fast series the model
+    # is out of distribution and its forecast is decoration. Measured loss, jitter and p95 are
+    # true at any cadence, so they decide the order and the model is reported beside them.
     def rank(row):
         loss_rate = row["losses"] / max(1, row["samples"])
-        return (loss_rate, row["degradation"] or 0.0, row["rtt_median"] or 1e9)
+        jitter_ratio = (row["jitter"] or 0.0) / max(1.0, row["rtt_median"] or 1.0)
+        return (loss_rate, round(jitter_ratio, 3), row["rtt_p95"] or 1e9)
 
     scored.sort(key=rank)
     if args.top:
@@ -181,16 +187,20 @@ def main(argv=None) -> int:
         print(json.dumps(scored, indent=1))
         return 0
 
-    print("\n== ranking (loss, then predicted degradation, then latency) ==")
+    print("\n== ranking (measured: loss, then jitter, then p95) ==")
     for i, row in enumerate(scored, 1):
-        print("  %d. %-38s loss %d/%d  degradation %.0f%%  median %s ms"
+        print("  %d. %-36s loss %d/%d  jitter %s ms  p95 %s ms   [model: %.0f%% degrad]"
               % (i, row["entry"], row["losses"], row["samples"],
-                 100 * (row["degradation"] or 0.0),
-                 "%.0f" % row["rtt_median"] if row["rtt_median"] else "-"))
+                 "%.0f" % (row["jitter"] or 0.0),
+                 "%.0f" % row["rtt_p95"] if row["rtt_p95"] else "-",
+                 100 * (row["degradation"] or 0.0)))
 
     if not scored:
         print("  no proxy produced a full window of measurements, so there is nothing to rank")
         return 1
+    print("\nThe model's window was trained on ~60s-spaced probe data and these pings are")
+    print("%.1fs apart, so its degradation column is advisory at best. The loss and jitter" % args.interval)
+    print("columns are measured and hold at any cadence — they decide the order.")
     print("\nbest right now: %s" % scored[0]["entry"])
     print("(it pings the proxy, not the game path — use it to choose between candidates that")
     print(" already pass the deep check, not as a prediction of how play will feel)")

@@ -320,11 +320,30 @@ is short of labels rather than of capacity.
    (non-structural) failures, so they cannot rank recovery strategies.
    `ai/reality_check.py` correctly refuses to conclude below 30.
 
-0. **The network-health model cannot be loaded.** `networkhealth_artifacts/model.pt` was
-   trained with `BatchNorm`; `networkhealth/trm_moe.py` now uses `GroupNorm(1, C)`, and
-   `SEQ_LEN` went 128 → 32. It fails `load_state_dict`, and loading it `strict=False` would
-   print a confident number from weights the architecture no longer matches. Retraining is
-   a separate job; `ai/diagnose_network.py` reports live relay telemetry until then.
+0. **The network-health model is retrained and loads — but it is only advisory on fast pings.**
+   The checkpoint had been dead weight since the architecture changed (BatchNorm → GroupNorm,
+   `SEQ_LEN` 128 → 32), so it failed `load_state_dict` and `ai/diagnose_network.py` could only
+   report telemetry. Retrained on a Kaggle T4 (`kaggle/networkhealth`, ~4 min) after a local
+   CPU run proved the point by burning 42 minutes of CPU for 11 of wall time without finishing:
+
+   | | before | after |
+   |---|---|---|
+   | loads against the code | no | **yes** |
+   | RTT log-MAE, horizon 1 | 0.4654 | **0.3597** |
+   | train / valid examples | 1,585 / 146 | 96,550 / 6,358 |
+   | size | 2.0 MB | 223 KB |
+
+   Verified on real feature rows: predicted 24.8 vs actual 22.3 ms, 373.9 vs 397.2, 165.6 vs
+   236.8 — it works on its own distribution.
+
+   **Where it does not work, and why it matters.** `log_gap_seconds` is one of its ten features
+   and its training cadence is RIPE Atlas at roughly a minute. Feeding it pings 0.3 s apart is
+   out of distribution and the forecast is decoration — measured, not guessed: a 120 ms series
+   pinged twice a second came back as "0.8 ms, confidence high". So `ai/score_proxies.py` ranks
+   by **measured** loss, jitter and p95, and prints the model's degradation beside them as
+   advisory. Using the model honestly here would mean training on local fast-cadence telemetry,
+   which is the Phase 5 the old REPORT asked for and which still has not been collected.
+
 
 ---
 

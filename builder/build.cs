@@ -455,6 +455,18 @@ namespace DofusBuild
                         if (!Directory.Exists(parent)) Directory.CreateDirectory(parent);
                         File.Copy(file, destFile, true);
                     }
+
+                    // The artifacts folder is excluded above (100 MB of corpora), but the
+                    // checkpoint is 223 KB and is the only file inference needs. Without it
+                    // an installed copy has the model's code and no model, so
+                    // ai/diagnose_network.py can only report telemetry.
+                    string modelSrc = Path.Combine(repoNetwork, "networkhealth_artifacts", "model.pt");
+                    if (File.Exists(modelSrc))
+                    {
+                        string modelDst = Path.Combine(stageNetwork, "networkhealth_artifacts");
+                        Directory.CreateDirectory(modelDst);
+                        File.Copy(modelSrc, Path.Combine(modelDst, "model.pt"), true);
+                    }
                 }
 
                 // Write requirements.txt and helper scripts
