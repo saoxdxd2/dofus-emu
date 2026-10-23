@@ -452,7 +452,11 @@ def test_every_declared_tool_exists_in_the_client() -> None:
             if depth == 0:
                 block = text[brace:i + 1]
                 break
-    handlers = set(re.findall(r"['\"]([a-z][a-z0-9_.]+)['\"]\s*:", block))
+    # Handler entries sit at the table's own indentation. Matching any depth picks up
+    # nested keys inside a handler's return value, which is how a diagnostic's own
+    # payload started looking like a phantom tool.
+    handlers = set(re.findall(r"^ {12}['\"]([a-z][a-z0-9_.]+)['\"]\s*:", block,
+                              re.MULTILINE))
 
     declared = {c["id"]: c for c in caps}
     directive = {t for t, c in declared.items() if c.get("backend") == "directive"}
@@ -466,7 +470,10 @@ def test_every_declared_tool_exists_in_the_client() -> None:
           str(missing) if missing else "%d of %d" % (len(directive), len(directive)))
     check("travel is one of them", "nav.goto" in handlers,
           "nav.goto %s" % ("present" if "nav.goto" in handlers else "MISSING"))
-    phantom = sorted(handlers - directive - local)
+    # debug.* handlers are diagnostics, not agent tools: they exist to ask the
+    # client what it actually contains when a reader is returning nulls.
+    phantom = sorted(h for h in (handlers - directive - local)
+                     if not h.startswith("debug."))
     check("the client has no handlers the contract does not declare", not phantom,
           str(phantom) if phantom else "none")
 

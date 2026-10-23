@@ -1639,40 +1639,67 @@
         var _agentSnapshot = function() {
             var snap = { connected: false, in_fight: false };
             try {
+                // The fields this used to read do not exist in this client build.
+                // `playerData.character` is not an object with id/name/level (the
+                // bundle never reads a field off it), `isoEngine.currentMapId` appears
+                // zero times, and `playerData.characteristics` likewise — so every
+                // value came back null while the character stood on Astrub 4,-21.
+                // A reader that returns nulls is indistinguishable from a character
+                // that is not in the game, and the agent correctly refused to act on
+                // an empty world. The real shape, taken from the bundle itself:
+                //   playerData.characterBaseInformations  {id,name,level,breed,sex}
+                //   playerData.position                   {mapId,coordinates{posX,posY},...}
+                //   playerData.isFighting                 bool
+                //   isoEngine.actorManager.userActor      the player's own actor
+                var first = function (fns) {
+                    for (var i = 0; i < fns.length; i++) {
+                        try { var v = fns[i](); if (v !== undefined && v !== null) return v; }
+                        catch (e) {}
+                    }
+                    return null;
+                };
                 var pd = (window.gui && window.gui.playerData) || null;
-                var ch = (pd && pd.character) || {};
+                var base = (pd && pd.characterBaseInformations) || {};
+                var pos = (pd && pd.position) || {};
+                var coords = pos.coordinates || {};
+                var ua = null;
+                try { ua = window.isoEngine && window.isoEngine.actorManager
+                    && window.isoEngine.actorManager.userActor; } catch (e) {}
                 snap.connected = !!(window.dofus && window.dofus.connectionManager);
                 snap.character = {
-                    id: ch.id != null ? ch.id : null,
-                    name: ch.name || null,
-                    level: ch.level != null ? ch.level : null,
-                    breed: (ch.breed && ch.breed.name) || null
+                    id: first([function(){ return base.id; }, function(){ return pd.id; }]),
+                    name: base.name || null,
+                    level: first([function(){ return base.level; }]),
+                    breed: first([function(){ return base.breed && base.breed.name; },
+                                  function(){ return base.breed; }])
                 };
-                var pos = ch.position || {};
-                var mapId = pos.mapId;
-                try {
-                    if (mapId == null && window.isoEngine) {
-                        mapId = window.isoEngine.currentMapId || (window.isoEngine.mapData && window.isoEngine.mapData.mapId);
-                    }
-                } catch(e){}
+                var mapId = first([
+                    function(){ return pos.mapId; },
+                    function(){ return window.isoEngine.mapData.mapId; }
+                ]);
                 snap.position = {
-                    cell: pos.cell != null ? pos.cell : null,
-                    x: pos.x != null ? pos.x : null,
-                    y: pos.y != null ? pos.y : null,
-                    map_id: mapId != null ? mapId : null
+                    cell: first([
+                        function(){ return ua.position.cell; },
+                        function(){ return ua.cellId; },
+                        function(){ return pos.cell; }
+                    ]),
+                    x: first([function(){ return coords.posX; }, function(){ return pos.x; }]),
+                    y: first([function(){ return coords.posY; }, function(){ return pos.y; }]),
+                    map_id: mapId
                 };
                 // Connected is not the same as in-world. The client stays connected at
-                // character selection, where every action silently does nothing: no
-                // map, no cell, no NPC, and every directive still answers ok. Saying
-                // which of the two states we are in is the difference between "the AI
-                // is broken" and "pick a character".
+                // character selection, where every action silently does nothing.
                 snap.in_world = (mapId != null);
+                var stats = (ua && ua.stats) || {};
                 snap.hp = {
-                    life: ch.lifePoints != null ? ch.lifePoints : null,
-                    max: ch.maxLifePoints != null ? ch.maxLifePoints : null,
-                    ap: ch.ap != null ? ch.ap : null,
-                    mp: ch.mp != null ? ch.mp : null
+                    life: first([function(){ return stats.lifePoints; },
+                                 function(){ return base.lifePoints; }]),
+                    max: first([function(){ return stats.maxLifePoints; },
+                                function(){ return base.maxLifePoints; }]),
+                    ap: first([function(){ return stats.actionPoints; }]),
+                    mp: first([function(){ return stats.movementPoints; }])
                 };
+                snap.in_fight = !!(pd && pd.isFighting);
                 // XP is what makes a farm measurable: it is the only quantity the
                 // client reports on every kill, and a fight that yields 0 xp is a
                 // fight that was lost or abandoned. Read several candidate keys
@@ -2300,6 +2327,48 @@
                 if (!r.ok) return _agentResult(false, null, r.error);
                 return _agentResult(true, { map_id: mapId, via: 'ChangeMapMessage',
                     note: 'edge transition requested; the server refuses it if the map is not adjacent' });
+            },
+            // Diagnostic: report the shape of the client's own objects.
+            //
+            // The snapshot reader assumes window.gui.playerData.character holds id,
+            // name, level, position and hp. On a live client standing on 4,-21 it
+            // returned null for every one of them, which made the agent believe there
+            // was no character and nothing to act on. Guessing a second set of field
+            // names would repeat the mistake, so this asks the client what it has.
+            'debug.probe': function() {
+                var out = {};
+                var keys = function(o, n) {
+                    try { return o ? Object.keys(o).slice(0, n || 40) : null; }
+                    catch (e) { return 'ERR:' + e; }
+                };
+                var val = function(fn) {
+                    try { var v = fn(); return (v === undefined) ? '__undefined' : v; }
+                    catch (e) { return 'ERR:' + e; }
+                };
+                var pd = null, ch = null;
+                try { pd = window.gui && window.gui.playerData; } catch (e) {}
+                try { ch = pd && pd.character; } catch (e) {}
+                out.gui_keys = keys(window.gui, 30);
+                out.playerData_keys = keys(pd, 40);
+                out.character_keys = keys(ch, 40);
+                out.characteristics_keys = keys(pd && pd.characteristics, 40);
+                out.iso_keys = keys(window.isoEngine, 40);
+                out.dofus_keys = keys(window.dofus, 20);
+                out.candidates = {
+                    'character.name': val(function(){ return ch && ch.name; }),
+                    'character.id': val(function(){ return ch && ch.id; }),
+                    'character.level': val(function(){ return ch && ch.level; }),
+                    'characteristics.level': val(function(){ return pd && pd.characteristics && pd.characteristics.level; }),
+                    'characteristics.life': val(function(){ return pd && pd.characteristics && pd.characteristics.lifePoints; }),
+                    'position': val(function(){ return pd && pd.position ? JSON.stringify(pd.position) : null; }),
+                    'character.position': val(function(){ return ch && ch.position ? JSON.stringify(ch.position) : null; }),
+                    'iso.currentMapId': val(function(){ return window.isoEngine && window.isoEngine.currentMapId; }),
+                    'iso.mapData.mapId': val(function(){ return window.isoEngine && window.isoEngine.mapData && window.isoEngine.mapData.mapId; }),
+                    'iso.actorManager.playerId': val(function(){ return window.isoEngine && window.isoEngine.actorManager && window.isoEngine.actorManager.playerId; }),
+                    'iso.actorManager.playingActorId': val(function(){ return window.isoEngine && window.isoEngine.actorManager && window.isoEngine.actorManager.playingActorId; }),
+                    'gui.playerData.inventory.kamas': val(function(){ return pd && pd.inventory && pd.inventory.kamas; })
+                };
+                return _agentResult(true, out);
             },
             'inv.list': function() {
                 var snap = _agentSnapshot();
