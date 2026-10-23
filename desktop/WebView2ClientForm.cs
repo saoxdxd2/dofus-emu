@@ -2586,6 +2586,11 @@ namespace DofusFarm.Engine
                 _instanceId, e.CloseReason, _closeRequestedBy ?? "the player (window close)",
                 e.Cancel ? " (cancelled)" : ""));
 
+            // Record how long the session lasted against the egress it ran on. Over time this is
+            // what tells the supervisor which exit actually survives here — no configuration, and
+            // it re-learns whenever a proxy starts being kicked.
+            try { ProxySupervisor.Instance.NoteSessionEnd(e.CloseReason.ToString()); } catch { }
+
             CloseOAuthDialog();
 
             if (_cdnInterceptTotal > 0)

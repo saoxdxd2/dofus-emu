@@ -78,6 +78,17 @@ namespace DofusFarm.Engine
         // A single latency probe cannot tell a proxy that is fine from one that is about to stop
         // answering; a short time series can. Until there is a trained model for it, that script
         // scores candidates on median, jitter, trend and loss and writes the order here.
+        // How long sessions actually last on each egress, learned on this machine.
+        //
+        // A probe says whether a proxy answers; it says nothing about whether a session on it
+        // survives. Users cannot be asked to configure an exit they control, so the app has to
+        // discover which egress works here by watching its own sessions and preferring the ones
+        // that last. No setup, and it adapts when a proxy starts getting kicked.
+        private DateTime _sessionStartUtc = DateTime.MinValue;
+        private string _sessionEgress;
+        private Dictionary<string, double> _survival = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, int> _sessionCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
         private List<string> _rankOrder;
         private DateTime _rankLoadedUtc = DateTime.MinValue;
 
@@ -211,6 +222,59 @@ namespace DofusFarm.Engine
             for (int i = 0; i < _rankOrder.Count; i++)
                 if (string.Equals(_rankOrder[i], c.Url, StringComparison.OrdinalIgnoreCase)) return i;
             return int.MaxValue;
+        }
+
+        /// <summary>Called when a client starts on this egress.</summary>
+        public void NoteSessionStart(string egress)
+        {
+            _sessionEgress = egress;
+            _sessionStartUtc = DateTime.UtcNow;
+        }
+
+        /// <summary>
+        /// Called when a client closes. Records how long the session lasted, which is the only
+        /// honest measure of whether an egress is usable for playing.
+        /// </summary>
+        public void NoteSessionEnd(string reason)
+        {
+            if (_sessionStartUtc == DateTime.MinValue || string.IsNullOrEmpty(_sessionEgress)) return;
+            double seconds = (DateTime.UtcNow - _sessionStartUtc).TotalSeconds;
+            _sessionStartUtc = DateTime.MinValue;
+
+            // Under ten seconds is a failed launch, not a session; it says nothing about the
+            // egress and would poison the average.
+            if (seconds < 10) return;
+
+            lock (_gate)
+            {
+                double prev;
+                _survival.TryGetValue(_sessionEgress, out prev);
+                int n;
+                _sessionCount.TryGetValue(_sessionEgress, out n);
+                _survival[_sessionEgress] = (prev * n + seconds) / (n + 1);
+                _sessionCount[_sessionEgress] = n + 1;
+            }
+
+            try
+            {
+                string path = Path.Combine(NetworkSettings.AppBase, "asset_cache", "sessions.jsonl");
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.AppendAllText(path, string.Format(
+                    "{{\"ts\":\"{0:o}\",\"egress\":\"{1}\",\"seconds\":{2:F1},\"reason\":\"{3}\"}}\n",
+                    DateTime.UtcNow, _sessionEgress.Replace("\\", "/"), seconds, (reason ?? "").Replace("\"", "'")));
+            }
+            catch { }
+        }
+
+        /// <summary>Average session seconds on this egress; 0 when unknown.</summary>
+        private double SurvivalOf(ProxyCandidate c)
+        {
+            if (c == null || string.IsNullOrEmpty(c.Url)) return 0;
+            lock (_gate)
+            {
+                double v;
+                return _survival.TryGetValue(c.Url, out v) ? v : 0;
+            }
         }
 
         public ProxyCandidate EnsureActive(bool forceRefresh)
@@ -392,6 +456,11 @@ namespace DofusFarm.Engine
                 {
                     // Measured stability first, then the source ranking, then latency. A candidate
                     // the ranker has never seen sorts last, which is right: it has no record.
+                    // Sessions that lasted come before sessions that did not. Unknown egresses
+                    // sit in the middle: no evidence either way, so they get a fair trial.
+                    double sa = SurvivalOf(a), sb = SurvivalOf(b);
+                    if (Math.Abs(sa - sb) > 1.0) return sb.CompareTo(sa);
+
                     int ia = RankIndex(a), ib = RankIndex(b);
                     if (ia != ib) return ia.CompareTo(ib);
                     int ra = RankOf(a), rb = RankOf(b);

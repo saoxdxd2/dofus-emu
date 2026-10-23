@@ -3022,6 +3022,9 @@ namespace DofusFarm.UI
                 string upstream = choice.Url;
                 Log(string.Format("WebView2 {0}: egress {1} ({2})", inst.Name,
                     choice.Direct ? "DIRECT" : upstream, choice.Reason));
+                // Start the clock: how long this session lasts is the only real evidence about
+                // whether this egress can carry a game.
+                try { ProxySupervisor.Instance.NoteSessionStart(choice.Direct ? "DIRECT" : upstream); } catch { }
 
                 bool wired = _engine.EnsureProxyRunning(localProxyPort, upstream, serialNo, androidId, profile);
 
