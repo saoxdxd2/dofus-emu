@@ -599,6 +599,9 @@ type ProxyServer struct {
 	// it treats as a hijacked account. One exit at a time, changed only when it fails.
 	upstreamMu sync.Mutex
 	lastGood   *url.URL
+	// The fixed exit: the one address Ankama is allowed to see. Reached through any hop in
+	// upstreams, so a hop can die without the session's identity changing.
+	exitURL *url.URL
 	cacheDir       string
 	quiet          bool
 	port           int
@@ -962,6 +965,187 @@ func parseUpstreamList(raw string) []*url.URL {
 	return out
 }
 
+// connectThrough performs a proxy handshake on a connection that is already open, so the same
+// socket can be relayed a second time. This is what makes a fixed exit possible: the hop carries
+// us to the exit proxy, and the exit proxy carries us to the target.
+func connectThrough(conn net.Conn, scheme, host string, port int, userinfo, ua string) error {
+	if strings.HasPrefix(strings.ToLower(scheme), "socks5") {
+		var user, pass string
+		if userinfo != "" {
+			user, pass, _ = strings.Cut(userinfo, ":")
+		}
+		greet := []byte{0x05, 0x01, 0x00}
+		if user != "" {
+			greet = []byte{0x05, 0x02, 0x00, 0x02}
+		}
+		if _, err := conn.Write(greet); err != nil {
+			return err
+		}
+		var buf [4]byte
+		if _, err := io.ReadFull(conn, buf[:2]); err != nil || buf[0] != 0x05 {
+			return errors.New("invalid SOCKS5 greeting")
+		}
+		if buf[1] == 0x02 {
+			if len(user) > 255 || len(pass) > 255 {
+				return errors.New("SOCKS5 credentials too long")
+			}
+			req := append([]byte{0x01, byte(len(user))}, user...)
+			req = append(req, byte(len(pass)))
+			req = append(req, pass...)
+			if _, err := conn.Write(req); err != nil {
+				return err
+			}
+			if _, err := io.ReadFull(conn, buf[:2]); err != nil || buf[1] != 0x00 {
+				return errors.New("SOCKS5 authentication rejected")
+			}
+		}
+		name := []byte(host)
+		if len(name) > 255 {
+			return errors.New("host too long for SOCKS5")
+		}
+		req := append([]byte{0x05, 0x01, 0x00, 0x03, byte(len(name))}, name...)
+		req = append(req, byte(port>>8), byte(port&0xFF))
+		if _, err := conn.Write(req); err != nil {
+			return err
+		}
+		if _, err := io.ReadFull(conn, buf[:4]); err != nil || buf[1] != 0x00 {
+			return fmt.Errorf("SOCKS5 connect failed (code %d)", buf[1])
+		}
+		switch buf[3] {
+		case 0x01:
+			_, err := io.ReadFull(conn, make([]byte, 4+2))
+			return err
+		case 0x04:
+			_, err := io.ReadFull(conn, make([]byte, 16+2))
+			return err
+		case 0x03:
+			if _, err := io.ReadFull(conn, buf[:1]); err != nil {
+				return err
+			}
+			_, err := io.ReadFull(conn, make([]byte, int(buf[0])+2))
+			return err
+		}
+		return nil
+	}
+
+	dest := net.JoinHostPort(host, strconv.Itoa(port))
+	auth := ""
+	if userinfo != "" {
+		auth = "Proxy-Authorization: Basic " +
+			base64.StdEncoding.EncodeToString([]byte(userinfo)) + "\r\n"
+	}
+	req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n%s\r\n",
+		dest, dest, ua, auth)
+	if _, err := io.WriteString(conn, req); err != nil {
+		return err
+	}
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("proxy answered %s", resp.Status)
+	}
+	return nil
+}
+
+// dialViaExit opens the target through a fixed exit proxy, reaching that exit through any of the
+// hop proxies.
+//
+// This is the difference between a session that survives and one that does not. With a single
+// upstream, every failover changes the address Ankama sees, and an address change mid-session is
+// what it treats as a hijacked account. Here the exit is the identity and the hops are
+// disposable: the hop can die, be replaced, be raced against others, and the far side still sees
+// one address — the exit's.
+//
+// Measured before building it: dialling 182.18.83.37:7890 and asking it to reach
+// 47.91.110.148:1000, then asking that one for api.ipify.org, returns 47.91.110.148 — exactly
+// what the exit reports on its own.
+func (p *ProxyServer) dialViaExit(ctx context.Context, exit *url.URL, dest string, timeout time.Duration) (net.Conn, *url.URL, error) {
+	exitHost := exit.Hostname()
+	exitPort := 1080
+	if portStr := exit.Port(); portStr != "" {
+		if n, err := strconv.Atoi(portStr); err == nil && n > 0 {
+			exitPort = n
+		}
+	}
+	targetHost, targetPortStr, err := net.SplitHostPort(dest)
+	if err != nil {
+		targetHost, targetPortStr = dest, "443"
+	}
+	targetPort, err := strconv.Atoi(targetPortStr)
+	if err != nil || targetPort <= 0 || targetPort > 65535 {
+		targetPort = 443
+	}
+	exitUser := ""
+	if exit.User != nil {
+		exitUser = exit.User.String()
+	}
+
+	hops := make([]*url.URL, 0, len(p.upstreams))
+	for _, u := range p.upstreams {
+		if u == nil || u.String() == exit.String() {
+			continue
+		}
+		hops = append(hops, u)
+	}
+	if len(hops) == 0 {
+		// Nothing to hop through: use the exit directly, which is the old behaviour.
+		conn, err := p.dialOne(exit, dest, dest, timeout)
+		if err != nil {
+			return nil, nil, err
+		}
+		return conn, exit, nil
+	}
+
+	type result struct {
+		conn net.Conn
+		hop  *url.URL
+		err  error
+	}
+	results := make(chan result, len(hops))
+	exitAddr := net.JoinHostPort(exitHost, strconv.Itoa(exitPort))
+	for _, hop := range hops {
+		go func(hop *url.URL) {
+			conn, err := p.dialOne(hop, exitAddr, exitAddr, timeout)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			if err = connectThrough(conn, exit.Scheme, targetHost, targetPort, exitUser, p.ua); err != nil {
+				conn.Close()
+				results <- result{err: err}
+				return
+			}
+			results <- result{conn: conn, hop: hop}
+		}(hop)
+	}
+
+	var lastErr error
+	for i := 0; i < len(hops); i++ {
+		r := <-results
+		if r.err == nil {
+			go func(remaining int) {
+				for j := 0; j < remaining; j++ {
+					if late := <-results; late.conn != nil {
+						late.conn.Close()
+					}
+				}
+			}(len(hops) - i - 1)
+			p.upstreamMu.Lock()
+			p.lastGood = exit
+			p.upstreamMu.Unlock()
+			return r.conn, exit, nil
+		}
+		lastErr = r.err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no hop could reach the exit")
+	}
+	return nil, nil, lastErr
+}
+
 // dialUpstreamHttp opens a tunnel through an HTTP proxy with CONNECT.
 func (p *ProxyServer) dialUpstreamHttp(u *url.URL, dest string, timeout time.Duration) (net.Conn, error) {
 	defPort := "80"
@@ -1142,6 +1326,29 @@ func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error)
 				dest = mapped
 			}
 		}
+	}
+
+	// The fixed exit comes first: it is the identity the session is supposed to keep.
+	//
+	// Hops are raced and can be replaced freely; the exit is what Ankama sees. Only if no hop can
+	// reach the exit at all do we fall through to the plain chain, and that fallback changes the
+	// exit IP, so it says so out loud.
+	if p.exitURL != nil {
+		var exitErr error
+		for attempt := 0; attempt < 2; attempt++ {
+			if attempt > 0 {
+				time.Sleep(time.Duration(attempt) * 1500 * time.Millisecond)
+			}
+			conn, _, err := p.dialViaExit(ctx, p.exitURL, dest, 6*time.Second)
+			if err == nil {
+				upstreamHealthy.Store(true)
+				return conn, nil
+			}
+			exitErr = err
+		}
+		upstreamHealthy.Store(false)
+		log.Printf("[UPSTREAM] fixed exit %s unreachable through any hop (%v); falling back to the plain chain, which WILL change the exit IP",
+			p.exitURL.Redacted(), exitErr)
 	}
 
 	if p.upstreamURL != nil {
@@ -3417,7 +3624,8 @@ func main() {
 
 	port := flag.Int("port", defInt("port", 8880), "Local listening port for HTTP/CONNECT proxy")
 	host := flag.String("host", defStr("host", "127.0.0.1"), "Host address to bind the proxy server to")
-	upstream := flag.String("upstream", defStr("upstream", ""), "Upstream proxy URL (optional, e.g. http://ip:port or socks5://ip:port)")
+	upstream := flag.String("upstream", defStr("upstream", ""), "Upstream proxy URL, or a comma-separated chain of them (http://ip:port or socks5://ip:port)")
+	exitProxy := flag.String("exit-proxy", defStr("exit_proxy", ""), "Fixed exit proxy reached through -upstream hops. Keeps one exit IP across hop failures.")
 	dnsServer := flag.String("dns", defStr("dns", ""), "Custom DNS server to query (optional, default: system DNS)")
 	cacheDir := flag.String("cache", defStr("cache", "proxy_cache"), "Directory to cache static game assets (optional)")
 	quiet := flag.Bool("quiet", defBool("quiet", false), "Quiet mode (suppress request logs)")
@@ -3517,6 +3725,12 @@ func main() {
 		}
 	}
 	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, *token, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize, *referer)
+	if trimmed := strings.TrimSpace(*exitProxy); trimmed != "" {
+		proxy.exitURL = parseUpstreamProxy(trimmed)
+		if proxy.exitURL == nil {
+			log.Printf("[UPSTREAM] -exit-proxy %q is not a usable proxy URL; ignoring it", trimmed)
+		}
+	}
 	proxy.allowDirect = *allowDirect
 	if *allowDirect {
 		log.Printf("[UPSTREAM] -allow-direct is ON: if the tunnel dies, traffic will go direct and " +

@@ -1886,12 +1886,13 @@ namespace DofusFarm.Engine
                     var sb = new StringBuilder().AppendFormat("-port {0} -cache \"{1}\" -quiet", port, Path.Combine(AppBaseDir, "asset_cache"));
                     if (!string.IsNullOrEmpty(normalizedUpstream))
                     {
-                        // Hand the relay the whole healthy set, not just the pick. It tries
-                        // them in order per dial, so a proxy that dies mid-session is a retry
-                        // rather than "the server is unavailable".
-                        string chain = ProxySupervisor.Instance.UpstreamChain(normalizedUpstream, 4);
-                        sb.AppendFormat(" -upstream \"{0}\"", chain);
-                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
+                        // The pick becomes the fixed exit — the address Ankama sees — and the
+                        // rest of the healthy set becomes disposable hops to reach it. That way
+                        // a hop can die and be replaced without the session changing IP.
+                        string hops = ProxySupervisor.Instance.HopChain(normalizedUpstream, 4);
+                        sb.AppendFormat(" -upstream \"{0}\" -exit-proxy \"{1}\"", hops, normalizedUpstream);
+                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Exit: {1} via {2} hop(s))...",
+                            port, normalizedUpstream, string.IsNullOrEmpty(hops) ? 0 : hops.Split(',').Length));
                     }
                     else Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
 

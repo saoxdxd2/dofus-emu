@@ -498,25 +498,27 @@ namespace DofusFarm.Engine
         }
 
         /// <summary>
-        /// The primary upstream followed by the next-best healthy candidates, comma separated.
+        /// The hops the relay may use to reach a fixed exit, comma separated.
         ///
-        /// The relay tries them in order on every dial, so a candidate that dies mid-session
-        /// costs one retry instead of the session. Order matters: the supervisor's pick stays
-        /// first, and the rest are only ever fallbacks.
+        /// The pick is no longer one of them: it becomes the exit, the address Ankama is allowed
+        /// to see. These are the disposable middle of the path — the relay races them and takes
+        /// whichever can reach the exit, so any of them can die without the session's identity
+        /// changing.
         /// </summary>
-        public string UpstreamChain(string primary, int max)
+        public string HopChain(string exitUrl, int max)
         {
-            if (string.IsNullOrEmpty(primary)) return primary;
-            if (max < 2) return primary;
+            if (string.IsNullOrEmpty(exitUrl)) return "";
+            if (max < 1) return "";
 
-            var parts = new List<string> { primary };
+            var parts = new List<string>();
             foreach (ProxyCandidate c in Candidates)
             {
                 if (parts.Count >= max) break;
                 if (c == null || !c.Healthy || string.IsNullOrEmpty(c.Url)) continue;
-                // No commas in a URL, but a chain entry that contained one would silently split
-                // into two bogus upstreams.
+                // No commas in a URL, but an entry that contained one would silently split into
+                // two bogus hops.
                 if (c.Url.IndexOf(',') >= 0) continue;
+                if (string.Equals(c.Url, exitUrl, StringComparison.OrdinalIgnoreCase)) continue;
                 if (parts.Contains(c.Url)) continue;
                 parts.Add(c.Url);
             }
