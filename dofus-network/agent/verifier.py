@@ -49,7 +49,8 @@ VERDICTS = ("advanced", "noop", "failed", "blocked")
 
 # Observation keys that mean "the world moved". Kept in one place so the rule,
 # the dataset builder and the model features cannot drift apart.
-STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size")
+STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
+              "in_dialog", "in_fight")
 
 # Tools that only read. A query cannot "change the world", so scoring it as
 # `noop` was wrong: it made every successful lookup look like a failure, and the
@@ -150,10 +151,37 @@ class Verdict:
         return asdict(self)
 
 
+# The observation is nested (position.map_id, hp.life, inventory.items) while these
+# rules were written against a flat snapshot. Comparing the flat names against a nested
+# dict returns None on both sides for every key, so `_changed` reported "nothing
+# changed" for every action — including a real map change — and every step was scored
+# `noop`. That is the single reason the loop could never see itself working.
+NESTED_ALIASES = {
+    "map_id": ("position", "map_id"),
+    "mapId": ("position", "map_id"),
+    "cell": ("position", "cell"),
+    "hp": ("hp", "life"),
+    "inventory_size": ("inventory", "items"),
+}
+
+
 def _get(obs: Optional[Dict[str, Any]], key: str) -> Any:
+    """Read a flat state key, following the nested snapshot shape when present."""
     if not isinstance(obs, dict):
         return None
-    return obs.get(key)
+    if key in obs:
+        return obs.get(key)
+    path = NESTED_ALIASES.get(key)
+    if path is None:
+        return None
+    cur: Any = obs
+    for part in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    if isinstance(cur, list):
+        return len(cur)
+    return cur
 
 
 def _changed(before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]]) -> list[str]:

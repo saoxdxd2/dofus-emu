@@ -498,6 +498,37 @@ def test_every_declared_tool_exists_in_the_client() -> None:
           str(phantom) if phantom else "none")
 
 
+def test_verifier_reads_the_real_observation_shape() -> None:
+    """The rules compared flat keys against a nested snapshot and saw no change.
+
+    The snapshot is `{position: {map_id, cell}, hp: {life}, inventory: {items}}`, but
+    STATE_KEYS asked for `map_id`, `cell`, `hp`, `inventory_size` at the top level. Both
+    sides were None for every key, so `_changed` was always empty, every step scored
+    `noop`, and the loop could not tell a real map change from standing still. This is
+    the bug that made the agent look incapable while it was actually moving.
+    """
+    print("\n== observation shape ==")
+    from agent.verifier import _changed
+
+    before = {"position": {"map_id": 150736645, "cell": 328},
+              "hp": {"life": 120}, "inventory": {"items": [1, 2]}, "in_dialog": False}
+    after_cell = {"position": {"map_id": 150736645, "cell": 402},
+                  "hp": {"life": 120}, "inventory": {"items": [1, 2]}, "in_dialog": False}
+    after_map = {"position": {"map_id": 150736646, "cell": 328},
+                 "hp": {"life": 120}, "inventory": {"items": [1, 2]}, "in_dialog": False}
+    after_dialog = {"position": {"map_id": 150736645, "cell": 328},
+                    "hp": {"life": 120}, "inventory": {"items": [1, 2]}, "in_dialog": True}
+
+    check("a moved cell is a change", "cell" in _changed(before, after_cell),
+          str(_changed(before, after_cell)))
+    check("a changed map is a change", "map_id" in _changed(before, after_map),
+          str(_changed(before, after_map)))
+    check("an opened dialog is a change", "in_dialog" in _changed(before, after_dialog),
+          str(_changed(before, after_dialog)))
+    check("standing still is not a change", not _changed(before, dict(before)),
+          str(_changed(before, dict(before))))
+
+
 def test_unlimited_means_unlimited() -> None:
     """An Auto run must not stop after eight steps because a default said so.
 
@@ -813,6 +844,7 @@ def main() -> int:
     test_bridge_port_is_discovered()
     test_every_declared_tool_exists_in_the_client()
     test_host_messages_are_not_double_encoded()
+    test_verifier_reads_the_real_observation_shape()
     test_unlimited_means_unlimited()
     test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()

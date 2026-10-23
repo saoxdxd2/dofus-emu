@@ -1763,6 +1763,10 @@
                                function(){ return stats.movementPoints; }])
                 };
                 snap.in_fight = !!(pd && pd.isFighting);
+                // A talk objective opens a dialog; without this flag the verifier sees
+                // no change and calls the step a noop, and the loop retires a quest
+                // that was actually progressing.
+                snap.in_dialog = !!(pd && pd.isInDialog);
                 // XP is what makes a farm measurable: it is the only quantity the
                 // client reports on every kill, and a fight that yields 0 xp is a
                 // fight that was lost or abandoned. Read several candidate keys
@@ -2388,14 +2392,90 @@
             // pathfinder must not be reimplemented, so this asks for the transition and
             // lets the server refuse it when the target is not adjacent — a real answer,
             // and the client keeps ownership of path validity and obstacles.
+            // Travel, using the client's own machinery instead of a blind protocol
+            // message. The client already owns a pathfinder and a map transition:
+            //
+            //   isoEngine._movePlayerOnMap(cell, flag, cb)  pathfind within this map
+            //       and send GameMapMovementRequestMessage
+            //   isoEngine._requestMapChange(mapId, cell)    send ChangeMapMessage and
+            //       run the transition animation
+            //
+            // Sending ChangeMapMessage by hand (what this did) asks for one edge hop
+            // with no path at all, so a target two cells away was unreachable and the
+            // notes' instruction — "do not reimplement the pathfinder, drive the
+            // client's" — was never followed.
+            //
+            // Accepts, in priority order:
+            //   npc_id  walk to that NPC's cell on this map (the useful one for quests)
+            //   cell    walk to a cell on this map
+            //   map_id  change map through the client's own transition
             'nav.goto': function(args) {
-                var raw = args && (args.map_id !== undefined ? args.map_id : args.mapId);
-                var mapId = parseInt(raw, 10);
-                if (!mapId) return _agentResult(false, null, 'nav.goto needs a numeric map_id');
-                var r = _cmSend('ChangeMapMessage', { mapId: mapId });
-                if (!r.ok) return _agentResult(false, null, r.error);
-                return _agentResult(true, { map_id: mapId, via: 'ChangeMapMessage',
-                    note: 'edge transition requested; the server refuses it if the map is not adjacent' });
+                var iso = window.isoEngine || null;
+                var pd = (window.gui && window.gui.playerData) || null;
+                var here = pd && pd.position ? pd.position.mapId : null;
+                var a = args || {};
+                var wantMap = parseInt(a.map_id !== undefined ? a.map_id : a.mapId, 10) || null;
+                var wantCell = parseInt(a.cell !== undefined ? a.cell : a.cellId, 10);
+                var npcId = parseInt(a.npc_id !== undefined ? a.npc_id : a.npcId, 10) || null;
+                if (isNaN(wantCell)) wantCell = null;
+
+                // Resolve an NPC to the cell it is standing on.
+                if (!wantCell && npcId) {
+                    try {
+                        var am = iso && iso.actorManager;
+                        var actors = (am && (am.actors || am.actorList)) || null;
+                        for (var k in actors) {
+                            if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
+                            var ac = actors[k] || {};
+                            var nid = ac.npcId != null ? ac.npcId : (ac.staticInfos && ac.staticInfos.npcId);
+                            if (Number(nid) !== npcId) continue;
+                            wantCell = ac.cellId != null ? ac.cellId : (ac.position && ac.position.cell);
+                            if (wantCell != null) break;
+                        }
+                    } catch (e) {}
+                    if (wantCell == null) {
+                        return _agentResult(false, { npc_id: npcId, map_id: here },
+                            'npc ' + npcId + ' is not on map ' + here);
+                    }
+                }
+
+                // A different map: let the client run its own transition.
+                if (wantMap && here && wantMap !== here) {
+                    if (!iso || typeof iso._requestMapChange !== 'function') {
+                        var r = _cmSend('ChangeMapMessage', { mapId: wantMap });
+                        return _agentResult(r.ok, { map_id: wantMap, via: 'raw' },
+                            r.ok ? null : r.error);
+                    }
+                    try {
+                        iso._requestMapChange(wantMap, wantCell);
+                        return _agentResult(true, { from_map: here, to_map: wantMap,
+                            via: 'isoEngine._requestMapChange',
+                            note: 'the server refuses it if the maps are not adjacent' });
+                    } catch (e) {
+                        return _agentResult(false, null, 'map change failed: ' + e);
+                    }
+                }
+
+                // Same map (or no map given): walk to the cell.
+                if (wantCell == null) {
+                    return _agentResult(false, { map_id: here },
+                        'nav.goto needs one of: npc_id, cell, or a map_id different from ' + here);
+                }
+                if (!iso || typeof iso._movePlayerOnMap !== 'function') {
+                    return _agentResult(false, null, 'isoEngine._movePlayerOnMap unavailable');
+                }
+                var outcome = { cell: wantCell, map_id: here, via: 'isoEngine._movePlayerOnMap' };
+                try {
+                    // The callback fires after the server confirms; the request itself
+                    // goes out synchronously inside the call, so ok here means "asked",
+                    // and the next state.snapshot says whether the character moved.
+                    iso._movePlayerOnMap(wantCell, false, function (err) {
+                        if (err) outcome.error = String(err);
+                    });
+                } catch (e) {
+                    return _agentResult(false, outcome, 'movement failed: ' + e);
+                }
+                return _agentResult(true, outcome);
             },
             // Diagnostic: report the shape of the client's own objects.
             //
@@ -2473,6 +2553,36 @@
                 } catch(err) { return _agentResult(false, null, err.toString()); }
             },
             'quest.advance': function(args) {
+                // A dialog that is already open has to be answered, and answering is
+                // the only way a talk objective ever completes: opening the NPC is
+                // step one, choosing a reply is step two. Before this, `quest.advance`
+                // could open a dialog and then had no way to finish it — which is why
+                // 46% of the objectives in the KB (talk + deliver) could not move.
+                //
+                // The client exposes the whole dialog: gui.npcDialogUi._uiReplyHandler
+                // (index) sends NpcDialogReplyMessage{replyId: replyIds[index]}.
+                var pd0 = (window.gui && window.gui.playerData) || null;
+                if (pd0 && pd0.isInDialog) {
+                    var ui = window.gui.npcDialogUi;
+                    var want = (args && args.reply !== undefined) ? parseInt(args.reply, 10) : 0;
+                    if (isNaN(want)) want = 0;
+                    var ids = (ui && ui.replyIds) || null;
+                    if (!ui || typeof ui._uiReplyHandler !== 'function') {
+                        return _agentResult(false, null, 'in a dialog but npcDialogUi is unavailable');
+                    }
+                    if (ids && want >= ids.length) {
+                        return _agentResult(false, { replies: ids.length },
+                            'dialog has ' + ids.length + ' replies; asked for index ' + want);
+                    }
+                    try {
+                        ui._uiReplyHandler(want);
+                        return _agentResult(true, { replied: want, replies: ids ? ids.length : null,
+                            via: 'gui.npcDialogUi._uiReplyHandler' });
+                    } catch (e) {
+                        return _agentResult(false, null, 'reply failed: ' + e);
+                    }
+                }
+
                 // Two ways to advance, both captured on 2026-10-22:
                 //   explicit objective -> QuestObjectiveValidationMessage
                 //   otherwise          -> talk to the NPC (npcActionId 3) and let
