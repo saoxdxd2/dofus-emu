@@ -1026,28 +1026,85 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 		order = append(order, u)
 	}
 
-	var lastErr error
-	for _, u := range order {
-		var conn net.Conn
-		var err error
-		if strings.HasPrefix(strings.ToLower(u.Scheme), "socks5") {
-			conn, err = dialUpstreamSocks5(u, socksTarget, timeout)
-		} else {
-			conn, err = p.dialUpstreamHttp(u, dest, timeout)
+	// Fast path: the exit we are already using. One dial, no goroutines, and the same source
+	// address the session has been using.
+	if preferred != nil {
+		if conn, err := p.dialOne(preferred, dest, socksTarget, timeout); err == nil {
+			return conn, preferred, nil
 		}
-		if err == nil {
+	}
+
+	// The exit is gone, or we never had one. Race the rest.
+	//
+	// Sequentially this was up to len(chain) x timeout: four dead candidates at six seconds
+	// each is a twenty-four second stall, which the client experiences as a dead server. Racing
+	// costs one timeout regardless of how many candidates there are, and the first upstream to
+	// open a tunnel wins.
+	//
+	// Racing is only ever used to *establish* an exit. Once one works it is pinned (lastGood) and
+	// the fast path above keeps every later dial on it, because a session that changes source
+	// address mid-flight is what the server treats as hijacked.
+	return p.raceUpstreams(ctx, order, dest, socksTarget, timeout)
+}
+
+// dialOne opens a tunnel through a single upstream, choosing the handshake by scheme.
+func (p *ProxyServer) dialOne(u *url.URL, dest, socksTarget string, timeout time.Duration) (net.Conn, error) {
+	if u == nil {
+		return nil, fmt.Errorf("nil upstream")
+	}
+	if strings.HasPrefix(strings.ToLower(u.Scheme), "socks5") {
+		return dialUpstreamSocks5(u, socksTarget, timeout)
+	}
+	return p.dialUpstreamHttp(u, dest, timeout)
+}
+
+// raceUpstreams dials every candidate at once and returns the first that opens.
+//
+// The losers are closed rather than leaked: a race where three goroutines each hold an open
+// tunnel to Ankama would look, from the far side, like three connections from three addresses
+// that never sent a byte.
+func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest, socksTarget string,
+	timeout time.Duration) (net.Conn, *url.URL, error) {
+	if len(order) == 0 {
+		return nil, nil, fmt.Errorf("no upstream configured")
+	}
+
+	type result struct {
+		conn net.Conn
+		url  *url.URL
+		err  error
+	}
+	results := make(chan result, len(order))
+	for _, u := range order {
+		go func(u *url.URL) {
+			conn, err := p.dialOne(u, dest, socksTarget, timeout)
+			results <- result{conn: conn, url: u, err: err}
+		}(u)
+	}
+
+	var lastErr error
+	for i := 0; i < len(order); i++ {
+		r := <-results
+		if r.err == nil {
+			// Drain the stragglers in the background so their sockets are closed.
+			go func(remaining int) {
+				for j := 0; j < remaining; j++ {
+					if late := <-results; late.conn != nil {
+						late.conn.Close()
+					}
+				}
+			}(len(order) - i - 1)
+
 			p.upstreamMu.Lock()
-			changed := p.lastGood == nil || p.lastGood.String() != u.String()
-			p.lastGood = u
+			changed := p.lastGood == nil || p.lastGood.String() != r.url.String()
+			p.lastGood = r.url
 			p.upstreamMu.Unlock()
 			if changed {
-				// Only when the exit actually moves: logging this on every dial while riding a
-				// fallback buries the one line that matters under a hundred that do not.
-				log.Printf("[UPSTREAM] carrying %s over %s (exit changed)", dest, u.Redacted())
+				log.Printf("[UPSTREAM] carrying %s over %s (exit changed)", dest, r.url.Redacted())
 			}
-			return conn, u, nil
+			return r.conn, r.url, nil
 		}
-		lastErr = err
+		lastErr = r.err
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no upstream configured")
