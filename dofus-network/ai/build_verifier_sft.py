@@ -199,7 +199,7 @@ def selfcheck_steps(count: int = 240, seed: int = 7, sessions: int = 4) -> List[
     rng = random.Random(seed)
     verifier = Verifier(human_path=Path("/nonexistent/verifier-selfcheck.jsonl"))
     tools = ["farm.step", "hdv.list", "hdv.scan", "inv.list", "quest.advance",
-             "nav.walk", "fight.join", "state.snapshot"]
+             "nav.goto", "fight.join", "state.snapshot"]
     per_session = max(1, count // max(1, sessions))
     rows: List[Dict[str, Any]] = []
     index = 0

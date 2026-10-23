@@ -37,7 +37,7 @@ namespace DofusFarm.UI
     {
         public string Mode = "off";          // off | order | auto
         public int TargetSlot = 0;           // 0 = all instances
-        public string Policy = "rule";       // rule | encoder
+        public string Policy = "planner";    // rule | encoder | planner
         public bool DryRun = false;
         // No wall-clock budget and no interval: the loop runs until the goals are
         // met or the user stops it. Steps 0 = unlimited for the same reason.
@@ -342,7 +342,7 @@ namespace DofusFarm.UI
             row1.Controls.Add(_cmbTarget);
 
             row1.Controls.Add(MakeLabel("Policy", 342, 4));
-            _cmbPolicy = MakeCombo(392, 0, 118, new object[] { "Rule policy", "Encoder v15" });
+            _cmbPolicy = MakeCombo(392, 0, 118, new object[] { "Rule policy", "Encoder v15", "Quest planner" });
             row1.Controls.Add(_cmbPolicy);
 
             _chkDry = new CheckBox();
@@ -525,7 +525,13 @@ namespace DofusFarm.UI
         private void ApplySettingsToUi()
         {
             _cmbMode.SelectedIndex = _settings.Mode == "auto" ? 2 : (_settings.Mode == "order" ? 1 : 0);
-            _cmbPolicy.SelectedIndex = _settings.Policy == "encoder" ? 1 : 0;
+            // The planner was reachable from Python (--policy planner) but not from
+            // here, so the panel could only offer a one-tool rule and an encoder with
+            // nothing to drive. "Nothing works" was, in part, that neither of these can
+            // plan a quest: the rule maps a goal to a single tool, and the encoder picks
+            // a tool for a step that no plan produced.
+            _cmbPolicy.SelectedIndex = _settings.Policy == "encoder" ? 1
+                : (_settings.Policy == "planner" ? 2 : 0);
             _chkDry.Checked = _settings.DryRun;
             _txtGoals.Text = _settings.Goals;
             _numSteps.Value = Clamp((decimal)_settings.Steps, _numSteps.Minimum, _numSteps.Maximum);
@@ -572,7 +578,8 @@ namespace DofusFarm.UI
         {
             _settings.Mode = _cmbMode.SelectedIndex == 2 ? "auto" : (_cmbMode.SelectedIndex == 1 ? "order" : "off");
             _settings.TargetSlot = _cmbTarget.SelectedIndex;
-            _settings.Policy = _cmbPolicy.SelectedIndex == 1 ? "encoder" : "rule";
+            _settings.Policy = _cmbPolicy.SelectedIndex == 2 ? "planner"
+                : (_cmbPolicy.SelectedIndex == 1 ? "encoder" : "rule");
             _settings.DryRun = _chkDry.Checked;
             _settings.Goals = _txtGoals.Text;
             _settings.Steps = (int)_numSteps.Value;

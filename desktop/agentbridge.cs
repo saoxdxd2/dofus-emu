@@ -99,9 +99,35 @@ namespace DofusFarm.Engine
                 }
             }
 
+            // Last resort: let the OS pick. A fixed port (or even a fixed list) is a
+            // single point of failure, and the failure is invisible — the app keeps
+            // running and every directive dies. Port 0 always binds, and the chosen
+            // port is published, so the agent follows it instead of assuming.
+            try
+            {
+                var listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                _listener = listener;
+                _port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                _running = true;
+                _thread = new Thread(Loop);
+                _thread.IsBackground = true;
+                _thread.Name = "AgentDirectiveBridge";
+                _thread.Start();
+                PublishPort();
+                Log("[AGENT] directive bridge listening on http://127.0.0.1:" + _port
+                    + "/directive (OS-assigned; " + string.Join(", ", candidates)
+                    + " were unavailable: " + firstError + ")");
+                return;
+            }
+            catch (Exception ex)
+            {
+                firstError = firstError + "; OS-assigned also failed: " + ex.Message;
+            }
+
             _running = false;
             Log("[AGENT] directive bridge failed to start on every port "
-                + string.Join(", ", candidates) + ": " + firstError
+                + string.Join(", ", candidates) + " and on an OS-assigned port: " + firstError
                 + " — the agent cannot send directives until this is resolved");
         }
 

@@ -62,7 +62,7 @@ def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
     """
     p = _params(obj)
     t = obj.get("type_id")
-    if tool in ("nav.goto", "nav.walk"):
+    if tool == "nav.goto":
         need = obj.get("map_id")
         if need is None and t in MAP_TYPES:
             need = p.get("parameter0")

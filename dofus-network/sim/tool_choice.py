@@ -60,7 +60,7 @@ ALTERNATIVES: Dict[str, List[str]] = {
     "fight":  ["fight.join", "farm.start", "nav.goto", "fight.pass", "state.snapshot"],
     "talk":   ["quest.advance", "nav.goto", "quest.list", "state.snapshot"],
     "deliver": ["farm.start", "quest.advance", "nav.goto", "inv.list", "inv.sell"],
-    "map":    ["nav.goto", "nav.walk", "state.snapshot", "knowledge.search"],
+    "map":    ["nav.goto", "state.snapshot", "knowledge.search"],
     "craft":  ["inv.list", "knowledge.search", "state.snapshot", "nav.goto"],
     "area":   ["nav.goto", "knowledge.search", "state.snapshot", "quest.list"],
     "other":  ["quest.list", "state.snapshot", "knowledge.search", "nav.goto"],

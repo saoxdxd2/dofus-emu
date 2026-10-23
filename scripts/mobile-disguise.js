@@ -2277,6 +2277,24 @@
             'nav.follow': function(args) {
                 return _agentResult(true, _agentCommander('FOLLOW'), null);
             },
+            // Travel. This handler did not exist, which is why no plan that needed to
+            // move could ever execute: nav.goto is 24-38% of every plan, and every
+            // call returned "no client handler for tool nav.goto".
+            //
+            // ChangeMapMessage is the walk-off-the-edge transition (PROTOCOL_NOTES,
+            // "Enter / refresh a map"). The notes are explicit that the client's own
+            // pathfinder must not be reimplemented, so this asks for the transition and
+            // lets the server refuse it when the target is not adjacent — a real answer,
+            // and the client keeps ownership of path validity and obstacles.
+            'nav.goto': function(args) {
+                var raw = args && (args.map_id !== undefined ? args.map_id : args.mapId);
+                var mapId = parseInt(raw, 10);
+                if (!mapId) return _agentResult(false, null, 'nav.goto needs a numeric map_id');
+                var r = _cmSend('ChangeMapMessage', { mapId: mapId });
+                if (!r.ok) return _agentResult(false, null, r.error);
+                return _agentResult(true, { map_id: mapId, via: 'ChangeMapMessage',
+                    note: 'edge transition requested; the server refuses it if the map is not adjacent' });
+            },
             'inv.list': function() {
                 var snap = _agentSnapshot();
                 return _agentResult(!!snap.inventory, snap.inventory || null,

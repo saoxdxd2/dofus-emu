@@ -84,7 +84,7 @@ def test_residual_and_drift() -> None:
     check("drift: observation lost fields", r.drift and any("lost" in x for x in r.reasons),
           str(r.reasons))
 
-    r = v.label("nav.walk", {}, True, None, base_obs(), base_obs(map_id=9), 100.0)
+    r = v.label("nav.goto", {}, True, None, base_obs(), base_obs(map_id=9), 100.0)
     check("no drift when a movement tool changes the map", not r.drift, str(r.reasons))
 
 
@@ -419,6 +419,58 @@ def test_bridge_port_is_discovered() -> None:
         bridge.state_dir = original        # type: ignore[assignment]
 
 
+def test_every_declared_tool_exists_in_the_client() -> None:
+    """The capabilities file is a contract; nothing checked it against the client.
+
+    `nav.goto` was declared with `backend: "sentinel"` — a third backend that nothing
+    implemented — so every plan that needed to move returned "no client handler for
+    tool nav.goto". Since nav.goto is 24-38% of every plan, that alone made the agent
+    unable to do anything in the real game while looking perfectly healthy in the
+    simulator. A missing handler must be a test failure, not a runtime surprise.
+    """
+    print("\n== tool contract ==")
+    import json
+    import re
+
+    caps_path = REPO_ROOT / "data" / "capabilities.json"
+    js_path = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
+    if not caps_path.exists() or not js_path.exists():
+        print("  [SKIP] capabilities or client script not found")
+        return
+
+    caps = json.loads(caps_path.read_text(encoding="utf-8"))["capabilities"]
+    text = js_path.read_text(encoding="utf-8")
+    start = text.find("_agentHandlers")
+    brace = text.find("{", start)
+    depth = 0
+    block = ""
+    for i in range(brace, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                block = text[brace:i + 1]
+                break
+    handlers = set(re.findall(r"['\"]([a-z][a-z0-9_.]+)['\"]\s*:", block))
+
+    declared = {c["id"]: c for c in caps}
+    directive = {t for t, c in declared.items() if c.get("backend") == "directive"}
+    local = {t for t, c in declared.items() if c.get("backend") == "local"}
+    other = set(declared) - directive - local
+
+    check("no tool claims a backend that does not exist", not other,
+          str(sorted(other)) if other else "directive | local only")
+    missing = sorted(directive - handlers)
+    check("every directive tool has a client handler", not missing,
+          str(missing) if missing else "%d of %d" % (len(directive), len(directive)))
+    check("travel is one of them", "nav.goto" in handlers,
+          "nav.goto %s" % ("present" if "nav.goto" in handlers else "MISSING"))
+    phantom = sorted(handlers - directive - local)
+    check("the client has no handlers the contract does not declare", not phantom,
+          str(phantom) if phantom else "none")
+
+
 def test_structural_failures_are_not_retried() -> None:
     """Real data: 9 of 15 client failures were 'no active client', 0/9 retries worked."""
     print("\n== error taxonomy ==")
@@ -658,6 +710,7 @@ def main() -> int:
     test_exploration_is_opt_in()
     test_session_log_becomes_a_dataset()
     test_bridge_port_is_discovered()
+    test_every_declared_tool_exists_in_the_client()
     test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()
     test_knowledge_store()

@@ -49,9 +49,9 @@
    "id": "nav.goto",
    "verb": "nav",
    "description": "Travel to a target position. Exactly one of: [x,y] coordinates, a zaap name, an NPC, or a map id.",
-   "backend": "sentinel",
-   "directive": null,
-   "returns": "navigation path with steps; the client bridge then walks it",
+   "backend": "directive",
+   "directive": "NAV_GOTO",
+   "returns": "transition request ack; the server refuses it when the target map is not adjacent",
    "params": {
     "x": {
      "type": "int",

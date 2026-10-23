@@ -60,7 +60,7 @@ READ_ONLY_TOOLS = frozenset({
 })
 
 # Tools that are *supposed* to change the map / the cell. Used by drift only.
-MOVE_TOOLS = ("farm.step", "farm.start", "nav.walk", "nav.goto", "travel.zaap")
+MOVE_TOOLS = ("farm.step", "farm.start", "nav.goto", "travel.zaap")
 
 
 # Fixed tool order for the feature vector. Must match data/capabilities.json;
