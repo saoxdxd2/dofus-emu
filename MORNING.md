@@ -134,21 +134,26 @@ Nothing in the emulator can fix a dead exit. Get one candidate to PASS, then lau
 ### One command for all of it
 
 ```bash
-start-network.bat            # tunnel up, pool refreshed, then report
-start-network.bat --daemon   # keep the pool running in this window (recommended)
+start-network.bat            # harvest + tunnel + one pool pass, then report
+start-network.bat --daemon   # harvest every 5 min + pool, keep this window open
 start-network.bat --report   # only report what works, change nothing
 ```
 
-It starts `bin\warp\wireproxy.exe` if `socks_port` is not listening, runs
-`scripts\proxy_pool.js` (extract → deep-check → rewrite `proxies.txt`), then runs
-`ai\test_egress.py`. Nothing is installed system-wide; the tunnel is a userspace binary that
-binds one local port.
+It harvests new candidates (`scripts\harvest_proxies.js`, 17 sources, append-only), starts
+`bin\warp\wireproxy.exe` if `socks_port` is silent, runs `scripts\proxy_pool.js`
+(deep-check → rewrite `proxies.txt`), then runs `ai\test_egress.py`. Nothing is installed
+system-wide; the tunnel is a userspace binary that binds one local port.
 
-**On WARP, measured 2026-10-23:** this line blocks Cloudflare. `8.8.8.8:53` answers in 19 ms
-(UDP is fine), `1.1.1.1:53` and the WARP endpoint `162.159.192.1:2408` answer nothing.
-`wireproxy` starts and reports `Interface state was Down, requested Up, now Up`, then the
-handshake never completes, so the SOCKS5 port accepts and times out. WARP is bundled and
-correct; the endpoint is unreachable. Do not spend time on it here — the pool is the path.
+The harvester matters more than it sounds: the pool only scrapes when its own queue is low,
+and with 75k candidates waiting it never does. One harvest pass took the queue from 75,148 to
+85,901 in under a second.
+
+**On WARP, measured 2026-10-23 — do not spend more time on it here.** Run
+`python ai\test_warp.py` to reproduce. All ten published endpoints and ports fail a real
+handshake, while the account API is genuine and reachable (`wgcf register` succeeds) and
+Cloudflare's CDN range (`104.16.0.1:443`) answers in 35 ms. So it is the WARP endpoints being
+filtered, not Cloudflare. `--scan`, `--cfon` (Psiphon) and `--gool` all fail at the same
+place. WARP is bundled and correct; the network will not carry it.
 
 
 

@@ -242,6 +242,31 @@ is short of labels rather than of capacity.
    inside the install and reports what is missing — without ever overwriting a user's
    settings.
 
+   **The harvester is separate and now real-time.** The pool only scrapes when its own queue
+   is low, and with 75,000 candidates waiting it never does — so it kept testing a frozen
+   snapshot of a list that rots by the hour. `scripts/harvest_proxies.js` fetches from 17
+   sources on its own schedule and only ever appends: one pass took the queue from 75,148 to
+   85,901 (+10,753) in 0.8 s. It tests nothing and never touches `proxies.txt`; the pool stays
+   the only thing that decides what "working" means.
+
+0. **WARP cannot work on this line, and that is now measured rather than assumed.**
+   `ai/test_warp.py` runs a real wireproxy handshake against all ten published endpoints and
+   ports. Every one times out. Three probes that look like evidence are not, and were used
+   wrongly earlier in the day: a TCP connect to `:2408` always fails (UDP-only port), a bare
+   UDP packet to `:2408` always fails (WireGuard drops invalid packets), and DNS for
+   `engage.cloudflareclient.com` comes and goes. What is solid:
+
+   | fact | evidence |
+   |---|---|
+   | the account API is genuine and reachable | TLS to `api.cloudflareclient.com` (104.16.24.84), valid chain, HTTP answers |
+   | a fresh identity is obtainable | `wgcf register --accept-tos` succeeded, new device created |
+   | the data plane is blocked | 10/10 endpoints fail a real SOCKS5-through-tunnel test |
+   | Cloudflare is not blocked wholesale | `104.16.0.1:443` open in 35 ms; only `1.1.1.1` and the WARP ranges are filtered |
+
+   So `warp-plus --scan`, `--cfon` (Psiphon) and `--gool` all fail at the same place, and
+   keeping WARP inside the project — which it already is — was never the issue. The pool is
+   the only path that can produce an egress here.
+
 0. **No objective has been completed end-to-end.** This is the live blocker and it is new.
    The agent claims objectives that the game already accepts (`objectiveStatus 2`) — real
    progress, now verified — but a *talk* objective that needs a walk, an NPC, a dialog and a

@@ -316,7 +316,7 @@ namespace DofusBuild
                 // app reads proxies.txt and the supervisor probes it, but nothing in an
                 // installed copy could refresh it, so the pool rotted to a single dead
                 // entry and every launch failed closed with "no healthy egress".
-                foreach (string rs in new[] { "mobile-disguise.js", "apply-zram.sh", "proxy_pool.js" })
+                foreach (string rs in new[] { "mobile-disguise.js", "apply-zram.sh", "proxy_pool.js", "harvest_proxies.js" })
                 {
                     string src = Path.Combine(RepoRoot, "scripts", rs);
                     if (File.Exists(src))

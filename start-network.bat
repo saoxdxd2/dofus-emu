@@ -73,13 +73,22 @@ if errorlevel 1 (
 
 :pool
 if /i "%MODE%"=="--report" goto :report
+
+REM Harvest first, always. The pool only scrapes when its own queue is low, and with tens of
+REM thousands of candidates waiting it never does - so it keeps testing a frozen snapshot of a
+REM list that rots by the hour. One pass took the queue from 75k to 86k in under a second.
+echo [ .. ] harvest: fetching fresh candidates into proxies_raw.txt
+node "scripts\harvest_proxies.js" --once
+
 if /i "%MODE%"=="--daemon" (
+  echo [ .. ] harvest daemon in its own window (every 5 min)
+  start "proxy harvest" /min node "scripts\harvest_proxies.js"
   echo [ .. ] pool daemon: leave this window open, Ctrl+C to stop
   node "scripts\proxy_pool.js"
   goto :report
 )
 
-echo [ .. ] pool: one pass (re-verify approved, scrape if stale, deep-check, rewrite proxies.txt)
+echo [ .. ] pool: one pass (re-verify approved, deep-check, rewrite proxies.txt)
 node "scripts\proxy_pool.js" --once
 
 :report
