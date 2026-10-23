@@ -549,6 +549,15 @@ type ProxyServer struct {
 	// socket that must stay responsive.
 	cdnUpstream *url.URL
 
+	// Cache effectiveness, counted rather than assumed.
+	//
+	// "How much can we serve directly" is the single number that decides where the remaining time
+	// goes: a hit is a disk read, a miss is a proxy round trip. Without this counter the only
+	// evidence was a request count, which says nothing about either.
+	cacheHits   uint64
+	cacheMisses uint64
+	ticks       int
+
 	// Which hops can actually reach the exit, measured in the background.
 	//
 	// Racing blind was the reason two thirds of connections failed: a hop has to accept
@@ -2300,7 +2309,16 @@ func setLongAssetCacheHeaders(h http.Header) {
 // serveCachedAsset streams a cached asset response (CORS + cached
 // Content-Type + Range/304 via http.ServeContent) and reports whether the
 // cache was served. Expired entries are evicted.
-func (p *ProxyServer) serveCachedAsset(w http.ResponseWriter, r *http.Request, cacheFilePath, fallbackPath string) bool {
+func (p *ProxyServer) serveCachedAsset(w http.ResponseWriter, r *http.Request, cacheFilePath, fallbackPath string) (served bool) {
+	// One place decides hit or miss, so one place counts it.
+	defer func() {
+		if served {
+			atomic.AddUint64(&p.cacheHits, 1)
+		} else {
+			atomic.AddUint64(&p.cacheMisses, 1)
+		}
+	}()
+
 	fi, err := os.Stat(cacheFilePath)
 	if err != nil {
 		return false
@@ -4077,6 +4095,15 @@ func main() {
 		for {
 			time.Sleep(10 * time.Second)
 			proxy.saveHopIndex()
+			proxy.ticks++
+			if proxy.ticks%6 == 0 {
+				h := atomic.LoadUint64(&proxy.cacheHits)
+				m := atomic.LoadUint64(&proxy.cacheMisses)
+				if h+m > 0 {
+					log.Printf("[CACHE] %d hits, %d misses (%.0f%% served from disk)", h, m,
+						100.0*float64(h)/float64(h+m))
+				}
+			}
 		}
 	}()
 	defer proxy.saveHopIndex()
