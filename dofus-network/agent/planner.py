@@ -445,6 +445,12 @@ class QuestPlanner:
         for qid, idx in sorted(active.items()):
             if int(qid) not in self.quests:
                 continue
+            # A quest this session has given up on stays in `quests_active` — the
+            # game does not let go of it — but re-planning it every step produces the
+            # same call forever. `_skipped` used to filter only *new* quests, so
+            # retiring an active one had no effect at all.
+            if int(qid) in self._skipped:
+                continue
             call = self._plan_quest(int(qid), int(idx), obs, goal)
             if call is not None:
                 return call
@@ -486,6 +492,19 @@ class QuestPlanner:
                 return call
             self._skipped.add(qid)
         return None
+
+    def skip(self, quest_id: Any) -> None:
+        """Retire a quest the agent cannot advance.
+
+        Nothing inside `_plan_quest` can tell "not yet" from "not ever": it reads the
+        KB and the observation, and both say the objective is still open. Only the
+        loop knows it has tried three times with no change, so only the loop can say
+        this.
+        """
+        try:
+            self._skipped.add(int(quest_id))
+        except (TypeError, ValueError):
+            pass
 
     def plan_quest(self, quest_id: int, obs: Dict[str, Any]) -> List[Dict[str, Any]]:
         """The whole plan for a quest — used to build the SFT corpus."""

@@ -498,6 +498,80 @@ def test_every_declared_tool_exists_in_the_client() -> None:
           str(phantom) if phantom else "none")
 
 
+def test_unlimited_means_unlimited() -> None:
+    """An Auto run must not stop after eight steps because a default said so.
+
+    `steps_per_goal` was a per-goal slice from Order mode, applied even when the user
+    asked for an unlimited budget. One goal therefore meant eight directives and exit
+    0, which is indistinguishable from "the AI does nothing". This drives the loop with
+    a policy that never makes progress and checks it keeps going past the old cap.
+    """
+    print("\n== unlimited budget ==")
+    import os
+    from agent.autopilot import Autopilot
+    from agent.runtime import ToolCall
+
+    tmp = Path(tempfile.mkdtemp())
+    # objectives_completed never rises: a stuck quest by definition.
+    obs = {"map_id": 150736645, "cell": 328, "kamas": 418, "level": 18,
+           "quests_active": {"584": 0}, "inventory": {}, "objectives_completed": 3}
+
+    class Policy:
+        def __init__(self):
+            self.skipped = []
+
+        def choose(self, goal, observation, tools=None):
+            return ToolCall("quest.advance", {"quest_id": 584}, goal)
+
+        def skip(self, quest_id):
+            self.skipped.append(quest_id)
+
+    class Executor:
+        def execute(self, tool, args, **kwargs):
+            return FakeResult(True)
+
+    class Runtime:
+        def __init__(self):
+            self.policy = Policy()
+            self.executor = Executor()
+            self.instance = "test"
+            self._obs = obs
+
+        def current_observation(self):
+            return self._obs, 0.0, "call"
+
+        def observe(self, snapshot, source="live"):
+            self._obs = snapshot
+
+    old = os.environ.get("LOCALAPPDATA")
+    os.environ["LOCALAPPDATA"] = str(tmp)
+    try:
+        stop = tmp / "AUTOPILOT_STOP"
+        pilot = Autopilot(runtime=Runtime(), goals=["do all the quests"],
+                          log_path=tmp / "a.jsonl", stop_file=stop,
+                          max_steps=0, interval=0.0, preflight=False)
+        seen = {"n": 0}
+
+        def on_step(_step):
+            seen["n"] += 1
+            if seen["n"] >= 12:
+                stop.write_text("enough", encoding="utf-8")
+
+        pilot.on_step = on_step
+        pilot.run()
+    finally:
+        if old is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = old
+
+    check("an unlimited run passes the old 8-step cap", seen["n"] >= 12,
+          "%d steps" % seen["n"])
+    check("a stuck quest is retired rather than ending the session",
+          len(pilot.runtime.policy.skipped) >= 1,
+          "skipped %s" % pilot.runtime.policy.skipped)
+
+
 def test_structural_failures_are_not_retried() -> None:
     """Real data: 9 of 15 client failures were 'no active client', 0/9 retries worked."""
     print("\n== error taxonomy ==")
@@ -739,6 +813,7 @@ def main() -> int:
     test_bridge_port_is_discovered()
     test_every_declared_tool_exists_in_the_client()
     test_host_messages_are_not_double_encoded()
+    test_unlimited_means_unlimited()
     test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()
     test_knowledge_store()

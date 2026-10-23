@@ -128,6 +128,7 @@ class Autopilot:
         veto_threshold: float = 0.0,
         explore: float = 0.0,
         explore_seed: int = 0,
+        preflight: bool = True,
     ) -> None:
         self.runtime = runtime
         self.goals = list(goals)
@@ -139,6 +140,12 @@ class Autopilot:
         # Agent 2: owns the objective, the strategy table and the failure memory.
         # The verifier answers "did that work"; the controller decides what the
         # actor does next, which is the part that used to be missing.
+        self.preflight = preflight
+        # Steps allowed without `objectives_completed` rising before the current quest
+        # is considered stuck. Only applies to unlimited runs.
+        self.stall_limit = 8
+        self._best_progress = -1
+        self._stall_since = 0
         self.controller = Controller(session=self.session, explore=explore,
                                      seed=explore_seed)
         self.controller.set_objective("; ".join(goals))
@@ -317,12 +324,24 @@ class Autopilot:
         budget = "unlimited" if self.max_steps <= 0 else (str(self.max_steps) + " steps")
         print(f"[autopilot] {len(self.goals)} goal(s), {budget}"
               f"{' (dry run)' if self.dry_run else ''}")
-        self._warn_if_no_bridge()
-        self._require_world()
+        if self.preflight:
+            self._warn_if_no_bridge()
+            self._require_world()
 
         for goal in self.goals:
             failures = 0
-            for _ in range(self.steps_per_goal):
+            # An unlimited step budget has to mean unlimited.
+            #
+            # `steps_per_goal` is a per-goal slice: Order mode means "do this one
+            # thing, a few steps, done". Auto mode means "keep working until I stop
+            # you". The two were conflated, so with --steps 0 the loop still ran
+            # exactly eight directives per goal and then exited 0 — which from
+            # outside is indistinguishable from "the AI does nothing". It was doing
+            # eight steps and quitting, by design, every single time.
+            budget = self.steps_per_goal if self.max_steps > 0 else None
+            taken = 0
+            while budget is None or taken < budget:
+                taken += 1
                 reason = self._should_stop()
                 if reason:
                     print(f"[autopilot] stopping: {reason}")
@@ -485,6 +504,31 @@ class Autopilot:
                 else:
                     failures = 0
 
+                # Stall detection on world progress. Repeating the same call is only
+                # one shape of a livelock; the commoner one here is the controller
+                # cycling retry -> recover -> continue forever, where no call repeats
+                # three times yet nothing is ever completed. `objectives_completed` is
+                # the honest measure of whether the session is getting anywhere.
+                prog = (after or {}).get("objectives_completed")
+                if isinstance(prog, (int, float)):
+                    if prog > self._best_progress:
+                        self._best_progress = prog
+                        self._stall_since = self._index
+                    elif self.max_steps <= 0 and self._index - self._stall_since >= self.stall_limit:
+                        qid = None
+                        try:
+                            active = list((before or {}).get("quests_active") or {})
+                            qid = int(active[0]) if active else None
+                        except (TypeError, ValueError):
+                            qid = None
+                        skipper = getattr(self.runtime.policy, "skip", None)
+                        if skipper is not None and qid is not None:
+                            skipper(qid)
+                            print(f"[autopilot] {self.stall_limit} steps without progress; "
+                                  f"retiring quest {qid} and taking another")
+                        self._stall_since = self._index
+                        self._recent.clear()
+
                 # No-progress detection. A rule policy will happily pick the same
                 # tool for the same goal forever; without this the loop burns the
                 # whole budget repeating one scan. Three identical calls with no
@@ -495,8 +539,25 @@ class Autopilot:
                 else:
                     self._recent.append(key)
                     if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
-                        print(f"[autopilot] no progress: {call.tool} repeated 3x with no change; "
-                              f"abandoning {goal!r}")
+                        print(f"[autopilot] no progress: {call.tool} repeated 3x with no change")
+                        if self.max_steps <= 0:
+                            # Retire the quest and take another, instead of ending the
+                            # session. An objective that never moves is usually one
+                            # this build cannot do at all (an area, a craft, an NPC
+                            # that is elsewhere); the next quest may be fine.
+                            qid = None
+                            try:
+                                active = list((before or {}).get("quests_active") or {})
+                                qid = int(active[0]) if active else None
+                            except (TypeError, ValueError):
+                                qid = None
+                            skipper = getattr(self.runtime.policy, "skip", None)
+                            if skipper is not None and qid is not None:
+                                skipper(qid)
+                                print(f"[autopilot] retiring quest {qid}; taking another")
+                                self._recent.clear()
+                                continue
+                        print(f"[autopilot] abandoning {goal!r}")
                         break
 
                 # A goal that produced a real world change is done; repeating it
@@ -506,14 +567,20 @@ class Autopilot:
                 # inventory" asked to *see* the inventory, and it was seen. Without
                 # this the loop re-read the same list for the whole step budget,
                 # which is what "the AI does nothing" looked like from outside.
+                # In Order mode ("open the inventory") a successful read IS the
+                # goal, so it ends the run. In Auto mode the goal is a standing
+                # instruction and a read is a recovery — breaking here meant one
+                # `state.snapshot` after one noop ended the whole session, which is
+                # exactly what "the AI does nothing" looked like.
                 if verdict == "advanced" and (call.tool in LISTING_TOOLS
                                               or call.tool in READ_ONLY_TOOLS):
-                    break
+                    if self.max_steps > 0:
+                        break
 
                 if self.interval:
                     time.sleep(self.interval)
 
-            # end steps_per_goal
+            # end per-goal loop (bounded in Order mode, unbounded in Auto mode)
         return self.summary("goals exhausted")
 
     # -- teardown ------------------------------------------------------------
