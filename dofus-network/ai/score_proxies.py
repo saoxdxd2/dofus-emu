@@ -192,10 +192,15 @@ def main(argv=None) -> int:
     # ten features, so the cadence is not a detail, it is an input. On a fast series the model
     # is out of distribution and its forecast is decoration. Measured loss, jitter and p95 are
     # true at any cadence, so they decide the order and the model is reported beside them.
+    # Order: loss, then p95, then jitter.
+    #
+    # Jitter was first and it was wrong. Two proxies measured 9 ms and 10 ms of jitter — noise —
+    # while their p95 was 374 ms and 165 ms, which is not noise, it is a stutter you feel. A game
+    # cares about the tail far more than the standard deviation, so p95 decides between two
+    # proxies that both answer every ping.
     def rank(row):
         loss_rate = row["losses"] / max(1, row["samples"])
-        jitter_ratio = (row["jitter"] or 0.0) / max(1.0, row["rtt_median"] or 1.0)
-        return (loss_rate, round(jitter_ratio, 3), row["rtt_p95"] or 1e9)
+        return (loss_rate, row["rtt_p95"] or 1e9, row["jitter"] or 1e9)
 
     scored.sort(key=rank)
     if args.top:
@@ -206,7 +211,7 @@ def main(argv=None) -> int:
         print(json.dumps(scored, indent=1))
         return 0
 
-    print("\n== ranking (measured: loss, then jitter, then p95) ==")
+    print("\n== ranking (measured: loss, then p95, then jitter) ==")
     for i, row in enumerate(scored, 1):
         print("  %d. %-36s loss %d/%d  jitter %s ms  p95 %s ms   [model: %.0f%% degrad]"
               % (i, row["entry"], row["losses"], row["samples"],

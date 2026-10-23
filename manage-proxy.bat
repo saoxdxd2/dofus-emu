@@ -9,6 +9,7 @@ REM Windows routing, DNS or proxy setting is read or written.
 REM
 REM   manage-proxy.bat                      status: config, pool size, tunnel, what works
 REM   manage-proxy.bat test                 probe every candidate now
+REM   manage-proxy.bat rank                 ping each candidate and rank by stability
 REM   manage-proxy.bat add <url>            test a proxy, then save it if it passes
 REM   manage-proxy.bat add <url> --replace  save it as the only entry
 REM   manage-proxy.bat refresh              harvest new candidates, then one pool pass
@@ -33,6 +34,7 @@ if "%CMD%"=="" set "CMD=status"
 
 if /i "%CMD%"=="status" goto :status
 if /i "%CMD%"=="test"   goto :test
+if /i "%CMD%"=="rank"   goto :rank
 if /i "%CMD%"=="add"    goto :add
 if /i "%CMD%"=="refresh" goto :refresh
 if /i "%CMD%"=="reset"  goto :reset
@@ -77,6 +79,16 @@ exit /b 0
 REM ---------------------------------------------------------------------------
 :test
 "%PY%" "dofus-network\ai\test_egress.py"
+exit /b %ERRORLEVEL%
+
+REM ---------------------------------------------------------------------------
+:rank
+REM Ping every candidate and rank it. The pool's deep check answers "does this open a tunnel
+REM right now", which is necessary and not sufficient — a proxy that answers once and then
+REM stalls ends a session. This measures loss and jitter over time, which is the difference.
+echo.
+echo ranking the pool by measured stability ...
+"%PY%" "dofus-network\ai\score_proxies.py" --samples 34 --interval 0.4 --timeout 2
 exit /b %ERRORLEVEL%
 
 REM ---------------------------------------------------------------------------
