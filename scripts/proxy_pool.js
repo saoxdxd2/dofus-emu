@@ -64,6 +64,9 @@ const TIMEOUT_MS = argNum('timeout', 8000);
 // connect at 1.5 s and only then paying for TLS + HTTP is the difference between a
 // night and an afternoon.
 const CONNECT_TIMEOUT_MS = argNum('connect-timeout', 1500);
+// Ceiling for proxies_raw.txt. At ~3 checks a second a queue of 150,000 is a day of
+// work; anything older than that is dead anyway.
+const MAX_RAW = argNum('max-raw', 150000);
 const BATCH = argNum('batch', 150);
 const CYCLE_MIN = argNum('cycle', 10);
 const TARGET = argNum('target', detectTarget());
@@ -331,6 +334,14 @@ async function main() {
   log('state: approved=' + state.approved.length + ' quarantine=' + Object.keys(state.quarantine).length + ' dead=' + state.dead.length + ' rawQueue=' + rawQueue.length);
 
   const persist = () => {
+    // Bound the queue. Without a cap it only grows, the oldest entries are never reached,
+    // and the file becomes a museum of dead proxies. Dropping from the head is right
+    // because the pool consumes from the tail: what survives here is the newest.
+    if (rawQueue.length > MAX_RAW) {
+      const dropped = rawQueue.length - MAX_RAW;
+      rawQueue = rawQueue.slice(dropped);
+      log('  queue over ' + MAX_RAW + '; dropped the ' + dropped + ' oldest candidates');
+    }
     fs.writeFileSync(F_RAW, rawQueue.join('\n') + (rawQueue.length ? '\n' : ''));
     state.dead = [...deadSet].slice(-50000);
     fs.writeFileSync(F_STATE, JSON.stringify(state, null, 1));
@@ -385,8 +396,15 @@ async function main() {
         await scrape(state, haveSet, rawQueue);
       }
       const batch = [];
+      // Newest first.
+      //
+      // This used to `shift()` — the oldest entry — while the harvester appended to the
+      // tail. With a queue of 85,000 that meant a proxy fetched this morning would not be
+      // tested for days, and the pool spent every cycle on entries that had been rotting
+      // in the file the longest. Public proxies die within hours, so age is the single
+      // strongest signal available and it was being used backwards.
       while (batch.length < BATCH && rawQueue.length) {
-        const raw = rawQueue.shift();
+        const raw = rawQueue.pop();
         if (deadSet.has(raw) || state.approved.indexOf(raw) !== -1 || state.quarantine[raw]) continue;
         const e = parseEntry(raw, null);
         if (e) batch.push(e);

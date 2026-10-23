@@ -128,6 +128,7 @@ async function pass() {
   const before = known.size;
   let okSources = 0;
   let failed = 0;
+  let seen = 0;
   const fresh = [];
 
   const bodies = await Promise.all(SOURCES.map(async s => ({ s, body: await fetchText(s.url) })));
@@ -136,13 +137,24 @@ async function pass() {
     okSources++;
     for (const line of body.split(/\r?\n/)) {
       const entry = parseLine(line, s.scheme);
-      if (!entry || known.has(entry)) continue;
+      if (!entry) continue;
+      if (known.has(entry)) { seen++; continue; }
       known.add(entry);
       fresh.push(entry);
     }
   }
 
   if (fresh.length) {
+    // Shuffle before appending.
+    //
+    // The pool consumes from the tail, so whatever is written last is tested first. Sources
+    // return their list in blocks, which means one fetch could fill an entire batch with a
+    // single list's addresses — usually one country, one hosting provider, one failure mode.
+    // Mixing costs nothing and samples across all of them.
+    for (let i = fresh.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = fresh[i]; fresh[i] = fresh[j]; fresh[j] = tmp;
+    }
     try {
       fs.appendFileSync(F_RAW, fresh.join('\n') + '\n');
     } catch (e) {
@@ -151,8 +163,10 @@ async function pass() {
     }
   }
 
+  // "new" is the number that matters: a pass that adds nothing is a pass where every source
+  // returned what we already had, which is the normal state between their update cycles.
   log('pass: sources ' + okSources + ' ok / ' + failed + ' failed, +' + fresh.length
-      + ' new (queue ' + before + ' -> ' + known.size + ') in '
+      + ' new, ' + seen + ' already known (queue ' + before + ' -> ' + known.size + ') in '
       + ((Date.now() - started) / 1000).toFixed(1) + 's');
 }
 
