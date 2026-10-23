@@ -736,6 +736,27 @@ namespace DofusFarm.Engine
                 if (parts.Contains(c.Url)) continue;
                 parts.Add(c.Url);
             }
+
+            // Then the ones that did not answer the probe, as last resort.
+            //
+            // A chain built only from candidates that passed leaves a one-deep chain whenever the
+            // pool is thin, and a one-deep chain cannot survive its upstream dying — the relay
+            // then has nothing to fail over to and the session ends. That is exactly what the log
+            // showed: one upstream, dead five seconds in, "servers under maintenance".
+            //
+            // An unproven candidate costs a race slot and loses it; a missing candidate costs the
+            // session.
+            if (parts.Count < max)
+            {
+                foreach (ProxyCandidate c in Candidates)
+                {
+                    if (parts.Count >= max) break;
+                    if (c == null || c.Healthy || string.IsNullOrEmpty(c.Url)) continue;
+                    if (c.Url.IndexOf(',') >= 0) continue;
+                    if (parts.Contains(c.Url)) continue;
+                    parts.Add(c.Url);
+                }
+            }
             return string.Join(",", parts.ToArray());
         }
 
