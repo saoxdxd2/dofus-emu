@@ -2406,7 +2406,16 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 	cacheFilePath := p.assetCachePath(mapURL)
 	if _, err := os.Stat(cacheFilePath); err != nil {
 		if ok, _, status, errText := p.warmAssetCacheDetail(ctx, mapURL); !ok {
-			p.prefetchLog("[PREFETCH] map %d json fetch failed status=%d err=%q", job.id, status, errText)
+			// 403 from this CDN means "that key is not there", not "we are blocked": measured 16
+			// map JSONs returning 200 and 234 returning 403 on the same path, and a direct
+			// connection gets the same 403. S3-backed CloudFront answers AccessDenied for a
+			// missing key instead of 404, so a neighbour id that is not shipped looks like an
+			// error in the log and like a wall in a browser.
+			if status == http.StatusForbidden || status == http.StatusNotFound {
+				p.prefetchLog("[PREFETCH] map %d not present upstream (status=%d)", job.id, status)
+			} else {
+				p.prefetchLog("[PREFETCH] map %d json fetch failed status=%d err=%q", job.id, status, errText)
+			}
 			return
 		}
 	}
