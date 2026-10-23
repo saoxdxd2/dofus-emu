@@ -52,7 +52,7 @@ echo === egress, as configured ===
 REM Counting and config reading live in python on purpose: a batch file that shells out to
 REM `find` breaks the moment someone runs it from Git Bash, where `find` is GNU find and the
 REM command walks the whole drive instead of counting a file. PATH is the caller's, not ours.
-"%PY%" "dofus-network\ai\pool_status.py"
+"%PY%" -u "dofus-network\ai\pool_status.py"
 
 if exist "network.ini" (
   for /f "usebackq tokens=1,2 delims==" %%A in ("network.ini") do (
@@ -73,14 +73,14 @@ if errorlevel 1 (
 
 echo.
 echo === what actually works ===
-"%PY%" "dofus-network\ai\test_egress.py"
+"%PY%" -u "dofus-network\ai\test_egress.py"
 echo.
 echo next: manage-proxy.bat add ^<url^>   if you have a proxy you trust
 exit /b 0
 
 REM ---------------------------------------------------------------------------
 :test
-"%PY%" "dofus-network\ai\test_egress.py"
+"%PY%" -u "dofus-network\ai\test_egress.py"
 exit /b %ERRORLEVEL%
 
 REM ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ REM right now", which is necessary and not sufficient — a proxy that answers o
 REM stalls ends a session. This measures loss and jitter over time, which is the difference.
 echo.
 echo ranking the pool by measured stability ...
-"%PY%" "dofus-network\ai\score_proxies.py" --samples 34 --interval 0.4 --timeout 2
+"%PY%" -u "dofus-network\ai\score_proxies.py" --samples 34 --interval 0.4 --timeout 2
 exit /b %ERRORLEVEL%
 
 REM ---------------------------------------------------------------------------
@@ -106,28 +106,21 @@ set "WATCH_SECONDS=300"
 if not "%~2"=="" set "WATCH_SECONDS=%~2"
 set /a WATCH_FAILS=0
 
-where node >nul 2>nul
-if errorlevel 1 (
-  echo [FAIL] node is not on PATH; the watchdog needs it to hunt.
-  exit /b 2
-)
-
 echo.
 echo watchdog: checking every %WATCH_SECONDS%s, hunting when nothing works.
 echo leave this window open. Ctrl+C to stop.
 echo.
 :wd_loop
 set /a WATCH_FAILS+=0
-"%PY%" "dofus-network\ai\test_egress.py" >nul 2>&1
+"%PY%" -u "dofus-network\ai\test_egress.py" >nul 2>&1
 if errorlevel 1 (set /a WATCH_FAILS+=1) else (set /a WATCH_FAILS=0)
 
 REM One failure is not an outage. Public proxies flap, and a watchdog that hunts on a single
 REM bad sample spends its life re-scraping instead of watching. Two in a row is a real gap.
 if !WATCH_FAILS! GEQ 2 (
   echo [%TIME%] no working exit twice in a row - hunting
-  node "scripts\harvest_proxies.js" --once
-  node "scripts\proxy_pool.js" --once --batch 800
-  "%PY%" "dofus-network\ai\test_egress.py" >nul 2>&1
+  "%PY%" -u "dofus-network\ai\pool_runner.py" --batch 800
+  "%PY%" -u "dofus-network\ai\test_egress.py" >nul 2>&1
   if errorlevel 1 (
     echo [%TIME%] still nothing after a hunt; will try again in %WATCH_SECONDS%s
     set /a WATCH_FAILS=0
@@ -164,7 +157,7 @@ if /i "%~3"=="--replace" (set "REPLACE=1") else (set "REPLACE=")
 
 echo.
 echo testing %ENTRY% before saving it ...
-"%PY%" "dofus-network\ai\test_egress.py" --proxy "%ENTRY%"
+"%PY%" -u "dofus-network\ai\test_egress.py" --proxy "%ENTRY%"
 if errorlevel 1 (
   echo.
   echo not saved. A proxy that fails here fails the app's own gate too, and saving it
@@ -191,19 +184,11 @@ exit /b 0
 
 REM ---------------------------------------------------------------------------
 :refresh
-where node >nul 2>nul
-if errorlevel 1 (
-  echo [FAIL] node is not on PATH; the harvester and pool need it.
-  exit /b 2
-)
 echo.
-echo === harvest ===
-node "scripts\harvest_proxies.js" --once
+echo === pool, one pass (fetch + screen + deep check) ===
+"%PY%" -u "dofus-network\ai\pool_runner.py" --batch 800
 echo.
-echo === pool, one pass ===
-node "scripts\proxy_pool.js" --once
-echo.
-"%PY%" "dofus-network\ai\test_egress.py"
+"%PY%" -u "dofus-network\ai\test_egress.py"
 exit /b 0
 
 REM ---------------------------------------------------------------------------

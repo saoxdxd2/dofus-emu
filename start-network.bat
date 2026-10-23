@@ -20,19 +20,22 @@ cd /d "%~dp0"
 set "MODE=%~1"
 if "%MODE%"=="" set "MODE=--once"
 
+REM The embedded interpreter, same lookup the other scripts use. Everything below is Python
+REM because the installer ships Python and no Node.
+set "PY=%~dp0runtimes\python\python.exe"
+if not exist "%PY%" (
+  where python >nul 2>nul
+  if errorlevel 1 (
+    echo [FAIL] no python found: runtimes\python\python.exe is missing and python is not on PATH.
+    exit /b 2
+  )
+  set "PY=python"
+)
+
 echo.
 echo === DofusFarm network ===
 echo root: %CD%
 echo.
-
-REM ---- 1. node, for the pool manager -------------------------------------------
-where node >nul 2>nul
-if errorlevel 1 (
-  echo [FAIL] node is not on PATH. The pool manager needs it.
-  echo        Install Node.js, or run the pool from a machine that has it, and copy
-  echo        proxies.txt here.
-  goto :report
-)
 
 REM ---- 2. the tunnel ------------------------------------------------------------
 set "SOCKS_PORT=40000"
@@ -74,33 +77,28 @@ if errorlevel 1 (
 :pool
 if /i "%MODE%"=="--report" goto :report
 
-REM Harvest first, always. The pool only scrapes when its own queue is low, and with tens of
-REM thousands of candidates waiting it never does - so it keeps testing a frozen snapshot of a
-REM list that rots by the hour. One pass took the queue from 75k to 86k in under a second.
-echo [ .. ] harvest: fetching fresh candidates into proxies_raw.txt
-node "scripts\harvest_proxies.js" --once
+REM The pool manager is Python, on purpose: the installer ships an embedded interpreter and no
+REM Node, so a Node-based pool could never refresh anything on an installed copy. That is the
+REM whole reason the file used to decay to one dead entry.
+if /i "%MODE%"=="--daemon" goto :net_daemon
 
-if /i "%MODE%"=="--daemon" (
-  echo [ .. ] harvest daemon in its own window (every 5 min)
-  start "proxy harvest" /min node "scripts\harvest_proxies.js"
-  echo [ .. ] pool daemon: leave this window open, Ctrl+C to stop
-  node "scripts\proxy_pool.js"
-  goto :report
-)
+echo [ .. ] pool: one pass (fetch, screen, deep-check, rewrite proxies.txt)
+"%PY%" -u "dofus-network\ai\pool_runner.py" --batch 800
+goto :report
 
-echo [ .. ] pool: one pass (re-verify approved, deep-check, rewrite proxies.txt)
-node "scripts\proxy_pool.js" --once
+REM The label has to live outside the if-block: `goto` into a parenthesised block is not
+REM something cmd.exe handles, and it fails in a way that looks like the loop simply never runs.
+:net_daemon
+echo [ .. ] pool daemon: leave this window open, Ctrl+C to stop
+:net_loop
+"%PY%" -u "dofus-network\ai\pool_runner.py" --batch 800
+"%SystemRoot%\System32\ping.exe" -n 601 127.0.0.1 >nul 2>&1
+goto :net_loop
 
 :report
 echo.
 echo === what actually works ===
-if exist "runtimes\python\python.exe" (
-  "runtimes\python\python.exe" "dofus-network\ai\test_egress.py"
-) else (
-  where python >nul 2>nul && (
-    python "dofus-network\ai\test_egress.py"
-  ) || echo [WARN] no python found; run dofus-network\ai\test_egress.py yourself
-)
+"%PY%" -u "dofus-network\ai\test_egress.py"
 
 echo.
 echo Done. A PASS above means a client can launch; fail_closed refuses otherwise.

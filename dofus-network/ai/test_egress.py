@@ -76,6 +76,42 @@ def mask(entry: str) -> str:
     return re.sub(r"//[^@]*@", "//***:***@", entry)
 
 
+def _fetch_through(sock, target_host: str, timeout: float) -> tuple[bool, str]:
+    """Actually fetch something through the tunnel.
+
+    Answering CONNECT is not the same as carrying a request. Four proxies earlier today
+    accepted CONNECT and returned 403 to every real fetch — `curl -x` gave 000 on both — while
+    this script reported them as working. The app then launched and failed at the login screen.
+    A check that answers a weaker question than it appears to is worse than no check.
+    """
+    import ssl as _ssl
+
+    context = _ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = _ssl.CERT_NONE
+    try:
+        with context.wrap_socket(sock, server_hostname=target_host) as tls:
+            tls.settimeout(timeout)
+            tls.sendall(("GET /config.json HTTP/1.1\r\nHost: %s\r\n"
+                         "User-Agent: Mozilla/5.0\r\nAccept: */*\r\n"
+                         "Connection: close\r\n\r\n" % target_host).encode())
+            head = b""
+            while b"\r\n\r\n" not in head:
+                chunk = tls.recv(4096)
+                if not chunk:
+                    break
+                head += chunk
+                if len(head) > 8192:
+                    break
+    except Exception as exc:  # noqa: BLE001
+        return False, "tunnel did not carry a request: %s" % type(exc).__name__
+
+    status = head.split(b"\r\n", 1)[0].split(b" ")[1:2]
+    if status == [b"200"]:
+        return True, "HTTP 200 through the tunnel"
+    return False, "tunnel open but /config.json -> %s" % (status[0].decode() if status else "no reply")
+
+
 def test_http(host: str, port: int, user, pwd, target_host: str, target_port: int,
               timeout: float) -> tuple[bool, str]:
     try:
@@ -93,7 +129,8 @@ def test_http(host: str, port: int, user, pwd, target_host: str, target_port: in
         head = s.recv(200).decode("latin-1", "replace")
         status = head.splitlines()[0] if head else "(no response)"
         if " 200" in status:
-            return True, status
+            # The proxy agreed to relay. Now make it relay.
+            return _fetch_through(s, target_host, timeout)
         if "403" in status:
             return False, status + " — rejected. Usually an IP allow-list, so a new public IP breaks it."
         if "407" in status:
@@ -130,7 +167,7 @@ def test_socks5(host: str, port: int, target_host: str, target_port: int,
         if len(reply) < 2:
             return False, "no SOCKS5 reply"
         if reply[1] == 0:
-            return True, "SOCKS5 tunnel open"
+            return _fetch_through(s, target_host, timeout)
         codes = {1: "general failure", 2: "not allowed by ruleset", 3: "network unreachable",
                  4: "host unreachable", 5: "connection refused", 6: "TTL expired"}
         return False, "SOCKS5 refused: %s" % codes.get(reply[1], "code %d" % reply[1])
