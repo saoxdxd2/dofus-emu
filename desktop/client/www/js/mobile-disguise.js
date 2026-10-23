@@ -2330,7 +2330,14 @@
                     return _agentResult(r.ok, { quest_id: Number(questId), objective_id: Number(objectiveId) },
                         r.ok ? null : r.error);
                 }
+                // The objective names its NPC; the planner passes it as npc_id. This
+                // handler used to ignore that and talk to the FIRST NPC on the map,
+                // which is a different person — the call succeeded, nothing advanced,
+                // and the loop spent its budget re-sending it. Talking to the wrong
+                // NPC and reporting ok is worse than failing: it hides the mistake.
+                var wantNpc = Number((args && (args.npc_id || args.npcId)) || 0) || null;
                 var npc = null;
+                var npcIds = [];
                 try {
                     var am = window.isoEngine && window.isoEngine.actorManager;
                     var actors = (am && (am.actors || am.actorList)) || null;
@@ -2339,10 +2346,24 @@
                             if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
                             var a = actors[k] || {};
                             var nid = a.npcId != null ? a.npcId : (a.staticInfos && a.staticInfos.npcId);
-                            if (nid != null && nid > 0) { npc = { npcId: nid, cell: a.cellId || (a.position && a.position.cell) }; break; }
+                            if (nid == null || nid <= 0) continue;
+                            npcIds.push(Number(nid));
+                            if (wantNpc && Number(nid) !== wantNpc) continue;
+                            if (!npc) npc = { npcId: Number(nid), cell: a.cellId || (a.position && a.position.cell) };
                         }
                     }
                 } catch (e) {}
+                if (wantNpc && !npc) {
+                    // The right answer here is "you are on the wrong map", because that
+                    // is what the agent can act on. The old code either talked to
+                    // somebody else or reported a bare "no NPC".
+                    var here = null;
+                    try { here = window.isoEngine.currentMapId || (window.isoEngine.mapData && window.isoEngine.mapData.mapId) || null; } catch (e) {}
+                    return _agentResult(false, { quest_id: questId, wanted_npc: wantNpc,
+                        map_id: here, npcs_here: npcIds },
+                        'npc ' + wantNpc + ' is not on map ' + here + ' (npcs here: '
+                        + (npcIds.length ? npcIds.join(',') : 'none') + ')');
+                }
                 if (!npc) {
                     return _agentResult(false, { quest_id: questId },
                         'no NPC on this map to talk to; pass objective_id to validate directly');

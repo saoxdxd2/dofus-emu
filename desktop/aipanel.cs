@@ -795,16 +795,30 @@ namespace DofusFarm.UI
             foreach (KeyValuePair<string, int> kv in _settings.Shortcuts)
             {
                 if (kv.Value == 0 || kv.Value != (int)keyData) continue;
-                switch (kv.Key)
-                {
-                    case "start_auto": StartAuto(true); return true;
-                    case "stop_all": StopAuto("shortcut"); return true;
-                    case "send_order": SendOrder(); return true;
-                    case "emergency": EmergencyStop(); return true;
-                    case "toggle_dry": ToggleDryRun(); return true;
-                }
+                RunShortcut(kv.Key);
+                return true;
             }
             return false;
+        }
+
+        /// <summary>The shortcuts, for the window that registers them system-wide.</summary>
+        public Dictionary<string, int> ShortcutMap()
+        {
+            return new Dictionary<string, int>(_settings.Shortcuts);
+        }
+
+        /// <summary>Run one named shortcut. Shared by the focused key path and the
+        /// global hotkey path so the two can never disagree about what F5 does.</summary>
+        public void RunShortcut(string action)
+        {
+            switch (action)
+            {
+                case "start_auto": StartAuto(true); break;
+                case "stop_all": StopAuto("shortcut"); break;
+                case "send_order": SendOrder(); break;
+                case "emergency": EmergencyStop(); break;
+                case "toggle_dry": ToggleDryRun(); break;
+            }
         }
 
         public string ShortcutSummary()

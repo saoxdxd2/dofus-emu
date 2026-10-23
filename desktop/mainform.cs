@@ -18,6 +18,8 @@ using System.Linq;
 
 using System.Runtime.CompilerServices;
 
+using System.Runtime.InteropServices;
+
 using System.Text;
 
 using System.Text.RegularExpressions;
@@ -1043,6 +1045,78 @@ namespace DofusFarm.UI
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
+        // -- global shortcuts -------------------------------------------------
+        //
+        // ProcessCmdKey only fires when this window has focus, and the whole point of
+        // a start/stop shortcut is to press it while playing — when the game window,
+        // not this one, is focused. So the shortcuts were dead exactly when they were
+        // needed, and the key handler looked fine in code review.
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        private const int WM_HOTKEY = 0x0312;
+        private readonly Dictionary<int, string> _hotkeys = new Dictionary<int, string>();
+
+        /// <summary>Register the AI panel's shortcuts as system-wide hotkeys.</summary>
+        public void RegisterGlobalShortcuts()
+        {
+            UnregisterGlobalShortcuts();
+            if (_aiPanel == null) return;
+            int id = 0xA1;
+            foreach (KeyValuePair<string, int> kv in _aiPanel.ShortcutMap())
+            {
+                if (kv.Value == 0) continue;
+                Keys key = (Keys)kv.Value;
+                uint mods = 0;
+                if ((key & Keys.Control) == Keys.Control) mods |= 0x2;
+                if ((key & Keys.Shift) == Keys.Shift) mods |= 0x4;
+                if ((key & Keys.Alt) == Keys.Alt) mods |= 0x1;
+                uint vk = (uint)(key & Keys.KeyCode);
+                if (RegisterHotKey(Handle, id, mods, vk))
+                {
+                    _hotkeys[id] = kv.Key;
+                    id++;
+                }
+                else
+                {
+                    // Usually another application already owns it. Saying which one
+                    // failed is the difference between "shortcuts are broken" and a
+                    // two-second fix.
+                    Log("[AI] shortcut " + kv.Key + " (" + key.ToString()
+                        + ") could not be registered; another application may own it");
+                }
+            }
+            if (_hotkeys.Count > 0)
+                Log("[AI] " + _hotkeys.Count + " global shortcut(s) registered");
+        }
+
+        public void UnregisterGlobalShortcuts()
+        {
+            foreach (int id in _hotkeys.Keys)
+            {
+                try { UnregisterHotKey(Handle, id); } catch { }
+            }
+            _hotkeys.Clear();
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_HOTKEY && _aiPanel != null)
+            {
+                int id = m.WParam.ToInt32();
+                string action;
+                if (_hotkeys.TryGetValue(id, out action))
+                {
+                    _aiPanel.RunShortcut(action);
+                    return;
+                }
+            }
+            base.WndProc(ref m);
+        }
+
         /// <summary>
         /// Build the page shell. The window used to be one long column -- header,
         /// toolbar, grid, a 184 px AI strip, status bar -- so the instance list,
@@ -1059,6 +1133,9 @@ namespace DofusFarm.UI
             _pageInstances.Controls.Add(_toolbarPanel);
 
             _aiPanel = new AiPanel(baseDir, GetInstanceIdFromSlot, delegate { return _grid.Rows.Count; }, Log);
+            // Shortcuts must work while the game has focus, so they are registered
+            // with the OS rather than handled as ordinary keys.
+            try { RegisterGlobalShortcuts(); } catch (Exception ex) { Log("[AI] shortcut registration failed: " + ex.Message); }
             _pageSettings = new SettingsPage(baseDir, Log, delegate
             {
                 // Changing the egress invalidates every relay that is already
@@ -2913,6 +2990,7 @@ namespace DofusFarm.UI
         protected override void OnFormClosing(FormClosingEventArgs e)
 
         {
+            try { UnregisterGlobalShortcuts(); } catch { }
             try { if (_aiLiveTimer != null) { _aiLiveTimer.Stop(); _aiLiveTimer.Dispose(); _aiLiveTimer = null; } } catch { }
 
             // Persist the AI panel's mode, budgets and shortcuts. Doing it here
