@@ -127,7 +127,8 @@ def main(argv=None) -> int:
     # every later talk failure rather than leaving it a mystery.
     hp = snap.get("hp") or {}
     life, top = hp.get("life"), hp.get("max")
-    if isinstance(life, (int, float)) and life > 0:
+    alive = isinstance(life, (int, float)) and life > 0
+    if alive:
         record("the character has health", "PASS", "%s/%s" % (life, top))
     elif life == 0 and top == 0:
         record("the character has health", "FAIL",
@@ -135,6 +136,20 @@ def main(argv=None) -> int:
                "revive before expecting talk to work")
     else:
         record("the character has health", "SKIP", "life=%s max=%s" % (life, top))
+
+    if not alive:
+        # A dead character can walk but cannot talk, so attempting the rest would
+        # produce three misleading failures instead of one true one.
+        record("talk opens a dialog", "SKIP", "not attempted: no health")
+        record("a dialog reply is accepted", "SKIP", "not attempted: no health")
+        record("the character moves", "SKIP", "not attempted: no health")
+        for tool, label in (("debug.npcs", "NPC actors are visible"),
+                            ("debug.groups", "monster groups are visible")):
+            r = directive(tool)
+            record(label, "PASS" if r.get("ok") else "FAIL",
+                   str((r.get("data") or {}).get("count")) if r.get("ok")
+                   else str(r.get("error")))
+        return _summary()
 
     # 5. talk: open a dialog with an NPC on this map
     before_dialog = bool(snap.get("in_dialog"))
