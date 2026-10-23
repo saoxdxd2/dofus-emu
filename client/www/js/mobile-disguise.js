@@ -1767,6 +1767,51 @@
                 // no change and calls the step a noop, and the loop retires a quest
                 // that was actually progressing.
                 snap.in_dialog = !!(pd && pd.isInDialog);
+
+                // Quest state. Without it the planner is blind: it cannot tell which
+                // quests are open, which objective is current, or which one is ready to
+                // hand in. It was planning against an observation that carried none of
+                // this, so every step re-accepted a quest and nothing could progress.
+                //
+                // The client's own model (from the bundle): an active quest has
+                // `objectives[{objectiveId, objectiveStatus}]` and `finishedCount`, and
+                // objectiveStatus is {FINISHED:0, ACTIVE:1, CAN_BE_FINISHED:2}.
+                // Status 2 is the interesting one: the conditions are met and the
+                // objective only needs QuestObjectiveValidationMessage to be claimed.
+                var qs = { active: {}, current: null, ready: [], step_objectives: [], completed: 0 };
+                try {
+                    var sq = pd && pd.quests && pd.quests.standardQuests;
+                    if (sq && typeof sq.getListOfActiveQuestsId === 'function') {
+                        var qids = sq.getListOfActiveQuestsId() || [];
+                        var perQuest = {};
+                        for (var qi = 0; qi < qids.length; qi++) {
+                            var qid = qids[qi];
+                            var q = sq.getActiveQuestById(qid);
+                            if (!q) continue;
+                            var fin = Number(q.finishedCount || 0);
+                            qs.active[qid] = fin;
+                            qs.completed += fin;
+                            var objs = q.objectives || [];
+                            perQuest[qid] = [];
+                            for (var oi = 0; oi < objs.length; oi++) {
+                                var o = objs[oi] || {};
+                                var st = o.objectiveStatus;
+                                perQuest[qid].push({ id: o.objectiveId, done: st === 0, status: st });
+                                if (st === 2) qs.ready.push({ quest_id: qid, objective_id: o.objectiveId });
+                                if (st !== 0 && !qs.current) {
+                                    qs.current = { quest_id: qid, step: fin,
+                                                   objective_id: o.objectiveId, status: st };
+                                }
+                            }
+                        }
+                        if (qs.current) qs.step_objectives = perQuest[qs.current.quest_id] || [];
+                    }
+                } catch (e) {}
+                snap.quests_active = qs.active;
+                snap.current_objective = qs.current;
+                snap.ready_objectives = qs.ready;
+                snap.step_objectives = qs.step_objectives;
+                snap.objectives_completed = qs.completed;
                 // XP is what makes a farm measurable: it is the only quantity the
                 // client reports on every kill, and a fight that yields 0 xp is a
                 // fight that was lost or abandoned. Read several candidate keys

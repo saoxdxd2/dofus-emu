@@ -498,6 +498,33 @@ def test_every_declared_tool_exists_in_the_client() -> None:
           str(phantom) if phantom else "none")
 
 
+def test_a_ready_objective_is_claimed_first() -> None:
+    """objectiveStatus 2 means the game already accepts it — claiming is free progress.
+
+    The planner had no notion of a ready objective, so a quest whose conditions were met
+    looked exactly like one that had not started, and the only way it ever advanced was
+    by luck. It now claims the first ready objective before planning anything else.
+    """
+    print("\n== ready objectives ==")
+    from agent.planner import QuestPlanner
+
+    p = QuestPlanner(level_hint=60)
+    obs = {"level": 60, "map_id": 150736645, "inventory": {}, "quests_active": {},
+           "ready_objectives": [{"quest_id": 584, "objective_id": 9001}]}
+    call = p.choose("do quests", obs, None)
+    check("a ready objective is validated first",
+          call is not None and call.tool == "quest.advance"
+          and call.args.get("objective_id") == 9001,
+          "%s %s" % (call.tool if call else None, call.args if call else None))
+
+    p2 = QuestPlanner(level_hint=60)
+    obs2 = {"level": 60, "map_id": 150736645, "inventory": {}, "quests_active": {},
+            "ready_objectives": [{"quest_id": "bad"}]}
+    call2 = p2.choose("do quests", obs2, None)
+    check("a malformed ready entry does not stop the plan", call2 is not None,
+          call2.tool if call2 else "no call")
+
+
 def test_verifier_reads_the_real_observation_shape() -> None:
     """The rules compared flat keys against a nested snapshot and saw no change.
 
@@ -844,6 +871,7 @@ def main() -> int:
     test_bridge_port_is_discovered()
     test_every_declared_tool_exists_in_the_client()
     test_host_messages_are_not_double_encoded()
+    test_a_ready_objective_is_claimed_first()
     test_verifier_reads_the_real_observation_shape()
     test_unlimited_means_unlimited()
     test_structural_failures_are_not_retried()

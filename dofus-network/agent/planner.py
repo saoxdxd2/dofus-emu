@@ -441,6 +441,23 @@ class QuestPlanner:
         self._seen_done |= {int(q) for q in (obs.get("quests_done") or [])}
         active_ids = [int(k) for k in active.keys()]
 
+        # 0. Claim anything the game says is already done.
+        #
+        # objectiveStatus 2 (CAN_BE_FINISHED) means the conditions are met and the only
+        # thing missing is the validation call. That is free progress, and leaving it
+        # unclaimed is why a quest could look stuck while it was actually ready.
+        for item in (obs.get("ready_objectives") or [])[:1]:
+            try:
+                return ToolCall("quest.advance",
+                                {"quest_id": int(item["quest_id"]),
+                                 "objective_id": int(item["objective_id"])},
+                                goal)
+            except (KeyError, TypeError, ValueError):
+                # A malformed ready-objective entry must not stop the plan, but it must
+                # not be silently swallowed either: a bare `continue` here hid a
+                # four-argument ToolCall for a while, and the branch never ran.
+                continue
+
         # 1. Continue an open quest if the observation says one is running.
         for qid, idx in sorted(active.items()):
             if int(qid) not in self.quests:
