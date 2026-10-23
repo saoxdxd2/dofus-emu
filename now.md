@@ -341,8 +341,26 @@ is short of labels rather than of capacity.
    out of distribution and the forecast is decoration — measured, not guessed: a 120 ms series
    pinged twice a second came back as "0.8 ms, confidence high". So `ai/score_proxies.py` ranks
    by **measured** loss, jitter and p95, and prints the model's degradation beside them as
-   advisory. Using the model honestly here would mean training on local fast-cadence telemetry,
-   which is the Phase 5 the old REPORT asked for and which still has not been collected.
+   advisory.
+
+   **Phase 5 is now done, and it works.** `ai/collect_local.py` samples this machine at the
+   cadence the tools actually use, and `prepare --out` / `train --out-dir` keep the result
+   separate from the public-probe artifacts. Corpus: **11,066 observations over 12 series** in
+   ~12 minutes (8 reachable hosts, 4 deliberately unreachable so the loss head sees a positive
+   at all). Split by **series**, so validation is on hosts the model never saw:
+
+   | checkpoint | cadence | RTT log-MAE h1 | live 0.5 s series: forecast vs actual |
+   |---|---|---|---|
+   | `local_model/model.pt` | 0.5 s, this machine | **0.1464** | **56.3 ms vs 63.3 ms** |
+   | `model.pt` (RIPE) | ~60 s, global probes | 0.3597 | 1.2 ms vs 65.9 ms |
+
+   `score_proxies.py` now prefers the local checkpoint and says when it is falling back. Two
+   honest limits remain: the corpus is ~12 minutes from one network, so it describes *this*
+   line and not networks in general; and its losses are bimodal (four series at 100%, the rest
+   at ~0%), so the loss head learned "some hosts never answer" rather than intermittent loss.
+   A corpus that teaches intermittency needs a flaky path to observe, which is exactly what a
+   working proxy would provide.
+
 
 
 ---

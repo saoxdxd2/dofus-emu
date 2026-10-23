@@ -15,10 +15,10 @@ So: ping each candidate, feed the series to the model, and rank by what it says.
 Honest about two things:
 
   * It pings the proxy itself, not the game path. That measures the hop you control.
-  * The checkpoint was trained on public RIPE Atlas series. The REPORT says so and warns that
-    public probe data cannot characterise this client; local telemetry is the better source.
-    Treat the ranking as a tie-breaker between candidates that already pass the deep check,
-    not as a promise about how the game will feel.
+  * Two checkpoints exist and they are not interchangeable. `local_model/model.pt` is trained
+    on this machine at half-second cadence and validated on held-out hosts; `model.pt` is the
+    RIPE Atlas one at ~60 s spacing, kept as a fallback. The tool picks the local one and says
+    when it cannot. Even then the ranking is measurement-first, so it holds either way.
 """
 
 from __future__ import annotations
@@ -33,7 +33,21 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROOT = REPO_ROOT.parent
 POOL = ROOT / "proxies.txt"
-CHECKPOINT = REPO_ROOT / "networkhealth_artifacts" / "model.pt"
+ARTIFACTS = REPO_ROOT / "networkhealth_artifacts"
+# Two checkpoints, and they are not interchangeable.
+#
+#   local_model/model.pt  trained on this machine at 0.5 s cadence, validated on held-out
+#                         hosts: RTT log-MAE 0.1464 at h1. Measured on a live 0.5 s series it
+#                         predicted 56.3 ms for a 63.3 ms link.
+#   model.pt              trained on RIPE Atlas at ~60 s cadence. Same live series: 1.2 ms
+#                         for a 65.9 ms link, because `log_gap_seconds` is a feature and a
+#                         half-second series is out of its distribution.
+#
+# So the local one is the default when it exists, and the global one is the fallback. If only
+# the fallback is present the tool still runs — it just says the forecast is out of cadence.
+LOCAL_CHECKPOINT = ARTIFACTS / "local_model" / "model.pt"
+GLOBAL_CHECKPOINT = ARTIFACTS / "model.pt"
+CHECKPOINT = LOCAL_CHECKPOINT if LOCAL_CHECKPOINT.exists() else GLOBAL_CHECKPOINT
 
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -70,13 +84,13 @@ def tcp_rtt(host: str, port: int, timeout: float) -> float | None:
 
 
 def score(engine_cls, observation_cls, entry: str, samples: int, interval: float,
-          timeout: float) -> dict:
+          timeout: float, checkpoint: Path = None) -> dict:
     parsed = parse(entry)
     if not parsed:
         return {"entry": entry, "error": "unparsable"}
     _scheme, host, port = parsed
 
-    engine = engine_cls(CHECKPOINT)
+    engine = engine_cls(checkpoint or CHECKPOINT)
     rtts: list[float] = []
     losses = 0
     result = None
@@ -120,15 +134,24 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=float, default=4.0, help="per-ping timeout")
     ap.add_argument("--top", type=int, default=0, help="show only the best N")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--checkpoint", default="",
+                    help="override the model; default is the local-cadence one if present")
     args = ap.parse_args(argv)
 
     pool = load_pool()
     if not pool:
         print("proxies.txt has no entries. Run: manage-proxy.bat refresh")
         return 1
-    if not CHECKPOINT.exists():
-        print("no model at %s" % CHECKPOINT)
+    checkpoint = Path(args.checkpoint) if args.checkpoint else CHECKPOINT
+    if not checkpoint.exists():
+        print("no model at %s" % checkpoint)
+        print("build one: python ai/collect_local.py, then networkhealth prepare/train")
         return 2
+    if checkpoint == GLOBAL_CHECKPOINT:
+        print("note: using the global-cadence checkpoint (RIPE, ~60 s spacing). These pings")
+        print("      are %.1fs apart, so its forecast is out of distribution — ranking below" % args.interval)
+        print("      is measurement-only. Collect local data to fix this: ai/collect_local.py")
+        print()
 
     try:
         from networkhealth.inference import NetworkHealthInference, Observation
@@ -139,7 +162,7 @@ def main(argv=None) -> int:
     # Fail early and clearly if the checkpoint does not match the code, rather than once per
     # proxy after a minute of pinging.
     try:
-        NetworkHealthInference(CHECKPOINT)
+        NetworkHealthInference(checkpoint)
     except Exception as exc:  # noqa: BLE001
         print("the checkpoint does not load against this code: %s" % str(exc).split("\n")[0])
         print("retrain it:  python -m networkhealth prepare --seq-len 32  then  train")
@@ -150,7 +173,7 @@ def main(argv=None) -> int:
     rows = []
     for entry in pool:
         row = score(NetworkHealthInference, Observation, entry, args.samples,
-                    args.interval, args.timeout)
+                    args.interval, args.timeout, checkpoint)
         rows.append(row)
         if not args.json:
             if row.get("error"):
@@ -198,9 +221,13 @@ def main(argv=None) -> int:
     if not scored:
         print("  no proxy produced a full window of measurements, so there is nothing to rank")
         return 1
-    print("\nThe model's window was trained on ~60s-spaced probe data and these pings are")
-    print("%.1fs apart, so its degradation column is advisory at best. The loss and jitter" % args.interval)
-    print("columns are measured and hold at any cadence — they decide the order.")
+    if checkpoint == GLOBAL_CHECKPOINT:
+        print("\nThis used the global checkpoint, trained on ~60s-spaced probes, and these pings")
+        print("are %.1fs apart — its degradation column is out of distribution. Run" % args.interval)
+        print("ai/collect_local.py to build a model at the cadence you actually use.")
+    else:
+        print("\nModel: local cadence (trained on this machine at 0.5s, validated on held-out")
+        print("hosts). Ranking is still measurement-first, so it holds if the model is wrong.")
     print("\nbest right now: %s" % scored[0]["entry"])
     print("(it pings the proxy, not the game path — use it to choose between candidates that")
     print(" already pass the deep check, not as a prediction of how play will feel)")
