@@ -429,6 +429,16 @@ namespace DofusFarm.Engine
             return form;
         }
 
+        /// <summary>Run a script in every open page. Used to keep the in-game badge
+        /// in step with the loop, including when it stops on its own.</summary>
+        public void ExecuteScriptOnAllInstances(string script)
+        {
+            foreach (var kv in _activeForms)
+            {
+                try { var ignored = kv.Value.ExecuteScriptAsync(script); } catch { }
+            }
+        }
+
         public void ExecuteScriptOnInstance(string instanceId, string script)
         {
             if (string.IsNullOrEmpty(script)) return;

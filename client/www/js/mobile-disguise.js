@@ -1119,6 +1119,40 @@
                 this.setEnabled(!this.enabled);
             },
 
+            // -- the badge is the AI button -------------------------------------
+            aiRunning: false,
+
+            aiToggle: function() {
+                try {
+                    if (!(window.chrome && window.chrome.webview)) return;
+                    window.chrome.webview.postMessage(JSON.stringify({
+                        type: 'AI_REQUEST',
+                        action: this.aiRunning ? 'stop_all' : 'start_auto'
+                    }));
+                } catch (e) {}
+            },
+
+            setAiState: function(running, text) {
+                this.aiRunning = !!running;
+                var hud = document.getElementById('__farmbot_hud');
+                var label = document.getElementById('__farmbot_hud_label');
+                if (hud) hud.title = text || (running ? 'AI running' : 'Start the AI');
+                if (!hud || !label) return;
+                if (running) {
+                    label.textContent = 'AI: running';
+                    hud.style.backgroundColor = '#10b981';
+                    hud.style.color = '#ffffff';
+                    hud.style.border = '1px solid #34d399';
+                    hud.style.boxShadow = '0 0 12px rgba(16,185,129,0.7)';
+                } else {
+                    label.textContent = 'AI: start';
+                    hud.style.backgroundColor = 'rgba(30, 41, 59, 0.85)';
+                    hud.style.color = '#94a3b8';
+                    hud.style.border = '1px solid rgba(100, 116, 139, 0.4)';
+                    hud.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+                }
+            },
+
             syncToHost: function() {
                 try {
                     if (window.chrome && window.chrome.webview) {
@@ -1243,7 +1277,11 @@
                                 localStorage.setItem(POS_KEY, JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }));
                             } catch (err) {}
                         } else {
-                            self.toggle();
+                            // The badge is the AI button: it asks the host to start
+                            // or stop the agent loop. It used to toggle the auto-fight
+                            // bot, which is a different system entirely — so pressing
+                            // "the AI button" could never start the AI.
+                            self.aiToggle();
                         }
                     });
                     hud.addEventListener('pointercancel', function() { dragging = false; hud.style.cursor = 'grab'; });
@@ -1267,22 +1305,9 @@
             },
 
             updateHud: function() {
-                var hud = document.getElementById('__farmbot_hud');
-                var label = document.getElementById('__farmbot_hud_label');
-                if (!hud || !label) return;
-                if (this.enabled) {
-                    label.textContent = 'Farm bot: ON';
-                    hud.style.backgroundColor = '#10b981';
-                    hud.style.color = '#ffffff';
-                    hud.style.border = '1px solid #34d399';
-                    hud.style.boxShadow = '0 0 12px rgba(16,185,129,0.7)';
-                } else {
-                    label.textContent = 'Farm bot: OFF';
-                    hud.style.backgroundColor = 'rgba(30, 41, 59, 0.85)';
-                    hud.style.color = '#94a3b8';
-                    hud.style.border = '1px solid rgba(100, 116, 139, 0.4)';
-                    hud.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
-                }
+                // The badge shows the AI loop's state. The farm bot has its own state
+                // and no badge: a control labelled "AI" must control the AI.
+                this.setAiState(this.aiRunning, null);
             },
 
             bindKeyListeners: function() {
@@ -2585,6 +2610,16 @@
                 return _agentResult(false, null, err.toString());
             }
         };
+        // The host pushes the AI loop's state here so the badge reflects reality
+        // rather than whatever the page last assumed.
+        try {
+            window.__aiState = function(running, text) {
+                if (window.__FarmBot && window.__FarmBot.setAiState) {
+                    window.__FarmBot.setAiState(running, text);
+                }
+            };
+        } catch (e) {}
+
         console.log('[AgentBridge] directive bus ready');
     } catch(e) {}
 

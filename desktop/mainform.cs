@@ -211,6 +211,7 @@ namespace DofusFarm.UI
         private SettingsPage _pageSettings;
         private Label _aiLive;
         private System.Windows.Forms.Timer _aiLiveTimer;
+        private bool _aiPushedRunning;
 
         private ShortcutsPage _pageShortcuts;
 
@@ -1214,6 +1215,56 @@ namespace DofusFarm.UI
             ShowPage(0);
         }
 
+        /// <summary>Push the AI loop's real state into a page, for the in-game badge.</summary>
+        private void PushAiState(string instanceId)
+        {
+            try
+            {
+                bool running = _aiPanel != null && _aiPanel.RunningNow;
+                string status = _aiPanel != null ? _aiPanel.LiveStatusText() : "";
+                string js = "window.__aiState && window.__aiState("
+                    + (running ? "true" : "false") + ", " + JsQuote(status) + ")";
+                if (!string.IsNullOrEmpty(instanceId)) _webViewBackend.ExecuteScriptOnInstance(instanceId, js);
+            }
+            catch (Exception ex)
+            {
+                Log("[AI] could not push state to the badge: " + ex.Message);
+            }
+        }
+
+        private void PushAiStateAll()
+        {
+            try
+            {
+                bool running = _aiPanel != null && _aiPanel.RunningNow;
+                string status = _aiPanel != null ? _aiPanel.LiveStatusText() : "";
+                _webViewBackend.ExecuteScriptOnAllInstances(
+                    "window.__aiState && window.__aiState("
+                    + (running ? "true" : "false") + ", " + JsQuote(status) + ")");
+            }
+            catch { }
+        }
+
+        private static string JsQuote(string s)
+        {
+            if (s == null) return "null";
+            var sb = new System.Text.StringBuilder("\"");
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default: sb.Append(c); break;
+                }
+            }
+            sb.Append("\"");
+            return sb.ToString();
+        }
+
         /// <summary>One tick: read the loop's own state and paint it.</summary>
         private void RefreshAiLive()
         {
@@ -1221,6 +1272,7 @@ namespace DofusFarm.UI
             {
                 if (_aiPanel == null || _aiLive == null || _aiLive.IsDisposed) return;
                 bool running = _aiPanel.RunningNow;
+                if (running != _aiPushedRunning) { _aiPushedRunning = running; PushAiStateAll(); }
                 string text = _aiPanel.LiveStatusText();
                 if (_aiLive.Text != text) _aiLive.Text = text;
                 Color want = running ? Color.FromArgb(74, 222, 128) : Color.FromArgb(148, 163, 184);
@@ -1558,6 +1610,15 @@ namespace DofusFarm.UI
                             ShowPage(1);
                             _aiPanel.StartAuto(true);
                         }
+                        else if (string.Equals(action, "stop_all", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _aiPanel.StopAuto("in-game badge");
+                        }
+                        // Tell the page what actually happened. The badge used to
+                        // paint itself from its own guess, which is how a button
+                        // labelled "AI" could sit there claiming a state the loop was
+                        // not in.
+                        PushAiState(instId);
                     });
                 };
 

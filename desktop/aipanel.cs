@@ -50,6 +50,19 @@ namespace DofusFarm.UI
         // enough to compare strings.
         public Dictionary<string, int> Shortcuts = DefaultShortcuts();
 
+        /// <summary>
+        /// Not user decisions. Only the planner can plan a quest — the rule maps a goal
+        /// to a single tool and the encoder picks a tool for a step that no plan
+        /// produced — and a step budget is a debugging aid rather than a setting. Both
+        /// were exposed, so the panel could be put into a state that cannot work and
+        /// the user had no way to know which of the three policies was the real one.
+        /// </summary>
+        public void PinDecisions()
+        {
+            Policy = "planner";
+            Steps = 0;
+        }
+
         public static Dictionary<string, int> DefaultShortcuts()
         {
             var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -279,10 +292,8 @@ namespace DofusFarm.UI
 
         private ComboBox _cmbMode;
         private ComboBox _cmbTarget;
-        private ComboBox _cmbPolicy;
         private CheckBox _chkDry;
         private TextBox _txtGoals;
-        private NumericUpDown _numSteps;
         private RichTextBox _output;
         private Button _btnStart;
         private Button _btnStop;
@@ -300,6 +311,7 @@ namespace DofusFarm.UI
             _instanceCount = instanceCount;
             _log = log;
             _settings = AiSettings.Load(baseDir);
+            _settings.PinDecisions();   // not user decisions; see PinDecisions()
 
             Dock = DockStyle.Fill;
             BackColor = Color.FromArgb(20, 22, 28);
@@ -341,9 +353,6 @@ namespace DofusFarm.UI
             _cmbTarget = MakeCombo(204, 0, 170, new object[] { "All instances" });
             row1.Controls.Add(_cmbTarget);
 
-            row1.Controls.Add(MakeLabel("Policy", 342, 4));
-            _cmbPolicy = MakeCombo(392, 0, 118, new object[] { "Rule policy", "Encoder v15", "Quest planner" });
-            row1.Controls.Add(_cmbPolicy);
 
             _chkDry = new CheckBox();
             _chkDry.Text = "Dry run (choose, never send)";
@@ -411,7 +420,6 @@ namespace DofusFarm.UI
 
             // No interval, no minutes: the loop is driven by the goals, not by a
             // clock. 0 steps = run until the goals are met or the user stops it.
-            AddNumber(row3, "Step budget (0 = unlimited)", 0, 22, 0, 1000000, 0, out _numSteps);
 
             _btnKeys = MakeButton("Shortcuts...", Color.FromArgb(51, 65, 85), Color.FromArgb(71, 85, 105), 260, 22, 110);
             _btnKeys.Click += delegate { EditShortcuts(); };
@@ -530,11 +538,8 @@ namespace DofusFarm.UI
             // nothing to drive. "Nothing works" was, in part, that neither of these can
             // plan a quest: the rule maps a goal to a single tool, and the encoder picks
             // a tool for a step that no plan produced.
-            _cmbPolicy.SelectedIndex = _settings.Policy == "encoder" ? 1
-                : (_settings.Policy == "planner" ? 2 : 0);
             _chkDry.Checked = _settings.DryRun;
             _txtGoals.Text = _settings.Goals;
-            _numSteps.Value = Clamp((decimal)_settings.Steps, _numSteps.Minimum, _numSteps.Maximum);
             RefreshTargets();
         }
 
@@ -578,11 +583,8 @@ namespace DofusFarm.UI
         {
             _settings.Mode = _cmbMode.SelectedIndex == 2 ? "auto" : (_cmbMode.SelectedIndex == 1 ? "order" : "off");
             _settings.TargetSlot = _cmbTarget.SelectedIndex;
-            _settings.Policy = _cmbPolicy.SelectedIndex == 2 ? "planner"
-                : (_cmbPolicy.SelectedIndex == 1 ? "encoder" : "rule");
             _settings.DryRun = _chkDry.Checked;
             _settings.Goals = _txtGoals.Text;
-            _settings.Steps = (int)_numSteps.Value;
         }
 
         public void SaveSettings()
