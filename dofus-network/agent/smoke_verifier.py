@@ -439,6 +439,111 @@ def test_host_messages_are_not_double_encoded() -> None:
           "%d occurrence(s)" % bad if bad else "object form only")
 
 
+def test_one_transport_one_copy() -> None:
+    """The client script must exist once and run once.
+
+    It used to exist three times — `scripts/`, `desktop/client/www/js/` and
+    `client/www/js/` — byte-identical, because `builder/build.cs` copied it after every
+    build. Worse, two transports both loaded it: the WebView2 host injects
+    `scripts/mobile-disguise.js` with AddScriptToExecuteOnDocumentCreated, and
+    `standalone.html` also pulled in the copy with a `<script src>` tag. The log showed
+    the result on every page load:
+
+        [FarmBot] Bound to connection manager.
+        [x2] [FarmBot] Bound to connection manager.
+
+    Two `FarmBot.init()` calls, two `waitForConnection` timers, two bindings of
+    `dofus.connectionManager` — two bots driving one HUD. Nothing failed, nothing
+    warned; the agent simply ran its tick loop twice.
+
+    These checks pin the fix, because a copy is easy to re-add and impossible to notice.
+    """
+    print("\n== one transport, one copy ==")
+    root = REPO_ROOT.parent
+    script = root / "scripts" / "mobile-disguise.js"
+    if not script.exists():
+        check("the client script exists where the host looks for it", False, str(script))
+        return
+
+    text = script.read_text(encoding="utf-8", errors="replace")
+    check("the client script guards against a second execution",
+          "__DofusFarmAgentLoaded" in text,
+          "window.__DofusFarmAgentLoaded present" if "__DofusFarmAgentLoaded" in text
+          else "no idempotence guard: a re-added transport would run two bots")
+
+    # Exactly one copy in the tree. Walk rather than glob so an unexpected location
+    # fails the check instead of being silently missed.
+    copies = []
+    for p in root.rglob("mobile-disguise*.js"):
+        parts = set(p.parts)
+        if parts & {"node_modules", "archive", "asset_cache", ".git", "__pycache__"}:
+            continue
+        copies.append(p)
+    check("exactly one copy of the client script exists", len(copies) == 1,
+          ", ".join(str(p.relative_to(root)) for p in copies))
+
+    # No page may load it itself; the host injects it.
+    tags = []
+    for html in root.rglob("standalone.html"):
+        if "node_modules" in html.parts:
+            continue
+        body = html.read_text(encoding="utf-8", errors="replace")
+        if "mobile-disguise" in body and "script" in body:
+            for line in body.splitlines():
+                if "mobile-disguise" in line and "<script" in line:
+                    tags.append("%s: %s" % (html.relative_to(root), line.strip()[:70]))
+    check("no page loads the client script with a <script> tag", not tags,
+          "; ".join(tags) if tags else "injected by the host only")
+
+    # The builder must not recreate the copies. Matched per line on File.Copy rather
+    # than on the filename alone: the comment explaining the removal also names the
+    # file, and a substring check would flag its own documentation.
+    build = root / "builder" / "build.cs"
+    if build.exists():
+        src = build.read_text(encoding="utf-8", errors="replace")
+        offenders = [ln.strip() for ln in src.splitlines()
+                     if "File.Copy" in ln and "mobile-disguise" in ln]
+        check("the builder does not copy the script into www/js", not offenders,
+              "; ".join(offenders)[:90] if offenders else "scripts/ is the only source")
+
+
+def test_layering_holds() -> None:
+    """The harness must not depend on the simulator, and shared vocabulary has one owner.
+
+    `agent/` is the production harness; `sim/` is the offline stand-in. If the harness
+    imports the simulator the dependency is inverted and the simulator stops being
+    replaceable. Separately, the objective-type buckets and `_params()` used to be
+    copy-pasted between `planner.py`, `world.py` and `decisions.py`; they now live in
+    `agent/features.py`, and identity checks below catch a re-introduced copy.
+    """
+    print("\n== layering ==")
+    import re as _re
+
+    offenders = []
+    for path in sorted((REPO_ROOT / "agent").glob("*.py")):
+        if path.name in ("smoke_verifier.py",):
+            continue
+        body = path.read_text(encoding="utf-8", errors="replace")
+        for m in _re.finditer(r"^\s*(?:from|import)\s+sim\b", body, _re.MULTILINE):
+            offenders.append("%s:%d" % (path.name, body[:m.start()].count("\n") + 1))
+    check("no harness module imports the simulator", not offenders,
+          ", ".join(offenders) if offenders else "agent/ does not depend on sim/")
+
+    try:
+        from agent import features
+        from sim import world
+        from agent import planner
+        check("objective buckets have one owner",
+              world.KILL_TYPES is features.KILL_TYPES
+              and planner.KILL_TYPES is features.KILL_TYPES,
+              "shared object" if world.KILL_TYPES is features.KILL_TYPES
+              else "a copy exists: the two can drift")
+        check("_params has one owner", planner._params is features._params,
+              "shared" if planner._params is features._params else "duplicated")
+    except Exception as exc:  # noqa: BLE001
+        check("shared vocabulary is importable", False, "%s: %s" % (type(exc).__name__, exc))
+
+
 def test_every_declared_tool_exists_in_the_client() -> None:
     """The capabilities file is a contract; nothing checked it against the client.
 
@@ -871,6 +976,8 @@ def main() -> int:
     test_bridge_port_is_discovered()
     test_every_declared_tool_exists_in_the_client()
     test_host_messages_are_not_double_encoded()
+    test_one_transport_one_copy()
+    test_layering_holds()
     test_a_ready_objective_is_claimed_first()
     test_verifier_reads_the_real_observation_shape()
     test_unlimited_means_unlimited()

@@ -271,7 +271,11 @@ try {
 // -----------------------------------------------------------------------------
 console.log('\n--- Step 5: Checking Mobile Disguise Watchdog Parameters ---');
 try {
-    const disguisePath = path.join('desktop', 'client', 'www', 'js', 'mobile-disguise.js');
+    // scripts/ is the single source of truth. This used to read the copy under
+    // desktop/client/www/js, which the build regenerated from scripts/ — so this check
+    // was inspecting a file that only existed after a build, and failed silently
+    // (the catch below) on a clean checkout.
+    const disguisePath = path.join('scripts', 'mobile-disguise.js');
     const disguiseCode = fs.readFileSync(disguisePath, 'utf8');
 
     const has10sThreshold = disguiseCode.includes('> 10000');
