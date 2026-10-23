@@ -2,6 +2,28 @@
     'use strict';
     if (typeof window === 'undefined') return;
 
+    // This file is the single source of truth for the in-client agent. The two copies
+    // that used to sit beside it (desktop/client/www/js and client/www/js) are gone:
+    // no page loads them any more, and every page that did was running a different
+    // program than the one in scripts/.
+    //
+    // It also runs once per page load now, and that is the point. It used to run
+    // twice: the WebView2 host injects it before the document is created, and
+    // standalone.html pulled in the same file a second time with a <script src> tag.
+    // The symptom was one log line, repeated, that nobody read:
+    //     [FarmBot] Bound to connection manager.
+    //     [x2] [FarmBot] Bound to connection manager.
+    // Two FarmBot.init() calls meant two waitForConnection timers, and each of them
+    // bound dofus.connectionManager, so two bots drove one HUD: double tick loops,
+    // double packets, and a HUD that reported whichever copy spoke last. The tag is
+    // removed, and this guard stays because a transport can be re-added by accident
+    // and the second copy must be a no-op instead of a second bot.
+    if (window.__DofusFarmAgentLoaded) {
+        try { console.log('[AgentBridge] already loaded; skipping duplicate execution'); } catch (e) {}
+        return;
+    }
+    window.__DofusFarmAgentLoaded = true;
+
     function cfg(val, fallback) {
         return (!val || val.indexOf('__' + 'DEVICE_') === 0) ? fallback : val;
     }
@@ -1534,8 +1556,17 @@
             },
 
             isUserActor: function(id) {
-                if (window.gui && window.gui.playerData && window.gui.playerData.character) {
-                    return window.gui.playerData.character.id === id;
+                // This used to read `playerData.character.id`. That field does not
+                // exist in this client build — the bundle never reads a field off it
+                // — so the condition was always false, the fallback below always ran,
+                // and every actor in the fight counted as the player. Every
+                // GameFightTurnStartMessage then looked like the player's own turn,
+                // and executeOptimalTurn was handed the monster's id as the fighter to
+                // plan for. The real path is
+                // `playerData.characterBaseInformations.id`, the same object
+                // `_agentSnapshot` reads.
+                if (window.gui && window.gui.playerData && window.gui.playerData.characterBaseInformations) {
+                    return window.gui.playerData.characterBaseInformations.id === id;
                 }
                 return true;
             }

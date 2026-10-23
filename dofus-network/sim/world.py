@@ -23,37 +23,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from agent.features import (objective_type, required_map,  # noqa: F401
+from agent.features import (DELIVER_TYPES, FIGHT_TYPES, KILL_TYPES,  # noqa: F401
+                            MAP_TYPES, OPEN_KILL_TYPES, TALK_TYPES,
+                            _params, objective_type, required_map,
                             travel_hops)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
-
-# Objective type -> what it needs, decoded from the objective text itself:
-#   0  "Locate and neutralise X"          monster
-#   1  "Talk to {npc,N}"                  npc
-#   2  "Show 1 {item,I} to {npc,N}"       item + npc
-#   3  "Take 1 {item,I} to {npc,N}"       item + npc
-#   4  "Find the map: X"                  map
-#   5  "Find the {subarea,S} area"        area
-#   6  "Defeat 1 {monster,M} in a fight"  monster
-#   9  "Talk to {npc,N} again"            npc
-#   12 "Take 1 {monster,M} soul to {npc}" monster + npc
-#   14 "Beat x3 {monster,M}"              monster xN
-#   16 "Defeat 8 x {monster} on {map}"    monster xN + map
-#   17 "Craft 1 {item,I}"                 item
-TALK_TYPES = {1, 9}
-MAP_TYPES = {4}
-AREA_TYPES = {5}
-KILL_TYPES = {0, 6, 14, 16}
-DELIVER_TYPES = {2, 3, 12}
-CRAFT_TYPES = {17}
-
-# Type 6 says "defeat X *in a fight*"; the open-world types do not. Keeping them
-# apart is what gives fight.join a job that farm.start cannot do, and a tool that
-# cannot be told from another tool is not a decision, it is noise in the label space.
-FIGHT_TYPES = {6}
-OPEN_KILL_TYPES = KILL_TYPES - FIGHT_TYPES
 
 # A stack limit is the only reason to ever sell something. Without it inv.sell is a
 # tool with no state effect, which means no counterfactual can ever prefer it.
@@ -66,18 +42,6 @@ def _load(name: str) -> Any:
         return []
     with path.open("r", encoding="utf-8") as fh:
         return json.load(fh)
-
-
-def _params(obj: Dict[str, Any]) -> Dict[str, Any]:
-    raw = obj.get("params")
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            return json.loads(raw.replace("'", '"'))
-        except ValueError:
-            return {}
-    return {}
 
 
 @dataclass
