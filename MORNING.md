@@ -37,10 +37,21 @@ Expected shape once things are right:
 [PASS] the character has health           120/240
 [PASS] talk opens a dialog                npc template 447 (actor 1234567)
 [PASS] a dialog reply is accepted         replied
+[PASS] the talk chain reports its stage   replied 0 replies  (in_dialog=False, reply_handler=True)
 [PASS] the character moves                cell 342 -> 305 (ok)
 [PASS] NPC actors are visible             3 found
 [PASS] monster groups are visible         0 found
 ```
+
+The talk-chain line is the new one and it is the useful one. `walk -> talk -> dialog ->
+reply` is four steps across two messages, and when it breaks every failure looks the same
+from outside: "nothing advanced". The client now records which stage it reached —
+`walking_then_talking`, `talked`, `dialog_open_no_replies`, `replied`, `npc_not_on_map` — so
+the line says where the chain stopped instead of leaving you to guess.
+
+Related: the handler no longer replies into a dialog whose reply list has not arrived.
+`isInDialog` flips when the dialog opens; `replyIds` is filled a moment later, and replying
+in that gap sent index 0 into a list that did not exist.
 
 ## 3. If health is 0/0
 

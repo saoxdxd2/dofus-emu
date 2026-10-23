@@ -177,6 +177,31 @@ def main(argv=None) -> int:
     else:
         record("a dialog reply is accepted", "SKIP", "no dialog open to answer")
 
+    # 6b. where the talk chain stopped, in the client's own words.
+    #
+    # walk -> talk -> dialog -> reply is four steps across two messages, and every way it
+    # breaks looks identical from here: "nothing advanced". The client records which stage
+    # it reached, so this prints a reading instead of a suspicion.
+    talk = directive("debug.talk_state")
+    talk_data = (talk.get("data") or {}) if talk.get("ok") else {}
+    last = talk_data.get("last") or {}
+    if not talk.get("ok"):
+        record("the talk chain reports its stage", "FAIL", str(talk.get("error")))
+    else:
+        stage = last.get("stage") or "not attempted"
+        detail = []
+        if last.get("npc_template"):
+            detail.append("npc %s" % last["npc_template"])
+        if last.get("replies") is not None:
+            detail.append("%s replies" % last["replies"])
+        if last.get("error"):
+            detail.append(str(last["error"])[:60])
+        record("the talk chain reports its stage", "PASS",
+               "%s%s  (in_dialog=%s, reply_handler=%s, reply_ids=%s)"
+               % (stage, (" " + ", ".join(detail)) if detail else "",
+                  talk_data.get("in_dialog"), talk_data.get("reply_handler"),
+                  (talk_data.get("reply_ids") or [])[:4] or None))
+
     # 7. movement: walk to the NPC's cell if one is on this map
     if args.skip_move:
         record("the character moves", "SKIP", "--skip-move")

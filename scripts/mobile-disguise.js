@@ -2698,17 +2698,25 @@
                 };
                 if (ua && ua.cellId === cell) {
                     var r0 = attack();
+                    window.__agentLastFight = { at: Date.now(), stage: r0.ok ? 'attacked' : 'attack_failed',
+                        group_id: gid, cell: cell, error: r0.ok ? null : String(r0.error || '') };
                     return _agentResult(r0.ok, { group_id: gid, cell: cell, via: 'attacked' },
                         r0.ok ? null : r0.error);
                 }
                 if (!iso || typeof iso._movePlayerOnMap !== 'function') {
+                    window.__agentLastFight = { at: Date.now(), stage: 'cannot_reach',
+                        group_id: gid, cell: cell };
                     return _agentResult(false, { group_id: gid, cell: cell },
                         'the group is not on my cell and I cannot walk there');
                 }
                 try {
+                    window.__agentLastFight = { at: Date.now(), stage: 'walk_then_attack',
+                        group_id: gid, cell: cell };
                     iso._movePlayerOnMap(cell, false, function () { attack(); });
                     return _agentResult(true, { group_id: gid, cell: cell, via: 'walk then attack' });
                 } catch (e) {
+                    window.__agentLastFight = { at: Date.now(), stage: 'walk_failed',
+                        group_id: gid, cell: cell, error: String(e) };
                     return _agentResult(false, { group_id: gid, cell: cell }, 'walk failed: ' + e);
                 }
             },
@@ -2900,6 +2908,38 @@
                 }, 250);
                 return _agentResult(true, { reloading: true, build: '2026-10-23a' });
             },
+            'debug.fight_state': function() {
+                // Whether a fight was ever attempted, and how far it got. `fight.join` has
+                // never run against the game — 0 calls in 697 recorded steps — so the first
+                // attempt should report its own outcome rather than needing a guess.
+                var pdG = (window.gui && window.gui.playerData) || null;
+                var fm = (window.gui && window.gui.fightManager) || null;
+                return _agentResult(true, {
+                    in_fight: !!(pdG && pdG.isFighting) || !!(fm && fm.isInFight && fm.isInFight()),
+                    last: window.__agentLastFight || null,
+                    note: window.__agentLastFight ? null
+                        : 'no fight attempted since this page loaded'
+                });
+            },
+            'debug.talk_state': function() {
+                // Where the walk -> talk -> reply chain stopped.
+                //
+                // That chain is four steps across two messages and a dialog, and every
+                // way it can break looks identical from the host: "nothing advanced".
+                // This says which step, so the next live session is a reading, not a
+                // guess.
+                var pdT = (window.gui && window.gui.playerData) || null;
+                var uiT = (window.gui && window.gui.npcDialogUi) || null;
+                return _agentResult(true, {
+                    in_dialog: !!(pdT && pdT.isInDialog),
+                    dialog_ui: !!uiT,
+                    reply_handler: !!(uiT && typeof uiT._uiReplyHandler === 'function'),
+                    reply_ids: (uiT && uiT.replyIds) ? uiT.replyIds.slice(0, 8) : null,
+                    last: window.__agentLastTalk || null,
+                    note: window.__agentLastTalk ? null
+                        : 'no talk attempted since this page loaded'
+                });
+            },
             'debug.last_disconnect': function() {
                 var d = window.__agentLastDisconnect || null;
                 return _agentResult(true, d || { none: true,
@@ -2994,15 +3034,46 @@
                     if (!ui || typeof ui._uiReplyHandler !== 'function') {
                         return _agentResult(false, null, 'in a dialog but npcDialogUi is unavailable');
                     }
-                    if (ids && want >= ids.length) {
+                    // A dialog is open, but the replies have not arrived yet.
+                    //
+                    // `isInDialog` flips when the dialog opens; the reply list is filled
+                    // by the message that carries it, a moment later. Replying in that gap
+                    // sent reply index 0 into a list that did not exist — which either
+                    // closes the dialog or picks the wrong answer, and in both cases the
+                    // objective does not advance and nothing says why. Wait instead: the
+                    // loop calls again in a second, and by then the list is there.
+                    if (!ids) {
+                        window.__agentLastTalk = {
+                            at: Date.now(), stage: 'dialog_open_no_replies',
+                            replies: null, want: want
+                        };
+                        return _agentResult(false, { stage: 'dialog_open_no_replies' },
+                            'a dialog is open but replyIds is not populated yet; retry in a moment');
+                    }
+                    if (!ids.length) {
+                        window.__agentLastTalk = {
+                            at: Date.now(), stage: 'dialog_open_no_choices',
+                            replies: 0, want: want
+                        };
+                        return _agentResult(false, { stage: 'dialog_open_no_choices', replies: 0 },
+                            'the dialog offers no replies; it may need to be closed instead');
+                    }
+                    if (want >= ids.length) {
                         return _agentResult(false, { replies: ids.length },
                             'dialog has ' + ids.length + ' replies; asked for index ' + want);
                     }
                     try {
                         ui._uiReplyHandler(want);
-                        return _agentResult(true, { replied: want, replies: ids ? ids.length : null,
+                        window.__agentLastTalk = {
+                            at: Date.now(), stage: 'replied', replied: want,
+                            replies: ids.length, reply_ids: ids.slice(0, 8)
+                        };
+                        return _agentResult(true, { replied: want, replies: ids.length,
                             via: 'gui.npcDialogUi._uiReplyHandler' });
                     } catch (e) {
+                        window.__agentLastTalk = {
+                            at: Date.now(), stage: 'reply_threw', error: String(e)
+                        };
                         return _agentResult(false, null, 'reply failed: ' + e);
                     }
                 }
@@ -3034,6 +3105,8 @@
                     // somebody else or reported a bare "no NPC".
                     var here = null;
                     try { here = window.isoEngine.currentMapId || (window.isoEngine.mapData && window.isoEngine.mapData.mapId) || null; } catch (e) {}
+                    window.__agentLastTalk = { at: Date.now(), stage: 'npc_not_on_map',
+                        wanted_npc: wantNpc, map_id: here, npcs_here: npcIds };
                     return _agentResult(false, { quest_id: questId, wanted_npc: wantNpc,
                         map_id: here, npcs_here: npcIds },
                         'npc ' + wantNpc + ' is not on map ' + here + ' (npcs here: '
@@ -3069,6 +3142,7 @@
                         window.isoEngine._movePlayerOnMap(npc.cell, false, function () {
                             try { doTalk(); } catch (e) {}
                         });
+                        window.__agentLastTalk = { at: Date.now(), stage: 'walking_then_talking', npc_template: npc.templateId, npc_contextual_id: npc.contextualId, map_id: mapId, npc_cell: npc.cell, my_cell: ua.cellId };
                         return _agentResult(true, { quest_id: questId,
                             npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
                             map_id: mapId, via: 'walking to npc then talking',
@@ -3076,6 +3150,7 @@
                     } catch (e) {}
                 }
                 var talk = doTalk();
+                window.__agentLastTalk = { at: Date.now(), stage: talk.ok ? 'talked' : 'talk_failed', npc_template: npc.templateId, npc_contextual_id: npc.contextualId, map_id: mapId, error: talk.ok ? null : String(talk.error || '') };
                 return _agentResult(talk.ok, { quest_id: questId, npc_template: npc.templateId,
                     npc_contextual_id: npc.contextualId, map_id: mapId },
                     talk.ok ? null : talk.error);
