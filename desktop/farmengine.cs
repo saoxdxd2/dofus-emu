@@ -1968,9 +1968,16 @@ namespace DofusFarm.Engine
                         string[] chainParts = chain.Split(',');
                         if (chainParts.Length >= 2)
                         {
-                            sb.AppendFormat(" -cdn-upstream \"{0}\"", chainParts[1]);
-                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1}, assets: {2})...",
-                                port, chainParts[0], chainParts[1]));
+                            // A pool, not one proxy: each asset connection takes the next egress,
+                            // so the page fetches in parallel across N pipes instead of queuing
+                            // behind whichever single proxy it was given.
+                            var assetEgresses = new List<string>();
+                            for (int i = 1; i < chainParts.Length && assetEgresses.Count < 3; i++)
+                                if (!string.IsNullOrEmpty(chainParts[i].Trim())) assetEgresses.Add(chainParts[i].Trim());
+
+                            sb.AppendFormat(" -cdn-upstream \"{0}\"", string.Join(",", assetEgresses.ToArray()));
+                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1}, assets: {2} egress(es))...",
+                                port, chainParts[0], assetEgresses.Count));
                         }
                         else
                         {

@@ -913,17 +913,33 @@ func asciiLower(s string) string {
 //
 // Same shape as the default client, but pointed at its own proxy so asset traffic has a path of
 // its own.
-func newAssetClient(u *url.URL, resolver *FastDNSResolver) *http.Client {
+func newAssetClient(ups []*url.URL, resolver *FastDNSResolver) *http.Client {
 	dialer := &net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}
-	isSocks := strings.HasPrefix(strings.ToLower(u.Scheme), "socks5")
 	transport := &http.Transport{
-		MaxIdleConns:        64,
-		MaxIdleConnsPerHost: 16,
+		MaxIdleConns:        128,
+		MaxIdleConnsPerHost: 32,
 		IdleConnTimeout:     60 * time.Second,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if isSocks {
+			// Round-robin across the asset proxies, one per connection.
+			//
+			// This is the whole point of a pool here: a single public proxy allows about one
+			// concurrent connection, so parallelism was capped by that proxy no matter how many
+			// goroutines asked. With N proxies the page can fetch N assets at once, each on its
+			// own pipe, and the loading screen stops being a queue.
+			var u *url.URL
+			if len(ups) == 1 {
+				u = ups[0]
+			} else if len(ups) > 1 {
+				idx := atomic.AddUint32(&assetProxyCursor, 1)
+				u = ups[int(idx)%len(ups)]
+			}
+			if u == nil {
+				return dialer.DialContext(ctx, network, addr)
+			}
+			if strings.HasPrefix(strings.ToLower(u.Scheme), "socks5") {
 				return dialUpstreamSocks5(u, addr, 8*time.Second)
 			}
+
 			host, portStr, err := net.SplitHostPort(addr)
 			if err != nil {
 				host, portStr = addr, "80"
@@ -931,13 +947,38 @@ func newAssetClient(u *url.URL, resolver *FastDNSResolver) *http.Client {
 			if ips, lookupErr := resolver.Lookup(ctx, host); lookupErr == nil && len(ips) > 0 {
 				addr = net.JoinHostPort(ips[0].String(), portStr)
 			}
-			return dialer.DialContext(ctx, network, addr)
+			conn, err := dialer.DialContext(ctx, network, ensureHostPort(u.Host, "80"))
+			if err != nil {
+				return nil, err
+			}
+			_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
+			if err := connectThrough(conn, u.Scheme, host, portStrInt(portStr), userOf(u), ""); err != nil {
+				conn.Close()
+				return nil, err
+			}
+			_ = conn.SetDeadline(time.Time{})
+			return conn, nil
 		},
 	}
-	if !isSocks {
-		transport.Proxy = http.ProxyURL(u)
-	}
 	return &http.Client{Transport: transport, Timeout: 60 * time.Second}
+}
+
+var assetProxyCursor uint32
+
+// portStrInt is a small helper so the CONNECT helper can take an int port.
+func portStrInt(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 || n > 65535 {
+		return 80
+	}
+	return n
+}
+
+func userOf(u *url.URL) string {
+	if u != nil && u.User != nil {
+		return u.User.String()
+	}
+	return ""
 }
 
 // parseUpstreamList splits a comma-separated upstream value into usable URLs.
@@ -4056,10 +4097,15 @@ func main() {
 	debug.SetMemoryLimit(384 << 20)
 
 	if cdn := strings.TrimSpace(*cdnProxy); cdn != "" {
-		if u := parseUpstreamProxy(cdn); u != nil {
-			proxy.cdnUpstream = u
-			proxy.client = newAssetClient(u, proxy.resolver)
-			log.Printf("[UPSTREAM] asset downloads use their own egress: %s", u.Redacted())
+		pool := parseUpstreamList(cdn)
+		if len(pool) > 0 {
+			proxy.client = newAssetClient(pool, proxy.resolver)
+			proxy.cdnUpstream = pool[0]
+			if len(pool) == 1 {
+				log.Printf("[UPSTREAM] asset downloads use their own egress: %s", pool[0].Redacted())
+			} else {
+				log.Printf("[UPSTREAM] asset downloads spread over %d egresses: %s ...", len(pool), pool[0].Redacted())
+			}
 		} else {
 			log.Printf("[UPSTREAM] -cdn-upstream %q is not a usable proxy URL; ignoring it", cdn)
 		}
