@@ -587,6 +587,11 @@ func (t *ProxyTelemetry) snapshot() TelemetrySnapshot {
 type ProxyServer struct {
 	resolver       *FastDNSResolver
 	upstreamURL    *url.URL
+	// Every configured SOCKS5 upstream, primary first. A single upstream means one dead proxy
+	// costs the whole session: the relay dials through it, the dial fails, and the client is
+	// told the server is unavailable until the supervisor notices and rebuilds. Trying the next
+	// candidate on the same dial turns that into a retry instead of an outage.
+	upstreams []*url.URL
 	cacheDir       string
 	quiet          bool
 	port           int
@@ -702,6 +707,16 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 		buildId = m[1]
 	}
 
+	// The upstream flag may be a comma-separated chain. Parse it once: the primary has to be a
+	// real URL, not the parse of the whole string. Parsing the list as a single URL produced a
+	// nonsense primary ("http://%2F%2F61.130.176.21:xxxxx@127.0.0.1:1,http") whose Redacted()
+	// then appeared in the failover log and in every message about the primary.
+	upstreamChain := parseUpstreamList(upstream)
+	var upstreamPrimary *url.URL
+	if len(upstreamChain) > 0 {
+		upstreamPrimary = upstreamChain[0]
+	}
+
 	p := &ProxyServer{
 		resolver:       resolver,
 		cacheDir:       cacheDir,
@@ -721,7 +736,8 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 		maxTextureSize: maxTextureSize,
 		referer:        referer,
 		refererRoot:    refererRoot,
-		upstreamURL:    parseUpstreamProxy(upstream),
+		upstreamURL:    upstreamPrimary,
+		upstreams:      upstreamChain,
 	}
 
 	if cacheDir != "" {
@@ -921,6 +937,93 @@ func asciiLower(s string) string {
 	return string(b)
 }
 
+// parseUpstreamList splits a comma-separated upstream value into usable URLs.
+//
+// The supervisor knows several candidates that passed its gate; handing them all to the relay
+// lets it fail over per connection instead of per process.
+func parseUpstreamList(raw string) []*url.URL {
+	var out []*url.URL
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if u := parseUpstreamProxy(part); u != nil {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// dialUpstreamHttp opens a tunnel through an HTTP proxy with CONNECT.
+func (p *ProxyServer) dialUpstreamHttp(u *url.URL, dest string, timeout time.Duration) (net.Conn, error) {
+	defPort := "80"
+	if strings.EqualFold(u.Scheme, "https") {
+		defPort = "443"
+	}
+	conn, err := net.DialTimeout("tcp", ensureHostPort(u.Host, defPort), timeout)
+	if err != nil {
+		return nil, err
+	}
+	authHeader := ""
+	if u.User != nil {
+		authHeader = "Proxy-Authorization: Basic " +
+			base64.StdEncoding.EncodeToString([]byte(u.User.String())) + "\r\n"
+	}
+	req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n%s\r\n",
+		dest, dest, p.ua, authHeader)
+	if _, err = io.WriteString(conn, req); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		conn.Close()
+		return nil, fmt.Errorf("proxy answered %s", resp.Status)
+	}
+	return conn, nil
+}
+
+// dialUpstreamAny tries every configured upstream, in order, on one dial.
+//
+// The two schemes need different targets: WARP's SOCKS proxy cannot resolve Ankama's game
+// domains, so it gets an IP, while an HTTP proxy gets the hostname and resolves it itself.
+func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout time.Duration) (net.Conn, *url.URL, error) {
+	socksTarget := dest
+	if host, port, splitErr := net.SplitHostPort(dest); splitErr == nil {
+		if ips, lookupErr := p.resolver.Lookup(ctx, host); lookupErr == nil && len(ips) > 0 {
+			socksTarget = net.JoinHostPort(ips[0].String(), port)
+		}
+	}
+
+	var lastErr error
+	for _, u := range p.upstreams {
+		if u == nil {
+			continue
+		}
+		var conn net.Conn
+		var err error
+		if strings.HasPrefix(strings.ToLower(u.Scheme), "socks5") {
+			conn, err = dialUpstreamSocks5(u, socksTarget, timeout)
+		} else {
+			conn, err = p.dialUpstreamHttp(u, dest, timeout)
+		}
+		if err == nil {
+			return conn, u, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no upstream configured")
+	}
+	return nil, nil, lastErr
+}
+
 func (p *ProxyServer) dialUpstreamOrDirect(ctx context.Context, dest string) (net.Conn, error) {
 	start := time.Now()
 	conn, err := p.doDial(ctx, dest)
@@ -955,34 +1058,34 @@ func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error)
 
 	if p.upstreamURL != nil {
 		scheme := strings.ToLower(p.upstreamURL.Scheme)
-		if strings.HasPrefix(scheme, "socks5") {
-			// Resolve the destination locally before handing it to the upstream.
-			// WARP's SOCKS proxy cannot resolve Ankama's game domains: measured
-			// on this machine, CONNECT by hostname to
-			// dt-proxy-production-login.ankama-games.com answers 0x04 (host
-			// unreachable) while CONNECT by IP answers 0x00 and carries traffic.
-			// The direct path below already resolves locally for the same class
-			// of problem, so this makes the two paths agree.
-			target := dest
-			if host, port, splitErr := net.SplitHostPort(dest); splitErr == nil {
-				if ips, lookupErr := p.resolver.Lookup(ctx, host); lookupErr == nil && len(ips) > 0 {
-					target = net.JoinHostPort(ips[0].String(), port)
-				}
-			}
-			// Retry briefly before declaring the tunnel dead. A network change
-			// (wifi -> ethernet, VPN re-handshake) drops WARP for a few seconds
-			// and the very next dial fails with SOCKS5 code 0; one retry is the
-			// difference between "the page reloads itself" and "Server busy".
-			// Three attempts, ~4.5 s worst case, and still never a direct dial.
+		if len(p.upstreams) > 0 {
+			// Try every configured upstream on this dial, whichever scheme each one speaks.
+			//
+			// A single upstream is a single point of failure for a whole session: a public proxy
+			// that answered the supervisor's probe and died thirty seconds later would take the
+			// game connection with it, and the client would report the server as unavailable
+			// after a login that had just worked. With a chain, the cost of a dead candidate is
+			// one dial attempt instead of an outage.
+			//
+			// Retry the whole chain briefly before declaring it dead: a network change
+			// (wifi -> ethernet, VPN re-handshake) drops the tunnel for a few seconds and the
+			// very next dial fails. Three attempts, ~4.5 s worst case, still never a direct dial.
 			var conn net.Conn
 			var err error
 			for attempt := 0; attempt < 3; attempt++ {
 				if attempt > 0 {
 					time.Sleep(time.Duration(attempt) * 1500 * time.Millisecond)
 				}
-				conn, err = dialUpstreamSocks5(p.upstreamURL, target, 6*time.Second)
+				var used *url.URL
+				conn, used, err = p.dialUpstreamAny(ctx, dest, 6*time.Second)
 				if err == nil {
 					upstreamHealthy.Store(true)
+					// Say so when the session is riding a fallback: an operator reading the log
+					// needs to know the primary is dead before it shows up as latency.
+					if used != nil && p.upstreamURL != nil && used.String() != p.upstreamURL.String() {
+						log.Printf("[UPSTREAM] primary %s failed; carrying %s over %s",
+							p.upstreamURL.Redacted(), dest, used.Redacted())
+					}
 					return conn, nil
 				}
 			}

@@ -1886,8 +1886,12 @@ namespace DofusFarm.Engine
                     var sb = new StringBuilder().AppendFormat("-port {0} -cache \"{1}\" -quiet", port, Path.Combine(AppBaseDir, "asset_cache"));
                     if (!string.IsNullOrEmpty(normalizedUpstream))
                     {
-                        sb.AppendFormat(" -upstream \"{0}\"", normalizedUpstream);
-                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, normalizedUpstream));
+                        // Hand the relay the whole healthy set, not just the pick. It tries
+                        // them in order per dial, so a proxy that dies mid-session is a retry
+                        // rather than "the server is unavailable".
+                        string chain = ProxySupervisor.Instance.UpstreamChain(normalizedUpstream, 4);
+                        sb.AppendFormat(" -upstream \"{0}\"", chain);
+                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
                     }
                     else Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
 

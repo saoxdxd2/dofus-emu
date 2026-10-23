@@ -478,6 +478,32 @@ namespace DofusFarm.Engine
             return 1;                            // unproven proxy, but not known to be flapping
         }
 
+        /// <summary>
+        /// The primary upstream followed by the next-best healthy candidates, comma separated.
+        ///
+        /// The relay tries them in order on every dial, so a candidate that dies mid-session
+        /// costs one retry instead of the session. Order matters: the supervisor's pick stays
+        /// first, and the rest are only ever fallbacks.
+        /// </summary>
+        public string UpstreamChain(string primary, int max)
+        {
+            if (string.IsNullOrEmpty(primary)) return primary;
+            if (max < 2) return primary;
+
+            var parts = new List<string> { primary };
+            foreach (ProxyCandidate c in Candidates)
+            {
+                if (parts.Count >= max) break;
+                if (c == null || !c.Healthy || string.IsNullOrEmpty(c.Url)) continue;
+                // No commas in a URL, but a chain entry that contained one would silently split
+                // into two bogus upstreams.
+                if (c.Url.IndexOf(',') >= 0) continue;
+                if (parts.Contains(c.Url)) continue;
+                parts.Add(c.Url);
+            }
+            return string.Join(",", parts.ToArray());
+        }
+
         public string Describe()
         {
             ProxyCandidate a = Active;
