@@ -73,6 +73,14 @@ namespace DofusFarm.Engine
         // Reconnecting from a different address is what the server treats as a hijacked session,
         // so the address has to survive a restart, not just a probe cycle. It also makes the
         // start fast: one probe of a known URL instead of waiting for a full round of thirteen.
+        // The ranked pool produced by ai/rank_proxies.py, best first.
+        //
+        // A single latency probe cannot tell a proxy that is fine from one that is about to stop
+        // answering; a short time series can. Until there is a trained model for it, that script
+        // scores candidates on median, jitter, trend and loss and writes the order here.
+        private List<string> _rankOrder;
+        private DateTime _rankLoadedUtc = DateTime.MinValue;
+
         private string _pinnedUrl;
         private string _pinnedExitIp;
         private bool _pinLoaded;
@@ -174,6 +182,35 @@ namespace DofusFarm.Engine
                 _pinnedExitIp = exitIp;
             }
             catch { }
+        }
+
+        private void LoadRankOrder()
+        {
+            // Re-read at most once a minute: the file is small, but this runs on a timer.
+            if (_rankOrder != null && (DateTime.UtcNow - _rankLoadedUtc).TotalSeconds < 60) return;
+            try
+            {
+                string path = Path.Combine(NetworkSettings.AppBase, "asset_cache", "proxies_ranked.txt");
+                if (!File.Exists(path)) { _rankOrder = null; _rankLoadedUtc = DateTime.UtcNow; return; }
+                var list = new List<string>();
+                foreach (string line in File.ReadAllLines(path))
+                {
+                    string s = line.Trim();
+                    if (s.Length == 0 || s.StartsWith("#")) continue;
+                    list.Add(s);
+                }
+                _rankOrder = list;
+            }
+            catch { _rankOrder = null; }
+            _rankLoadedUtc = DateTime.UtcNow;
+        }
+
+        private int RankIndex(ProxyCandidate c)
+        {
+            if (_rankOrder == null || c == null || string.IsNullOrEmpty(c.Url)) return int.MaxValue;
+            for (int i = 0; i < _rankOrder.Count; i++)
+                if (string.Equals(_rankOrder[i], c.Url, StringComparison.OrdinalIgnoreCase)) return i;
+            return int.MaxValue;
         }
 
         public ProxyCandidate EnsureActive(bool forceRefresh)
@@ -350,8 +387,13 @@ namespace DofusFarm.Engine
                     if (c.Healthy) healthy.Add(c);
                 }
 
+                LoadRankOrder();
                 healthy.Sort(delegate (ProxyCandidate a, ProxyCandidate b)
                 {
+                    // Measured stability first, then the source ranking, then latency. A candidate
+                    // the ranker has never seen sorts last, which is right: it has no record.
+                    int ia = RankIndex(a), ib = RankIndex(b);
+                    if (ia != ib) return ia.CompareTo(ib);
                     int ra = RankOf(a), rb = RankOf(b);
                     if (ra != rb) return rb - ra;          // higher rank wins
                     return a.LatencyMs.CompareTo(b.LatencyMs);
