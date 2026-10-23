@@ -149,11 +149,33 @@ and with 75k candidates waiting it never does. One harvest pass took the queue f
 85,901 in under a second.
 
 **On WARP, measured 2026-10-23 — do not spend more time on it here.** Run
-`python ai\test_warp.py` to reproduce. All ten published endpoints and ports fail a real
-handshake, while the account API is genuine and reachable (`wgcf register` succeeds) and
-Cloudflare's CDN range (`104.16.0.1:443`) answers in 35 ms. So it is the WARP endpoints being
-filtered, not Cloudflare. `--scan`, `--cfon` (Psiphon) and `--gool` all fail at the same
-place. WARP is bundled and correct; the network will not carry it.
+`python ai\test_warp.py` to reproduce. Twenty endpoint/port combinations, every one fails a
+real handshake. `ping 1.1.1.1` is not evidence either way — Cloudflare deprioritises ICMP —
+but the TCP facts are clear:
+
+```
+1.1.1.1:443      timeout          <- this one address is filtered
+1.0.0.1:443      open,  34 ms     <- the same service, sibling IP, fine
+104.16.0.1:443   open,  46 ms     <- Cloudflare CDN, fine
+dofus-touch.com  open,  35 ms     <- the game itself, fine
+```
+
+So the block is narrow: `1.1.1.1` plus the WARP endpoint ranges. `wgcf register` still
+succeeds (the account API is genuine), but nothing carries the tunnel. WARP is bundled and
+correct; the network will not carry it.
+
+### What that leaves
+
+The game is reachable directly. The only thing stopping a client from launching is
+`fail_closed=1` insisting on an exit. Three ways forward, in order of safety:
+
+| option | cost | what it does |
+|---|---|---|
+| a paid proxy with credentials in `proxies.txt` | money | one working entry and everything resumes |
+| `start-network.bat --daemon` for hours | time | 86k raw candidates queued; 0/560 passed so far, so the odds are poor |
+| `fail_closed=0` in `network.ini` | your real IP reaches the game | **not a fix, a decision** — it removes the thing this project exists to protect |
+
+Nothing in the code should flip the third one for you.
 
 
 

@@ -250,22 +250,31 @@ is short of labels rather than of capacity.
    the only thing that decides what "working" means.
 
 0. **WARP cannot work on this line, and that is now measured rather than assumed.**
-   `ai/test_warp.py` runs a real wireproxy handshake against all ten published endpoints and
-   ports. Every one times out. Three probes that look like evidence are not, and were used
-   wrongly earlier in the day: a TCP connect to `:2408` always fails (UDP-only port), a bare
-   UDP packet to `:2408` always fails (WireGuard drops invalid packets), and DNS for
-   `engage.cloudflareclient.com` comes and goes. What is solid:
+   `ai/test_warp.py` runs a real wireproxy handshake against every published endpoint and
+   port. Twenty combinations, every one times out. Three probes that look like evidence are
+   not, and were used wrongly earlier in the day: a TCP connect to `:2408` always fails
+   (UDP-only port), a bare UDP packet to `:2408` always fails (WireGuard drops invalid
+   packets), and `ping 1.1.1.1` says nothing at all (Cloudflare deprioritises ICMP and many
+   ISPs drop it). What is solid:
 
-   | fact | evidence |
-   |---|---|
-   | the account API is genuine and reachable | TLS to `api.cloudflareclient.com` (104.16.24.84), valid chain, HTTP answers |
-   | a fresh identity is obtainable | `wgcf register --accept-tos` succeeded, new device created |
-   | the data plane is blocked | 10/10 endpoints fail a real SOCKS5-through-tunnel test |
-   | Cloudflare is not blocked wholesale | `104.16.0.1:443` open in 35 ms; only `1.1.1.1` and the WARP ranges are filtered |
+   | probe | result | what it means |
+   |---|---|---|
+   | `1.1.1.1:443` | timeout | that one address is filtered |
+   | `1.0.0.1:443` | **open, 34 ms** | the *same service* on its sibling IP is fine |
+   | `104.16.0.1:443` | open, 46 ms | Cloudflare's CDN is fine |
+   | `8.8.8.8:443` / `:53` | open / replies | general internet is fine |
+   | `dofus-touch.com:443` | **open, 35 ms** | **the game itself is reachable** |
+   | `wgcf register --accept-tos` | succeeded | the account API is genuine and reachable |
+   | 20 WARP endpoints, real handshake | 0 pass | the WARP ranges are what is filtered |
 
-   So `warp-plus --scan`, `--cfon` (Psiphon) and `--gool` all fail at the same place, and
-   keeping WARP inside the project — which it already is — was never the issue. The pool is
-   the only path that can produce an egress here.
+   So the block is narrow and specific — `1.1.1.1` plus the WARP endpoint ranges — not
+   "Cloudflare". `warp-plus --scan`, `--cfon` (Psiphon) and `--gool` all fail at the same
+   place. Keeping WARP inside the project was never the issue and is already done.
+
+   **The consequence matters more than the finding:** the game is reachable directly, so the
+   only thing between this machine and a running client is `fail_closed=1` insisting on an
+   exit. That is a deliberate safety setting, not a bug, and the three ways forward are a
+   paid proxy, a long pool hunt, or turning it off and accepting a direct connection.
 
 0. **No objective has been completed end-to-end.** This is the live blocker and it is new.
    The agent claims objectives that the game already accepts (`objectiveStatus 2`) — real
