@@ -1123,8 +1123,19 @@
             aiRunning: false,
 
             aiToggle: function() {
+                var self = this;
+                var hud = document.getElementById('__farmbot_hud');
+                var label = document.getElementById('__farmbot_hud_label');
+                // Acknowledge the press immediately. Whether the host acts on it is a
+                // separate question, and leaving the badge unchanged made a working
+                // click look like a dead button.
+                if (label && !this.aiRunning) label.textContent = 'AI: starting\u2026';
+                if (hud && !this.aiRunning) hud.style.backgroundColor = '#b45309';
                 try {
-                    if (!(window.chrome && window.chrome.webview)) return;
+                    if (!(window.chrome && window.chrome.webview)) {
+                        if (label) label.textContent = 'AI: no host';
+                        return;
+                    }
                     // Post the OBJECT, not JSON.stringify(obj). The stringified form
                     // arrives in C# as a JSON string with escaped quotes, and every
                     // type check there matches on "type":"X" — so it fell through
@@ -1134,11 +1145,26 @@
                         type: 'AI_REQUEST',
                         action: this.aiRunning ? 'stop_all' : 'start_auto'
                     });
-                } catch (e) {}
+                } catch (e) {
+                    if (label) label.textContent = 'AI: send failed';
+                    return;
+                }
+                // If the host never answers, say so rather than pretending. A button
+                // that quietly does nothing is the worst of the three outcomes.
+                if (this._ackTimer) clearTimeout(this._ackTimer);
+                this._ackTimer = setTimeout(function () {
+                    if (self.aiPending) {
+                        var l = document.getElementById('__farmbot_hud_label');
+                        if (l) l.textContent = 'AI: no reply';
+                    }
+                }, 4000);
+                this.aiPending = true;
             },
 
             setAiState: function(running, text) {
                 this.aiRunning = !!running;
+                this.aiPending = false;
+                if (this._ackTimer) { clearTimeout(this._ackTimer); this._ackTimer = null; }
                 var hud = document.getElementById('__farmbot_hud');
                 var label = document.getElementById('__farmbot_hud_label');
                 if (hud) hud.title = text || (running ? 'AI running' : 'Start the AI');
