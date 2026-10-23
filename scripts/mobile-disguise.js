@@ -586,8 +586,20 @@
     // 15. Per-Instance Deterministic 2D Canvas Fingerprint Jitter
     try {
         if (typeof HTMLCanvasElement !== 'undefined' && HTMLCanvasElement.prototype) {
+            // A canvas must fingerprint the same way every time it is read.
+            //
+            // The noise below XORs one pixel in place. XOR is its own inverse, so the second call
+            // on the same canvas flipped the pixel back and returned the untouched image: two
+            // toDataURL() calls, two different hashes, inside one session. A fingerprint that
+            // changes when you ask twice is a far stronger bot signal than no noise at all.
+            var _noisedCanvases = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+
             var applyCanvasMicroNoise = function(canvas) {
                 try {
+                    if (_noisedCanvases) {
+                        if (_noisedCanvases.has(canvas)) return;
+                        _noisedCanvases.add(canvas);
+                    }
                     if (canvas.width > 4 && canvas.height > 4) {
                         var ctx2d = canvas.getContext('2d');
                         if (ctx2d) {
