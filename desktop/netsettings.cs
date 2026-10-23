@@ -56,6 +56,20 @@ namespace DofusFarm.Engine
         // That exposes the real IP, so it stays on unless the user turns it off.
         public bool FailClosed = true;
 
+        /// <summary>
+        /// A proxy whose address is the identity the game server sees, reached through the
+        /// disposable pool.
+        ///
+        /// This is the "sticky session" shape: one stable exit, many hops. Public proxies die in
+        /// under a minute — measured, eleven alive then none sixty seconds later — so any session
+        /// riding one of them directly ends when it does, and the reconnect arrives from a new
+        /// address, which the server treats as a hijacked account. With an exit that is a host
+        /// we control, a hop dying costs a retry and the address never moves.
+        ///
+        /// Empty means off. Set it to e.g. socks5://your-vps:1080.
+        /// </summary>
+        public string ExitProxy = "";
+
         // Raw extra flags handed to dofus-net-proxy.exe verbatim, e.g.
         //   -dns 1.1.1.1 -prefetch-radius 3 -mods-dir C:\mods
         public string ExtraArgs = "";
@@ -139,6 +153,7 @@ namespace DofusFarm.Engine
                         case "upstream": s.Upstream = val; break;
                         case "base_port": s.BasePort = ClampInt(val, s.BasePort, 1024, 65000); break;
                         case "fail_closed": s.FailClosed = ParseBool(val, s.FailClosed); break;
+                        case "exit_proxy": s.ExitProxy = (val ?? "").Trim(); break;
                         case "allow_system_warp": s.AllowSystemWarp = ParseBool(val, s.AllowSystemWarp); break;
                         case "extra_args": s.ExtraArgs = val; break;
                         case "wireproxy_conf": s.WireproxyConf = val; break;
@@ -170,6 +185,7 @@ namespace DofusFarm.Engine
                 sb.AppendLine("upstream=" + (Upstream ?? ""));
                 sb.AppendLine("base_port=" + BasePort);
                 sb.AppendLine("fail_closed=" + (FailClosed ? "1" : "0"));
+                if (!string.IsNullOrEmpty(ExitProxy)) sb.AppendLine("exit_proxy=" + ExitProxy);
                 if (AllowSystemWarp) sb.AppendLine("allow_system_warp=1");
                 sb.AppendLine("extra_args=" + (ExtraArgs ?? ""));
                 sb.AppendLine("wireproxy_conf=" + (WireproxyConf ?? ""));

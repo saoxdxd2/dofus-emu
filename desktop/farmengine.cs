@@ -1948,40 +1948,39 @@ namespace DofusFarm.Engine
                         // Fixed exit only when a SOCKS5 hop exists to reach it. Without one the
                         // chain cannot connect often enough to be worth its identity guarantee,
                         // so fall back to the plain sticky chain instead of failing.
-                        // Fixed-exit mode is off by default.
-                        //
-                        // It costs up to 3.5 s of exit validation before the relay can listen —
-                        // and the app only polls the port for about five seconds, so the launch
-                        // sat right on that edge. Worse, on this pool the validation kept
-                        // dropping the exit anyway ("no hop could carry a request through it"),
-                        // so the delay bought nothing. The relay still supports -exit-proxy for
-                        // when there is a static exit worth pinning; the address stability that
-                        // actually mattered is handled by the egress pin.
-                        sb.AppendFormat(" -upstream \"{0}\"", chain);
+                        // Sticky session: one exit we control, reached through the disposable
+                        // pool. `exit_proxy` in network.ini turns it on; the relay validates the
+                        // exit at startup and drops it if no hop can carry a request through it,
+                        // so a wrong address degrades to the plain chain instead of failing.
+                        string exitProxy = (net.ExitProxy ?? "").Trim();
+                        if (!string.IsNullOrEmpty(exitProxy))
+                        {
+                            sb.AppendFormat(" -upstream \"{0}\" -exit-proxy \"{1}\"", chain, exitProxy);
+                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> exit {1} via {2} hop(s))...",
+                                port, exitProxy, chain.Split(',').Length));
+                        }
+                        else
+                        {
+                            sb.AppendFormat(" -upstream \"{0}\"", chain);
+                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
+                        }
 
-                        // Give asset downloads their own egress when a second candidate exists.
+                        // Asset downloads get their own egress, and a pool of them.
                         //
-                        // One public proxy allows roughly one concurrent connection, so the 231
-                        // asset requests of a page load were queuing behind the live game socket
-                        // and behind each other. A second proxy for the CDN path means the game
-                        // connection stops waiting for the loading screen.
+                        // One public proxy allows roughly one concurrent connection, so the page's
+                        // asset requests were queuing behind the live game socket and behind each
+                        // other. Spreading them over several egresses is the only way to fetch in
+                        // parallel — no number of goroutines helps while they share one pipe.
                         string[] chainParts = chain.Split(',');
                         if (chainParts.Length >= 2)
                         {
-                            // A pool, not one proxy: each asset connection takes the next egress,
-                            // so the page fetches in parallel across N pipes instead of queuing
-                            // behind whichever single proxy it was given.
                             var assetEgresses = new List<string>();
                             for (int i = 1; i < chainParts.Length && assetEgresses.Count < 3; i++)
                                 if (!string.IsNullOrEmpty(chainParts[i].Trim())) assetEgresses.Add(chainParts[i].Trim());
 
                             sb.AppendFormat(" -cdn-upstream \"{0}\"", string.Join(",", assetEgresses.ToArray()));
-                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1}, assets: {2} egress(es))...",
-                                port, chainParts[0], assetEgresses.Count));
-                        }
-                        else
-                        {
-                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
+                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> assets over {1} egress(es))...",
+                                port, assetEgresses.Count));
                         }
                     }
                     else Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
