@@ -80,8 +80,6 @@ var (
 const (
 	hopIndexEvery          = 10 * time.Second
 	exitCooldown           = 90 * time.Second
-	warmTTL                = 15 * time.Second
-	warmPerDest            = 2
 	warmMaxDests           = 6
 	assetCacheTTL          = 7 * 24 * time.Hour
 	prefetchCooldown       = 20 * time.Second
@@ -156,7 +154,9 @@ func NewFastDNSResolver(customDNS string, ttl time.Duration) *FastDNSResolver {
 }
 
 func (r *FastDNSResolver) pickIP(ips []net.IP) []net.IP {
-	if len(ips) <= 1 { return slices.Clone(ips) }
+	if len(ips) <= 1 {
+		return slices.Clone(ips)
+	}
 	r.mu.Lock()
 	idx := r.rr % uint64(len(ips))
 	r.rr++
@@ -165,13 +165,19 @@ func (r *FastDNSResolver) pickIP(ips []net.IP) []net.IP {
 }
 
 func (r *FastDNSResolver) Lookup(ctx context.Context, host string) ([]net.IP, error) {
-	if h, _, err := net.SplitHostPort(host); err == nil { host = h }
-	if ip := net.ParseIP(host); ip != nil { return []net.IP{ip}, nil }
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
 	now := time.Now()
 	r.mu.RLock()
 	entry, found := r.cache[host]
 	r.mu.RUnlock()
-	if found && now.Before(entry.ExpiresAt) { return r.pickIP(entry.IPs), nil }
+	if found && now.Before(entry.ExpiresAt) {
+		return r.pickIP(entry.IPs), nil
+	}
 	v, err, _ := r.sf.Do(host, func() (any, error) {
 		ips, err := r.netResolve.LookupIP(ctx, "ip4", host)
 		if err != nil && r.netResolve != net.DefaultResolver {
@@ -181,12 +187,18 @@ func (r *FastDNSResolver) Lookup(ctx context.Context, host string) ([]net.IP, er
 		defer r.mu.Unlock()
 		if len(r.cache) >= 1024 {
 			maps.DeleteFunc(r.cache, func(_ string, e DNSCacheEntry) bool { return now.After(e.ExpiresAt) })
-			if len(r.cache) >= 1024 { clear(r.cache) }
+			if len(r.cache) >= 1024 {
+				clear(r.cache)
+			}
 		}
-		if err == nil { r.cache[host] = DNSCacheEntry{IPs: ips, ExpiresAt: now.Add(r.ttl)} }
+		if err == nil {
+			r.cache[host] = DNSCacheEntry{IPs: ips, ExpiresAt: now.Add(r.ttl)}
+		}
 		return ips, err
 	})
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return r.pickIP(v.([]net.IP)), nil
 }
 
@@ -237,15 +249,21 @@ func stripWebViewTokens(ua string) string {
 }
 
 func isTokenCharUA(s string, i int) bool {
-	if i >= len(s) { return false }
+	if i >= len(s) {
+		return false
+	}
 	c := s[i]
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-'
 }
 
 func isCacheAssetURL(u string) bool {
-	if strings.Contains(u, "/assets/") { return true }
+	if strings.Contains(u, "/assets/") {
+		return true
+	}
 	dot := strings.LastIndexByte(u, '.')
-	if dot < 0 { return false }
+	if dot < 0 {
+		return false
+	}
 	switch asciiLower(u[dot+1:]) {
 	case "png", "jpg", "mp3", "ogg", "zip", "pak", "dat", "jpeg", "webp", "wasm", "json":
 		return true
@@ -256,7 +274,9 @@ func isCacheAssetURL(u string) bool {
 func asciiEqualFold(s, t string) bool { return len(s) == len(t) && strings.EqualFold(s, t) }
 
 func parseUpstreamProxy(raw string) *url.URL {
-	if raw = strings.TrimSpace(raw); raw == "" { return nil }
+	if raw = strings.TrimSpace(raw); raw == "" {
+		return nil
+	}
 	scheme, rest := "http", raw
 	if s, r, ok := strings.Cut(raw, "://"); ok {
 		scheme, rest = strings.ToLower(s), r
@@ -271,13 +291,17 @@ func parseUpstreamProxy(raw string) *url.URL {
 }
 
 func ensureHostPort(addr, defPort string) string {
-	if !strings.Contains(addr, ":") { return addr + ":" + defPort }
+	if !strings.Contains(addr, ":") {
+		return addr + ":" + defPort
+	}
 	return addr
 }
 
 func upstreamReachable(u *url.URL, timeout time.Duration) (bool, error) {
 	conn, err := net.DialTimeout("tcp", ensureHostPort(u.Host, "1080"), timeout)
-	if err != nil { return false, err }
+	if err != nil {
+		return false, err
+	}
 	_ = conn.Close()
 	return true, nil
 }
@@ -294,7 +318,9 @@ func watchUpstream(u *url.URL, raw string) {
 }
 
 func socksAuth(u *url.URL) *xproxy.Auth {
-	if u == nil || u.User == nil { return nil }
+	if u == nil || u.User == nil {
+		return nil
+	}
 	pass, _ := u.User.Password()
 	return &xproxy.Auth{User: u.User.Username(), Password: pass}
 }
@@ -302,7 +328,9 @@ func socksAuth(u *url.URL) *xproxy.Auth {
 func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.Duration) (net.Conn, error) {
 	base := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
 	dialer, err := xproxy.SOCKS5("tcp", ensureHostPort(proxyURL.Host, "1080"), socksAuth(proxyURL), base)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	if cd, ok := dialer.(xproxy.ContextDialer); ok {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
@@ -344,8 +372,12 @@ func (t *ProxyTelemetry) recordClose(sent, recv int64) {
 	if t.connsActive > 0 {
 		t.connsActive--
 	}
-	if sent > 0 { t.bytesSent += uint64(sent) }
-	if recv > 0 { t.bytesRecv += uint64(recv) }
+	if sent > 0 {
+		t.bytesSent += uint64(sent)
+	}
+	if recv > 0 {
+		t.bytesRecv += uint64(recv)
+	}
 }
 
 type TelemetrySnapshot struct {
@@ -405,37 +437,36 @@ type modRule struct {
 }
 
 type ProxyServer struct {
-	resolver                                                   *FastDNSResolver
-	upstreamURL, lastGood, exitURL, cdnUpstream                *url.URL
-	upstreams                                                  []*url.URL
-	upstreamMu, exitMu, hopMu, destMu                          sync.Mutex
-	prefetchMu, prefetchLogMu, mirrorMu, warmMu, negMu, modsMu sync.Mutex
-	exitBlockedUntil, modsChecked, modsRulesMod                time.Time
-	cacheHits, cacheMisses                                     uint64
-	ticks, port                                                int
-	prefetchRadius, prefetchTilesDepth, prefetchWorkers        int
-	hopIdx                                                     map[string]hopProbe
-	hopIdxPath, cacheDir, authToken, modsDir                   string
-	serial, uuid, model, manufacturer, ua, dalvikUA            string
-	osVer, buildId, glVendor, glRenderer                       string
-	maxTextureSize, referer, refererRoot                       string
-	hopDirty, quiet, allowDirect, prefetch, mirrorBuilt        bool
-	dests                                                      []string
-	disguiseOnce, prefetchOnce                                 sync.Once
-	cachedDisguise                                             string
-	disguiseBytes                                              []byte
-	client                                                     *http.Client
-	telemetry                                                  ProxyTelemetry
-	prefetchQ                                                  chan prefetchJob
-	prefetchSeen                                               map[int64]time.Time
-	reqLogFile, prefetchLogFile                                *os.File
-	reqLogSize, reqLogRotateAt, clientInflight                 int64
-	mirrorIndex                                                map[string]struct{}
-	warmInflight                                               map[string]chan struct{}
-	warmSF                                                     singleflight.Group
-	negCache                                                   map[string]negEntry
-	modsRules                                                  []modRule
-	modsRes                                                    []*regexp.Regexp
+	resolver                                            *FastDNSResolver
+	upstreamURL, lastGood, exitURL, cdnUpstream         *url.URL
+	upstreams                                           []*url.URL
+	upstreamMu, exitMu, hopMu, destMu                   sync.Mutex
+	prefetchMu, prefetchLogMu, mirrorMu, negMu, modsMu  sync.Mutex
+	exitBlockedUntil, modsChecked, modsRulesMod         time.Time
+	cacheHits, cacheMisses                              uint64
+	ticks, port                                         int
+	prefetchRadius, prefetchTilesDepth, prefetchWorkers int
+	hopIdx                                              map[string]hopProbe
+	hopIdxPath, cacheDir, authToken, modsDir            string
+	serial, uuid, model, manufacturer, ua, dalvikUA     string
+	osVer, buildId, glVendor, glRenderer                string
+	maxTextureSize, referer, refererRoot                string
+	hopDirty, quiet, allowDirect, prefetch, mirrorBuilt bool
+	dests                                               []string
+	disguiseOnce, prefetchOnce                          sync.Once
+	cachedDisguise                                      string
+	disguiseBytes                                       []byte
+	client                                              *http.Client
+	telemetry                                           ProxyTelemetry
+	prefetchQ                                           chan prefetchJob
+	prefetchSeen                                        map[int64]time.Time
+	reqLogFile, prefetchLogFile                         *os.File
+	reqLogSize, reqLogRotateAt, clientInflight          int64
+	mirrorIndex                                         map[string]struct{}
+	warmSF                                              singleflight.Group
+	negCache                                            map[string]negEntry
+	modsRules                                           []modRule
+	modsRes                                             []*regexp.Regexp
 }
 
 func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet bool, port int, authToken, serial, uuid, model, manufacturer, ua, glVendor, glRenderer, maxTextureSize, referer string) *ProxyServer {
@@ -448,12 +479,20 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 		refererRoot = u.Scheme + "://" + u.Host
 	}
 	osVer, buildId := "10", "QP1A.190711.020"
-	if m := reOsVer.FindStringSubmatch(ua); len(m) > 1 { osVer = m[1] }
-	if m := reBuildId.FindStringSubmatch(ua); len(m) > 1 { buildId = m[1] }
+	if m := reOsVer.FindStringSubmatch(ua); len(m) > 1 {
+		osVer = m[1]
+	}
+	if m := reBuildId.FindStringSubmatch(ua); len(m) > 1 {
+		buildId = m[1]
+	}
 	upstreamChain := parseUpstreamList(upstream)
 	var upstreamPrimary *url.URL
-	if len(upstreamChain) > 0 { upstreamPrimary = upstreamChain[0] }
-	if cacheDir != "" { _ = os.MkdirAll(cacheDir, 0755) }
+	if len(upstreamChain) > 0 {
+		upstreamPrimary = upstreamChain[0]
+	}
+	if cacheDir != "" {
+		_ = os.MkdirAll(cacheDir, 0755)
+	}
 	isSocks := upstreamPrimary != nil && strings.HasPrefix(strings.ToLower(upstreamPrimary.Scheme), "socks5")
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
@@ -461,11 +500,15 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 		MaxIdleConnsPerHost: 50,
 		IdleConnTimeout:     90 * time.Second,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if isSocks { return dialUpstreamSocks5(upstreamPrimary, addr, 6*time.Second) }
+			if isSocks {
+				return dialUpstreamSocks5(upstreamPrimary, addr, 6*time.Second)
+			}
 			return dialer.DialContext(ctx, network, resolver.resolveAddr(ctx, addr, "80"))
 		},
 	}
-	if upstreamPrimary != nil && !isSocks { transport.Proxy = http.ProxyURL(upstreamPrimary) }
+	if upstreamPrimary != nil && !isSocks {
+		transport.Proxy = http.ProxyURL(upstreamPrimary)
+	}
 	return &ProxyServer{
 		hopIdx:         make(map[string]hopProbe),
 		resolver:       resolver,
@@ -512,7 +555,9 @@ func (p *ProxyServer) sanitizeRequestHeaders(h http.Header) {
 		"Sec-CH-UA-Mobile":   "?1",
 		"Sec-CH-UA-Model":    `"` + p.model + `"`,
 	} {
-		if h.Get(k) != "" { h.Set(k, v) }
+		if h.Get(k) != "" {
+			h.Set(k, v)
+		}
 	}
 	if h.Get("Accept-Language") == "" {
 		h.Set("Accept-Language", "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7")
@@ -522,14 +567,18 @@ func (p *ProxyServer) sanitizeRequestHeaders(h http.Header) {
 func uaLeaksDesktop(ua string) bool {
 	lower := asciiLower(ua)
 	for _, kw := range []string{"mozilla/", "x86", "sdk", "emulator", "goldfish", "ranchu"} {
-		if strings.Contains(lower, kw) { return true }
+		if strings.Contains(lower, kw) {
+			return true
+		}
 	}
 	return false
 }
 
 func copyHeaderFiltered(dst, src http.Header, skip map[string]struct{}) {
 	for k, vv := range src {
-		if _, drop := skip[k]; !drop { dst[k] = slices.Clone(vv) }
+		if _, drop := skip[k]; !drop {
+			dst[k] = slices.Clone(vv)
+		}
 	}
 }
 
@@ -543,7 +592,9 @@ func buildAcceptEncoding(ae string, dropBr bool) string {
 	b.Grow(len(ae))
 	for _, raw := range strings.Split(ae, ",") {
 		if tok := strings.TrimSpace(raw); tok != "" && (!dropBr || !isBrCoding(tok)) {
-			if b.Len() > 0 { b.WriteString(", ") }
+			if b.Len() > 0 {
+				b.WriteString(", ")
+			}
 			b.WriteString(tok)
 		}
 	}
@@ -551,7 +602,9 @@ func buildAcceptEncoding(ae string, dropBr bool) string {
 }
 
 func filterAcceptEncoding(ae string) string {
-	if !hasBrToken(ae) && ae == joinAcceptEncodingTokens(ae) { return ae }
+	if !hasBrToken(ae) && ae == joinAcceptEncodingTokens(ae) {
+		return ae
+	}
 	return buildAcceptEncoding(ae, true)
 }
 
@@ -559,7 +612,9 @@ func joinAcceptEncodingTokens(ae string) string { return buildAcceptEncoding(ae,
 
 func hasBrToken(ae string) bool {
 	for _, raw := range strings.Split(ae, ",") {
-		if tok := strings.TrimSpace(raw); tok != "" && isBrCoding(tok) { return true }
+		if tok := strings.TrimSpace(raw); tok != "" && isBrCoding(tok) {
+			return true
+		}
 	}
 	return false
 }
@@ -569,7 +624,9 @@ func asciiLower(s string) string {
 		if s[i] >= 'A' && s[i] <= 'Z' {
 			b := []byte(s)
 			for ; i < len(b); i++ {
-				if b[i] >= 'A' && b[i] <= 'Z' { b[i] += 'a' - 'A' }
+				if b[i] >= 'A' && b[i] <= 'Z' {
+					b[i] += 'a' - 'A'
+				}
 			}
 			return string(b)
 		}
@@ -590,7 +647,9 @@ func newAssetClient(ups []*url.URL, resolver *FastDNSResolver) *http.Client {
 			} else if len(ups) > 1 {
 				u = ups[int(atomic.AddUint32(&assetProxyCursor, 1))%len(ups)]
 			}
-			if u == nil { return dialer.DialContext(ctx, network, addr) }
+			if u == nil {
+				return dialer.DialContext(ctx, network, addr)
+			}
 			if strings.HasPrefix(strings.ToLower(u.Scheme), "socks5") {
 				return dialUpstreamSocks5(u, addr, 8*time.Second)
 			}
@@ -599,7 +658,9 @@ func newAssetClient(ups []*url.URL, resolver *FastDNSResolver) *http.Client {
 				host, portStr = addr, "80"
 			}
 			conn, err := dialer.DialContext(ctx, network, ensureHostPort(u.Host, "80"))
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
 			if err := connectThrough(conn, u.Scheme, host, portStrInt(portStr), userOf(u), ""); err != nil {
 				_ = conn.Close()
@@ -613,19 +674,25 @@ func newAssetClient(ups []*url.URL, resolver *FastDNSResolver) *http.Client {
 }
 
 func portStrInt(s string) int {
-	if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 65535 { return n }
+	if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 65535 {
+		return n
+	}
 	return 80
 }
 
 func userOf(u *url.URL) string {
-	if u != nil && u.User != nil { return u.User.String() }
+	if u != nil && u.User != nil {
+		return u.User.String()
+	}
 	return ""
 }
 
 func parseUpstreamList(raw string) []*url.URL {
 	var out []*url.URL
 	for _, part := range strings.Split(raw, ",") {
-		if u := parseUpstreamProxy(part); u != nil { out = append(out, u) }
+		if u := parseUpstreamProxy(part); u != nil {
+			out = append(out, u)
+		}
 	}
 	return out
 }
@@ -634,12 +701,16 @@ func readConnectResponse(conn net.Conn) error {
 	var buf [1]byte
 	var cur []byte
 	for total := 0; total <= 8192; {
-		if _, err := conn.Read(buf[:]); err != nil { return err }
+		if _, err := conn.Read(buf[:]); err != nil {
+			return err
+		}
 		total++
 		switch buf[0] {
 		case '\r':
 		case '\n':
-			if len(cur) == 0 { return nil }
+			if len(cur) == 0 {
+				return nil
+			}
 			if s := string(cur); strings.HasPrefix(s, "HTTP/") {
 				if f := strings.Fields(s); len(f) >= 2 && f[1] != "200" {
 					return fmt.Errorf("proxy answered %s", s)
@@ -654,21 +725,27 @@ func readConnectResponse(conn net.Conn) error {
 }
 
 func httpConnect(conn net.Conn, dest, userinfo, ua string, timeout time.Duration) error {
-	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil { return err }
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
 	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 	auth := ""
 	if userinfo != "" {
 		auth = "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(userinfo)) + "\r\n"
 	}
 	req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n%s\r\n", dest, dest, ua, auth)
-	if _, err := io.WriteString(conn, req); err != nil { return err }
+	if _, err := io.WriteString(conn, req); err != nil {
+		return err
+	}
 	return readConnectResponse(conn)
 }
 
 func connectThrough(conn net.Conn, scheme, host string, port int, userinfo, ua string) error {
 	dest := net.JoinHostPort(host, strconv.Itoa(port))
 	if strings.HasPrefix(strings.ToLower(scheme), "socks5") {
-		if err := conn.SetDeadline(time.Now().Add(6 * time.Second)); err != nil { return err }
+		if err := conn.SetDeadline(time.Now().Add(6 * time.Second)); err != nil {
+			return err
+		}
 		defer func() { _ = conn.SetDeadline(time.Time{}) }()
 		var auth *xproxy.Auth
 		if userinfo != "" {
@@ -676,7 +753,9 @@ func connectThrough(conn net.Conn, scheme, host string, port int, userinfo, ua s
 			auth = &xproxy.Auth{User: user, Password: pass}
 		}
 		d, err := xproxy.SOCKS5("tcp", "0.0.0.0:0", auth, connDialer{conn})
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		_, err = d.Dial("tcp", dest)
 		return err
 	}
@@ -686,8 +765,12 @@ func connectThrough(conn net.Conn, scheme, host string, port int, userinfo, ua s
 func (p *ProxyServer) rememberDest(dest string) {
 	p.destMu.Lock()
 	defer p.destMu.Unlock()
-	if slices.Contains(p.dests, dest) { return }
-	if len(p.dests) >= warmMaxDests { p.dests = p.dests[1:] }
+	if slices.Contains(p.dests, dest) {
+		return
+	}
+	if len(p.dests) >= warmMaxDests {
+		p.dests = p.dests[1:]
+	}
 	p.dests = append(p.dests, dest)
 }
 
@@ -697,7 +780,9 @@ func (p *ProxyServer) hopOrder() []*url.URL {
 	defer p.hopMu.Unlock()
 	var good, unknown, bad []*url.URL
 	for _, u := range p.upstreams {
-		if u == nil || (exit != nil && u.String() == exit.String()) { continue }
+		if u == nil || (exit != nil && u.String() == exit.String()) {
+			continue
+		}
 		switch pr, seen := p.hopIdx[u.String()]; {
 		case !seen:
 			unknown = append(unknown, u)
@@ -715,7 +800,9 @@ func (p *ProxyServer) hopOrder() []*url.URL {
 
 func (p *ProxyServer) openViaHop(hop, exit *url.URL, dest string, timeout time.Duration) (net.Conn, error) {
 	exitPort := 1080
-	if n, err := strconv.Atoi(exit.Port()); err == nil && n > 0 { exitPort = n }
+	if n, err := strconv.Atoi(exit.Port()); err == nil && n > 0 {
+		exitPort = n
+	}
 	targetHost, targetPortStr, err := net.SplitHostPort(dest)
 	if err != nil {
 		targetHost, targetPortStr = dest, "443"
@@ -741,7 +828,9 @@ func (p *ProxyServer) openViaHop(hop, exit *url.URL, dest string, timeout time.D
 }
 
 func hopIndexPath(cacheDir string) string {
-	if cacheDir == "" { return "" }
+	if cacheDir == "" {
+		return ""
+	}
 	return filepath.Join(cacheDir, "hop_index.json")
 }
 
@@ -752,13 +841,21 @@ type hopDiskEntry struct {
 }
 
 func (p *ProxyServer) loadHopIndex() {
-	if p.hopIdxPath == "" { return }
+	if p.hopIdxPath == "" {
+		return
+	}
 	raw, err := os.ReadFile(p.hopIdxPath)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	var stored map[string]hopDiskEntry
-	if json.Unmarshal(raw, &stored) != nil { return }
+	if json.Unmarshal(raw, &stored) != nil {
+		return
+	}
 	p.hopMu.Lock()
-	if p.hopIdx == nil { p.hopIdx = map[string]hopProbe{} }
+	if p.hopIdx == nil {
+		p.hopIdx = map[string]hopProbe{}
+	}
 	for k, v := range stored {
 		p.hopIdx[k] = hopProbe{ok: v.Ok, latency: time.Duration(v.Latency) * time.Millisecond, checked: time.Unix(v.At, 0)}
 	}
@@ -769,7 +866,9 @@ func (p *ProxyServer) loadHopIndex() {
 }
 
 func (p *ProxyServer) saveHopIndex() {
-	if p.hopIdxPath == "" { return }
+	if p.hopIdxPath == "" {
+		return
+	}
 	p.hopMu.Lock()
 	if !p.hopDirty || len(p.hopIdx) == 0 {
 		p.hopMu.Unlock()
@@ -783,20 +882,26 @@ func (p *ProxyServer) saveHopIndex() {
 	p.hopMu.Unlock()
 	if raw, err := json.Marshal(out); err == nil {
 		tmp := p.hopIdxPath + ".tmp"
-		if os.WriteFile(tmp, raw, 0o644) == nil { _ = os.Rename(tmp, p.hopIdxPath) }
+		if os.WriteFile(tmp, raw, 0o644) == nil {
+			_ = os.Rename(tmp, p.hopIdxPath)
+		}
 	}
 }
 
 func isLoopbackHost(h string) bool {
 	h = strings.ToLower(strings.TrimSpace(h))
-	if h == "localhost" || h == "::1" || h == "0.0.0.0" { return true }
+	if h == "localhost" || h == "::1" || h == "0.0.0.0" {
+		return true
+	}
 	addr, err := netip.ParseAddr(h)
 	return err == nil && addr.IsLoopback()
 }
 
 func (p *ProxyServer) validateExitAtStartup() {
 	exit := p.exitURL
-	if exit == nil { return }
+	if exit == nil {
+		return
+	}
 	hops := p.hopOrder()
 	if len(hops) == 0 {
 		log.Printf("[UPSTREAM] fixed exit %s dropped: no hop available to reach it", exit.Redacted())
@@ -829,9 +934,13 @@ func (p *ProxyServer) validateExitAtStartup() {
 }
 
 func (p *ProxyServer) recordHop(hop *url.URL, ok bool, took time.Duration) {
-	if hop == nil { return }
+	if hop == nil {
+		return
+	}
 	p.hopMu.Lock()
-	if p.hopIdx == nil { p.hopIdx = map[string]hopProbe{} }
+	if p.hopIdx == nil {
+		p.hopIdx = map[string]hopProbe{}
+	}
 	p.hopIdx[hop.String()] = hopProbe{ok: ok, latency: took, checked: time.Now()}
 	p.hopDirty = true
 	p.hopMu.Unlock()
@@ -856,7 +965,9 @@ func raceDials(n int, dialFn func(i int) (net.Conn, error)) (net.Conn, int, erro
 		if r.err == nil {
 			go func(rem int) {
 				for j := 0; j < rem; j++ {
-					if late := <-ch; late.conn != nil { _ = late.conn.Close() }
+					if late := <-ch; late.conn != nil {
+						_ = late.conn.Close()
+					}
 				}
 			}(n - i - 1)
 			return r.conn, r.idx, nil
@@ -871,14 +982,18 @@ func (p *ProxyServer) dialViaExit(ctx context.Context, exit *url.URL, dest strin
 	hops := p.hopOrder()
 	if len(hops) == 0 {
 		conn, err := p.dialOne(exit, dest, dest, timeout)
-		if err != nil { return nil, nil, err }
+		if err != nil {
+			return nil, nil, err
+		}
 		return conn, exit, nil
 	}
 	hops = hops[:min(len(hops), 4)]
 	conn, _, err := raceDials(len(hops), func(i int) (net.Conn, error) {
 		return p.openViaHop(hops[i], exit, dest, timeout)
 	})
-	if err != nil { return nil, nil, cmp.Or(err, errors.New("no hop could reach the exit")) }
+	if err != nil {
+		return nil, nil, cmp.Or(err, errors.New("no hop could reach the exit"))
+	}
 	p.upstreamMu.Lock()
 	p.lastGood = exit
 	p.upstreamMu.Unlock()
@@ -887,9 +1002,13 @@ func (p *ProxyServer) dialViaExit(ctx context.Context, exit *url.URL, dest strin
 
 func (p *ProxyServer) dialUpstreamHttp(u *url.URL, dest string, timeout time.Duration) (net.Conn, error) {
 	defPort := "80"
-	if strings.EqualFold(u.Scheme, "https") { defPort = "443" }
+	if strings.EqualFold(u.Scheme, "https") {
+		defPort = "443"
+	}
 	conn, err := net.DialTimeout("tcp", ensureHostPort(u.Host, defPort), timeout)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	if err := httpConnect(conn, dest, userOf(u), p.ua, timeout); err != nil {
 		_ = conn.Close()
 		return nil, err
@@ -904,7 +1023,9 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 	p.upstreamMu.Unlock()
 
 	order := make([]*url.URL, 0, len(p.upstreams)+1)
-	if preferred != nil { order = append(order, preferred) }
+	if preferred != nil {
+		order = append(order, preferred)
+	}
 	for _, u := range p.upstreams {
 		if u != nil && (preferred == nil || u.String() != preferred.String()) {
 			order = append(order, u)
@@ -914,7 +1035,9 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 		started := time.Now()
 		conn, err := p.dialOne(preferred, dest, socksTarget, timeout)
 		p.recordHop(preferred, err == nil, time.Since(started))
-		if err == nil { return conn, preferred, nil }
+		if err == nil {
+			return conn, preferred, nil
+		}
 		if active := atomic.LoadInt64(&p.telemetry.connsActive); active > 0 {
 			log.Printf("[UPSTREAM] %s failed with %d live connection(s); refusing to switch exit IP mid-session", preferred.Redacted(), active)
 			return nil, nil, err
@@ -924,7 +1047,9 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 }
 
 func (p *ProxyServer) dialOne(u *url.URL, dest, socksTarget string, timeout time.Duration) (net.Conn, error) {
-	if u == nil { return nil, fmt.Errorf("nil upstream") }
+	if u == nil {
+		return nil, fmt.Errorf("nil upstream")
+	}
 	if strings.HasPrefix(strings.ToLower(u.Scheme), "socks5") {
 		return dialUpstreamSocks5(u, socksTarget, timeout)
 	}
@@ -932,7 +1057,9 @@ func (p *ProxyServer) dialOne(u *url.URL, dest, socksTarget string, timeout time
 }
 
 func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest, socksTarget string, timeout time.Duration) (net.Conn, *url.URL, error) {
-	if len(order) == 0 { return nil, nil, fmt.Errorf("no upstream configured") }
+	if len(order) == 0 {
+		return nil, nil, fmt.Errorf("no upstream configured")
+	}
 	conn, idx, err := raceDials(len(order), func(i int) (net.Conn, error) {
 		u := order[i]
 		started := time.Now()
@@ -940,7 +1067,9 @@ func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest,
 		p.recordHop(u, err == nil, time.Since(started))
 		return c, err
 	})
-	if err != nil { return nil, nil, cmp.Or(err, fmt.Errorf("no upstream configured")) }
+	if err != nil {
+		return nil, nil, cmp.Or(err, fmt.Errorf("no upstream configured"))
+	}
 	winner := order[idx]
 	p.upstreamMu.Lock()
 	changed := p.lastGood == nil || p.lastGood.String() != winner.String()
@@ -996,7 +1125,9 @@ func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error)
 		if len(p.upstreams) > 0 {
 			var err error
 			for attempt := 0; attempt < 3; attempt++ {
-				if attempt > 0 { time.Sleep(time.Duration(attempt) * 1500 * time.Millisecond) }
+				if attempt > 0 {
+					time.Sleep(time.Duration(attempt) * 1500 * time.Millisecond)
+				}
 				if conn, _, dialErr := p.dialUpstreamAny(ctx, dest, 6*time.Second); dialErr == nil {
 					upstreamHealthy.Store(true)
 					return conn, nil
@@ -1059,7 +1190,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && (r.URL.Path == "/authorized" || r.URL.Path == "/login-authorized" || strings.HasPrefix(r.URL.Path, "/oauth/callback")) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		qs := ""
-		if r.URL.RawQuery != "" { qs = "?" + r.URL.RawQuery }
+		if r.URL.RawQuery != "" {
+			qs = "?" + r.URL.RawQuery
+		}
 		_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><head><title>Authorization Success</title></head><body><script>if(window.opener&&window.opener.__onDeepLinkCallback){window.opener.__onDeepLinkCallback(window.location.href);}window.location.href="dofustouch://authorized%s";</script><h2>Authorization Successful</h2><p>Redirecting back to Dofus Touch...</p></body></html>`, qs)
 		return
 	}
@@ -1089,7 +1222,9 @@ func (p *ProxyServer) auditOutboundIP() []byte {
 		Timeout: 6 * time.Second,
 	}
 	resp, err := client.Get("http://ip-api.com/json/?fields=status,message,country,city,isp,org,as,query,mobile,proxy,hosting")
-	if err != nil { return errResp(err.Error(), "LOOKUP_OFFLINE") }
+	if err != nil {
+		return errResp(err.Error(), "LOOKUP_OFFLINE")
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	var info struct {
@@ -1231,24 +1366,32 @@ func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func atomicReplaceFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil { return nil }
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		time.Sleep(20 * time.Millisecond)
 		_ = os.Remove(dst)
-		if err = os.Rename(src, dst); err == nil { return nil }
+		if err = os.Rename(src, dst); err == nil {
+			return nil
+		}
 	}
 	oldPath := dst + ".old." + strconv.FormatInt(time.Now().UnixNano(), 10)
 	if os.Rename(dst, oldPath) == nil {
 		_ = os.Remove(oldPath)
-		if os.Rename(src, dst) == nil { return nil }
+		if os.Rename(src, dst) == nil {
+			return nil
+		}
 	}
 	return err
 }
 
 func detectMimeType(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
-	if m, ok := extMimeMap[ext]; ok { return m }
+	if m, ok := extMimeMap[ext]; ok {
+		return m
+	}
 	return cmp.Or(mime.TypeByExtension(ext), "application/octet-stream")
 }
 
@@ -1290,7 +1433,9 @@ func (p *ProxyServer) loadDisguiseFromDisk() string {
 		filepath.Join(exeDir, "mobile-disguise.js"),
 	} {
 		b, err := os.ReadFile(c)
-		if err != nil || len(b) == 0 { continue }
+		if err != nil || len(b) == 0 {
+			continue
+		}
 		var pairs []string
 		for _, kv := range [][2]string{
 			{"__DEVICE_SERIAL__", p.serial},
@@ -1302,9 +1447,13 @@ func (p *ProxyServer) loadDisguiseFromDisk() string {
 			{"__DEVICE_GL_RENDERER__", p.glRenderer},
 			{"__DEVICE_MAX_TEXTURE_SIZE__", p.maxTextureSize},
 		} {
-			if kv[1] != "" { pairs = append(pairs, kv[0], kv[1]) }
+			if kv[1] != "" {
+				pairs = append(pairs, kv[0], kv[1])
+			}
 		}
-		if len(pairs) > 0 { return strings.NewReplacer(pairs...).Replace(string(b)) }
+		if len(pairs) > 0 {
+			return strings.NewReplacer(pairs...).Replace(string(b))
+		}
 		return string(b)
 	}
 	return ""
@@ -1316,20 +1465,28 @@ func isLocalRequestHost(host string) bool {
 }
 
 func isCdnAssetHost(host string) bool {
-	if h, _, ok := strings.Cut(host, ":"); ok { host = h }
+	if h, _, ok := strings.Cut(host, ":"); ok {
+		host = h
+	}
 	host = strings.ToLower(host)
 	return host == "cdn.ankama.com" || host == "cdn.ankama-games.com" ||
 		strings.HasSuffix(host, ".cdn.ankama.com") || strings.HasSuffix(host, ".cdn.ankama-games.com")
 }
 
 func isStaticAnkamaHost(host string) bool {
-	if h, _, ok := strings.Cut(host, ":"); ok { host = h }
+	if h, _, ok := strings.Cut(host, ":"); ok {
+		host = h
+	}
 	return strings.EqualFold(host, "static.ankama.com")
 }
 
 func isVolatileCacheURL(u string) bool {
-	if strings.Contains(u, "production-login") { return true }
-	if i := strings.IndexAny(u, "?#"); i != -1 { u = u[:i] }
+	if strings.Contains(u, "production-login") {
+		return true
+	}
+	if i := strings.IndexAny(u, "?#"); i != -1 {
+		u = u[:i]
+	}
 	return strings.HasSuffix(u, "/config.json") || strings.HasSuffix(u, "/getLanguage.json") || strings.HasSuffix(u, "/version.json")
 }
 
@@ -1340,7 +1497,9 @@ func isEmulatorOrigin(v string) bool {
 }
 
 func (p *ProxyServer) applyHotlinkHeaders(h http.Header, host string) {
-	if !isCdnAssetHost(host) { return }
+	if !isCdnAssetHost(host) {
+		return
+	}
 	if ref := h.Get("Referer"); ref != "" && isEmulatorOrigin(ref) {
 		h.Set("Referer", p.referer)
 	}
@@ -1373,14 +1532,18 @@ func (p *ProxyServer) serveCachedAsset(w http.ResponseWriter, r *http.Request, c
 		}
 	}()
 	fi, err := os.Stat(cacheFilePath)
-	if err != nil { return false }
+	if err != nil {
+		return false
+	}
 	if time.Since(fi.ModTime()) > assetCacheTTL {
 		_ = os.Remove(cacheFilePath)
 		_ = os.Remove(cacheFilePath + ".meta")
 		return false
 	}
 	f, err := os.Open(cacheFilePath)
-	if err != nil { return false }
+	if err != nil {
+		return false
+	}
 	defer f.Close()
 	h := w.Header()
 	setCORSHeaders(h, "GET, POST, OPTIONS, HEAD")
@@ -1405,7 +1568,9 @@ func (p *ProxyServer) storeCacheEntry(targetStr, assetPath, cacheFilePath, ct st
 		return err
 	}
 	var w io.Writer = tf
-	if dst != nil { w = io.MultiWriter(dst, tf) }
+	if dst != nil {
+		w = io.MultiWriter(dst, tf)
+	}
 	buf := bufPool.Get().([]byte)
 	written, copyErr := io.CopyBuffer(w, r, buf)
 	bufPool.Put(buf)
@@ -1418,17 +1583,23 @@ func (p *ProxyServer) storeCacheEntry(targetStr, assetPath, cacheFilePath, ct st
 		_ = os.Remove(tmpPath)
 		return err
 	}
-	if ct != "" { _ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644) }
+	if ct != "" {
+		_ = os.WriteFile(cacheFilePath+".meta", []byte(ct), 0644)
+	}
 	p.mirrorCachedFile(targetStr, cacheFilePath)
 	if assetPath != "" {
-		if id := mapJSONID(assetPath); id > 0 { p.scheduleMapPrefetch(targetStr, id) }
+		if id := mapJSONID(assetPath); id > 0 {
+			p.scheduleMapPrefetch(targetStr, id)
+		}
 	}
 	return nil
 }
 
 func mirrorRelPath(target string) string {
 	u, err := url.Parse(target)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" { return "" }
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return ""
+	}
 	host := strings.ToLower(u.Hostname())
 	if host == "" || strings.ContainsAny(host, `<>:"|?*\`) || u.Path == "" || u.Path == "/" ||
 		strings.Contains(u.Path, "..") || strings.ContainsAny(u.Path, `<>:"|*\`) {
@@ -1438,7 +1609,9 @@ func mirrorRelPath(target string) string {
 }
 
 func (p *ProxyServer) mirrorPathFor(target string) string {
-	if p.cacheDir == "" { return "" }
+	if p.cacheDir == "" {
+		return ""
+	}
 	if rel := mirrorRelPath(target); rel != "" {
 		return filepath.Join(p.cacheDir, "files", filepath.FromSlash(rel))
 	}
@@ -1447,19 +1620,29 @@ func (p *ProxyServer) mirrorPathFor(target string) string {
 
 func (p *ProxyServer) mirrorCachedFile(target, cacheFilePath string) {
 	mirror := p.mirrorPathFor(target)
-	if mirror == "" { return }
-	if _, err := os.Stat(mirror); err == nil { return }
-	if os.MkdirAll(filepath.Dir(mirror), 0755) != nil { return }
+	if mirror == "" {
+		return
+	}
+	if _, err := os.Stat(mirror); err == nil {
+		return
+	}
+	if os.MkdirAll(filepath.Dir(mirror), 0755) != nil {
+		return
+	}
 	rel := mirrorRelPath(target)
 	if os.Link(cacheFilePath, mirror) == nil {
 		p.mirrorIndexAdd(rel)
 		return
 	}
 	in, err := os.Open(cacheFilePath)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	defer in.Close()
 	out, err := os.Create(mirror)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	if _, err := io.Copy(out, in); err != nil {
 		_ = out.Close()
 		_ = os.Remove(mirror)
@@ -1470,9 +1653,13 @@ func (p *ProxyServer) mirrorCachedFile(target, cacheFilePath string) {
 }
 
 func (p *ProxyServer) mirrorIndexAdd(rel string) {
-	if rel == "" { return }
+	if rel == "" {
+		return
+	}
 	p.mirrorMu.Lock()
-	if p.mirrorBuilt && p.mirrorIndex != nil { p.mirrorIndex[rel] = struct{}{} }
+	if p.mirrorBuilt && p.mirrorIndex != nil {
+		p.mirrorIndex[rel] = struct{}{}
+	}
 	p.mirrorMu.Unlock()
 }
 
@@ -1535,7 +1722,9 @@ func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad target", http.StatusBadRequest)
 			return
 		}
-		if !p.quiet { log.Printf("[WARM] %s", target) }
+		if !p.quiet {
+			log.Printf("[WARM] %s", target)
+		}
 		ok, already, status, errText := p.warmAssetCacheDetail(r.Context(), target)
 		h.Set("Content-Type", "application/json")
 		if !ok {
@@ -1546,7 +1735,9 @@ func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 		}
 		p.requestLog("WARM %s", target)
 		if u, err := url.Parse(target); err == nil {
-			if id := mapJSONID(u.Path); id > 0 { p.scheduleMapPrefetch(target, id) }
+			if id := mapJSONID(u.Path); id > 0 {
+				p.scheduleMapPrefetch(target, id)
+			}
 		}
 		_, _ = fmt.Fprintf(w, `{"ok":true,"cached":%t}`, already)
 	case "/__delete":
@@ -1557,7 +1748,9 @@ func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 		}
 		removed := 0
 		for _, rel := range p.mirrorIndexSnapshot() {
-			if rel != needle && !strings.HasSuffix(rel, "/"+needle) { continue }
+			if rel != needle && !strings.HasSuffix(rel, "/"+needle) {
+				continue
+			}
 			_ = os.Remove(filepath.Join(p.cacheDir, "files", filepath.FromSlash(rel)))
 			cp := p.assetCachePath("https://" + rel)
 			_ = os.Remove(cp)
@@ -1575,10 +1768,14 @@ func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProxyServer) loadModsIfChanged() {
-	if p.modsDir == "" { return }
+	if p.modsDir == "" {
+		return
+	}
 	p.modsMu.Lock()
 	defer p.modsMu.Unlock()
-	if time.Since(p.modsChecked) < 2*time.Second { return }
+	if time.Since(p.modsChecked) < 2*time.Second {
+		return
+	}
 	p.modsChecked = time.Now()
 	rulesPath := filepath.Join(p.modsDir, "rules.json")
 	fi, err := os.Stat(rulesPath)
@@ -1589,9 +1786,13 @@ func (p *ProxyServer) loadModsIfChanged() {
 		}
 		return
 	}
-	if fi.ModTime().Equal(p.modsRulesMod) { return }
+	if fi.ModTime().Equal(p.modsRulesMod) {
+		return
+	}
 	raw, err := os.ReadFile(rulesPath)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	var rules []modRule
 	if err := json.Unmarshal(raw, &rules); err != nil {
 		log.Printf("[MODS] rules.json parse error: %v", err)
@@ -1611,24 +1812,34 @@ func (p *ProxyServer) loadModsIfChanged() {
 }
 
 func (p *ProxyServer) applyModRules(w http.ResponseWriter, r *http.Request, targetStr string) bool {
-	if p.modsDir == "" { return false }
+	if p.modsDir == "" {
+		return false
+	}
 	p.loadModsIfChanged()
 	p.modsMu.Lock()
 	rules, res := p.modsRules, p.modsRes
 	p.modsMu.Unlock()
 	for i, rule := range rules {
-		if i >= len(res) || res[i] == nil || !res[i].MatchString(targetStr) { continue }
+		if i >= len(res) || res[i] == nil || !res[i].MatchString(targetStr) {
+			continue
+		}
 		switch rule.Action {
 		case "block":
 			status := rule.Status
-			if status < 100 || status > 599 { status = http.StatusNoContent }
+			if status < 100 || status > 599 {
+				status = http.StatusNoContent
+			}
 			w.WriteHeader(status)
 			p.requestLog("MODBLOCK %d %s", status, targetStr)
 			return true
 		case "override":
-			if p.serveModOverride(w, r, rule, targetStr) { return true }
+			if p.serveModOverride(w, r, rule, targetStr) {
+				return true
+			}
 		case "patch":
-			if p.serveModPatched(w, r, rule, targetStr) { return true }
+			if p.serveModPatched(w, r, rule, targetStr) {
+				return true
+			}
 		}
 	}
 	return false
@@ -1648,7 +1859,9 @@ func (p *ProxyServer) serveModOverride(w http.ResponseWriter, r *http.Request, r
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil || fi.IsDir() { return false }
+	if err != nil || fi.IsDir() {
+		return false
+	}
 	h := w.Header()
 	setCORSHeaders(h, "GET, HEAD, OPTIONS")
 	setLongAssetCacheHeaders(h)
@@ -1662,7 +1875,9 @@ func (p *ProxyServer) serveModOverride(w http.ResponseWriter, r *http.Request, r
 
 func (p *ProxyServer) serveModPatched(w http.ResponseWriter, r *http.Request, rule modRule, targetStr string) bool {
 	body, ct, ok := p.patchedAssetBody(r.Context(), targetStr, rule)
-	if !ok { return false }
+	if !ok {
+		return false
+	}
 	h := w.Header()
 	setCORSHeaders(h, "GET, HEAD, OPTIONS")
 	setLongAssetCacheHeaders(h)
@@ -1678,7 +1893,9 @@ func (p *ProxyServer) serveModPatched(w http.ResponseWriter, r *http.Request, ru
 
 func readFileLimited(path string, maxBytes int64) ([]byte, error) {
 	f, err := os.Open(path)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer f.Close()
 	return io.ReadAll(io.LimitReader(f, maxBytes))
 }
@@ -1692,11 +1909,15 @@ func (p *ProxyServer) patchedAssetBody(ctx context.Context, targetStr string, ru
 		}
 	}
 	raw, err := readFileLimited(cacheFilePath, 64<<20)
-	if err != nil { return nil, "", false }
+	if err != nil {
+		return nil, "", false
+	}
 	metaBytes, _ := os.ReadFile(cacheFilePath + ".meta")
 	ct := strings.TrimSpace(string(metaBytes))
 	var doc any
-	if json.Unmarshal(raw, &doc) != nil { return nil, "", false }
+	if json.Unmarshal(raw, &doc) != nil {
+		return nil, "", false
+	}
 	for _, op := range rule.Patch {
 		switch strings.ToLower(strings.TrimSpace(op.Op)) {
 		case "set":
@@ -1706,13 +1927,17 @@ func (p *ProxyServer) patchedAssetBody(ctx context.Context, targetStr string, ru
 		}
 	}
 	out, err := json.Marshal(doc)
-	if err != nil { return nil, "", false }
+	if err != nil {
+		return nil, "", false
+	}
 	return out, ct, true
 }
 
 func jsonPointerTokens(pointer string) []string {
 	pointer = strings.TrimPrefix(pointer, "/")
-	if pointer == "" { return nil }
+	if pointer == "" {
+		return nil
+	}
 	parts := strings.Split(pointer, "/")
 	for i, s := range parts {
 		parts[i] = strings.ReplaceAll(strings.ReplaceAll(s, "~1", "/"), "~0", "~")
@@ -1722,7 +1947,9 @@ func jsonPointerTokens(pointer string) []string {
 
 func jsonPointerSet(doc any, pointer string, value any) (any, bool) {
 	tokens := jsonPointerTokens(pointer)
-	if len(tokens) == 0 { return value, true }
+	if len(tokens) == 0 {
+		return value, true
+	}
 	return pointerSetWalk(doc, tokens, value, 0)
 }
 
@@ -1735,20 +1962,30 @@ func pointerSetWalk(node any, tokens []string, value any, idx int) (any, bool) {
 			return cur, true
 		}
 		child := cur[tok]
-		if child == nil { child = map[string]any{} }
+		if child == nil {
+			child = map[string]any{}
+		}
 		v, ok := pointerSetWalk(child, tokens, value, idx+1)
-		if ok { cur[tok] = v }
+		if ok {
+			cur[tok] = v
+		}
 		return cur, ok
 	case []any:
-		if last && tok == "-" { return append(cur, value), true }
+		if last && tok == "-" {
+			return append(cur, value), true
+		}
 		n, err := strconv.Atoi(tok)
-		if err != nil || n < 0 || n >= len(cur) { return cur, false }
+		if err != nil || n < 0 || n >= len(cur) {
+			return cur, false
+		}
 		if last {
 			cur[n] = value
 			return cur, true
 		}
 		v, ok := pointerSetWalk(cur[n], tokens, value, idx+1)
-		if ok { cur[n] = v }
+		if ok {
+			cur[n] = v
+		}
 		return cur, ok
 	}
 	return node, false
@@ -1756,7 +1993,9 @@ func pointerSetWalk(node any, tokens []string, value any, idx int) (any, bool) {
 
 func jsonPointerRemove(doc any, pointer string) (any, bool) {
 	tokens := jsonPointerTokens(pointer)
-	if len(tokens) == 0 { return doc, false }
+	if len(tokens) == 0 {
+		return doc, false
+	}
 	return pointerRemoveWalk(doc, tokens, 0)
 }
 
@@ -1765,20 +2004,30 @@ func pointerRemoveWalk(node any, tokens []string, idx int) (any, bool) {
 	switch cur := node.(type) {
 	case map[string]any:
 		child, ok := cur[tok]
-		if !ok { return cur, false }
+		if !ok {
+			return cur, false
+		}
 		if last {
 			delete(cur, tok)
 			return cur, true
 		}
 		v, ok := pointerRemoveWalk(child, tokens, idx+1)
-		if ok { cur[tok] = v }
+		if ok {
+			cur[tok] = v
+		}
 		return cur, ok
 	case []any:
 		n, err := strconv.Atoi(tok)
-		if err != nil || n < 0 || n >= len(cur) { return cur, false }
-		if last { return slices.Delete(cur, n, n+1), true }
+		if err != nil || n < 0 || n >= len(cur) {
+			return cur, false
+		}
+		if last {
+			return slices.Delete(cur, n, n+1), true
+		}
 		v, ok := pointerRemoveWalk(cur[n], tokens, idx+1)
-		if ok { cur[n] = v }
+		if ok {
+			cur[n] = v
+		}
 		return cur, ok
 	}
 	return node, false
@@ -1786,21 +2035,29 @@ func pointerRemoveWalk(node any, tokens []string, idx int) (any, bool) {
 
 func (p *ProxyServer) newCDNRequest(ctx context.Context, method, targetStr string, src http.Header) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, targetStr, nil)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("User-Agent", p.ua)
 	req.Header.Set("Referer", p.referer)
 	req.Header.Set("Origin", p.refererRoot)
 	req.Header.Set("Accept", "*/*")
 	for _, k := range []string{"Cookie", "Range", "If-None-Match", "If-Modified-Since"} {
-		if v := src.Get(k); v != "" { req.Header.Set(k, v) }
+		if v := src.Get(k); v != "" {
+			req.Header.Set(k, v)
+		}
 	}
 	return req, nil
 }
 
 func (p *ProxyServer) tryServeCached(w http.ResponseWriter, r *http.Request, targetStr, assetPath, cacheFilePath string) bool {
-	if !p.serveCachedAsset(w, r, cacheFilePath, assetPath) { return false }
+	if !p.serveCachedAsset(w, r, cacheFilePath, assetPath) {
+		return false
+	}
 	p.mirrorCachedFile(targetStr, cacheFilePath)
-	if id := mapJSONID(assetPath); id > 0 { p.scheduleMapPrefetch(targetStr, id) }
+	if id := mapJSONID(assetPath); id > 0 {
+		p.scheduleMapPrefetch(targetStr, id)
+	}
 	return true
 }
 
@@ -1830,14 +2087,20 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetStr := "https://" + host + assetPath
-	if r.URL.RawQuery != "" { targetStr += "?" + r.URL.RawQuery }
-	if p.applyModRules(w, r, targetStr) { return }
+	if r.URL.RawQuery != "" {
+		targetStr += "?" + r.URL.RawQuery
+	}
+	if p.applyModRules(w, r, targetStr) {
+		return
+	}
 	reqStart := time.Now()
 	var cacheFilePath string
 	if p.cacheDir != "" && isCacheAssetURL(targetStr) && !isVolatileCacheURL(targetStr) {
 		cacheFilePath = p.assetCachePath(targetStr)
 		if p.tryServeCached(w, r, targetStr, assetPath, cacheFilePath) {
-			if !p.quiet { log.Printf("[RELAY] HIT %s", targetStr) }
+			if !p.quiet {
+				log.Printf("[RELAY] HIT %s", targetStr)
+			}
 			p.requestLog("HIT %s", targetStr)
 			return
 		}
@@ -1873,7 +2136,9 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	case http.StatusForbidden, http.StatusNotFound:
 		p.negCacheStore(targetStr, resp.StatusCode)
 	}
-	if !p.quiet { log.Printf("[RELAY] %d %s", resp.StatusCode, targetStr) }
+	if !p.quiet {
+		log.Printf("[RELAY] %d %s", resp.StatusCode, targetStr)
+	}
 	p.requestLog("%d %dms %s", resp.StatusCode, time.Since(reqStart).Milliseconds(), targetStr)
 	w.WriteHeader(resp.StatusCode)
 	if cacheFilePath == "" || resp.StatusCode != http.StatusOK || r.Method != http.MethodGet {
@@ -1914,14 +2179,18 @@ func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (
 	}
 	ch := p.warmSF.DoChan(target, func() (any, error) {
 		req, err := p.newCDNRequest(context.WithoutCancel(ctx), http.MethodGet, target, http.Header{})
-		if err != nil { return &warmRes{ok: false, status: 0, errTxt: "request: " + err.Error()}, nil }
+		if err != nil {
+			return &warmRes{ok: false, status: 0, errTxt: "request: " + err.Error()}, nil
+		}
 		for i := 0; i < 100 && atomic.LoadInt64(&p.clientInflight) > 0; i++ {
 			if !sleepCtx(ctx, 50*time.Millisecond) {
 				return &warmRes{ok: false, status: 0, errTxt: "canceled while yielding to client traffic"}, nil
 			}
 		}
 		resp, err := p.client.Do(req)
-		if err != nil { return &warmRes{ok: false, status: 0, errTxt: "fetch: " + err.Error()}, nil }
+		if err != nil {
+			return &warmRes{ok: false, status: 0, errTxt: "fetch: " + err.Error()}, nil
+		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			p.negCacheStore(target, resp.StatusCode)
@@ -1936,7 +2205,9 @@ func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (
 	select {
 	case res := <-ch:
 		wr := res.Val.(*warmRes)
-		if wr.claimed.CompareAndSwap(false, true) { return wr.ok, false, wr.status, wr.errTxt }
+		if wr.claimed.CompareAndSwap(false, true) {
+			return wr.ok, false, wr.status, wr.errTxt
+		}
 		if fi, err := os.Stat(cacheFilePath); err == nil && time.Since(fi.ModTime()) <= assetCacheTTL {
 			p.mirrorCachedFile(target, cacheFilePath)
 			return true, true, 200, ""
@@ -1949,14 +2220,18 @@ func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (
 
 func mapJSONID(path string) int64 {
 	if m := reMapJSONPath.FindStringSubmatch(path); m != nil {
-		if id, err := strconv.ParseInt(m[1], 10, 64); err == nil { return id }
+		if id, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+			return id
+		}
 	}
 	return 0
 }
 
 func mapJSONNeighbours(body []byte) []int64 {
 	m := reMapHeader.FindSubmatch(body[:min(len(body), 300)])
-	if m == nil { return nil }
+	if m == nil {
+		return nil
+	}
 	var out []int64
 	for _, g := range m[2:] {
 		if id, err := strconv.ParseInt(string(g), 10, 64); err == nil && id > 0 && !slices.Contains(out, id) {
@@ -1970,26 +2245,36 @@ func mapTileURLs(body []byte, prefix string) []string {
 	matches := reAtlasEntry.FindAllSubmatch(body, prefetchMaxTilesPerMap+1)
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
-		if !bytes.Contains(m[2], []byte(`"sx"`)) { continue }
+		if !bytes.Contains(m[2], []byte(`"sx"`)) {
+			continue
+		}
 		dir, ext := "png", ".png"
 		if bytes.Contains(m[2], []byte(`"jpg"`)) {
 			dir, ext = "jpg", ".jpg"
 		}
 		out = append(out, prefix+"/gfx/world/"+dir+"/"+string(m[1])+ext)
-		if len(out) == prefetchMaxTilesPerMap { break }
+		if len(out) == prefetchMaxTilesPerMap {
+			break
+		}
 	}
 	return out
 }
 
 func (p *ProxyServer) prefetchLog(format string, args ...any) {
 	line := fmt.Sprintf(format, args...)
-	if !p.quiet { log.Printf("%s", line) }
-	if p.cacheDir == "" { return }
+	if !p.quiet {
+		log.Printf("%s", line)
+	}
+	if p.cacheDir == "" {
+		return
+	}
 	p.prefetchLogMu.Lock()
 	defer p.prefetchLogMu.Unlock()
 	if p.prefetchLogFile == nil {
 		f, err := os.OpenFile(filepath.Join(p.cacheDir, "prefetch.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 		p.prefetchLogFile = f
 	}
 	if _, err := p.prefetchLogFile.WriteString(time.Now().Format("2006-01-02 15:04:05") + " " + line + "\n"); err != nil {
@@ -1999,13 +2284,17 @@ func (p *ProxyServer) prefetchLog(format string, args ...any) {
 }
 
 func (p *ProxyServer) requestLog(format string, args ...any) {
-	if p.cacheDir == "" { return }
+	if p.cacheDir == "" {
+		return
+	}
 	logPath := filepath.Join(p.cacheDir, "requests.log")
 	p.prefetchLogMu.Lock()
 	defer p.prefetchLogMu.Unlock()
 	if p.reqLogFile == nil {
 		var size int64
-		if fi, err := os.Stat(logPath); err == nil { size = fi.Size() }
+		if fi, err := os.Stat(logPath); err == nil {
+			size = fi.Size()
+		}
 		p.reqLogRotateAt = 16 << 20
 		if size > 16<<20 {
 			_ = os.Remove(logPath + ".1")
@@ -2016,7 +2305,9 @@ func (p *ProxyServer) requestLog(format string, args ...any) {
 			}
 		}
 		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 		p.reqLogFile, p.reqLogSize = f, size
 	}
 	n, err := p.reqLogFile.WriteString(time.Now().Format("15:04:05.000") + " " + fmt.Sprintf(format, args...) + "\n")
@@ -2032,7 +2323,9 @@ func (p *ProxyServer) negCacheHit(target string) (int, bool) {
 	p.negMu.Lock()
 	defer p.negMu.Unlock()
 	e, ok := p.negCache[target]
-	if !ok { return 0, false }
+	if !ok {
+		return 0, false
+	}
 	if time.Since(e.at) > prefetchNegativeTTL {
 		delete(p.negCache, target)
 		return 0, false
@@ -2041,14 +2334,20 @@ func (p *ProxyServer) negCacheHit(target string) (int, bool) {
 }
 
 func (p *ProxyServer) negCacheStore(target string, status int) {
-	if status != http.StatusForbidden && status != http.StatusNotFound { return }
+	if status != http.StatusForbidden && status != http.StatusNotFound {
+		return
+	}
 	now := time.Now()
 	p.negMu.Lock()
 	defer p.negMu.Unlock()
-	if p.negCache == nil { p.negCache = make(map[string]negEntry) }
+	if p.negCache == nil {
+		p.negCache = make(map[string]negEntry)
+	}
 	if len(p.negCache) > 4096 {
 		maps.DeleteFunc(p.negCache, func(_ string, v negEntry) bool { return now.Sub(v.at) > prefetchNegativeTTL })
-		if len(p.negCache) > 4096 { clear(p.negCache) }
+		if len(p.negCache) > 4096 {
+			clear(p.negCache)
+		}
 	}
 	p.negCache[target] = negEntry{status: status, at: now}
 }
@@ -2060,10 +2359,16 @@ func (p *ProxyServer) negCacheClear(target string) {
 }
 
 func (p *ProxyServer) scheduleMapPrefetch(target string, id int64) {
-	if !p.prefetch || p.cacheDir == "" || id <= 0 { return }
-	if _, bad := p.negCacheHit(target); bad { return }
+	if !p.prefetch || p.cacheDir == "" || id <= 0 {
+		return
+	}
+	if _, bad := p.negCacheHit(target); bad {
+		return
+	}
 	p.prefetchMu.Lock()
-	if p.prefetchSeen == nil { p.prefetchSeen = make(map[int64]time.Time) }
+	if p.prefetchSeen == nil {
+		p.prefetchSeen = make(map[int64]time.Time)
+	}
 	if last, ok := p.prefetchSeen[id]; ok && time.Since(last) < prefetchCooldown {
 		p.prefetchMu.Unlock()
 		return
@@ -2106,7 +2411,9 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 		}
 	}
 	body, err := readFileLimited(cacheFilePath, prefetchMapJSONReadMax)
-	if err != nil || len(body) == 0 { return }
+	if err != nil || len(body) == 0 {
+		return
+	}
 	prefix := strings.TrimSuffix(mapURL, "/maps/"+strconv.FormatInt(job.id, 10)+".json")
 	neighbours := mapJSONNeighbours(body)
 	newTiles, cachedTiles, totalTiles := 0, 0, 0
@@ -2122,12 +2429,16 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 	}
 	p.prefetchLog("[PREFETCH] map %d d%d neighbours=%d tiles new=%d cached=%d total=%d",
 		job.id, job.depth, len(neighbours), newTiles, cachedTiles, totalTiles)
-	if job.depth >= p.prefetchRadius { return }
+	if job.depth >= p.prefetchRadius {
+		return
+	}
 	for _, nid := range neighbours {
 		p.prefetchMu.Lock()
 		last, ok := p.prefetchSeen[nid]
 		skip := ok && time.Since(last) < prefetchCooldown
-		if !skip { p.prefetchSeen[nid] = time.Now() }
+		if !skip {
+			p.prefetchSeen[nid] = time.Now()
+		}
 		p.prefetchMu.Unlock()
 		if !skip {
 			select {
@@ -2140,20 +2451,28 @@ func (p *ProxyServer) processPrefetchJob(ctx context.Context, job prefetchJob) {
 
 func forEachIDRange(spec string, maxVal, maxSpan int64, strictHi bool, fn func(int64) bool) {
 	for _, part := range strings.Split(spec, ",") {
-		if part = strings.TrimSpace(part); part == "" { continue }
+		if part = strings.TrimSpace(part); part == "" {
+			continue
+		}
 		var lo, hi int64
 		if lStr, hStr, ok := strings.Cut(part, "-"); ok && lStr != "" {
 			l, errL := strconv.ParseInt(strings.TrimSpace(lStr), 10, 64)
 			h, errH := strconv.ParseInt(strings.TrimSpace(hStr), 10, 64)
-			if errL != nil || (strictHi && errH != nil) { continue }
+			if errL != nil || (strictHi && errH != nil) {
+				continue
+			}
 			lo, hi = l, h
 		} else if v, err := strconv.ParseInt(part, 10, 64); err == nil {
 			lo, hi = v, v
 		}
-		if lo < 1 { continue }
+		if lo < 1 {
+			continue
+		}
 		hi = min(max(hi, lo), maxVal, lo+maxSpan)
 		for id := lo; id <= hi; id++ {
-			if !fn(id) { return }
+			if !fn(id) {
+				return
+			}
 		}
 	}
 }
@@ -2163,7 +2482,9 @@ func feedMapIDs(spec string, fn func(id int) bool) {
 }
 
 func (p *ProxyServer) precacheMaps(ctx context.Context, assetsURL, spec string, workers int) {
-	if assetsURL == "" || spec == "" { return }
+	if assetsURL == "" || spec == "" {
+		return
+	}
 	workers = max(workers, 1)
 	base := strings.TrimRight(assetsURL, "/")
 	log.Printf("[PRECACHE] Warming maps from %s/maps/*.json (workers=%d)", base, workers)
@@ -2171,9 +2492,13 @@ func (p *ProxyServer) precacheMaps(ctx context.Context, assetsURL, spec string, 
 	var eg errgroup.Group
 	eg.SetLimit(workers)
 	feedMapIDs(spec, func(id int) bool {
-		if ctx.Err() != nil { return false }
+		if ctx.Err() != nil {
+			return false
+		}
 		eg.Go(func() error {
-			if ctx.Err() != nil { return nil }
+			if ctx.Err() != nil {
+				return nil
+			}
 			ok, already := p.warmAssetCache(ctx, base+"/maps/"+strconv.Itoa(id)+".json")
 			n := atomic.AddInt64(&total, 1)
 			switch {
@@ -2223,7 +2548,9 @@ func (p *ProxyServer) runMapCrawler(ctx context.Context, assetsURL string, seeds
 		return
 	}
 	base := strings.TrimRight(assetsURL, "/")
-	if base == "" { return }
+	if base == "" {
+		return
+	}
 	if crawlRate <= 0 {
 		crawlRate = 1
 	} else if crawlRate > 50 {
@@ -2236,17 +2563,25 @@ func (p *ProxyServer) runMapCrawler(ctx context.Context, assetsURL string, seeds
 	queue := slices.Clone(seeds)
 	fetched, reused, failed := 0, 0, 0
 	for len(queue) > 0 && ctx.Err() == nil {
-		if maxMaps > 0 && len(visited) >= maxMaps { break }
+		if maxMaps > 0 && len(visited) >= maxMaps {
+			break
+		}
 		id := queue[0]
 		queue = queue[1:]
-		if id <= 0 { continue }
-		if _, dup := visited[id]; dup { continue }
+		if id <= 0 {
+			continue
+		}
+		if _, dup := visited[id]; dup {
+			continue
+		}
 		visited[id] = struct{}{}
 
 		mapURL := base + "/maps/" + strconv.FormatInt(id, 10) + ".json"
 		cacheFilePath := p.assetCachePath(mapURL)
 		if _, err := os.Stat(cacheFilePath); err != nil {
-			if limiter.Wait(ctx) != nil { break }
+			if limiter.Wait(ctx) != nil {
+				break
+			}
 			if ok, _, status, errText := p.warmAssetCacheDetail(ctx, mapURL); !ok {
 				failed++
 				p.prefetchLog("[CRAWL] map %d json failed status=%d err=%q", id, status, errText)
@@ -2259,16 +2594,26 @@ func (p *ProxyServer) runMapCrawler(ctx context.Context, assetsURL string, seeds
 		}
 
 		body, err := readFileLimited(cacheFilePath, prefetchMapJSONReadMax)
-		if err != nil || len(body) == 0 { continue }
+		if err != nil || len(body) == 0 {
+			continue
+		}
 		for _, nid := range mapJSONNeighbours(body) {
-			if _, dup := visited[nid]; !dup { queue = append(queue, nid) }
+			if _, dup := visited[nid]; !dup {
+				queue = append(queue, nid)
+			}
 		}
 		if withTiles {
 			prefix := strings.TrimSuffix(mapURL, "/maps/"+strconv.FormatInt(id, 10)+".json")
 			for _, tileURL := range mapTileURLs(body, prefix) {
-				if ctx.Err() != nil { break }
-				if _, err := os.Stat(p.assetCachePath(tileURL)); err == nil { continue }
-				if limiter.Wait(ctx) != nil { break }
+				if ctx.Err() != nil {
+					break
+				}
+				if _, err := os.Stat(p.assetCachePath(tileURL)); err == nil {
+					continue
+				}
+				if limiter.Wait(ctx) != nil {
+					break
+				}
 				p.warmAssetCache(ctx, tileURL)
 			}
 		}
@@ -2302,7 +2647,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	var cacheFilePath string
 	if p.cacheDir != "" && r.Method == http.MethodGet && isCacheAssetURL(targetStr) && !isVolatileCacheURL(targetStr) {
 		cacheFilePath = p.assetCachePath(targetStr)
-		if p.tryServeCached(w, r, targetStr, targetURL.Path, cacheFilePath) { return }
+		if p.tryServeCached(w, r, targetStr, targetURL.Path, cacheFilePath) {
+			return
+		}
 	}
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetStr, r.Body)
 	if err != nil {
@@ -2327,7 +2674,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	wh := w.Header()
 	copyHeaderFiltered(wh, resp.Header, hopRespHeaders)
 	wh.Set("Access-Control-Allow-Origin", "*")
-	if resp.StatusCode == http.StatusOK && cacheFilePath != "" { setLongAssetCacheHeaders(wh) }
+	if resp.StatusCode == http.StatusOK && cacheFilePath != "" {
+		setLongAssetCacheHeaders(wh)
+	}
 	ct := resp.Header.Get("Content-Type")
 	isHTML := (strings.Contains(ct, "text/html") || strings.HasSuffix(strings.ToLower(targetURL.Path), ".html")) && resp.StatusCode == http.StatusOK
 
@@ -2358,7 +2707,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	if cacheFilePath != "" && resp.StatusCode == http.StatusOK && !isGzip {
 		expLen := resp.ContentLength
-		if resp.Header.Get("Content-Encoding") != "" { expLen = -1 }
+		if resp.Header.Get("Content-Encoding") != "" {
+			expLen = -1
+		}
 		_ = p.storeCacheEntry(targetStr, targetURL.Path, cacheFilePath, ct, bodyReader, expLen, w)
 		return
 	}
@@ -2369,9 +2720,13 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 func configArgValue(args []string, name string) string {
 	for i, a := range args {
-		if (a == "-"+name || a == "--"+name) && i+1 < len(args) { return args[i+1] }
+		if (a == "-"+name || a == "--"+name) && i+1 < len(args) {
+			return args[i+1]
+		}
 		for _, pfx := range []string{"-" + name + "=", "--" + name + "="} {
-			if v, ok := strings.CutPrefix(a, pfx); ok { return v }
+			if v, ok := strings.CutPrefix(a, pfx); ok {
+				return v
+			}
 		}
 	}
 	return ""
@@ -2379,7 +2734,9 @@ func configArgValue(args []string, name string) string {
 
 func loadIniConfig(path string) map[string]string {
 	out := map[string]string{}
-	if path == "" { return out }
+	if path == "" {
+		return out
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		log.Printf("[CONFIG] %s not readable (%v); using flags only", path, err)
@@ -2387,7 +2744,9 @@ func loadIniConfig(path string) map[string]string {
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.ContainsAny(line[:1], "#;[") { continue }
+		if line == "" || strings.ContainsAny(line[:1], "#;[") {
+			continue
+		}
 		if k, v, ok := strings.Cut(line, "="); ok && strings.TrimSpace(k) != "" {
 			out[strings.ToLower(strings.TrimSpace(k))] = strings.TrimSpace(v)
 		}
@@ -2400,7 +2759,9 @@ func main() {
 	cfg := loadIniConfig(cfgPath)
 	defStr := func(k, fb string) string { return cmp.Or(cfg[k], fb) }
 	defInt := func(k string, fb int) int {
-		if n, err := strconv.Atoi(cfg[k]); err == nil && cfg[k] != "" { return n }
+		if n, err := strconv.Atoi(cfg[k]); err == nil && cfg[k] != "" {
+			return n
+		}
 		return fb
 	}
 	defBool := func(k string, fb bool) bool {
@@ -2451,13 +2812,17 @@ func main() {
 	loginHost = cmp.Or(*loginHostFlag, loginHost)
 
 	log.SetFlags(log.Ldate | log.Ltime)
-	if *configFlag != "" { log.Printf("[CONFIG] loaded %s", *configFlag) }
+	if *configFlag != "" {
+		log.Printf("[CONFIG] loaded %s", *configFlag)
+	}
 	target := *logPath
 	if target == "" && *quiet && *cacheDir != "" {
 		target = filepath.Join(*cacheDir, "proxy.log")
 	}
 	if target != "" {
-		if dir := filepath.Dir(target); dir != "" { _ = os.MkdirAll(dir, 0o755) }
+		if dir := filepath.Dir(target); dir != "" {
+			_ = os.MkdirAll(dir, 0o755)
+		}
 		if f, err := os.OpenFile(target, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 			log.SetOutput(f)
 			log.Printf("[CONFIG] logging to %s", target)
@@ -2542,8 +2907,12 @@ func main() {
 			go proxy.precacheMaps(runCtx, *assetsURL, *precacheSpec, *precacheWorkers)
 		}
 	}
-	if *modsDir == "" && *cacheDir != "" { *modsDir = filepath.Join(*cacheDir, "mods") }
-	if proxy.modsDir = *modsDir; *modsDir != "" { proxy.loadModsIfChanged() }
+	if *modsDir == "" && *cacheDir != "" {
+		*modsDir = filepath.Join(*cacheDir, "mods")
+	}
+	if proxy.modsDir = *modsDir; *modsDir != "" {
+		proxy.loadModsIfChanged()
+	}
 	if *crawlSpec != "" {
 		if *assetsURL == "" {
 			log.Printf("[CRAWL] -crawl set without -assets-url; skipping")
