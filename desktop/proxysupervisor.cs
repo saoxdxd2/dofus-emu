@@ -60,6 +60,9 @@ namespace DofusFarm.Engine
         private readonly object _gate = new object();
         private readonly List<ProxyCandidate> _candidates = new List<ProxyCandidate>();
         private ProxyCandidate _active;
+        // The upstream the relays are actually built with. Compared against the new pick to
+        // decide whether a switch is real.
+        private string _lastAppliedUrl;
         private DateTime _lastRefreshUtc = DateTime.MinValue;
         private string _directIp;
         private FarmEngine _engine;
@@ -276,8 +279,20 @@ namespace DofusFarm.Engine
                     {
                         if (results[i] != null) _candidates.Add(results[i]);
                     }
+                    // A switch is real only when the relays would be built with a different
+                    // upstream than they already have.
+                    //
+                    // This used to compare against `_active`, which `best == null` also clears.
+                    // So one probe pass that missed every candidate set _active to null, the
+                    // next pass picked the same tunnel again, `changed` fired, and
+                    // RebuildAllRelays stopped and restarted the relay on the same port —
+                    // dropping every live socket, including the game connection. From the
+                    // client that is "it was not possible to connect to the server", right after
+                    // a login that had just worked, and it repeated because the tunnel's latency
+                    // oscillates around the threshold.
                     changed = best != null &&
-                              (_active == null || !string.Equals(_active.Url, best.Url, StringComparison.OrdinalIgnoreCase));
+                              !string.Equals(_lastAppliedUrl, best.Url, StringComparison.OrdinalIgnoreCase);
+                    if (changed) _lastAppliedUrl = best.Url;
                     _active = best;
                     _lastRefreshUtc = DateTime.UtcNow;
                 }
