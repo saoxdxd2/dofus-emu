@@ -1134,9 +1134,12 @@ namespace DofusFarm.UI
             // explanation, because the Python child's stdout — and any traceback on its
             // stderr, which arrives here prefixed with "! " — was written to this control
             // and nowhere else. A crash that leaves no trace is worse than the crash.
+            //
+            // Passed through unchanged: these lines already carry their own "[ai] "
+            // prefix, and adding a second one produced "[ai] [ai] ..." in the log.
             try
             {
-                if (_log != null) _log("[ai] " + line);
+                if (_log != null) _log(line);
             }
             catch { }
         }

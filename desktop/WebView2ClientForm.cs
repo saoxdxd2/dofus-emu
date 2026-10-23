@@ -2552,6 +2552,16 @@ namespace DofusFarm.Engine
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // Who closed this window?
+            //
+            // Every close used to be reported the same way — "WebView2 client closed by
+            // user" — whether the user clicked X, the app called Stop(), Windows shut
+            // down, or the task manager killed it. Sixty-two of those in one log, and no
+            // way to tell a kick from a shutdown from a stray Close(). CloseReason says
+            // which, and it costs one line.
+            _logCallback?.Invoke(string.Format("[{0}] closing: reason={1}{2}",
+                _instanceId, e.CloseReason, e.Cancel ? " (cancelled)" : ""));
+
             CloseOAuthDialog();
 
             if (_cdnInterceptTotal > 0)

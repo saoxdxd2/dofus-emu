@@ -49,8 +49,20 @@ VERDICTS = ("advanced", "noop", "failed", "blocked")
 
 # Observation keys that mean "the world moved". Kept in one place so the rule,
 # the dataset builder and the model features cannot drift apart.
+# What counts as a change in the world.
+#
+# `ready_objectives` is the important addition. Claiming an objective
+# (`quest.advance {objective_id}`) changes no cell, no map and no HP — it moves an entry
+# off the ready list, and that is the only observable proof it worked. Without it here,
+# the most valuable action the agent can take scored `noop` every time:
+#
+#   1 quest.advance  ok  noop  -> {'quest_id': 4278, 'objective_id': 13986}
+#
+# and the controller then replanned, retired the quest, and gave up on a goal it had just
+# made progress on. `objectives_completed` covers the step-level version of the same thing.
 STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
-              "in_dialog", "in_fight")
+              "in_dialog", "in_fight", "ready_objectives", "objectives_completed",
+              "quests_active")
 
 # Tools that only read. A query cannot "change the world", so scoring it as
 # `noop` was wrong: it made every successful lookup look like a failure, and the

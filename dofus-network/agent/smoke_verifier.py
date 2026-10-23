@@ -948,6 +948,23 @@ def test_verifier_reads_the_real_observation_shape() -> None:
     check("standing still is not a change", not _changed(before, dict(before)),
           str(_changed(before, dict(before))))
 
+    # Claiming an objective changes no cell, no map and no HP. It moves an entry off the
+    # ready list, and that is the only observable proof it worked. Without this key the
+    # most valuable action the agent has scored `noop` every time, and the controller
+    # retired a quest it had just advanced.
+    claim_before = {"ready_objectives": [{"quest_id": 4278, "objective_id": 13986}],
+                    "objectives_completed": 3, "quests_active": {"4278": 0}}
+    claim_after = {"ready_objectives": [], "objectives_completed": 3,
+                   "quests_active": {"4278": 0}}
+    check("claiming an objective counts as progress",
+          "ready_objectives" in _changed(claim_before, claim_after),
+          str(_changed(claim_before, claim_after)))
+    step_after = {"ready_objectives": [], "objectives_completed": 4,
+                  "quests_active": {"4278": 0}}
+    check("finishing a step counts as progress",
+          "objectives_completed" in _changed(claim_before, step_after),
+          str(_changed(claim_before, step_after)))
+
 
 def test_unlimited_means_unlimited() -> None:
     """An Auto run must not stop after eight steps because a default said so.

@@ -576,6 +576,18 @@ class Autopilot:
                     break
 
                 if not result.ok:
+                    # A missing client is not a failed step. Retrying it three times and
+                    # then retiring a quest is what the log showed: the window had closed,
+                    # and the loop went on filing failures against a quest that had done
+                    # nothing wrong, then abandoned the goal with "goals exhausted".
+                    reason = str(result.error or "")
+                    if "no client instance" in reason or "not reachable" in reason:
+                        print("[autopilot] the client is gone: " + reason)
+                        print("[autopilot]   stopping. Launch an instance, log in, then start"
+                              " the loop again.")
+                        ended_because = "the client window closed"
+                        break
+
                     failures += 1
                     if failures >= self.consecutive_failure_limit:
                         print(f"[autopilot] {failures} failures in a row on {goal!r}; "
