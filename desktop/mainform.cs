@@ -2992,9 +2992,14 @@ namespace DofusFarm.UI
                 NetworkSettings net = NetworkSettings.For(_engine.AppBaseDir);
                 int slot = Math.Max(0, (inst.Port - 5554) / 2), localProxyPort = net.BasePort + slot;
                 DeviceProfile profile = _engine.GetInstancePhoneModel(inst.Name);
+                // The same device every launch, not a new one.
+                //
+                // Two fresh GUIDs per start meant this account arrived from a different phone
+                // each session, which is what a shared-account ring looks like from the server's
+                // side and a legitimate reason to close the session. Persisted per instance.
                 string serialPrefix = (profile != null && !string.IsNullOrEmpty(profile.SerialPrefix)) ? profile.SerialPrefix : "R58M";
-                string serialNo = serialPrefix + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant();
-                string androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLowerInvariant();
+                string serialNo, androidId;
+                FarmEngine.LoadInstanceIdentity(inst.Name, serialPrefix, out serialNo, out androidId);
 
                 // network.ini decides the egress; a per-instance proxy still wins.
                 FarmEngine.UpstreamChoice choice = FarmEngine.ResolveUpstream(inst.Proxy, slot, Log);

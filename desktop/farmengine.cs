@@ -280,6 +280,54 @@ namespace DofusFarm.Engine
             finally { if (searcher != null) searcher.Dispose(); }
         }
 
+        /// <summary>
+        /// The device a WebView2 instance pretends to be, persisted per instance.
+        ///
+        /// These used to be two fresh GUIDs on every launch. To the server that is the same
+        /// account logging in from a brand new phone each time — the exact shape of an account
+        /// takeover or a shared-account ring, and a normal reason to close the session. The
+        /// Android path always persisted its identity through ReadIdentity; this path never did.
+        ///
+        /// Same idea as the egress pin: the identity has to survive a restart, because the far
+        /// side is comparing this session to the last one.
+        /// </summary>
+        public static void LoadInstanceIdentity(string instanceName, string serialPrefix,
+                                                out string serialNo, out string androidId)
+        {
+            serialNo = null;
+            androidId = null;
+            string path = null;
+            try
+            {
+                string dir = Path.Combine(NetworkSettings.AppBase, "asset_cache", "identity");
+                Directory.CreateDirectory(dir);
+                foreach (char bad in Path.GetInvalidFileNameChars())
+                    instanceName = instanceName.Replace(bad, '_');
+                path = Path.Combine(dir, instanceName + ".txt");
+
+                if (File.Exists(path))
+                {
+                    string[] parts = File.ReadAllText(path).Split('|');
+                    if (parts.Length >= 2 && parts[0].Trim().Length >= 6 && parts[1].Trim().Length >= 8)
+                    {
+                        serialNo = parts[0].Trim();
+                        androidId = parts[1].Trim();
+                        return;
+                    }
+                }
+            }
+            catch { }
+
+            if (string.IsNullOrEmpty(serialPrefix)) serialPrefix = "R58M";
+            serialNo = serialPrefix + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant();
+            androidId = Guid.NewGuid().ToString("N").Substring(0, 16).ToLowerInvariant();
+            try
+            {
+                if (path != null) File.WriteAllText(path, serialNo + "|" + androidId);
+            }
+            catch { }
+        }
+
         private void ReadIdentity(string avdDir, ref string customName, ref string serialNo, ref string androidId, ref string mac, ref string proxy, ref string phoneModel)
         {
             string identFile = Path.Combine(avdDir, "identity.json");
