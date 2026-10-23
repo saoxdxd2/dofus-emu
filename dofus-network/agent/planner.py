@@ -26,6 +26,7 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from agent.observe import flatten
 from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E402
                             KILL_TYPES, MAP_TYPES, ObsTracker, TALK_TYPES,
                             _params, required_map, travel_hops)
@@ -434,7 +435,10 @@ class QuestPlanner:
                tools: Optional[Sequence[str]] = None) -> Optional[Any]:
         from agent.runtime import ToolCall
 
-        obs = observation or {}
+        # One normalisation for the nested snapshot, so `map_id`, `level` and the
+        # inventory-by-id lookup are present instead of None. Without it the planner
+        # could not tell which map it was on and never saw the items it already had.
+        obs = flatten(observation)
         self.tracker.observe(obs)
         level = int(obs.get("level") or self.level_hint)
         active = obs.get("quests_active") or {}

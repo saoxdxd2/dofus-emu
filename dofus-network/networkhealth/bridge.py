@@ -22,6 +22,10 @@ from .inference import ForecastResult, MultiInstanceNetworkHealth, Observation
 logger = logging.getLogger("networkhealth.bridge")
 
 
+# Loopback telemetry must not go through HTTP_PROXY.
+_LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 class NetworkHealthBridge:
     def __init__(
         self,
@@ -47,7 +51,11 @@ class NetworkHealthBridge:
         url = f"http://127.0.0.1:{port}/__telemetry"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "NetworkHealthBridge/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # The relay is on this machine. urlopen() honours HTTP_PROXY, and with a VPN
+            # or proxy client running that is set machine-wide — so the health collector
+            # was asking an external proxy to fetch a loopback port, which is both wrong
+            # and a second way to get a 502 that has nothing to do with the network.
+            with _LOCAL_OPENER.open(req, timeout=timeout) as resp:
                 if resp.status == 200:
                     data = resp.read()
                     return json.loads(data.decode("utf-8"))

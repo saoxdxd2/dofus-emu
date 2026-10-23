@@ -28,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from agent.bridge import bridge_port, reachable  # noqa: E402
+from agent.bridge import bridge_port, reachable, local_opener  # noqa: E402
 
 RESULTS: List[Tuple[str, str, str]] = []
 
@@ -47,7 +47,7 @@ def directive(tool: str, args: Optional[Dict[str, Any]] = None,
     req = urllib.request.Request("http://127.0.0.1:%d/directive" % bridge_port(),
                                  data=body, headers={"Content-Type": "application/json"})
     try:
-        outer = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+        outer = json.loads(local_opener().open(req, timeout=timeout).read().decode())
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": "transport: %s" % exc}
     return outer.get("result") or outer
@@ -64,7 +64,7 @@ def snapshot() -> Dict[str, Any]:
 def health() -> Dict[str, Any]:
     import urllib.request
     try:
-        return json.loads(urllib.request.urlopen(
+        return json.loads(local_opener().open(
             "http://127.0.0.1:%d/agent/health" % bridge_port(), timeout=4).read().decode())
     except Exception:  # noqa: BLE001
         return {}

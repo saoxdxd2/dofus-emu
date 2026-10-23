@@ -289,6 +289,103 @@ worse than the crash.
   long enough to miss keep-alives — a disconnect that never reaches the game's own
   disconnect handler.
 
+## Round three: the proxy, the player's situation, and fights
+
+### The proxy: your instinct was right, one hop off
+
+The relay itself is fine. Live telemetry from the relay on 8884:
+
+```
+rtt 164.8 ms (proxy's own average 97.7), connections 54 total, 0 failed, 0 active
+```
+
+54 connections, zero failures. The transport is not dropping anything.
+
+The proxy problem is on the **agent's side of it**. This machine has
+
+```
+HTTP_PROXY=http://127.0.0.1:20056
+HTTPS_PROXY=http://127.0.0.1:20056
+```
+
+set machine-wide (a VPN or local proxy client). `urllib.request.urlopen` honours it, and
+every place the harness talks to *this machine* used urlopen:
+
+| caller | what it fetched | result |
+|---|---|---|
+| `agent/executor.py` | `http://127.0.0.1:8894/directive` | every directive went through the proxy |
+| `agent/bridge.py` | the reachability probe | same |
+| `ai/probe_client.py`, `ai/verify_live.py`, `ai/idle_trainer.py` | bridge | same |
+| `networkhealth/bridge.py` | relay `/__telemetry` | same |
+
+A loopback request routed through an external proxy is a 502 waiting to happen — that is
+exactly what a probe of `127.0.0.1:8890` returned before the fix. Every one of those calls
+now uses a direct opener (`agent.bridge.opener_for`, `local_opener`), and a check pins it:
+a loopback opener has no proxies, a remote one still honours the environment.
+
+### The player's situation: the planner could not see the map
+
+`state.snapshot` returns a nested document. The planner reads flat keys. On a live client:
+
+```
+map_id             -> None
+level              -> None
+quests_done        -> None
+inventory_capacity -> None
+```
+
+It could not tell **which map it was on**, so every `required_map` comparison failed and
+travel decisions were made blind. It could not see its own bag, so a delivery objective
+always believed it lacked the item and planned to go and farm it again.
+
+`agent/observe.py` now normalises once, on the way in: `position.map_id` → `map_id`,
+`character.level` → `level`, `inventory.items[{gid, qty}]` → an id lookup. The nested keys
+are untouched, so nothing that already read them breaks. The guard extracts the keys the
+planner actually reads from `planner.py` and fails if `flatten()` does not supply one —
+seven keys today, and a new read in the planner is covered without anyone remembering.
+
+### Fights: the agent has never attempted one
+
+Across **697 recorded steps**, the tool histogram is:
+
+```
+quest.advance  404
+state.snapshot 264
+quest.list      25
+knowledge.search 3
+```
+
+`fight.join`, `farm.start`, `fight.pass`: **zero**. Not "fights fail" — fights are never
+reached. The current quest's first objective is a talk, the talk never completes, so the
+plan never advances to the kill step where a fight would be chosen.
+
+That also means the fight code added earlier (`GameRolePlayAttackMonsterRequestMessage`
+after walking to the group) has never run against the game. It is unverified, and it should
+be described that way until a fight actually happens. The blocker is the talk objective,
+not the combat handler.
+
+### The network-health model cannot be used as shipped
+
+`networkhealth_artifacts/model.pt` does not load against the current code:
+
+```
+Unexpected key(s) in state_dict: h_cycle.blocks.0.norm1.running_mean, ...
+```
+
+The checkpoint was trained with `BatchNorm`; `networkhealth/trm_moe.py` now uses
+`GroupNorm(1, C)`, which has no running statistics. `SEQ_LEN` also changed from 128 (the
+shape of `features.npz`) to 32. Loading it with `strict=False` would leave half the
+normalisation unaccounted for and print a confident number from weights the architecture
+no longer matches — worse than refusing.
+
+So `ai/diagnose_network.py` uses the model when it loads and falls back to the relay's own
+telemetry when it does not, saying which. To make the forecast available again, retrain on
+the existing artifacts (`python -m networkhealth train`); that is a separate job, and the
+telemetry verdict is already useful without it.
+
+One caveat about the tool: an idle relay reports its **last** RTT, not a live one. Run it
+while a client is connected, or the samples are flat by construction.
+
 ## Still open, deliberately
 
 - `kaggle/toolkit/` drifts from `agent/` with no generator. It needs an export script, or

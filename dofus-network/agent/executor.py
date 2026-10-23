@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from agent.bridge import directive_url as bridge_directive_url
+from agent.bridge import directive_url as bridge_directive_url, opener_for
 from agent.recorder import TrajectoryRecorder
 from agent.knowledge_store import KnowledgeStore
 from agent.schema import TOOLS_BY_NAME, validate_call
@@ -290,7 +290,12 @@ class ToolExecutor:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            # Loopback must not go through HTTP_PROXY. With a VPN or a local proxy
+            # client running, HTTP_PROXY is set machine-wide, and urlopen() sent every
+            # directive to the bridge *through that proxy* — an extra hop, a second
+            # failure point, and a 502 whenever the proxy could not reach a port that
+            # only listens on this machine.
+            with opener_for(url).open(request, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8", errors="replace")
                 try:
                     return True, json.loads(raw)

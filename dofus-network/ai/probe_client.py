@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from agent.bridge import bridge_port, reachable  # noqa: E402
+from agent.bridge import bridge_port, reachable, local_opener  # noqa: E402
 
 
 def main(argv=None) -> int:
@@ -49,7 +49,7 @@ def main(argv=None) -> int:
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
     try:
-        raw = urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "replace")
+        raw = local_opener().open(req, timeout=10).read().decode("utf-8", "replace")
     except Exception as exc:  # noqa: BLE001
         print("probe failed: %s" % exc)
         return 1

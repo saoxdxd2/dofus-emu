@@ -415,6 +415,21 @@ def test_bridge_port_is_discovered() -> None:
 
         (tmp / "bridge_port.txt").write_text("1", encoding="utf-8")
         check("a port nobody serves is not reachable", not bridge.reachable(timeout=0.5))
+
+        # A loopback call must never go through HTTP_PROXY. On a machine running a VPN
+        # or a local proxy client that variable is set machine-wide, and urlopen() sent
+        # every directive to the bridge through it — a 502 from your own machine, and a
+        # second failure point between the agent and the client.
+        import urllib.request as _ur
+        local = bridge.opener_for("http://127.0.0.1:8894/directive")
+        proxy_handlers = [h for h in getattr(local, "handlers", [])
+                          if isinstance(h, _ur.ProxyHandler)]
+        check("a loopback call bypasses HTTP_PROXY",
+              all(not h.proxies for h in proxy_handlers),
+              "proxies=%r" % (proxy_handlers[0].proxies if proxy_handlers else {}))
+        check("a remote call still honours the environment",
+              bridge.opener_for("https://example.com/x") is not local,
+              "different opener")
     finally:
         bridge.state_dir = original        # type: ignore[assignment]
 
@@ -612,6 +627,70 @@ def test_a_dead_connection_stops_the_loop() -> None:
 
     check("leaving the world stops the loop instead of retrying", seen["n"] <= 3,
           "%d step(s) before it stopped" % seen["n"])
+
+
+def test_the_planner_can_see_the_world() -> None:
+    """Every key the planner reads must survive the trip from the client.
+
+    `state.snapshot` returns a nested document (`position.map_id`, `character.level`,
+    `inventory.items[{gid, qty}]`) and the planner reads flat keys (`map_id`, `level`,
+    `inventory[gid]`). On a live client the planner therefore got None for all of them:
+
+        map_id -> None    level -> None    inventory[7405] -> None
+
+    It could not tell which map it was on, so every `required_map` comparison failed, and
+    it never saw the items it already carried, so a delivery objective always planned to
+    go and farm them again. This is the "it does not understand the situation" complaint
+    in code, and the keys are extracted from planner.py rather than listed here, so a new
+    read in the planner is covered without anyone remembering to add it.
+    """
+    print("\n== planner sees the world ==")
+    import re as _re
+
+    from agent.observe import flatten
+    from agent.planner import QuestPlanner
+
+    # The shape state.snapshot actually produces, taken from the live client.
+    snapshot = {
+        "in_world": True, "in_fight": False, "in_dialog": False,
+        "character": {"id": 4422236, "name": "Aiismine", "level": 18, "breed": 4},
+        "position": {"cell": 328, "x": 4, "y": -21, "map_id": 150736645},
+        "hp": {"life": 120, "max": 120},
+        "quests_active": {"584": 0},
+        "current_objective": {"quest_id": 584, "step": 0},
+        "step_objectives": [], "ready_objectives": [], "objectives_completed": 3,
+        "inventory": {"kamas": 418, "items": [{"gid": 7405, "qty": 2}]},
+    }
+    flat = flatten(snapshot)
+
+    check("the map is visible to the planner", flat.get("map_id") == 150736645,
+          str(flat.get("map_id")))
+    check("the level is visible to the planner", flat.get("level") == 18,
+          str(flat.get("level")))
+    check("the cell is visible to the planner", flat.get("cell") == 328,
+          str(flat.get("cell")))
+    inventory = flat.get("inventory") or {}
+    check("an item in the bag is visible by id", inventory.get(7405) == 2,
+          "gid 7405 -> %r" % inventory.get(7405))
+    check("kamas survive the flattening", inventory.get("kamas") == 418,
+          str(inventory.get("kamas")))
+
+    # The general form: whatever planner.py asks for, flatten() must supply.
+    source = (REPO_ROOT / "agent" / "planner.py").read_text(encoding="utf-8")
+    wanted = set(_re.findall(r'obs\.get\("([a-z_]+)"\)', source))
+    # Optional by design: the client does not report a slot capacity, and a finished-quest
+    # id list is not in the snapshot (the active list already excludes finished quests).
+    optional = {"inventory_capacity", "quests_done"}
+    missing = sorted(k for k in wanted - optional if k not in flat)
+    check("every key the planner reads is present after flatten()", not missing,
+          ", ".join(missing) if missing else "%d keys covered" % len(wanted - optional))
+
+    # And the plan that comes out uses the map it can now see.
+    planner = QuestPlanner(level_hint=1)
+    call = planner.choose("do quests", snapshot, None)
+    check("the planner plans against a real map",
+          call is not None and (call.args or {}).get("map_id") not in (None, 0),
+          "%s %s" % (call.tool if call else None, call.args if call else None))
 
 
 def test_a_walk_gets_time_to_land() -> None:
@@ -1187,6 +1266,7 @@ def main() -> int:
     test_host_messages_are_not_double_encoded()
     test_one_transport_one_copy()
     test_the_planner_can_call_what_it_plans()
+    test_the_planner_can_see_the_world()
     test_a_walk_gets_time_to_land()
     test_a_dead_connection_stops_the_loop()
     test_layering_holds()

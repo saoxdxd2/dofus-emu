@@ -14,9 +14,42 @@ is three chances to disagree.
 from __future__ import annotations
 
 import os
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 DEFAULT_PORT = 8893
+
+# A direct opener, for every call to this machine.
+#
+# `urllib.request.urlopen` honours HTTP_PROXY from the environment, and on a machine
+# running a VPN or a local proxy client that variable is set globally — this one had
+# HTTP_PROXY=http://127.0.0.1:20056. Every directive the agent sent to
+# http://127.0.0.1:8894/directive therefore went *through that proxy* instead of
+# straight to the bridge: an extra hop for a loopback call, a second failure point,
+# and a 502 when the proxy could not reach a port that was only listening locally.
+# A loopback address must never be proxied. One opener, used by every local call.
+_NO_PROXY = urllib.request.ProxyHandler({})
+_LOCAL_OPENER = urllib.request.build_opener(_NO_PROXY)
+# The default opener: honours HTTP_PROXY from the environment. Built once so both
+# branches return the same kind of object (something with `.open`).
+_ENV_OPENER = urllib.request.build_opener()
+
+
+def local_opener() -> urllib.request.OpenerDirector:
+    """An opener that ignores HTTP_PROXY/HTTPS_PROXY. Use it for 127.0.0.1."""
+    return _LOCAL_OPENER
+
+
+def opener_for(url: str) -> urllib.request.OpenerDirector:
+    """Direct opener for a loopback URL, the environment's opener otherwise."""
+    try:
+        host = urllib.parse.urlsplit(url).hostname or ""
+    except ValueError:
+        host = ""
+    if host in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+        return _LOCAL_OPENER
+    return _ENV_OPENER
 
 
 def state_dir() -> Path:
@@ -51,9 +84,9 @@ def reachable(host: str = "127.0.0.1", timeout: float = 1.5) -> bool:
     the loop look alive while every directive timed out. Demand a response.
     """
     import urllib.error
-    import urllib.request
     try:
-        urllib.request.urlopen(base_url(host), timeout=timeout)
+        # Local opener: HTTP_PROXY must not intercept a loopback probe.
+        local_opener().open(base_url(host), timeout=timeout)
         return True
     except urllib.error.HTTPError:
         return True     # it answered, even if with 404 — somebody is home
