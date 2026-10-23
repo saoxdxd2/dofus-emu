@@ -1387,6 +1387,45 @@
                 var self = this;
                 console.log('[FarmBot] Bound to connection manager.');
 
+                // Record why the game connection ends.
+                //
+                // The client already knows: `dofus.disconnect(reason)` logs
+                // "connectionManager.disconnect: reason=..." and then
+                // `disconnectAndReload` reloads the page. But a reload wipes the reason
+                // before anyone can read it, so a session that ended in a kick looked
+                // exactly like one that ended because the window closed — 62 closes and
+                // 88 page loads in one log, with no way to tell them apart. Keeping the
+                // reason on the host side is the difference between guessing and knowing.
+                try {
+                    var wrap = function (name) {
+                        var orig = window.dofus && window.dofus[name];
+                        if (typeof orig !== 'function' || orig.__agentWrapped) return;
+                        var wrapped = function (reason) {
+                            try {
+                                var why = String(reason || 'CLIENT_CLOSING');
+                                window.__agentLastDisconnect = { at: Date.now(), reason: why,
+                                                                 via: name };
+                                // console.log, not info: the host captures log lines,
+                                // and this must survive the reload that follows.
+                                console.log('[AgentBridge] connection ended: reason=' + why
+                                            + ' via ' + name);
+                                try {
+                                    if (window.chrome && window.chrome.webview) {
+                                        window.chrome.webview.postMessage({
+                                            type: 'AI_DISCONNECT', reason: why, via: name
+                                        });
+                                    }
+                                } catch (e) {}
+                            } catch (e) {}
+                            return orig.apply(this, arguments);
+                        };
+                        wrapped.__agentWrapped = true;
+                        window.dofus[name] = wrapped;
+                    };
+                    wrap('disconnect');
+                    wrap('disconnectAndReload');
+                } catch (e) {}
+
                 cm.on('GameFightStartingMessage', function(msg) {
                     self.state.inFight = true;
                     self.openFight();
@@ -1830,6 +1869,10 @@
                 // no change and calls the step a noop, and the loop retires a quest
                 // that was actually progressing.
                 snap.in_dialog = !!(pd && pd.isInDialog);
+                // Why the previous connection ended, if it did. Carried in the
+                // observation so a session that died of a kick can be told apart from one
+                // that was closed by hand — the two look identical from the host side.
+                snap.last_disconnect = window.__agentLastDisconnect || null;
 
                 // Quest state. Without it the planner is blind: it cannot tell which
                 // quests are open, which objective is current, or which one is ready to
@@ -2856,6 +2899,11 @@
                     try { window.location.reload(); } catch (e) {}
                 }, 250);
                 return _agentResult(true, { reloading: true, build: '2026-10-23a' });
+            },
+            'debug.last_disconnect': function() {
+                var d = window.__agentLastDisconnect || null;
+                return _agentResult(true, d || { none: true,
+                    note: 'no disconnect observed since this page loaded' });
             },
             'debug.version': function() {
                 return _agentResult(true, { build: '2026-10-23a' });

@@ -172,6 +172,70 @@ Six new checks, because every fix above is the kind that silently comes back:
 
 **110 checks, 0 failed. Simulator unchanged: 119 quests, 148 objectives.**
 
+## "Running the AI gets me kicked from the server"
+
+Reported after a run: logged in, started the AI, and the session ended. What the logs
+actually show, and what was done about it.
+
+### The client never logged a disconnect
+
+The game's own disconnect path is:
+```js
+t.disconnect = function (e) { ... console.info("connectionManager.disconnect: reason=" + e) ... }
+```
+`console.info` is captured by the host (620 `[WEB-INFO]` lines in the log). **Zero**
+`disconnect: reason=` lines, zero `[Gui] disconnected`, zero socket-lost messages. So at
+the socket level the client did not observe a drop — which means "kicked" was, at least
+in the logged cases, the window closing (`WebView2 client closed by user`, 62 times, which
+also fires on app exit and on `Dispose`).
+
+That is not proof there was no kick. It is proof that **the reason was never recorded**, so
+every explanation was a guess. Fixed first, so the next occurrence is data:
+
+- `scripts/mobile-disguise.js` wraps `dofus.disconnect` / `disconnectAndReload` and records
+  the reason in `window.__agentLastDisconnect`, posts an `AI_DISCONNECT` message, and
+  exposes it in `state.snapshot.last_disconnect` and `debug.last_disconnect`.
+- `WebView2ClientForm` logs it as `[NET] game connection ended: reason=… (via …)`.
+- The autopilot now stops when the client leaves the world mid-run, instead of sending
+  directives into a dead session, and reports that as the reason the run ended rather than
+  "goals exhausted".
+
+### One provable way the app itself kills a live session
+
+`ProxySupervisor.OnActiveChanged` → `RebuildAllRelays` → for every relay port:
+`StopProxyInternal(port)` then start a new proxy on the same port. That drops **every live
+socket**, including the game connection, and the reconnect leaves from a different exit IP
+— which is exactly what a server treats as a hijacked session.
+
+The supervisor fires whenever a health probe changes its mind (29 switches in the log). The
+fix defers the switch while any client is connected:
+
+```
+[PROXY] egress would move to <label> but 1 client(s) are connected;
+        keeping the current egress until the next launch
+```
+
+Deferring costs nothing: the supervisor has already recorded the pick, and the next launch
+resolves its egress from the supervisor, so the switch lands on a fresh connection.
+
+### Two logs that sent the investigation the wrong way
+
+- `WebView2ClientForm` announced `Registered visitor credentials injection for [GUEST]…`
+  even when manual-login had just *cleared* the guest identity and injected nothing. It now
+  says `manual-login: no credentials injected, stored guest identity cleared`.
+- `WebView2 client closed by user.` fires on any close, including the app's own
+  `Dispose` during shutdown. Not renamed (too many call sites), but the disconnect reason
+  above is now the line that distinguishes the two.
+
+### Still unexplained, and worth knowing
+
+Every launch starts the proxy **twice** — 67 launches, 67 duplicates, one `bind: Only one
+usage of each socket address` per launch in `asset_cache/proxy.log`. The second start is
+`RebuildAllRelays` rebuilding a relay that `EnsureProxyRunning` had just created, because
+the supervisor fires again after the first start records the spec. It happens before the
+client connects, so it is waste rather than a kick — but it means a relay can be rebuilt
+moments after it came up, and that is the same code path that kills a live session.
+
 ## Still open, deliberately
 
 - `kaggle/toolkit/` drifts from `agent/` with no generator. It needs an export script, or

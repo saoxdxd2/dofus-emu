@@ -330,6 +330,10 @@ class Autopilot:
 
         for goal in self.goals:
             failures = 0
+            # Why this run ended. "goals exhausted" used to be reported even when the
+            # session had died, which reads as success and hides the one thing worth
+            # knowing.
+            ended_because = "goals exhausted"
             # An unlimited step budget has to mean unlimited.
             #
             # `steps_per_goal` is a per-goal slice: Order mode means "do this one
@@ -411,6 +415,37 @@ class Autopilot:
                 # latency made every step look slow for the wrong reason.
                 latency_ms = (time.perf_counter() - started) * 1000.0
                 after = self.observe()
+
+                # A closed connection is not a failed step.
+                #
+                # When the game ends the session — a kick, a timeout, a login from
+                # somewhere else — the page reloads and every directive after that answers
+                # into a socket that no longer exists. Retrying looks identical to a
+                # stubborn agent, and it keeps knocking on a server that just closed the
+                # door.
+                #
+                # `connected` is not the signal: it stays true as long as the client's
+                # connectionManager object exists, which it does at the login screen too.
+                # Falling out of the world mid-run is: we were on a map, and now we are not.
+                if isinstance(after, dict) and isinstance(before, dict):
+                    why = after.get("last_disconnect") or {}
+                    reason = why.get("reason") if isinstance(why, dict) else None
+                    # Two ways to know the session is gone: we watched the world
+                    # disappear between two steps, or the client told us why it left.
+                    # Either alone is enough; a bare `in_world: false` is not, because a
+                    # map transition can briefly report no map and that must not end the
+                    # run.
+                    fell_out = after.get("in_world") is False and (
+                        before.get("in_world") is not False or bool(reason))
+                    if fell_out:
+                        print("[autopilot] the client left the world mid-run"
+                              + (f" (reason: {reason})" if reason else "")
+                              + "; stopping instead of sending directives into a dead session")
+                        print("[autopilot]   log in again, then start the loop.")
+                        ended_because = ("the client left the world"
+                                         + (f" ({reason})" if reason else ""))
+                        break
+
                 v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
                 verdict = v.verdict
 
@@ -585,7 +620,7 @@ class Autopilot:
                 time.sleep(self.interval if self.interval > 0 else 0.35)
 
             # end per-goal loop (bounded in Order mode, unbounded in Auto mode)
-        return self.summary("goals exhausted")
+        return self.summary(ended_because)
 
     # -- teardown ------------------------------------------------------------
 

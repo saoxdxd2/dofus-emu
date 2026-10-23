@@ -544,6 +544,75 @@ def test_layering_holds() -> None:
         check("shared vocabulary is importable", False, "%s: %s" % (type(exc).__name__, exc))
 
 
+def test_a_dead_connection_stops_the_loop() -> None:
+    """Falling out of the world mid-run ends the session, it does not become a retry.
+
+    When the game ends a session the page reloads, and every directive after that answers
+    into a socket that no longer exists. The loop used to treat that as an ordinary failed
+    step and keep going, which is both useless and a good way to look like a bot to a
+    server that just closed the door. `connected` is not the signal — it stays true at the
+    login screen — so the trigger is leaving the world after having been in it.
+    """
+    print("\n== dead connection ==")
+    import os
+    from agent.autopilot import Autopilot
+    from agent.runtime import ToolCall
+
+    tmp = Path(tempfile.mkdtemp())
+
+    class Policy:
+        def choose(self, goal, observation, tools=None):
+            return ToolCall("state.snapshot", {}, goal)
+
+    class Executor:
+        def execute(self, tool, args, **kwargs):
+            return FakeResult(True)
+
+    class Runtime:
+        def __init__(self):
+            self.policy = Policy()
+            self.executor = Executor()
+            self.instance = "test"
+            self.calls = 0
+
+        def current_observation(self):
+            # Alternate: in the world, then out of it, so the first step sees the
+            # transition — which is the signal the loop is meant to react to.
+            self.calls += 1
+            if self.calls % 2 == 1:
+                return {"in_world": True, "position": {"map_id": 150736645, "cell": 328}}, 0.0, "call"
+            return ({"in_world": False, "position": {"map_id": None, "cell": None},
+                     "last_disconnect": {"reason": "SOCKET_LOST", "via": "disconnect"}},
+                    0.0, "call")
+
+        def observe(self, snapshot, source="live"):
+            pass
+
+    old = os.environ.get("LOCALAPPDATA")
+    os.environ["LOCALAPPDATA"] = str(tmp)
+    try:
+        pilot = Autopilot(runtime=Runtime(), goals=["do all the quests"],
+                          log_path=tmp / "a.jsonl", stop_file=tmp / "AUTOPILOT_STOP",
+                          max_steps=0, interval=0.0, preflight=False)
+        seen = {"n": 0}
+
+        def on_step(_step):
+            seen["n"] += 1
+            if seen["n"] > 12:
+                (tmp / "AUTOPILOT_STOP").write_text("enough", encoding="utf-8")
+
+        pilot.on_step = on_step
+        pilot.run()
+    finally:
+        if old is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = old
+
+    check("leaving the world stops the loop instead of retrying", seen["n"] <= 3,
+          "%d step(s) before it stopped" % seen["n"])
+
+
 def test_the_planner_can_call_what_it_plans() -> None:
     """Every call the planner produces must pass the contract that will execute it.
 
@@ -1062,6 +1131,7 @@ def main() -> int:
     test_host_messages_are_not_double_encoded()
     test_one_transport_one_copy()
     test_the_planner_can_call_what_it_plans()
+    test_a_dead_connection_stops_the_loop()
     test_layering_holds()
     test_a_ready_objective_is_claimed_first()
     test_verifier_reads_the_real_observation_shape()

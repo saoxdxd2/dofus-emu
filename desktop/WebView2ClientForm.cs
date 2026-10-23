@@ -966,7 +966,17 @@ namespace DofusFarm.Engine
                 {
                     await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(accScript);
                 }
-                if (hasSeedAccount)
+                // Say what actually happened, not what the account string happens to be.
+                // With manual-login on, the branch above cleared the stored guest identity
+                // and injected nothing — but this line still announced "Registered visitor
+                // credentials injection for [GUEST]...", which reads as though a guest
+                // identity was pushed into a session the user was signing into by hand.
+                // That contradiction sent a debugging session down the wrong path.
+                if (manualLogin)
+                    _logCallback?.Invoke(string.Format(
+                        "[{0}] manual-login: no credentials injected, stored guest identity cleared",
+                        _instanceId));
+                else if (hasSeedAccount)
                     _logCallback?.Invoke(string.Format("[{0}] Registered visitor credentials injection for {1}", _instanceId, _options.AccountLogin));
                 else
                     _logCallback?.Invoke(string.Format("[{0}] Registered guest auto-login (profile keeps its own identity)", _instanceId));
@@ -1393,6 +1403,19 @@ namespace DofusFarm.Engine
                 else if (json.Contains("\"type\":\"ping\""))
                 {
                     _webView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"pong\",\"reply\":\"Hello from C# WinForms Host!\"}");
+                }
+                else if (json.Contains("\"type\":\"AI_DISCONNECT\""))
+                {
+                    // The game connection ended, and this is the only line that says why.
+                    // Without it a kicked session and a window closed by hand produce the
+                    // same log ("WebView2 client closed by user") and the same symptom.
+                    Match mReason = Regex.Match(json, "\"reason\":\"([^\"]*)\"");
+                    Match mVia = Regex.Match(json, "\"via\":\"([^\"]*)\"");
+                    _logCallback?.Invoke(string.Format(
+                        "[{0}] [NET] game connection ended: reason={1} (via {2})",
+                        _instanceId,
+                        mReason.Success ? mReason.Groups[1].Value : "unknown",
+                        mVia.Success ? mVia.Groups[1].Value : "?"));
                 }
                 else if (json.Contains("\"type\":\"FARMBOT_STATE\""))
                 {

@@ -1646,6 +1646,35 @@ namespace DofusFarm.UI
                 {
                     SafeBeginInvoke(delegate
                     {
+                        // Never rebuild a relay while a client is connected through it.
+                        //
+                        // RebuildAllRelays stops the proxy and starts a new one on the same
+                        // port, which drops every live socket — including the game
+                        // connection — and the reconnect leaves from a different exit IP.
+                        // A session whose IP changes is what the server treats as a hijacked
+                        // account, and it closes the session. From outside that is
+                        // indistinguishable from "running the AI got me kicked".
+                        //
+                        // Deferring costs nothing: the supervisor has already recorded the
+                        // new pick, and the next launch resolves its egress from the
+                        // supervisor, so the switch happens on a fresh connection instead of
+                        // under a live one.
+                        int live = 0;
+                        try
+                        {
+                            if (_webViewBackend != null)
+                                live = _webViewBackend.GetActiveInstanceIds().Count;
+                        }
+                        catch { }
+
+                        if (live > 0)
+                        {
+                            Log("[PROXY] egress would move to " + pick.Label + " but " + live
+                                + " client(s) are connected; keeping the current egress until"
+                                + " the next launch");
+                            return;
+                        }
+
                         Log("[PROXY] switching egress to " + pick.Label);
                         try { _engine.RebuildAllRelays(pick.Url, Log); } catch { }
                     });
