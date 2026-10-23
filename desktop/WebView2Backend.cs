@@ -139,6 +139,13 @@ namespace DofusFarm.Engine
                     }
                     catch { }
                 }
+                else
+                {
+                    // An empty DisguiseScript means the page loads with no agent at all,
+                    // and nothing downstream can tell that apart from an agent that
+                    // simply never fired. Say it once, here, where the decision was made.
+                    OnLog?.Invoke("[AGENT] mobile-disguise.js not found; the agent will not load in this client");
+                }
             }
 
             // Default entry URL points to our standalone Dofus Touch client if present, else test probe

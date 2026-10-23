@@ -26,30 +26,12 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from agent.features import ObsTracker, required_map, travel_hops  # noqa: E402
+from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E402
+                            KILL_TYPES, MAP_TYPES, ObsTracker, TALK_TYPES,
+                            _params, required_map, travel_hops)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
-
-TALK_TYPES = {1, 9}
-MAP_TYPES = {4}
-AREA_TYPES = {5}
-KILL_TYPES = {0, 6, 14, 16}
-FIGHT_TYPES = {6}          # "in a fight": needs fight.join, not farm.start
-DELIVER_TYPES = {2, 3, 12}
-CRAFT_TYPES = {17}
-
-
-def _params(obj: Dict[str, Any]) -> Dict[str, Any]:
-    raw = obj.get("params")
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            return json.loads(raw.replace("'", '"'))
-        except ValueError:
-            return {}
-    return {}
 
 
 def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],

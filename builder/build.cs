@@ -253,19 +253,24 @@ namespace DofusBuild
         {
             try
             {
-                string scriptsDir = Path.Combine(RepoRoot, "scripts");
                 string desktopJsDir = Path.Combine(RepoRoot, @"desktop\client\www\js");
                 string rootJsDir = Path.Combine(RepoRoot, @"client\www\js");
 
                 if (!Directory.Exists(desktopJsDir) || !Directory.Exists(rootJsDir)) return;
 
-                // Sync mobile-disguise.js (master in scripts)
-                string masterDisguise = Path.Combine(scriptsDir, "mobile-disguise.js");
-                if (File.Exists(masterDisguise))
-                {
-                    File.Copy(masterDisguise, Path.Combine(desktopJsDir, "mobile-disguise.js"), true);
-                    File.Copy(masterDisguise, Path.Combine(rootJsDir, "mobile-disguise.js"), true);
-                }
+                // mobile-disguise.js used to be copied from scripts/ into both www/js
+                // folders here. That copy is why three identical 3135-line files sat in
+                // the tree: the build recreated them after every edit, so a change made
+                // in one place silently diverged from the other two.
+                //
+                // It is no longer copied because it is no longer loaded from there.
+                // WebView2 injects scripts/mobile-disguise.js with
+                // AddScriptToExecuteOnDocumentCreated, and the Go proxy serves it as
+                // /__disguise.js for the Android path. The <script src> tags that pulled
+                // the copies in were removed from both standalone.html files, and
+                // scripts/mobile-disguise.js is now the single source of truth.
+                // Do not add this copy back: it recreates the drift, and a second copy
+                // means a second FarmBot bound to the same connection manager.
 
                 // Sync autoupdate.js (master in client\www\js -> live copy in
                 // desktop\client\www\js). The runtime serves desktop\client\www,
@@ -279,7 +284,8 @@ namespace DofusBuild
                 }
 
                 // Sync cordova-standalone-shim.js & cdn-relay-shim.js (master in desktop\client\www\js)
-                string masterCordova = Path.Combine(desktopJsDir, "cordova-standalone-shim.js");                if (File.Exists(masterCordova))
+                string masterCordova = Path.Combine(desktopJsDir, "cordova-standalone-shim.js");
+                if (File.Exists(masterCordova))
                 {
                     File.Copy(masterCordova, Path.Combine(rootJsDir, "cordova-standalone-shim.js"), true);
                 }

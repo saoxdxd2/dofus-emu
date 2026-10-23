@@ -43,7 +43,11 @@
             window.buildVersion = b;
         })();
     </script>
-    <script type="text/javascript" src="js/mobile-disguise.js?v=ef5a1ca682"></script>
+    <!-- The agent script is injected by the host, not by this page: WebView2 adds it
+         with AddScriptToExecuteOnDocumentCreatedAsync, and the proxy injects its own
+         copy for the Android path. Do not add a <script src> for it here again —
+         loading it twice ran the whole agent twice (two FarmBot.init(), two
+         connection bindings, one HUD). -->
     <script type="text/javascript" src="js/cordova-standalone-shim.js"></script>
     <script type="text/javascript" src="js/cdn-relay-shim.js?v=ef5a1ca682"></script>
     <script type="text/javascript" src="js/wizassets-shim.js?v=ef5a1ca682"></script>

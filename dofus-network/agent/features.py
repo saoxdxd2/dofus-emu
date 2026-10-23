@@ -28,6 +28,37 @@ REGISTRY = REPO_ROOT / "data" / "capabilities.json"
 
 OBJECTIVE_TYPES = [0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 14, 16, 17]
 
+# Objective type -> what it needs, decoded from the objective text itself:
+#   0  "Locate and neutralise X"          monster
+#   1  "Talk to {npc,N}"                  npc
+#   2  "Show 1 {item,I} to {npc,N}"       item + npc
+#   3  "Take 1 {item,I} to {npc,N}"       item + npc
+#   4  "Find the map: X"                  map
+#   5  "Find the {subarea,S} area"        area
+#   6  "Defeat 1 {monster,M} in a fight"  monster
+#   9  "Talk to {npc,N} again"            npc
+#   12 "Take 1 {monster,M} soul to {npc}" monster + npc
+#   14 "Beat x3 {monster,M}"              monster xN
+#   16 "Defeat 8 x {monster} on {map}"    monster xN + map
+#   17 "Craft 1 {item,I}"                 item
+#
+# These live with `objective_type` and `required_map` because they are the same
+# concern: how an objective's parameters are read. The planner and the simulator each
+# used to carry a private copy, and a bucket that means one thing to the teacher and
+# another to the world is a corpus that teaches a rule the game does not have.
+TALK_TYPES = {1, 9}
+MAP_TYPES = {4}
+AREA_TYPES = {5}
+KILL_TYPES = {0, 6, 14, 16}
+DELIVER_TYPES = {2, 3, 12}
+CRAFT_TYPES = {17}
+
+# Type 6 says "defeat X *in a fight*"; the open-world types do not. Keeping them
+# apart is what gives fight.join a job that farm.start cannot do, and a tool that
+# cannot be told from another tool is not a decision, it is noise in the label space.
+FIGHT_TYPES = {6}
+OPEN_KILL_TYPES = KILL_TYPES - FIGHT_TYPES
+
 # The error taxonomy, reusing the controller's classifier so a new marker cannot be
 # added in one place and forgotten in the other.
 ERROR_SLOTS = ["none", "structural", "transport", "action", "other"]

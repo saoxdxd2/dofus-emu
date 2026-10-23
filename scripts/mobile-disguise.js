@@ -2,6 +2,28 @@
     'use strict';
     if (typeof window === 'undefined') return;
 
+    // This file is the single source of truth for the in-client agent. The two copies
+    // that used to sit beside it (desktop/client/www/js and client/www/js) are gone:
+    // no page loads them any more, and every page that did was running a different
+    // program than the one in scripts/.
+    //
+    // It also runs once per page load now, and that is the point. It used to run
+    // twice: the WebView2 host injects it before the document is created, and
+    // standalone.html pulled in the same file a second time with a <script src> tag.
+    // The symptom was one log line, repeated, that nobody read:
+    //     [FarmBot] Bound to connection manager.
+    //     [x2] [FarmBot] Bound to connection manager.
+    // Two FarmBot.init() calls meant two waitForConnection timers, and each of them
+    // bound dofus.connectionManager, so two bots drove one HUD: double tick loops,
+    // double packets, and a HUD that reported whichever copy spoke last. The tag is
+    // removed, and this guard stays because a transport can be re-added by accident
+    // and the second copy must be a no-op instead of a second bot.
+    if (window.__DofusFarmAgentLoaded) {
+        try { console.log('[AgentBridge] already loaded; skipping duplicate execution'); } catch (e) {}
+        return;
+    }
+    window.__DofusFarmAgentLoaded = true;
+
     function cfg(val, fallback) {
         return (!val || val.indexOf('__' + 'DEVICE_') === 0) ? fallback : val;
     }
@@ -1397,13 +1419,45 @@
 
             executeOptimalTurn: function(cm, fighterId) {
                 var self = this;
-                var charData = (window.gui && window.gui.playerData && window.gui.playerData.character) || {};
-                var charCell = (charData.position && charData.position.cell) || 250;
-                var charAp = charData.ap || 6;
-                var charMp = charData.mp || 3;
-                var charHp = charData.lifePoints || 400;
-                var charMaxHp = charData.maxLifePoints || 400;
-                var breed = (charData.breed && charData.breed.name) || 'Cra';
+                // `playerData.character` does not exist in this client build, so every
+                // value below used to fall through to its default: cell 250, 6 AP, 3 MP,
+                // 400 HP, breed 'Cra'. The bot then played every turn as a Cra with
+                // invented stats, which is why its turns looked random rather than wrong.
+                //
+                // In a fight the authoritative source is the player's own fighter, the
+                // same place the monster stats are read from a few lines below. Outside
+                // a fight, playerData carries these directly (lifePoints,
+                // effectiveMaxLifePoints, actionPoints, movementPoints) — there is no
+                // `characteristics` object and no `stats` object on playerData.
+                var pd = (window.gui && window.gui.playerData) || null;
+                var fStats = {};
+                var fCell = null;
+                try {
+                    var am0 = window.actorManager
+                        || (window.isoEngine && window.isoEngine.actorManager);
+                    var own = am0 && am0.getActor ? am0.getActor(fighterId) : null;
+                    var ownFighter = (own && typeof own.getFighter === 'function') ? own.getFighter() : null;
+                    fStats = (ownFighter && ownFighter.data && ownFighter.data.stats) || {};
+                    fCell = own && own.cellId != null ? own.cellId : null;
+                } catch (e) {}
+                var pick = function () {
+                    for (var i = 0; i < arguments.length; i++) {
+                        var v = arguments[i];
+                        if (v !== undefined && v !== null) return v;
+                    }
+                    return null;
+                };
+                var charCell = pick(fCell, pd && pd.position && pd.position.cell, 250);
+                var charAp = pick(fStats.actionPoints, pd && pd.actionPoints, 6);
+                var charMp = pick(fStats.movementPoints, pd && pd.movementPoints, 3);
+                var charHp = pick(fStats.lifePoints, pd && pd.lifePoints, 400);
+                var charMaxHp = pick(fStats.maxLifePoints, pd && pd.effectiveMaxLifePoints, 400);
+                var breedName = pick(pd && pd.characterBreed && pd.characterBreed.name,
+                                     pd && pd.characterBreed, 'Cra');
+                // Kept as a plain string: the turn payload below has always carried
+                // `breed` as a string, and turning it into an object here would be a
+                // silent shape change for whoever reads the payload.
+                var breed = breedName;
 
                 var monsters = [];
                 if (window.isoEngine && window.isoEngine.actorManager) {
@@ -1534,8 +1588,17 @@
             },
 
             isUserActor: function(id) {
-                if (window.gui && window.gui.playerData && window.gui.playerData.character) {
-                    return window.gui.playerData.character.id === id;
+                // This used to read `playerData.character.id`. That field does not
+                // exist in this client build — the bundle never reads a field off it
+                // — so the condition was always false, the fallback below always ran,
+                // and every actor in the fight counted as the player. Every
+                // GameFightTurnStartMessage then looked like the player's own turn,
+                // and executeOptimalTurn was handed the monster's id as the fighter to
+                // plan for. The real path is
+                // `playerData.characterBaseInformations.id`, the same object
+                // `_agentSnapshot` reads.
+                if (window.gui && window.gui.playerData && window.gui.playerData.characterBaseInformations) {
+                    return window.gui.playerData.characterBaseInformations.id === id;
                 }
                 return true;
             }

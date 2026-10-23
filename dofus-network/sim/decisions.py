@@ -36,26 +36,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from agent.features import (TOOL_INDEX, objective_type, required_map,  # noqa: E402
+from agent.features import (ERROR_SLOTS, TOOL_INDEX, _err_slot,  # noqa: E402
+                            _params, objective_type, required_map,
                             travel_hops)
 from agent.planner import QuestPlanner  # noqa: E402
 from sim.world import World  # noqa: E402
 
 DECISIONS = ["continue", "retry", "recover", "replan"]
 DEPTH = 3
-
-ERROR_SLOTS = ["none", "structural", "transport", "action", "other"]
-
-
-def _err_slot(note: Optional[str]) -> str:
-    if not note:
-        return "none"
-    try:
-        from agent.controller import error_class
-        cls = error_class(note)
-    except Exception:  # noqa: BLE001
-        cls = "other"
-    return cls if cls in ERROR_SLOTS else "other"
 
 
 def features(world: World, streak: int, last_ok: Optional[bool],
@@ -100,7 +88,6 @@ def features(world: World, streak: int, last_ok: Optional[bool],
     vec.append(1.0 if obs_kind == "partial" else 0.0)
     has_needed = 0.0
     if obj is not None and t in (2, 3, 12):
-        from agent.planner import _params
         p = _params(obj)
         item = p.get("parameter1") if t == 3 else p.get("parameter0")
         if item is not None:
