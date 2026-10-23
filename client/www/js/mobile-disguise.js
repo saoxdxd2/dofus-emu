@@ -2532,6 +2532,11 @@
             // selector (`.join-fight`) that almost certainly does not exist in this
             // client, which is why it returned ok and nothing happened.
             'fight.join': function(args) {
+                var pdF = (window.gui && window.gui.playerData) || null;
+                if (pdF && pdF.lifePoints === 0) {
+                    return _agentResult(false, { life: 0 },
+                        'the character has 0 HP; revive before fighting');
+                }
                 var am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
                 var iso = window.isoEngine || null;

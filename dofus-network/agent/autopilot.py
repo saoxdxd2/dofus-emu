@@ -577,8 +577,12 @@ class Autopilot:
                     if self.max_steps > 0:
                         break
 
-                if self.interval:
-                    time.sleep(self.interval)
+                # A floor on the step rate, because this loop can run unattended for
+                # hours. With interval 0 (the panel's default) it would issue
+                # directives as fast as the client answers, which is not how a person
+                # plays and is a good way to get an account flagged. 0.35 s is still
+                # far faster than a human and invisible to the game.
+                time.sleep(self.interval if self.interval > 0 else 0.35)
 
             # end per-goal loop (bounded in Order mode, unbounded in Auto mode)
         return self.summary("goals exhausted")
