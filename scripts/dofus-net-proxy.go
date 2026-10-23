@@ -602,6 +602,14 @@ type ProxyServer struct {
 	// The fixed exit: the one address Ankama is allowed to see. Reached through any hop in
 	// upstreams, so a hop can die without the session's identity changing.
 	exitURL *url.URL
+	// When to stop trusting that exit.
+	//
+	// An exit that no hop can reach must not be retried on every request: the page issues
+	// hundreds of them, and each one paid the full timeout before falling back, which is a black
+	// screen with the traffic trickling in behind it. After one failure the exit is skipped for
+	// exitCooldown and the plain chain answers immediately.
+	exitMu           sync.Mutex
+	exitBlockedUntil time.Time
 
 	// Which hops can actually reach the exit, measured in the background.
 	//
@@ -1128,6 +1136,7 @@ type hopProbe struct {
 
 const (
 	hopIndexEvery = 10 * time.Second
+	exitCooldown  = 90 * time.Second
 	warmTTL       = 15 * time.Second
 	warmPerDest   = 2
 	warmMaxDests  = 6
@@ -1307,6 +1316,57 @@ func (p *ProxyServer) saveHopIndex() {
 		return
 	}
 	_ = os.Rename(tmp, p.hopIdxPath)
+}
+
+// validateExitAtStartup drops the fixed exit if no hop can reach it.
+//
+// The supervisor picks a proxy that works when dialled directly, which says nothing about whether
+// another proxy can reach it. Discovering that on the first page request costs the page six
+// seconds of blank screen, so it is checked once at startup — with connections that would have
+// been spent anyway — and the exit is dropped if it cannot be reached.
+func (p *ProxyServer) validateExitAtStartup() {
+	exit := p.exitURL
+	if exit == nil {
+		return
+	}
+	hops := p.hopOrder()
+	if len(hops) == 0 {
+		log.Printf("[UPSTREAM] fixed exit %s dropped: no hop available to reach it", exit.Redacted())
+		p.exitURL = nil
+		return
+	}
+	// Check the whole path, not just the exit's port.
+	//
+	// A TCP connect through the hop to the exit's address proves the port answers; it does not
+	// prove the exit will carry a request. Measured: the weaker check passed and the very first
+	// page request then failed the exit's handshake and paid ten seconds for it. The honest test
+	// is the traffic this relay exists to carry, so it opens the login host through hop -> exit.
+	// Parallel and short: the app polls the listen port for about five seconds before deciding the
+	// relay never started, and this check runs before Listen. A sequential two-hop check took
+	// seven seconds and would have made every launch look like a dead relay.
+	probeDest := net.JoinHostPort(loginHost, "443")
+	if len(hops) > 2 {
+		hops = hops[:2]
+	}
+	found := make(chan *url.URL, len(hops))
+	for _, hop := range hops {
+		go func(hop *url.URL) {
+			conn, err := p.openViaHop(hop, exit, probeDest, 3*time.Second)
+			if err == nil {
+				conn.Close()
+				found <- hop
+			}
+		}(hop)
+	}
+	select {
+	case hop := <-found:
+		log.Printf("[UPSTREAM] fixed exit %s carries %s through %s", exit.Redacted(), loginHost, hop.Redacted())
+		return
+	case <-time.After(3500 * time.Millisecond):
+	}
+	log.Printf("[UPSTREAM] fixed exit %s dropped: no hop could carry a request through it. Using the plain chain.",
+		exit.Redacted())
+	p.exitURL = nil
 }
 
 // recordHop notes what a real dial taught us about this hop.
@@ -1580,21 +1640,23 @@ func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error)
 	// reach the exit at all do we fall through to the plain chain, and that fallback changes the
 	// exit IP, so it says so out loud.
 	if p.exitURL != nil {
-		var exitErr error
-		for attempt := 0; attempt < 2; attempt++ {
-			if attempt > 0 {
-				time.Sleep(time.Duration(attempt) * 1500 * time.Millisecond)
-			}
+		p.exitMu.Lock()
+		blocked := time.Now().Before(p.exitBlockedUntil)
+		p.exitMu.Unlock()
+
+		if !blocked {
 			conn, _, err := p.dialViaExit(ctx, p.exitURL, dest, 6*time.Second)
 			if err == nil {
 				upstreamHealthy.Store(true)
 				return conn, nil
 			}
-			exitErr = err
+			p.exitMu.Lock()
+			p.exitBlockedUntil = time.Now().Add(exitCooldown)
+			p.exitMu.Unlock()
+			upstreamHealthy.Store(false)
+			log.Printf("[UPSTREAM] fixed exit %s unreachable through any hop (%v); using the plain chain for the next %s (the exit IP will change)",
+				p.exitURL.Redacted(), err, exitCooldown)
 		}
-		upstreamHealthy.Store(false)
-		log.Printf("[UPSTREAM] fixed exit %s unreachable through any hop (%v); falling back to the plain chain, which WILL change the exit IP",
-			p.exitURL.Redacted(), exitErr)
 	}
 
 	if p.upstreamURL != nil {
@@ -3994,6 +4056,8 @@ func main() {
 		proxy.exitURL = parseUpstreamProxy(trimmed)
 		if proxy.exitURL == nil {
 			log.Printf("[UPSTREAM] -exit-proxy %q is not a usable proxy URL; ignoring it", trimmed)
+		} else {
+			proxy.validateExitAtStartup()
 		}
 	}
 	proxy.allowDirect = *allowDirect
