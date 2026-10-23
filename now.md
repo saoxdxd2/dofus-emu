@@ -390,6 +390,49 @@ no `"ProxyEnable"`/`"ProxyServer"` registry writes, no hosts edits, no
 `Set-DnsClientServerAddress` — across 55 files — and the WARP guard must appear before the
 `warp-cli` call. Three checks, so the box cannot be widened without someone noticing.
 
+## 4b. Audit of the connection path — "cannot connect to the server"
+
+Symptom: login completes, then the client reports the server is unavailable. It happens with the
+AI running and not without. Traced from the client to the wire, in this order:
+
+| link | what it does | verdict |
+|---|---|---|
+| WebView2 client | dials `dofus.local:443` (page origin) and `haapi.ankama.com:443` | fine |
+| relay `dofus-net-proxy` | maps `dofus.local` → `dt-proxy-production-login.ankama-games.com`, dials the upstream | two bugs |
+| upstream | wireproxy on `127.0.0.1:40000`, or a `proxies.txt` entry | the unstable one was always chosen |
+| supervisor | re-probes every 45 s and may rebuild the relays | rebuilt constantly |
+
+**Bug 1 — the relay was rebuilt on every missed probe.** `changed` was computed against
+`_active`, and `_active = best` runs unconditionally, so one probe pass that missed everything
+nulled it. The next pass re-picked the same tunnel, `_active` was null, `changed` fired, and
+`RebuildAllRelays` stopped and restarted the relay on the same port — dropping every live socket,
+the game connection included. The log shows `switching egress` a dozen times, each one a dropped
+session. Fixed: `changed` is keyed on `_lastAppliedUrl`, the upstream the relays were actually
+built with.
+
+**Bug 2 — the flapping tunnel outranked stable proxies.** The sort put `wireguard tunnel` first
+whenever it was healthy, and "healthy" only means "answered the last probe". On this line WARP's
+UDP is blocked, so the tunnel binds `:40000`, carries a little traffic, then exits — measured:
+`:40000` was listening and passing traffic to the game host at 17:32, and refusing connections at
+17:38. Ranking it first meant the app kept choosing an egress that died seconds later. Fixed:
+candidates carry a `HealthyStreak`, and the tunnel must pass **twice** before it outranks a proxy;
+an unproven tunnel ranks below an unproven proxy.
+
+**Why the AI made it worse:** the AI starts instances, which triggers refreshes and relay builds.
+More refreshes meant more chances for a missed probe to null `_active`, so the rebuild loop ran
+constantly instead of occasionally.
+
+### Noted, not fixed
+
+- `virtualHostRewriteOnce` logs the `dofus.local` mapping once per process. Correct, but it makes
+  a session's route look like it only happened once — worth logging the first N instead of one.
+- The relay rebuild still drops live sockets; the deferral depends on
+  `_webViewBackend.GetActiveInstanceIds()` being non-empty. It is, but a client that is
+  connecting-but-not-yet-running would still be cut.
+- `curl -x` fails against the local wireproxy while the same CONNECT succeeds from Python. Not
+  investigated — wireproxy may not implement CONNECT the way curl expects. It does not affect the
+  app, which speaks SOCKS5.
+
 ## 5. The plan, in order
 
 ### P0 — finish one objective end-to-end (the only thing that matters now)

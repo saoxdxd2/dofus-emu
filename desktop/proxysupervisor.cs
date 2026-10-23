@@ -41,6 +41,9 @@ namespace DofusFarm.Engine
         public bool Healthy;
         public string Note;
         public DateTime CheckedUtc = DateTime.MinValue;
+        // Consecutive passes. A candidate that answers twice in a row has demonstrated
+        // something a candidate that answered once has not, and the ranking uses that.
+        public int HealthyStreak;
 
         public string Label
         {
@@ -234,6 +237,25 @@ namespace DofusFarm.Engine
                 }
                 done.Wait(ProbeTimeoutMs + 5000);
 
+                // Carry the streak across refreshes. Probes produce fresh objects every cycle,
+                // so without this every pass looks like a first pass and a tunnel that answers
+                // once looks exactly as good as a proxy that has answered ten times.
+                Dictionary<string, int> streakBefore =
+                    new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                lock (_gate)
+                {
+                    foreach (ProxyCandidate pc in _candidates)
+                        if (pc != null && pc.Url != null) streakBefore[pc.Url] = pc.HealthyStreak;
+                }
+                for (int i = 0; i < results.Length; i++)
+                {
+                    ProxyCandidate rc = results[i];
+                    if (rc == null || rc.Url == null) continue;
+                    int before;
+                    streakBefore.TryGetValue(rc.Url, out before);
+                    rc.HealthyStreak = rc.Healthy ? before + 1 : 0;
+                }
+
                 string direct = DirectExitIp();
                 var healthy = new List<ProxyCandidate>();
                 for (int i = 0; i < results.Length; i++)
@@ -253,10 +275,8 @@ namespace DofusFarm.Engine
 
                 healthy.Sort(delegate (ProxyCandidate a, ProxyCandidate b)
                 {
-                    // The local tunnel first: no third party sees the traffic.
-                    int sa = a.Source == "wireguard tunnel" ? 0 : 1;
-                    int sb = b.Source == "wireguard tunnel" ? 0 : 1;
-                    if (sa != sb) return sa - sb;
+                    int ra = RankOf(a), rb = RankOf(b);
+                    if (ra != rb) return rb - ra;          // higher rank wins
                     return a.LatencyMs.CompareTo(b.LatencyMs);
                 });
 
@@ -433,6 +453,31 @@ namespace DofusFarm.Engine
         }
 
         /// <summary>Human-readable state for the Settings page and the log.</summary>
+        /// <summary>
+        /// How much a candidate has earned.
+        ///
+        /// The local tunnel used to win outright whenever it was healthy, on the reasonable
+        /// grounds that no third party sees the traffic. The catch is that "healthy" here means
+        /// "answered the last probe", and on a line where WARP's UDP is blocked the tunnel
+        /// answers one probe and dies before the next: it binds its port, carries a little
+        /// traffic, then exits. Ranking it first meant the app kept choosing an egress that
+        /// failed seconds later - the client logged in, then reported that it could not connect
+        /// to the server.
+        ///
+        /// So the tunnel has to pass twice before it outranks a proxy, and an unproven tunnel
+        /// ranks below an unproven proxy. A candidate that keeps working beats one that looked
+        /// good once, which is the only ordering that survives a flaky line.
+        /// </summary>
+        private static int RankOf(ProxyCandidate c)
+        {
+            bool proven = c.HealthyStreak >= 2;
+            bool tunnel = c.Source == "wireguard tunnel";
+            if (proven && tunnel) return 3;      // steady tunnel: best, nobody sees the traffic
+            if (proven) return 2;                // steady proxy
+            if (tunnel) return 0;                // answered once: on a blocked line, usually a fluke
+            return 1;                            // unproven proxy, but not known to be flapping
+        }
+
         public string Describe()
         {
             ProxyCandidate a = Active;
