@@ -160,7 +160,17 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
                     "NPC, harvest, or fight as the step objective requires.",
         params={
             "quest_id": _p("int", "Quest id from quest.list.", required=True),
-            "step_id": _p("int", "Optional step id; defaults to the current step."),
+            # These three are read by the client handler and sent by the planner. They
+            # were missing from this contract while the code used them, so the validator
+            # rejected every talk and deliver call ("unknown argument(s) for
+            # quest.advance: npc_id") and every ready-objective claim — the call never
+            # reached the game. A contract that under-declares its own arguments blocks
+            # the very thing it is meant to protect.
+            "npc_id": _p("int", "Talk to this NPC, by the template id the objective carries."),
+            "objective_id": _p("int", "Validate this objective. Use it to claim one the "
+                                      "game already accepts (objectiveStatus 2)."),
+            "reply": _p("int", "Which dialog reply to choose, by index. Defaults to 0, "
+                               "which is what an unanswered NPC dialog needs."),
         },
         backend="directive",
         directive="QUEST_ADVANCE",
@@ -172,8 +182,16 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
         description="Start a farm loop: kill monster groups and/or harvest resources, "
                     "looting according to the filter, optionally auto-selling.",
         params={
-            "monster": _p("str", "Monster (family) name to farm, any language."),
-            "resource": _p("str", "Resource to harvest instead (herbs, ore, wood...)."),
+            # `monster` was declared as a string name while the planner derives an int
+            # id from the objective and the client does parseInt() on it. Every kill
+            # objective was rejected with "farm.start.monster: expected a string" — 36.5%
+            # of the knowledge base, dead at the contract. `id_or_name` accepts both
+            # vocabularies: the planner's id and the encoder's name.
+            "monster": _p("id_or_name", "Monster id from the objective, or a name from "
+                                        "the corpus. The client needs an id; the harness "
+                                        "resolves a name."),
+            "resource": _p("id_or_name", "Resource id from the objective, or a name. The "
+                                         "client harvests the nearest interactive element."),
             "zone": _p("str", "Area/subarea to stay inside, any language."),
             "map_id": _p("int", "Farm on one specific map."),
             "kill_count": _p("int", "Stop after this many kills.", default=100),
@@ -195,8 +213,16 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
     ),
     ToolSpec(
         name="fight.join",
-        description="Join a fight: the current one, a nearby group, or a named target.",
-        params={"target": _p("str", "Optional monster/player name; default current group.")},
+        description="Join a fight: a monster group containing the named monster, an "
+                    "explicit group, or the nearest group.",
+        params={
+            # `target` was declared while the planner sent `monster` and the client read
+            # `group_id` — three names with no overlap, so every fight objective was
+            # rejected by the validator before it reached the game.
+            "monster": _p("int", "Monster id from the objective. The group containing it "
+                                 "is chosen; the client knows which group that is."),
+            "group_id": _p("int", "Explicit monster-group id, when the caller has one."),
+        },
         backend="directive",
         directive="AUTO_JOIN_COMBAT",
         returns="fight state",
@@ -242,7 +268,16 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
         name="hdv.scan",
         description="Scan the market (HDV) for an item and return price statistics "
                     "(min/median/max over current listings).",
-        params={"item": _p("str", "Item name, any language.", required=True)},
+        params={
+            # The client reads all six; only `item` was declared, so any caller that
+            # wanted to browse by category or type was rejected at the contract.
+            "item": _p("str", "Item name to look up."),
+            "category": _p("int", "Market category id, when browsing rather than searching."),
+            "type": _p("int", "Item type id filter."),
+            "item_type": _p("int", "Alias of type."),
+            "id": _p("int", "Item id filter."),
+            "gid": _p("int", "Item group id filter."),
+        },
         backend="directive",
         directive="HDV_SCAN",
         returns="price stats and listing count",
@@ -437,6 +472,27 @@ def _coerce(type_name: str, value: Any) -> Tuple[bool, Any]:
             except ValueError:
                 return False, "expected an integer"
         return False, "expected an integer"
+    if type_name == "id_or_name":
+        # Two callers reach these arguments with different vocabularies: the planner
+        # derives an id from the objective's parameters, and the trained encoder emits
+        # the entity name from its corpus. The client only understands ids. Declaring
+        # this as `str` (which it was) rejected the planner outright — every kill
+        # objective died at the validator with "expected a string" — and declaring it
+        # `int` would reject the model instead. Accept both, and let the harness resolve
+        # a name through data/cache/monsters_full.json.
+        if isinstance(value, bool):
+            return False, "expected an id or a name, got a boolean"
+        if isinstance(value, int):
+            return True, value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return False, "expected an id or a name"
+            try:
+                return True, int(text)
+            except ValueError:
+                return True, text
+        return False, "expected an id or a name"
     if type_name == "float":
         if isinstance(value, bool):
             return False, "expected a number, got a boolean"

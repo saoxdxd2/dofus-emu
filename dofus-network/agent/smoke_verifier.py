@@ -544,6 +544,90 @@ def test_layering_holds() -> None:
         check("shared vocabulary is importable", False, "%s: %s" % (type(exc).__name__, exc))
 
 
+def test_the_planner_can_call_what_it_plans() -> None:
+    """Every call the planner produces must pass the contract that will execute it.
+
+    This is the check that was missing, and its absence cost a night. The planner sent
+    `quest.advance {quest_id, npc_id}` while the contract declared only
+    `{quest_id, step_id}`; it sent `farm.start {monster: 182}` while the contract
+    declared `monster` as a *string*; it sent `farm.start {item: 7405}` where no such
+    argument existed; and it sent `fight.join {monster: 447}` to a contract that declared
+    `target`. Every one of those was rejected before it reached the game:
+
+        refused: schema rejected the call (unknown argument(s) for quest.advance:
+                 objective_id)
+
+    The agent then looked incapable while it was doing exactly the right thing, which is
+    why the obvious diagnosis — "train it more" — would have been the wrong one.
+
+    The objective types come from the knowledge base rather than a hand-written list, so
+    a new type in the KB is covered without anyone remembering to add it here.
+    """
+    print("\n== plan vs contract ==")
+    from agent.planner import QuestPlanner
+    from agent.schema import validate_call
+
+    planner = QuestPlanner(level_hint=60)
+    types = sorted({int(o["type_id"])
+                    for q in planner.quests.values()
+                    for st in (q.get("steps") or [])
+                    for o in (st.get("objectives") or [])
+                    if o.get("type_id") is not None})
+    check("the knowledge base has objective types to plan", bool(types), "%d types" % len(types))
+
+    rejected = []
+    total = 0
+    for type_id in types:
+        objective = {"id": 900000 + type_id, "type_id": type_id,
+                     "params": {"parameter0": 447, "parameter1": 7405},
+                     "map_id": 150736645}
+        quest = {"id": 584, "steps": [{"id": 1, "objectives": [objective]}]}
+        try:
+            calls = planner.plan_objective(quest, 0, objective,
+                                           {"map_id": 1, "inventory": {}})
+        except Exception as exc:  # noqa: BLE001
+            rejected.append("type %d raised %s" % (type_id, type(exc).__name__))
+            continue
+        for call in calls:
+            total += 1
+            ok, err = validate_call(call["tool"], call.get("args") or {})
+            if not ok:
+                rejected.append("type %d -> %s: %s" % (type_id, call["tool"], err))
+
+    check("every planned call passes the contract", not rejected,
+          "; ".join(rejected[:3]) if rejected else "%d calls, 0 rejected" % total)
+
+    # The other direction: an argument the client reads but the contract does not declare
+    # can never be sent by anyone, which is how npc_id and objective_id stayed invisible.
+    js = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
+    if not js.exists():
+        print("  [SKIP] client script not found")
+        return
+    import json as _json
+    import re as _re
+
+    caps_path = REPO_ROOT / "data" / "capabilities.json"
+    caps = {c["id"]: set((c.get("params") or {}))
+            for c in _json.loads(caps_path.read_text(encoding="utf-8"))["capabilities"]}
+    text = js.read_text(encoding="utf-8", errors="replace")
+    start = text.find("var _agentHandlers = {")
+    table = text[start:text.find("\n        };", start)]
+
+    def snake(name: str) -> str:
+        return _re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+    undeclared = []
+    parts = _re.split(r"\n {12}'([a-z][a-z0-9_.]+)':\s*function", table)
+    for i in range(1, len(parts), 2):
+        name, code = parts[i], parts[i + 1]
+        declared = caps.get(name, set())
+        for read in set(_re.findall(r"args\.([A-Za-z_][A-Za-z0-9_]*)", code)):
+            if read not in declared and snake(read) not in declared:
+                undeclared.append("%s.%s" % (name, read))
+    check("the contract declares every argument the client reads", not undeclared,
+          ", ".join(sorted(undeclared)) if undeclared else "no hidden arguments")
+
+
 def test_every_declared_tool_exists_in_the_client() -> None:
     """The capabilities file is a contract; nothing checked it against the client.
 
@@ -977,6 +1061,7 @@ def main() -> int:
     test_every_declared_tool_exists_in_the_client()
     test_host_messages_are_not_double_encoded()
     test_one_transport_one_copy()
+    test_the_planner_can_call_what_it_plans()
     test_layering_holds()
     test_a_ready_objective_is_claimed_first()
     test_verifier_reads_the_real_observation_shape()

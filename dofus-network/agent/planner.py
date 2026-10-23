@@ -64,9 +64,13 @@ def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
         return args
     if tool == "farm.start":
         if t in DELIVER_TYPES:
+            # `resource`, not `item`: the client reads `args.resource` to start
+            # harvesting, and `item` was rejected by the contract ("unknown argument(s)
+            # for farm.start: item"), so show-item, deliver and soul-stone objectives
+            # could not be planned at all.
             item = p.get("parameter1") if t == 3 else p.get("parameter0")
             try:
-                return {"item": int(item)} if item is not None else {}
+                return {"resource": int(item)} if item is not None else {}
             except (TypeError, ValueError):
                 return {}
         monster = p.get("parameter0")
@@ -249,7 +253,11 @@ class QuestPlanner:
             elif item is not None and not have:
                 # Getting the item is a farming problem; the honest first move is to
                 # go and farm it rather than pretend the delivery can happen.
-                calls.append({"tool": "farm.start", "args": {"item": item},
+                # `resource`, matching what the client reads and what the contract
+                # declares. This was `item`, which the validator rejected outright
+                # ("unknown argument(s) for farm.start: item"), so a deliver objective
+                # whose item was missing could never even be planned.
+                calls.append({"tool": "farm.start", "args": {"resource": item},
                               "why": "objective %d: need item %s first" % (t, item)})
             if npc is not None:
                 calls.append({"tool": "quest.advance",

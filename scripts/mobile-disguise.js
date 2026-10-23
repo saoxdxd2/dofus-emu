@@ -2605,14 +2605,43 @@
                 var iso = window.isoEngine || null;
                 if (!am || !am.actors) return _agentResult(false, null, 'actorManager unavailable');
                 var actors = am.actors;
-                var want = parseInt(args && (args.group_id || args.monster_group_id), 10) || null;
+                var want = parseInt(args && args.group_id, 10) || null;
+                // The planner names a monster, not a group: an objective says "fight
+                // monster 447", and only the client knows which group contains it. The
+                // contract used to declare `target` while the planner sent `monster` and
+                // this handler read `group_id` - three names with no overlap, so a fight
+                // objective was rejected by the schema before it reached the game.
+                var wantMonster = parseInt(args && args.monster, 10) || null;
                 var pick = want ? (actors[want] || null) : null;
                 if (!pick) {
+                    var seenMonsters = [];
                     for (var k in actors) {
                         if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
                         var a = actors[k] || {};
                         var ty = (a.data && a.data.type) || a._type || a.type;
-                        if (ty === 'GameRolePlayGroupMonsterInformations') { pick = a; break; }
+                        if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
+                        if (wantMonster) {
+                            var gsi = (a.data && a.data.staticInfos) || a.staticInfos || {};
+                            var gm = gsi.monsters || (a.data && a.data.monsters) || [];
+                            var hit = false;
+                            for (var gmi = 0; gmi < gm.length; gmi++) {
+                                var gmm = gm[gmi] || {};
+                                var mid = gmm.creatureGenericId != null ? gmm.creatureGenericId
+                                    : (gmm.genericId != null ? gmm.genericId : gmm.monsterId);
+                                if (mid != null) seenMonsters.push(Number(mid));
+                                if (Number(mid) === wantMonster) { hit = true; break; }
+                            }
+                            if (!hit) continue;
+                        }
+                        pick = a;
+                        break;
+                    }
+                    if (!pick && wantMonster) {
+                        return _agentResult(false, { wanted_monster: wantMonster,
+                            monsters_here: seenMonsters },
+                            'no group on this map contains monster ' + wantMonster
+                            + (seenMonsters.length ? ' (here: ' + seenMonsters.join(',') + ')'
+                                                   : ' (no monster groups on this map)'));
                     }
                 }
                 if (!pick) return _agentResult(false, { map_id: (window.gui && window.gui.playerData

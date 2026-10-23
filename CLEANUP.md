@@ -184,3 +184,67 @@ Six new checks, because every fix above is the kind that silently comes back:
 - `client/www/js/autoupdate.js` is the master and `desktop/client/www/js/` is the copy,
   while the two shims go the other way. One bidirectional sync with no rule about which
   side wins.
+- `Build.exe` is a compiled binary from 2026-10-22 and still contains the old
+  `TrySyncClientShims`, so it recreates the two www copies on every build. It did exactly
+  that at 06:47 while this cleanup was running, from a `scripts/` file edited minutes
+  earlier — the drift came back within the hour. The source is fixed; the binary needs
+  `compile.bat` to catch up. Until then, the "exactly one copy" check will fail after each
+  build, which is the check doing its job.
+
+## `asset_cache/`: do not delete it
+
+181 MB, 9,662 files. It is the proxy's **live HTTP cache**, not build debris:
+
+| consumer | line |
+|---|---|
+| `desktop/farmengine.cs` | `-cache "asset_cache"` passed to the proxy |
+| `desktop/mainform.cs` | `opts.CacheDir = ...\asset_cache` |
+| `desktop/WebView2ClientForm.cs` | the WebView2 profile cache root |
+| `tools/map-export.js` | reads map data from it |
+| `scripts/fetch_maps.py` | `ASSET_ROOT = asset_cache/files/...` |
+
+Deleting it forces the client to re-fetch every asset from Ankama's CDN on the next
+launch. That is slower, and for this project more CDN traffic is an account-safety
+question rather than a performance one.
+
+It is also not stale: `assetCacheTTL` is 7 days (`scripts/dofus-net-proxy.go:1477`) and
+entries past it are removed lazily when requested, so the Oct-18 files are still inside
+the window. What it does *not* have is a size cap, so entries that are never requested
+again stay forever. If it ever needs shrinking, the safe move is to prune by age (older
+than the TTL), never to empty it.
+
+Four log files live inside it and are safe to clear when the app is closed:
+`requests.log` (1.5 MB), `prefetch.log` (36 KB), `proxy.log` (24 KB), `cfgtest.log`.
+
+## The second bug class: the contract rejected the plan
+
+Found while answering "the AI still isn't working, should we train it more?" — from the
+trajectory log of the user's own run:
+
+```
+refused: schema rejected the call (unknown argument(s) for quest.advance: objective_id)
+```
+
+The planner and the client agreed with each other. The **contract between them did not**,
+and it ran first, so nothing reached the game. Four tools were affected:
+
+| tool | planner sends | contract declared | client reads | result |
+|---|---|---|---|---|
+| `quest.advance` | `quest_id, npc_id, objective_id` | `quest_id, step_id` | `quest_id, npc_id, objective_id, reply` | every talk and deliver objective rejected (46% of the KB) |
+| `farm.start` | `monster: 182` (int) | `monster` as **str** | `parseInt(args.monster)` | every kill objective rejected (36.5%) |
+| `farm.start` | `item: 7405` | — | `args.resource` | deliver / show-item / soul-stone rejected |
+| `fight.join` | `monster: 447` | `target` | `group_id` | three names, no overlap |
+
+`step_id` was the mirror image: declared, and read by nobody.
+
+Why it survived so long: the existing guard checked that every declared *tool* had a
+client handler. It never checked the *arguments*, so the names matched and the parameters
+did not. The new check drives every objective type in the knowledge base through
+`plan_objective()` and then through `validate_call()` — 22 calls, 0 rejected — and a
+second check compares the arguments the client reads against the ones the contract
+declares.
+
+This is worth stating plainly because of the diagnosis it invites: a system that refuses
+its own plans looks exactly like a model that cannot play. Training more would have
+produced a model that had learned to avoid the correct actions.
+

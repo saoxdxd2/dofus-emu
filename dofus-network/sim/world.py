@@ -489,13 +489,17 @@ class World:
             return False, "nothing to kill for"
         quest = current[0]
 
-        if args.get("item") is not None:
-            picked = self._target(quest, "item", args["item"], DELIVER_TYPES)
+        # `resource`, matching the client (`args.resource` starts harvesting) and the
+        # contract. This read `item`, which the client never looked at and the validator
+        # never accepted, so gathering for a delivery was unreachable in both worlds.
+        wanted_resource = args.get("resource")
+        if wanted_resource is not None:
+            picked = self._target(quest, "item", wanted_resource, DELIVER_TYPES)
             if picked is None:
-                return False, "no open delivery wants item %s" % args["item"]
+                return False, "no open delivery wants item %s" % wanted_resource
             # Gathering for a delivery is the same kind of step as a kill: one
             # action, one step of progress, no objective completed yet.
-            item = int(args["item"])
+            item = int(wanted_resource)
             if len(self.inventory) >= self.capacity and item not in self.inventory:
                 return False, "inventory full"
             if self.map_id is None:

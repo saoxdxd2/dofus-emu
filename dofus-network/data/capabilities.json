@@ -168,10 +168,21 @@
      "doc": "Quest id from quest.list.",
      "required": true
     },
-    "step_id": {
+    "npc_id": {
      "type": "int",
-     "doc": "Optional step id; defaults to the current step.",
-     "required": false
+     "required": false,
+     "doc": "Talk to this NPC, by the template id the objective carries."
+    },
+    "objective_id": {
+     "type": "int",
+     "required": false,
+     "doc": "Validate this objective. Use it to claim one the game already accepts (objectiveStatus 2)."
+    },
+    "reply": {
+     "type": "int",
+     "required": false,
+     "default": 0,
+     "doc": "Which dialog reply to choose, by index. Defaults to 0, which is what an unanswered NPC dialog needs."
     }
    }
   },
@@ -184,13 +195,13 @@
    "returns": "farm session id and live counters",
    "params": {
     "monster": {
-     "type": "str",
-     "doc": "Monster (family) name to farm, any language.",
+     "type": "id_or_name",
+     "doc": "Monster id from the objective, or a name from the corpus. The client needs an id; the harness resolves a name.",
      "required": false
     },
     "resource": {
-     "type": "str",
-     "doc": "Resource to harvest instead (herbs, ore, wood...).",
+     "type": "id_or_name",
+     "doc": "Resource id from the objective, or a name. The client harvests the nearest interactive element; the id selects it when the client can.",
      "required": false
     },
     "zone": {
@@ -239,15 +250,20 @@
   {
    "id": "fight.join",
    "verb": "fight",
-   "description": "Join a fight: the current one, a nearby group, or a named target.",
+   "description": "Join a fight: a monster group containing the named monster, an explicit group, or the nearest group.",
    "backend": "directive",
    "directive": "AUTO_JOIN_COMBAT",
    "returns": "fight state",
    "params": {
-    "target": {
-     "type": "str",
-     "doc": "Optional monster/player name; default current group.",
-     "required": false
+    "monster": {
+     "type": "int",
+     "required": false,
+     "doc": "Monster id from the objective. The group containing it is chosen; the client knows which group that is."
+    },
+    "group_id": {
+     "type": "int",
+     "required": false,
+     "doc": "Explicit monster-group id, when the caller already has one."
     }
    }
   },
@@ -342,8 +358,33 @@
    "params": {
     "item": {
      "type": "str",
-     "doc": "Item name, any language.",
-     "required": true
+     "required": false,
+     "doc": "Item name to look up."
+    },
+    "category": {
+     "type": "int",
+     "required": false,
+     "doc": "Market category id, when browsing rather than searching."
+    },
+    "type": {
+     "type": "int",
+     "required": false,
+     "doc": "Item type id filter."
+    },
+    "item_type": {
+     "type": "int",
+     "required": false,
+     "doc": "Alias of type."
+    },
+    "id": {
+     "type": "int",
+     "required": false,
+     "doc": "Item id filter."
+    },
+    "gid": {
+     "type": "int",
+     "required": false,
+     "doc": "Item group id filter."
     }
    }
   },
