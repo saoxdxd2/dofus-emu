@@ -629,6 +629,78 @@ def test_a_dead_connection_stops_the_loop() -> None:
           "%d step(s) before it stopped" % seen["n"])
 
 
+def test_the_emulator_stays_inside_its_box() -> None:
+    """Nothing here may change the user's system networking.
+
+    The whole point of the local relay is that it binds a port on 127.0.0.1 and leaves
+    Windows routing, DNS and proxy settings alone. One mode broke that rule: `mode=warp`
+    shells out to `warp-cli mode proxy`, which takes over routing and DNS for *every*
+    program on the machine — so when that tunnel drops, the user's entire internet drops
+    with it, and their other apps silently change exit address. That is a failure this
+    project has no business causing, and it must stay behind an explicit opt-in.
+
+    This is a source-level check on purpose: it is cheap, it runs in CI, and the failure
+    it prevents is invisible at runtime until it has already happened to someone.
+    """
+    print("\n== stays inside the box ==")
+    root = REPO_ROOT.parent
+    sources = []
+    for pattern in ("desktop/*.cs", "scripts/*.go", "scripts/*.js", "dofus-network/agent/*.py"):
+        sources.extend(root.glob(pattern))
+
+    # Each of these changes the machine, not the emulator.
+    #
+    # The registry values are matched with their quotes: `ProxyServer` on its own also
+    # matches the class name `InProcessProxyServer`, and a check that cries wolf on its
+    # own source code is a check people learn to ignore.
+    forbidden = {
+        "netsh ": "changes Windows network configuration",
+        "route add": "changes the system routing table",
+        '"ProxyEnable"': "writes the system-wide proxy setting",
+        '"ProxyServer"': "writes the system-wide proxy setting",
+        "Set-DnsClientServerAddress": "changes the system DNS",
+        "drivers\\etc\\hosts": "edits the hosts file",
+    }
+
+    hits = []
+    for path in sources:
+        # Skip this file: it contains the needles by definition, and a check that fails on
+        # itself is a check that gets deleted.
+        if path.name == "smoke_verifier.py":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for number, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith(("//", "*", "#", "/*")):
+                continue
+            for needle, why in forbidden.items():
+                if needle in line:
+                    hits.append("%s:%d %r — %s" % (path.name, number, needle, why))
+    check("no source changes the system network", not hits,
+          "; ".join(hits[:3]) if hits else "%d files scanned" % len(sources))
+
+    # mode=warp is the one exception, and it must be asked for by name.
+    engine = root / "desktop" / "farmengine.cs"
+    if engine.exists():
+        text = engine.read_text(encoding="utf-8", errors="replace")
+        guard = text.find("AllowSystemWarp")
+        takeover = text.find('RunWarpCli(cli, "mode proxy"')
+        check("system-wide WARP is gated behind an explicit opt-in",
+              guard != -1 and takeover != -1 and guard < takeover,
+              "guard at %d, takeover at %d" % (guard, takeover))
+
+    # The relay must bind loopback, never a routable interface.
+    settings = root / "network.ini"
+    if settings.exists():
+        ini = settings.read_text(encoding="utf-8-sig", errors="replace")
+        check("the relay is configured on a local port only",
+              "socks_port=" in ini and "base_port=" in ini,
+              "socks_port + base_port present")
+
+
 def test_the_planner_can_see_the_world() -> None:
     """Every key the planner reads must survive the trip from the client.
 
@@ -1284,6 +1356,7 @@ def main() -> int:
     test_one_transport_one_copy()
     test_the_planner_can_call_what_it_plans()
     test_the_planner_can_see_the_world()
+    test_the_emulator_stays_inside_its_box()
     test_a_walk_gets_time_to_land()
     test_a_dead_connection_stops_the_loop()
     test_layering_holds()

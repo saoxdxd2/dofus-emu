@@ -328,6 +328,31 @@ is short of labels rather than of capacity.
 
 ---
 
+### What stays inside the box
+
+The emulator may use the network. It may not change it. Concretely, every mode except one
+binds a port on `127.0.0.1` and leaves Windows routing, DNS and proxy settings exactly as
+they were:
+
+| mode | what it touches |
+|---|---|
+| `auto` | `127.0.0.1:40000` (wireproxy) + the relay ports |
+| `wireproxy` | the same, local only |
+| `custom` | the same, one upstream |
+| `direct` | nothing — the relay connects out itself |
+| `warp` | **`warp-cli mode proxy`: routing and DNS for the whole PC** |
+
+That last one is now gated behind `allow_system_warp=1`, and if it is not set the engine logs
+the refusal and **falls back to the local tunnel** rather than leaving the user with no
+egress. A mode that takes over a machine's entire internet and drops it when the tunnel dies
+is not something an emulator should be able to do by accident, or by a config file someone
+copied.
+
+`agent/smoke_verifier.py` now enforces the rule at source level: no `netsh`, no `route add`,
+no `"ProxyEnable"`/`"ProxyServer"` registry writes, no hosts edits, no
+`Set-DnsClientServerAddress` — across 55 files — and the WARP guard must appear before the
+`warp-cli` call. Three checks, so the box cannot be widened without someone noticing.
+
 ## 5. The plan, in order
 
 ### P0 — finish one objective end-to-end (the only thing that matters now)

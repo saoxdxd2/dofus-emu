@@ -60,6 +60,16 @@ namespace DofusFarm.Engine
         //   -dns 1.1.1.1 -prefetch-radius 3 -mods-dir C:\mods
         public string ExtraArgs = "";
 
+        // mode=warp runs the *system* Cloudflare client, and `warp-cli mode proxy` takes
+        // over routing and DNS for every program on the machine - not just this one. When
+        // that tunnel drops, the user's whole internet drops with it, and their other apps
+        // change exit address without being asked. That is outside the box this emulator
+        // is supposed to stay inside, so it now needs an explicit yes.
+        //
+        // Everything else (auto, wireproxy, custom, direct) binds a local port on
+        // 127.0.0.1 and leaves Windows routing and DNS untouched.
+        public bool AllowSystemWarp = false;
+
         // Blank = bin\warp\wireproxy.conf. A relative path is resolved against
         // the install folder.
         public string WireproxyConf = "";
@@ -129,6 +139,7 @@ namespace DofusFarm.Engine
                         case "upstream": s.Upstream = val; break;
                         case "base_port": s.BasePort = ClampInt(val, s.BasePort, 1024, 65000); break;
                         case "fail_closed": s.FailClosed = ParseBool(val, s.FailClosed); break;
+                        case "allow_system_warp": s.AllowSystemWarp = ParseBool(val, s.AllowSystemWarp); break;
                         case "extra_args": s.ExtraArgs = val; break;
                         case "wireproxy_conf": s.WireproxyConf = val; break;
                         case "log_path": s.LogPath = val; break;
@@ -159,6 +170,7 @@ namespace DofusFarm.Engine
                 sb.AppendLine("upstream=" + (Upstream ?? ""));
                 sb.AppendLine("base_port=" + BasePort);
                 sb.AppendLine("fail_closed=" + (FailClosed ? "1" : "0"));
+                if (AllowSystemWarp) sb.AppendLine("allow_system_warp=1");
                 sb.AppendLine("extra_args=" + (ExtraArgs ?? ""));
                 sb.AppendLine("wireproxy_conf=" + (WireproxyConf ?? ""));
                 sb.AppendLine("log_path=" + (LogPath ?? ""));

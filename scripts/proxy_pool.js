@@ -58,6 +58,12 @@ const ONCE = ARGV.includes('--once');
 const NO_SCRAPE = ARGV.includes('--no-scrape');
 const CONCURRENCY = argNum('concurrency', 50);
 const TIMEOUT_MS = argNum('timeout', 8000);
+// A dead proxy almost never completes the TCP handshake, so the connect stage does
+// not need the full budget. With 50 workers and an 8 s ceiling the pool managed about
+// three candidates a second, which is eight hours for a queue of 86,000. Screening the
+// connect at 1.5 s and only then paying for TLS + HTTP is the difference between a
+// night and an afternoon.
+const CONNECT_TIMEOUT_MS = argNum('connect-timeout', 1500);
 const BATCH = argNum('batch', 150);
 const CYCLE_MIN = argNum('cycle', 10);
 const TARGET = argNum('target', detectTarget());
@@ -191,20 +197,46 @@ function checkEntry(entry) {
   });
 }
 
-async function verifyMany(entries) {
-  const queue = entries.slice();
-  const results = [];
+// Cheap question first: does anything answer a TCP handshake at all?
+function tcpReachable(entry) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: entry.host, port: entry.port });
+    let settled = false;
+    const done = (ok, why) => {
+      if (settled) return;
+      settled = true;
+      try { sock.destroy(); } catch (e) {}
+      resolve({ entry, ok, why });
+    };
+    const timer = setTimeout(() => done(false, 'connect-timeout'), CONNECT_TIMEOUT_MS);
+    sock.on('connect', () => { clearTimeout(timer); done(true, null); });
+    sock.on('error', (e) => { clearTimeout(timer); done(false, e.code || e.message); });
+  });
+}
+
+async function runPool(items, worker, limit) {
+  const queue = items.slice();
+  const out = [];
   const workers = [];
-  for (let w = 0; w < CONCURRENCY; w++) {
+  for (let w = 0; w < limit; w++) {
     workers.push((async () => {
-      while (queue.length) {
-        const e = queue.shift();
-        results.push(await checkEntry(e));
-      }
+      while (queue.length) out.push(await worker(queue.shift()));
     })());
   }
   await Promise.all(workers);
-  return results;
+  return out;
+}
+
+async function verifyMany(entries) {
+  // Stage 1: TCP only, at a short timeout. Stage 2: the real deep check on survivors.
+  const screened = await runPool(entries, tcpReachable, CONCURRENCY);
+  const alive = screened.filter(r => r.ok).map(r => r.entry);
+  const dead = screened.filter(r => !r.ok);
+  log('    pre-screen: ' + alive.length + ' of ' + entries.length
+      + ' answered a TCP connect (' + dead.length + ' dropped without a TLS attempt)');
+  const results = dead.map(r => ({ entry: r.entry, ok: false, why: r.why }));
+  const deep = await runPool(alive, checkEntry, CONCURRENCY);
+  return results.concat(deep);
 }
 
 // ---- scrape ----

@@ -177,6 +177,17 @@ The game is reachable directly. The only thing stopping a client from launching 
 
 Nothing in the code should flip the third one for you.
 
+### The emulator does not touch your system network
+
+Every mode except one binds a port on `127.0.0.1` and leaves Windows routing, DNS and proxy
+settings alone. The exception is `mode=warp`, which runs `warp-cli mode proxy` and takes over
+routing and DNS **for every program on the PC** — when that tunnel drops, your whole internet
+drops with it. It now requires `allow_system_warp=1` in `network.ini`, and without it the
+engine refuses and falls back to the local tunnel instead of leaving you with no egress.
+
+`smoke_verifier.py` enforces this at source level: no `netsh`, no `route add`, no registry
+proxy writes, no hosts edits. If a future change widens that box, the suite fails.
+
 
 
 ## What changed today, and why each one mattered

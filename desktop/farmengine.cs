@@ -1183,7 +1183,18 @@ namespace DofusFarm.Engine
             lock (_tunnelLock)
             {
                 if (IsLocalPortOpen(s.SocksPort, 250)) return true;
-                if (mode == NetworkSettings.ModeWarp) return EnsureSystemWarp(s, logger);
+                if (mode == NetworkSettings.ModeWarp)
+                {
+                    if (EnsureSystemWarp(s, logger)) return true;
+                    // Refused, or warp-cli is not installed. Falling through to the local
+                    // tunnel keeps the emulator working without touching the system, which
+                    // is the point: a user who asks for the system-wide mode and does not
+                    // have it enabled should still get a working client, not "no egress".
+                    if (logger != null) logger(
+                        "[NET] falling back to the local tunnel (wireproxy); your system " +
+                        "routing and DNS stay as they are.");
+                    return EnsureWireproxy(s, logger);
+                }
                 return EnsureWireproxy(s, logger);
             }
         }
@@ -1262,6 +1273,24 @@ namespace DofusFarm.Engine
 
         private static bool EnsureSystemWarp(NetworkSettings s, Action<string> logger)
         {
+            // Refuse unless the user said yes explicitly.
+            //
+            // `warp-cli mode proxy` rewrites routing and DNS for the whole machine. Every
+            // other program's traffic moves with it, and when the tunnel drops, so does the
+            // user's internet - a failure that looks nothing like "the game is slow" and
+            // that this emulator has no business causing. Everything else in this project
+            // binds a port on 127.0.0.1 and leaves the system alone; this one mode is the
+            // exception, so it has to be asked for by name.
+            if (!s.AllowSystemWarp)
+            {
+                if (logger != null) logger(
+                    "[NET] mode=warp refused: it takes over routing and DNS for every program " +
+                    "on this PC, not just this one. Add allow_system_warp=1 to network.ini if " +
+                    "that is really what you want. mode=auto with wireproxy keeps everything " +
+                    "inside the emulator and leaves your system untouched.");
+                return false;
+            }
+
             string cli = WarpCliPath();
             if (cli == null)
             {
