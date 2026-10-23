@@ -181,6 +181,15 @@ def main(argv=None) -> int:
             record("the character moves", "SKIP",
                    "no NPC on this map to walk to; needs a known walkable cell")
 
+    # 7b. what the client knows about this map, which is what cross-map routing needs
+    m = directive("debug.map")
+    if m.get("ok"):
+        data = m.get("data") or {}
+        print("  map info: %s" % json.dumps({k: data.get(k) for k in
+                                             ("map_id", "candidates", "exit_cells")})[:400])
+    else:
+        print("  map info: unavailable (%s)" % m.get("error"))
+
     # 8. combat plumbing, read-only: can we see monster groups and NPCs at all?
     for tool, label in (("debug.npcs", "NPC actors are visible"),
                         ("debug.groups", "monster groups are visible")):

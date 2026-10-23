@@ -2688,6 +2688,43 @@
             // so it runs again on any page load. Reloading the page therefore picks up
             // whatever is on disk right now. Without this, every client-side fix needed
             // a full app restart, and with no auto-launch that meant losing the session.
+            // What the client knows about the current map, so cross-map routing can be
+            // built on its data instead of a guess. `getChangeMapFlags(cell)` tells us
+            // which border cell leads off this map; the *destination* ids come from the
+            // server's map information, and this reports wherever they landed.
+            'debug.map': function() {
+                var iso = window.isoEngine || null;
+                var pd = (window.gui && window.gui.playerData) || null;
+                var md = (iso && iso.mapData) || {};
+                var mr = (iso && iso.mapRenderer && iso.mapRenderer.map) || {};
+                var out = { map_id: pd && pd.position ? pd.position.mapId : null,
+                            mapData_keys: Object.keys(md).slice(0, 30),
+                            rendererMap_keys: Object.keys(mr).slice(0, 30),
+                            candidates: {} };
+                var tryGet = function (label, obj, key) {
+                    try { if (obj && obj[key] !== undefined) out.candidates[label] = obj[key]; }
+                    catch (e) {}
+                };
+                tryGet('mapData.neighbours', md, 'neighbours');
+                tryGet('mapData.neighbors', md, 'neighbors');
+                tryGet('mapRendererMap.neighbours', mr, 'neighbours');
+                tryGet('mapData.mapId', md, 'mapId');
+                // Which cells on this map are exits, and where they lead if the client
+                // records it.
+                var exits = [];
+                try {
+                    var cells = (mr && mr.cells) || {};
+                    for (var c in cells) {
+                        if (!Object.prototype.hasOwnProperty.call(cells, c)) continue;
+                        var flags = iso && iso.mapRenderer
+                            ? iso.mapRenderer.getChangeMapFlags(Number(c)) : null;
+                        if (flags && flags.length) exits.push({ cell: Number(c), flags: flags });
+                        if (exits.length >= 8) break;
+                    }
+                } catch (e) {}
+                out.exit_cells = exits;
+                return _agentResult(true, out);
+            },
             'debug.groups': function() {
                 var am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
