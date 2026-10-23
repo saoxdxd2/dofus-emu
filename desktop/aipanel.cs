@@ -425,6 +425,15 @@ namespace DofusFarm.UI
             _btnKeys.Click += delegate { EditShortcuts(); };
             row3.Controls.Add(_btnKeys);
 
+            // The agent script is injected on page load, so an edit to
+            // mobile-disguise.js does nothing until the page reloads. Reloading the app
+            // to pick up a script change is a heavy price for a one-line fix, and with
+            // no auto-launch it also loses the session.
+            var btnReload = MakeButton("Reload client", Color.FromArgb(30, 58, 138),
+                                       Color.FromArgb(37, 99, 235), 380, 22, 118);
+            btnReload.Click += delegate { ReloadClients(); };
+            row3.Controls.Add(btnReload);
+
             _lblState = new Label();
             _lblState.Text = "idle";
             _lblState.ForeColor = Color.FromArgb(148, 163, 184);
@@ -780,6 +789,28 @@ namespace DofusFarm.UI
             _chkDry.Checked = !_chkDry.Checked;
             Append("[ai] dry run " + (_chkDry.Checked ? "ON (choose and guard, never send)" : "off"));
         }
+
+        /// <summary>Reload every open client page so it re-injects the agent script.</summary>
+        public void ReloadClients()
+        {
+            try
+            {
+                _onReloadClients?.Invoke();
+                Append("[ai] reloading the client page so the agent script is current");
+            }
+            catch (Exception ex)
+            {
+                Append("[ai] reload failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>Set by the host: reload every client page.</summary>
+        public Action OnReloadClients
+        {
+            set { _onReloadClients = value; }
+        }
+
+        private Action _onReloadClients;
 
         public void EditShortcuts()
         {

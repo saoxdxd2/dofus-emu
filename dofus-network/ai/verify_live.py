@@ -1,0 +1,199 @@
+"""Check the live client, one primitive at a time, and say which ones work.
+
+The agent has never completed a quest. That is not a planning problem: three of the
+four primitives a quest needs are unverified, and until each one is checked against the
+real game, every model result is unfalsifiable. This script checks them in order and
+stops being clever about it.
+
+    python ai/verify_live.py
+
+Each line is PASS, FAIL or SKIP with the reason. SKIP means the check could not be run
+(no NPC on this map, no window open) — never that it worked.
+
+Order matters: a failure early makes the later ones meaningless, so the script stops
+after a failed prerequisite.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from agent.bridge import bridge_port, reachable  # noqa: E402
+
+RESULTS: List[Tuple[str, str, str]] = []
+
+
+def record(name: str, status: str, detail: str = "") -> None:
+    RESULTS.append((name, status, detail))
+    print("  [%-4s] %-38s %s" % (status, name, detail))
+
+
+def directive(tool: str, args: Optional[Dict[str, Any]] = None,
+              timeout: float = 15.0) -> Dict[str, Any]:
+    """One tool call. Returns the client's result object, or {'ok': False, 'error': ...}."""
+    import urllib.request
+    body = json.dumps({"id": "verify-%d" % int(time.time() * 1000), "ts": 0,
+                       "tool": tool, "args": args or {}, "source": "verify"}).encode()
+    req = urllib.request.Request("http://127.0.0.1:%d/directive" % bridge_port(),
+                                 data=body, headers={"Content-Type": "application/json"})
+    try:
+        outer = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "transport: %s" % exc}
+    return outer.get("result") or outer
+
+
+def snapshot() -> Dict[str, Any]:
+    r = directive("state.snapshot")
+    if not r.get("ok"):
+        return {}
+    data = r.get("data") or {}
+    return data.get("snapshot") or data
+
+
+def health() -> Dict[str, Any]:
+    import urllib.request
+    try:
+        return json.loads(urllib.request.urlopen(
+            "http://127.0.0.1:%d/agent/health" % bridge_port(), timeout=4).read().decode())
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--quest", type=int, default=584,
+                    help="quest id to try talking about")
+    ap.add_argument("--skip-move", action="store_true")
+    args = ap.parse_args(argv)
+
+    print("== live client ==")
+    print("  bridge port: %d" % bridge_port())
+
+    # 1. bridge
+    if not reachable():
+        record("bridge answers", "FAIL", "nothing answering on %d - is the app running?"
+               % bridge_port())
+        return _summary()
+    record("bridge answers", "PASS", "port %d" % bridge_port())
+
+    # 2. an instance
+    h = health()
+    count = h.get("instances")
+    if not count:
+        record("a client window is open", "FAIL",
+               "instances=%s - launch an instance in DofusFarm" % count)
+        return _summary()
+    record("a client window is open", "PASS", "instances=%s" % count)
+
+    # 3. the script version, so a stale page is visible
+    v = directive("debug.version")
+    if v.get("ok"):
+        record("agent script is current", "PASS", str((v.get("data") or {}).get("build")))
+    else:
+        record("agent script is current", "FAIL",
+               "debug.version missing - the page is running an older script; reload it "
+               "with debug.reload (or restart the app)")
+
+    # 4. in-world
+    snap = snapshot()
+    if not snap:
+        record("snapshot returns state", "FAIL", "no data")
+        return _summary()
+    record("snapshot returns state", "PASS", "%d fields" % len(snap))
+    pos = snap.get("position") or {}
+    char = snap.get("character") or {}
+    if snap.get("in_world") and pos.get("map_id"):
+        record("character is in the world", "PASS",
+               "%s level %s on map %s cell %s" % (char.get("name"), char.get("level"),
+                                                  pos.get("map_id"), pos.get("cell")))
+    else:
+        record("character is in the world", "FAIL",
+               "map_id=%s - the client is at character selection" % pos.get("map_id"))
+        return _summary()
+
+    # 5. talk: open a dialog with an NPC on this map
+    before_dialog = bool(snap.get("in_dialog"))
+    r = directive("quest.advance", {"quest_id": args.quest})
+    data = r.get("data") or {}
+    time.sleep(1.2)
+    after = snapshot()
+    opened = (not before_dialog) and bool(after.get("in_dialog"))
+    if r.get("ok") and opened:
+        record("talk opens a dialog", "PASS",
+               "npc template %s (actor %s)" % (data.get("npc_template"),
+                                               data.get("npc_contextual_id")))
+    elif r.get("ok") and before_dialog:
+        record("talk opens a dialog", "SKIP", "a dialog was already open")
+    else:
+        record("talk opens a dialog", "FAIL", str(r.get("error") or "no dialog appeared"))
+
+    # 6. answer it
+    if after.get("in_dialog"):
+        r2 = directive("quest.advance", {"quest_id": args.quest, "reply": 0})
+        time.sleep(1.0)
+        closed = not bool(snapshot().get("in_dialog"))
+        record("a dialog reply is accepted", "PASS" if closed else "FAIL",
+               str(r2.get("error") or ("replied" if closed else "still open")))
+    else:
+        record("a dialog reply is accepted", "SKIP", "no dialog open to answer")
+
+    # 7. movement: walk to the NPC's cell if one is on this map
+    if args.skip_move:
+        record("the character moves", "SKIP", "--skip-move")
+    else:
+        cell_before = (snapshot().get("position") or {}).get("cell")
+        listed = directive("debug.npcs")
+        npcs = (listed.get("data") or {}).get("npcs") or []
+        if npcs:
+            r3 = directive("nav.goto", {"npc_id": npcs[0].get("templateId")})
+            time.sleep(2.0)
+            cell_after = (snapshot().get("position") or {}).get("cell")
+            moved = cell_before != cell_after
+            record("the character moves", "PASS" if moved else "FAIL",
+                   "cell %s -> %s (%s)" % (cell_before, cell_after,
+                                           r3.get("error") or "ok"))
+        else:
+            record("the character moves", "SKIP",
+                   "no NPC on this map to walk to; needs a known walkable cell")
+
+    # 8. combat plumbing, read-only: can we see monster groups and NPCs at all?
+    for tool, label in (("debug.npcs", "NPC actors are visible"),
+                        ("debug.groups", "monster groups are visible")):
+        r = directive(tool)
+        data = r.get("data") or {}
+        if r.get("ok"):
+            record(label, "PASS", "%s found" % data.get("count"))
+        else:
+            record(label, "FAIL", str(r.get("error") or "no data"))
+
+    return _summary()
+
+
+def _summary() -> int:
+    print("\n== verdict ==")
+    counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
+    for _, status, _ in RESULTS:
+        counts[status] = counts.get(status, 0) + 1
+    for name, status, detail in RESULTS:
+        if status != "PASS":
+            print("  %-4s %s: %s" % (status, name, detail))
+    print("  %d pass, %d fail, %d skip" % (counts["PASS"], counts["FAIL"], counts["SKIP"]))
+    if counts["FAIL"]:
+        print("\n  The first FAIL is the one to fix; later checks depend on it.")
+    return 0 if counts["FAIL"] == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

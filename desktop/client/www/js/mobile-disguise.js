@@ -2300,6 +2300,72 @@
             return { status: 'error', message: '__executeCommanderDirective unavailable' };
         };
 
+        // Every NPC actor on the current map.
+        //
+        // Two things were wrong before this existed. The actor manager is on
+        // `window.actorManager` (the bundle uses it that way in eight places), and the
+        // id in NpcGenericActionRequestMessage is the actor's `contextualId` — the
+        // bundle sends `npcId: l.contextualId` — not the template npcId the quest
+        // objective carries. Sending the template id talks to nobody.
+        var _listNpcActors = function () {
+            var am = window.actorManager
+                || (window.isoEngine && window.isoEngine.actorManager) || null;
+            var actors = (am && (am.actors || am.actorList)) || null;
+            var out = [];
+            if (!actors) return out;
+            for (var k in actors) {
+                if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
+                var a = actors[k] || {};
+                var d = a.data || {};
+                var si = d.staticInfos || a.staticInfos || {};
+                var template = si.npcId != null ? si.npcId : (a.npcId != null ? a.npcId : null);
+                if (template == null || Number(template) <= 0) continue;
+                out.push({
+                    templateId: Number(template),
+                    contextualId: a.contextualId != null ? a.contextualId : a.id,
+                    cell: a.cellId != null ? a.cellId : (a.position && a.position.cell)
+                });
+            }
+            return out;
+        };
+
+        var _findNpcActor = function (templateId) {
+            var list = _listNpcActors();
+            var seen = [];
+            for (var i = 0; i < list.length; i++) seen.push(list[i].templateId);
+            // The client has a purpose-built lookup (the bundle calls
+            // `window.actorManager.getActorFromNpcId(npcId)`), so prefer it over a scan.
+            if (templateId != null) {
+                var am = window.actorManager
+                    || (window.isoEngine && window.isoEngine.actorManager) || null;
+                if (am && typeof am.getActorFromNpcId === 'function') {
+                    try {
+                        var hit = am.getActorFromNpcId(Number(templateId));
+                        if (hit) {
+                            var hd = hit.data || {};
+                            var hsi = hd.staticInfos || hit.staticInfos || {};
+                            return {
+                                actor: {
+                                    templateId: Number(templateId),
+                                    contextualId: hit.contextualId != null ? hit.contextualId : hit.id,
+                                    cell: hit.cellId != null ? hit.cellId : (hit.position && hit.position.cell),
+                                    isNpc: typeof hit.isNPC === 'function' ? !!hit.isNPC() : null
+                                },
+                                seen: seen, all: list
+                            };
+                        }
+                    } catch (e) {}
+                }
+                for (var j = 0; j < list.length; j++) {
+                    if (Number(list[j].templateId) === Number(templateId)) {
+                        return { actor: list[j], seen: seen, all: list };
+                    }
+                }
+                return { actor: null, seen: seen, all: list };
+            }
+            return { actor: list.length ? list[0] : null, seen: seen, all: list };
+        };
+
         var _agentHandlers = {
             'safe.stop': function(args) {
                 var stopped = { auto_fight: false, follow: false };
@@ -2378,7 +2444,55 @@
                     xp: s ? s.xp : null
                 });
             },
-            'fight.join': function() { return _agentResult(true, _agentCommander('AUTO_JOIN_COMBAT')); },
+            // Attack a monster group, using the client's own sequence.
+            //
+            // The bundle does exactly this (see the handler that sends
+            // GameRolePlayAttackMonsterRequestMessage): look the group up in
+            // actorManager.actors by its contextual id, walk to its cell if we are not
+            // already there, then send the request. The previous version clicked a DOM
+            // selector (`.join-fight`) that almost certainly does not exist in this
+            // client, which is why it returned ok and nothing happened.
+            'fight.join': function(args) {
+                var am = window.actorManager
+                    || (window.isoEngine && window.isoEngine.actorManager) || null;
+                var iso = window.isoEngine || null;
+                if (!am || !am.actors) return _agentResult(false, null, 'actorManager unavailable');
+                var actors = am.actors;
+                var want = parseInt(args && (args.group_id || args.monster_group_id), 10) || null;
+                var pick = want ? (actors[want] || null) : null;
+                if (!pick) {
+                    for (var k in actors) {
+                        if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
+                        var a = actors[k] || {};
+                        var ty = (a.data && a.data.type) || a._type || a.type;
+                        if (ty === 'GameRolePlayGroupMonsterInformations') { pick = a; break; }
+                    }
+                }
+                if (!pick) return _agentResult(false, { map_id: (window.gui && window.gui.playerData
+                        && window.gui.playerData.position && window.gui.playerData.position.mapId) },
+                    'no monster group on this map');
+                var gid = pick.contextualId != null ? pick.contextualId : pick.id;
+                var cell = pick.cellId != null ? pick.cellId : (pick.position && pick.position.cell);
+                var ua = am.userActor;
+                var attack = function () {
+                    return _cmSend('GameRolePlayAttackMonsterRequestMessage', { monsterGroupId: gid });
+                };
+                if (ua && ua.cellId === cell) {
+                    var r0 = attack();
+                    return _agentResult(r0.ok, { group_id: gid, cell: cell, via: 'attacked' },
+                        r0.ok ? null : r0.error);
+                }
+                if (!iso || typeof iso._movePlayerOnMap !== 'function') {
+                    return _agentResult(false, { group_id: gid, cell: cell },
+                        'the group is not on my cell and I cannot walk there');
+                }
+                try {
+                    iso._movePlayerOnMap(cell, false, function () { attack(); });
+                    return _agentResult(true, { group_id: gid, cell: cell, via: 'walk then attack' });
+                } catch (e) {
+                    return _agentResult(false, { group_id: gid, cell: cell }, 'walk failed: ' + e);
+                }
+            },
             'fight.pass': function() { return _agentResult(true, _agentCommander('PASS_TURN')); },
             'nav.follow': function(args) {
                 return _agentResult(true, _agentCommander('FOLLOW'), null);
@@ -2484,6 +2598,44 @@
             // returned null for every one of them, which made the agent believe there
             // was no character and nothing to act on. Guessing a second set of field
             // names would repeat the mistake, so this asks the client what it has.
+            // Re-inject the agent script without restarting the app.
+            //
+            // mobile-disguise.js is registered with AddScriptToExecuteOnDocumentCreated,
+            // so it runs again on any page load. Reloading the page therefore picks up
+            // whatever is on disk right now. Without this, every client-side fix needed
+            // a full app restart, and with no auto-launch that meant losing the session.
+            'debug.groups': function() {
+                var am = window.actorManager
+                    || (window.isoEngine && window.isoEngine.actorManager) || null;
+                var actors = (am && am.actors) || {};
+                var out = [];
+                for (var k in actors) {
+                    if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
+                    var a = actors[k] || {};
+                    var ty = (a.data && a.data.type) || a._type || a.type;
+                    if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
+                    var d = a.data || {};
+                    out.push({
+                        contextualId: a.contextualId != null ? a.contextualId : a.id,
+                        cell: a.cellId != null ? a.cellId : (a.position && a.position.cell),
+                        monsters: d.monsters ? d.monsters.length : null
+                    });
+                }
+                return _agentResult(true, { count: out.length, groups: out });
+            },
+            'debug.npcs': function() {
+                var list = _listNpcActors();
+                return _agentResult(true, { count: list.length, npcs: list });
+            },
+            'debug.reload': function() {
+                setTimeout(function () {
+                    try { window.location.reload(); } catch (e) {}
+                }, 250);
+                return _agentResult(true, { reloading: true, build: '2026-10-23a' });
+            },
+            'debug.version': function() {
+                return _agentResult(true, { build: '2026-10-23a' });
+            },
             'debug.probe': function() {
                 var out = {};
                 var keys = function(o, n) {
@@ -2601,23 +2753,9 @@
                 // and the loop spent its budget re-sending it. Talking to the wrong
                 // NPC and reporting ok is worse than failing: it hides the mistake.
                 var wantNpc = Number((args && (args.npc_id || args.npcId)) || 0) || null;
-                var npc = null;
-                var npcIds = [];
-                try {
-                    var am = window.isoEngine && window.isoEngine.actorManager;
-                    var actors = (am && (am.actors || am.actorList)) || null;
-                    if (actors) {
-                        for (var k in actors) {
-                            if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
-                            var a = actors[k] || {};
-                            var nid = a.npcId != null ? a.npcId : (a.staticInfos && a.staticInfos.npcId);
-                            if (nid == null || nid <= 0) continue;
-                            npcIds.push(Number(nid));
-                            if (wantNpc && Number(nid) !== wantNpc) continue;
-                            if (!npc) npc = { npcId: Number(nid), cell: a.cellId || (a.position && a.position.cell) };
-                        }
-                    }
-                } catch (e) {}
+                var found = _findNpcActor(wantNpc);
+                var npc = found.actor;
+                var npcIds = found.seen;
                 if (wantNpc && !npc) {
                     // The right answer here is "you are on the wrong map", because that
                     // is what the agent can act on. The old code either talked to
@@ -2635,9 +2773,13 @@
                 }
                 var mapId = null;
                 try { mapId = window.isoEngine.currentMapId || (window.isoEngine.mapData && window.isoEngine.mapData.mapId) || null; } catch (e) {}
+                // The wire field is the actor's contextual id (the bundle sends
+                // `npcId: l.contextualId`). Sending the template id talks to nobody,
+                // which is why a talk objective opened no dialog.
                 var talk = _cmSend('NpcGenericActionRequestMessage',
-                    { npcId: npc.npcId, npcActionId: 3, npcMapId: mapId });
-                return _agentResult(talk.ok, { quest_id: questId, npc_id: npc.npcId, map_id: mapId },
+                    { npcId: npc.contextualId, npcActionId: 3, npcMapId: mapId });
+                return _agentResult(talk.ok, { quest_id: questId, npc_template: npc.templateId,
+                    npc_contextual_id: npc.contextualId, map_id: mapId },
                     talk.ok ? null : talk.error);
             },
             'inv.sell': function(args) {

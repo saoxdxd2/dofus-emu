@@ -1137,6 +1137,19 @@ namespace DofusFarm.UI
             // Shortcuts must work while the game has focus, so they are registered
             // with the OS rather than handled as ordinary keys.
             try { RegisterGlobalShortcuts(); } catch (Exception ex) { Log("[AI] shortcut registration failed: " + ex.Message); }
+
+            // Let the panel ask every page to reload, so an edit to the agent script
+            // takes effect without restarting the app.
+            try
+            {
+                _aiPanel.OnReloadClients = delegate
+                {
+                    _webViewBackend.ExecuteScriptOnAllInstances(
+                        "setTimeout(function(){try{window.location.reload();}catch(e){}},150)");
+                    Log("[AI] reloading client pages to re-inject the agent script");
+                };
+            }
+            catch (Exception ex) { Log("[AI] could not wire the reload button: " + ex.Message); }
             _pageSettings = new SettingsPage(baseDir, Log, delegate
             {
                 // Changing the egress invalidates every relay that is already
