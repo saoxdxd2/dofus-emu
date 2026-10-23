@@ -347,6 +347,16 @@ class QuestPlanner:
             for obj in objectives:
                 if obj.get("id") == tracker.get("objective_id"):
                     return obj
+            # The tracker names an objective that is not in the step we were given. The
+            # client reports `finishedCount` as the step index, and there is no promise
+            # that it matches the KB's numbering — so search the whole quest before
+            # concluding the objective does not exist. `args_for_tool` reads the
+            # objective's own params, so a corrected step index is not needed for the
+            # call itself.
+            for step in quest.get("steps") or []:
+                for obj in step.get("objectives") or []:
+                    if obj.get("id") == tracker.get("objective_id"):
+                        return obj
         for obj in objectives:
             if self.plan_objective(quest, step_idx, obj, obs):
                 return obj

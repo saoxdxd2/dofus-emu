@@ -2439,6 +2439,40 @@
                 // skillInstanceUid}` -- captured 2026-10-22 while gathering. If the
                 // agent asked for a resource, take the nearest interactive element
                 // on this map; walking to it is still the client's job.
+                // A quest says "kill monster 182", and the bot fights whatever is on
+                // the map. If a group here contains that monster, attack it — the
+                // client's own walk-then-attack sequence. If no group matches (or the
+                // group shape is not what we expect), fall through to the bot, which is
+                // the previous behaviour and costs nothing.
+                var wanted = args && args.monster ? parseInt(args.monster, 10) : null;
+                if (wanted) {
+                    var amG = window.actorManager
+                        || (window.isoEngine && window.isoEngine.actorManager) || null;
+                    var actorsG = (amG && amG.actors) || {};
+                    var targetGroup = null;
+                    for (var gk in actorsG) {
+                        if (!Object.prototype.hasOwnProperty.call(actorsG, gk)) continue;
+                        var ga = actorsG[gk] || {};
+                        var gty = (ga.data && ga.data.type) || ga._type || ga.type;
+                        if (gty !== 'GameRolePlayGroupMonsterInformations') continue;
+                        var gsi = (ga.data && ga.data.staticInfos) || ga.staticInfos || {};
+                        var gm = gsi.monsters || (ga.data && ga.data.monsters) || [];
+                        for (var gmi = 0; gmi < gm.length; gmi++) {
+                            var gmm = gm[gmi] || {};
+                            var gid2 = gmm.creatureGenericId != null ? gmm.creatureGenericId
+                                : (gmm.genericId != null ? gmm.genericId : gmm.monsterId);
+                            if (Number(gid2) === wanted) { targetGroup = ga; break; }
+                        }
+                        if (targetGroup) break;
+                    }
+                    if (targetGroup) {
+                        var hit = _agentHandlers['fight.join']({
+                            group_id: targetGroup.contextualId != null ? targetGroup.contextualId : targetGroup.id
+                        });
+                        return hit;
+                    }
+                }
+
                 if (started && args && (args.resource || args.monster)) {
                     var list = _interactives();
                     var target = null;
@@ -2660,10 +2694,21 @@
                     var ty = (a.data && a.data.type) || a._type || a.type;
                     if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
                     var d = a.data || {};
+                    var si = d.staticInfos || a.staticInfos || {};
+                    var mons = si.monsters || d.monsters || [];
+                    var ids = [];
+                    for (var mi = 0; mi < mons.length; mi++) {
+                        var mm = mons[mi] || {};
+                        var mid = mm.creatureGenericId != null ? mm.creatureGenericId
+                            : (mm.genericId != null ? mm.genericId
+                            : (mm.monsterId != null ? mm.monsterId : null));
+                        if (mid != null) ids.push(Number(mid));
+                    }
                     out.push({
                         contextualId: a.contextualId != null ? a.contextualId : a.id,
                         cell: a.cellId != null ? a.cellId : (a.position && a.position.cell),
-                        monsters: d.monsters ? d.monsters.length : null
+                        monster_ids: ids,
+                        static_keys: Object.keys(si).slice(0, 12)
                     });
                 }
                 return _agentResult(true, { count: out.length, groups: out });
