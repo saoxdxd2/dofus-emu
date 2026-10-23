@@ -385,6 +385,40 @@ def test_session_log_becomes_a_dataset() -> None:
           str(stats["fields_seen"]))
 
 
+def test_bridge_port_is_discovered() -> None:
+    """The bridge publishes its port; assuming 8893 cost a whole session.
+
+    The app runs, the bridge fails to bind because something else holds the port, and
+    every directive goes to a socket nobody serves. The loop then takes one step, fails
+    everything, and exits looking like it finished. Discovery turns that into either a
+    working session or a clear failure.
+    """
+    print("\n== bridge discovery ==")
+    import agent.bridge as bridge
+
+    tmp = Path(tempfile.mkdtemp())
+    original = bridge.state_dir
+    bridge.state_dir = lambda: tmp          # type: ignore[assignment]
+    try:
+        check("no published port falls back to the default",
+              bridge.bridge_port() == bridge.DEFAULT_PORT, str(bridge.bridge_port()))
+
+        (tmp / "bridge_port.txt").write_text("8894", encoding="utf-8")
+        check("a published port is used", bridge.bridge_port() == 8894,
+              str(bridge.bridge_port()))
+        check("the directive URL follows the published port",
+              bridge.directive_url().endswith(":8894/directive"), bridge.directive_url())
+
+        (tmp / "bridge_port.txt").write_text("not a port", encoding="utf-8")
+        check("garbage falls back instead of crashing",
+              bridge.bridge_port() == bridge.DEFAULT_PORT, str(bridge.bridge_port()))
+
+        (tmp / "bridge_port.txt").write_text("1", encoding="utf-8")
+        check("a port nobody serves is not reachable", not bridge.reachable(timeout=0.5))
+    finally:
+        bridge.state_dir = original        # type: ignore[assignment]
+
+
 def test_structural_failures_are_not_retried() -> None:
     """Real data: 9 of 15 client failures were 'no active client', 0/9 retries worked."""
     print("\n== error taxonomy ==")
@@ -623,6 +657,7 @@ def main() -> int:
     test_step_summary()
     test_exploration_is_opt_in()
     test_session_log_becomes_a_dataset()
+    test_bridge_port_is_discovered()
     test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()
     test_knowledge_store()

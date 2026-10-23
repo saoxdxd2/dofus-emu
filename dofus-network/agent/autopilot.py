@@ -561,19 +561,20 @@ class Autopilot:
         # A TCP connect is not enough: a force-killed host leaves a listening socket
         # that accepts connections and never answers, which makes every directive
         # wait for the full HTTP timeout. Ask for a response instead.
-        import urllib.error
-        import urllib.request
+        from agent.bridge import bridge_port, reachable
 
-        try:
-            urllib.request.urlopen("http://127.0.0.1:8893/", timeout=1.5)
+        if reachable():
             return
-        except urllib.error.HTTPError:
-            return  # it answered, even if with 404
-        except Exception:  # noqa: BLE001 - timeout, refused, reset: all mean "not there"
-            pass
-        print("[autopilot] WARNING: no client bridge on 127.0.0.1:8893 - "
-              "directives will fail until an instance is running. "
-              "Local tools (quest.list, knowledge.search) still work.")
+        port = bridge_port()
+        print("[autopilot] FATAL: no client bridge answering on 127.0.0.1:%d." % port)
+        print("[autopilot]   The app publishes its port to "
+              "LOCALAPPDATA\\DofusFarm\\bridge_port.txt; a stale file means the app "
+              "is not running, or its bridge never bound.")
+        print("[autopilot]   A port held by another process is the usual cause: the"
+              " bridge logs '[AGENT] directive bridge listening on ...' when it binds.")
+        print("[autopilot]   Refusing to run: every directive would fail and the run"
+              " would look like it finished.")
+        raise SystemExit(3)
 
     def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
         """Turn agent 2's decision into what the actor does on the next step.

@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agent.bridge import directive_url as bridge_directive_url
 from agent.recorder import TrajectoryRecorder
 from agent.knowledge_store import KnowledgeStore
 from agent.schema import TOOLS_BY_NAME, validate_call
@@ -257,14 +258,14 @@ class ToolExecutor:
     def __init__(
         self,
         sentinel_url: str = "http://127.0.0.1:8890",
-        directive_url: str = "http://127.0.0.1:8893/directive",
+        directive_url: Optional[str] = None,
         cache_dir: Path = DEFAULT_CACHE_DIR,
         timeout: float = 6.0,
         knowledge_store: Optional[Path] = None,
         recorder: Optional[TrajectoryRecorder] = None,
     ) -> None:
         self.sentinel_url = sentinel_url.rstrip("/")
-        self.directive_url = directive_url
+        self.directive_url = directive_url or bridge_directive_url()
         self.timeout = float(timeout)
         self.recorder = recorder
         self.knowledge = _KnowledgeIndex(Path(cache_dir))

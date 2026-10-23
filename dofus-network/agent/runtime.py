@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
+from agent.bridge import directive_url as bridge_directive_url
 from agent.executor import ToolExecutor, ToolResult
 from agent.recorder import TrajectoryRecorder
 from agent.schema import tool_names
@@ -294,7 +295,7 @@ class AgentRuntime:
         executor: Optional[ToolExecutor] = None,
         recorder: Optional[TrajectoryRecorder] = None,
         policy: Optional[Policy] = None,
-        directive_url: str = "http://127.0.0.1:8893/directive",
+        directive_url: Optional[str] = None,
         instance: str = "default",
         objective_provider: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
     ) -> None:

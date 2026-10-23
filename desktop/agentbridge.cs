@@ -25,10 +25,18 @@ namespace DofusFarm.Engine
         private readonly WebView2Backend _backend;
         private readonly Func<int, string> _instanceBySlot;
         private readonly Action<string> _log;
-        private readonly int _port;
+        private int _port;
         private TcpListener _listener;
         private Thread _thread;
         private volatile bool _running;
+
+        // Ports to try, in order. A single fixed port is a single point of failure:
+        // if anything on the machine is holding 8893 — a leaked listening socket owned
+        // by System is the case that actually happened — the bridge dies silently, the
+        // app keeps running with no bridge, and every directive fails while the UI
+        // looks normal. Falling through to the next port costs nothing and turns a
+        // dead session into a working one.
+        private static readonly int[] CANDIDATE_PORTS = { 8893, 8894, 8895, 8896, 8897, 8898, 8899 };
 
         public AgentDirectiveBridge(WebView2Backend backend, Func<int, string> instanceBySlot,
             Action<string> log, int port)
@@ -41,24 +49,73 @@ namespace DofusFarm.Engine
 
         public bool IsRunning { get { return _running; } }
 
+        /// <summary>The port actually bound, which is not necessarily the one asked for.</summary>
+        public int Port { get { return _port; } }
+
+        /// <summary>Where the chosen port is published for the Python agent to read.</summary>
+        public static string PortFile
+        {
+            get
+            {
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "DofusFarm", "bridge_port.txt");
+            }
+        }
+
         public void Start()
         {
             if (_running) return;
+            string firstError = null;
+            int firstPort = _port;
+            var candidates = new List<int>();
+            foreach (int p in CANDIDATE_PORTS) candidates.Add(p);
+            if (!candidates.Contains(_port)) candidates.Insert(0, _port);
+
+            foreach (int port in candidates)
+            {
+                try
+                {
+                    var listener = new TcpListener(IPAddress.Loopback, port);
+                    listener.Start();
+                    _listener = listener;
+                    _port = port;
+                    _running = true;
+                    _thread = new Thread(Loop);
+                    _thread.IsBackground = true;
+                    _thread.Name = "AgentDirectiveBridge";
+                    _thread.Start();
+                    PublishPort();
+                    if (firstError == null)
+                        Log("[AGENT] directive bridge listening on http://127.0.0.1:" + _port + "/directive");
+                    else
+                        Log("[AGENT] directive bridge listening on http://127.0.0.1:" + _port
+                            + "/directive (port " + firstPort + " was unavailable: " + firstError + ")");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    if (firstError == null) firstError = ex.Message;
+                }
+            }
+
+            _running = false;
+            Log("[AGENT] directive bridge failed to start on every port "
+                + string.Join(", ", candidates) + ": " + firstError
+                + " — the agent cannot send directives until this is resolved");
+        }
+
+        private void PublishPort()
+        {
             try
             {
-                _listener = new TcpListener(IPAddress.Loopback, _port);
-                _listener.Start();
-                _running = true;
-                _thread = new Thread(Loop);
-                _thread.IsBackground = true;
-                _thread.Name = "AgentDirectiveBridge";
-                _thread.Start();
-                Log("[AGENT] directive bridge listening on http://127.0.0.1:" + _port + "/directive");
+                string path = PortFile;
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, _port.ToString());
             }
             catch (Exception ex)
             {
-                _running = false;
-                Log("[AGENT] directive bridge failed to start on port " + _port + ": " + ex.Message);
+                Log("[AGENT] could not publish the bridge port: " + ex.Message);
             }
         }
 

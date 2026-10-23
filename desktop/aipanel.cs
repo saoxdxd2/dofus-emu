@@ -819,6 +819,28 @@ namespace DofusFarm.UI
         /// One tool call, straight to the directive bridge. Same path Python uses,
         /// so the call is schema-checked by the client and recorded like any other.
         /// </summary>
+        /// <summary>The bridge's port, as the bridge published it.
+        /// Hardcoding 8893 here meant that when the port was taken, every panel action
+        /// failed with a connection error that looked like a client problem.</summary>
+        private static string BridgeUrl()
+        {
+            int port = 8893;
+            try
+            {
+                string path = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "DofusFarm", "bridge_port.txt");
+                if (File.Exists(path))
+                {
+                    int parsed;
+                    if (int.TryParse(File.ReadAllText(path).Trim(), out parsed) && parsed > 0)
+                        port = parsed;
+                }
+            }
+            catch { }
+            return "http://127.0.0.1:" + port.ToString() + "/directive";
+        }
+
         public void Quick(string tool, string argsJson)
         {
             string target = InstanceForTarget();
@@ -835,7 +857,7 @@ namespace DofusFarm.UI
                 {
                     wc.Headers[HttpRequestHeader.ContentType] = "application/json";
                     wc.Encoding = Encoding.UTF8;
-                    string res = wc.UploadString("http://127.0.0.1:8893/directive", "POST", payload);
+                    string res = wc.UploadString(BridgeUrl(), "POST", payload);
                     Append("[ai] " + tool + " -> " + Shorten(res, 220));
                 }
             }
