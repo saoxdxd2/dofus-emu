@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	xproxy "golang.org/x/net/proxy"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -398,107 +399,34 @@ func watchUpstream(u *url.URL, raw string) {
 
 func dialUpstreamSocks5(proxyURL *url.URL, targetHostPort string, timeout time.Duration) (net.Conn, error) {
 	proxyAddr := ensureHostPort(proxyURL.Host, "1080")
-	targetHost, targetPortStr, err := net.SplitHostPort(targetHostPort)
-	if err != nil {
-		targetHost, targetPortStr = targetHostPort, "443"
-	}
-	targetPort, err := strconv.Atoi(targetPortStr)
-	if err != nil || targetPort <= 0 || targetPort > 65535 {
-		targetPort = 443
-	}
 
-	conn, err := net.DialTimeout("tcp", proxyAddr, timeout)
-	if err != nil {
-		return nil, err
-	}
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-
-	var user, pass string
+	// x/net/proxy instead of a hand-written SOCKS5 handshake.
+	//
+	// The hand-rolled version was ~80 lines of greeting, auth and reply parsing, and it already
+	// shipped one real bug today: a bufio.Reader in the HTTP path pulled bytes past the CONNECT
+	// header and silently ate the next handshake. This package is maintained by the Go team and
+	// implements the same RFC 1928/1929 exchange, so the class of bug goes away with the code.
+	var auth *xproxy.Auth
 	if proxyURL.User != nil {
-		user = proxyURL.User.Username()
-		pass, _ = proxyURL.User.Password()
+		user := proxyURL.User.Username()
+		pass, _ := proxyURL.User.Password()
+		auth = &xproxy.Auth{User: user, Password: pass}
 	}
 
-	greet := []byte{0x05, 0x01, 0x00}
-	if user != "" {
-		greet = []byte{0x05, 0x02, 0x00, 0x02}
-	}
-	if _, err = conn.Write(greet); err != nil {
-		conn.Close()
+	base := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+	dialer, err := xproxy.SOCKS5("tcp", proxyAddr, auth, base)
+	if err != nil {
 		return nil, err
 	}
 
-	var buf [4]byte
-	if _, err = io.ReadFull(conn, buf[:2]); err != nil || buf[0] != 0x05 {
-		conn.Close()
-		return nil, errors.New("invalid SOCKS5 greeting")
+	// The caller has already resolved the target when it needs to (WARP cannot resolve Ankama's
+	// domains), so this dials an address or a name exactly as given — same contract as before.
+	if cd, ok := dialer.(xproxy.ContextDialer); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		return cd.DialContext(ctx, "tcp", targetHostPort)
 	}
-
-	if buf[1] == 0x02 {
-		if len(user) > 255 || len(pass) > 255 {
-			conn.Close()
-			return nil, errors.New("SOCKS5 credentials too long")
-		}
-		authReq := make([]byte, 0, 3+len(user)+len(pass))
-		authReq = append(authReq, 0x01, byte(len(user)))
-		authReq = append(authReq, user...)
-		authReq = append(authReq, byte(len(pass)))
-		authReq = append(authReq, pass...)
-		if _, err = conn.Write(authReq); err != nil {
-			conn.Close()
-			return nil, err
-		}
-		if _, err = io.ReadFull(conn, buf[:2]); err != nil || buf[1] != 0x00 {
-			conn.Close()
-			return nil, errors.New("SOCKS5 authentication rejected")
-		}
-	} else if buf[1] != 0x00 {
-		conn.Close()
-		return nil, errors.New("SOCKS5 auth method unsupported")
-	}
-
-	req := make([]byte, 0, 7+len(targetHost))
-	req = append(req, 0x05, 0x01, 0x00)
-	if ip := net.ParseIP(targetHost); ip != nil && ip.To4() != nil {
-		req = append(req, 0x01)
-		req = append(req, ip.To4()...)
-	} else {
-		req = append(req, 0x03, byte(len(targetHost)))
-		req = append(req, targetHost...)
-	}
-	req = append(req, byte(targetPort>>8), byte(targetPort&0xFF))
-
-	if _, err = conn.Write(req); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	if _, err = io.ReadFull(conn, buf[:4]); err != nil || buf[1] != 0x00 {
-		conn.Close()
-		return nil, fmt.Errorf("SOCKS5 connect failed (code %d)", buf[1])
-	}
-
-	var discardLen int
-	switch buf[3] {
-	case 0x01:
-		discardLen = 6
-	case 0x03:
-		if _, err = io.ReadFull(conn, buf[:1]); err != nil {
-			conn.Close()
-			return nil, err
-		}
-		discardLen = int(buf[0]) + 2
-	case 0x04:
-		discardLen = 18
-	}
-	if discardLen > 0 {
-		if _, err = io.CopyN(io.Discard, conn, int64(discardLen)); err != nil {
-			conn.Close()
-			return nil, err
-		}
-	}
-
-	_ = conn.SetDeadline(time.Time{})
-	return conn, nil
+	return dialer.Dial("tcp", targetHostPort)
 }
 
 type ProxyTelemetry struct {
