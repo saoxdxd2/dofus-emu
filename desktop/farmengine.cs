@@ -1886,13 +1886,18 @@ namespace DofusFarm.Engine
                     var sb = new StringBuilder().AppendFormat("-port {0} -cache \"{1}\" -quiet", port, Path.Combine(AppBaseDir, "asset_cache"));
                     if (!string.IsNullOrEmpty(normalizedUpstream))
                     {
-                        // The pick becomes the fixed exit — the address Ankama sees — and the
-                        // rest of the healthy set becomes disposable hops to reach it. That way
-                        // a hop can die and be replaced without the session changing IP.
-                        string hops = ProxySupervisor.Instance.HopChain(normalizedUpstream, 4);
-                        sb.AppendFormat(" -upstream \"{0}\" -exit-proxy \"{1}\"", hops, normalizedUpstream);
-                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Exit: {1} via {2} hop(s))...",
-                            port, normalizedUpstream, string.IsNullOrEmpty(hops) ? 0 : hops.Split(',').Length));
+                        // Plain sticky chain, which is the configuration that measured well:
+                        // one upstream, raced only when it fails, exit pinned by lastGood.
+                        //
+                        // The fixed-exit mode (-upstream hops -exit-proxy identity) is implemented
+                        // and works when the hop can reach the exit, but on this pool most hops
+                        // cannot: it measured 2/6 successes at 5.5 s against 6/6 at 2.2 s. It is
+                        // left available behind its flag rather than switched on, because a mode
+                        // that connects a third as often is not an improvement no matter how good
+                        // its identity guarantee is.
+                        string chain = ProxySupervisor.Instance.UpstreamChain(normalizedUpstream, 4);
+                        sb.AppendFormat(" -upstream \"{0}\"", chain);
+                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
                     }
                     else Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
 

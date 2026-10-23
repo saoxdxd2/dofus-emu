@@ -505,6 +505,30 @@ namespace DofusFarm.Engine
         /// whichever can reach the exit, so any of them can die without the session's identity
         /// changing.
         /// </summary>
+        /// <summary>
+        /// The pick followed by the next-best healthy candidates, comma separated.
+        ///
+        /// This is the default: the relay dials the pick, and only races the rest when it fails.
+        /// One exit at a time, because a session that changes source address mid-flight is what
+        /// the server treats as hijacked.
+        /// </summary>
+        public string UpstreamChain(string primary, int max)
+        {
+            if (string.IsNullOrEmpty(primary)) return primary;
+            if (max < 2) return primary;
+
+            var parts = new List<string> { primary };
+            foreach (ProxyCandidate c in Candidates)
+            {
+                if (parts.Count >= max) break;
+                if (c == null || !c.Healthy || string.IsNullOrEmpty(c.Url)) continue;
+                if (c.Url.IndexOf(',') >= 0) continue;
+                if (parts.Contains(c.Url)) continue;
+                parts.Add(c.Url);
+            }
+            return string.Join(",", parts.ToArray());
+        }
+
         public string HopChain(string exitUrl, int max)
         {
             if (string.IsNullOrEmpty(exitUrl)) return "";

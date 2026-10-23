@@ -602,6 +602,18 @@ type ProxyServer struct {
 	// The fixed exit: the one address Ankama is allowed to see. Reached through any hop in
 	// upstreams, so a hop can die without the session's identity changing.
 	exitURL *url.URL
+
+	// Which hops can actually reach the exit, measured in the background.
+	//
+	// Racing blind was the reason two thirds of connections failed: a hop has to accept
+	// CONNECT exitHost:exitPort, and most public proxies only allow 443, so a random hop usually
+	// cannot reach the exit at all. Testing that is one handshake, so it belongs in an index
+	// that is refreshed continuously rather than paid for on every dial.
+	hopMu  sync.Mutex
+	hopIdx map[string]hopProbe
+
+	destMu sync.Mutex
+	dests  []string
 	cacheDir       string
 	quiet          bool
 	port           int
@@ -728,6 +740,7 @@ func NewProxyServer(resolver *FastDNSResolver, upstream, cacheDir string, quiet 
 	}
 
 	p := &ProxyServer{
+		hopIdx: make(map[string]hopProbe),
 		resolver:       resolver,
 		cacheDir:       cacheDir,
 		quiet:          quiet,
@@ -965,10 +978,59 @@ func parseUpstreamList(raw string) []*url.URL {
 	return out
 }
 
+// readConnectResponse reads a CONNECT reply without reading ahead.
+//
+// http.ReadResponse goes through a bufio.Reader, which pulls whatever is available — and when the
+// connection is a tunnel that is about to carry a second handshake, the bytes it pulled past the
+// header belong to that handshake and are gone. That is a silent "unexpected EOF" a few lines
+// later, and it is why chaining failed two times in six while the same proxies worked alone.
+// One byte at a time is slow in principle and irrelevant here: it is a handshake header.
+func readConnectResponse(conn net.Conn) error {
+	var line []byte
+	buf := make([]byte, 1)
+	header := make([]byte, 0, 256)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			return err
+		}
+		header = append(header, buf[0])
+		if buf[0] == '\n' {
+			trimmed := strings.TrimRight(string(line), "\r")
+			if trimmed == "" {
+				break
+			}
+			if strings.HasPrefix(trimmed, "HTTP/") {
+				fields := strings.Fields(trimmed)
+				if len(fields) >= 2 && fields[1] != "200" {
+					return fmt.Errorf("proxy answered %s", trimmed)
+				}
+			}
+			line = line[:0]
+			continue
+		}
+		if buf[0] != '\r' {
+			line = append(line, buf[0])
+		}
+		if len(header) > 8192 {
+			return errors.New("CONNECT reply too long")
+		}
+	}
+	return nil
+}
+
 // connectThrough performs a proxy handshake on a connection that is already open, so the same
 // socket can be relayed a second time. This is what makes a fixed exit possible: the hop carries
 // us to the exit proxy, and the exit proxy carries us to the target.
 func connectThrough(conn net.Conn, scheme, host string, port int, userinfo, ua string) error {
+	// A handshake needs a deadline. Without one a slow proxy blocks this goroutine forever, and
+	// because the race returns on the first success, "forever" means the whole dial never
+	// finishes — the client hangs instead of failing over. The deadline is cleared on success so
+	// the tunnel itself is not limited by it.
+	if err := conn.SetDeadline(time.Now().Add(6 * time.Second)); err != nil {
+		return err
+	}
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
+
 	if strings.HasPrefix(strings.ToLower(scheme), "socks5") {
 		var user, pass string
 		if userinfo != "" {
@@ -1039,15 +1101,7 @@ func connectThrough(conn net.Conn, scheme, host string, port int, userinfo, ua s
 	if _, err := io.WriteString(conn, req); err != nil {
 		return err
 	}
-	br := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("proxy answered %s", resp.Status)
-	}
-	return nil
+	return readConnectResponse(conn)
 }
 
 // dialViaExit opens the target through a fixed exit proxy, reaching that exit through any of the
@@ -1062,11 +1116,80 @@ func connectThrough(conn net.Conn, scheme, host string, port int, userinfo, ua s
 // Measured before building it: dialling 182.18.83.37:7890 and asking it to reach
 // 47.91.110.148:1000, then asking that one for api.ipify.org, returns 47.91.110.148 — exactly
 // what the exit reports on its own.
-func (p *ProxyServer) dialViaExit(ctx context.Context, exit *url.URL, dest string, timeout time.Duration) (net.Conn, *url.URL, error) {
-	exitHost := exit.Hostname()
+// hopProbe is what the background index knows about one hop -> exit pair.
+type hopProbe struct {
+	ok      bool
+	latency time.Duration
+	checked time.Time
+}
+
+const (
+	hopIndexEvery = 10 * time.Second
+	warmTTL       = 15 * time.Second
+	warmPerDest   = 2
+	warmMaxDests  = 6
+)
+
+// rememberDest keeps the small set of destinations worth warming.
+func (p *ProxyServer) rememberDest(dest string) {
+	p.destMu.Lock()
+	defer p.destMu.Unlock()
+	for _, d := range p.dests {
+		if d == dest {
+			return
+		}
+	}
+	if len(p.dests) >= warmMaxDests {
+		p.dests = p.dests[1:]
+	}
+	p.dests = append(p.dests, dest)
+}
+
+// The index is built from real dials, never from background probes.
+//
+// It started as a goroutine that tested every hop every ten seconds, which is the obvious design
+// and the wrong one here: a public proxy often allows a single concurrent connection, so a probe
+// competes with the traffic it is supposed to be helping. Measured with the probe running, three
+// requests took 25 s, 25 s and 7 s — against 5.5 s with no index at all. Every dial already
+// reveals whether its hop worked and how fast, so the index is updated from that and costs
+// nothing. First contact with a hop is a guess; every contact after it is informed.
+
+// hopOrder puts hops that are known to reach the exit first, fastest first, then the rest.
+func (p *ProxyServer) hopOrder() []*url.URL {
+	exit := p.exitURL
+	p.hopMu.Lock()
+	defer p.hopMu.Unlock()
+
+	var good, unknown, bad []*url.URL
+	for _, u := range p.upstreams {
+		if u == nil || (exit != nil && u.String() == exit.String()) {
+			continue
+		}
+		pr, seen := p.hopIdx[u.String()]
+		switch {
+		case !seen:
+			unknown = append(unknown, u)
+		case pr.ok:
+			good = append(good, u)
+		default:
+			bad = append(bad, u)
+		}
+	}
+	sort.SliceStable(good, func(i, j int) bool {
+		return p.hopIdx[good[i].String()].latency < p.hopIdx[good[j].String()].latency
+	})
+	// Bad hops are kept last rather than dropped: the index may be stale, and a hop that failed
+	// ten seconds ago can be the only working one now.
+	return append(append(good, unknown...), bad...)
+}
+
+// refillWarm tops the pre-opened tunnels back up for the destinations in use.
+
+// openViaHop performs the two handshakes: hop -> exit, then exit -> target.
+func (p *ProxyServer) openViaHop(hop, exit *url.URL, dest string, timeout time.Duration) (net.Conn, error) {
 	exitPort := 1080
-	if portStr := exit.Port(); portStr != "" {
-		if n, err := strconv.Atoi(portStr); err == nil && n > 0 {
+	if s := exit.Port(); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			exitPort = n
 		}
 	}
@@ -1083,15 +1206,49 @@ func (p *ProxyServer) dialViaExit(ctx context.Context, exit *url.URL, dest strin
 		exitUser = exit.User.String()
 	}
 
-	hops := make([]*url.URL, 0, len(p.upstreams))
-	for _, u := range p.upstreams {
-		if u == nil || u.String() == exit.String() {
-			continue
-		}
-		hops = append(hops, u)
+	exitAddr := net.JoinHostPort(exit.Hostname(), strconv.Itoa(exitPort))
+	started := time.Now()
+	conn, err := p.dialOne(hop, exitAddr, exitAddr, timeout)
+	if err != nil {
+		p.recordHop(hop, false, time.Since(started))
+		return nil, err
 	}
+	if err = connectThrough(conn, exit.Scheme, targetHost, targetPort, exitUser, p.ua); err != nil {
+		conn.Close()
+		p.recordHop(hop, false, time.Since(started))
+		return nil, err
+	}
+	p.recordHop(hop, true, time.Since(started))
+	return conn, nil
+}
+
+// recordHop notes what a real dial taught us about this hop.
+func (p *ProxyServer) recordHop(hop *url.URL, ok bool, took time.Duration) {
+	if hop == nil {
+		return
+	}
+	p.hopMu.Lock()
+	if p.hopIdx == nil {
+		p.hopIdx = map[string]hopProbe{}
+	}
+	p.hopIdx[hop.String()] = hopProbe{ok: ok, latency: took, checked: time.Now()}
+	p.hopMu.Unlock()
+}
+
+// takeWarm hands out a pre-opened tunnel for dest, if one is standing by.
+
+func (p *ProxyServer) dialViaExit(ctx context.Context, exit *url.URL, dest string, timeout time.Duration) (net.Conn, *url.URL, error) {
+	p.rememberDest(dest)
+
+	// The index decides the order; a short race settles it.
+	//
+	// There used to be a warm pool here, pre-opening hop->exit->target tunnels so a new
+	// connection would cost nothing. It made everything slower: public proxies allow one or two
+	// concurrent connections, so tunnels that nobody consumed took the slots the real requests
+	// needed. Measured cold 20 s, then 6/15/16 s with the pool running, against 5.5 s without.
+	// Prefetching only pays when the far end allows many connections.
+	hops := p.hopOrder()
 	if len(hops) == 0 {
-		// Nothing to hop through: use the exit directly, which is the old behaviour.
 		conn, err := p.dialOne(exit, dest, dest, timeout)
 		if err != nil {
 			return nil, nil, err
@@ -1099,26 +1256,21 @@ func (p *ProxyServer) dialViaExit(ctx context.Context, exit *url.URL, dest strin
 		return conn, exit, nil
 	}
 
+	// Race a few, not all: the index already put the likely winners in front, and a race across
+	// twenty hops would open twenty tunnels to the same exit.
+	if len(hops) > 4 {
+		hops = hops[:4]
+	}
+
 	type result struct {
 		conn net.Conn
-		hop  *url.URL
 		err  error
 	}
 	results := make(chan result, len(hops))
-	exitAddr := net.JoinHostPort(exitHost, strconv.Itoa(exitPort))
 	for _, hop := range hops {
 		go func(hop *url.URL) {
-			conn, err := p.dialOne(hop, exitAddr, exitAddr, timeout)
-			if err != nil {
-				results <- result{err: err}
-				return
-			}
-			if err = connectThrough(conn, exit.Scheme, targetHost, targetPort, exitUser, p.ua); err != nil {
-				conn.Close()
-				results <- result{err: err}
-				return
-			}
-			results <- result{conn: conn, hop: hop}
+			conn, err := p.openViaHop(hop, exit, dest, timeout)
+			results <- result{conn: conn, err: err}
 		}(hop)
 	}
 
@@ -1167,16 +1319,12 @@ func (p *ProxyServer) dialUpstreamHttp(u *url.URL, dest string, timeout time.Dur
 		conn.Close()
 		return nil, err
 	}
-	br := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
-	if err != nil {
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if err := readConnectResponse(conn); err != nil {
 		conn.Close()
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		conn.Close()
-		return nil, fmt.Errorf("proxy answered %s", resp.Status)
-	}
+	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }
 
@@ -3708,8 +3856,16 @@ func main() {
 	// readiness probe succeeds and no in-process fallback is started; every dial is
 	// still refused while the upstream is down, so nothing can leak; and the
 	// instance starts working by itself the moment WARP returns.
-	if *upstream != "" {
-		if u, err := url.Parse(*upstream); err == nil {
+	// With a fixed exit the chain decides reachability per dial, so this single-upstream gate
+	// must not run: `-upstream` is a comma-separated hop list now, url.Parse on the whole string
+	// fails, and the relay would mark itself unreachable at boot and refuse every dial — which
+	// is a black screen with no explanation anywhere except this log.
+	if *upstream != "" && strings.TrimSpace(*exitProxy) == "" {
+		firstUpstream := *upstream
+		if i := strings.Index(firstUpstream, ","); i >= 0 {
+			firstUpstream = firstUpstream[:i]
+		}
+		if u, err := url.Parse(strings.TrimSpace(firstUpstream)); err == nil {
 			if ok, dialErr := upstreamReachable(u, 1500*time.Millisecond); ok {
 				upstreamHealthy.Store(true)
 				log.Printf("[UPSTREAM] %s reachable", *upstream)
