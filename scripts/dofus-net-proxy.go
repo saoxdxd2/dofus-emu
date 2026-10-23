@@ -1056,6 +1056,30 @@ func (p *ProxyServer) dialOne(u *url.URL, dest, socksTarget string, timeout time
 	return p.dialUpstreamHttp(u, dest, timeout)
 }
 
+// isGameDestination reports whether a dial target belongs to the game.
+//
+// Only these may move the pinned egress. The relay is the WebView2's proxy for everything, and
+// Windows components inside it reach out on their own — measured: a request to
+// config.edge.skype.com moved the exit to the tunnel, and the game's next connection inherited a
+// new address and was closed as a hijacked session. Background telemetry must not be able to
+// change which address Ankama sees.
+func isGameDestination(dest string) bool {
+	host := dest
+	if h, _, err := net.SplitHostPort(dest); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "dofus.local" || host == "dofus.localhost" {
+		return true
+	}
+	for _, suffix := range []string{".ankama.com", ".ankama-games.com", ".dofus-touch.com"} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest, socksTarget string, timeout time.Duration) (net.Conn, *url.URL, error) {
 	if len(order) == 0 {
 		return nil, nil, fmt.Errorf("no upstream configured")
@@ -1071,6 +1095,11 @@ func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest,
 		return nil, nil, cmp.Or(err, fmt.Errorf("no upstream configured"))
 	}
 	winner := order[idx]
+	if !isGameDestination(dest) {
+		// Answered through whichever upstream won, but the pinned egress is untouched: this is
+		// the browser's own background traffic, not the game.
+		return conn, winner, nil
+	}
 	p.upstreamMu.Lock()
 	changed := p.lastGood == nil || p.lastGood.String() != winner.String()
 	p.lastGood = winner
