@@ -483,18 +483,25 @@ namespace DofusFarm.Engine
         /// failed seconds later - the client logged in, then reported that it could not connect
         /// to the server.
         ///
-        /// So the tunnel has to pass twice before it outranks a proxy, and an unproven tunnel
-        /// ranks below an unproven proxy. A candidate that keeps working beats one that looked
-        /// good once, which is the only ordering that survives a flaky line.
+        /// The tunnel now ranks below every healthy proxy, proven or not, and that is a
+        /// deliberate reversal of the privacy preference.
+        ///
+        /// Three sessions in a row were closed by the server within seconds of the egress moving
+        /// onto the WARP tunnel, and not one of them involved the AI. WARP's exit is a Cloudflare
+        /// address (measured: 104.28.220.131, stable across probes), and a shared, well-known VPN
+        /// range is exactly what a game server is entitled to refuse. A stable address that gets
+        /// you disconnected is worse than a rotating one that does not.
+        ///
+        /// The tunnel is still the last resort: it beats having no egress at all.
         /// </summary>
         private static int RankOf(ProxyCandidate c)
         {
             bool proven = c.HealthyStreak >= 2;
             bool tunnel = c.Source == "wireguard tunnel";
-            if (proven && tunnel) return 3;      // steady tunnel: best, nobody sees the traffic
-            if (proven) return 2;                // steady proxy
-            if (tunnel) return 0;                // answered once: on a blocked line, usually a fluke
-            return 1;                            // unproven proxy, but not known to be flapping
+            if (proven && !tunnel) return 3;     // steady proxy: the address Ankama accepts
+            if (!proven && !tunnel) return 2;    // unproven proxy, still a better bet than WARP
+            if (proven && tunnel) return 1;      // steady tunnel, but see below
+            return 0;                            // unproven tunnel
         }
 
         /// <summary>
