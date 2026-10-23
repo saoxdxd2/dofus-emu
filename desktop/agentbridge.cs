@@ -214,8 +214,29 @@ namespace DofusFarm.Engine
                 WebView2ClientForm form = _backend != null ? _backend.GetForm(target) : null;
                 if (form == null || form.IsDisposed)
                 {
-                    WriteResponse(stream, 200, FailureJson(id, "instance '" + target + "' is not an active client window"));
-                    return;
+                    // The caller's idea of the instance name can be stale — a slot was
+                    // restarted, or the panel remembers "dofus-05" while the only window
+                    // open is "dofus-01". Refusing outright made that look like the
+                    // client was down. If exactly one window is active, it is
+                    // unambiguous which one was meant.
+                    string fallback = FirstActiveInstance();
+                    WebView2ClientForm alt = (fallback != null && _backend != null)
+                        ? _backend.GetForm(fallback) : null;
+                    if (alt != null && !alt.IsDisposed)
+                    {
+                        Log("[AGENT] '" + target + "' is not active; using '" + fallback + "'");
+                        form = alt;
+                        target = fallback;
+                    }
+                    else
+                    {
+                        WriteResponse(stream, 200, FailureJson(id,
+                            "instance '" + target + "' is not an active client window"
+                            + (string.IsNullOrEmpty(fallback)
+                               ? " (no client window is open - launch an instance in DofusFarm)"
+                               : " (active: " + fallback + ")")));
+                        return;
+                    }
                 }
 
                 string label = string.IsNullOrEmpty(tool) ? directive : tool;

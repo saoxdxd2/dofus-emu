@@ -207,7 +207,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--recorder-dir", type=Path,
                         default=REPO_ROOT / "trajectories")
     parser.add_argument("--sentinel-url", default="http://127.0.0.1:8890")
-    parser.add_argument("--directive-url", default="http://127.0.0.1:8893/directive")
+    parser.add_argument("--directive-url", default=None,
+                        help="default: the port the app published to bridge_port.txt")
     parser.add_argument("--policy", choices=["rule", "thx"], default="rule",
                         help="decision policy: rule baseline or THX-01 (loads lazily)")
     parser.add_argument("--thx-model", default=None,

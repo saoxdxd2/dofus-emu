@@ -856,7 +856,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="character level, for the planner's curriculum")
     parser.add_argument("--model-dir", default=str(REPO_ROOT / "models" / "encoder30_v15"))
     parser.add_argument("--instance", default="default")
-    parser.add_argument("--directive-url", default="http://127.0.0.1:8893/directive")
+    parser.add_argument("--directive-url", default=None,
+                        help="default: the port the app published to bridge_port.txt")
     parser.add_argument("--log", default=str(DEFAULT_LOG))
     parser.add_argument("--stop-file", default=str(DEFAULT_STOP))
     parser.add_argument("--explore", type=float, default=0.0,

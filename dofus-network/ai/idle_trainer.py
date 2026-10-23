@@ -32,6 +32,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent.bridge import base_url as bridge_base_url  # noqa: E402
+
 STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "DofusFarm"
 LOCK = STATE_DIR / "autopilot.lock"
 LOG = STATE_DIR / "idle_trainer.log"
@@ -60,7 +62,7 @@ def busy_reason() -> Optional[str]:
     # A live bridge means the client is open and someone is playing.
     try:
         import urllib.request
-        urllib.request.urlopen("http://127.0.0.1:8893/", timeout=0.8)
+        urllib.request.urlopen(bridge_base_url(), timeout=0.8)
         return "the client bridge is answering"
     except Exception:  # noqa: BLE001
         return None
