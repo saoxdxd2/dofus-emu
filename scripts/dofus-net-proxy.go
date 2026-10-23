@@ -611,6 +611,9 @@ type ProxyServer struct {
 	// that is refreshed continuously rather than paid for on every dial.
 	hopMu  sync.Mutex
 	hopIdx map[string]hopProbe
+	// Where the index lives between runs, and whether it has changed since the last save.
+	hopIdxPath string
+	hopDirty   bool
 
 	destMu sync.Mutex
 	dests  []string
@@ -1222,6 +1225,90 @@ func (p *ProxyServer) openViaHop(hop, exit *url.URL, dest string, timeout time.D
 	return conn, nil
 }
 
+// hopIndexPath is where the index is kept. A relay is started per instance and restarted often,
+// so an index that dies with the process would leave every start as blind as the first one.
+func hopIndexPath(cacheDir string) string {
+	if cacheDir == "" {
+		return ""
+	}
+	return filepath.Join(cacheDir, "hop_index.json")
+}
+
+// loadHopIndex reads the previous run's measurements.
+//
+// This is the difference between a cold start and a warm one: the first dial after a restart
+// already knows which hops reached the exit last time, so it does not have to discover that by
+// failing. Entries are kept even when they are old — an older measurement is better than none,
+// and every real dial overwrites it.
+func (p *ProxyServer) loadHopIndex() {
+	if p.hopIdxPath == "" {
+		return
+	}
+	raw, err := os.ReadFile(p.hopIdxPath)
+	if err != nil {
+		return
+	}
+	var stored map[string]struct {
+		Ok      bool  `json:"ok"`
+		Latency int64 `json:"latency_ms"`
+		At      int64 `json:"at"`
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return
+	}
+	p.hopMu.Lock()
+	defer p.hopMu.Unlock()
+	if p.hopIdx == nil {
+		p.hopIdx = map[string]hopProbe{}
+	}
+	for key, v := range stored {
+		p.hopIdx[key] = hopProbe{
+			ok:      v.Ok,
+			latency: time.Duration(v.Latency) * time.Millisecond,
+			checked: time.Unix(v.At, 0),
+		}
+	}
+	if len(stored) > 0 {
+		log.Printf("[UPSTREAM] loaded %d hop measurement(s) from %s", len(stored), p.hopIdxPath)
+	}
+}
+
+// saveHopIndex writes the index if anything changed.
+func (p *ProxyServer) saveHopIndex() {
+	if p.hopIdxPath == "" {
+		return
+	}
+	p.hopMu.Lock()
+	if !p.hopDirty || len(p.hopIdx) == 0 {
+		p.hopMu.Unlock()
+		return
+	}
+	out := make(map[string]struct {
+		Ok      bool  `json:"ok"`
+		Latency int64 `json:"latency_ms"`
+		At      int64 `json:"at"`
+	}, len(p.hopIdx))
+	for key, v := range p.hopIdx {
+		out[key] = struct {
+			Ok      bool  `json:"ok"`
+			Latency int64 `json:"latency_ms"`
+			At      int64 `json:"at"`
+		}{Ok: v.ok, Latency: v.latency.Milliseconds(), At: v.checked.Unix()}
+	}
+	p.hopDirty = false
+	p.hopMu.Unlock()
+
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	tmp := p.hopIdxPath + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, p.hopIdxPath)
+}
+
 // recordHop notes what a real dial taught us about this hop.
 func (p *ProxyServer) recordHop(hop *url.URL, ok bool, took time.Duration) {
 	if hop == nil {
@@ -1232,6 +1319,7 @@ func (p *ProxyServer) recordHop(hop *url.URL, ok bool, took time.Duration) {
 		p.hopIdx = map[string]hopProbe{}
 	}
 	p.hopIdx[hop.String()] = hopProbe{ok: ok, latency: took, checked: time.Now()}
+	p.hopDirty = true
 	p.hopMu.Unlock()
 }
 
@@ -1361,8 +1449,12 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 	// Fast path: the exit we are already using. One dial, no goroutines, and the same source
 	// address the session has been using.
 	if preferred != nil {
+		started := time.Now()
 		if conn, err := p.dialOne(preferred, dest, socksTarget, timeout); err == nil {
+			p.recordHop(preferred, true, time.Since(started))
 			return conn, preferred, nil
+		} else {
+			p.recordHop(preferred, false, time.Since(started))
 		}
 	}
 
@@ -1405,12 +1497,14 @@ func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest,
 		conn net.Conn
 		url  *url.URL
 		err  error
+		took time.Duration
 	}
 	results := make(chan result, len(order))
 	for _, u := range order {
 		go func(u *url.URL) {
+			started := time.Now()
 			conn, err := p.dialOne(u, dest, socksTarget, timeout)
-			results <- result{conn: conn, url: u, err: err}
+			results <- result{conn: conn, url: u, err: err, took: time.Since(started)}
 		}(u)
 	}
 
@@ -1418,6 +1512,7 @@ func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest,
 	for i := 0; i < len(order); i++ {
 		r := <-results
 		if r.err == nil {
+			p.recordHop(r.url, true, r.took)
 			// Drain the stragglers in the background so their sockets are closed.
 			go func(remaining int) {
 				for j := 0; j < remaining; j++ {
@@ -1435,6 +1530,9 @@ func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest,
 				log.Printf("[UPSTREAM] carrying %s over %s (exit changed)", dest, r.url.Redacted())
 			}
 			return r.conn, r.url, nil
+		}
+		if r.url != nil {
+			p.recordHop(r.url, false, r.took)
 		}
 		lastErr = r.err
 	}
@@ -3881,6 +3979,17 @@ func main() {
 		}
 	}
 	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, *token, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize, *referer)
+	// The hop index is loaded before the first request, so a restart does not start blind.
+	proxy.hopIdxPath = hopIndexPath(*cacheDir)
+	proxy.loadHopIndex()
+	go func() {
+		for {
+			time.Sleep(10 * time.Second)
+			proxy.saveHopIndex()
+		}
+	}()
+	defer proxy.saveHopIndex()
+
 	if trimmed := strings.TrimSpace(*exitProxy); trimmed != "" {
 		proxy.exitURL = parseUpstreamProxy(trimmed)
 		if proxy.exitURL == nil {
