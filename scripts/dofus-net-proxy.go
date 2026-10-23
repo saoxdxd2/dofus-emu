@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"regexp"
 	"sort"
 	"strconv"
@@ -3957,7 +3958,7 @@ func main() {
 	prefetchNeighbours := flag.Bool("prefetch-neighbours", true, "Warm neighbour map JSONs and tiles into -cache whenever a map is loaded")
 	prefetchRadius := flag.Int("prefetch-radius", 2, "Map graph depth warmed for JSON (1=direct neighbours, 2=neighbours of neighbours)")
 	prefetchTilesDepth := flag.Int("prefetch-tiles-depth", 1, "Graph depth at which map tile images (gfx/world/*) are warmed")
-	prefetchWorkers := flag.Int("prefetch-workers", 5, "Parallel workers for neighbour prefetch")
+	prefetchWorkers := flag.Int("prefetch-workers", 3, "Parallel workers for neighbour prefetch")
 	crawlSpec := flag.String("crawl", "", "Graph crawl seeds: BFS the map neighbour graph from these map IDs, warming JSON (+tiles with -crawl-tiles) into -cache (requires -assets-url)")
 	crawlMax := flag.Int("crawl-max", 0, "Stop the crawl after this many maps (0 = unlimited)")
 	crawlRate := flag.Float64("crawl-rate", 3, "Max upstream CDN requests per second during the crawl")
@@ -4051,6 +4052,16 @@ func main() {
 		}
 	}()
 	defer proxy.saveHopIndex()
+
+	// Bound the heap instead of letting it grow between collections.
+	//
+	// The relay caches static assets and prefetches neighbours, so the live heap is mostly
+	// reachable data and the default collector happily doubles it before running. That is the
+	// spike: a soft memory limit makes the collector work earlier as the heap approaches it, and
+	// a lower GOGC keeps the steady state tighter. The cost is a little more CPU, which this
+	// process has spare.
+	debug.SetGCPercent(50)
+	debug.SetMemoryLimit(384 << 20)
 
 	if trimmed := strings.TrimSpace(*exitProxy); trimmed != "" {
 		proxy.exitURL = parseUpstreamProxy(trimmed)

@@ -258,8 +258,18 @@ class Autopilot:
         nothing ever changed — so a genuinely inert call is still scored `noop`, just
         after the wait rather than before it.
         """
-        if self.settle_s <= 0 or not isinstance(before, dict):
+        if self.settle_s <= 0:
             return after
+        if not isinstance(before, dict):
+            # No baseline yet, which is the first step of every run.
+            #
+            # Returning here meant the very first action was always judged against nothing and
+            # scored `noop` — and the live log shows exactly that: `quest.advance ok noop 103ms`,
+            # a walk that had barely started. Take a baseline now and give the action its window
+            # like any other step.
+            before = after if isinstance(after, dict) else None
+            if before is None:
+                return after
         deadline = time.monotonic() + self.settle_s
         best = after
         while time.monotonic() < deadline:
