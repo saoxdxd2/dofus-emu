@@ -34,24 +34,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ROOT = REPO_ROOT.parent
 POOL = ROOT / "proxies.txt"
 ARTIFACTS = REPO_ROOT / "networkhealth_artifacts"
-# Two checkpoints, and they are not interchangeable.
-#
-#   local_model/model.pt  trained on this machine at 0.5 s cadence, validated on held-out
-#                         hosts: RTT log-MAE 0.1464 at h1. Measured on a live 0.5 s series it
-#                         predicted 56.3 ms for a 63.3 ms link.
-#   model.pt              trained on RIPE Atlas at ~60 s cadence. Same live series: 1.2 ms
-#                         for a 65.9 ms link, because `log_gap_seconds` is a feature and a
-#                         half-second series is out of its distribution.
-#
-# So the local one is the default when it exists, and the global one is the fallback. If only
-# the fallback is present the tool still runs — it just says the forecast is out of cadence.
-LOCAL_CHECKPOINT = ARTIFACTS / "local_model" / "model.pt"
-GLOBAL_CHECKPOINT = ARTIFACTS / "model.pt"
-CHECKPOINT = LOCAL_CHECKPOINT if LOCAL_CHECKPOINT.exists() else GLOBAL_CHECKPOINT
+
+# Which checkpoint, and why it matters: see networkhealth.inference.resolve_checkpoint. The
+# short version is that the local one is trained at this tool's cadence and the RIPE one is not,
+# so the choice is not a preference.
 
 sys.path.insert(0, str(REPO_ROOT))
 
 import re  # noqa: E402
+
+# The path insert has to come first: without it this is ModuleNotFoundError, not a slow import.
+from networkhealth.inference import resolve_checkpoint  # noqa: E402
+
+CHECKPOINT, CHECKPOINT_KIND, CHECKPOINT_NOTE = resolve_checkpoint(ARTIFACTS)
 
 
 def parse(entry: str):
@@ -143,11 +138,12 @@ def main(argv=None) -> int:
         print("proxies.txt has no entries. Run: manage-proxy.bat refresh")
         return 1
     checkpoint = Path(args.checkpoint) if args.checkpoint else CHECKPOINT
+    kind = "local" if args.checkpoint else CHECKPOINT_KIND
     if not checkpoint.exists():
         print("no model at %s" % checkpoint)
         print("build one: python ai/collect_local.py, then networkhealth prepare/train")
         return 2
-    if checkpoint == GLOBAL_CHECKPOINT:
+    if kind != "local":
         print("note: using the global-cadence checkpoint (RIPE, ~60 s spacing). These pings")
         print("      are %.1fs apart, so its forecast is out of distribution — ranking below" % args.interval)
         print("      is measurement-only. Collect local data to fix this: ai/collect_local.py")
@@ -221,7 +217,7 @@ def main(argv=None) -> int:
     if not scored:
         print("  no proxy produced a full window of measurements, so there is nothing to rank")
         return 1
-    if checkpoint == GLOBAL_CHECKPOINT:
+    if kind != "local":
         print("\nThis used the global checkpoint, trained on ~60s-spaced probes, and these pings")
         print("are %.1fs apart — its degradation column is out of distribution. Run" % args.interval)
         print("ai/collect_local.py to build a model at the cadence you actually use.")

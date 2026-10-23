@@ -457,15 +457,25 @@ namespace DofusBuild
                     }
 
                     // The artifacts folder is excluded above (100 MB of corpora), but the
-                    // checkpoint is 223 KB and is the only file inference needs. Without it
-                    // an installed copy has the model's code and no model, so
-                    // ai/diagnose_network.py can only report telemetry.
-                    string modelSrc = Path.Combine(repoNetwork, "networkhealth_artifacts", "model.pt");
-                    if (File.Exists(modelSrc))
+                    // checkpoints are ~220 KB each and are the only files inference needs.
+                    // Both ship: model.pt is the RIPE one (60 s cadence, the fallback) and
+                    // local_model/model.pt is trained on this machine at 0.5 s, which is what
+                    // every tool here actually samples at. Shipping only the first is why an
+                    // installed copy would quote a forecast from the wrong distribution.
+                    string artifacts = Path.Combine(repoNetwork, "networkhealth_artifacts");
+                    string modelDst = Path.Combine(stageNetwork, "networkhealth_artifacts");
+                    string globalModel = Path.Combine(artifacts, "model.pt");
+                    if (File.Exists(globalModel))
                     {
-                        string modelDst = Path.Combine(stageNetwork, "networkhealth_artifacts");
                         Directory.CreateDirectory(modelDst);
-                        File.Copy(modelSrc, Path.Combine(modelDst, "model.pt"), true);
+                        File.Copy(globalModel, Path.Combine(modelDst, "model.pt"), true);
+                    }
+                    string localModel = Path.Combine(artifacts, "local_model", "model.pt");
+                    if (File.Exists(localModel))
+                    {
+                        string localDst = Path.Combine(modelDst, "local_model");
+                        Directory.CreateDirectory(localDst);
+                        File.Copy(localModel, Path.Combine(localDst, "model.pt"), true);
                     }
                 }
 

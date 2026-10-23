@@ -213,6 +213,60 @@ proxy writes, no hosts edits. If a future change widens that box, the suite fail
 
 
 
+## 6. The network-health model, end to end
+
+Four links, and each one has been broken at least once. Run them in order; the last two are
+only needed when the corpus changes.
+
+```bash
+cd dofus-network
+
+# 1. collect at the cadence the tools use (0.5 s). --relay also samples a running relay.
+python ai/collect_local.py --minutes 20 --interval 0.5
+python ai/collect_local.py --minutes 15 --timeout 1.5 \
+  --targets "192.0.2.1:443,203.0.113.1:443,8.8.8.8:1,9.9.9.9:1"   # unreachable hosts, so the
+                                                                   # loss head sees a positive
+
+# 2. build windows, keeping them away from the public-probe features
+python -c "import sys;sys.path.insert(0,'.');from networkhealth.cli import main;
+main(['prepare','--input','networkhealth_artifacts/local_all.jsonl','--seq-len','32',
+      '--out','networkhealth_artifacts/local_features.npz'])"
+
+# 3. train. A 12-minute corpus is 11k windows and takes ~2 min on this CPU; the defaults are
+#    tuned for a 7-day corpus, so the time split must be replaced by a series split.
+python -c "import sys;sys.path.insert(0,'.');from networkhealth.cli import main;
+main(['train','--input','networkhealth_artifacts/local_features.npz','--epochs','30',
+      '--split-mode','series','--purge-seconds','0','--gap-seconds','0',
+      '--out-dir','networkhealth_artifacts/local_model'])"
+
+# 4. use it
+python ai/score_proxies.py            # ranks the pool; prefers the local checkpoint
+python ai/diagnose_network.py         # relay telemetry, same resolver
+```
+
+**Which checkpoint is used is not a preference.** `resolve_checkpoint()` picks
+`local_model/model.pt` when it exists, because that is trained at the cadence these tools
+sample at. Measured on the same live 0.5 s series against 8.8.8.8:
+
+| checkpoint | cadence | forecast | actual |
+|---|---|---|---|
+| `local_model/model.pt` | 0.5 s | **56.3 ms** | 63.3 ms |
+| `model.pt` (RIPE) | ~60 s | 1.2 ms | 65.9 ms |
+
+The RIPE one is kept as a fallback and the tools say when they are using it. `smoke_verifier.py`
+checks all four links, so a checkpoint that stops loading, a tool that hardcodes a path, or a
+resolver that picks the wrong one fails the suite rather than a run.
+
+Kaggle, when the corpus is big enough to want a GPU:
+
+```bash
+# dataset: package + features.npz. Stage it, then upload from inside the folder —
+# kaggle-cli 2.2.4 mangles absolute Windows paths.
+kaggle datasets create -p . -r zip
+kaggle kernels push -p kaggle/networkhealth     # T4, ~4 min for 153k windows
+kaggle kernels output tajdinenizar/thx-03-network-health-retrain -p <dir>
+```
+
 ## What changed today, and why each one mattered
 
 | fix | symptom it removes |

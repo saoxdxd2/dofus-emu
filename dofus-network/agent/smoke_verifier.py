@@ -629,6 +629,53 @@ def test_a_dead_connection_stops_the_loop() -> None:
           "%d step(s) before it stopped" % seen["n"])
 
 
+def test_the_model_chain_is_wired() -> None:
+    """The network-health model has to be reachable from the tools that quote it.
+
+    This chain has four links and each one has been broken at least once today: a checkpoint
+    that predated the architecture, a cadence mismatch between the training corpus and the
+    sampling tools, a tool that hardcoded the wrong checkpoint, and a payload that shipped the
+    code without the model. A check per link is cheaper than rediscovering them.
+    """
+    print("\n== the model chain ==")
+    try:
+        from networkhealth.inference import resolve_checkpoint
+    except Exception as exc:  # noqa: BLE001
+        check("the resolver imports", False, str(exc))
+        return
+
+    path, kind, note = resolve_checkpoint()
+    check("a checkpoint resolves", kind in ("local", "global"), "%s: %s" % (kind, note))
+    if kind == "missing":
+        return
+
+    check("the resolver prefers the local-cadence model when it exists",
+          kind == "local" or not (REPO_ROOT / "networkhealth_artifacts" / "local_model" / "model.pt").exists(),
+          "kind=%s" % kind)
+
+    # It must actually load against the current code — the original defect.
+    try:
+        from networkhealth.inference import NetworkHealthInference
+        engine = NetworkHealthInference(path)
+        check("the resolved checkpoint loads against the current architecture", True,
+              "%s, %d-step window" % (path.name, engine.window.seq_len))
+    except Exception as exc:  # noqa: BLE001
+        check("the resolved checkpoint loads against the current architecture", False,
+              str(exc).split("\n")[0][:90])
+
+    # And the tools that quote a forecast must use the resolver, not a hardcoded path.
+    hardcoded = []
+    for name in ("diagnose_network.py", "score_proxies.py"):
+        source = (REPO_ROOT / "ai" / name)
+        if not source.exists():
+            continue
+        text = source.read_text(encoding="utf-8")
+        if "resolve_checkpoint" not in text:
+            hardcoded.append(name)
+    check("both inference tools resolve the checkpoint instead of hardcoding it",
+          not hardcoded, ", ".join(hardcoded) if hardcoded else "diagnose_network, score_proxies")
+
+
 def test_the_emulator_stays_inside_its_box() -> None:
     """Nothing here may change the user's system networking.
 
@@ -1357,6 +1404,7 @@ def main() -> int:
     test_the_planner_can_call_what_it_plans()
     test_the_planner_can_see_the_world()
     test_the_emulator_stays_inside_its_box()
+    test_the_model_chain_is_wired()
     test_a_walk_gets_time_to_land()
     test_a_dead_connection_stops_the_loop()
     test_layering_holds()

@@ -35,7 +35,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 ARTIFACTS = REPO_ROOT / "networkhealth_artifacts"
-CHECKPOINT = ARTIFACTS / "model.pt"
+# Which checkpoint: see networkhealth.inference.resolve_checkpoint. This tool samples at 0.5 s,
+# which is the local cadence, so it should not be quoting the RIPE model's forecast.
+from networkhealth.inference import resolve_checkpoint  # noqa: E402
+
+CHECKPOINT, _CK_KIND, _CK_NOTE = resolve_checkpoint(ARTIFACTS)
 
 # Loopback must never go through HTTP_PROXY.
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -85,7 +89,10 @@ def main(argv=None) -> int:
 
     if not CHECKPOINT.exists():
         print("no model at %s" % CHECKPOINT)
+        print("build one: ai/collect_local.py, then networkhealth prepare/train")
         return 2
+    if _CK_KIND != "local":
+        print("model: the global checkpoint (%s)" % _CK_NOTE)
 
     ports = ([int(p) for p in args.ports.split(",") if p.strip()]
              if args.ports else list(range(8880, 8900)))
