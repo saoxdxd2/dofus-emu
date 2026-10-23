@@ -352,6 +352,39 @@ def test_exploration_is_opt_in() -> None:
           "%s" % sorted({(x.action, x.explored) for x in structural}))
 
 
+def test_session_log_becomes_a_dataset() -> None:
+    """The live session is the only remaining source of this decision.
+
+    A log that cannot be turned into (state, action, reward) is a transcript, not
+    data. This checks the conversion without needing the client, so a session that
+    runs overnight does not turn out to be unreadable in the morning.
+    """
+    print("\n== session log -> dataset ==")
+    from ai.export_decision_log import build
+
+    obs = {"level": 60, "map_id": 123, "inventory": {"1": 2},
+           "quests_active": {"5": 0}, "inventory_capacity": 40,
+           "current_objective": {"quest_id": 5, "type_id": 1, "map_id": 123}}
+    rows = []
+    for i in range(8):
+        rows.append({"kind": "decision", "action": ["continue", "retry", "recover",
+                                                    "replan"][i % 4],
+                     "cause": "plan_wrong", "explored": i % 2 == 0,
+                     "tool": "farm.start", "error": "timed out", "obs": obs})
+        rows.append({"tool": "farm.start", "ok": i % 2 == 0, "error": None})
+
+    dataset, stats = build(rows)
+    check("every decision row becomes a sample", len(dataset) == 8, "%d" % len(dataset))
+    check("the reward is the next step's outcome",
+          sum(r["reward"] for r in dataset) == 4,
+          "%d of 8" % sum(r["reward"] for r in dataset))
+    check("coverage is counted per cause and action", len(stats["cells"]) == 4,
+          "%d cells" % len(stats["cells"]))
+    check("the observation's own fields are detected, not assumed",
+          stats["fields_seen"].get("current_objective") == 8,
+          str(stats["fields_seen"]))
+
+
 def test_structural_failures_are_not_retried() -> None:
     """Real data: 9 of 15 client failures were 'no active client', 0/9 retries worked."""
     print("\n== error taxonomy ==")
@@ -589,6 +622,7 @@ def main() -> int:
     test_onnx_head()
     test_step_summary()
     test_exploration_is_opt_in()
+    test_session_log_becomes_a_dataset()
     test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()
     test_knowledge_store()

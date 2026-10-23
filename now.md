@@ -277,6 +277,10 @@ worked) and marks the decision `explored: true` so the dataset can tell.
 ```bash
 python agent/autopilot.py --goal "farm" --steps 30 --explore 0.3
 python ai/reality_check.py
+
+# after a session: is it learnable, and turn the log into a dataset
+python ai/export_decision_log.py --selftest          # no client needed
+python ai/export_decision_log.py --log "%LOCALAPPDATA%\DofusFarm\autopilot.jsonl"
 ```
 
 **Done when:** ≥30 genuine (non-structural) failures *and* at least two of the four
@@ -326,6 +330,11 @@ dofus-network/
     train_planner_student.py  the old 5-tool student (superseded)
     self_improve.py      resume → train N seconds → score acc & ECE → keep best
     reality_check.py     real failures → can they rank recovery strategies?
+    export_decision_log.py  session log → (state, action, reward) + a coverage
+                         verdict: it refuses to call a cause learnable below 8
+                         samples per action
+    train_decision.py    the repair model; ships only if regret beats every constant
+    eval_travel.py       teacher vs model in the priced world, N seeds
   kaggle/
     toolkit/             the simulator + KB, shipped as a private dataset
     tool/                the kernel that generates a corpus then trains on it

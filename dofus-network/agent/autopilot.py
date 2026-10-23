@@ -176,6 +176,36 @@ class Autopilot:
         except OSError:
             pass  # a full disk must not stop the bot from stopping cleanly
 
+    def _emit_decision(self, decision: Decision, call: ToolCall, result: Any,
+                       obs: Optional[Dict[str, Any]]) -> None:
+        """Log the repair decision next to the step that provoked it.
+
+        A decision is not recoverable from the steps: a retry and a continue both end
+        in a tool call, so the old log could only guess the action from the tool name.
+        Guessing is how the first reality check ended up ranking strategies it had
+        inferred rather than observed. One extra line per decision removes the guess
+        and makes the log a bandit dataset (state, action, reward) instead of a
+        transcript.
+        """
+        try:
+            with self.log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "kind": "decision",
+                    "session": self.session,
+                    "goal": None,
+                    "action": decision.action,
+                    "cause": decision.cause,
+                    "explored": bool(decision.explored),
+                    "confidence": decision.confidence,
+                    "tool": call.tool,
+                    "ok": bool(getattr(result, "ok", False)),
+                    "error": getattr(result, "error", None),
+                    "obs": obs if isinstance(obs, dict) else {},
+                    "at": time.time(),
+                }, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
     def _should_stop(self) -> Optional[str]:
         """A pre-existing stop file is reported explicitly.
 
@@ -439,6 +469,7 @@ class Autopilot:
                                                    before, after)
                 self._pending = decision
                 self.controller.save()
+                self._emit_decision(decision, call, result, after)
 
                 outcome = self._apply_decision(decision, goal, call)
                 if outcome == "abort":

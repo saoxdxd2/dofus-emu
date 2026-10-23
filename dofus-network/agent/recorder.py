@@ -195,6 +195,44 @@ class TrajectoryRecorder:
             "result": result,
         })
 
+    def decision(
+        self,
+        action: str,
+        cause: str,
+        reason: str,
+        tool: Optional[str] = None,
+        error: Optional[str] = None,
+        explored: bool = False,
+        confidence: float = 0.5,
+        goal: Optional[str] = None,
+        observation: Optional[Dict[str, Any]] = None,
+        observation_age_ms: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Append the repair decision that was taken, not just the call it produced.
+
+        Without this the log cannot answer "which repair did the agent choose here" —
+        a retry and a continue both end in a tool call, so the action is not
+        recoverable from the steps. That made the first reality check possible only by
+        guessing from tool names, and it would have made a bandit dataset impossible.
+
+        ``explored`` marks decisions taken to gather data rather than because the rule
+        said so. Keeping them distinguishable is what lets a learner correct for the
+        exploration instead of being quietly biased by it.
+        """
+        return self.log("decision", {
+            "goal": goal,
+            "action": action,
+            "cause": cause,
+            "reason": reason,
+            "tool": tool,
+            "error": error,
+            "explored": bool(explored),
+            "confidence": float(confidence),
+            "observation": observation,
+            "observation_age_ms": (round(observation_age_ms, 1)
+                                   if observation_age_ms is not None else None),
+        })
+
     def stats(self) -> Dict[str, Any]:
         return {
             "file": str(self.path),

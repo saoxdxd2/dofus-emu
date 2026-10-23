@@ -37,6 +37,7 @@ MIN_SAMPLES = 30
 
 
 def read_steps(path: Path) -> List[Dict[str, Any]]:
+    """Step rows only. The same file now also carries `kind: decision` rows."""
     if not path.exists():
         return []
     rows = []
@@ -45,9 +46,12 @@ def read_steps(path: Path) -> List[Dict[str, Any]]:
             line = line.strip()
             if line:
                 try:
-                    rows.append(json.loads(line))
+                    row = json.loads(line)
                 except ValueError:
                     continue
+                if row.get("kind") == "decision":
+                    continue          # a decision, not a step; see ai/export_decision_log.py
+                rows.append(row)
     return rows
 
 
