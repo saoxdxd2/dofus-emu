@@ -1716,23 +1716,36 @@
                 // character selection, where every action silently does nothing.
                 snap.in_world = (mapId != null);
                 var stats = (ua && ua.stats) || {};
+                // playerData carries these directly: the probe listed lifePoints,
+                // effectiveMaxLifePoints, actionPoints and movementPoints as keys of
+                // playerData itself, and there is no characteristics object at all.
                 snap.hp = {
-                    life: first([function(){ return stats.lifePoints; },
+                    life: first([function(){ return pd.lifePoints; },
+                                 function(){ return stats.lifePoints; },
                                  function(){ return base.lifePoints; }]),
-                    max: first([function(){ return stats.maxLifePoints; },
+                    max: first([function(){ return pd.effectiveMaxLifePoints; },
+                                function(){ return stats.maxLifePoints; },
                                 function(){ return base.maxLifePoints; }]),
-                    ap: first([function(){ return stats.actionPoints; }]),
-                    mp: first([function(){ return stats.movementPoints; }])
+                    ap: first([function(){ return pd.actionPoints; },
+                               function(){ return stats.actionPoints; }]),
+                    mp: first([function(){ return pd.movementPoints; },
+                               function(){ return stats.movementPoints; }])
                 };
                 snap.in_fight = !!(pd && pd.isFighting);
                 // XP is what makes a farm measurable: it is the only quantity the
                 // client reports on every kill, and a fight that yields 0 xp is a
                 // fight that was lost or abandoned. Read several candidate keys
                 // because the field name differs across client builds.
-                snap.xp = (ch.experience != null ? ch.experience
-                          : (ch.xp != null ? ch.xp
-                          : (ch.experiencePoints != null ? ch.experiencePoints : null)));
-                snap.xp_level = (ch.experienceLevel != null ? ch.experienceLevel : (ch.level != null ? ch.level : null));
+                // `ch` used to be playerData.character, which does not exist. Leaving
+                // the reference in place after switching to characterBaseInformations
+                // threw here — and because the whole body is wrapped in one try/catch,
+                // every field below it (kamas, inventory) silently vanished and the
+                // snapshot came back with an `error` key instead.
+                snap.xp = first([function(){ return base.experience; },
+                                 function(){ return pd.experience; },
+                                 function(){ return base.xp; }]);
+                snap.xp_level = first([function(){ return base.experienceLevel; },
+                                       function(){ return base.level; }]);
                 snap.kamas = (pd && pd.inventory && pd.inventory.kamas != null)
                     ? pd.inventory.kamas : null;
                 if (window.__FarmBot) {
@@ -2391,7 +2404,18 @@
                     'iso.mapData.mapId': val(function(){ return window.isoEngine && window.isoEngine.mapData && window.isoEngine.mapData.mapId; }),
                     'iso.actorManager.playerId': val(function(){ return window.isoEngine && window.isoEngine.actorManager && window.isoEngine.actorManager.playerId; }),
                     'iso.actorManager.playingActorId': val(function(){ return window.isoEngine && window.isoEngine.actorManager && window.isoEngine.actorManager.playingActorId; }),
-                    'gui.playerData.inventory.kamas': val(function(){ return pd && pd.inventory && pd.inventory.kamas; })
+                    'gui.playerData.inventory.kamas': val(function(){ return pd && pd.inventory && pd.inventory.kamas; }),
+                    // The paths the snapshot now reads. Listed here so one probe run
+                    // verifies the reader end to end instead of confirming one field.
+                    'characterBaseInformations.name': val(function(){ return pd && pd.characterBaseInformations && pd.characterBaseInformations.name; }),
+                    'characterBaseInformations.level': val(function(){ return pd && pd.characterBaseInformations && pd.characterBaseInformations.level; }),
+                    'position.mapId': val(function(){ return pd && pd.position && pd.position.mapId; }),
+                    'position.coordinates': val(function(){ return pd && pd.position && pd.position.coordinates ? JSON.stringify(pd.position.coordinates) : null; }),
+                    'lifePoints': val(function(){ return pd && pd.lifePoints; }),
+                    'effectiveMaxLifePoints': val(function(){ return pd && pd.effectiveMaxLifePoints; }),
+                    'actionPoints': val(function(){ return pd && pd.actionPoints; }),
+                    'movementPoints': val(function(){ return pd && pd.movementPoints; }),
+                    'isFighting': val(function(){ return pd && pd.isFighting; })
                 };
                 return _agentResult(true, out);
             },

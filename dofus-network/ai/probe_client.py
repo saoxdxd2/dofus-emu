@@ -71,6 +71,10 @@ def main(argv=None) -> int:
         return 1
     data = result.get("data") or {}
     print("target:", outer.get("target"))
+    if data.get("error"):
+        # A partial snapshot that reports its own failure beats one that silently
+        # returns nulls for everything below the throw.
+        print("CLIENT ERROR:", data["error"])
     print("\ncandidates:")
     for key, value in (data.get("candidates") or {}).items():
         print("  %-34s %s" % (key, value))
