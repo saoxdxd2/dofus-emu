@@ -1271,13 +1271,13 @@
                 var label = document.getElementById('__farmbot_hud_label');
                 if (!hud || !label) return;
                 if (this.enabled) {
-                    label.textContent = 'DofusFarm AI: ON';
+                    label.textContent = 'Farm bot: ON';
                     hud.style.backgroundColor = '#10b981';
                     hud.style.color = '#ffffff';
                     hud.style.border = '1px solid #34d399';
                     hud.style.boxShadow = '0 0 12px rgba(16,185,129,0.7)';
                 } else {
-                    label.textContent = 'DofusFarm AI: OFF';
+                    label.textContent = 'Farm bot: OFF';
                     hud.style.backgroundColor = 'rgba(30, 41, 59, 0.85)';
                     hud.style.color = '#94a3b8';
                     hud.style.border = '1px solid rgba(100, 116, 139, 0.4)';
@@ -1661,6 +1661,12 @@
                     y: pos.y != null ? pos.y : null,
                     map_id: mapId != null ? mapId : null
                 };
+                // Connected is not the same as in-world. The client stays connected at
+                // character selection, where every action silently does nothing: no
+                // map, no cell, no NPC, and every directive still answers ok. Saying
+                // which of the two states we are in is the difference between "the AI
+                // is broken" and "pick a character".
+                snap.in_world = (mapId != null);
                 snap.hp = {
                     life: ch.lifePoints != null ? ch.lifePoints : null,
                     max: ch.maxLifePoints != null ? ch.maxLifePoints : null,

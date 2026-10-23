@@ -318,6 +318,7 @@ class Autopilot:
         print(f"[autopilot] {len(self.goals)} goal(s), {budget}"
               f"{' (dry run)' if self.dry_run else ''}")
         self._warn_if_no_bridge()
+        self._require_world()
 
         for goal in self.goals:
             failures = 0
@@ -575,6 +576,26 @@ class Autopilot:
         print("[autopilot]   Refusing to run: every directive would fail and the run"
               " would look like it finished.")
         raise SystemExit(3)
+
+    def _require_world(self) -> None:
+        """Refuse to run when the character is not in the game world.
+
+        The client stays *connected* at character selection. There is no map, no cell
+        and no NPC, so every directive answers ok and changes nothing — the loop then
+        burns its budget, decides the plan is stuck, and exits 0. That is
+        indistinguishable from a broken agent, and it is the state this project spent a
+        night debugging. One snapshot settles it.
+        """
+        obs = self.observe()
+        if not obs:
+            return
+        pos = obs.get("position") or {}
+        if obs.get("in_world") is False or pos.get("map_id") in (None, 0):
+            print("[autopilot] FATAL: the character is not in the world.")
+            print("[autopilot]   The client is connected but reports no map and no cell,"
+                  " which is the character-selection screen.")
+            print("[autopilot]   Pick a character and stand on a map, then start again.")
+            raise SystemExit(4)
 
     def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
         """Turn agent 2's decision into what the actor does on the next step.
