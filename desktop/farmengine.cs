@@ -1896,8 +1896,22 @@ namespace DofusFarm.Engine
                         // that connects a third as often is not an improvement no matter how good
                         // its identity guarantee is.
                         string chain = ProxySupervisor.Instance.UpstreamChain(normalizedUpstream, 4);
-                        sb.AppendFormat(" -upstream \"{0}\"", chain);
-                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
+
+                        // Fixed exit only when a SOCKS5 hop exists to reach it. Without one the
+                        // chain cannot connect often enough to be worth its identity guarantee,
+                        // so fall back to the plain sticky chain instead of failing.
+                        string hops = ProxySupervisor.Instance.HopChain(normalizedUpstream, 4);
+                        if (ProxySupervisor.Instance.HasSocksHop(normalizedUpstream))
+                        {
+                            sb.AppendFormat(" -upstream \"{0}\" -exit-proxy \"{1}\"", hops, normalizedUpstream);
+                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> fixed exit {1} via {2} hop(s))...",
+                                port, normalizedUpstream, hops.Split(',').Length));
+                        }
+                        else
+                        {
+                            sb.AppendFormat(" -upstream \"{0}\"", chain);
+                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
+                        }
                     }
                     else Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
 
