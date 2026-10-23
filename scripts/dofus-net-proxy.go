@@ -1516,6 +1516,24 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 			return conn, preferred, nil
 		} else {
 			p.recordHop(preferred, false, time.Since(started))
+
+			// Never move the exit IP while a session is live.
+			//
+			// Failing over here is invisible locally and fatal remotely: the server sees the
+			// same account reconnect from a different address mid-session and closes it as a
+			// hijacked connection. Measured: three exit changes in one test, and the player was
+			// thrown out of the game each time while nothing in the local log looked wrong —
+			// zero relay rebuilds, because this path never touches the relay, it just picks a
+			// different upstream on the next dial.
+			//
+			// A failed dial on a dead exit is the honest outcome: this connection fails, the
+			// session keeps its address, and the supervisor can rebuild between sessions when
+			// the client is not connected.
+			if active := atomic.LoadInt64(&p.telemetry.connsActive); active > 0 {
+				log.Printf("[UPSTREAM] %s failed with %d live connection(s); refusing to switch exit IP mid-session",
+					preferred.Redacted(), active)
+				return nil, nil, err
+			}
 		}
 	}
 
