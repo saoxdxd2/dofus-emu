@@ -280,7 +280,26 @@ namespace DofusFarm.Engine
                     return a.LatencyMs.CompareTo(b.LatencyMs);
                 });
 
-                ProxyCandidate best = healthy.Count > 0 ? healthy[0] : null;
+                // Sticky egress: if the upstream already in use is still healthy, keep it.
+                //
+                // Switching changes the exit IP, and the server treats a session whose IP moves
+                // as a hijacked account. A marginally faster candidate is not worth that: the
+                // relay only moves when the current one actually fails, which is the only time
+                // an IP change is unavoidable.
+                ProxyCandidate incumbent = null;
+                if (!string.IsNullOrEmpty(_lastAppliedUrl))
+                {
+                    foreach (ProxyCandidate c in healthy)
+                    {
+                        if (string.Equals(c.Url, _lastAppliedUrl, StringComparison.OrdinalIgnoreCase))
+                        {
+                            incumbent = c;
+                            break;
+                        }
+                    }
+                }
+
+                ProxyCandidate best = incumbent ?? (healthy.Count > 0 ? healthy[0] : null);
                 bool changed;
                 lock (_gate)
                 {

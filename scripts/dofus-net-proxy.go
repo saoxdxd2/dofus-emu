@@ -587,11 +587,18 @@ func (t *ProxyTelemetry) snapshot() TelemetrySnapshot {
 type ProxyServer struct {
 	resolver       *FastDNSResolver
 	upstreamURL    *url.URL
-	// Every configured SOCKS5 upstream, primary first. A single upstream means one dead proxy
-	// costs the whole session: the relay dials through it, the dial fails, and the client is
-	// told the server is unavailable until the supervisor notices and rebuilds. Trying the next
-	// candidate on the same dial turns that into a retry instead of an outage.
+	// Every configured upstream, primary first. A single upstream means one dead proxy costs the
+	// whole session: the relay dials through it, the dial fails, and the client is told the
+	// server is unavailable until the supervisor notices and rebuilds. Trying the next candidate
+	// on the same dial turns that into a retry instead of an outage.
 	upstreams []*url.URL
+	// The upstream that last carried a connection, tried first on every later dial.
+	//
+	// The chain is a fallback list, not a rotation. Picking a different exit per connection
+	// would show the server several source addresses inside one session, which is exactly what
+	// it treats as a hijacked account. One exit at a time, changed only when it fails.
+	upstreamMu sync.Mutex
+	lastGood   *url.URL
 	cacheDir       string
 	quiet          bool
 	port           int
@@ -1001,11 +1008,26 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 		}
 	}
 
-	var lastErr error
+	p.upstreamMu.Lock()
+	preferred := p.lastGood
+	p.upstreamMu.Unlock()
+
+	order := make([]*url.URL, 0, len(p.upstreams)+1)
+	if preferred != nil {
+		order = append(order, preferred)
+	}
 	for _, u := range p.upstreams {
 		if u == nil {
 			continue
 		}
+		if preferred != nil && u.String() == preferred.String() {
+			continue
+		}
+		order = append(order, u)
+	}
+
+	var lastErr error
+	for _, u := range order {
 		var conn net.Conn
 		var err error
 		if strings.HasPrefix(strings.ToLower(u.Scheme), "socks5") {
@@ -1014,6 +1036,15 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 			conn, err = p.dialUpstreamHttp(u, dest, timeout)
 		}
 		if err == nil {
+			p.upstreamMu.Lock()
+			changed := p.lastGood == nil || p.lastGood.String() != u.String()
+			p.lastGood = u
+			p.upstreamMu.Unlock()
+			if changed {
+				// Only when the exit actually moves: logging this on every dial while riding a
+				// fallback buries the one line that matters under a hundred that do not.
+				log.Printf("[UPSTREAM] carrying %s over %s (exit changed)", dest, u.Redacted())
+			}
 			return conn, u, nil
 		}
 		lastErr = err
@@ -1080,12 +1111,7 @@ func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error)
 				conn, used, err = p.dialUpstreamAny(ctx, dest, 6*time.Second)
 				if err == nil {
 					upstreamHealthy.Store(true)
-					// Say so when the session is riding a fallback: an operator reading the log
-					// needs to know the primary is dead before it shows up as latency.
-					if used != nil && p.upstreamURL != nil && used.String() != p.upstreamURL.String() {
-						log.Printf("[UPSTREAM] primary %s failed; carrying %s over %s",
-							p.upstreamURL.Redacted(), dest, used.Redacted())
-					}
+					_ = used
 					return conn, nil
 				}
 			}
