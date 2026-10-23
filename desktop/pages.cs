@@ -542,6 +542,15 @@ namespace DofusFarm.UI
         {
             ThreadPool.QueueUserWorkItem(delegate
             {
+                // Never let a status refresh kill the process.
+                //
+                // This runs on a pool thread, where an unhandled exception is not a log line but
+                // a fatal error dialog and a dead app. It happened: Describe() threw
+                // NullReferenceException on a null candidate slot and the whole farm went down
+                // from a read-only status update. The slot bug is fixed, but a status refresh is
+                // not worth that risk in the first place.
+                try
+                {
                 NetworkSettings s = NetworkSettings.For(_baseDir);
                 string text = "Mode: " + NetworkSettings.ModeLabel(s.Mode) + "\r\n" + s.Summary;
                 if (NetworkSettings.NormalizeMode(s.Mode) == NetworkSettings.ModeAuto)
@@ -563,6 +572,11 @@ namespace DofusFarm.UI
                     }
                 }
                 SetState(text, s.FailClosed ? UiKit.Muted : Color.FromArgb(251, 191, 36));
+                }
+                catch (Exception ex)
+                {
+                    SetState("network state unavailable: " + ex.Message, Color.FromArgb(248, 113, 113));
+                }
             });
         }
 

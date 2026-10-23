@@ -177,12 +177,26 @@ namespace DofusFarm.Engine
             // start four probe storms.
             if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0)
             {
+                // Wait for the refresh that is already running, for as long as that refresh
+                // can possibly take.
+                //
+                // This used to give up after 6 s while the refresh it was waiting on allows
+                // itself ProbeTimeoutMs + 5 s. With a dozen slow candidates the first launch of
+                // the session therefore always saw "no healthy egress" and refused, and then the
+                // supervisor found a perfectly good egress 45 s later — which reads as "the pool
+                // is dead" when it was only still being tested.
                 ProxyCandidate wait = Active;
-                for (int i = 0; i < 60 && wait == null; i++)
+                int budgetMs = ProbeTimeoutMs + 6000;
+                int waited = 0;
+                while (wait == null && waited < budgetMs)
                 {
                     Thread.Sleep(100);
+                    waited += 100;
                     wait = Active;
                 }
+                if (wait == null)
+                    Log("still no healthy egress after waiting " + (waited / 1000) + "s for the"
+                        + " probe in flight; this launch will be refused");
                 return wait;
             }
 
@@ -247,8 +261,21 @@ namespace DofusFarm.Engine
                 bool changed;
                 lock (_gate)
                 {
+                    // Drop null slots before storing them.
+                    //
+                    // `results` is filled by pool threads and `done.Wait` has a timeout: when a
+                    // probe outlives it, its slot is still null. The healthy-list loop below
+                    // skips nulls, but this array is what Describe() walks, and
+                    // `foreach (c in all) if (c.Healthy)` on a null slot throws on a thread-pool
+                    // thread — which is not catchable and takes the whole process down. That was
+                    // the "Fatal Error: Object reference not set to an instance of an object"
+                    // arriving from SettingsPage.RefreshNetState while the supervisor was still
+                    // probing.
                     _candidates.Clear();
-                    _candidates.AddRange(results);
+                    for (int i = 0; i < results.Length; i++)
+                    {
+                        if (results[i] != null) _candidates.Add(results[i]);
+                    }
                     changed = best != null &&
                               (_active == null || !string.Equals(_active.Url, best.Url, StringComparison.OrdinalIgnoreCase));
                     _active = best;
@@ -400,7 +427,9 @@ namespace DofusFarm.Engine
 
             List<ProxyCandidate> all = Candidates;
             int up = 0;
-            foreach (ProxyCandidate c in all) if (c.Healthy) up++;
+            // Defensive on purpose: this is called from the settings page on a pool thread,
+            // where an exception is fatal rather than a log line.
+            foreach (ProxyCandidate c in all) if (c != null && c.Healthy) up++;
             sb.Append("   |   ").Append(up).Append("/").Append(all.Count).Append(" candidates healthy");
             if (!string.IsNullOrEmpty(_directIp)) sb.Append("   |   this machine: ").Append(_directIp);
             return sb.ToString();
