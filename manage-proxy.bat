@@ -10,6 +10,7 @@ REM
 REM   manage-proxy.bat                      status: config, pool size, tunnel, what works
 REM   manage-proxy.bat test                 probe every candidate now
 REM   manage-proxy.bat rank                 ping each candidate and rank by stability
+REM   manage-proxy.bat watchdog [seconds]    keep the pool alive; hunt when nothing works
 REM   manage-proxy.bat add <url>            test a proxy, then save it if it passes
 REM   manage-proxy.bat add <url> --replace  save it as the only entry
 REM   manage-proxy.bat refresh              harvest new candidates, then one pool pass
@@ -35,6 +36,7 @@ if "%CMD%"=="" set "CMD=status"
 if /i "%CMD%"=="status" goto :status
 if /i "%CMD%"=="test"   goto :test
 if /i "%CMD%"=="rank"   goto :rank
+if /i "%CMD%"=="watchdog" goto :watchdog
 if /i "%CMD%"=="add"    goto :add
 if /i "%CMD%"=="refresh" goto :refresh
 if /i "%CMD%"=="reset"  goto :reset
@@ -90,6 +92,65 @@ echo.
 echo ranking the pool by measured stability ...
 "%PY%" "dofus-network\ai\score_proxies.py" --samples 34 --interval 0.4 --timeout 2
 exit /b %ERRORLEVEL%
+
+REM ---------------------------------------------------------------------------
+:watchdog
+REM The app already auto-uses the pool: ProxySupervisor re-reads proxies.txt every 45 s,
+REM probes every entry in parallel, and switches to the best healthy one, logging
+REM "active egress -> ...". What it cannot do is refill the file. Public proxies die within
+REM hours, so without this the pool empties and every launch refuses with "no healthy egress".
+REM
+REM This is the other half of "auto": every WATCH_SECONDS, ask the same question the app asks
+REM (does any candidate carry a tunnel right now) and, if the answer is no, go and find more.
+set "WATCH_SECONDS=300"
+if not "%~2"=="" set "WATCH_SECONDS=%~2"
+set /a WATCH_FAILS=0
+
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [FAIL] node is not on PATH; the watchdog needs it to hunt.
+  exit /b 2
+)
+
+echo.
+echo watchdog: checking every %WATCH_SECONDS%s, hunting when nothing works.
+echo leave this window open. Ctrl+C to stop.
+echo.
+:wd_loop
+set /a WATCH_FAILS+=0
+"%PY%" "dofus-network\ai\test_egress.py" >nul 2>&1
+if errorlevel 1 (set /a WATCH_FAILS+=1) else (set /a WATCH_FAILS=0)
+
+REM One failure is not an outage. Public proxies flap, and a watchdog that hunts on a single
+REM bad sample spends its life re-scraping instead of watching. Two in a row is a real gap.
+if !WATCH_FAILS! GEQ 2 (
+  echo [%TIME%] no working exit twice in a row - hunting
+  node "scripts\harvest_proxies.js" --once
+  node "scripts\proxy_pool.js" --once --batch 800
+  "%PY%" "dofus-network\ai\test_egress.py" >nul 2>&1
+  if errorlevel 1 (
+    echo [%TIME%] still nothing after a hunt; will try again in %WATCH_SECONDS%s
+    set /a WATCH_FAILS=0
+  ) else (
+    echo [%TIME%] recovered - the app picks it up within 45s, no restart needed
+    set /a WATCH_FAILS=0
+  )
+) else (
+  if !WATCH_FAILS! EQU 1 (
+    echo [%TIME%] one failed check - watching, not hunting yet
+  ) else (
+    echo [%TIME%] egress ok
+  )
+)
+REM Absolute paths on purpose: a batch file inherits the caller's PATH, and when that caller is
+REM Git Bash these resolve to GNU tools that reject Windows flags. Same trap as `find` in the
+REM status command, and the same reason the counting moved to python.
+REM
+REM ping instead of timeout: timeout.exe refuses to run when stdin is not a console ("input
+REM redirection is not supported"), which is exactly the case when this is piped to a log.
+set /a PING_N=%WATCH_SECONDS%+1
+"%SystemRoot%\System32\ping.exe" -n !PING_N! 127.0.0.1 >nul 2>&1
+goto :wd_loop
 
 REM ---------------------------------------------------------------------------
 :add
