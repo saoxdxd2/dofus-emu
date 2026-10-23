@@ -1337,6 +1337,18 @@ func (p *ProxyServer) saveHopIndex() {
 	_ = os.Rename(tmp, p.hopIdxPath)
 }
 
+// isLoopbackHost reports whether a hostname only exists on this machine.
+func isLoopbackHost(h string) bool {
+	h = strings.ToLower(strings.TrimSpace(h))
+	if h == "localhost" || h == "::1" || h == "0.0.0.0" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 // validateExitAtStartup drops the fixed exit if no hop can reach it.
 //
 // The supervisor picks a proxy that works when dialled directly, which says nothing about whether
@@ -1363,6 +1375,28 @@ func (p *ProxyServer) validateExitAtStartup() {
 	// Parallel and short: the app polls the listen port for about five seconds before deciding the
 	// relay never started, and this check runs before Listen. A sequential two-hop check took
 	// seven seconds and would have made every launch look like a dead relay.
+	// A loopback exit cannot be reached through a remote hop.
+	//
+	// `CONNECT 127.0.0.1:40000` sent to a proxy in another country asks *that machine* for its own
+	// localhost, not ours — the connection succeeds and lands nowhere near the tunnel we meant.
+	// WARP on this PC is exactly that shape, so it has to be used directly (as the upstream), and
+	// saying so plainly beats the generic "no hop could carry a request through it".
+	if isLoopbackHost(exit.Hostname()) && len(hops) > 0 {
+		remote := false
+		for _, h := range hops {
+			if h != nil && !isLoopbackHost(h.Hostname()) {
+				remote = true
+				break
+			}
+		}
+		if remote {
+			log.Printf("[UPSTREAM] fixed exit %s is local; a remote hop cannot reach it (it would dial its own localhost). Use it as the plain upstream instead of an exit.",
+				exit.Redacted())
+			p.exitURL = nil
+			return
+		}
+	}
+
 	probeDest := net.JoinHostPort(loginHost, "443")
 	if len(hops) > 2 {
 		hops = hops[:2]

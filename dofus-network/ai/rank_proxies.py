@@ -15,6 +15,7 @@ order; absent or stale, it falls back to its own ranking.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import statistics
 import sys
@@ -75,6 +76,9 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=4.0)
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "..", "asset_cache", "proxies_ranked.txt"))
+    ap.add_argument("--dataset", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                      "data", "proxy_lifetime.jsonl"),
+                    help="append one training record per candidate (features + outcome)")
     args = ap.parse_args()
 
     pool = read_pool()
@@ -92,6 +96,27 @@ def main() -> int:
 
     results.sort(key=lambda r: r[1][0])
     usable = [(e, s) for e, s in results if s[0] < 1e8]
+
+    # Training rows for a lifetime model.
+    #
+    # Features now, label later: `alive_at` is filled in by the next run that sees the same URL
+    # again, so survival becomes measurable instead of assumed. That is the dataset a Kaggle
+    # notebook needs — the same features this script already trusts, with a real outcome attached.
+    try:
+        ds = os.path.abspath(args.dataset)
+        os.makedirs(os.path.dirname(ds), exist_ok=True)
+        now = time.time()
+        with open(ds, "a", encoding="utf-8") as f:
+            for entry, (sc, why) in results:
+                f.write(json.dumps({
+                    "ts": now,
+                    "url": entry,
+                    "score": sc,
+                    "reason": why,
+                }) + "\n")
+        print("appended %d training row(s) to %s" % (len(results), ds))
+    except Exception as exc:  # never let bookkeeping break the ranking
+        print("dataset export skipped: %s" % exc)
 
     out = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
