@@ -441,6 +441,14 @@ type ProxyServer struct {
 	upstreamURL, lastGood, exitURL, cdnUpstream         *url.URL
 	upstreams                                           []*url.URL
 	upstreamMu, exitMu, hopMu, destMu                   sync.Mutex
+	// Held only while the session's egress is being chosen.
+	//
+	// A client opens several game sockets at once. Before any of them has succeeded lastGood is
+	// nil, so each one races the whole pool independently — and two winners can be two different
+	// proxies, which means the server sees one account arrive from two addresses in the same
+	// second. That is a stronger kick signal than a reconnect from a new IP. The first game dial
+	// picks; the rest wait and use what it picked.
+	pinMu sync.Mutex
 	prefetchMu, prefetchLogMu, mirrorMu, negMu, modsMu  sync.Mutex
 	exitBlockedUntil, modsChecked, modsRulesMod         time.Time
 	cacheHits, cacheMisses                              uint64
@@ -1021,6 +1029,24 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 	p.upstreamMu.Lock()
 	preferred := p.lastGood
 	p.upstreamMu.Unlock()
+
+	if preferred == nil && isGameDestination(dest) {
+		p.pinMu.Lock()
+		p.upstreamMu.Lock()
+		preferred = p.lastGood
+		p.upstreamMu.Unlock()
+		if preferred == nil {
+			// Still nobody has chosen: this dial is the one that decides, and the others are
+			// waiting on pinMu. Whoever wins here sets lastGood in raceUpstreams.
+			conn, winner, err := p.raceUpstreams(ctx, p.upstreams, dest, socksTarget, timeout)
+			p.pinMu.Unlock()
+			if err == nil {
+				log.Printf("[UPSTREAM] session egress pinned to %s", winner.Redacted())
+			}
+			return conn, winner, err
+		}
+		p.pinMu.Unlock()
+	}
 
 	order := make([]*url.URL, 0, len(p.upstreams)+1)
 	if preferred != nil {
