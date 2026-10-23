@@ -123,6 +123,19 @@ def main(argv=None) -> int:
                "map_id=%s - the client is at character selection" % pos.get("map_id"))
         return _summary()
 
+    # 4b. health. A dead character can walk but cannot talk, so a FAIL here explains
+    # every later talk failure rather than leaving it a mystery.
+    hp = snap.get("hp") or {}
+    life, top = hp.get("life"), hp.get("max")
+    if isinstance(life, (int, float)) and life > 0:
+        record("the character has health", "PASS", "%s/%s" % (life, top))
+    elif life == 0 and top == 0:
+        record("the character has health", "FAIL",
+               "0/0 - either dead, or the stats are not loaded in this client state; "
+               "revive before expecting talk to work")
+    else:
+        record("the character has health", "SKIP", "life=%s max=%s" % (life, top))
+
     # 5. talk: open a dialog with an NPC on this map
     before_dialog = bool(snap.get("in_dialog"))
     r = directive("quest.advance", {"quest_id": args.quest})

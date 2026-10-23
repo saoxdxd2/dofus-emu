@@ -2776,8 +2776,34 @@
                 // The wire field is the actor's contextual id (the bundle sends
                 // `npcId: l.contextualId`). Sending the template id talks to nobody,
                 // which is why a talk objective opened no dialog.
-                var talk = _cmSend('NpcGenericActionRequestMessage',
-                    { npcId: npc.contextualId, npcActionId: 3, npcMapId: mapId });
+                var doTalk = function () {
+                    return _cmSend('NpcGenericActionRequestMessage',
+                        { npcId: npc.contextualId, npcActionId: 3, npcMapId: mapId });
+                };
+                // Talking from the far side of the map does nothing in this game, and
+                // the planner has no cell to walk to — only the client knows where the
+                // NPC stands. So walk first, then talk, the same way the client does
+                // before attacking a monster group.
+                var ua = null;
+                try {
+                    var am2 = window.actorManager
+                        || (window.isoEngine && window.isoEngine.actorManager);
+                    ua = am2 && am2.userActor;
+                } catch (e) {}
+                if (ua && npc.cell != null && ua.cellId !== npc.cell
+                        && window.isoEngine
+                        && typeof window.isoEngine._movePlayerOnMap === 'function') {
+                    try {
+                        window.isoEngine._movePlayerOnMap(npc.cell, false, function () {
+                            try { doTalk(); } catch (e) {}
+                        });
+                        return _agentResult(true, { quest_id: questId,
+                            npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
+                            map_id: mapId, via: 'walking to npc then talking',
+                            npc_cell: npc.cell, my_cell: ua.cellId });
+                    } catch (e) {}
+                }
+                var talk = doTalk();
                 return _agentResult(talk.ok, { quest_id: questId, npc_template: npc.templateId,
                     npc_contextual_id: npc.contextualId, map_id: mapId },
                     talk.ok ? null : talk.error);
