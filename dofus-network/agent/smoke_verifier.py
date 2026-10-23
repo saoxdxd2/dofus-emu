@@ -10,6 +10,7 @@ care about, and that a human label overrides both.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -486,16 +487,29 @@ def test_one_transport_one_copy() -> None:
           "window.__DofusFarmAgentLoaded present" if "__DofusFarmAgentLoaded" in text
           else "no idempotence guard: a re-added transport would run two bots")
 
-    # Exactly one copy in the tree. Walk rather than glob so an unexpected location
-    # fails the check instead of being silently missed.
+    # Every copy in the tree must be identical.
+    #
+    # This used to require exactly one file, which was the wrong invariant: the client tree
+    # legitimately holds generated copies, and three byte-identical files are not a problem —
+    # three files that have drifted apart are. Walk rather than glob so an unexpected location
+    # is seen, then compare contents. Identical copies pass; one edited copy fails and names
+    # the file that disagrees.
     copies = []
     for p in root.rglob("mobile-disguise*.js"):
         parts = set(p.parts)
         if parts & {"node_modules", "archive", "asset_cache", ".git", "__pycache__"}:
             continue
         copies.append(p)
-    check("exactly one copy of the client script exists", len(copies) == 1,
-          ", ".join(str(p.relative_to(root)) for p in copies))
+    digests = {}
+    for p in copies:
+        try:
+            digests.setdefault(hashlib.sha256(p.read_bytes()).hexdigest(), []).append(p)
+        except OSError:
+            pass
+    drifted = [str(p.relative_to(root)) for group in list(digests.values())[1:] for p in group]
+    check("every copy of the client script is identical", copies and not drifted,
+          ("%d copies, %d distinct version(s)" % (len(copies), len(digests)))
+          + ((" — drifted: " + ", ".join(drifted)) if drifted else ""))
 
     # No page may load it itself; the host injects it.
     tags = []
