@@ -593,7 +593,8 @@ def test_a_dead_connection_stops_the_loop() -> None:
     try:
         pilot = Autopilot(runtime=Runtime(), goals=["do all the quests"],
                           log_path=tmp / "a.jsonl", stop_file=tmp / "AUTOPILOT_STOP",
-                          max_steps=0, interval=0.0, preflight=False)
+                          max_steps=0, interval=0.0, preflight=False,
+                          settle_s=0)
         seen = {"n": 0}
 
         def on_step(_step):
@@ -611,6 +612,61 @@ def test_a_dead_connection_stops_the_loop() -> None:
 
     check("leaving the world stops the loop instead of retrying", seen["n"] <= 3,
           "%d step(s) before it stopped" % seen["n"])
+
+
+def test_a_walk_gets_time_to_land() -> None:
+    """A directive that starts a walk must not be judged before the walk has moved.
+
+    A live session showed 30 steps of `quest.advance ok / noop`: the handler walks to the
+    NPC and talks in the walk callback, so it answers ok immediately, the cell has not
+    changed yet, and the verifier scores it `noop`. The controller retried an action that
+    was already in flight, forever. Waiting for the promised change is what turns that
+    into a real verdict — while a genuinely inert call still ends up `noop`, just later.
+    """
+    print("\n== settle ==")
+    from agent.autopilot import Autopilot
+
+    tmp = Path(tempfile.mkdtemp())
+
+    class Runtime:
+        def __init__(self):
+            self.n = 0
+
+        def current_observation(self):
+            # The move lands on the second look, as a walk does.
+            self.n += 1
+            cell = 100 if self.n == 1 else 200
+            return ({"in_world": True, "position": {"map_id": 1, "cell": cell}},
+                    0.0, "call")
+
+        def observe(self, snapshot, source="live"):
+            pass
+
+    pilot = Autopilot(runtime=Runtime(), goals=["q"], log_path=tmp / "a.jsonl",
+                      stop_file=tmp / "S", max_steps=1, interval=0.0,
+                      preflight=False, settle_s=1.0)
+
+    before = {"in_world": True, "position": {"map_id": 1, "cell": 100}}
+    settled = pilot._settle(before, dict(before), step_s=0.05)
+    check("a move that lands late is seen, not scored as noop",
+          (settled or {}).get("position", {}).get("cell") == 200,
+          str((settled or {}).get("position")))
+
+    # Nothing ever changes: the wait must end and report the unchanged state, so an
+    # inert call is still `noop` rather than hanging the loop.
+    class Still(Runtime):
+        def current_observation(self):
+            self.n += 1
+            return ({"in_world": True, "position": {"map_id": 1, "cell": 100}},
+                    0.0, "call")
+
+    inert = Autopilot(runtime=Still(), goals=["q"], log_path=tmp / "b.jsonl",
+                      stop_file=tmp / "S", max_steps=1, interval=0.0,
+                      preflight=False, settle_s=0.2)
+    unchanged = inert._settle(before, dict(before), step_s=0.05)
+    check("a call that changes nothing still ends as noop",
+          (unchanged or {}).get("position", {}).get("cell") == 100,
+          str((unchanged or {}).get("position")))
 
 
 def test_the_planner_can_call_what_it_plans() -> None:
@@ -1131,6 +1187,7 @@ def main() -> int:
     test_host_messages_are_not_double_encoded()
     test_one_transport_one_copy()
     test_the_planner_can_call_what_it_plans()
+    test_a_walk_gets_time_to_land()
     test_a_dead_connection_stops_the_loop()
     test_layering_holds()
     test_a_ready_objective_is_claimed_first()

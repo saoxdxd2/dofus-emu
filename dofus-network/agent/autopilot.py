@@ -55,7 +55,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
 from agent.controller import Controller, Decision
-from agent.verifier import READ_ONLY_TOOLS, Verdict, Verifier
+from agent.verifier import READ_ONLY_TOOLS, Verdict, Verifier, changed_keys
 from agent.schema import TOOL_SCHEMA, validate_call
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -68,6 +68,16 @@ FORBIDDEN_TOOLS = {"hdv.buy"}
 
 # Listing tools: allowed, but only with an explicit price the caller supplied.
 LISTING_TOOLS = {"hdv.list", "inv.sell"}
+
+# Tools whose effect lands after the call returns.
+#
+# `quest.advance` walks to the NPC and talks in the walk callback; `nav.goto` asks the
+# client's pathfinder and the map changes on the next server round trip; `fight.join`
+# walks then attacks. All of them answer ok immediately, so observing in the same
+# instant scores them `noop` — the cell has not moved yet because the walk just started.
+# That is what a live session showed: 30 steps of `quest.advance ok / noop`, the loop
+# cycling retry -> recover forever while the character was actually walking.
+SETTLE_TOOLS = {"quest.advance", "nav.goto", "fight.join", "farm.start"}
 
 # Minimum price we will ever list at. One kama is the floor the game itself
 # enforces; anything below it is a typo, not a strategy.
@@ -129,6 +139,9 @@ class Autopilot:
         explore: float = 0.0,
         explore_seed: int = 0,
         preflight: bool = True,
+        # Seconds to keep re-observing after an asynchronous tool before judging
+        # it. 0 disables the wait (tests, dry runs).
+        settle_s: float = 3.0,
     ) -> None:
         self.runtime = runtime
         self.goals = list(goals)
@@ -141,6 +154,7 @@ class Autopilot:
         # The verifier answers "did that work"; the controller decides what the
         # actor does next, which is the part that used to be missing.
         self.preflight = preflight
+        self.settle_s = settle_s
         # Steps allowed without `objectives_completed` rising before the current quest
         # is considered stuck. Only applies to unlimited runs.
         self.stall_limit = 8
@@ -232,6 +246,30 @@ class Autopilot:
         return None
 
     # -- observation ---------------------------------------------------------
+
+    def _settle(self, before: Any, after: Any, step_s: float = 0.4) -> Any:
+        """Re-observe until the world shows the action landed, or time runs out.
+
+        A directive that starts a walk returns ok before the character has moved. Judging
+        it in that same instant produces `noop`, the controller retries, and the agent
+        looks broken while it is walking. This waits for the change the tool promised.
+
+        Returns the first observation that differs from `before`, or the last one seen if
+        nothing ever changed — so a genuinely inert call is still scored `noop`, just
+        after the wait rather than before it.
+        """
+        if self.settle_s <= 0 or not isinstance(before, dict):
+            return after
+        deadline = time.monotonic() + self.settle_s
+        best = after
+        while time.monotonic() < deadline:
+            if isinstance(best, dict) and changed_keys(before, best):
+                return best
+            time.sleep(step_s)
+            nxt = self.observe()
+            if nxt:
+                best = nxt
+        return best
 
     def observe(self) -> Optional[Dict[str, Any]]:
         """Return the freshest state we can get.
@@ -415,6 +453,13 @@ class Autopilot:
                 # latency made every step look slow for the wrong reason.
                 latency_ms = (time.perf_counter() - started) * 1000.0
                 after = self.observe()
+
+                # A walk is not finished when the call returns. Give the tools that move
+                # the character, open a dialog or start a fight a moment to land before
+                # judging them — otherwise every one of them scores `noop` and the loop
+                # retries an action that is already in flight.
+                if result.ok and call.tool in SETTLE_TOOLS:
+                    after = self._settle(before, after)
 
                 # A closed connection is not a failed step.
                 #

@@ -1125,6 +1125,20 @@ namespace DofusFarm.UI
             if (_output.TextLength > 24000) _output.Text = _output.Text.Substring(_output.TextLength - 16000);
             _output.SelectionStart = _output.TextLength;
             _output.ScrollToCaret();
+
+            // Mirror to the host log as well.
+            //
+            // This text box is capped at 24,000 characters and disappears when the panel
+            // closes, so anything written only here is gone exactly when it is most
+            // needed. Two runs ended with "[AI] loop finished (exit -1)" and no
+            // explanation, because the Python child's stdout — and any traceback on its
+            // stderr, which arrives here prefixed with "! " — was written to this control
+            // and nowhere else. A crash that leaves no trace is worse than the crash.
+            try
+            {
+                if (_log != null) _log("[ai] " + line);
+            }
+            catch { }
         }
 
         private static string Shorten(string s, int max)

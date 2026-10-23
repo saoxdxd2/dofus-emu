@@ -195,6 +195,17 @@ def _changed(before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]]) 
     return out
 
 
+def changed_keys(before: Optional[Dict[str, Any]],
+                 after: Optional[Dict[str, Any]]) -> list[str]:
+    """Which state keys moved between two observations.
+
+    Public name for the check the loop needs when it has to decide whether an action
+    has landed yet: a directive that starts a walk returns ok immediately, and the
+    world changes a moment later. Judging that in the same instant scores it `noop`.
+    """
+    return _changed(before, after)
+
+
 def _int(value: Any, fallback: int = 0) -> int:
     try:
         return int(value)
