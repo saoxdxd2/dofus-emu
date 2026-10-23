@@ -1948,18 +1948,17 @@ namespace DofusFarm.Engine
                         // Fixed exit only when a SOCKS5 hop exists to reach it. Without one the
                         // chain cannot connect often enough to be worth its identity guarantee,
                         // so fall back to the plain sticky chain instead of failing.
-                        string hops = ProxySupervisor.Instance.HopChain(normalizedUpstream, 4);
-                        if (ProxySupervisor.Instance.HasSocksHop(normalizedUpstream))
-                        {
-                            sb.AppendFormat(" -upstream \"{0}\" -exit-proxy \"{1}\"", hops, normalizedUpstream);
-                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> fixed exit {1} via {2} hop(s))...",
-                                port, normalizedUpstream, hops.Split(',').Length));
-                        }
-                        else
-                        {
-                            sb.AppendFormat(" -upstream \"{0}\"", chain);
-                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
-                        }
+                        // Fixed-exit mode is off by default.
+                        //
+                        // It costs up to 3.5 s of exit validation before the relay can listen —
+                        // and the app only polls the port for about five seconds, so the launch
+                        // sat right on that edge. Worse, on this pool the validation kept
+                        // dropping the exit anyway ("no hop could carry a request through it"),
+                        // so the delay bought nothing. The relay still supports -exit-proxy for
+                        // when there is a static exit worth pinning; the address stability that
+                        // actually mattered is handled by the egress pin.
+                        sb.AppendFormat(" -upstream \"{0}\"", chain);
+                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
                     }
                     else Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
 

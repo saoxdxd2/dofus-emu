@@ -196,7 +196,7 @@ namespace DofusFarm.Engine
                 LoadPin();
                 if (!string.IsNullOrEmpty(_pinnedUrl))
                 {
-                    ProxyCandidate pin = Probe(_pinnedUrl, "pinned");
+                    ProxyCandidate pin = Probe(_pinnedUrl, "pinned", Math.Min(2500, ProbeTimeoutMs));
                     if (pin.Healthy)
                     {
                         lock (_gate)
@@ -487,6 +487,17 @@ namespace DofusFarm.Engine
         }
 
         private ProxyCandidate Probe(string url, string source)
+        {
+            return Probe(url, source, ProbeTimeoutMs);
+        }
+
+        /// <summary>
+        /// Probe with an explicit timeout. The pinned-egress check runs on the launch path, and
+        /// paying the full 8 s there is 8 s of a window that has not appeared yet: measured 6.6 s
+        /// before the client could even start. A pinned proxy that cannot answer in a couple of
+        /// seconds is not worth waiting for — the pool is right behind it.
+        /// </summary>
+        private ProxyCandidate Probe(string url, string source, int timeoutMs)
         {
             var c = new ProxyCandidate { Url = url, Source = source, CheckedUtc = DateTime.UtcNow };
             DateTime t0 = DateTime.UtcNow;

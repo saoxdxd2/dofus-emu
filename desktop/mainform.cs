@@ -1675,8 +1675,19 @@ namespace DofusFarm.UI
                             return;
                         }
 
-                        Log("[PROXY] switching egress to " + pick.Label);
-                        try { _engine.RebuildAllRelays(pick.Url, Log); } catch { }
+                        // Do not rebuild. A rebuild stops the relay and starts a new one on the
+                        // same port, which drops every request in flight — including a page that
+                        // is still loading. That is what "dofus.local server is busy" followed by
+                        // a loading screen that never finishes actually was: the egress moved
+                        // while the client was fetching the bundle, and the client's own retry
+                        // landed on a relay that had just been torn down.
+                        //
+                        // `live` cannot see that case: an instance is not "running" until it has
+                        // loaded, which is exactly the window being destroyed. The pick is
+                        // recorded, and the next relay start uses it — a new client always begins
+                        // on the newest egress, and nothing in flight is ever cut.
+                        Log("[PROXY] egress for the next launch is now " + pick.Label
+                            + "; relays already up keep their upstream so nothing in flight is dropped");
                     });
                 };
                 ProxySupervisor.Instance.Start();
