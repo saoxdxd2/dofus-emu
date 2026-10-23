@@ -117,7 +117,7 @@ def cmd_prepare(args: argparse.Namespace) -> Path:
 
     x = np.stack([e["x"] for e in examples]).astype(np.float32)
     y = np.stack([e["targets"] for e in examples]).astype(np.float32)
-    features_path = ARTIFACTS / "features.npz"
+    features_path = Path(args.out) if getattr(args, "out", "") else (ARTIFACTS / "features.npz")
     np.savez_compressed(
         features_path,
         x=x,
@@ -324,7 +324,9 @@ def cmd_train(args: argparse.Namespace) -> Path:
                           purge_seconds=args.purge_seconds, gap_seconds=args.gap_seconds,
                           seed=args.seed),
     )
-    artifacts = train_model(examples, series_map, config, ARTIFACTS)
+    out_dir = Path(args.out_dir) if getattr(args, "out_dir", "") else ARTIFACTS
+    out_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = train_model(examples, series_map, config, out_dir)
     write_manifest(
         ARTIFACTS / "manifest_train.json",
         stage="train",
@@ -445,6 +447,11 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Apply per-instance identity masking (pseudonymization, desynchronization)")
     prepare.add_argument("--no-mask-identity", dest="mask_identity", action="store_false",
                          help="Disable identity masking")
+    prepare.add_argument("--out", default="",
+                         help="Where to write the feature windows. Default: "
+                              "networkhealth_artifacts/features.npz. Pass a different path "
+                              "when the corpus is local telemetry, so the public-probe "
+                              "features are not overwritten.")
     prepare.set_defaults(func=cmd_prepare)
 
     baselines = sub.add_parser("baselines", help="Compute baselines only (no PyTorch needed)")
@@ -473,6 +480,11 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--valid-fraction", type=float, default=0.2)
     train.add_argument("--purge-seconds", type=int, default=3600)
     train.add_argument("--gap-seconds", type=int, default=1800)
+    train.add_argument("--out-dir", default="",
+                       help="Where to write the checkpoint and evaluation. Default: "
+                            "networkhealth_artifacts. Point this elsewhere when training on "
+                            "a different corpus, so the shipped model is not replaced by "
+                            "whatever was trained last.")
     train.set_defaults(func=cmd_train)
 
     inference = sub.add_parser(
