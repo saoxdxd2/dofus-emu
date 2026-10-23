@@ -88,6 +88,39 @@ verdict. An idle relay reports its *last* RTT, so sampling with no client connec
 nothing. The network-health model itself cannot load right now (BatchNorm checkpoint against
 a GroupNorm model); the tool says so and falls back to telemetry.
 
+## 5b. If no client launches at all
+
+That is almost always the **egress**, not the emulator:
+
+```
+WebView2 dofus-01: not started - auto mode found no healthy egress (tunnel blocked, pool dead)
+```
+
+`fail_closed=1` means the app refuses to launch rather than fall back to a direct connection,
+which would expose this machine's address to the game. Ask the egress instead of guessing:
+
+```bash
+python ai/test_egress.py
+```
+
+One line per candidate — the local tunnel and every entry in `proxies.txt` — each tested the
+only way that matters: can it open a tunnel to the game's login host.
+
+```
+  socks5://127.0.0.1:40000  FAIL   2053 ms  connect failed: [WinError 10061] refused
+  http://3.211.120.181:443  FAIL    238 ms  HTTP/1.1 403 Forbidden — usually an IP allow-list
+```
+
+| what it says | what it means |
+|---|---|
+| `403 Forbidden` | the proxy's IP allow-list still has your **old** address. A new WiFi/ISP means a new public IP. Ask the provider to allow it, or add `http://user:pass@host:port` |
+| `407` | the proxy needs credentials and the entry has none |
+| `connection refused` on 40000 | nothing is running `wireproxy`; it binds `socks_port` only, so Windows routing and DNS stay untouched |
+| `host unreachable` / timeout | this network drops the path — Cloudflare is a known case here (`1.1.1.1:443` times out), which is why WARP cannot work on this line |
+
+Nothing in the emulator can fix a dead exit. Get one candidate to PASS, then launch.
+
+
 ## What changed today, and why each one mattered
 
 | fix | symptom it removes |
