@@ -131,6 +131,26 @@ only way that matters: can it open a tunnel to the game's login host.
 
 Nothing in the emulator can fix a dead exit. Get one candidate to PASS, then launch.
 
+### One command for all of it
+
+```bash
+start-network.bat            # tunnel up, pool refreshed, then report
+start-network.bat --daemon   # keep the pool running in this window (recommended)
+start-network.bat --report   # only report what works, change nothing
+```
+
+It starts `bin\warp\wireproxy.exe` if `socks_port` is not listening, runs
+`scripts\proxy_pool.js` (extract → deep-check → rewrite `proxies.txt`), then runs
+`ai\test_egress.py`. Nothing is installed system-wide; the tunnel is a userspace binary that
+binds one local port.
+
+**On WARP, measured 2026-10-23:** this line blocks Cloudflare. `8.8.8.8:53` answers in 19 ms
+(UDP is fine), `1.1.1.1:53` and the WARP endpoint `162.159.192.1:2408` answer nothing.
+`wireproxy` starts and reports `Interface state was Down, requested Up, now Up`, then the
+handshake never completes, so the SOCKS5 port accepts and times out. WARP is bundled and
+correct; the endpoint is unreachable. Do not spend time on it here — the pool is the path.
+
+
 
 ## What changed today, and why each one mattered
 

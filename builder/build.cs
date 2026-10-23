@@ -311,12 +311,24 @@ namespace DofusBuild
 
                 string stageScripts = Path.Combine(stageDir, "scripts");
                 Directory.CreateDirectory(stageScripts);
-                foreach (string rs in new[] { "mobile-disguise.js", "apply-zram.sh" })
+                // proxy_pool.js belongs here: it extracts, tests and rewrites proxies.txt,
+                // and it was the one piece of the egress pipeline that never shipped. The
+                // app reads proxies.txt and the supervisor probes it, but nothing in an
+                // installed copy could refresh it, so the pool rotted to a single dead
+                // entry and every launch failed closed with "no healthy egress".
+                foreach (string rs in new[] { "mobile-disguise.js", "apply-zram.sh", "proxy_pool.js" })
                 {
                     string src = Path.Combine(RepoRoot, "scripts", rs);
                     if (File.Exists(src))
                         File.Copy(src, Path.Combine(stageScripts, rs), true);
                 }
+
+                // The one command that wires tunnel + pool + report together. Copied to
+                // the payload root so an installed copy has the same entry point as the
+                // repository does.
+                string netBat = Path.Combine(RepoRoot, "start-network.bat");
+                if (File.Exists(netBat))
+                    File.Copy(netBat, Path.Combine(stageDir, "start-network.bat"), true);
 
                 string repoBin = Path.Combine(RepoRoot, @"scripts\bin");
                 if (Directory.Exists(repoBin) && includeLegacyEmulator)

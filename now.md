@@ -211,6 +211,37 @@ is short of labels rather than of capacity.
 
 ## 4. What is blocked, and by what
 
+0. **The egress, and it is now measured rather than blamed.** A client cannot launch
+   without one healthy exit, because `fail_closed=1` refuses to fall back to a direct
+   connection. On 2026-10-23, after a WiFi change, every candidate was dead and the app
+   correctly refused. What the network actually does:
+
+   | probe | result | meaning |
+   |---|---|---|
+   | direct HTTPS | 200 in 0.31 s | the internet is fine |
+   | `8.8.8.8:53` UDP | reply, 19 ms | **UDP works** |
+   | `1.1.1.1:53` UDP | no reply | **Cloudflare blocked** |
+   | `162.159.192.1:2408` (WARP) | no reply | **WARP blocked** |
+   | pool proxy `:443` | TCP open, then 403 on every CONNECT | reachable, rejects — an IP allow-list |
+
+   So **WARP is a dead end on this line, and no configuration fixes it.** `bin\warp\` ships
+   a complete local stack (wireproxy, warp-plus, wgcf with a real profile) and it starts
+   cleanly — `Interface state was Down, requested Up, now Up` — but the WireGuard handshake
+   to Cloudflare never answers, so the SOCKS5 port accepts and then times out. Keeping WARP
+   in the project was never the problem; the network blocks its endpoint.
+
+   The pool is the viable path, and the pool automation was **present but orphaned**: 
+   `scripts/proxy_pool.js` does exactly what it should — re-verify approved, quarantine,
+   scrape when stale, deep-check candidates (CONNECT → TLS → `200` on `/build/primus.js`
+   and `/config.json`), then rewrite `proxies.txt` atomically — but nothing invoked it and it
+   was not in the installer payload. Run once by hand it found `live=0/10` and emptied
+   `proxies.txt`: the public pool on this line is exhausted, not misconfigured.
+
+   Fixed: it now ships (`builder/build.cs`), `start-network.bat` drives tunnel + pool +
+   report in one command, and `SetupNetworkEgress` in the installer provisions `network.ini`
+   inside the install and reports what is missing — without ever overwriting a user's
+   settings.
+
 0. **No objective has been completed end-to-end.** This is the live blocker and it is new.
    The agent claims objectives that the game already accepts (`objectiveStatus 2`) — real
    progress, now verified — but a *talk* objective that needs a walk, an NPC, a dialog and a

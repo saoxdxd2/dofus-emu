@@ -1479,6 +1479,9 @@ namespace DofusStandaloneSetup
 
                     SetupPythonEnvironment(TargetDir);
 
+                    // Same idea for the network: provision it inside the install.
+                    SetupNetworkEgress(TargetDir);
+
 
 
                     // 5. Desktop Shortcut, Registry & Environment Variables
@@ -1840,6 +1843,74 @@ namespace DofusStandaloneSetup
         }
 
 
+
+        /// <summary>
+        /// Make the egress work from inside the install, with nothing added system-wide.
+        ///
+        /// Everything it needs already ships in the payload: bin\warp\wireproxy.exe (a
+        /// userspace WireGuard client that binds one local SOCKS5 port and leaves Windows
+        /// routing and DNS alone), the pool manager in scripts\proxy_pool.js, and
+        /// start-network.bat to drive both. What was missing was an installer that says so
+        /// and a network.ini that exists, so a fresh install had a launcher that refused to
+        /// start a client and no visible reason why.
+        /// </summary>
+        private void SetupNetworkEgress(string targetDir)
+        {
+            try
+            {
+                // network.ini: created if absent, never rewritten. These are the user's
+                // settings; an installer that overwrites them silently changes where the
+                // game traffic exits, which is not an installer's decision to make.
+                string ini = Path.Combine(targetDir, "network.ini");
+                if (!File.Exists(ini))
+                {
+                    File.WriteAllText(ini,
+                        "# DofusFarm network settings - edited by Settings > Network, or by hand.\r\n" +
+                        "#\r\n" +
+                        "# mode=auto probes the tunnel, the configured upstream and the pool, and keeps\r\n" +
+                        "# whatever actually works. fail_closed=1 refuses to launch a client rather\r\n" +
+                        "# than fall back to a direct connection, which would expose this machine to\r\n" +
+                        "# the game.\r\n" +
+                        "#\r\n" +
+                        "# wireproxy_conf empty means bin\\warp\\wireproxy.conf.\r\n" +
+                        "mode=auto\r\n" +
+                        "socks_port=40000\r\n" +
+                        "upstream=\r\n" +
+                        "base_port=8880\r\n" +
+                        "fail_closed=1\r\n" +
+                        "extra_args=\r\n" +
+                        "wireproxy_conf=\r\n" +
+                        "log_path=\r\n",
+                        new UTF8Encoding(false));
+                    Report(89, "Wrote network.ini (auto egress, fail closed).");
+                }
+
+                string wireproxy = Path.Combine(targetDir, @"bin\warp\wireproxy.exe");
+                string wireConf = Path.Combine(targetDir, @"bin\warp\wireproxy.conf");
+                string pool = Path.Combine(targetDir, @"scripts\proxy_pool.js");
+                string startNet = Path.Combine(targetDir, "start-network.bat");
+
+                var missing = new List<string>();
+                if (!File.Exists(wireproxy)) missing.Add(@"bin\warp\wireproxy.exe");
+                if (!File.Exists(wireConf)) missing.Add(@"bin\warp\wireproxy.conf");
+                if (!File.Exists(pool)) missing.Add(@"scripts\proxy_pool.js");
+                if (!File.Exists(startNet)) missing.Add("start-network.bat");
+
+                if (missing.Count == 0)
+                    Report(89, "Local egress ready (tunnel + proxy pool), no system install needed.");
+                else
+                    Report(89, "Egress pieces missing from the payload: " + string.Join(", ", missing));
+
+                if (!File.Exists(Path.Combine(targetDir, "proxies.txt")))
+                    Report(89, "No proxies.txt yet - run start-network.bat once to build the pool.");
+            }
+            catch (Exception ex)
+            {
+                // Never fail an install over the network helper: the app reports the
+                // missing egress itself, and a half-installed machine is worse.
+                Report(89, "Network setup skipped: " + ex.Message);
+            }
+        }
 
         private static string FindPythonExecutable(string targetDir = null)
 

@@ -142,3 +142,11 @@ dofus-network/data/tool_sft_v2/*.jsonl
 dofus-network/data/tool_sft_all/*.jsonl
 # the shipped tool policy is small and is the artifact, so it is tracked
 !dofus-network/models/tool_policy.onnx
+
+# Proxy pool runtime state. These are rewritten every cycle by scripts/proxy_pool.js:
+# a 2 MB scraped candidate queue and the approved/quarantine/dead bookkeeping. Committing
+# them puts a few thousand lines of churn in every diff and tells the next reader nothing.
+proxies_raw.txt
+proxy_pool_state.json
+proxy_pool.log
+proxies.txt.pre-pool.bak
