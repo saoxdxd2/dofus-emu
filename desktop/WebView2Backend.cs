@@ -278,7 +278,9 @@ namespace DofusFarm.Engine
             {
                 SafeUiInvoke(form, () =>
                 {
-                    try { form.Close(); } catch { }
+                    // CloseFromHost, not Close: it records that the app asked, so the
+                    // close log can be told apart from the player shutting the window.
+                    try { form.CloseFromHost("WebView2Backend.Stop"); } catch { }
                     try { form.Dispose(); } catch { }
                 });
             }
@@ -497,7 +499,7 @@ namespace DofusFarm.Engine
                 {
                     SafeUiInvoke(kvp.Value, () =>
                     {
-                        try { kvp.Value.Close(); } catch { }
+                        try { kvp.Value.CloseFromHost("WebView2Backend.CloseAll"); } catch { }
                         try { kvp.Value.Dispose(); } catch { }
                     });
                 }

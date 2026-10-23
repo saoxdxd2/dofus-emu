@@ -194,6 +194,29 @@ namespace DofusFarm.Engine
         public event Action<string, string> OnAiRequest;
         public event Action<string> OnFormClosedByUser;
 
+        // Who asked for this window to close.
+        //
+        // WinForms reports CloseReason.UserClosing for a real click on X *and* for a
+        // programmatic Form.Close(), so "reason=UserClosing" alone cannot tell "the
+        // player shut the window" from "the app shut it for them" — and every close in
+        // this project was logged identically. Set here before Close() so the log can
+        // name the caller.
+        private string _closeRequestedBy = null;
+
+        /// <summary>Close from host code, recording which path asked for it.</summary>
+        public void CloseFromHost(string why)
+        {
+            try
+            {
+                var frame = new System.Diagnostics.StackTrace(1, true).GetFrame(0);
+                string where = frame == null ? "?" : string.Format("{0}:{1}",
+                    System.IO.Path.GetFileName(frame.GetFileName() ?? "?"), frame.GetFileLineNumber());
+                _closeRequestedBy = string.IsNullOrEmpty(why) ? where : (why + " @ " + where);
+            }
+            catch { _closeRequestedBy = why; }
+            Close();
+        }
+
         // Embedded Cordova compatibility shim: emulates Cordova runtime so Dofus Touch / hybrid web assets run standalone
         private const string CordovaShimScript = @"(function() {
     'use strict';
@@ -2559,8 +2582,9 @@ namespace DofusFarm.Engine
             // down, or the task manager killed it. Sixty-two of those in one log, and no
             // way to tell a kick from a shutdown from a stray Close(). CloseReason says
             // which, and it costs one line.
-            _logCallback?.Invoke(string.Format("[{0}] closing: reason={1}{2}",
-                _instanceId, e.CloseReason, e.Cancel ? " (cancelled)" : ""));
+            _logCallback?.Invoke(string.Format("[{0}] closing: reason={1} requested_by={2}{3}",
+                _instanceId, e.CloseReason, _closeRequestedBy ?? "the player (window close)",
+                e.Cancel ? " (cancelled)" : ""));
 
             CloseOAuthDialog();
 
