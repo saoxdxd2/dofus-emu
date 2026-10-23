@@ -1,18 +1,20 @@
 # Morning — what to run, in order
 
-Everything below is committed. The client-side changes need **one page reload**; the
-C# changes need a **rebuild**. Nothing needs a fresh login.
+Everything below is committed. The client-side changes need **one page reload**; the C#
+changes need a **rebuild**. Nothing needs a fresh login.
+
+**One caveat before anything else:** `Build.exe` is still the 2026-10-22 binary and contains
+the old `TrySyncClientShims`, so it recreates two unused copies of `mobile-disguise.js` on
+every build. They are not loaded by any page — ignore them, or rebuild `Build.exe` from
+`builder/build.cs` to stop it.
 
 ## 1. One click to load the new agent script
 
-The app is (or was) running with the previous script. Two ways, either is fine:
-
-- **Rebuild** (`compile.bat`), start the app, then press **Reload client** in the AI panel
-  (new button), or
+- **Rebuild** (`compile.bat`), start the app, then press **Reload client** in the AI panel, or
 - **Without rebuilding:** restart the app and launch an instance as usual.
 
-The page reload is what makes every fix below take effect. `ai/verify_live.py` tells you
-whether it worked — its first check after the bridge is `agent script is current`.
+The page reload is what makes every JS fix take effect. `ai/verify_live.py` tells you whether
+it worked — its first check after the bridge is `agent script is current`.
 
 ## 2. The check that matters
 
@@ -29,7 +31,7 @@ Expected shape once things are right:
 ```
 [PASS] bridge answers                     port 8894
 [PASS] a client window is open            instances=1
-[PASS] agent script is current            2026-10-23a
+[PASS] agent script is current            2026-10-23b
 [PASS] snapshot returns state             24 fields
 [PASS] character is in the world          Aiismine level 18 on map 150736645 cell 342
 [PASS] the character has health           120/240
@@ -42,51 +44,86 @@ Expected shape once things are right:
 
 ## 3. If health is 0/0
 
-`hp 0/0` means the character is dead (or the stats are not loaded in this client state).
-A dead character can walk but cannot talk, so revive first. `verify_live` flags this
-before the talk check for exactly that reason.
+`hp 0/0` means the character is dead (or the stats are not loaded in this client state). A
+dead character can walk but cannot talk, so revive first. `verify_live` flags this before the
+talk check for exactly that reason.
 
-## 4. Then the agent
+## 4. Then the agent — and this time, leave the window alone
 
-Press the in-game badge (it is the AI button) or the panel's **Start**. The goal is
-already `plz do all the quests`, policy is pinned to the planner, steps are unlimited.
+Press the in-game badge (the AI button) or the panel's **Start**. The goal is already
+`plz do all the quests`, policy is pinned to the planner, steps are unlimited.
+
+**Do not close the client window, and do not press the instance's stop/toggle in the grid
+while the loop runs.** Six sessions ended because the window closed, and the log now says
+`reason=UserClosing` — a click, not a kick. Let it run for at least 60 seconds.
 
 Watch `%LOCALAPPDATA%\DofusFarm\autopilot.jsonl` and the panel log. What you want to see:
 
-- `quest.advance ... ok advanced` — not `noop`. `advanced` now means the observation
-  really changed (cell, map, dialog or quest counter).
-- `[autopilot] retiring quest N; taking another` when a quest cannot progress — the loop
-  keeps going instead of exiting.
-- No `[AI] loop finished (exit 0)` after a handful of steps.
+- `quest.advance ... ok advanced` — **this now works.** `advanced` means the observation
+  really changed. A claim that lands shows up as `advanced` because `ready_objectives` is
+  part of the state now.
+- `[autopilot] the client is gone: … stopping` when the window closes — the loop says so
+  instead of retiring a quest and claiming "goals exhausted".
+- `[autopilot] done: <reason>` at the end, and the reason should be one you can explain.
 
-## What changed tonight, and why each one mattered
+And the two lines to send me if it stops early:
+
+```
+[dofus-05] closing: reason=… requested_by=…
+[autopilot] done: …
+```
+
+`requested_by=the player (window close)` means you closed it.
+`requested_by=WebView2Backend.Stop @ WebView2Backend.cs:283` means the app did, and that
+call site is the bug.
+
+## 5. If the relay ever looks guilty
+
+```bash
+python ai/diagnose_network.py --seconds 20     # run it WHILE connected
+```
+
+It reads the live relay's own `/__telemetry` (RTT, connections, failures) and reports a
+verdict. An idle relay reports its *last* RTT, so sampling with no client connected measures
+nothing. The network-health model itself cannot load right now (BatchNorm checkpoint against
+a GroupNorm model); the tool says so and falls back to telemetry.
+
+## What changed today, and why each one mattered
 
 | fix | symptom it removes |
 |---|---|
-| `--directive-url` no longer defaults to 8893 | "bridge not reachable" while the bridge was on 8894 |
-| snapshot reads the real fields | character/map/HP were null on a live character |
-| verifier reads the nested shape | **every step scored `noop`** — the agent was blind |
-| snapshot carries quest state | planner could not tell which quest/objective was current |
-| planner claims ready objectives (status 2) | free progress that used to be invisible |
-| `quest.advance` answers dialogs | talk + deliver (46% of objectives) could not complete |
-| `quest.advance` walks to the NPC first | talking from across the map did nothing |
-| NPC lookup via `data.staticInfos.npcId` + `contextualId` | "no NPC on this map" while standing next to one |
-| `fight.join` sends `GameRolePlayAttackMonsterRequestMessage` | it clicked a DOM selector that does not exist |
-| `nav.goto` drives the client's own pathfinder | travel was one blind edge hop, so nothing multi-map |
-| unlimited really unlimited | every Auto run did 8 steps then exited 0 |
-| read-only success no longer ends the run | one `state.snapshot` ended the session |
-| `_skipped` filters active quests | a stuck quest was re-planned forever |
-| stall detection on `objectives_completed` | a retry/recover livelock was invisible |
-| badge acknowledges the press | a working button looked dead |
-| "Reload client" button + `debug.reload` | every JS fix needed an app restart |
+| contract declares the real arguments (`npc_id`, `objective_id`, `reply`, `monster`, `resource`) | **46% of objectives (talk/deliver) and 36.5% (kill) were rejected by the validator** — nothing reached the game |
+| `id_or_name` coercion for `farm.start.monster` | it was declared a *string* while the planner sent an int: every kill objective failed type-checking |
+| `farm.start` takes `resource`, not `item` | deliver / show-item / soul-stone were rejected as an unknown argument |
+| `fight.join` declares `monster` + `group_id`, and resolves a monster to its group | planner sent `monster`, contract said `target`, client read `group_id` — three names, no overlap |
+| `ready_objectives` is part of the verifier's state | **claiming an objective scored `noop`**, so the agent's best action was invisible and its progress was discarded |
+| settle window after walk/talk/fight tools | a walk was judged in the instant it was issued, so every one scored `noop` |
+| `agent/observe.py` flattens the snapshot | the planner saw `map_id: None` and never saw its own inventory |
+| loopback calls bypass `HTTP_PROXY` | every directive to `127.0.0.1` went through the VPN proxy — 502s from your own machine |
+| a missing client stops the loop | it filed three failures, retired the quest, and reported "goals exhausted" |
+| client script runs once, one copy | two `FarmBot.init()`, two bindings of `connectionManager`, two bots on one HUD |
+| `closing: reason=… requested_by=…` | every close was logged identically, so a click and a kick looked the same |
+| AI panel output mirrored to `DofusFarm.log` | the panel's text box is capped at 24k chars and vanishes on close — crashes left no trace |
 
-## Still not built
+Night-of fixes that still hold: `--directive-url` no longer defaults to 8893; the snapshot
+reads the real fields; the verifier reads the nested shape; `quest.advance` walks to the NPC,
+answers dialogs, and uses `data.staticInfos.npcId` + `contextualId`; `fight.join` sends
+`GameRolePlayAttackMonsterRequestMessage`; `nav.goto` drives the client's pathfinder;
+unlimited really is unlimited; a read-only success no longer ends the run; stall detection
+on `objectives_completed`.
 
-- **Kill objectives (36.5%).** `fight.join` now attacks a group properly, and the
-  auto-fight bot passes turns, but nothing targets *a specific monster* or counts kills
-  toward an objective. If the right monster is not on the map, the objective cannot
-  progress.
-- **Cross-map routing.** `nav.goto` changes one map through the client, and walks within
-  a map. There is no route across several maps; the client's GPS/zaap path is not wired.
-- **`_resizeUi` uncaught JS error** in the patched bundle (fires on resize). Harmless to
-  the agent, but it is a real error in the client.
+## Still not built, and one thing that is untested
+
+- **A completed talk objective.** The gate in front of everything. The agent claims
+  objectives the game already accepts, but walk → dialog → reply → objective finished has
+  never happened in one session. That is P0.
+- **Fights are untested, not working.** `fight.join` has **never been executed against the
+  game** — 0 calls in 697 recorded steps, because fights sit behind the first talk. The
+  handler is written and reviewed; it has not run.
+- **Kill objectives (36.5%).** Nothing targets a specific monster or counts kills toward an
+  objective.
+- **Cross-map routing.** `nav.goto` changes one map and walks within a map. There is no
+  route across several maps; the client's GPS/zaap path is not wired.
+- **A JS error in the patched bundle** (`Cannot read properties of undefined (reading
+  'setStyles')`, and `_resizeUi` on resize). Harmless to the agent, but it is a real error in
+  the client.
