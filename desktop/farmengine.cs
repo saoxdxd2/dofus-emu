@@ -1958,7 +1958,24 @@ namespace DofusFarm.Engine
                         // when there is a static exit worth pinning; the address stability that
                         // actually mattered is handled by the egress pin.
                         sb.AppendFormat(" -upstream \"{0}\"", chain);
-                        Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
+
+                        // Give asset downloads their own egress when a second candidate exists.
+                        //
+                        // One public proxy allows roughly one concurrent connection, so the 231
+                        // asset requests of a page load were queuing behind the live game socket
+                        // and behind each other. A second proxy for the CDN path means the game
+                        // connection stops waiting for the loading screen.
+                        string[] chainParts = chain.Split(',');
+                        if (chainParts.Length >= 2)
+                        {
+                            sb.AppendFormat(" -cdn-upstream \"{0}\"", chainParts[1]);
+                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1}, assets: {2})...",
+                                port, chainParts[0], chainParts[1]));
+                        }
+                        else
+                        {
+                            Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
+                        }
                     }
                     else Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Direct)...", port));
 

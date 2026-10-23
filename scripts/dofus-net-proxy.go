@@ -540,6 +540,15 @@ type ProxyServer struct {
 	exitMu           sync.Mutex
 	exitBlockedUntil time.Time
 
+	// A separate egress for asset downloads.
+	//
+	// The game socket and the CDN share one upstream today, and a public proxy allows roughly one
+	// concurrent connection — so every asset request queues behind the live game connection and
+	// behind the other assets. 231 requests at ~600 ms each, serialised, is minutes of loading
+	// screen. A second upstream gives the CDN its own path, so downloads stop competing with the
+	// socket that must stay responsive.
+	cdnUpstream *url.URL
+
 	// Which hops can actually reach the exit, measured in the background.
 	//
 	// Racing blind was the reason two thirds of connections failed: a hop has to accept
@@ -898,6 +907,37 @@ func asciiLower(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// newAssetClient builds the HTTP client used for CDN downloads on a given upstream.
+//
+// Same shape as the default client, but pointed at its own proxy so asset traffic has a path of
+// its own.
+func newAssetClient(u *url.URL, resolver *FastDNSResolver) *http.Client {
+	dialer := &net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}
+	isSocks := strings.HasPrefix(strings.ToLower(u.Scheme), "socks5")
+	transport := &http.Transport{
+		MaxIdleConns:        64,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     60 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if isSocks {
+				return dialUpstreamSocks5(u, addr, 8*time.Second)
+			}
+			host, portStr, err := net.SplitHostPort(addr)
+			if err != nil {
+				host, portStr = addr, "80"
+			}
+			if ips, lookupErr := resolver.Lookup(ctx, host); lookupErr == nil && len(ips) > 0 {
+				addr = net.JoinHostPort(ips[0].String(), portStr)
+			}
+			return dialer.DialContext(ctx, network, addr)
+		},
+	}
+	if !isSocks {
+		transport.Proxy = http.ProxyURL(u)
+	}
+	return &http.Client{Transport: transport, Timeout: 60 * time.Second}
 }
 
 // parseUpstreamList splits a comma-separated upstream value into usable URLs.
@@ -3880,6 +3920,7 @@ func main() {
 	port := flag.Int("port", defInt("port", 8880), "Local listening port for HTTP/CONNECT proxy")
 	host := flag.String("host", defStr("host", "127.0.0.1"), "Host address to bind the proxy server to")
 	upstream := flag.String("upstream", defStr("upstream", ""), "Upstream proxy URL, or a comma-separated chain of them (http://ip:port or socks5://ip:port)")
+	cdnProxy := flag.String("cdn-upstream", defStr("cdn_upstream", ""), "Separate upstream for asset downloads, so they do not queue behind the game socket")
 	exitProxy := flag.String("exit-proxy", defStr("exit_proxy", ""), "Fixed exit proxy reached through -upstream hops. Keeps one exit IP across hop failures.")
 	dnsServer := flag.String("dns", defStr("dns", ""), "Custom DNS server to query (optional, default: system DNS)")
 	cacheDir := flag.String("cache", defStr("cache", "proxy_cache"), "Directory to cache static game assets (optional)")
@@ -4013,6 +4054,16 @@ func main() {
 	// memory limit alone does what is actually wanted — normal collection until the heap
 	// approaches the ceiling, then collect harder.
 	debug.SetMemoryLimit(384 << 20)
+
+	if cdn := strings.TrimSpace(*cdnProxy); cdn != "" {
+		if u := parseUpstreamProxy(cdn); u != nil {
+			proxy.cdnUpstream = u
+			proxy.client = newAssetClient(u, proxy.resolver)
+			log.Printf("[UPSTREAM] asset downloads use their own egress: %s", u.Redacted())
+		} else {
+			log.Printf("[UPSTREAM] -cdn-upstream %q is not a usable proxy URL; ignoring it", cdn)
+		}
+	}
 
 	if trimmed := strings.TrimSpace(*exitProxy); trimmed != "" {
 		proxy.exitURL = parseUpstreamProxy(trimmed)
