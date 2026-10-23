@@ -149,7 +149,33 @@ def main(argv=None) -> int:
     ap.add_argument("--host", default=DEFAULT_HOST, help="target host to tunnel to")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--timeout", type=float, default=8.0)
+    ap.add_argument("--proxy", default="",
+                    help="test one entry and nothing else, e.g. http://user:pass@host:port")
+    ap.add_argument("--quiet", action="store_true",
+                    help="one line of output; for scripts. Exit code says it.")
     args = ap.parse_args(argv)
+
+    # One entry, nothing else. This is what `manage-proxy.bat add` calls before it writes a
+    # line into proxies.txt: a proxy that is not tested before it is saved is a proxy the
+    # next launch will fail closed on, with no record of why.
+    if args.proxy:
+        parsed = parse_proxy(args.proxy)
+        if not parsed:
+            print("cannot parse %r — expected [http|socks5]://[user:pass@]host:port"
+                  % args.proxy)
+            return 2
+        scheme, user, pwd, host, port = parsed
+        t0 = time.time()
+        if scheme == "socks5":
+            ok, why = test_socks5(host, port, args.host, args.port, args.timeout)
+        else:
+            ok, why = test_http(host, port, user, pwd, args.host, args.port, args.timeout)
+        ms = (time.time() - t0) * 1000
+        if args.quiet:
+            print(("PASS %s" if ok else "FAIL %s") % mask(args.proxy))
+        else:
+            print("%-40s %-4s %6.0f ms  %s" % (mask(args.proxy), "PASS" if ok else "FAIL", ms, why))
+        return 0 if ok else 1
 
     cfg = read_ini(NETWORK_INI)
     pool = read_pool(PROXIES)

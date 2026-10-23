@@ -148,6 +148,29 @@ The harvester matters more than it sounds: the pool only scrapes when its own qu
 and with 75k candidates waiting it never does. One harvest pass took the queue from 75,148 to
 85,901 in under a second.
 
+### Looking after it afterwards
+
+`start-network.bat` brings the egress up. `manage-proxy.bat` keeps it up — and it is the one
+to reach for once setup.exe is done, because it tells you what is actually true right now:
+
+```bash
+manage-proxy.bat                    # status: config, pool, tunnel, and what works
+manage-proxy.bat test               # probe every candidate
+manage-proxy.bat add http://user:pass@host:port          # test, then save if it passes
+manage-proxy.bat add socks5://host:port --replace        # make it the only entry
+manage-proxy.bat refresh            # harvest + one pool pass + re-test
+manage-proxy.bat reset              # forget approvals/quarantine, re-test from scratch
+manage-proxy.bat logs               # relay log + pool log tails
+```
+
+`add` tests the proxy **before** writing it, and refuses to save one that fails — a saved
+proxy that does not work only makes the next launch fail closed with no record of why. It
+also means the paid-proxy path is one command, not a file edit.
+
+Everything runs from inside the install folder. Nothing is registered system-wide, no PATH or
+registry entry is created, and the two bats sit next to the launcher so an installed copy has
+the same entry points as this repository.
+
 **On WARP, measured 2026-10-23 — do not spend more time on it here.** Run
 `python ai\test_warp.py` to reproduce. Twenty endpoint/port combinations, every one fails a
 real handshake. `ping 1.1.1.1` is not evidence either way — Cloudflare deprioritises ICMP —

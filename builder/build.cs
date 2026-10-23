@@ -323,12 +323,15 @@ namespace DofusBuild
                         File.Copy(src, Path.Combine(stageScripts, rs), true);
                 }
 
-                // The one command that wires tunnel + pool + report together. Copied to
-                // the payload root so an installed copy has the same entry point as the
-                // repository does.
-                string netBat = Path.Combine(RepoRoot, "start-network.bat");
-                if (File.Exists(netBat))
-                    File.Copy(netBat, Path.Combine(stageDir, "start-network.bat"), true);
+                // The two entry points an installed copy needs: one to bring the egress up,
+                // one to look after it afterwards. Both live at the payload root so they sit
+                // next to the launcher, not buried in scripts\.
+                foreach (string bat in new[] { "start-network.bat", "manage-proxy.bat" })
+                {
+                    string src = Path.Combine(RepoRoot, bat);
+                    if (File.Exists(src))
+                        File.Copy(src, Path.Combine(stageDir, bat), true);
+                }
 
                 string repoBin = Path.Combine(RepoRoot, @"scripts\bin");
                 if (Directory.Exists(repoBin) && includeLegacyEmulator)
