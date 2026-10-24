@@ -1,0 +1,23 @@
+{
+  "id": "tajdinenizar/thx-02-tool-policy",
+  "id_no": 140254584,
+  "title": "THX-02 tool policy",
+  "code_file": "thx-02-tool-policy.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [
+    "gpu"
+  ],
+  "dataset_sources": [
+    "tajdinenizar/thx-02-sim-toolkit"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:9a6bcfda6d03b2cd9aa347ee8c1bae62043328ed0f4afe9bda014e4f8bbf9435",
+  "machine_shape": "NvidiaTeslaT4"
+}

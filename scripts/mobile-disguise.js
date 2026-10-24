@@ -1018,7 +1018,6 @@
         var FarmBot = {
             enabled: false,
             config: {
-                aoeSpellId: 164,       // Flèche Explosive (Cra) or primary AOE
                 autoReadyDelayMs: 20,   // Delay before GameFightTurnReadyMessage
                 autoFinishDelayMs: 15   // Delay before GameFightTurnFinishMessage
             },
@@ -1417,6 +1416,14 @@
                                 var why = String(reason || 'CLIENT_CLOSING');
                                 window.__agentLastDisconnect = { at: Date.now(), reason: why,
                                                                  via: name };
+                                // Only attributes the kick when a claim was sent in the
+                                // last few seconds. A network drop an hour after the
+                                // last validation must not blacklist an objective.
+                                try {
+                                    if (window.__agentRecordKick) {
+                                        window.__agentRecordKick('dofus_' + name);
+                                    }
+                                } catch (e) {}
                                 // console.log, not info: the host captures log lines,
                                 // and this must survive the reload that follows.
                                 console.log('[AgentBridge] connection ended: reason=' + why
@@ -1438,25 +1445,59 @@
                     wrap('disconnectAndReload');
                 } catch (e) {}
 
+                // Freshness stamps for quest claims. The quest model is
+                // replaced from the server on map changes and quest messages;
+                // a claim sent while that refresh is in flight, or right
+                // after a map change, is checked against a state the server
+                // may no longer hold. _questClaimCheck reads these.
+                var stamp = function (name, field) {
+                    try {
+                        cm.on(name, function () { window[field] = Date.now(); });
+                    } catch (e) {}
+                };
+                stamp('CurrentMapMessage', '__agentLastMapChange');
+                stamp('QuestObjectiveValidatedMessage', '__agentLastQuestSync');
+                stamp('QuestStepInfoMessage', '__agentLastQuestSync');
+                stamp('QuestsUpdatedMessage', '__agentLastQuestSync');
+                stamp('QuestStepStartedMessage', '__agentLastQuestSync');
+                // The disconnect path also answers as a message before the page
+                // reloads; recording here catches a kick even when the host-side
+                // disconnect wrapper is not the code that fires.
+                try {
+                    cm.on('serverDisconnecting', function () {
+                        if (window.__agentRecordKick) {
+                            window.__agentRecordKick('serverDisconnecting');
+                        }
+                    });
+                } catch (e) {}
+
                 cm.on('GameFightStartingMessage', function(msg) {
                     self.state.inFight = true;
                     self.openFight();
                 });
 
-                cm.on('GameFightPlacementPossiblePositionsMessage', function() {
+                cm.on('GameFightPlacementPossiblePositionsMessage', function(msg) {
                     if (!self.enabled) return;
                     setTimeout(function() {
-                        self.sendPacket('GameFightOptionToggleMessage', { option: 2 });
-                        self.sendPacket('GameFightTurnReadyMessage', { isReady: true });
+                        try { self.placeAndReady(msg); } catch (e) {}
                     }, self.config.autoReadyDelayMs);
                 });
 
                 cm.on('GameFightTurnStartMessage', function(msg) {
                     if (!self.enabled) return;
+                    // The same start can arrive twice while a turn is already being
+                    // played; a second driver would cast twice and spend AP the server
+                    // never authorised. TurnEnd (and fight end) release the flag.
+                    if (self.state.myTurn) return;
                     if (self.isUserActor(msg.id)) {
                         self.state.myTurn = true;
+                        self.state.turnStartedAt = Date.now();
                         self.executeOptimalTurn(cm, msg.id);
                     }
+                });
+
+                cm.on('GameFightTurnEndMessage', function(msg) {
+                    if (self.isUserActor(msg.id)) self.state.myTurn = false;
                 });
 
                 cm.on('GameFightEndMessage', function(msg) {
@@ -1468,168 +1509,298 @@
                 });
             },
 
+            // Placement is two messages, not an option toggle. The previous handler
+            // sent FIGHT_OPTION_SET_CLOSED (option 2) plus a *turn* ready, so with the
+            // bot enabled the fight never even started: nobody picked a cell and nobody
+            // pressed the real ready button. The live capture of a manual fight shows
+            // the actual sequence: GameFightPlacementPositionRequestMessage then
+            // GameFightReadyMessage.
+            placeAndReady: function(msg) {
+                var positions = (msg && msg.positionsForChallengers) || [];
+                var am = window.actorManager
+                    || (window.isoEngine && window.isoEngine.actorManager) || null;
+                var ua = am && am.userActor;
+                var current = ua && ua.cellId != null ? ua.cellId : null;
+                var cell = null;
+                if (positions.indexOf(current) !== -1) cell = current;
+                else if (positions.length) cell = positions[0];
+                if (cell != null && cell !== current) {
+                    this.sendPacket('GameFightPlacementPositionRequestMessage', { cellId: cell });
+                }
+                var self = this;
+                setTimeout(function() {
+                    self.sendPacket('GameFightReadyMessage', { isReady: true });
+                }, 60);
+            },
+
+            // Turns are played with the client's own combat machinery, against the
+            // character's real spell list. The old driver posted to a combat server on
+            // 8892 that is not running and fell back to a hardcoded Cra spell (164),
+            // which this character does not own: every turn was a wasted cast and a
+            // pass. Nothing here assumes a class or a level.
             executeOptimalTurn: function(cm, fighterId) {
                 var self = this;
-                // `playerData.character` does not exist in this client build, so every
-                // value below used to fall through to its default: cell 250, 6 AP, 3 MP,
-                // 400 HP, breed 'Cra'. The bot then played every turn as a Cra with
-                // invented stats, which is why its turns looked random rather than wrong.
-                //
-                // In a fight the authoritative source is the player's own fighter, the
-                // same place the monster stats are read from a few lines below. Outside
-                // a fight, playerData carries these directly (lifePoints,
-                // effectiveMaxLifePoints, actionPoints, movementPoints) — there is no
-                // `characteristics` object and no `stats` object on playerData.
-                var pd = (window.gui && window.gui.playerData) || null;
-                var fStats = {};
-                var fCell = null;
+                var steps = 0;
+                var tick = function() {
+                    if (!self.enabled || !self.state.myTurn) return;
+                    if (steps++ >= 8 || Date.now() - (self.state.turnStartedAt || 0) > 20000) {
+                        self._endFightTurn();
+                        return;
+                    }
+                    var ctx = self._fightContext(fighterId);
+                    var action = ctx ? self._planFightAction(ctx) : null;
+                    if (!action) { self._endFightTurn(); return; }
+                    try {
+                        if (action.type === 'cast') {
+                            window.__agentLastFightTurn = { at: Date.now(), action: 'cast',
+                                spell: action.spellId, target: action.targetId, cell: action.cell };
+                            ctx.fm.castSpellOnTarget(action.spellId, action.targetId, ctx.myId);
+                            setTimeout(tick, 450);
+                            return;
+                        }
+                        var mapId = (ctx.iso && ctx.iso.mapRenderer && ctx.iso.mapRenderer.map)
+                            ? ctx.iso.mapRenderer.map.id : null;
+                        if (mapId == null) { self._endFightTurn(); return; }
+                        window.__agentLastFightTurn = { at: Date.now(), action: 'move',
+                            cell: action.cell };
+                        self.sendPacket('GameMapMovementRequestMessage', {
+                            keyMovements: self._compressPath(action.path), mapId: mapId });
+                        setTimeout(tick, 700);
+                    } catch (e) {
+                        self._endFightTurn();
+                    }
+                };
+                tick();
+            },
+
+            _endFightTurn: function() {
+                this.state.myTurn = false;
                 try {
-                    var am0 = window.actorManager
-                        || (window.isoEngine && window.isoEngine.actorManager);
-                    var own = am0 && am0.getActor ? am0.getActor(fighterId) : null;
-                    var ownFighter = (own && typeof own.getFighter === 'function') ? own.getFighter() : null;
-                    fStats = (ownFighter && ownFighter.data && ownFighter.data.stats) || {};
-                    fCell = own && own.cellId != null ? own.cellId : null;
+                    var fm = window.gui && window.gui.fightManager;
+                    if (fm && typeof fm.finishTurn === 'function') { fm.finishTurn(); return; }
                 } catch (e) {}
-                var pick = function () {
-                    for (var i = 0; i < arguments.length; i++) {
-                        var v = arguments[i];
-                        if (v !== undefined && v !== null) return v;
+                this.sendPacket('GameFightTurnFinishMessage', { isAfk: false });
+            },
+
+            _fightContext: function(fighterId) {
+                var gui = window.gui || {};
+                var fm = gui.fightManager || null;
+                var pd = gui.playerData || null;
+                var iso = window.isoEngine || null;
+                var am = window.actorManager || (iso && iso.actorManager) || null;
+                if (!fm || !pd || !am) return null;
+                var chars = pd.characters || {};
+                var myId = chars.controlledCharacterId != null
+                    ? chars.controlledCharacterId : fighterId;
+                var me = am.getActor ? am.getActor(myId) : null;
+                var myCell = me && me.cellId != null ? me.cellId
+                    : (pd.position && pd.position.cell != null ? pd.position.cell : null);
+                var controlled = chars.getControlledCharacter ? chars.getControlledCharacter() : null;
+                var stats = (controlled && controlled.characteristics) || {};
+                var spells = (controlled && controlled.spellData
+                    && controlled.spellData.getSpellListDependingOnGameMode)
+                    ? controlled.spellData.getSpellListDependingOnGameMode() : {};
+                var enemies = [];
+                var ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
+                for (var i = 0; i < ids.length; i++) {
+                    var id = ids[i];
+                    if (id === myId) continue;
+                    var a = am.getActor(id);
+                    if (!a || a.cellId == null || a.isDead) continue;
+                    var f = null;
+                    try { f = (typeof a.getFighter === 'function') ? a.getFighter() : null; } catch (e) {}
+                    if (!f) continue;
+                    if (f.data && f.data.alive === false) continue;
+                    var onTeam = false;
+                    try { onTeam = !!fm.isFighterOnUsersTeam(id); } catch (e) {}
+                    if (onTeam) continue;
+                    var st = (f.data && f.data.stats) || {};
+                    enemies.push({ id: id, cell: a.cellId,
+                        hp: st.lifePoints != null ? st.lifePoints : 1 });
+                }
+                return { fm: fm, iso: iso, am: am, myId: myId, myCell: myCell,
+                    ap: stats.actionPointsCurrent != null ? stats.actionPointsCurrent : 6,
+                    mp: stats.movementPointsCurrent != null ? stats.movementPointsCurrent : 3,
+                    spells: spells, enemies: enemies };
+            },
+
+            // A spell is worth casting at an enemy only if it actually damages. Buffs
+            // and heals share the same list, and the effect instances the client uses
+            // for its tooltips know the difference. Weapon attacks have no spellLevel,
+            // but they are damage by definition.
+            _damageSpell: function(spell) {
+                if (!spell) return false;
+                try {
+                    if (typeof spell.isWeapon === 'function' && spell.isWeapon()) return true;
+                } catch (e) {}
+                var lvl = spell.spellLevel;
+                if (!lvl || !lvl.effects || !lvl.effects.length) return false;
+                var prefix = (typeof spell.getSpellLevelId === 'function')
+                    ? spell.getSpellLevelId() : null;
+                var rawDamage = [82, 85, 86, 87, 88, 89, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100];
+                for (var i = 0; i < lvl.effects.length; i++) {
+                    var inst = (spell.effectInstances && prefix != null)
+                        ? spell.effectInstances[prefix + '-effects-' + i] : null;
+                    if (inst && typeof inst.isDamageEffect === 'function') {
+                        try { if (inst.isDamageEffect()) return true; } catch (e) {}
+                        continue;
                     }
-                    return null;
+                    var eid = (lvl.effects[i] || {}).effectId;
+                    if (rawDamage.indexOf(eid) !== -1) return true;
+                }
+                return false;
+            },
+
+            _spellDescriptor: function(spell) {
+                var prop = function(name, fallback) {
+                    try {
+                        var v = spell.getProperty ? spell.getProperty(name) : null;
+                        return v != null ? v : (fallback !== undefined ? fallback : null);
+                    } catch (e) { return fallback !== undefined ? fallback : null; }
                 };
-                var charCell = pick(fCell, pd && pd.position && pd.position.cell, 250);
-                var charAp = pick(fStats.actionPoints, pd && pd.actionPoints, 6);
-                var charMp = pick(fStats.movementPoints, pd && pd.movementPoints, 3);
-                var charHp = pick(fStats.lifePoints, pd && pd.lifePoints, 400);
-                var charMaxHp = pick(fStats.maxLifePoints, pd && pd.effectiveMaxLifePoints, 400);
-                var breedName = pick(pd && pd.characterBreed && pd.characterBreed.name,
-                                     pd && pd.characterBreed, 'Cra');
-                // Kept as a plain string: the turn payload below has always carried
-                // `breed` as a string, and turning it into an object here would be a
-                // silent shape change for whoever reads the payload.
-                var breed = breedName;
-
-                var monsters = [];
-                if (window.isoEngine && window.isoEngine.actorManager) {
-                    var am = window.isoEngine.actorManager;
-                    var ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
-                    for (var i = 0; i < ids.length; i++) {
-                        var a = am.getActor(ids[i]);
-                        if (!a || a.cellId == null) continue;
-                        var fighter = null;
-                        try { fighter = (typeof a.getFighter === 'function') ? a.getFighter() : null; } catch(e) {}
-                        var isMonster = false;
-                        try { isMonster = !!(fighter && typeof fighter.isMonster === 'function' && fighter.isMonster()); } catch(e) {}
-                        if (!isMonster) continue;
-                        var fData = (fighter && fighter.data) || {};
-                        var fStats = fData.stats || {};
-                        monsters.push({
-                            id: a.actorId != null ? a.actorId : (ids[i] || -1),
-                            name: fData.monsterName || fData.name || 'Monster',
-                            hp: fStats.lifePoints || 500,
-                            maxHp: fStats.maxLifePoints || fStats.lifePoints || 500,
-                            cellId: a.cellId
-                        });
-                    }
-                }
-
-                var aiPayload = {
-                    turn: 1,
-                    player: {
-                        id: fighterId,
-                        breed: breed,
-                        hp: charHp,
-                        maxHp: charMaxHp,
-                        ap: charAp,
-                        mp: charMp,
-                        cellId: charCell
-                    },
-                    monsters: monsters
+                return {
+                    spellId: spell.id,
+                    castInDiagonal: prop('castInDiagonal'),
+                    castInLine: prop('castInLine'),
+                    castTestLos: prop('castTestLos'),
+                    minRange: prop('minRange'),
+                    range: prop('range'),
+                    apCost: prop('apCost', spell.level),
+                    needFreeCell: prop('needFreeCell'),
+                    needFreeTrapCell: prop('needFreeTrapCell'),
+                    needTakenCell: prop('needTakenCell'),
+                    name: (typeof spell.getName === 'function') ? spell.getName() : null
                 };
-
-                // Query DofusFarm combat decision server with 750ms abort timeout
-                var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-                var timeoutId = controller ? setTimeout(function() { try { controller.abort(); } catch(e){} }, 750) : null;
-
-                fetch('http://127.0.0.1:8892/v1/combat/decide', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(aiPayload),
-                    signal: controller ? controller.signal : undefined
-                }).then(function(resp) {
-                    if (timeoutId) clearTimeout(timeoutId);
-                    if (!resp.ok) throw new Error('AI Server ' + resp.status);
-                    return resp.json();
-                }).then(function(data) {
-                    if (data && data.status === 'ok' && Array.isArray(data.actions) && data.actions.length > 0) {
-                        console.log('[FarmBot AI] Decision: Stance=' + data.stance + ' (Conf: ' + (data.confidence * 100).toFixed(1) + '%) -> ' + data.actions.length + ' actions');
-                        self.dispatchActionSequence(data.actions, 0);
-                    } else {
-                        self.executeFallbackBurst();
-                    }
-                }).catch(function(err) {
-                    if (timeoutId) clearTimeout(timeoutId);
-                    self.executeFallbackBurst();
-                });
             },
 
-            dispatchActionSequence: function(actions, index) {
-                var self = this;
-                if (!this.state.myTurn) return;
-                if (index >= actions.length) {
-                    setTimeout(function() {
-                        self.sendPacket('GameFightTurnFinishMessage', { isAfk: false });
-                        self.state.myTurn = false;
-                    }, this.config.autoFinishDelayMs);
-                    return;
-                }
-
-                var act = actions[index];
-                if (act.type === 'CAST') {
-                    this.sendPacket('GameActionFightCastRequestMessage', {
-                        spellId: act.spellId,
-                        cellId: act.cellId
-                    });
-                } else if (act.type === 'MOVE') {
-                    this.sendPacket('GameActionFightMovementRequestMessage', {
-                        keyMovements: [act.cellId]
-                    });
-                }
-
-                setTimeout(function() {
-                    self.dispatchActionSequence(actions, index + 1);
-                }, 20);
-            },
-
-            executeFallbackBurst: function() {
-                var self = this;
-                var targetCell = this.resolveOptimalTargetCell();
-                this.sendPacket('GameActionFightCastRequestMessage', {
-                    spellId: this.config.aoeSpellId,
-                    cellId: targetCell
-                });
-                setTimeout(function() {
-                    self.sendPacket('GameFightTurnFinishMessage', { isAfk: false });
-                    self.state.myTurn = false;
-                }, this.config.autoFinishDelayMs);
-            },
-
-            resolveOptimalTargetCell: function() {
-                if (window.isoEngine && window.isoEngine.actorManager) {
-                    var am = window.isoEngine.actorManager;
-                    var ids = (typeof am.getActorsIDList === 'function') ? am.getActorsIDList() : [];
-                    for (var i = 0; i < ids.length; i++) {
-                        var actor = am.getActor(ids[i]);
-                        if (!actor || actor.cellId == null) continue;
-                        var fighter = null;
-                        try { fighter = (typeof actor.getFighter === 'function') ? actor.getFighter() : null; } catch(e) {}
-                        var isMonster = false;
-                        try { isMonster = !!(fighter && typeof fighter.isMonster === 'function' && fighter.isMonster()); } catch(e) {}
-                        if (isMonster) return actor.cellId;
+            // Range, line/diagonal restrictions and line of sight are the client's own
+            // rules: setCurrentSpell + displaySpellRange is exactly what the spell bar
+            // does, and isOutsight then answers for one cell. Geometry is only a
+            // fallback for when the renderer is not ready.
+            _spellReaches: function(ctx, spell, targetCell) {
+                var iso = ctx.iso;
+                var desc = this._spellDescriptor(spell);
+                if (iso && typeof iso.setCurrentSpell === 'function'
+                    && typeof iso.displaySpellRange === 'function'
+                    && typeof iso.isOutsight === 'function'
+                    && iso.mapRenderer && iso.mapRenderer.map && iso.mapRenderer.map.cells) {
+                    var actor = ctx.am.getActor ? ctx.am.getActor(ctx.myId) : null;
+                    if (actor && !actor.isDead) {
+                        try {
+                            iso.setCurrentSpell(desc);
+                            iso.displaySpellRange(ctx.myId);
+                            return !iso.isOutsight(targetCell);
+                        } catch (e) {}
                     }
                 }
-                return 250;
+                if (ctx.myCell == null) return false;
+                var dist = this._cellDistance(ctx.myCell, targetCell);
+                var min = desc.minRange || 0;
+                var max = desc.range == null ? 63 : desc.range;
+                if (dist < min || dist > max) return false;
+                if (desc.castInLine || desc.castInDiagonal) {
+                    var a = this._cellPoint(ctx.myCell), b = this._cellPoint(targetCell);
+                    var line = (a.x === b.x || a.y === b.y);
+                    var diag = Math.abs(a.x - b.x) === Math.abs(a.y - b.y);
+                    if (desc.castInLine && desc.castInDiagonal) {
+                        if (!line && !diag) return false;
+                    } else if (desc.castInLine && !line) return false;
+                    else if (desc.castInDiagonal && !diag) return false;
+                }
+                return true;
+            },
+
+            _planFightAction: function(ctx) {
+                if (ctx.myCell == null) return null;
+                var candidates = [];
+                for (var k in ctx.spells) {
+                    if (!Object.prototype.hasOwnProperty.call(ctx.spells, k)) continue;
+                    var sid = parseInt(k, 10);
+                    if (isNaN(sid)) continue;
+                    var spell = ctx.spells[k];
+                    if (!this._damageSpell(spell)) continue;
+                    var usable = false;
+                    try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, sid); } catch (e) {}
+                    if (!usable) continue;
+                    var desc = this._spellDescriptor(spell);
+                    candidates.push({ id: sid, spell: spell,
+                        cost: desc.apCost != null ? desc.apCost : 1 });
+                }
+                candidates.sort(function(a, b) { return b.cost - a.cost; });
+                var enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });
+                for (var e = 0; e < enemies.length; e++) {
+                    for (var s = 0; s < candidates.length; s++) {
+                        if (this._spellReaches(ctx, candidates[s].spell, enemies[e].cell)) {
+                            return { type: 'cast', spellId: candidates[s].id,
+                                targetId: enemies[e].id, cell: enemies[e].cell };
+                        }
+                    }
+                }
+                if (ctx.mp > 0 && enemies.length) return this._planFightMove(ctx, enemies);
+                return null;
+            },
+
+            // Walk towards the nearest enemy using the client's fight pathfinder, so
+            // MP cost, tackle and occupied cells are the game's answers, not guesses.
+            _planFightMove: function(ctx, enemies) {
+                var iso = ctx.iso;
+                if (!iso || typeof iso._displayPathInFight !== 'function') return null;
+                var self = this;
+                var nearest = enemies[0];
+                var bestDist = this._cellDistance(ctx.myCell, nearest.cell);
+                for (var i = 1; i < enemies.length; i++) {
+                    var d = this._cellDistance(ctx.myCell, enemies[i].cell);
+                    if (d < bestDist) { bestDist = d; nearest = enemies[i]; }
+                }
+                var limit = Math.max(1, Math.min(ctx.mp, 6));
+                var best = null;
+                for (var cell = 0; cell < 560; cell++) {
+                    if (cell === ctx.myCell) continue;
+                    if (this._cellDistance(cell, ctx.myCell) > limit) continue;
+                    var dist = this._cellDistance(cell, nearest.cell);
+                    if (dist >= bestDist) continue;
+                    try {
+                        if (typeof ctx.am.getActorsOnCell === 'function'
+                            && ctx.am.getActorsOnCell(cell).length > 0) continue;
+                    } catch (e) {}
+                    var path = null;
+                    try { path = iso._displayPathInFight(cell); } catch (e) {}
+                    if (!path || !path.reachable || path.reachable.indexOf(cell) === -1) continue;
+                    if (path.costMP != null && path.costMP > ctx.mp) continue;
+                    best = { cell: cell, path: path.reachable };
+                    bestDist = dist;
+                }
+                return best ? { type: 'move', cell: best.cell, path: best.path } : null;
+            },
+
+            // Same grid the bundle uses (getMapPointFromCellId): cell ids are not
+            // row-major, so distance computed on raw ids is meaningless.
+            _cellPoint: function(cell) {
+                var t = cell % 14 - Math.floor(cell / 28);
+                return { x: t + 19, y: t + Math.floor(cell / 14) };
+            },
+
+            _cellDistance: function(a, b) {
+                var pa = this._cellPoint(a), pb = this._cellPoint(b);
+                return Math.abs(pa.x - pb.x) + Math.abs(pa.y - pb.y);
+            },
+
+            // The bundle's compressPath, verified against the live capture: cells
+            // [316, 359] must encode to keyMovements [4412, 4455].
+            _compressPath: function(path) {
+                var out = [], prev = path[0], lastDir = -1, px, py;
+                for (var i = 0; i < path.length; i++) {
+                    var cell = path[i], p = this._cellPoint(cell), dir;
+                    if (i === 0) dir = -1;
+                    else if (p.y === py) dir = p.x > px ? 7 : 3;
+                    else if (p.x === px) dir = p.y > py ? 1 : 5;
+                    else if (p.x > px) dir = p.y > py ? 0 : 6;
+                    else dir = p.y > py ? 2 : 4;
+                    if (dir !== lastDir) { out.push(prev + (dir << 12)); lastDir = dir; }
+                    prev = cell; px = p.x; py = p.y;
+                }
+                out.push(prev + (lastDir << 12));
+                return out;
             },
 
             sendPacket: function(messageType, payload) {
@@ -1651,7 +1822,7 @@
                 if (window.gui && window.gui.playerData && window.gui.playerData.characterBaseInformations) {
                     return window.gui.playerData.characterBaseInformations.id === id;
                 }
-                return true;
+                return false;
             }
         };
 
@@ -1684,6 +1855,194 @@
             } catch (e) {
                 return { ok: false, error: String(e) };
             }
+        };
+
+        // Claims that already ended a connection.
+        //
+        // A disconnect that follows a validation by a second is the server
+        // answering the claim, and it is the most expensive label this agent can
+        // collect. Remember the (quest, objective) pair the packet carried:
+        // window.__agentRecordKick is called from the disconnect hook, and the
+        // host seeds signatures extracted from old sessions before the page
+        // loads. Nothing here is a quest list -- only what the server itself
+        // rejected, on this machine or in a recorded session.
+        var _KICK_STORE = 'dofus.agent.unsafeClaims.v1';
+        var _knownKickSignatures = function() {
+            var out = {};
+            try {
+                var seeded = window.__agentKnownKickSignatures;
+                if (seeded && seeded.length) {
+                    for (var i = 0; i < seeded.length; i++) out[String(seeded[i])] = true;
+                }
+            } catch (e) {}
+            try {
+                var raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
+                var saved = raw ? JSON.parse(raw) : null;
+                if (saved && typeof saved === 'object') {
+                    for (var k in saved) {
+                        if (Object.prototype.hasOwnProperty.call(saved, k)) out[k] = true;
+                    }
+                }
+            } catch (e) {}
+            return out;
+        };
+        window.__agentRecordKick = function(via) {
+            var prev = window.__agentLastValidate;
+            if (!prev || !prev.quest_id || !prev.objective_id) return false;
+            var age = Date.now() - Number(prev.at || 0);
+            if (age < 0 || age > 3000) return false;
+            var sig = Number(prev.quest_id) + '/' + Number(prev.objective_id);
+            var saved = {};
+            try {
+                var raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
+                saved = raw ? JSON.parse(raw) : {};
+                if (!saved || typeof saved !== 'object') saved = {};
+            } catch (e) { saved = {}; }
+            saved[sig] = { at: Date.now(), via: String(via || ''),
+                           count: ((saved[sig] && saved[sig].count) || 0) + 1 };
+            var keys = [];
+            for (var k in saved) {
+                if (Object.prototype.hasOwnProperty.call(saved, k)) keys.push(k);
+            }
+            while (keys.length > 500) delete saved[keys.shift()];
+            try {
+                if (window.localStorage) {
+                    window.localStorage.setItem(_KICK_STORE, JSON.stringify(saved));
+                }
+            } catch (e) {}
+            console.log('[AgentGuard] kick signature recorded: quest=' + prev.quest_id
+                        + ' objective=' + prev.objective_id
+                        + ' via=' + (via || '') + ' age_ms=' + age);
+            return true;
+        };
+
+        // Whether a quest objective can be claimed safely.
+        //
+        // QuestObjectiveValidationMessage is a claim, and the server checks it
+        // against its own quest state: a claim it did not expect ends the
+        // connection (recorded as serverDisconnecting/SERVER_GONE within a
+        // second of the packet). The client's quest model is only a copy of
+        // that state and it lags -- it can still show the previous step, a
+        // status from before a map change, or CAN_BE_FINISHED on an objective
+        // whose event the server has not counted. So a claim is sent only when
+        // the model says, at this instant, that this is the current objective,
+        // that it is CAN_BE_FINISHED, that any counter it carries is complete,
+        // that its type is one the client is allowed to report, that no earlier
+        // claim of this pair ended the connection, and that nothing refreshed
+        // the state or changed the map moments ago.
+        var _questClaimCheck = function(qid, oid) {
+            var now = Date.now();
+            var sq = window.gui && window.gui.playerData && window.gui.playerData.quests
+                && window.gui.playerData.quests.standardQuests;
+            var q = null;
+            try {
+                if (sq && typeof sq.getActiveQuestById === 'function') {
+                    q = sq.getActiveQuestById(qid) || sq.getActiveQuestById(String(qid));
+                }
+            } catch (e) {}
+            if (!q || !q.objectives) {
+                return { ok: false, reason: 'objective_not_in_client_model',
+                         error: 'quest ' + qid + ' objective ' + oid
+                             + ' is not in the client quest model; the client cannot see what it would claim' };
+            }
+            var target = null, current = null;
+            for (var i = 0; i < q.objectives.length; i++) {
+                var o = q.objectives[i] || {};
+                if (o.objectiveStatus !== 0 && !current) current = o;
+                if (Number(o.objectiveId) === oid) target = o;
+            }
+            if (!target) {
+                return { ok: false, reason: 'objective_not_in_current_step',
+                         error: 'objective ' + oid + ' is not part of quest ' + qid
+                             + "'s current step" };
+            }
+            if (current && Number(current.objectiveId) !== oid) {
+                return { ok: false, reason: 'objective_not_current',
+                         current_objective_id: current.objectiveId,
+                         error: 'objective ' + oid + ' is not the current objective (current is '
+                             + current.objectiveId + ')' };
+            }
+            if (Number(target.objectiveStatus) !== 2) {
+                return { ok: false, reason: 'objective_not_ready', status: target.objectiveStatus,
+                         error: 'objective ' + oid + ' is not CAN_BE_FINISHED (status '
+                             + target.objectiveStatus + ')' };
+            }
+            if (target.maxCompletion != null && target.curCompletion != null
+                    && Number(target.curCompletion) < Number(target.maxCompletion)) {
+                return { ok: false, reason: 'objective_count_incomplete',
+                         cur_completion: target.curCompletion,
+                         max_completion: target.maxCompletion,
+                         error: 'objective ' + oid + ' is at ' + target.curCompletion + '/'
+                             + target.maxCompletion + '; the server counts this one itself' };
+            }
+            // Types whose completion the server decides. Claiming one before
+            // the server has counted the event is what the disconnect follows.
+            var db = (q.dbObjectives && q.dbObjectives[oid]) || null;
+            if (!db) {
+                try {
+                    var table = window.gui && window.gui.databases && window.gui.databases.QuestObjectives;
+                    db = (table && table[oid]) || null;
+                } catch (e) {}
+            }
+            var kind = (db && db._type) || target._type || null;
+            var SERVER_TYPES = {
+                QuestObjectiveDiscoverMap: true,
+                QuestObjectiveDiscoverSubArea: true,
+                QuestObjectiveFightMonster: true,
+                QuestObjectiveFightMonstersOnMap: true,
+                QuestObjectiveMultiFightMonster: true,
+                QuestObjectiveWinMonsterInDungeon: true,
+                QuestObjectiveWinMonsterInDungeonXTimes: true,
+                QuestObjectiveWinMonsterInDungeonValidChallenge: true,
+                QuestObjectiveWinPvpAgainstBreed: true,
+                QuestObjectiveCraftXItem: true,
+                QuestObjectiveBringItemToNpc: true,
+                QuestObjectiveBringSoulToNpc: true,
+                QuestObjectiveValidChallenge: true,
+                QuestObjectiveDuelSpecificPlayer: true,
+                QuestObjectivePoiId: true
+            };
+            var typeId = db && db.typeId != null ? Number(db.typeId)
+                : (target.typeId != null ? Number(target.typeId) : null);
+            // Fallback for builds where _type is absent: 4 and 6 are the
+            // DiscoverMap and FightMonster ids in this client's database, the
+            // two types whose claims were followed by a disconnect.
+            if (!kind && (typeId === 4 || typeId === 6)) {
+                kind = typeId === 4 ? 'QuestObjectiveDiscoverMap' : 'QuestObjectiveFightMonster';
+            }
+            if (kind && SERVER_TYPES[kind]) {
+                return { ok: false, reason: 'objective_server_counted', type: kind,
+                         error: 'objective ' + oid + ' (' + kind + ') is completed by the server; '
+                             + 'perform the action instead of claiming it' };
+            }
+            try {
+                if (_knownKickSignatures()[Number(qid) + '/' + Number(oid)]) {
+                    return { ok: false, reason: 'known_kick_signature',
+                             error: 'a previous claim of objective ' + oid + ' of quest ' + qid
+                                 + ' ended the connection; perform the objective instead' };
+                }
+            } catch (e) {}
+            var mapAt = Number(window.__agentLastMapChange || 0);
+            if (mapAt && now - mapAt < 2000) {
+                return { ok: false, reason: 'map_change_settling',
+                         wait_ms: 2000 - (now - mapAt),
+                         error: 'the map changed ' + (now - mapAt) + ' ms ago; the quest state is settling' };
+            }
+            var syncAt = Number(window.__agentLastQuestSync || 0);
+            if (syncAt && now - syncAt < 800) {
+                return { ok: false, reason: 'quest_state_syncing',
+                         wait_ms: 800 - (now - syncAt),
+                         error: 'the quest state was refreshed ' + (now - syncAt) + ' ms ago; retry in a moment' };
+            }
+            var prev = window.__agentLastValidate;
+            if (prev && Number(prev.quest_id) === qid && Number(prev.objective_id) === oid
+                    && now - prev.at < 5000) {
+                return { ok: false, reason: 'validation_cooldown',
+                         wait_ms: 5000 - (now - prev.at),
+                         error: 'this objective was already claimed ' + (now - prev.at)
+                             + ' ms ago; the server has not answered yet' };
+            }
+            return { ok: true };
         };
 
         // The interactive elements on the current map, as {elemId, skillInstanceUid}.
@@ -1753,10 +2112,16 @@
             listings: {},     // gid -> [{uid, price, quantity}] seen in a category
             averageAt: 0,
             listingAt: 0,
+            averageRequestedAt: 0,
+            // The game's own field names, taken from the bundle handlers:
+            // ObjectAveragePricesMessage  {ids, avgPrices}
+            // ExchangeBidHouseInList*Message {itemUID, objGenericId, prices, effects}
+            // The earlier reader used prices/objectGID/objectUID and therefore
+            // never cached a single server number.
             absorb: function(name, msg) {
                 if (!msg || typeof msg !== 'object') return;
                 if (name === 'ObjectAveragePricesMessage') {
-                    var ids = msg.ids, prices = msg.prices;
+                    var ids = msg.ids, prices = msg.avgPrices || msg.prices;
                     if (Object.prototype.toString.call(ids) !== '[object Array]') return;
                     if (Object.prototype.toString.call(prices) !== '[object Array]') return;
                     for (var i = 0; i < ids.length && i < prices.length; i++) {
@@ -1766,18 +2131,20 @@
                     this.averageAt = Date.now();
                     return;
                 }
-                if (name === 'ExchangeBidHouseInListAddedMessage') {
-                    var g = Number(msg.objectGID);
+                if (name === 'ExchangeBidHouseInListAddedMessage'
+                        || name === 'ExchangeBidHouseInListUpdatedMessage') {
+                    var g = Number(msg.objGenericId != null ? msg.objGenericId
+                                 : msg.objectGID);
                     if (!(g > 0)) return;
-                    var p = msg.prices, q = msg.quantities;
+                    var p = msg.prices;
                     if (Object.prototype.toString.call(p) !== '[object Array]') return;
+                    var uid = msg.itemUID != null ? Number(msg.itemUID)
+                            : (msg.objectUID != null ? Number(msg.objectUID) : null);
                     var rows = [];
                     for (var j = 0; j < p.length; j++) {
                         var price = Number(p[j]);
                         if (!(price > 0)) continue;
-                        rows.push({ uid: msg.objectUID != null ? Number(msg.objectUID) : null,
-                                    price: price,
-                                    quantity: q && q[j] != null ? Number(q[j]) : 1 });
+                        rows.push({ uid: uid, price: price, quantity: 1 });
                     }
                     if (rows.length) {
                         this.listings[g] = rows;
@@ -1806,6 +2173,37 @@
             }
         };
 
+        // The authoritative life state, read the same way the HUD reads it.
+        // playerData carries lifePoints too, but in this build it stayed 0 while the
+        // character stood in world at 55/55 (see the snapshot below), and a live
+        // session refused every fight with "0 HP; revive before fighting".
+        // isAlive() is the bundle's own test: state === STATUS_ALIVE_AND_KICKING.
+        var _agentLife = function () {
+            var pd = null;
+            try { pd = (window.gui && window.gui.playerData) || null; } catch (e) {}
+            var life = null, max = null, state = null, alive = null;
+            try {
+                var stats = pd && pd.characters && pd.characters.mainCharacter
+                    && pd.characters.mainCharacter.characteristics;
+                if (stats) {
+                    if (stats.lifePoints != null) life = Number(stats.lifePoints);
+                    if (stats.effectiveMaxLifePoints != null) {
+                        max = Number(stats.effectiveMaxLifePoints);
+                    } else if (stats.maxLifePoints != null) {
+                        max = Number(stats.maxLifePoints);
+                    }
+                }
+            } catch (e) {}
+            try {
+                if (pd && pd.state != null) state = Number(pd.state);
+                if (pd && typeof pd.isAlive === 'function') alive = !!pd.isAlive();
+            } catch (e) {}
+            if (life == null && pd && pd.lifePoints != null) life = Number(pd.lifePoints);
+            // A missing stat is not a death certificate: when nothing says the
+            // character is dead, let the game reject the fight instead of blocking it.
+            if (alive == null) alive = (life == null) ? true : life > 0;
+            return { alive: alive, life: life, max: max, state: state };
+        };
         var _agentSnapshot = function() {
             var snap = { connected: false, in_fight: false };
             try {
@@ -1858,24 +2256,43 @@
                     map_id: mapId
                 };
                 // Connected is not the same as in-world. The client stays connected at
-                // character selection, where every action silently does nothing.
-                snap.in_world = (mapId != null);
+                // character selection, where every action silently does nothing — and
+                // position.mapId is 0 there. Treating "not null" as in-world reported
+                // a character standing on map 0, so guard the value itself.
+                snap.in_world = (mapId != null && Number(mapId) > 0);
                 var stats = (ua && ua.stats) || {};
-                // playerData carries these directly: the probe listed lifePoints,
-                // effectiveMaxLifePoints, actionPoints and movementPoints as keys of
-                // playerData itself, and there is no characteristics object at all.
+                // The live stats live on the selected character, not on playerData:
+                //   playerData.characters.mainCharacter.characteristics
+                // That is what the bundle's own HUD and XP gauge read. playerData has
+                // lifePoints/actionPoints keys too, but they stayed at 0 while the
+                // character stood in world, and `first()` treats 0 as a real value,
+                // so the actor fallback was never reached. Read the character stats
+                // first and keep the others as fallbacks.
+                var chars = null;
+                try {
+                    chars = (pd && pd.characters && pd.characters.mainCharacter
+                        && pd.characters.mainCharacter.characteristics) || null;
+                } catch (e) {}
                 snap.hp = {
-                    life: first([function(){ return pd.lifePoints; },
+                    life: first([function(){ return chars && chars.lifePoints; },
+                                 function(){ return pd.lifePoints; },
                                  function(){ return stats.lifePoints; },
                                  function(){ return base.lifePoints; }]),
-                    max: first([function(){ return pd.effectiveMaxLifePoints; },
+                    max: first([function(){ return chars && chars.effectiveMaxLifePoints; },
+                                function(){ return chars && chars.maxLifePoints; },
+                                function(){ return pd.effectiveMaxLifePoints; },
                                 function(){ return stats.maxLifePoints; },
                                 function(){ return base.maxLifePoints; }]),
-                    ap: first([function(){ return pd.actionPoints; },
+                    ap: first([function(){ return chars && chars.actionPointsCurrent; },
+                               function(){ return pd.actionPoints; },
                                function(){ return stats.actionPoints; }]),
-                    mp: first([function(){ return pd.movementPoints; },
+                    mp: first([function(){ return chars && chars.movementPointsCurrent; },
+                               function(){ return pd.movementPoints; },
                                function(){ return stats.movementPoints; }])
                 };
+                var lifeSelf = _agentLife();
+                snap.alive = lifeSelf.alive;
+                snap.life_state = lifeSelf.state;
                 snap.in_fight = !!(pd && pd.isFighting);
                 // A talk objective opens a dialog; without this flag the verifier sees
                 // no change and calls the step a noop, and the loop retires a quest
@@ -1885,6 +2302,24 @@
                 // observation so a session that died of a kick can be told apart from one
                 // that was closed by hand — the two look identical from the host side.
                 snap.last_disconnect = window.__agentLastDisconnect || null;
+                // What the last navigation attempt actually did. A failed walk and a
+                // rejected transition look identical in the position fields; this
+                // says which one happened, and at which cell.
+                snap.last_nav = window.__agentLastNav || null;
+                // The map's exits, NPCs and interactive elements: the details a
+                // policy needs to choose a specific spot, not just a map id.
+                try {
+                    if (typeof _agentMapDetails === 'function') {
+                        snap.map = _agentMapDetails();
+                    }
+                } catch (e) { snap.map = null; }
+                // The tutorial's own gate: which crossings it allows, which cells it
+                // lets the character stand on, and which NPC it lets it tap. During
+                // the tutorial the client refuses actions outside that set, so the
+                // planner needs it to pick a step it can actually complete.
+                try {
+                    snap.tutorial = _agentTutorial();
+                } catch (e) { snap.tutorial = null; }
 
                 // Quest state. Without it the planner is blind: it cannot tell which
                 // quests are open, which objective is current, or which one is ready to
@@ -1896,6 +2331,81 @@
                 // objectiveStatus is {FINISHED:0, ACTIVE:1, CAN_BE_FINISHED:2}.
                 // Status 2 is the interesting one: the conditions are met and the
                 // objective only needs QuestObjectiveValidationMessage to be claimed.
+                // An objective's type and parameters live in the quest's own
+                // `dbObjectives` table, which the client loads from the game database
+                // and which is newer than any knowledge-base snapshot. Without them the
+                // planner saw an id and a status and could do nothing but re-send the
+                // validation message: the tutorial quest it was stuck on (3841) is not
+                // in quests_full.json at all, so there was no type to translate.
+                var _objParams = function (raw) {
+                    var out = {};
+                    if (!raw) return out;
+                    if (raw.length !== undefined && typeof raw !== 'string') {
+                        if (raw.length > 0 && raw[0] != null) out.parameter0 = raw[0];
+                        if (raw.length > 1 && raw[1] != null) out.parameter1 = raw[1];
+                    } else if (typeof raw === 'object') {
+                        for (var k in raw) {
+                            if (raw.hasOwnProperty(k) && raw[k] != null) out[k] = raw[k];
+                        }
+                    }
+                    return out;
+                };
+                // The quest's own dbObjectives is filled asynchronously from the
+                // client's game database. A quest can therefore be active while that
+                // table is still empty for it, which is what left some objectives as
+                // bare ids. The same table is available globally once the client has
+                // loaded its databases, so use it as a generic fallback -- the raw id
+                // lookup is not specific to any quest.
+                var _rawObjectiveDb = function (id) {
+                    try {
+                        var dbs = window.gui && window.gui.databases;
+                        var table = dbs && dbs.QuestObjectives;
+                        return (table && table[id]) || null;
+                    } catch (e) { return null; }
+                };
+                // `typeId` is the objective type the planner translates; the bundle
+                // itself formats text from `_type`. They are the same enum, so prefer
+                // typeId and fall back rather than emit a null type on a build that
+                // only carries one of them.
+                var _objMeta = function (o, db, raw) {
+                    var d = db || {};
+                    var r = raw || {};
+                    var meta = {};
+                    var t = d.typeId != null ? d.typeId
+                        : (o.typeId != null ? o.typeId
+                        : (d._type != null ? d._type
+                        : (r.typeId != null ? r.typeId : r._type)));
+                    if (t != null && !isNaN(Number(t))) meta.type_id = Number(t);
+                    // `_type` is the game's own class name for the objective
+                    // (QuestObjectiveDiscoverMap, QuestObjectiveFightMonster,
+                    // ...). It decides who completes the objective: the client
+                    // reports some, the server counts the rest, and a claim on
+                    // a server-counted one before its event is a disconnect.
+                    var tn = d._type || o._type || r._type;
+                    if (typeof tn === 'string' && tn) meta.type = tn;
+                    if (o.curCompletion != null && !isNaN(Number(o.curCompletion))) {
+                        meta.cur_completion = Number(o.curCompletion);
+                    }
+                    if (o.maxCompletion != null && !isNaN(Number(o.maxCompletion))) {
+                        meta.max_completion = Number(o.maxCompletion);
+                    }
+                    var m = Number(d.mapId || r.mapId || 0);
+                    if (m) meta.map_id = m;
+                    var p = _objParams(d.parameters || r.parameters);
+                    var keys = [];
+                    for (var pk in p) if (p.hasOwnProperty(pk)) keys.push(pk);
+                    if (keys.length) meta.params = p;
+                    if (typeof o.text === 'string') meta.text = o.text;
+                    else if (typeof d.text === 'string') meta.text = d.text;
+                    else if (typeof r.text === 'string') meta.text = r.text;
+                    var sid = d.stepId != null ? d.stepId : r.stepId;
+                    if (sid != null) meta.step_id = Number(sid);
+                    return meta;
+                };
+                var _objEntry = function (base, meta) {
+                    for (var k in meta) if (meta.hasOwnProperty(k)) base[k] = meta[k];
+                    return base;
+                };
                 var qs = { active: {}, current: null, ready: [], step_objectives: [], completed: 0 };
                 try {
                     var sq = pd && pd.quests && pd.quests.standardQuests;
@@ -1910,15 +2420,21 @@
                             qs.active[qid] = fin;
                             qs.completed += fin;
                             var objs = q.objectives || [];
+                            var dbs = q.dbObjectives || {};
                             perQuest[qid] = [];
                             for (var oi = 0; oi < objs.length; oi++) {
                                 var o = objs[oi] || {};
                                 var st = o.objectiveStatus;
-                                perQuest[qid].push({ id: o.objectiveId, done: st === 0, status: st });
-                                if (st === 2) qs.ready.push({ quest_id: qid, objective_id: o.objectiveId });
+                                var meta = _objMeta(o, dbs[o.objectiveId],
+                                                    _rawObjectiveDb(o.objectiveId));
+                                perQuest[qid].push(_objEntry(
+                                    { id: o.objectiveId, done: st === 0, status: st }, meta));
+                                if (st === 2) qs.ready.push(_objEntry(
+                                    { quest_id: qid, objective_id: o.objectiveId }, meta));
                                 if (st !== 0 && !qs.current) {
-                                    qs.current = { quest_id: qid, step: fin,
-                                                   objective_id: o.objectiveId, status: st };
+                                    qs.current = _objEntry(
+                                        { quest_id: qid, step: fin,
+                                          objective_id: o.objectiveId, status: st }, meta);
                                 }
                             }
                         }
@@ -1939,7 +2455,8 @@
                 // threw here — and because the whole body is wrapped in one try/catch,
                 // every field below it (kamas, inventory) silently vanished and the
                 // snapshot came back with an `error` key instead.
-                snap.xp = first([function(){ return base.experience; },
+                snap.xp = first([function(){ return chars && chars.experience; },
+                                 function(){ return base.experience; },
                                  function(){ return pd.experience; },
                                  function(){ return base.xp; }]);
                 snap.xp_level = first([function(){ return base.experienceLevel; },
@@ -1958,22 +2475,48 @@
                 }
                 // Inventory probe. Item GIDs are returned raw; the Python agent maps
                 // gid -> name from its local items cache (no per-item DOM work here).
+                //
+                // `inventory.objects` is keyed by object UID on this client, not an
+                // array, and each value is a whole ObjectItem. The old branch emitted
+                // the UID as the gid and the entire ObjectItem as the quantity, which
+                // bloated every observation to hundreds of tokens and made inventory
+                // reasoning impossible. Normalise both shapes to {gid, qty} numbers.
                 if (pd && pd.inventory) {
                     var inv = pd.inventory;
                     snap.inventory = { kamas: (inv.kamas != null ? inv.kamas : null), items: [], raw_keys: null };
+                    var _qty = function (v) {
+                        if (typeof v === 'number') return v;
+                        if (v && typeof v === 'object' && typeof v.quantity === 'number') return v.quantity;
+                        var n = Number(v);
+                        return isFinite(n) ? n : 1;
+                    };
+                    var _pushItem = function (gid, qty) {
+                        if (gid == null) return;
+                        if (snap.inventory.items.length >= 120) {
+                            snap.inventory.items_truncated = true;
+                            return;
+                        }
+                        snap.inventory.items.push({ gid: gid, qty: _qty(qty) });
+                    };
                     var items = inv.objects || inv.items || null;
                     if (Array.isArray(items)) {
                         for (var i = 0; i < items.length; i++) {
                             var it = items[i] || {};
-                            snap.inventory.items.push({
-                                gid: it.objectGID != null ? it.objectGID : (it.gid != null ? it.gid : null),
-                                qty: it.quantity != null ? it.quantity : (it.qty != null ? it.qty : 1)
-                            });
+                            _pushItem(it.objectGID != null ? it.objectGID
+                                      : (it.gid != null ? it.gid : null),
+                                      it.quantity != null ? it.quantity : it.qty);
                         }
                     } else if (items && typeof items === 'object') {
-                        for (var gid in items) {
-                            if (Object.prototype.hasOwnProperty.call(items, gid)) {
-                                snap.inventory.items.push({ gid: parseInt(gid, 10) || gid, qty: items[gid] });
+                        for (var key in items) {
+                            if (!Object.prototype.hasOwnProperty.call(items, key)) continue;
+                            var entry = items[key];
+                            if (entry && typeof entry === 'object') {
+                                _pushItem(entry.objectGID != null ? entry.objectGID
+                                          : (entry.gid != null ? entry.gid
+                                          : (parseInt(key, 10) || null)),
+                                          entry.quantity != null ? entry.quantity : entry.qty);
+                            } else {
+                                _pushItem(parseInt(key, 10) || key, entry);
                             }
                         }
                     } else {
@@ -2529,6 +3072,844 @@
             return { actor: list.length ? list[0] : null, seen: seen, all: list };
         };
 
+        // What the tutorial currently allows.
+        //
+        // While a tutorial step is running the client disables map crossings and
+        // restricts taps to one NPC or a set of cells. `gotoNeighbourMap` bypasses
+        // that gate and asks the server for a transition the tutorial is about to
+        // refuse: a live session walked to the edge cell and then sat there while
+        // the agent re-sent the same request. The scenario step is the authority on
+        // what may happen next, so expose it instead of guessing from the map.
+        var _agentTutorial = function () {
+            var sm = (window.gui && window.gui.scenarioManager) || null;
+            if (!sm) return null;
+            var iso = window.isoEngine || null;
+            var dirs = ['left', 'right', 'top', 'bottom'];
+            var can = {};
+            for (var i = 0; i < dirs.length; i++) {
+                var d = dirs[i];
+                var blocked = false;
+                try {
+                    blocked = !!(typeof sm.isBehaviourEnabled === 'function'
+                        && sm.isBehaviourEnabled('DISABLE_' + d.toUpperCase()
+                            + '_SLIDE_CHANGEMAP'));
+                } catch (e) {}
+                can[d] = !blocked;
+            }
+            var cells = null;
+            try {
+                var raw = iso && iso.unblockedCells;
+                if (raw && typeof raw === 'object') {
+                    // An empty gate is not "no gate": a step that calls
+                    // setUnblockedCells({}) forbids every cell, which is how a talk
+                    // step pins the character in place. Only a null gate means
+                    // "all cells allowed".
+                    cells = [];
+                    for (var k in raw) {
+                        if (Object.prototype.hasOwnProperty.call(raw, k) && raw[k]) {
+                            var n = Number(k);
+                            if (isFinite(n)) cells.push(n);
+                        }
+                    }
+                    cells.sort(function (a, b) { return a - b; });
+                }
+            } catch (e) { cells = null; }
+            var npc = null;
+            try {
+                var ni = iso && iso.unblockedNpcId;
+                // -1 means no NPC restriction; 0 is a real restriction to "no NPC",
+                // and collapsing it to null would tell the planner every tap is open.
+                if (ni != null && Number(ni) !== -1) npc = Number(ni);
+            } catch (e) {}
+            var questId = Number(sm.currentQuestId);
+            var stepId = Number(sm.currentStepId);
+            var specialId = Number(sm.currentSpecialStepId);
+            return {
+                active: !!(sm.currentStep || specialId >= 0),
+                quest_id: questId > 0 ? questId : null,
+                step_id: stepId >= 0 ? stepId : null,
+                special_step_id: specialId >= 0 ? specialId : null,
+                can_change_map: can,
+                unblocked_cells: cells,
+                unblocked_npc_id: npc
+            };
+        };
+
+        // What the client knows about this map, in the shape a decision needs.
+        //
+        // Navigation only ever asked for a destination map id. A quest can ask for a
+        // specific spot instead ("click the right edge"), and an agent cannot act on
+        // that from a map id alone. This is the observation side of that contract:
+        // the exits and their border cells, the NPCs here, and the interactive
+        // elements here. It is deliberately generic -- no quest ids, no hard-coded
+        // targets -- so a policy can decide from the details for any objective.
+        var _agentMapDetails = function () {
+            var iso = window.isoEngine || null;
+            var pd = (window.gui && window.gui.playerData) || null;
+            var pos = (pd && pd.position) || {};
+            var coords = pos.coordinates || {};
+            var mapId = pos.mapId != null ? pos.mapId
+                : (iso && iso.mapData && iso.mapData.mapId != null
+                    ? iso.mapData.mapId : null);
+            var playerCell = null;
+            try {
+                var ua = iso && iso.actorManager && iso.actorManager.userActor;
+                if (ua) {
+                    playerCell = ua.cellId != null ? ua.cellId
+                        : (ua.position && ua.position.cell != null
+                            ? ua.position.cell : null);
+                }
+            } catch (e) {}
+            var mr = iso && iso.mapRenderer;
+            var map = (mr && mr.map) || (iso && iso.mapData) || {};
+            var dirs = ['left', 'right', 'top', 'bottom'];
+            var keys = { left: 'leftNeighbourId', right: 'rightNeighbourId',
+                         top: 'topNeighbourId', bottom: 'bottomNeighbourId' };
+            var byDir = {};
+            try {
+                var cells = map.cells || [];
+                if (mr && typeof mr.getChangeMapFlags === 'function') {
+                    for (var c = 0; c < cells.length; c++) {
+                        var flags = mr.getChangeMapFlags(c) || {};
+                        for (var fi = 0; fi < dirs.length; fi++) {
+                            var fd = dirs[fi];
+                            if (!flags[fd]) continue;
+                            if (!byDir[fd]) byDir[fd] = [];
+                            byDir[fd].push(c);
+                        }
+                    }
+                }
+            } catch (e) {}
+            var playerScene = null;
+            try {
+                if (playerCell != null && mr
+                        && typeof mr.getCellSceneCoordinate === 'function') {
+                    playerScene = mr.getCellSceneCoordinate(playerCell);
+                }
+            } catch (e) {}
+            var nearest = function (list) {
+                if (!playerScene || !mr
+                        || typeof mr.getCellSceneCoordinate !== 'function') {
+                    return list.slice();
+                }
+                return list.slice().sort(function (a, b) {
+                    var ca = mr.getCellSceneCoordinate(a) || {};
+                    var cb = mr.getCellSceneCoordinate(b) || {};
+                    var da = (ca.x - playerScene.x) * (ca.x - playerScene.x)
+                           + (ca.y - playerScene.y) * (ca.y - playerScene.y);
+                    var db = (cb.x - playerScene.x) * (cb.x - playerScene.x)
+                           + (cb.y - playerScene.y) * (cb.y - playerScene.y);
+                    return da - db;
+                });
+            };
+            // The tutorial gate belongs on the exits themselves. A caller that sees
+            // only `left: 1234` cannot know the client will refuse that crossing, so
+            // it walks to the edge and stalls. Carrying `blocked` lets the planner
+            // route around it before spending the walk.
+            var tutorial = null;
+            try { tutorial = _agentTutorial(); } catch (e) { tutorial = null; }
+            var gate = (tutorial && tutorial.can_change_map) || null;
+            var neighbours = {};
+            var exits = [];
+            for (var di = 0; di < dirs.length; di++) {
+                var d = dirs[di];
+                var raw = map[keys[d]];
+                var nid = raw != null && Number(raw) > 0 ? Number(raw) : null;
+                if (nid != null) neighbours[d] = nid;
+                if (nid == null || !byDir[d] || !byDir[d].length) continue;
+                exits.push({ direction: d, map_id: nid,
+                             blocked: !!(gate && gate[d] === false),
+                             cells: nearest(byDir[d]).slice(0, 6) });
+            }
+            var npcs = [];
+            try {
+                npcs = _listNpcActors().slice(0, 20).map(function (n) {
+                    return { npc_id: n.templateId, actor_id: n.contextualId,
+                             cell: n.cell };
+                });
+            } catch (e) {}
+            var interactives = [];
+            try {
+                interactives = _interactives().slice(0, 12).map(function (el) {
+                    return { elem_id: el.elemId, cell: el.cell,
+                             skill_uid: el.skillInstanceUid };
+                });
+            } catch (e) {}
+            return {
+                map_id: mapId,
+                cell: playerCell,
+                x: coords.posX != null ? coords.posX : (pos.x != null ? pos.x : null),
+                y: coords.posY != null ? coords.posY : (pos.y != null ? pos.y : null),
+                neighbours: neighbours,
+                exits: exits,
+                npcs: npcs,
+                interactives: interactives
+            };
+        };
+
+        // ------------------------------------------------------------------
+        // Read-only advisor diagnostics.
+        //
+        // The spell/gear/market advisor runs beside the quest policy and needs
+        // the live rows the client itself uses: owned spells and their grade,
+        // the raw and derived spell-point budget, equipped items with their
+        // real effect ids, set thresholds, and the server's average-price
+        // table. Everything here only reads. No handler spends a point,
+        // equips, buys, lists or sells.
+        // ------------------------------------------------------------------
+        var _agentDatabases = function() {
+            try { return (window.gui && window.gui.databases) || null; }
+            catch (e) { return null; }
+        };
+        var _agentDbTable = function(name) {
+            var dbs = _agentDatabases();
+            var t = dbs && dbs[name];
+            return (t && typeof t === 'object') ? t : null;
+        };
+        var _agentDbRow = function(table, id) {
+            var t = _agentDbTable(table);
+            if (!t || id == null) return null;
+            if (t[id] !== undefined && t[id] !== null) return t[id];
+            var k = String(id);
+            return (t[k] !== undefined && t[k] !== null) ? t[k] : null;
+        };
+        var _agentNum = function(v) {
+            if (v === null || v === undefined || v === '') return null;
+            var n = Number(v);
+            return isFinite(n) ? n : null;
+        };
+        var _agentPick = function(row, names) {
+            if (!row || typeof row !== 'object') return null;
+            for (var i = 0; i < names.length; i++) {
+                var v = row[names[i]];
+                if (v !== undefined && v !== null) return v;
+            }
+            return null;
+        };
+        var _agentCap = function(v, lo, hi, dflt) {
+            var n = _agentNum(v);
+            if (n == null) n = dflt;
+            return Math.max(lo, Math.min(hi, Math.floor(n)));
+        };
+        var _agentUpgradeCost = function(from, to) {
+            // Total cost at grade L is L*(L-1)/2; the marginal L-1 -> L is L-1.
+            var sum = function(n) { return n > 0 ? n * (n - 1) / 2 : 0; };
+            return sum(to) - sum(from);
+        };
+        var _agentReadStat = function(v) {
+            if (v === null || v === undefined) return null;
+            if (typeof v === 'number') return { total: v };
+            var out = { total: null, base: null, equipment: null,
+                        bonus: null, additional: null };
+            var call = function(fn) {
+                try {
+                    return (typeof v[fn] === 'function') ? _agentNum(v[fn]()) : null;
+                } catch (e) { return null; }
+            };
+            out.total = call('getTotalStat');
+            out.base = call('getBasePts');
+            out.equipment = call('getEquipmentPts');
+            out.bonus = call('getBonusPts');
+            out.additional = call('getAdditionalPts');
+            if (out.total == null) out.total = _agentNum(_agentPick(v, ['_total', 'total', 'value']));
+            if (out.base == null) out.base = _agentNum(_agentPick(v, ['_base', 'base']));
+            if (out.equipment == null) out.equipment = _agentNum(_agentPick(v, ['_objectsAndMountBonus', 'objectsAndMountBonus']));
+            if (out.bonus == null) out.bonus = _agentNum(_agentPick(v, ['_alignGiftBonus', 'alignGiftBonus', '_bonus']));
+            if (out.additional == null) out.additional = _agentNum(_agentPick(v, ['_additionnal', 'additionnal', '_additional']));
+            return out;
+        };
+        var _agentEffectList = function(list) {
+            var out = [];
+            if (!list) return out;
+            var arr = list;
+            if (Object.prototype.toString.call(list) !== '[object Array]') {
+                if (typeof list !== 'object') return out;
+                arr = [];
+                for (var k in list) {
+                    if (!Object.prototype.hasOwnProperty.call(list, k)) continue;
+                    arr.push(list[k]);
+                }
+            }
+            for (var i = 0; i < arr.length; i++) {
+                var eff = arr[i];
+                if (!eff || typeof eff !== 'object') continue;
+                var db = eff.effect || eff.effectData || eff.template || null;
+                var eid = _agentNum(_agentPick(eff, ['effectId', 'effect_id']));
+                if (eid == null) eid = _agentNum(_agentPick(eff, ['id']));
+                if (eid == null && db) eid = _agentNum(_agentPick(db, ['id', 'effectId']));
+                var row = {
+                    effect_id: eid,
+                    element_id: _agentNum(_agentPick(eff, ['elementId', 'element_id'])),
+                    dice_num: _agentNum(_agentPick(eff, ['diceNum', 'dice_num'])),
+                    dice_side: _agentNum(_agentPick(eff, ['diceSide', 'dice_side'])),
+                    value: _agentNum(_agentPick(eff, ['value'])),
+                    duration: _agentNum(_agentPick(eff, ['duration'])),
+                    delay: _agentNum(_agentPick(eff, ['delay'])),
+                    characteristic: _agentNum(_agentPick(db || {}, ['characteristic'])),
+                    description_id: _agentNum(_agentPick(db || {}, ['descriptionId', 'description_id'])),
+                    category: _agentNum(_agentPick(db || {}, ['category'])),
+                    bonus_type: _agentNum(_agentPick(db || {}, ['bonusType', 'bonus_type']))
+                };
+                out.push(row);
+            }
+            return out;
+        };
+        var _agentItemType = function(typeId) {
+            var row = _agentDbRow('ItemTypes', typeId);
+            if (!row) return null;
+            return {
+                id: _agentNum(_agentPick(row, ['id'])),
+                name_id: _agentNum(_agentPick(row, ['nameId', 'name_id'])),
+                super_type_id: _agentNum(_agentPick(row, ['superTypeId', 'super_type_id'])),
+                category: _agentNum(_agentPick(row, ['category']))
+            };
+        };
+        // superTypeId -> equippable positions, copied from the bundle's
+        // itemTypePositions table (module 488). This is the only reliable
+        // weapon/hat/cape test: superTypeId is the type family, typeId is the
+        // concrete item type.
+        var _agentTypePositions = {
+            1: [0], 2: [1], 3: [2, 4], 4: [3], 5: [5], 7: [15],
+            8: [1], 10: [6], 11: [7], 12: [8],
+            13: [9, 10, 11, 12, 13, 14], 15: [20], 16: [21],
+            17: [22, 23], 18: [24, 25], 19: [26], 20: [27], 21: [16],
+            23: [32], 24: [31], 26: [28], 27: [29], 28: [30]
+        };
+        var _agentItemRow = function(gid, withEffects) {
+            gid = _agentNum(gid);
+            var row = _agentDbRow('Items', gid);
+            if (!row) return { gid: gid, db: false };
+            var typeId = _agentNum(_agentPick(row, ['typeId', 'type_id']));
+            var typeRow = _agentItemType(typeId);
+            var sets = _agentPick(row, ['itemSetIds', 'setIds', 'itemSetId', 'setId']);
+            if (Object.prototype.toString.call(sets) !== '[object Array]') {
+                sets = (sets != null) ? [sets] : [];
+            }
+            var setIds = [];
+            for (var i = 0; i < sets.length; i++) {
+                var sid = _agentNum(sets[i]);
+                if (sid != null && sid > 0) setIds.push(sid);
+            }
+            var out = {
+                gid: gid,
+                db: true,
+                name_id: _agentNum(_agentPick(row, ['nameId', 'name_id'])),
+                type_id: typeId,
+                super_type_id: typeRow ? typeRow.super_type_id : null,
+                item_type: typeRow,
+                level: _agentNum(_agentPick(row, ['level'])),
+                set_ids: setIds,
+                possible_positions: _agentTypePositions[typeRow ? typeRow.super_type_id : -1] || [],
+                is_weapon: !!(typeRow && (typeRow.super_type_id === 2
+                        || typeRow.super_type_id === 23)),
+                two_handed: !!_agentPick(row, ['twoHanded', 'two_handed']),
+                ap_cost: _agentNum(_agentPick(row, ['apCost', 'ap_cost'])),
+                min_range: _agentNum(_agentPick(row, ['minRange', 'min_range'])),
+                max_range: _agentNum(_agentPick(row, ['maxRange', 'max_range', 'range'])),
+                critical_hit_probability: _agentNum(_agentPick(row, ['criticalHitProbability', 'critical_hit_probability'])),
+                criteria: _agentPick(row, ['criteria']),
+                is_legendary: !!_agentPick(row, ['isLegendary', 'is_legendary']),
+                raw_keys: Object.keys(row).slice(0, 30)
+            };
+            if (withEffects) {
+                out.effects = _agentEffectList(_agentPick(row, ['possibleEffects', 'effects']));
+            }
+            return out;
+        };
+        var _agentItemInstance = function(item, withEffects) {
+            if (!item || typeof item !== 'object') return null;
+            var gid = _agentNum(_agentPick(item, ['objectGID', 'objectGid', 'object_gid', 'gid']));
+            var uid = _agentNum(_agentPick(item, ['objectUID', 'objectUid', 'object_uid', 'uid']));
+            var out = {
+                uid: uid,
+                gid: gid,
+                quantity: _agentNum(_agentPick(item, ['quantity', 'qty'])) || 1,
+                position: _agentNum(_agentPick(item, ['position'])),
+                template: gid != null ? _agentItemRow(gid, false) : null
+            };
+            if (withEffects) {
+                out.effects = _agentEffectList(item.effects || item.effectsMap);
+            }
+            return out;
+        };
+        var _agentSpellLevelRow = function(spell, levelId) {
+            try {
+                var tables = spell && spell._tables;
+                var map = tables && (tables.spellLevels || tables.SpellLevels);
+                if (map && typeof map === 'object' && map[levelId] != null) {
+                    return map[levelId];
+                }
+            } catch (e) {}
+            return _agentDbRow('SpellLevels', levelId);
+        };
+        var _agentSpellEntry = function(spell, playerLevel, withGrades, withEffects) {
+            if (!spell) return null;
+            var id = _agentNum(_agentPick(spell, ['id']));
+            var nameId = null, breed = null, isItem = false, level = null;
+            try { if (typeof spell.getProperty === 'function') nameId = _agentNum(spell.getProperty('nameId')); } catch (e) {}
+            try { if (typeof spell.getProperty === 'function') breed = _agentNum(spell.getProperty('spellBreed')); } catch (e) {}
+            try { isItem = !!spell.isItem; } catch (e) {}
+            try { level = _agentNum(spell.level); } catch (e) {}
+            var levelIds = [];
+            try {
+                if (Object.prototype.toString.call(spell.spellLevels) === '[object Array]') {
+                    levelIds = spell.spellLevels;
+                }
+            } catch (e) {}
+            var maxGrade = levelIds.length || 6;
+            var maxForLevel = 0;
+            var grades = [];
+            for (var i = 0; i < levelIds.length; i++) {
+                var lr = _agentSpellLevelRow(spell, levelIds[i]);
+                var minLvl = lr ? _agentNum(_agentPick(lr, ['minPlayerLevel', 'min_player_level'])) : null;
+                if (lr && minLvl != null && playerLevel != null && playerLevel >= minLvl) {
+                    maxForLevel = i + 1;
+                }
+                if (withGrades) {
+                    var grade = {
+                        grade: i + 1,
+                        level_id: _agentNum(levelIds[i]),
+                        min_player_level: minLvl,
+                        ap_cost: lr ? _agentNum(_agentPick(lr, ['apCost', 'ap_cost'])) : null,
+                        min_range: lr ? _agentNum(_agentPick(lr, ['minRange', 'min_range'])) : null,
+                        max_range: lr ? _agentNum(_agentPick(lr, ['maxRange', 'max_range', 'range'])) : null,
+                        max_cast_per_turn: lr ? _agentNum(_agentPick(lr, ['maxCastPerTurn', 'max_cast_per_turn', 'castsPerTurn'])) : null,
+                        max_cast_per_target: lr ? _agentNum(_agentPick(lr, ['maxCastPerTarget', 'max_cast_per_target'])) : null,
+                        max_cast_per_fight: lr ? _agentNum(_agentPick(lr, ['maxCastPerFight', 'max_cast_per_fight'])) : null,
+                        critical_hit_probability: lr ? _agentNum(_agentPick(lr, ['criticalHitProbability', 'critical_hit_probability'])) : null,
+                        critical_failure_probability: lr ? _agentNum(_agentPick(lr, ['criticalFailureProbability', 'critical_failure_probability'])) : null,
+                        cast_in_line: lr ? !!_agentPick(lr, ['castInLine', 'cast_in_line']) : null,
+                        cast_in_diagonal: lr ? !!_agentPick(lr, ['castInDiagonal', 'cast_in_diagonal']) : null,
+                        cast_test_los: lr ? !!_agentPick(lr, ['castTestLos', 'cast_test_los']) : null,
+                        range_can_be_boosted: lr ? !!_agentPick(lr, ['rangeCanBeBoosted', 'range_can_be_boosted']) : null
+                    };
+                    if (withEffects && lr) {
+                        grade.effects = _agentEffectList(lr.effects);
+                        grade.critical_effects = _agentEffectList(lr.criticalEffect || lr.criticalEffects);
+                    }
+                    grades.push(grade);
+                }
+            }
+            var cur = level != null ? level : 0;
+            // A spell that is already at grade 3 was unlockable at that grade even
+            // if a level row could not be read; never report a cap below the
+            // level the server itself gave us.
+            if (maxForLevel < cur) maxForLevel = cur;
+            if (playerLevel == null && levelIds.length) maxForLevel = maxGrade;
+            if (maxForLevel > maxGrade) maxForLevel = maxGrade;
+            return {
+                spell_id: id,
+                name_id: nameId,
+                breed_id: breed,
+                is_item: isItem,
+                level: cur,
+                unlocked: cur > 0,
+                max_grade: maxGrade,
+                max_grade_for_level: maxForLevel,
+                next_grade_available: maxForLevel > cur,
+                upgrade_cost: (cur > 0 && maxForLevel > cur)
+                    ? _agentUpgradeCost(cur, cur + 1) : null,
+                refund_if_lowered: cur > 1 ? _agentUpgradeCost(1, cur) - _agentUpgradeCost(1, cur - 1) : 0,
+                total_cost_at_level: _agentUpgradeCost(1, cur),
+                grades: withGrades ? grades : undefined
+            };
+        };
+        var _agentPositionName = function(pos) {
+            var names = {
+                0: 'amulet', 1: 'weapon', 2: 'ring_left', 3: 'belt',
+                4: 'ring_right', 5: 'boots', 6: 'hat', 7: 'cape',
+                8: 'pet', 9: 'dofus_1', 10: 'dofus_2', 11: 'dofus_3',
+                12: 'dofus_4', 13: 'dofus_5', 14: 'dofus_6',
+                15: 'shield', 16: 'mount', 20: 'mutation', 21: 'boost_food',
+                22: 'bonus_1', 23: 'bonus_2', 24: 'malus_1', 25: 'malus_2',
+                26: 'roleplay_buff', 27: 'follower', 28: 'cosmetic_hat',
+                29: 'cosmetic_cape', 30: 'cosmetic_pet', 31: 'cosmetic_shield',
+                32: 'cosmetic_weapon', 61: 'emblem_1', 62: 'emblem_2',
+                63: 'not_equipped'
+            };
+            return names[pos] || ('position_' + pos);
+        };
+        var _agentCharacterReport = function(args) {
+            args = args || {};
+            var pd = null, base = {}, pos = {}, coords = {}, main = null, chars = {};
+            try { pd = (window.gui && window.gui.playerData) || null; } catch (e) {}
+            try { base = (pd && pd.characterBaseInformations) || {}; } catch (e) {}
+            try { pos = (pd && pd.position) || {}; } catch (e) {}
+            try { coords = pos.coordinates || {}; } catch (e) {}
+            try { main = pd && pd.characters && pd.characters.mainCharacter; } catch (e) {}
+            try { chars = (main && main.characteristics) || {}; } catch (e) {}
+            var level = _agentNum(_agentPick(base, ['level', 'experienceLevel']));
+            if (level == null) level = _agentNum(_agentPick(chars, ['level']));
+            var statNames = ['strength', 'intelligence', 'chance', 'agility',
+                'wisdom', 'vitality', 'actionPoints', 'movementPoints', 'range',
+                'damagesBonusPercent', 'criticalHit', 'criticalDamageBonus',
+                'healBonus', 'damageBonus', 'earthDamageBonus', 'fireDamageBonus',
+                'waterDamageBonus', 'airDamageBonus', 'neutralDamageBonus',
+                'earthElementReduction', 'fireElementReduction',
+                'waterElementReduction', 'airElementReduction',
+                'neutralElementReduction', 'earthElementResistPercent',
+                'fireElementResistPercent', 'waterElementResistPercent',
+                'airElementResistPercent', 'neutralElementResistPercent',
+                'actionPointsCurrent', 'movementPointsCurrent', 'lifePoints',
+                'maxLifePoints', 'effectiveMaxLifePoints', 'experience',
+                'experienceLevelFloor', 'experienceNextLevelFloor'];
+            var stats = {};
+            for (var si = 0; si < statNames.length; si++) {
+                var key = statNames[si];
+                if (chars[key] !== undefined && chars[key] !== null) {
+                    stats[key] = _agentReadStat(chars[key]);
+                }
+            }
+            var out = {
+                at: Date.now(),
+                character: {
+                    id: _agentNum(_agentPick(base, ['id'])),
+                    name: _agentPick(base, ['name']),
+                    level: level,
+                    breed: _agentPick(base, ['breed']),
+                    sex: _agentPick(base, ['sex'])
+                },
+                position: {
+                    map_id: _agentNum(_agentPick(pos, ['mapId', 'map_id'])),
+                    cell: _agentNum(_agentPick(pos, ['cell', 'cellId'])),
+                    x: _agentNum(_agentPick(coords, ['posX', 'x'])),
+                    y: _agentNum(_agentPick(coords, ['posY', 'y']))
+                },
+                stats: stats,
+                stat_keys: Object.keys(chars).slice(0, 100)
+            };
+            var inv = null;
+            try { inv = pd && pd.inventory; } catch (e) {}
+            out.inventory = inv ? {
+                kamas: _agentNum(inv.kamas),
+                weight: _agentNum(inv.weight),
+                max_weight: _agentNum(inv.maxWeight),
+                object_count: inv.objects ? Object.keys(inv.objects).length : null,
+                // The advisor needs to tell an owned set piece from one it has
+                // to price on the market. Set-level counts are not enough: a
+                // set can be complete but unequipped. Keyed by gid, capped so a
+                // hoarder's inventory cannot turn a read-only report into a
+                // multi-megabyte response.
+                gids: {}
+            } : null;
+
+            var spellData = null;
+            try { spellData = main && main.spellData; } catch (e) {}
+            var used = null;
+            try {
+                if (spellData && typeof spellData.getUsedSpellPoints === 'function') {
+                    used = _agentNum(spellData.getUsedSpellPoints());
+                }
+            } catch (e) {}
+            var rawSpells = _agentNum(_agentPick(chars, ['spellsPoints']));
+            var rawAccount = _agentNum(_agentPick(chars, ['accountSpellsPoints']));
+            var budget = level != null ? level - 1 : null;
+            out.points = {
+                level: level,
+                used_spell_points: used,
+                character_budget: budget,
+                character_cap_left: (budget != null && used != null) ? budget - used : null,
+                raw_spells_points: rawSpells,
+                raw_account_spells_points: rawAccount,
+                stats_points_raw: _agentNum(_agentPick(chars, ['statsPoints'])),
+                remaining_if_raw_is_balance:
+                    (rawSpells != null || rawAccount != null)
+                        ? ((rawSpells || 0) + (rawAccount || 0)) : null,
+                note: 'raw_*_spells_points are what the server sent; character_cap_left is ' +
+                      '(level-1) - used, the bundle calculateAttribution cap. Compare the two ' +
+                      'once on a live character to fix the interpretation.'
+            };
+
+            var spells = [];
+            try {
+                var smap = spellData && spellData.spells;
+                for (var sid in smap) {
+                    if (!Object.prototype.hasOwnProperty.call(smap, sid)) continue;
+                    var sp = smap[sid];
+                    if (!sp) continue;
+                    if (sp.isItem && !args.include_item_spells) continue;
+                    var entry = _agentSpellEntry(sp, level, args.spell_grades !== false,
+                                                 !!args.spell_effects);
+                    if (entry) spells.push(entry);
+                }
+            } catch (e) { out.spells_error = String(e); }
+            spells.sort(function(a, b) { return (a.spell_id || 0) - (b.spell_id || 0); });
+            out.spells = spells;
+
+            var equipment = [];
+            var equippedSets = {};
+            var ownedBySet = {};
+            try {
+                var eq = (inv && inv.equippedItems) || {};
+                for (var pk in eq) {
+                    if (!Object.prototype.hasOwnProperty.call(eq, pk)) continue;
+                    var inst = _agentItemInstance(eq[pk], true);
+                    if (!inst) continue;
+                    inst.position_name = _agentPositionName(_agentNum(pk));
+                    equipment.push(inst);
+                    var setIds = (inst.template && inst.template.set_ids) || [];
+                    for (var q = 0; q < setIds.length; q++) {
+                        equippedSets[setIds[q]] = (equippedSets[setIds[q]] || 0) + 1;
+                    }
+                }
+                var objs = (inv && inv.objects) || {};
+                var seen = 0;
+                for (var ok in objs) {
+                    if (!Object.prototype.hasOwnProperty.call(objs, ok)) continue;
+                    if (seen++ > 2000) break;
+                    var oi = objs[ok];
+                    var og = _agentNum(_agentPick(oi, ['objectGID', 'objectGid', 'gid']));
+                    if (og == null) continue;
+                    var tpl = _agentItemRow(og, false);
+                    var sids = tpl.set_ids || [];
+                    var qty = _agentNum(_agentPick(oi, ['quantity', 'qty'])) || 1;
+                    if (out.inventory && out.inventory.gids
+                            && Object.keys(out.inventory.gids).length < 2000) {
+                        out.inventory.gids[og] = (out.inventory.gids[og] || 0) + qty;
+                    }
+                    for (var r = 0; r < sids.length; r++) {
+                        if (!ownedBySet[sids[r]]) ownedBySet[sids[r]] = { gids: {}, qty: 0 };
+                        ownedBySet[sids[r]].gids[og] = true;
+                        ownedBySet[sids[r]].qty += qty;
+                    }
+                }
+            } catch (e) { out.equipment_error = String(e); }
+            equipment.sort(function(a, b) { return (a.position || 0) - (b.position || 0); });
+            out.equipment = equipment;
+
+            var setsOut = [];
+            try {
+                for (var setId in equippedSets) {
+                    if (!Object.prototype.hasOwnProperty.call(equippedSets, setId)) continue;
+                    var setRow = _agentDbRow('ItemSets', setId) || null;
+                    var count = equippedSets[setId];
+                    var pieces = (setRow && _agentPick(setRow, ['items'])) || [];
+                    if (Object.prototype.toString.call(pieces) !== '[object Array]') pieces = [];
+                    var effectsByCount = (setRow && _agentPick(setRow, ['effects'])) || [];
+                    var active = [];
+                    if (Object.prototype.toString.call(effectsByCount) === '[object Array]'
+                            && effectsByCount.length) {
+                        var idx = Math.min(Math.max(count - 1, 0), effectsByCount.length - 1);
+                        active = _agentEffectList(effectsByCount[idx]);
+                    }
+                    var missing = [];
+                    for (var pi = 0; pi < pieces.length; pi++) {
+                        var pg = _agentNum(pieces[pi]);
+                        var isOn = false;
+                        for (var ei = 0; ei < equipment.length; ei++) {
+                            if (equipment[ei].gid === pg) { isOn = true; break; }
+                        }
+                        if (!isOn) missing.push(pg);
+                    }
+                    setsOut.push({
+                        set_id: _agentNum(setId),
+                        name_id: setRow ? _agentNum(_agentPick(setRow, ['nameId', 'name_id'])) : null,
+                        equipped_count: count,
+                        piece_ids: pieces,
+                        missing_ids: missing,
+                        owned_piece_count: ownedBySet[setId]
+                            ? Object.keys(ownedBySet[setId].gids).length : count,
+                        owned_quantity: ownedBySet[setId] ? ownedBySet[setId].qty : null,
+                        active_effects: active,
+                        bonus_is_secret: !!(setRow && _agentPick(setRow, ['bonusIsSecret', 'bonus_is_secret']))
+                    });
+                }
+            } catch (e) { out.sets_error = String(e); }
+            setsOut.sort(function(a, b) { return b.equipped_count - a.equipped_count; });
+            out.sets = setsOut;
+
+            var dbs = _agentDatabases();
+            var counts = {};
+            var names = ['Items', 'ItemSets', 'ItemTypes', 'Effects', 'Spells', 'SpellLevels'];
+            for (var ni = 0; ni < names.length; ni++) {
+                var tb = dbs && dbs[names[ni]];
+                counts[names[ni]] = (tb && typeof tb === 'object')
+                    ? Object.keys(tb).length : null;
+            }
+            out.db = {
+                available: !!dbs,
+                counts: counts,
+                effect_sample_ids: (dbs && dbs.Effects)
+                    ? Object.keys(dbs.Effects).slice(0, 20).map(Number) : null
+            };
+            return _agentResult(!!main, out, main ? null : 'mainCharacter is not loaded (not in world?)');
+        };
+        var _agentItemDbReport = function(args) {
+            args = args || {};
+            var dbs = _agentDatabases();
+            var table = dbs && dbs.Items;
+            if (!table) return _agentResult(false, null, 'Items database is not loaded');
+            var gid = _agentNum(args.gid);
+            var gids = {};
+            if (Object.prototype.toString.call(args.gids) === '[object Array]') {
+                for (var gi = 0; gi < args.gids.length && gi < 200; gi++) {
+                    var gv = _agentNum(args.gids[gi]);
+                    if (gv != null) gids[gv] = true;
+                }
+            }
+            var levelMin = _agentNum(args.level_min);
+            var levelMax = _agentNum(args.level_max);
+            var typeId = _agentNum(args.type_id);
+            var setId = _agentNum(args.set_id);
+            var offset = _agentCap(args.offset, 0, 2147483647, 0);
+            var limit = _agentCap(args.limit, 1, 200, 50);
+            var withEffects = args.with_effects !== false;
+            var matched = [];
+            for (var k in table) {
+                if (!Object.prototype.hasOwnProperty.call(table, k)) continue;
+                var row = table[k];
+                if (!row || typeof row !== 'object') continue;
+                var id = _agentNum(_agentPick(row, ['id']));
+                if (id == null) id = _agentNum(k);
+                if (gid != null && id !== gid) continue;
+                if (gid == null && Object.keys(gids).length && !gids[id]) continue;
+                var lvl = _agentNum(_agentPick(row, ['level']));
+                if (levelMin != null && (lvl == null || lvl < levelMin)) continue;
+                if (levelMax != null && (lvl == null || lvl > levelMax)) continue;
+                if (typeId != null && _agentNum(_agentPick(row, ['typeId', 'type_id'])) !== typeId) continue;
+                if (setId != null) {
+                    var sets = _agentPick(row, ['itemSetIds', 'setIds', 'itemSetId', 'setId']);
+                    if (Object.prototype.toString.call(sets) !== '[object Array]') sets = sets != null ? [sets] : [];
+                    var hit = false;
+                    for (var s = 0; s < sets.length; s++) {
+                        if (_agentNum(sets[s]) === setId) { hit = true; break; }
+                    }
+                    if (!hit) continue;
+                }
+                matched.push(id);
+                if (gid != null || Object.keys(gids).length) {
+                    if (matched.length >= 200) break;
+                }
+            }
+            matched.sort(function(a, b) { return a - b; });
+            var page = matched.slice(offset, offset + limit);
+            var rows = [];
+            for (var p = 0; p < page.length; p++) {
+                rows.push(_agentItemRow(page[p], withEffects));
+            }
+            return _agentResult(true, {
+                total_matched: matched.length,
+                offset: offset,
+                limit: limit,
+                rows: rows
+            });
+        };
+        var _agentEffectDbReport = function(args) {
+            args = args || {};
+            var dbs = _agentDatabases();
+            var table = dbs && dbs.Effects;
+            if (!table) return _agentResult(false, null, 'Effects database is not loaded');
+            var wanted = [];
+            var seen = {};
+            if (Object.prototype.toString.call(args.ids) === '[object Array]') {
+                for (var i = 0; i < args.ids.length && wanted.length < 60; i++) {
+                    var id = _agentNum(args.ids[i]);
+                    if (id != null && !seen[id]) { seen[id] = true; wanted.push(id); }
+                }
+            }
+            var allIds = Object.keys(table);
+            var out = {
+                count: allIds.length,
+                sample_ids: allIds.slice(0, 40).map(Number),
+                rows: [],
+                keys: null
+            };
+            if (!wanted.length) {
+                var limit = _agentCap(args.limit, 1, 60, 20);
+                var offset = _agentCap(args.offset, 0, allIds.length, 0);
+                wanted = allIds.slice(offset, offset + limit).map(Number);
+            }
+            var keySet = {};
+            for (var w = 0; w < wanted.length; w++) {
+                var row = _agentDbRow('Effects', wanted[w]);
+                if (!row || typeof row !== 'object') {
+                    out.rows.push({ effect_id: wanted[w], db: false });
+                    continue;
+                }
+                var item = { effect_id: wanted[w], db: true };
+                for (var f in row) {
+                    if (!Object.prototype.hasOwnProperty.call(row, f)) continue;
+                    var v = row[f];
+                    if (v === null || v === undefined) continue;
+                    if (typeof v === 'object') continue;
+                    if (Object.keys(keySet).length < 40) keySet[f] = true;
+                    item[f] = v;
+                }
+                out.rows.push(item);
+            }
+            out.keys = Object.keys(keySet);
+            return _agentResult(true, out);
+        };
+        var _agentMarketCapture = function(args) {
+            args = args || {};
+            var now = Date.now();
+            var refreshed = false;
+            var requestError = null;
+            if (args.refresh) {
+                if (!__PriceCache.averageRequestedAt
+                        || now - __PriceCache.averageRequestedAt > 120000) {
+                    var r = _cmSend('ObjectAveragePricesGetMessage', {});
+                    if (r.ok) {
+                        __PriceCache.averageRequestedAt = now;
+                        refreshed = true;
+                    } else {
+                        requestError = r.error;
+                    }
+                }
+            }
+            var avg = __PriceCache.average;
+            var gids = [];
+            if (Object.prototype.toString.call(args.gids) === '[object Array]') {
+                for (var i = 0; i < args.gids.length && i < 500; i++) {
+                    var g = _agentNum(args.gids[i]);
+                    if (g != null) gids.push(g);
+                }
+            }
+            var total = Object.keys(avg).length;
+            var offset = _agentCap(args.offset, 0, Math.max(total, 0), 0);
+            var limit = _agentCap(args.limit, 1, 20000, 2000);
+            var prices = [];
+            if (gids.length) {
+                for (var gi = 0; gi < gids.length; gi++) {
+                    if (avg[gids[gi]] != null) prices.push([gids[gi], avg[gids[gi]]]);
+                }
+            } else {
+                var ids = Object.keys(avg).map(Number).sort(function(a, b) { return a - b; });
+                var page = ids.slice(offset, offset + limit);
+                for (var p = 0; p < page.length; p++) {
+                    prices.push([page[p], avg[page[p]]]);
+                }
+            }
+            var listingGids = gids.length ? gids
+                : Object.keys(__PriceCache.listings).map(Number).slice(0, limit);
+            var listingLimit = _agentCap(args.listing_limit, 0, 500, 200);
+            var listings = {};
+            var listingCount = 0;
+            for (var li = 0; li < listingGids.length && listingCount < listingLimit; li++) {
+                var st = __PriceCache.stats(listingGids[li]);
+                if (st) {
+                    listings[listingGids[li]] = st;
+                    listingCount++;
+                }
+            }
+            return _agentResult(true, {
+                captured_at: now,
+                average_at: __PriceCache.averageAt || null,
+                average_age_ms: __PriceCache.averageAt ? now - __PriceCache.averageAt : null,
+                average_count: total,
+                listing_count: Object.keys(__PriceCache.listings).length,
+                listing_at: __PriceCache.listingAt || null,
+                requested: refreshed,
+                request_error: requestError,
+                gids: gids.length ? gids : null,
+                offset: offset,
+                limit: limit,
+                returned: prices.length,
+                prices: prices,
+                listings: listings
+            });
+        };
+
         var _agentHandlers = {
             'safe.stop': function(args) {
                 var stopped = { auto_fight: false, follow: false };
@@ -2651,9 +4032,19 @@
             // client, which is why it returned ok and nothing happened.
             'fight.join': function(args) {
                 var pdF = (window.gui && window.gui.playerData) || null;
-                if (pdF && pdF.lifePoints === 0) {
-                    return _agentResult(false, { life: 0 },
-                        'the character has 0 HP; revive before fighting');
+                var fmF = (window.gui && window.gui.fightManager) || null;
+                var managerFight = false;
+                try { managerFight = !!(fmF && fmF.isInFight && fmF.isInFight()); } catch (e) {}
+                if (!!(pdF && pdF.isFighting) || managerFight) {
+                    if (window.__FarmBot) window.__FarmBot.setEnabled(true);
+                    return _agentResult(true, { in_fight: true, auto_fight: !!window.__FarmBot });
+                }
+                var lifeF = _agentLife();
+                if (!lifeF.alive) {
+                    return _agentResult(false, { life: lifeF.life, max: lifeF.max,
+                        life_state: lifeF.state },
+                        'the character is dead (life ' + lifeF.life + '); '
+                        + 'revive before fighting');
                 }
                 var am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
@@ -2706,14 +4097,16 @@
                 var cell = pick.cellId != null ? pick.cellId : (pick.position && pick.position.cell);
                 var ua = am.userActor;
                 var attack = function () {
-                    return _cmSend('GameRolePlayAttackMonsterRequestMessage', { monsterGroupId: gid });
+                    var result = _cmSend('GameRolePlayAttackMonsterRequestMessage', { monsterGroupId: gid });
+                    if (result.ok && window.__FarmBot) window.__FarmBot.setEnabled(true);
+                    return result;
                 };
                 if (ua && ua.cellId === cell) {
                     var r0 = attack();
                     window.__agentLastFight = { at: Date.now(), stage: r0.ok ? 'attacked' : 'attack_failed',
                         group_id: gid, cell: cell, error: r0.ok ? null : String(r0.error || '') };
-                    return _agentResult(r0.ok, { group_id: gid, cell: cell, via: 'attacked' },
-                        r0.ok ? null : r0.error);
+                    return _agentResult(r0.ok, { group_id: gid, cell: cell, via: 'attacked',
+                        auto_fight: r0.ok && !!window.__FarmBot }, r0.ok ? null : r0.error);
                 }
                 if (!iso || typeof iso._movePlayerOnMap !== 'function') {
                     window.__agentLastFight = { at: Date.now(), stage: 'cannot_reach',
@@ -2724,7 +4117,13 @@
                 try {
                     window.__agentLastFight = { at: Date.now(), stage: 'walk_then_attack',
                         group_id: gid, cell: cell };
-                    iso._movePlayerOnMap(cell, false, function () { attack(); });
+                    iso._movePlayerOnMap(cell, false, function () {
+                        var result = attack();
+                        window.__agentLastFight = { at: Date.now(),
+                            stage: result.ok ? 'attacked' : 'attack_failed',
+                            group_id: gid, cell: cell,
+                            error: result.ok ? null : String(result.error || '') };
+                    });
                     return _agentResult(true, { group_id: gid, cell: cell, via: 'walk then attack' });
                 } catch (e) {
                     window.__agentLastFight = { at: Date.now(), stage: 'walk_failed',
@@ -2733,102 +4132,589 @@
                 }
             },
             'fight.pass': function() { return _agentResult(true, _agentCommander('PASS_TURN')); },
+            'fight.state': function() {
+                var gui = window.gui || {};
+                var fm = gui.fightManager || null;
+                var pd = gui.playerData || null;
+                var am = window.actorManager
+                    || (window.isoEngine && window.isoEngine.actorManager) || null;
+                if (!fm || !pd || !am) {
+                    return _agentResult(false, null, 'combat managers unavailable');
+                }
+                var num = function(value) {
+                    if (value === null || value === undefined || value === '') return null;
+                    var parsed = Number(value);
+                    return isFinite(parsed) ? parsed : null;
+                };
+                var text = function(value) {
+                    return typeof value === 'string' && value ? value : null;
+                };
+                var effects = function(list) {
+                    var out = [];
+                    if (!list || !list.length) return out;
+                    for (var i = 0; i < list.length; i++) {
+                        var effect = list[i] || {};
+                        var params = [];
+                        for (var p = 1; p <= 3; p++) {
+                            var param = num(effect['param' + p]);
+                            if (param !== null) params.push(param);
+                        }
+                        out.push({
+                            effect_id: num(effect.effectId),
+                            dice_num: num(effect.diceNum),
+                            dice_side: num(effect.diceSide),
+                            value: num(effect.value),
+                            element_id: num(effect.elementId),
+                            target_id: num(effect.targetId),
+                            duration: num(effect.duration),
+                            delay: num(effect.delay),
+                            random: effect.random == null ? null : !!effect.random,
+                            params: params
+                        });
+                    }
+                    return out;
+                };
+
+                var chars = pd.characters || {};
+                var base = pd.characterBaseInformations || {};
+                var myId = num(chars.controlledCharacterId);
+                if (myId === null) myId = num(base.id);
+                if (myId === null && am.userActor) myId = num(am.userActor.actorId);
+                var inFight = false;
+                try { inFight = !!(pd.isFighting || (fm.isInFight && fm.isInFight())); } catch (e) {}
+
+                var state = {
+                    available: true,
+                    in_fight: inFight,
+                    in_preparation: false,
+                    fight_id: num(fm.fightId),
+                    fight_state: num(fm.fightState),
+                    round: typeof fm.getTurnCount === 'function' ? num(fm.getTurnCount()) : null,
+                    current_fighter_id: num(fm.currentFighterId) || null,
+                    is_my_turn: false,
+                    turn_started_ms_ago: null,
+                    my_id: myId,
+                    character_id: num(base.id),
+                    my_cell: null,
+                    map_id: num(pd.position && pd.position.mapId),
+                    cells: [],
+                    my_stats: null,
+                    fighters: [],
+                    spells: []
+                };
+                // The cell flags are what make the board solvable instead of a picture.
+                // Bit 0 is walkable, bit 1 is line of sight, and fight-mode walkability
+                // is (l & 5) === 1 in the client's own isWalkable(). Read them here so
+                // the planner does not need a second call, a map cache, or a guess.
+                try {
+                    var map = window.isoEngine && window.isoEngine.mapRenderer
+                        && window.isoEngine.mapRenderer.map;
+                    var mapCells = map && map.cells;
+                    if (mapCells && mapCells.length) {
+                        for (var ci = 0; ci < mapCells.length; ci++) {
+                            state.cells.push(num(mapCells[ci] && mapCells[ci].l));
+                        }
+                    }
+                } catch (e) {}
+                try {
+                    state.in_preparation = !!(fm.isInFightPreparation
+                        && fm.isInFightPreparation());
+                } catch (e) {}
+                var current = num(fm.currentFighterId);
+                state.is_my_turn = current !== null && myId !== null && current === myId;
+                var turnStarted = num(fm.turnStartTime);
+                if (turnStarted !== null && turnStarted > 0) {
+                    state.turn_started_ms_ago = Math.max(0, Date.now() - turnStarted);
+                }
+                if (myId !== null) {
+                    try {
+                        var mine = am.getActor ? am.getActor(myId) : null;
+                        state.my_cell = mine && mine.cellId != null
+                            ? num(mine.cellId)
+                            : (pd.position && pd.position.cell != null
+                                ? num(pd.position.cell) : null);
+                    } catch (e) {}
+                }
+
+                if (inFight) {
+                    var seen = {};
+                    var ids = [];
+                    var addId = function(id) {
+                        var value = num(id);
+                        if (value === null || seen[value]) return;
+                        seen[value] = true;
+                        ids.push(value);
+                    };
+                    try {
+                        var actorIds = (typeof am.getActorsIDList === 'function')
+                            ? am.getActorsIDList() : [];
+                        for (var i = 0; i < actorIds.length; i++) addId(actorIds[i]);
+                    } catch (e) {}
+                    try {
+                        var fighterIds = fm._fighters ? Object.keys(fm._fighters) : [];
+                        for (var j = 0; j < fighterIds.length; j++) addId(fighterIds[j]);
+                    } catch (e) {}
+
+                    for (var k = 0; k < ids.length; k++) {
+                        var id = ids[k];
+                        var actor = null;
+                        var fighter = null;
+                        try { actor = am.getActor ? am.getActor(id) : null; } catch (e) {}
+                        try { fighter = fm.getFighter ? fm.getFighter(id) : null; } catch (e) {}
+                        if (!actor && !fighter) continue;
+                        var data = (fighter && fighter.data) || (actor && actor.data) || {};
+                        var stats = data.stats || {};
+                        var onTeam = false;
+                        try { onTeam = !!fm.isFighterOnUsersTeam(id); } catch (e) {}
+                        var cell = actor && actor.cellId != null ? num(actor.cellId) : null;
+                        if (cell === null && data.disposition && data.disposition.cellId != null) {
+                            cell = num(data.disposition.cellId);
+                        }
+                        var states = [];
+                        try {
+                            var rawStates = (fighter && fighter.states) || [];
+                            for (var s = 0; s < rawStates.length && states.length < 32; s++) {
+                                if (typeof rawStates[s] === 'number'
+                                    || typeof rawStates[s] === 'string') {
+                                    states.push(rawStates[s]);
+                                }
+                            }
+                        } catch (e) {}
+                        state.fighters.push({
+                            id: id,
+                            cell: cell,
+                            team: onTeam ? 'player' : 'enemy',
+                            team_id: num(data.teamId),
+                            is_me: myId !== null && id === myId,
+                            alive: data.alive !== false && !(actor && actor.isDead),
+                            hp: num(stats.lifePoints),
+                            max_hp: num(stats.maxLifePoints),
+                            ap: num(stats.actionPointsCurrent),
+                            max_ap: num(stats.actionPointsMax),
+                            mp: num(stats.movementPointsCurrent),
+                            max_mp: num(stats.movementPointsMax),
+                            shield: num(stats.shieldPoints),
+                            level: num(fighter && fighter.level) !== null
+                                ? num(fighter.level) : num(data.level),
+                            name: text(fighter && fighter.name) || text(data.name),
+                            creature_generic_id: num(data.creatureGenericId),
+                            summoner_id: num(stats.summoner),
+                            is_monster: !!(fighter && fighter.isMonster && fighter.isMonster()),
+                            is_summon: !!(fighter && fighter.isSummon && fighter.isSummon()),
+                            is_companion: !!(fighter && fighter.isCompanion
+                                && fighter.isCompanion()),
+                            is_boss: !!(fighter && fighter.isBoss),
+                            buffs: fighter && fighter.buffs ? fighter.buffs.length : 0,
+                            states: states,
+                            resist_percent: {
+                                neutral: num(stats.neutralElementResistPercent),
+                                earth: num(stats.earthElementResistPercent),
+                                fire: num(stats.fireElementResistPercent),
+                                water: num(stats.waterElementResistPercent),
+                                air: num(stats.airElementResistPercent)
+                            },
+                            resist_fixed: {
+                                neutral: num(stats.neutralElementReduction),
+                                earth: num(stats.earthElementReduction),
+                                fire: num(stats.fireElementReduction),
+                                water: num(stats.waterElementReduction),
+                                air: num(stats.airElementReduction)
+                            },
+                            critical_resistance: num(stats.criticalDamageReduction),
+                            permanent_damage_percent: num(stats.permanentDamagePercent),
+                            ap_dodge: num(stats.dodgePALostProbability),
+                            mp_dodge: num(stats.dodgePMLostProbability),
+                            tackle_block: num(stats.tackleBlock),
+                            tackle_evade: num(stats.tackleEvade)
+                        });
+                    }
+                }
+
+                var controlled = null;
+                try {
+                    controlled = chars.getControlledCharacter
+                        ? chars.getControlledCharacter() : (chars.mainCharacter || null);
+                } catch (e) {}
+                // Characteristics are CharacterBaseCharacteristic wrappers, not numbers;
+                // getTotalStat() is base + equipment + bonuses, which is what the damage
+                // formula consumes. Reading `.strength` alone would hand the solver an
+                // object and silently poison every estimate.
+                var charStat = function(name) {
+                    var stat = controlled && controlled.characteristics
+                        ? controlled.characteristics[name] : null;
+                    if (!stat) return null;
+                    try {
+                        return stat.getTotalStat ? num(stat.getTotalStat()) : num(stat);
+                    } catch (e) { return null; }
+                };
+                if (controlled) {
+                    state.my_stats = {
+                        strength: charStat('strength'),
+                        intelligence: charStat('intelligence'),
+                        chance: charStat('chance'),
+                        agility: charStat('agility'),
+                        wisdom: charStat('wisdom'),
+                        vitality: charStat('vitality'),
+                        power: charStat('damagesBonusPercent'),
+                        damage: charStat('allDamagesBonus'),
+                        damage_neutral: charStat('neutralDamageBonus'),
+                        damage_earth: charStat('earthDamageBonus'),
+                        damage_fire: charStat('fireDamageBonus'),
+                        damage_water: charStat('waterDamageBonus'),
+                        damage_air: charStat('airDamageBonus'),
+                        critical_hit: charStat('criticalHit'),
+                        damage_critical: charStat('criticalDamageBonus'),
+                        heals: charStat('healBonus'),
+                        range: charStat('range'),
+                        action_points: charStat('actionPoints'),
+                        movement_points: charStat('movementPoints'),
+                        critical_resistance: charStat('criticalDamageReduction')
+                    };
+                }
+                var spellList = {};
+                try {
+                    spellList = (controlled && controlled.spellData
+                        && controlled.spellData.getSpellListDependingOnGameMode)
+                        ? controlled.spellData.getSpellListDependingOnGameMode()
+                        : ((controlled && controlled.spells) || {});
+                } catch (e) {}
+                var prop = function(spell, name, fallback) {
+                    try {
+                        var value = spell.getProperty ? spell.getProperty(name) : null;
+                        return value === undefined ? fallback : value;
+                    } catch (e) { return fallback; }
+                };
+                for (var key in spellList) {
+                    if (!Object.prototype.hasOwnProperty.call(spellList, key)) continue;
+                    var spell = spellList[key];
+                    var spellId = num(spell && spell.id);
+                    if (spellId === null) spellId = num(key);
+                    if (spellId === null || !spell) continue;
+                    var level = spell.spellLevel || null;
+                    var levelId = null;
+                    try {
+                        levelId = typeof spell.getSpellLevelId === 'function'
+                            ? num(spell.getSpellLevelId()) : null;
+                    } catch (e) {}
+                    if (levelId === null && level) levelId = num(level.id);
+                    var castable = false;
+                    try {
+                        castable = myId !== null && !!fm.canCastThisSpell(myId, spellId);
+                    } catch (e) {}
+                    var name = null;
+                    try { name = text(spell.getName ? spell.getName() : null); } catch (e) {}
+                    var castsThisTurn = null;
+                    try {
+                        if (fm.spellCastCounts && fm.spellCastCounts[spellId] != null) {
+                            castsThisTurn = num(fm.spellCastCounts[spellId]);
+                        }
+                    } catch (e) {}
+                    var spellFacts = {
+                        id: spellId,
+                        name: name,
+                        level: num(spell.level) !== null ? num(spell.level) : null,
+                        spell_level_id: levelId,
+                        ap_cost: num(prop(spell, 'apCost', spell.level)),
+                        min_range: num(prop(spell, 'minRange')),
+                        range: num(prop(spell, 'range')),
+                        cast_in_line: !!prop(spell, 'castInLine', false),
+                        cast_in_diagonal: !!prop(spell, 'castInDiagonal', false),
+                        requires_los: !!prop(spell, 'castTestLos', false),
+                        need_free_cell: !!prop(spell, 'needFreeCell', false),
+                        need_taken_cell: !!prop(spell, 'needTakenCell', false),
+                        max_cast_per_turn: num(prop(spell, 'maxCastPerTurn')),
+                        max_cast_per_target: num(prop(spell, 'maxCastPerTarget')),
+                        max_cast_per_fight: num(prop(spell, 'maxCastPerFight')),
+                        min_cast_interval: num(prop(spell, 'minCastInterval')),
+                        global_cooldown: num(prop(spell, 'globalCooldown')),
+                        critical_hit_probability: num(prop(spell, 'criticalHitProbability')),
+                        critical_failure_probability: num(prop(spell, 'criticalFailureProbability')),
+                        zone_size: num(prop(spell, 'zoneSize')),
+                        zone_shape: prop(spell, 'zoneShape') || null,
+                        casts_this_turn: castsThisTurn,
+                        castable: castable,
+                        is_weapon: !!(spell.isWeapon && spell.isWeapon()),
+                        effects: effects(level && level.effects),
+                        critical_effects: effects(level && level.criticalEffect)
+                    };
+                    state.spells.push(spellFacts);
+                }
+                return _agentResult(true, state);
+            },
             'nav.follow': function(args) {
                 return _agentResult(true, _agentCommander('FOLLOW'), null);
             },
-            // Travel. This handler did not exist, which is why no plan that needed to
-            // move could ever execute: nav.goto is 24-38% of every plan, and every
-            // call returned "no client handler for tool nav.goto".
-            //
-            // ChangeMapMessage is the walk-off-the-edge transition (PROTOCOL_NOTES,
-            // "Enter / refresh a map"). The notes are explicit that the client's own
-            // pathfinder must not be reimplemented, so this asks for the transition and
-            // lets the server refuse it when the target is not adjacent — a real answer,
-            // and the client keeps ownership of path validity and obstacles.
             // Travel, using the client's own machinery instead of a blind protocol
             // message. The client already owns a pathfinder and a map transition:
             //
-            //   isoEngine._movePlayerOnMap(cell, flag, cb)  pathfind within this map
-            //       and send GameMapMovementRequestMessage
-            //   isoEngine._requestMapChange(mapId, cell)    send ChangeMapMessage and
-            //       run the transition animation
+            //   isoEngine.gotoNeighbourMap(dir, cell, x, y)  walk to the border cell
+            //       and send ChangeMapMessage when the walk lands
+            //   isoEngine._movePlayerOnMap(cell, flag, cb)   pathfind within this map
+            //   isoEngine._requestMapChange(mapId, dir)      transition animation
             //
             // Sending ChangeMapMessage by hand (what this did) asks for one edge hop
-            // with no path at all, so a target two cells away was unreachable and the
-            // notes' instruction — "do not reimplement the pathfinder, drive the
-            // client's" — was never followed.
+            // from wherever the character happens to stand; the server refuses it
+            // unless that is the edge cell. The client's own transition walks there
+            // first, so this drives that instead of reimplementing a pathfinder.
             //
-            // Accepts, in priority order:
-            //   npc_id  walk to that NPC's cell on this map (the useful one for quests)
-            //   cell    walk to a cell on this map
-            //   map_id  change map through the client's own transition
+            // Targets, exactly one:
+            //   cell       walk to that cell on this map (a specific spot)
+            //   npc_id     walk to that NPC's cell on this map
+            //   direction  leave by that edge (left/right/top/bottom)
+            //   map_id     go to that map; adjacent maps are left by their edge,
+            //              and a far map is reported with the exits of this one
             'nav.goto': function(args) {
                 var iso = window.isoEngine || null;
-                var pd = (window.gui && window.gui.playerData) || null;
-                var here = pd && pd.position ? pd.position.mapId : null;
                 var a = args || {};
+                var details = _agentMapDetails();
+                var here = details.map_id;
                 var wantMap = parseInt(a.map_id !== undefined ? a.map_id : a.mapId, 10) || null;
                 var wantCell = parseInt(a.cell !== undefined ? a.cell : a.cellId, 10);
                 var npcId = parseInt(a.npc_id !== undefined ? a.npc_id : a.npcId, 10) || null;
                 if (isNaN(wantCell)) wantCell = null;
+                var dir = String(a.direction || a.dir || '').toLowerCase().trim();
+                if (dir === 'up') dir = 'top';
+                if (dir === 'down') dir = 'bottom';
+                if (dir && ['left', 'right', 'top', 'bottom'].indexOf(dir) < 0) {
+                    return _agentResult(false, { direction: dir, exits: details.exits },
+                        'direction must be one of left, right, top, bottom');
+                }
+
+                var exits = details.exits || [];
+                var exitFor = function (d) {
+                    for (var ei = 0; ei < exits.length; ei++) {
+                        if (exits[ei].direction === d) return exits[ei];
+                    }
+                    return null;
+                };
+                var exitTo = function (m) {
+                    for (var ei = 0; ei < exits.length; ei++) {
+                        if (Number(exits[ei].map_id) === Number(m)) return exits[ei];
+                    }
+                    return null;
+                };
 
                 // Resolve an NPC to the cell it is standing on.
-                if (!wantCell && npcId) {
-                    try {
-                        var am = iso && iso.actorManager;
-                        var actors = (am && (am.actors || am.actorList)) || null;
-                        for (var k in actors) {
-                            if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
-                            var ac = actors[k] || {};
-                            var nid = ac.npcId != null ? ac.npcId : (ac.staticInfos && ac.staticInfos.npcId);
-                            if (Number(nid) !== npcId) continue;
-                            wantCell = ac.cellId != null ? ac.cellId : (ac.position && ac.position.cell);
-                            if (wantCell != null) break;
-                        }
-                    } catch (e) {}
+                if (wantCell == null && npcId) {
+                    var found = _findNpcActor(npcId);
+                    var actor = found && found.actor;
+                    if (actor && actor.cell != null) wantCell = actor.cell;
                     if (wantCell == null) {
-                        return _agentResult(false, { npc_id: npcId, map_id: here },
+                        return _agentResult(false, { npc_id: npcId, map_id: here,
+                            npcs: details.npcs },
                             'npc ' + npcId + ' is not on map ' + here);
                     }
                 }
 
-                // A different map: let the client run its own transition.
-                if (wantMap && here && wantMap !== here) {
-                    if (!iso || typeof iso._requestMapChange !== 'function') {
-                        var r = _cmSend('ChangeMapMessage', { mapId: wantMap });
-                        return _agentResult(r.ok, { map_id: wantMap, via: 'raw' },
-                            r.ok ? null : r.error);
+                if (here == null || here === undefined) {
+                    return _agentResult(false, { map_id: null },
+                        'not in world yet: there is no current map');
+                }
+
+                // The tutorial is the authority on what may happen next. Its gate is
+                // checked here rather than left to the client because the client's
+                // `gotoNeighbourMap` bypasses it: it walks to the border and sends a
+                // transition the scenario then refuses, which looks like a stuck
+                // character. Refusing up front names the restriction and hands the
+                // caller the step it should follow instead.
+                var tutorial = null;
+                try { tutorial = _agentTutorial(); } catch (e) { tutorial = null; }
+                var tutorialActive = !!(tutorial && tutorial.active);
+                var allowedCells = tutorialActive ? tutorial.unblocked_cells : null;
+                var tutorialHint = function () {
+                    if (!tutorialActive) return '';
+                    var parts = [];
+                    if (tutorial.unblocked_npc_id != null) {
+                        parts.push('tap NPC ' + tutorial.unblocked_npc_id);
                     }
+                    if (allowedCells && allowedCells.length) {
+                        parts.push('stand on cell ' + allowedCells.slice(0, 8).join('/'));
+                    } else if (allowedCells) {
+                        parts.push('stay where you are');
+                    }
+                    return parts.length ? ' Follow the tutorial step: '
+                        + parts.join(', ') + '.' : '';
+                };
+                var refuseRestricted = function (stage, error, data) {
+                    window.__agentLastNav = { at: Date.now(), stage: stage,
+                        from_map: data && data.map_id,
+                        direction: data && data.direction,
+                        to_map: data && data.target_map,
+                        tutorial_step: tutorial.step_id,
+                        can_change_map: tutorial.can_change_map,
+                        unblocked_cells: allowedCells,
+                        unblocked_npc_id: tutorial.unblocked_npc_id };
+                    return _agentResult(false, data, error + tutorialHint());
+                };
+
+                if (tutorialActive && npcId
+                        && tutorial.unblocked_npc_id != null
+                        && Number(tutorial.unblocked_npc_id) !== Number(npcId)) {
+                    return refuseRestricted('tutorial_blocked',
+                        'the tutorial only allows NPC ' + tutorial.unblocked_npc_id
+                        + ', not ' + npcId + '.',
+                        { map_id: here, npc_id: npcId, target_map: null });
+                }
+
+                // A map id equal to the current map is not a transition. If a cell
+                // came with it, fall through and walk there.
+                if (wantMap && Number(wantMap) === Number(here)) {
+                    if (wantCell == null && !dir) {
+                        return _agentResult(true, { map_id: here, already_here: true });
+                    }
+                    wantMap = null;
+                }
+
+                // A direction alone names the exit: the destination is whatever the
+                // client's map data says is on that edge.
+                if (!wantMap && dir) {
+                    var edge = exitFor(dir);
+                    if (!edge) {
+                        return _agentResult(false, { map_id: here, direction: dir,
+                            exits: exits, neighbours: details.neighbours },
+                            'no exit to the ' + dir + ' on map ' + here);
+                    }
+                    wantMap = Number(edge.map_id);
+                }
+
+                // Cross to another map through the edge that leads there.
+                if (wantMap && Number(wantMap) !== Number(here)) {
+                    var crossing = dir ? exitFor(dir) : exitTo(wantMap);
+                    if (!crossing) {
+                        return _agentResult(false, { map_id: here, target_map: wantMap,
+                            direction: dir, exits: exits, neighbours: details.neighbours },
+                            'map ' + wantMap + ' is not adjacent to ' + here
+                            + '; take one of the exits: '
+                            + exits.map(function (e) {
+                                return e.direction + '->' + e.map_id;
+                            }).join(', '));
+                    }
+                    if (dir && Number(crossing.map_id) !== Number(wantMap)) {
+                        return _agentResult(false, { map_id: here, target_map: wantMap,
+                            direction: dir, exit_map: crossing.map_id, exits: exits },
+                            'the ' + dir + ' exit leads to ' + crossing.map_id
+                            + ', not ' + wantMap);
+                    }
+                    var changeDir = dir || crossing.direction;
+                    if (tutorialActive && tutorial.can_change_map
+                            && tutorial.can_change_map[changeDir] === false) {
+                        return refuseRestricted('tutorial_blocked',
+                            'the tutorial restricts map changes on the ' + changeDir
+                            + ' edge, so the ' + changeDir + ' neighbour '
+                            + crossing.map_id + ' cannot be reached yet.',
+                            { map_id: here, target_map: Number(crossing.map_id),
+                              direction: changeDir });
+                    }
+                    var exitCell = wantCell;
+                    if (exitCell == null || (crossing.cells || []).indexOf(exitCell) < 0) {
+                        exitCell = (crossing.cells || [])[0];
+                    }
+                    if (exitCell == null) {
+                        return _agentResult(false, { map_id: here, target_map: wantMap,
+                            direction: changeDir, exits: exits },
+                            'the client reports a ' + changeDir + ' neighbour but no '
+                            + changeDir + ' border cell to walk to');
+                    }
+                    var outcome = { from_map: here, to_map: Number(crossing.map_id),
+                        requested_map: wantMap, direction: changeDir, cell: exitCell };
+                    window.__agentLastNav = { at: Date.now(), stage: 'walking_to_edge',
+                        from_map: here, to_map: Number(crossing.map_id),
+                        direction: changeDir, cell: exitCell };
                     try {
-                        iso._requestMapChange(wantMap, wantCell);
-                        return _agentResult(true, { from_map: here, to_map: wantMap,
-                            via: 'isoEngine._requestMapChange',
-                            note: 'the server refuses it if the maps are not adjacent' });
+                        if (typeof iso.gotoNeighbourMap === 'function') {
+                            // The x/y arguments only position the border arrow. The
+                            // transition itself uses the direction and the cell.
+                            iso.gotoNeighbourMap(changeDir, exitCell, 0, 0);
+                            outcome.via = 'isoEngine.gotoNeighbourMap';
+                            window.__agentLastNav.stage = 'walk_then_change';
+                            window.__agentLastNav.via = outcome.via;
+                            return _agentResult(true, outcome);
+                        }
+                        if (typeof iso._movePlayerOnMap !== 'function'
+                                || typeof iso._requestMapChange !== 'function') {
+                            return _agentResult(false, outcome,
+                                'the client has no map transition method');
+                        }
+                        var moved = iso._movePlayerOnMap(exitCell, false,
+                            function (err, reached) {
+                                if (err) {
+                                    window.__agentLastNav = { at: Date.now(),
+                                        stage: 'walk_failed', from_map: here,
+                                        to_map: Number(crossing.map_id),
+                                        direction: changeDir, cell: exitCell,
+                                        error: String(err) };
+                                    return;
+                                }
+                                if (reached != null && Number(reached) !== Number(exitCell)) {
+                                    window.__agentLastNav = { at: Date.now(),
+                                        stage: 'walk_stopped_short', from_map: here,
+                                        to_map: Number(crossing.map_id),
+                                        direction: changeDir, cell: exitCell,
+                                        reached: reached };
+                                    return;
+                                }
+                                iso._requestMapChange(Number(crossing.map_id), changeDir);
+                                window.__agentLastNav = { at: Date.now(),
+                                    stage: 'change_requested', from_map: here,
+                                    to_map: Number(crossing.map_id),
+                                    direction: changeDir, cell: exitCell };
+                            });
+                        if (moved == null) {
+                            return _agentResult(false, outcome,
+                                'no path to the ' + changeDir + ' border cell ' + exitCell);
+                        }
+                        outcome.via = 'isoEngine._movePlayerOnMap';
+                        return _agentResult(true, outcome);
                     } catch (e) {
-                        return _agentResult(false, null, 'map change failed: ' + e);
+                        window.__agentLastNav = { at: Date.now(), stage: 'map_change_failed',
+                            from_map: here, to_map: Number(crossing.map_id),
+                            direction: changeDir, cell: exitCell, error: String(e) };
+                        return _agentResult(false, outcome, 'map change failed: ' + e);
                     }
                 }
 
-                // Same map (or no map given): walk to the cell.
+                // Same map: walk to the cell.
                 if (wantCell == null) {
-                    return _agentResult(false, { map_id: here },
-                        'nav.goto needs one of: npc_id, cell, or a map_id different from ' + here);
+                    return _agentResult(false, { map_id: here, exits: exits },
+                        'nav.goto needs one of: cell, npc_id, direction, or a map_id '
+                        + 'different from ' + here);
+                }
+                if (tutorialActive && allowedCells && details.cell != null
+                        && Number(wantCell) !== Number(details.cell)
+                        && allowedCells.indexOf(Number(wantCell)) < 0) {
+                    return refuseRestricted('tutorial_blocked',
+                        'the tutorial only lets the character stand on '
+                        + (allowedCells.length ? allowedCells.slice(0, 10).join('/')
+                            : 'no cell') + ', not cell ' + wantCell + '.',
+                        { map_id: here, target_map: null });
                 }
                 if (!iso || typeof iso._movePlayerOnMap !== 'function') {
                     return _agentResult(false, null, 'isoEngine._movePlayerOnMap unavailable');
                 }
-                var outcome = { cell: wantCell, map_id: here, via: 'isoEngine._movePlayerOnMap' };
+                var walkOutcome = { cell: wantCell, map_id: here,
+                    via: 'isoEngine._movePlayerOnMap' };
+                window.__agentLastNav = { at: Date.now(), stage: 'walking',
+                    from_map: here, cell: wantCell };
                 try {
                     // The callback fires after the server confirms; the request itself
                     // goes out synchronously inside the call, so ok here means "asked",
                     // and the next state.snapshot says whether the character moved.
-                    iso._movePlayerOnMap(wantCell, false, function (err) {
-                        if (err) outcome.error = String(err);
+                    var walked = iso._movePlayerOnMap(wantCell, false, function (err) {
+                        if (err) {
+                            walkOutcome.error = String(err);
+                            window.__agentLastNav = { at: Date.now(),
+                                stage: 'walk_failed', from_map: here, cell: wantCell,
+                                error: String(err) };
+                        }
                     });
+                    if (walked == null) {
+                        return _agentResult(false, walkOutcome,
+                            'no path to cell ' + wantCell + ' on map ' + here);
+                    }
                 } catch (e) {
-                    return _agentResult(false, outcome, 'movement failed: ' + e);
+                    return _agentResult(false, walkOutcome, 'movement failed: ' + e);
                 }
-                return _agentResult(true, outcome);
+                return _agentResult(true, walkOutcome);
             },
             // Diagnostic: report the shape of the client's own objects.
             //
@@ -2864,20 +4750,15 @@
                 tryGet('mapData.neighbors', md, 'neighbors');
                 tryGet('mapRendererMap.neighbours', mr, 'neighbours');
                 tryGet('mapData.mapId', md, 'mapId');
-                // Which cells on this map are exits, and where they lead if the client
-                // records it.
-                var exits = [];
+                // Which cells on this map are exits, and where they lead. The flags
+                // object has one boolean per direction; the old `flags.length` test
+                // was always undefined, so this diagnostic listed no exits at all.
                 try {
-                    var cells = (mr && mr.cells) || {};
-                    for (var c in cells) {
-                        if (!Object.prototype.hasOwnProperty.call(cells, c)) continue;
-                        var flags = iso && iso.mapRenderer
-                            ? iso.mapRenderer.getChangeMapFlags(Number(c)) : null;
-                        if (flags && flags.length) exits.push({ cell: Number(c), flags: flags });
-                        if (exits.length >= 8) break;
-                    }
-                } catch (e) {}
-                out.exit_cells = exits;
+                    var details = _agentMapDetails();
+                    out.exit_cells = details.exits;
+                    out.npcs = details.npcs;
+                    out.interactives = details.interactives;
+                } catch (e) { out.exit_cells = []; }
                 return _agentResult(true, out);
             },
             'debug.groups': function() {
@@ -2942,11 +4823,18 @@
                 // guess.
                 var pdT = (window.gui && window.gui.playerData) || null;
                 var uiT = (window.gui && window.gui.npcDialogUi) || null;
+                var hT = (window.gui && window.gui.npcDialogHandler) || null;
+                var canSend = function(o) {
+                    return !!(o && (typeof o._uiReplyHandler === 'function'
+                        || typeof o.replyHandler === 'function'));
+                };
                 return _agentResult(true, {
                     in_dialog: !!(pdT && pdT.isInDialog),
                     dialog_ui: !!uiT,
-                    reply_handler: !!(uiT && typeof uiT._uiReplyHandler === 'function'),
-                    reply_ids: (uiT && uiT.replyIds) ? uiT.replyIds.slice(0, 8) : null,
+                    dialog_handler: !!hT,
+                    reply_handler: canSend(uiT) || canSend(hT),
+                    reply_ids: (hT && hT.replyIds) ? hT.replyIds.slice(0, 8)
+                        : ((uiT && uiT.replyIds) ? uiT.replyIds.slice(0, 8) : null),
                     last: window.__agentLastTalk || null,
                     note: window.__agentLastTalk ? null
                         : 'no talk attempted since this page loaded'
@@ -2957,8 +4845,99 @@
                 return _agentResult(true, d || { none: true,
                     note: 'no disconnect observed since this page loaded' });
             },
+            // What the quest DB and the client's objective compass actually say.
+            // The planner reads `parameter0` as a map id, but for some objective
+            // types that field is an index into another table, and a wrong
+            // reading sends the agent walking to a map that does not exist.
+            // Read-only: no message is sent and nothing is changed.
+            'debug.questdb': function(args) {
+                var out = {};
+                var a = args || {};
+                var qid = Number(a.quest_id || 3841);
+                var oid = Number(a.objective_id || 13541);
+                var mid = Number(a.map_id || 0);
+                var keys = function(o, n) {
+                    try { return o ? Object.keys(o).slice(0, n || 60) : null; }
+                    catch (e) { return 'ERR:' + e; }
+                };
+                var val = function(fn) {
+                    try { var v = fn(); return (v === undefined) ? '__undefined' : v; }
+                    catch (e) { return 'ERR:' + e; }
+                };
+                var pd = window.gui && window.gui.playerData;
+                var sq = pd && pd.quests && pd.quests.standardQuests;
+                var q = (sq && typeof sq.getActiveQuestById === 'function')
+                    ? sq.getActiveQuestById(qid) : null;
+                out.quest = null;
+                try {
+                    if (q) {
+                        out.quest = {
+                            id: q.questId,
+                            finishedCount: q.finishedCount,
+                            objectives: q.objectives,
+                            db_objective_keys: keys(q.dbObjectives),
+                            db_objective: (q.dbObjectives || {})[oid] || null
+                        };
+                    }
+                } catch (e) { out.quest = 'ERR:' + e; }
+                out.objective_db = val(function () {
+                    var dbs = window.gui && window.gui.databases;
+                    return dbs && dbs.QuestObjectives
+                        ? (dbs.QuestObjectives[oid] || null) : null;
+                });
+                out.databases = val(function () {
+                    return (window.gui && window.gui.databases)
+                        ? keys(window.gui.databases, 60) : null;
+                });
+                out.map_position = null;
+                out.map_position_count = null;
+                try {
+                    var dbs2 = window.gui && window.gui.databases;
+                    var mp = dbs2 && dbs2.MapPositions;
+                    if (mp) {
+                        out.map_position_count = Object.keys(mp).length;
+                        if (mid) out.map_position = mp[mid] || null;
+                    }
+                } catch (e) { out.map_position = 'ERR:' + e; }
+                out.position = val(function () {
+                    return (pd && pd.position) ? JSON.stringify(pd.position) : null;
+                });
+                out.gps = null;
+                try {
+                    var g = window.gui && window.gui.GPS;
+                    if (g) {
+                        out.gps = { keys: keys(g, 40) };
+                        ['_currentTarget', 'currentTarget', '_target', 'target',
+                         '_targetMapId', 'targetMapId', 'currentMapId'].forEach(function (k) {
+                            if (g[k] !== undefined) out.gps[k] = g[k];
+                        });
+                        if (typeof g.getCurrentTarget === 'function') {
+                            out.gps.getCurrentTarget = val(function () {
+                                return g.getCurrentTarget();
+                            });
+                        }
+                    }
+                } catch (e) { out.gps = 'ERR:' + e; }
+                out.quests_keys = val(function () {
+                    return (pd && pd.quests) ? keys(pd.quests, 40) : null;
+                });
+                out.scenario_keys = val(function () {
+                    return (window.gui && window.gui.scenarioManager)
+                        ? keys(window.gui.scenarioManager, 40) : null;
+                });
+                return _agentResult(true, out);
+            },
+            'debug.character': function(args) {
+                return _agentCharacterReport(args);
+            },
+            'debug.itemdb': function(args) {
+                return _agentItemDbReport(args);
+            },
+            'debug.effectdb': function(args) {
+                return _agentEffectDbReport(args);
+            },
             'debug.version': function() {
-                return _agentResult(true, { build: '2026-10-23a' });
+                return _agentResult(true, { build: '2026-10-24b' });
             },
             'debug.probe': function() {
                 var out = {};
@@ -3039,12 +5018,56 @@
                 // (index) sends NpcDialogReplyMessage{replyId: replyIds[index]}.
                 var pd0 = (window.gui && window.gui.playerData) || null;
                 if (pd0 && pd0.isInDialog) {
-                    var ui = window.gui.npcDialogUi;
                     var want = (args && args.reply !== undefined) ? parseInt(args.reply, 10) : 0;
                     if (isNaN(want)) want = 0;
-                    var ids = (ui && ui.replyIds) || null;
-                    if (!ui || typeof ui._uiReplyHandler !== 'function') {
-                        return _agentResult(false, null, 'in a dialog but npcDialogUi is unavailable');
+                    // Which object owns the reply sender differs by build. On 1.74
+                    // `gui.npcDialogHandler` receives NpcDialogCreationMessage and
+                    // holds both `replyIds` and `_uiReplyHandler`, while
+                    // `gui.npcDialogUi` is only the view. Requiring the view made
+                    // every open dialog fail with "npcDialogUi is unavailable"
+                    // while the handler sat right beside it. Accept either, and
+                    // refuse only when neither can send.
+                    var dialogOwners = [];
+                    var addOwner = function(label, owner) {
+                        if (!owner) return;
+                        if (typeof owner._uiReplyHandler === 'function') {
+                            dialogOwners.push({ owner: owner, fn: owner._uiReplyHandler,
+                                                label: label + '._uiReplyHandler',
+                                                ids: owner.replyIds || null });
+                        }
+                        if (typeof owner.replyHandler === 'function') {
+                            dialogOwners.push({ owner: owner, fn: owner.replyHandler,
+                                                label: label + '.replyHandler',
+                                                ids: owner.replyIds || null });
+                        } else if (owner.replyHandler && typeof owner.replyHandler === 'object'
+                                   && typeof owner.replyHandler._uiReplyHandler === 'function') {
+                            dialogOwners.push({ owner: owner.replyHandler,
+                                                fn: owner.replyHandler._uiReplyHandler,
+                                                label: label + '.replyHandler._uiReplyHandler',
+                                                ids: owner.replyHandler.replyIds || owner.replyIds || null });
+                        }
+                    };
+                    try { addOwner('gui.npcDialogHandler', window.gui.npcDialogHandler); } catch (e) {}
+                    try { addOwner('gui.npcDialogUi', window.gui.npcDialogUi); } catch (e) {}
+                    if (!dialogOwners.length) {
+                        return _agentResult(false, { dialog_owners: [] },
+                            'in a dialog but no reply handler is available (npcDialogHandler/npcDialogUi missing)');
+                    }
+                    // The ids and the sender can live on different objects: the
+                    // handler received the reply list, the view forwards clicks.
+                    // Use the first populated list with the first sender.
+                    var pick = dialogOwners[0];
+                    for (var dpi = 0; dpi < dialogOwners.length; dpi++) {
+                        if (dialogOwners[dpi].ids && dialogOwners[dpi].ids.length) {
+                            pick = dialogOwners[dpi];
+                            break;
+                        }
+                    }
+                    var ids = pick.ids || null;
+                    if (!ids) {
+                        for (var dpi2 = 0; dpi2 < dialogOwners.length; dpi2++) {
+                            if (dialogOwners[dpi2].ids) { ids = dialogOwners[dpi2].ids; break; }
+                        }
                     }
                     // A dialog is open, but the replies have not arrived yet.
                     //
@@ -3075,13 +5098,14 @@
                             'dialog has ' + ids.length + ' replies; asked for index ' + want);
                     }
                     try {
-                        ui._uiReplyHandler(want);
+                        pick.fn.call(pick.owner, want);
                         window.__agentLastTalk = {
                             at: Date.now(), stage: 'replied', replied: want,
-                            replies: ids.length, reply_ids: ids.slice(0, 8)
+                            replies: ids.length, reply_ids: ids.slice(0, 8),
+                            via: pick.label
                         };
                         return _agentResult(true, { replied: want, replies: ids.length,
-                            via: 'gui.npcDialogUi._uiReplyHandler' });
+                            via: pick.label });
                     } catch (e) {
                         window.__agentLastTalk = {
                             at: Date.now(), stage: 'reply_threw', error: String(e)
@@ -3097,17 +5121,120 @@
                 var questId = (args && (args.quest_id || args.questId)) || null;
                 var objectiveId = (args && (args.objective_id || args.objectiveId)) || null;
                 if (questId && objectiveId) {
+                    var qid = Number(questId), oid = Number(objectiveId);
+                    var claim = _questClaimCheck(qid, oid);
+                    // Every attempt is a candidate training row: the reason is the
+                    // precondition the gate believes it is enforcing. The trajectory
+                    // captures console lines, so this is the feature that lets the
+                    // label extractor see refusals and not only packets.
+                    try {
+                        console.log('[AgentGuard] claim ' + (claim.ok ? 'allowed' : 'refused')
+                            + ' quest=' + qid + ' objective=' + oid
+                            + (claim.ok ? '' : ' reason=' + claim.reason));
+                    } catch (e) {}
+                    if (!claim.ok) {
+                        window.__agentLastTalk = { at: Date.now(), stage: 'validate_refused',
+                            quest_id: qid, objective_id: oid, reason: claim.reason };
+                        return _agentResult(false, claim, claim.error);
+                    }
+                    window.__agentLastValidate = { quest_id: qid, objective_id: oid,
+                                                   at: Date.now() };
                     var r = _cmSend('QuestObjectiveValidationMessage',
-                        { questId: Number(questId), objectiveId: Number(objectiveId) });
-                    return _agentResult(r.ok, { quest_id: Number(questId), objective_id: Number(objectiveId) },
+                        { questId: qid, objectiveId: oid });
+                    return _agentResult(r.ok, { quest_id: qid, objective_id: oid },
                         r.ok ? null : r.error);
+                }
+                // Accepting a quest is not talking to an NPC. The client's own quest
+                // link and quest book send QuestStartRequestMessage. This handler used
+                // to fall through to "talk to the first NPC on the map", so a call
+                // that meant "start quest 584" produced the same "no NPC on this map"
+                // failure 70 times in one recorded session. When the client already
+                // knows the quest (active or finished), keep the talk path below.
+                var sq0 = window.gui && window.gui.playerData
+                    && window.gui.playerData.quests
+                    && window.gui.playerData.quests.standardQuests;
+                if (questId && sq0) {
+                    var known = false;
+                    try {
+                        known = (typeof sq0.isActiveQuestById === 'function'
+                                    && sq0.isActiveQuestById(questId))
+                             || (typeof sq0.isFinishedQuestById === 'function'
+                                    && sq0.isFinishedQuestById(questId));
+                    } catch (e) {}
+                    if (!known) {
+                        // The client reports the request as sent; the server decides
+                        // whether to activate the quest, and QuestStartedMessage is
+                        // what moves it into standardQuests. A quest whose
+                        // prerequisites are unmet never does, and reporting ok every
+                        // step made quest 584 an endless no-op. Check the previous
+                        // request before sending another.
+                        var starts = window.__agentQuestStarts
+                            || (window.__agentQuestStarts = {});
+                        var startKey = Number(questId);
+                        var pendingStart = starts[startKey] || null;
+                        var nowStart = Date.now();
+                        if (pendingStart) {
+                            var waited = nowStart - Number(pendingStart.at || 0);
+                            if (waited < 5000) {
+                                window.__agentLastTalk = {
+                                    at: nowStart, stage: 'quest_start_pending',
+                                    quest_id: startKey, waited_ms: waited
+                                };
+                                // Still in flight, not a failed directive: the
+                                // autopilot abandons a goal after three ok=false
+                                // steps, and a slow acknowledgement is not one.
+                                // The planner counts the attempt from the
+                                // observation, which still says "not active".
+                                return _agentResult(true,
+                                    { quest_id: startKey, via: 'QuestStartRequestMessage',
+                                      pending: true, waited_ms: waited }, null);
+                            }
+                            delete starts[startKey];
+                            window.__agentLastTalk = {
+                                at: nowStart, stage: 'quest_not_activated',
+                                quest_id: startKey, waited_ms: waited
+                            };
+                            return _agentResult(false,
+                                { quest_id: startKey, via: 'QuestStartRequestMessage',
+                                  not_activated: true, waited_ms: waited },
+                                'the server did not activate quest ' + startKey
+                                + ' after the start request');
+                        }
+                        var start = _cmSend('QuestStartRequestMessage',
+                            { questId: Number(questId) });
+                        if (start.ok) starts[startKey] = { at: Date.now() };
+                        window.__agentLastTalk = {
+                            at: Date.now(),
+                            stage: start.ok ? 'quest_start_sent' : 'quest_start_failed',
+                            quest_id: startKey,
+                            error: start.ok ? null : String(start.error || '')
+                        };
+                        return _agentResult(start.ok,
+                            { quest_id: startKey, via: 'QuestStartRequestMessage' },
+                            start.ok ? null : start.error);
+                    }
                 }
                 // The objective names its NPC; the planner passes it as npc_id. This
                 // handler used to ignore that and talk to the FIRST NPC on the map,
                 // which is a different person — the call succeeded, nothing advanced,
                 // and the loop spent its budget re-sending it. Talking to the wrong
                 // NPC and reporting ok is worse than failing: it hides the mistake.
+                // Without an npc_id the only honest answer is the list of NPCs here,
+                // so the caller can choose one instead of guessing.
                 var wantNpc = Number((args && (args.npc_id || args.npcId)) || 0) || null;
+                if (!wantNpc) {
+                    var hereNpcs = _listNpcActors().slice(0, 20).map(function (n) {
+                        return { npc_id: n.templateId, actor_id: n.contextualId, cell: n.cell };
+                    });
+                    window.__agentLastTalk = { at: Date.now(), stage: 'npc_id_required',
+                        quest_id: questId, npcs_here: hereNpcs.length };
+                    return _agentResult(false,
+                        { quest_id: questId, npcs_here: hereNpcs, reason: 'npc_id_required' },
+                        'quest is active but no npc_id was given; npcs on this map: '
+                        + (hereNpcs.length
+                            ? hereNpcs.map(function (n) { return n.npc_id; }).join(',')
+                            : 'none'));
+                }
                 var found = _findNpcActor(wantNpc);
                 var npc = found.actor;
                 var npcIds = found.seen;
@@ -3275,14 +5402,24 @@
                     price: price, price_source: priceSource,
                     note: 'listing_open: the sale depends on a buyer, not on us' },
                     r.ok ? null : r.error);
+            },
+            'hdv.prices': function(args) {
+                return _agentMarketCapture(args || {});
+            },
+            'market.capture': function(args) {
+                return _agentMarketCapture(args || {});
             }
         };
 
         var _agentDirectiveAliases = {
             'SAFE_STOP': 'safe.stop', 'FARM_START': 'farm.start', 'FARM_STOP': 'farm.stop',
-            'AUTO_JOIN_COMBAT': 'fight.join', 'PASS_TURN': 'fight.pass', 'FOLLOW': 'nav.follow',
+            'AUTO_JOIN_COMBAT': 'fight.join', 'PASS_TURN': 'fight.pass',
+            'FIGHT_STATE': 'fight.state', 'FOLLOW': 'nav.follow',
             'INV_LIST': 'inv.list', 'INV_SELL': 'inv.sell', 'HDV_SCAN': 'hdv.scan',
-            'HDV_LIST': 'hdv.list', 'CHAT_SAY': 'chat.say', 'STATE_SNAPSHOT': 'state.snapshot',
+            'HDV_LIST': 'hdv.list', 'HDV_PRICES': 'hdv.prices',
+            'MARKET_CAPTURE': 'market.capture', 'CHARACTER_REPORT': 'debug.character',
+            'ITEM_DB': 'debug.itemdb', 'EFFECT_DB': 'debug.effectdb',
+            'CHAT_SAY': 'chat.say', 'STATE_SNAPSHOT': 'state.snapshot',
             'QUEST_ADVANCE': 'quest.advance'
         };
 

@@ -23,6 +23,7 @@ import unicodedata
 import urllib.error
 import urllib.request
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -100,6 +101,162 @@ class ToolResult:
             "latency_ms": round(self.latency_ms, 2),
             "source": self.source,
         }
+
+
+# Order is the tie-break when a BFS step has several equal-length routes.
+_MAP_DIRECTIONS: Tuple[Tuple[str, str], ...] = (
+    ("top", "topNeighbourId"),
+    ("right", "rightNeighbourId"),
+    ("bottom", "bottomNeighbourId"),
+    ("left", "leftNeighbourId"),
+)
+
+
+class _MapGraph:
+    """Routing graph over the exported maps (`data/maps/_index.json`).
+
+    The client can only do the last step: walk to a border and cross it. It knows
+    the exits of the map it is standing on and nothing else, so any route longer
+    than one map has to be planned on this side, where the export is available.
+    """
+
+    def __init__(self, path: Optional[Path] = None) -> None:
+        self.path = Path(path) if path else REPO_ROOT / "data" / "maps" / "_index.json"
+        self._lock = threading.Lock()
+        self._edges: Optional[Dict[int, Dict[str, int]]] = None
+
+    def edges(self) -> Dict[int, Dict[str, int]]:
+        with self._lock:
+            if self._edges is not None:
+                return self._edges
+            edges: Dict[int, Dict[str, int]] = {}
+            try:
+                with self.path.open("r", encoding="utf-8") as fh:
+                    payload = json.load(fh)
+            except (OSError, ValueError) as exc:
+                logger.warning("map index unavailable (%s): %s", self.path, exc)
+                payload = {}
+            items = payload.items() if isinstance(payload, dict) else ()
+            for key, record in items:
+                if not isinstance(record, dict):
+                    continue
+                try:
+                    map_id = int(record.get("id", key))
+                except (TypeError, ValueError):
+                    continue
+                neighbours = record.get("neighbours") or {}
+                exits: Dict[str, int] = {}
+                for direction, field_name in _MAP_DIRECTIONS:
+                    try:
+                        neighbour_id = int(neighbours.get(field_name))
+                    except (TypeError, ValueError):
+                        continue
+                    if neighbour_id > 0:
+                        exits[direction] = neighbour_id
+                if exits:
+                    edges[map_id] = exits
+            self._edges = edges
+            return edges
+
+    def hop(self, here: Optional[int], target: Optional[int],
+            blocked_first: Optional[set] = None) -> Optional[Tuple[str, int, int]]:
+        """First step from `here` towards `target`: (direction, next map, hops left).
+
+        `blocked_first` names directions the tutorial forbids on the current map.
+        They are skipped for the first step only: the gate belongs to the scenario
+        step, not to the other maps on the route.
+        """
+        if here is None or target is None or here == target:
+            return None
+        edges = self.edges()
+        if here not in edges or target not in edges:
+            return None
+        blocked_first = blocked_first or set()
+        parent: Dict[int, Tuple[Optional[int], Optional[str]]] = {here: (None, None)}
+        queue: deque = deque([here])
+        while queue:
+            node = queue.popleft()
+            if node == target:
+                break
+            for direction, neighbour in edges.get(node, {}).items():
+                if node == here and direction in blocked_first:
+                    continue
+                if neighbour in parent:
+                    continue
+                parent[neighbour] = (node, direction)
+                queue.append(neighbour)
+        if target not in parent:
+            return None
+        path: List[str] = []
+        node = target
+        while parent[node][0] is not None:
+            previous, direction = parent[node]
+            path.append(direction)
+            node = previous
+        path.reverse()
+        if not path:
+            return None
+        return path[0], edges[here][path[0]], len(path)
+
+
+def _obs_map_id(observation: Optional[Dict[str, Any]]) -> Optional[int]:
+    """The current map id from any snapshot shape the bridge has used."""
+    if not isinstance(observation, dict):
+        return None
+    map_block = observation.get("map")
+    candidates = [
+        observation.get("map_id"),
+        observation.get("position", {}).get("map_id")
+        if isinstance(observation.get("position"), dict) else None,
+        map_block.get("map_id") if isinstance(map_block, dict) else None,
+    ]
+    for value in candidates:
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _obs_map_exits(observation: Optional[Dict[str, Any]]) -> Dict[int, str]:
+    """neighbour map id -> direction, straight from the client's own exit list.
+
+    Exits the tutorial marks `blocked` are left out: the client refuses those
+    crossings, so routing through one walks the character to a border it cannot
+    cross.
+    """
+    if not isinstance(observation, dict):
+        return {}
+    map_block = observation.get("map")
+    if not isinstance(map_block, dict):
+        return {}
+    exits: Dict[int, str] = {}
+    for entry in map_block.get("exits") or []:
+        if not isinstance(entry, dict) or entry.get("blocked"):
+            continue
+        try:
+            neighbour = int(entry.get("map_id"))
+        except (TypeError, ValueError):
+            continue
+        direction = entry.get("direction")
+        if direction:
+            exits[neighbour] = str(direction)
+    return exits
+
+
+def _obs_blocked_directions(observation: Optional[Dict[str, Any]]) -> set:
+    """Directions the tutorial currently disables on the observed map."""
+    if not isinstance(observation, dict):
+        return set()
+    map_block = observation.get("map")
+    if not isinstance(map_block, dict):
+        return set()
+    blocked = set()
+    for entry in map_block.get("exits") or []:
+        if isinstance(entry, dict) and entry.get("blocked") and entry.get("direction"):
+            blocked.add(str(entry["direction"]))
+    return blocked
 
 
 class _KnowledgeIndex:
@@ -274,6 +431,7 @@ class ToolExecutor:
         self.store = KnowledgeStore(knowledge_store)
         self._zaaps_cache: Optional[List[Dict[str, Any]]] = None
         self._geo_index: Optional[Dict[str, Any]] = None
+        self._maps = _MapGraph()
 
     # -- HTTP helpers --------------------------------------------------------
 
@@ -332,7 +490,14 @@ class ToolExecutor:
             return result
 
         try:
-            result = self._dispatch(tool, validated, source=source, instance=instance)
+            routed, route = self._route_nav(validated, observation) if (
+                tool == "nav.goto" and isinstance(validated, dict)) else (validated, None)
+            if route and route.get("already_here"):
+                result = ToolResult(tool=tool, ok=True, source=source, data=route)
+            else:
+                result = self._dispatch(tool, routed, source=source, instance=instance)
+                if route and isinstance(result.data, dict):
+                    result.data["route"] = route
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller and the log
             result = ToolResult(
                 tool=tool, ok=False, error=f"{type(exc).__name__}: {exc}", source=source)
@@ -349,6 +514,74 @@ class ToolExecutor:
         self._record(tool, validated, result, goal, observation,
                      observation_age_ms, observation_source)
         return result
+
+    def snapshot(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Read the current game state without recording it as a step.
+
+        Observation polling is not a decision. Recording it would put a
+        ``state.snapshot`` row in the corpus for every re-read the loop makes
+        while waiting for a walk to land, and a policy trained on those learns
+        to spend turns looking instead of acting.
+        """
+        try:
+            result = self._dispatch("state.snapshot", {}, source="live", instance=instance)
+        except Exception:  # noqa: BLE001 - a probe must never kill the loop
+            return None
+        if not result.ok or not isinstance(result.data, dict):
+            return None
+        snap = result.data.get("snapshot")
+        if isinstance(snap, dict) and snap:
+            return snap
+        response = result.data.get("response")
+        inner = response.get("result") if isinstance(response, dict) else None
+        if isinstance(inner, dict):
+            data = inner.get("data")
+            if isinstance(data, dict) and data:
+                return data
+        return None
+
+    def fight_state(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Read the live combat board without recording it as a step.
+
+        Same contract as ``snapshot``: a read is not a decision. This exists so combat
+        code has one place that knows the bridge wraps the client payload as
+        ``response["result"]["data"]`` instead of every caller rediscovering it.
+        """
+        try:
+            result = self._dispatch("fight.state", {}, source="live", instance=instance)
+        except Exception:  # noqa: BLE001 - a probe must never kill the loop
+            return None
+        if not result.ok or not isinstance(result.data, dict):
+            return None
+        response = result.data.get("response")
+        inner = response.get("result") if isinstance(response, dict) else None
+        data = inner.get("data") if isinstance(inner, dict) else None
+        return data if isinstance(data, dict) and data else None
+
+    def fight_plan(self, args: Dict[str, Any], source: str = "local") -> ToolResult:
+        """Plan one combat turn from the live board. Read-only: it never acts.
+
+        The solver is imported here rather than at module import so the agent can
+        start without the combat/data stack loaded.
+        """
+        from combat.battle_solver import BattleSolver, Board
+
+        payload = self.fight_state()
+        if not payload:
+            return ToolResult(
+                tool="fight.plan", ok=False, source=source,
+                error="no live fight board: the client is not in a fight",
+            )
+        try:
+            board = Board.from_fight_state(payload)
+            solver = BattleSolver(
+                beam_width=int(args.get("beam_width", 16) or 16),
+                max_actions=int(args.get("max_actions", 4) or 4),
+            )
+            plan = solver.plan_turn(board)
+        except Exception as exc:  # noqa: BLE001 - a bad board must not kill the loop
+            return ToolResult(tool="fight.plan", ok=False, error=str(exc), source=source)
+        return ToolResult(tool="fight.plan", ok=True, data=plan.as_dict(), source=source)
 
     # -- internals -----------------------------------------------------------
 
@@ -378,6 +611,65 @@ class ToolExecutor:
             source=result.source,
         )
 
+    def _route_nav(
+        self,
+        args: Dict[str, Any],
+        observation: Optional[Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Turn a destination map into the single step the client can take.
+
+        The client walks to a border and crosses it; it cannot walk a route. So
+        `nav.goto {"map_id": far_away}` is split here: the destination stays the
+        caller's intent, while the copy handed to the client carries the next hop
+        and its direction. When the map is adjacent (as the snapshot itself says),
+        only the direction is added.
+        """
+        target_raw = args.get("map_id")
+        if target_raw is None or args.get("direction"):
+            return args, None
+        try:
+            target = int(target_raw)
+        except (TypeError, ValueError):
+            return args, None
+        here = _obs_map_id(observation)
+        if here is None:
+            return args, None
+        if target == here:
+            # A bare map target on the map we already stand on is a no-op. A cell,
+            # NPC or coordinate alongside it still means "do that here", so the
+            # client keeps the call.
+            if args.get("cell") is None and args.get("npc_id") is None \
+                    and args.get("npc") is None and args.get("x") is None:
+                return args, {"already_here": True, "map_id": here}
+            return args, None
+
+        direction = _obs_map_exits(observation).get(target)
+        if direction:
+            routed = dict(args)
+            routed["direction"] = direction
+            return routed, {"requested_map_id": target, "from_map_id": here,
+                            "direction": direction, "next_map_id": target,
+                            "hops_remaining": 1, "source": "observation"}
+
+        step = self._maps.hop(here, target, blocked_first=_obs_blocked_directions(observation))
+        if step is None:
+            # Not adjacent and not in the exported graph: send the call anyway so
+            # the client's own error names the exits it does have, which is better
+            # evidence in the log than a silent substitution. A tutorial gate can
+            # also make every route's first step unusable; the client then refuses
+            # this call naming the restriction, which is the evidence we need.
+            return args, {"requested_map_id": target, "from_map_id": here,
+                          "routable": False,
+                          "tutorial_blocked": sorted(
+                              _obs_blocked_directions(observation)) or None}
+        direction, next_map, hops = step
+        routed = dict(args)
+        routed["map_id"] = next_map
+        routed["direction"] = direction
+        return routed, {"requested_map_id": target, "from_map_id": here,
+                        "direction": direction, "next_map_id": next_map,
+                        "hops_remaining": hops, "source": "map_index"}
+
     def _dispatch(self, tool: str, args: Dict[str, Any], source: str,
                   instance: Optional[str] = None) -> ToolResult:
         spec = TOOLS_BY_NAME[tool]
@@ -390,6 +682,8 @@ class ToolExecutor:
                 return self._knowledge_remember(args, source)
             if tool == "knowledge.forget":
                 return self._knowledge_forget(args, source)
+            if tool == "fight.plan":
+                return self.fight_plan(args, source)
             return ToolResult(tool=tool, ok=False, error=f"no local handler for {tool}", source=source)
         if spec.backend == "sentinel":
             if tool == "nav.goto":

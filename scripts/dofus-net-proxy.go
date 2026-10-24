@@ -437,10 +437,10 @@ type modRule struct {
 }
 
 type ProxyServer struct {
-	resolver                                            *FastDNSResolver
-	upstreamURL, lastGood, exitURL, cdnUpstream         *url.URL
-	upstreams                                           []*url.URL
-	upstreamMu, exitMu, hopMu, destMu                   sync.Mutex
+	resolver                                    *FastDNSResolver
+	upstreamURL, lastGood, exitURL, cdnUpstream *url.URL
+	upstreams                                   []*url.URL
+	upstreamMu, exitMu, hopMu, destMu           sync.Mutex
 	// Held only while the session's egress is being chosen.
 	//
 	// A client opens several game sockets at once. Before any of them has succeeded lastGood is
@@ -449,6 +449,16 @@ type ProxyServer struct {
 	// second. That is a stronger kick signal than a reconnect from a new IP. The first game dial
 	// picks; the rest wait and use what it picked.
 	pinMu sync.Mutex
+	// Addresses that just failed as the session pin, and may not be chosen again until the
+	// cooldown expires. Without this, a pinned proxy that flaps every ~10 s was re-pinned on
+	// the very next dial, so every login fetch kept landing in the same down window instead of
+	// moving to a hop that was actually carrying traffic.
+	pinDeadMu sync.Mutex
+	pinDead   map[string]time.Time
+	// Game tunnels that are still moving bytes. The pin may not move while one exists; it must
+	// move when none does, or a dead egress leaves the client on a login screen forever.
+	gameMu                                              sync.Mutex
+	gameConns                                           map[*gameTunnel]struct{}
 	prefetchMu, prefetchLogMu, mirrorMu, negMu, modsMu  sync.Mutex
 	exitBlockedUntil, modsChecked, modsRulesMod         time.Time
 	cacheHits, cacheMisses                              uint64
@@ -1002,9 +1012,7 @@ func (p *ProxyServer) dialViaExit(ctx context.Context, exit *url.URL, dest strin
 	if err != nil {
 		return nil, nil, cmp.Or(err, errors.New("no hop could reach the exit"))
 	}
-	p.upstreamMu.Lock()
-	p.lastGood = exit
-	p.upstreamMu.Unlock()
+	p.setPinnedUpstream(exit)
 	return conn, exit, nil
 }
 
@@ -1024,6 +1032,217 @@ func (p *ProxyServer) dialUpstreamHttp(u *url.URL, dest string, timeout time.Dur
 	return conn, nil
 }
 
+// gameIdleWindow is how long a game tunnel may be silent before it stops counting as a live
+// session. An open-but-silent socket is what kept a dead egress pinned forever: the client sat
+// on a login screen while the relay refused to move because one stale connection still counted.
+// Real game traffic sends heartbeats well inside this window.
+const gameIdleWindow = 60 * time.Second
+
+// pinDeadCooldown keeps a pin that just failed from being chosen again immediately. Public
+// proxies on this line flap on a ~10 s cycle, so retrying the same address on the next dial
+// only samples the same dead window again.
+const pinDeadCooldown = 30 * time.Second
+
+// markPinDead remembers that an address just failed as the session pin. establishPin skips it
+// until the cooldown expires, which lets a re-pin land on a hop that is actually carrying
+// traffic. A relay started later begins with an empty map and will try the supervisor's pick
+// again: this is a per-process failure memory, not a permanent blacklist.
+func (p *ProxyServer) markPinDead(u *url.URL) {
+	if u == nil {
+		return
+	}
+	key := u.String()
+	p.pinDeadMu.Lock()
+	if p.pinDead == nil {
+		p.pinDead = make(map[string]time.Time)
+	}
+	p.pinDead[key] = time.Now().Add(pinDeadCooldown)
+	p.pinDeadMu.Unlock()
+}
+
+func (p *ProxyServer) pinRecentlyDead(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	key := u.String()
+	now := time.Now()
+	p.pinDeadMu.Lock()
+	until, ok := p.pinDead[key]
+	if ok && !now.Before(until) {
+		delete(p.pinDead, key)
+		ok = false
+	}
+	p.pinDeadMu.Unlock()
+	return ok
+}
+
+// gameTunnel is one game connection's last sign of life.
+type gameTunnel struct {
+	lastActivity atomic.Int64
+}
+
+func (g *gameTunnel) touch() {
+	g.lastActivity.Store(time.Now().UnixNano())
+}
+
+// activityWriter marks the session alive only when the peer accepted bytes. Reading from the
+// client into a dead upstream never reaches this, which is exactly the distinction the pin needs:
+// a half-open socket must not look like a session worth preserving.
+type activityWriter struct {
+	w     io.Writer
+	touch func()
+}
+
+func (a activityWriter) Write(b []byte) (int, error) {
+	n, err := a.w.Write(b)
+	if n > 0 {
+		a.touch()
+	}
+	return n, err
+}
+
+func (p *ProxyServer) registerGameTunnel() (*gameTunnel, func()) {
+	t := &gameTunnel{}
+	t.touch()
+	p.gameMu.Lock()
+	if p.gameConns == nil {
+		p.gameConns = make(map[*gameTunnel]struct{})
+	}
+	p.gameConns[t] = struct{}{}
+	p.gameMu.Unlock()
+	return t, func() {
+		p.gameMu.Lock()
+		delete(p.gameConns, t)
+		p.gameMu.Unlock()
+	}
+}
+
+// liveGameSessions counts game tunnels that moved bytes within window. Background connections
+// are deliberately excluded: they are not the session the server binds to an address.
+func (p *ProxyServer) liveGameSessions(window time.Duration) int {
+	cutoff := time.Now().Add(-window).UnixNano()
+	p.gameMu.Lock()
+	defer p.gameMu.Unlock()
+	live := 0
+	for t := range p.gameConns {
+		if t.lastActivity.Load() >= cutoff {
+			live++
+		}
+	}
+	return live
+}
+
+func (p *ProxyServer) setPinnedUpstream(u *url.URL) {
+	if u == nil {
+		return
+	}
+	p.upstreamMu.Lock()
+	if p.lastGood == nil {
+		p.lastGood = u
+	}
+	p.upstreamMu.Unlock()
+}
+
+// establishPin chooses the egress this session will use. Called with pinMu held so that
+// concurrent dials cannot each pick a different exit.
+//
+// `skip` is an address that just died and must not be dialled again. `resume` only changes the
+// log line: a second pin in one process is a new session, and the log has to say so, because the
+// first session's address is gone and cannot be preserved.
+func (p *ProxyServer) establishPin(ctx context.Context, dest, socksTarget string, timeout time.Duration, skip *url.URL, resume bool) (net.Conn, *url.URL, error) {
+	order := make([]*url.URL, 0, len(p.upstreams))
+	for _, u := range p.upstreams {
+		if u == nil || (skip != nil && u.String() == skip.String()) || p.pinRecentlyDead(u) {
+			continue
+		}
+		order = append(order, u)
+	}
+	if len(order) == 0 {
+		return nil, nil, fmt.Errorf("no upstream configured")
+	}
+	first := order[0]
+	why := "the supervisor's pick"
+	if skip != nil {
+		why = "the dead address was skipped"
+	}
+	started := time.Now()
+	conn, err := p.dialOne(first, dest, socksTarget, timeout)
+	p.recordHop(first, err == nil, time.Since(started))
+	if err == nil {
+		p.setPinnedUpstream(first)
+		p.logPin(first, resume, why)
+		return conn, first, nil
+	}
+	p.markPinDead(first)
+	if len(order) == 1 {
+		return nil, nil, err
+	}
+	log.Printf("[UPSTREAM] %s %s did not carry the first dial (%v); choosing another", why, first.Redacted(), err)
+	conn, winner, rerr := p.raceUpstreams(ctx, order[1:], dest, socksTarget, timeout)
+	if rerr != nil {
+		return nil, nil, rerr
+	}
+	p.setPinnedUpstream(winner)
+	p.logPin(winner, resume, "the first choice was unreachable")
+	return conn, winner, nil
+}
+
+func (p *ProxyServer) logPin(winner *url.URL, resume bool, why string) {
+	if resume {
+		log.Printf("[UPSTREAM] session egress re-pinned to %s (%s; the previous address is dead and no game traffic is live — this is a new session)", winner.Redacted(), why)
+		return
+	}
+	log.Printf("[UPSTREAM] session egress pinned to %s (%s; one address for this session)", winner.Redacted(), why)
+}
+
+// recoverPin decides whether a failed session pin may be replaced.
+//
+// The pin exists to keep one live session on one address. It must not outlive that session: if
+// the pinned egress is dead and no game tunnel has moved bytes for gameIdleWindow, there is
+// nothing left to protect, and refusing only leaves the client on a login screen that can never
+// complete. While game traffic is live the refusal stands — that is the hijacked-session signal.
+//
+// moved=false means the pin was kept and the caller should log the refusal.
+func (p *ProxyServer) recoverPin(ctx context.Context, dest, socksTarget string, timeout time.Duration, dead *url.URL) (net.Conn, *url.URL, bool, error) {
+	p.pinMu.Lock()
+	defer p.pinMu.Unlock()
+
+	if p.liveGameSessions(gameIdleWindow) > 0 {
+		return nil, nil, false, nil
+	}
+
+	// This address failed as the pin. Do not let the replacement logic choose it again on the
+	// next dial just because it happens to be first in the chain.
+	p.markPinDead(dead)
+
+	p.upstreamMu.Lock()
+	current := p.lastGood
+	p.upstreamMu.Unlock()
+
+	if current == nil {
+		conn, winner, err := p.establishPin(ctx, dest, socksTarget, timeout, dead, true)
+		return conn, winner, true, err
+	}
+	if dead != nil && current.String() != dead.String() {
+		// Another dial already replaced the dead pin while this one was failing. Use the
+		// address the session has now; starting a third one would split it again.
+		started := time.Now()
+		conn, err := p.dialOne(current, dest, socksTarget, timeout)
+		p.recordHop(current, err == nil, time.Since(started))
+		if err != nil {
+			p.markPinDead(current)
+		}
+		return conn, current, true, err
+	}
+
+	log.Printf("[UPSTREAM] pinned egress %s is dead and no game traffic is live; the session it protected is gone, so a new one may use another address", current.Redacted())
+	p.upstreamMu.Lock()
+	p.lastGood = nil
+	p.upstreamMu.Unlock()
+	conn, winner, err := p.establishPin(ctx, dest, socksTarget, timeout, current, true)
+	return conn, winner, true, err
+}
+
 func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout time.Duration) (net.Conn, *url.URL, error) {
 	socksTarget := p.resolver.resolveAddr(ctx, dest, "443")
 	p.upstreamMu.Lock()
@@ -1036,27 +1255,13 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 		preferred = p.lastGood
 		p.upstreamMu.Unlock()
 		if preferred == nil {
-			// Still nobody has chosen: this dial is the one that decides, and the others are
-			// waiting on pinMu. Whoever wins here sets lastGood in raceUpstreams.
-			conn, winner, err := p.raceUpstreams(ctx, p.upstreams, dest, socksTarget, timeout)
+			conn, winner, err := p.establishPin(ctx, dest, socksTarget, timeout, nil, false)
 			p.pinMu.Unlock()
-			if err == nil {
-				log.Printf("[UPSTREAM] session egress pinned to %s", winner.Redacted())
-			}
 			return conn, winner, err
 		}
 		p.pinMu.Unlock()
 	}
 
-	order := make([]*url.URL, 0, len(p.upstreams)+1)
-	if preferred != nil {
-		order = append(order, preferred)
-	}
-	for _, u := range p.upstreams {
-		if u != nil && (preferred == nil || u.String() != preferred.String()) {
-			order = append(order, u)
-		}
-	}
 	if preferred != nil {
 		started := time.Now()
 		conn, err := p.dialOne(preferred, dest, socksTarget, timeout)
@@ -1064,12 +1269,38 @@ func (p *ProxyServer) dialUpstreamAny(ctx context.Context, dest string, timeout 
 		if err == nil {
 			return conn, preferred, nil
 		}
-		if active := atomic.LoadInt64(&p.telemetry.connsActive); active > 0 {
-			log.Printf("[UPSTREAM] %s failed with %d live connection(s); refusing to switch exit IP mid-session", preferred.Redacted(), active)
+		if isGameDestination(dest) {
+			// The pin may move only when the session it protects is gone. Live game traffic —
+			// a tunnel that is actually moving bytes, not merely an open socket — keeps the
+			// refusal. With no live traffic there is no session left to keep on this address,
+			// and refusing would strand the client on a login screen that can never complete.
+			conn, winner, moved, rerr := p.recoverPin(ctx, dest, socksTarget, timeout, preferred)
+			if moved {
+				if rerr == nil {
+					return conn, winner, nil
+				}
+				return nil, nil, rerr
+			}
+			live := p.liveGameSessions(gameIdleWindow)
+			log.Printf("[UPSTREAM] pinned egress %s failed for %s with %d live game connection(s); refusing to move the exit IP mid-session (%v)",
+				preferred.Redacted(), dest, live, err)
 			return nil, nil, err
 		}
+		// Background traffic (OS telemetry, the browser's own endpoints) may ride another hop.
+		// The pin is untouched, so the game's sockets keep leaving from one address.
+		rest := make([]*url.URL, 0, len(p.upstreams))
+		for _, u := range p.upstreams {
+			if u != nil && u.String() != preferred.String() {
+				rest = append(rest, u)
+			}
+		}
+		if len(rest) == 0 {
+			return nil, nil, err
+		}
+		log.Printf("[UPSTREAM] pinned egress %s failed for background %s; using another hop (the session pin does not move)", preferred.Redacted(), dest)
+		return p.raceUpstreams(ctx, rest, dest, socksTarget, timeout)
 	}
-	return p.raceUpstreams(ctx, order, dest, socksTarget, timeout)
+	return p.raceUpstreams(ctx, p.upstreams, dest, socksTarget, timeout)
 }
 
 func (p *ProxyServer) dialOne(u *url.URL, dest, socksTarget string, timeout time.Duration) (net.Conn, error) {
@@ -1082,13 +1313,13 @@ func (p *ProxyServer) dialOne(u *url.URL, dest, socksTarget string, timeout time
 	return p.dialUpstreamHttp(u, dest, timeout)
 }
 
-// isGameDestination reports whether a dial target belongs to the game.
+// isGameDestination reports whether a dial target belongs to the session's own traffic.
 //
-// Only these may move the pinned egress. The relay is the WebView2's proxy for everything, and
-// Windows components inside it reach out on their own — measured: a request to
-// config.edge.skype.com moved the exit to the tunnel, and the game's next connection inherited a
-// new address and was closed as a hijacked session. Background telemetry must not be able to
-// change which address Ankama sees.
+// These may establish the pinned egress, and once it is pinned they must never move it. The
+// relay is the WebView2's proxy for everything, and Windows components inside it reach out on
+// their own — measured: a request to config.edge.skype.com moved the exit to the tunnel, and the
+// game's next connection inherited a new address and was closed as a hijacked session. Background
+// telemetry may use a different hop; it must never be able to change which address Ankama sees.
 func isGameDestination(dest string) bool {
 	host := dest
 	if h, _, err := net.SplitHostPort(dest); err == nil {
@@ -1120,20 +1351,11 @@ func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest,
 	if err != nil {
 		return nil, nil, cmp.Or(err, fmt.Errorf("no upstream configured"))
 	}
-	winner := order[idx]
-	if !isGameDestination(dest) {
-		// Answered through whichever upstream won, but the pinned egress is untouched: this is
-		// the browser's own background traffic, not the game.
-		return conn, winner, nil
-	}
-	p.upstreamMu.Lock()
-	changed := p.lastGood == nil || p.lastGood.String() != winner.String()
-	p.lastGood = winner
-	p.upstreamMu.Unlock()
-	if changed {
-		log.Printf("[UPSTREAM] carrying %s over %s (exit changed)", dest, winner.Redacted())
-	}
-	return conn, winner, nil
+	// Racing never moves the pin. It is used to pick an egress when none exists yet, or to carry
+	// traffic that does not belong to the session. The session's address is decided by
+	// establishPin and changes only through recoverPin, when that address is dead and no game
+	// traffic remains.
+	return conn, order[idx], nil
 }
 
 func (p *ProxyServer) dialUpstreamOrDirect(ctx context.Context, dest string) (net.Conn, error) {
@@ -1171,9 +1393,17 @@ func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error)
 				p.exitBlockedUntil = time.Now().Add(exitCooldown)
 				p.exitMu.Unlock()
 				upstreamHealthy.Store(false)
-				log.Printf("[UPSTREAM] fixed exit %s unreachable through any hop (%v); using the plain chain for the next %s (the exit IP will change)",
+				if isGameDestination(dest) {
+					// The fixed exit is the session's address. Falling through to the plain chain
+					// would move it, which is the kick this whole path exists to avoid.
+					log.Printf("[UPSTREAM] fixed exit %s unreachable (%v); refusing to dial %s over a different address", p.exitURL.Redacted(), err, dest)
+					return nil, fmt.Errorf("fixed exit %s unavailable; refusing to change the session's exit IP: %w", p.exitURL.Redacted(), err)
+				}
+				log.Printf("[UPSTREAM] fixed exit %s unreachable through any hop (%v); background traffic uses the plain chain for the next %s",
 					p.exitURL.Redacted(), err, exitCooldown)
 			}
+		} else if isGameDestination(dest) {
+			return nil, fmt.Errorf("fixed exit %s is cooling down after a failure; refusing to dial %s over a different address", p.exitURL.Redacted(), dest)
 		}
 	}
 	if p.upstreamURL != nil {
@@ -1324,18 +1554,22 @@ func halfCloseOrClose(c net.Conn) {
 	}
 }
 
-func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn) {
+func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, tunnel *gameTunnel) {
 	tuneTCPConn(clientConn)
 	tuneTCPConn(destConn)
 	var sentBytes, recvBytes int64
 	done := make(chan struct{}, 2)
 	copyDir := func(dst, src net.Conn, counter *int64, pre *bufio.ReadWriter) {
+		out := io.Writer(dst)
+		if tunnel != nil {
+			out = activityWriter{w: dst, touch: tunnel.touch}
+		}
 		if pre != nil && pre.Reader.Buffered() > 0 {
-			n, _ := io.CopyN(dst, pre, int64(pre.Reader.Buffered()))
+			n, _ := io.CopyN(out, pre, int64(pre.Reader.Buffered()))
 			atomic.AddInt64(counter, n)
 		}
 		buf := bufPool.Get().([]byte)
-		n, _ := io.CopyBuffer(dst, src, buf)
+		n, _ := io.CopyBuffer(out, src, buf)
 		atomic.AddInt64(counter, n)
 		bufPool.Put(buf)
 		halfCloseOrClose(dst)
@@ -1388,7 +1622,13 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if !p.quiet && strings.Contains(dest, "ankama") {
 		log.Printf("[TUNNEL] CONNECT -> %s (%s)", dest, p.model)
 	}
-	p.pipeTunnel(clientConn, clientBuf, destConn)
+	var tunnel *gameTunnel
+	if isGameDestination(dest) {
+		var release func()
+		tunnel, release = p.registerGameTunnel()
+		defer release()
+	}
+	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel)
 }
 
 func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -1417,7 +1657,13 @@ func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		_ = clientConn.Close()
 		return
 	}
-	p.pipeTunnel(clientConn, clientBuf, destConn)
+	var tunnel *gameTunnel
+	if isGameDestination(r.Host) {
+		var release func()
+		tunnel, release = p.registerGameTunnel()
+		defer release()
+	}
+	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel)
 }
 
 func atomicReplaceFile(src, dst string) error {

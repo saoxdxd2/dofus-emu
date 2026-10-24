@@ -60,7 +60,7 @@ ALTERNATIVES: Dict[str, List[str]] = {
     "fight":  ["fight.join", "farm.start", "nav.goto", "fight.pass", "state.snapshot"],
     "talk":   ["quest.advance", "nav.goto", "quest.list", "state.snapshot"],
     "deliver": ["farm.start", "quest.advance", "nav.goto", "inv.list", "inv.sell"],
-    "map":    ["nav.goto", "nav.walk", "state.snapshot", "knowledge.search"],
+    "map":    ["nav.goto", "state.snapshot", "knowledge.search"],
     "craft":  ["inv.list", "knowledge.search", "state.snapshot", "nav.goto"],
     "area":   ["nav.goto", "knowledge.search", "state.snapshot", "quest.list"],
     "other":  ["quest.list", "state.snapshot", "knowledge.search", "nav.goto"],
@@ -94,15 +94,23 @@ def candidates(teacher_tool: str, obj: Dict[str, Any], rng: random.Random,
 
 
 def _fork_score(world: World, planner: QuestPlanner, tool: str, args: Dict[str, Any],
-                depth: int) -> Tuple[float, List[int]]:
+                depth: int, mode: str = "rate") -> Tuple[float, List[int]]:
     """Fork once, and score the candidate by progress *per step*.
 
     Total progress over a fixed horizon does not discriminate: with three steps
     available, a wasted read still finishes the objective, so every candidate ties and
     the label collapses back into "what the teacher did". What separates them is the
-    rate — one objective in one step beats one objective in three. So the score is the
-    best cumulative-progress-per-step over the prefixes of the fork, which is the same
-    quantity the simulator's own scoreboard reports.
+    rate — one objective in one step beats one objective in three.
+
+    Two ways to compute it, and the difference matters:
+
+    * ``rate`` — max(cumulative / steps). Coarse: it can only take the values 1, 1/2,
+      1/3, 1/4, 1/5, so candidates land on the same number constantly and the
+      tie-break, not the world, decides the label. Measured: 83% of soul-stone rows
+      were ambiguous under this score.
+    * ``cummean`` — mean cumulative gain over the horizon. Rewards speed and also
+      rewards *not stalling*: finishing at step 2 scores 0.8, at step 3 scores 0.6.
+      Continuous, so fewer ties and less of the label decided by a coin flip.
     """
     base = world.objectives_completed
     cum: List[int] = []
@@ -116,6 +124,8 @@ def _fork_score(world: World, planner: QuestPlanner, tool: str, args: Dict[str, 
             break
         twin.step(call.tool, call.args)
         cum.append(twin.objectives_completed - base)
+    if mode == "cummean":
+        return (sum(cum) / float(max(1, len(cum)))), cum
     best = 0.0
     for i, done in enumerate(cum, start=1):
         if done > 0:
@@ -135,7 +145,12 @@ def _perturb(world: World, rng: random.Random) -> None:
     """
     roll = rng.random()
     if roll < 0.30:
-        world.map_id = rng.choice([1001, 2002, 3003, 4004])   # wrong place
+        # A real map from the KB, not a made-up id: a wrong place has to be
+        # reachable, or the recovery is a hole rather than a decision.
+        places = [int(q.start_map) for q in world.quests.values() if q.start_map]
+        if places:
+            world.map_id = int(rng.choice(places))
+            world.visited.add(world.map_id)
     elif roll < 0.60:
         world.inventory.clear()                                # nothing carried
     elif roll < 0.70:
@@ -145,12 +160,38 @@ def _perturb(world: World, rng: random.Random) -> None:
             world.inventory[900000 + i] = 1
 
 
+def _planned_objective(world: World, planner: QuestPlanner
+                       ) -> Optional[tuple]:
+    """The objective the planner's last call is about.
+
+    The world's `current_objective()` is the oldest active quest. The planner may
+    deliberately work on a different one, and featurising the oldest while storing a
+    label for another quest teaches the model a mapping that does not exist.
+    """
+    qid = planner.current_quest
+    oid = planner.current_objective
+    if qid is None or oid is None:
+        return None
+    quest = world.quests.get(int(qid))
+    if quest is None:
+        return None
+    for step_idx, step in enumerate(quest.steps):
+        for obj_idx, obj in enumerate(step.get("objectives") or []):
+            if obj.get("id") == oid:
+                return quest, step_idx, obj_idx, obj
+    return None
+
+
 def episode(level: int, steps: int, seed: int, rng: random.Random,
             noise: bool = True, depth: int = DEPTH,
-            focus: Optional[int] = None) -> List[Dict[str, Any]]:
-    world = World(level=level, seed=seed, max_steps=steps, noise=noise)
+            focus: Optional[int] = None,
+            score_mode: str = "rate",
+            travel_cost: bool = False,
+            ordering: str = "step") -> List[Dict[str, Any]]:
+    world = World(level=level, seed=seed, max_steps=steps, noise=noise,
+                  travel_cost=travel_cost)
     planner = QuestPlanner(level_hint=level, curriculum="random", seed=seed,
-                           focus=focus)
+                           focus=focus, ordering=ordering)
     rows: List[Dict[str, Any]] = []
 
     for _ in range(steps):
@@ -158,14 +199,14 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             _perturb(world, rng)
 
         obs = world.observe()
-        current = world.current_objective()
         call = planner.choose("do all the quests", obs, None)
         if call is None:
             break
+        current = _planned_objective(world, planner)
         if current is None:
             # Accepting a quest: a real step, but there is no objective to featurise.
             ok, note = world.step(call.tool, call.args)
-            planner.note_result(call.tool, ok, note, obs)
+            planner.note_result(call.tool, ok, note, world.state())
             continue
 
         quest, step_idx, obj_idx, obj = current
@@ -177,11 +218,16 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
         base = world.objectives_completed
         for tool in candidates(call.tool, obj, rng):
             args = args_for_tool(tool, planner.quests.get(quest.id) or {"id": quest.id}, obj, obs)
-            score, cum = _fork_score(world, planner, tool, args, depth)
+            score, cum = _fork_score(world, planner, tool, args, depth, score_mode)
             gains[tool] = round(score, 4)
             notes[tool] = ",".join(str(c) for c in cum)
 
         best = max(gains.values())
+        # Margin matters: a row where the top two candidates are 0.02 apart carries
+        # almost no signal, and the trainer should know that. Recorded per row so the
+        # weight can be set from data rather than from a hunch.
+        ordered = sorted(gains.values(), reverse=True)
+        margin = ordered[0] - ordered[1] if len(ordered) > 1 else ordered[0]
         winner = next(t for t in gains if gains[t] == best)
         # Ties go to the teacher: when several tools work equally well, the corpus
         # should not invent a preference that the world does not have.
@@ -189,7 +235,7 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             winner = call.tool
 
         ok, note = world.step(call.tool, call.args)
-        planner.note_result(call.tool, ok, note, obs)
+        planner.note_result(call.tool, ok, note, world.state())
         advanced = world.objectives_completed > base
 
         rows.append({
@@ -206,6 +252,7 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             # the preconditions but carries no counterfactual information, and the
             # trainer weights it down rather than pretending it is evidence.
             "trivial": best <= 0.0,
+            "margin": round(margin, 4),
             "gains": gains,
             "curves": notes,
             "ok": bool(ok), "advanced": bool(advanced), "note": note[:60],
@@ -226,11 +273,15 @@ def _parallel(args: argparse.Namespace) -> int:
         cmd = [sys.executable, str(Path(__file__).resolve()),
                "--episodes", str(args.episodes), "--steps", str(args.steps),
                "--seed", str(args.seed + i * 977), "--depth", str(args.depth),
+               "--score", args.score,
                "--levels", *[str(x) for x in args.levels],
                "--focus", *[str(x) for x in args.focus],
                "--out", str(root / ("w%d" % i))]
         if args.noise:
             cmd.append("--noise")
+        if args.travel_cost:
+            cmd.append("--travel-cost")
+        cmd += ["--ordering", args.ordering]
         if deadline:
             cmd += ["--deadline-epoch", "%.0f" % deadline]
         procs.append(subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
@@ -280,6 +331,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--deadline-epoch", type=float, default=0.0)
     ap.add_argument("--parallel", type=int, default=1)
     ap.add_argument("--minutes", type=float, default=0.0)
+    ap.add_argument("--travel-cost", action="store_true",
+                    help="travel costs hops instead of one free step")
+    ap.add_argument("--ordering", choices=("step", "nearest"), default="nearest",
+                    help="pursue the closest open objective rather than the KB's order")
+    ap.add_argument("--score", choices=("rate", "cummean"), default="rate",
+                    help="how a fork is scored: max progress per step, or mean "
+                         "cumulative progress (finer, fewer ties)")
     ap.add_argument("--focus", type=int, nargs="+", default=[0, 1, 3, 6, 9, 2, 12, 14, 16, 4],
                     help="objective types to steer episodes at, cycled; keeps the "
                          "corpus from collapsing onto whatever the shortest quests do")
@@ -299,7 +357,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         level = args.levels[i % len(args.levels)]
         focus = focus_cycle[i % len(focus_cycle)] if focus_cycle else None
         rows.extend(episode(level, args.steps, args.seed + i, rng, args.noise,
-                            args.depth, focus))
+                            args.depth, focus, args.score, args.travel_cost,
+                            args.ordering))
 
     split = int(len(rows) * 0.9)
     for name, part in (("train", rows[:split]), ("val", rows[split:])):
@@ -317,6 +376,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "seconds": round(time.time() - started, 1),
         "rows_per_s": round(len(rows) / max(0.001, time.time() - started), 1),
         "agreement_with_teacher": round(sum(1 for r in rows if r["agrees"]) / total, 3),
+        "score_mode": args.score,
+        "mean_margin": round(sum(r.get("margin") or 0 for r in rows) / total, 4),
+        "near_ties": round(sum(1 for r in rows if (r.get("margin") or 0) <= 0.05) / total, 3),
         "trivial_rate": round(trivial / total, 3),
         "tools": {k: round(100.0 * v / total, 1) for k, v in tools.most_common()},
         "covered": sum(1 for v in tools.values() if v / total >= 0.05),

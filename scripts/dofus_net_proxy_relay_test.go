@@ -6,9 +6,15 @@ package main
 //     dofus_net_proxy_equiv_test.go dofus_net_proxy_relay_test.go
 
 import (
+	"bufio"
+	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 )
 
 func TestIsCdnAssetHost(t *testing.T) {
@@ -143,10 +149,10 @@ func TestRelayProbeAndAllowlist(t *testing.T) {
 func TestMapJSONID(t *testing.T) {
 	cases := map[string]int64{
 		"/assets/3.3.9_znDI1I3e76AsBAbi3QoRVb_02piQ7P1x/maps/123995138.json": 123995138,
-		"/assets/v/maps/262.json":   262,
-		"/assets/v/maps/262.json.bak": 0,
+		"/assets/v/maps/262.json":          262,
+		"/assets/v/maps/262.json.bak":      0,
 		"/assets/v/gfx/world/png/7715.png": 0,
-		"/assets/v/maps/abc.json":   0,
+		"/assets/v/maps/abc.json":          0,
 	}
 	for path, want := range cases {
 		if got := mapJSONID(path); got != want {
@@ -190,6 +196,196 @@ func TestMapTileURLs(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("tileURLs = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestGameDestinationClassification(t *testing.T) {
+	game := []string{
+		"dofus.local:443",
+		"dofus.localhost:5555",
+		"dt-proxy-production-login.ankama-games.com:443",
+		"haapi.ankama.com:443",
+		"www.dofus-touch.com:443",
+	}
+	for _, dest := range game {
+		if !isGameDestination(dest) {
+			t.Errorf("isGameDestination(%q) = false; session traffic must pin and hold the egress", dest)
+		}
+	}
+	background := []string{
+		"config.edge.skype.com:443",
+		"cdn.ankama.com.evil.example:443",
+		"notankama-games.com:443",
+		"127.0.0.1:8893",
+	}
+	for _, dest := range background {
+		if isGameDestination(dest) {
+			t.Errorf("isGameDestination(%q) = true; background traffic must not decide or move the session's address", dest)
+		}
+	}
+}
+
+// fakeConnectUpstream accepts a CONNECT and answers 200. That is enough for dialOne to return a
+// usable connection without a real destination.
+func fakeConnectUpstream(t *testing.T) (*url.URL, func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				br := bufio.NewReader(c)
+				for {
+					line, err := br.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if line == "\r\n" {
+						break
+					}
+				}
+				if _, err := c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+					return
+				}
+				_, _ = io.Copy(io.Discard, br)
+			}(c)
+		}
+	}()
+	u, err := url.Parse("http://" + ln.Addr().String())
+	if err != nil {
+		ln.Close()
+		t.Fatalf("url: %v", err)
+	}
+	return u, func() { _ = ln.Close() }
+}
+
+func closedUpstreamURL(t *testing.T) *url.URL {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	u, err := url.Parse("http://" + addr)
+	if err != nil {
+		t.Fatalf("url: %v", err)
+	}
+	return u
+}
+
+func TestThePinHoldsWhileGameTrafficLivesAndMovesOnlyWhenItDoesNot(t *testing.T) {
+	live, stopLive := fakeConnectUpstream(t)
+	defer stopLive()
+	dead := closedUpstreamURL(t)
+
+	p := &ProxyServer{upstreams: []*url.URL{dead, live}}
+	p.setPinnedUpstream(dead)
+	p.setPinnedUpstream(live) // a second pin in one session is the bug, not a feature
+	if p.lastGood == nil || p.lastGood.String() != dead.String() {
+		t.Fatalf("setPinnedUpstream moved an existing pin to %v", p.lastGood)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	const dest = "dt-proxy-production-login.ankama-games.com:443"
+
+	tunnel, release := p.registerGameTunnel()
+	conn, winner, moved, err := p.recoverPin(ctx, dest, "127.0.0.1:443", 2*time.Second, dead)
+	if err != nil || moved || conn != nil || winner != nil {
+		release()
+		t.Fatalf("recoverPin moved while game traffic was live: conn=%v winner=%v moved=%v err=%v",
+			conn, winner, moved, err)
+	}
+	if p.lastGood.String() != dead.String() {
+		release()
+		t.Fatalf("pin moved while game traffic was live: %s", p.lastGood)
+	}
+
+	// A socket that has been silent longer than the window is not a session worth preserving.
+	// Leaving it registered is the point: the old guard's bug was counting open sockets.
+	tunnel.lastActivity.Store(time.Now().Add(-2 * gameIdleWindow).UnixNano())
+	conn, winner, moved, err = p.recoverPin(ctx, dest, "127.0.0.1:443", 2*time.Second, dead)
+	release()
+	if err != nil || !moved || conn == nil || winner == nil {
+		t.Fatalf("recoverPin did not replace a dead pin with no live traffic: conn=%v winner=%v moved=%v err=%v",
+			conn, winner, moved, err)
+	}
+	defer conn.Close()
+	if winner.String() != live.String() {
+		t.Fatalf("re-pin chose %s, want the live egress %s", winner, live)
+	}
+	if p.lastGood == nil || p.lastGood.String() != live.String() {
+		t.Fatalf("pin is %v after re-pin, want %s", p.lastGood, live)
+	}
+}
+
+func TestRecoverPinDoesNotDialTheDeadAddressAgain(t *testing.T) {
+	live, stopLive := fakeConnectUpstream(t)
+	defer stopLive()
+	dead := closedUpstreamURL(t)
+
+	p := &ProxyServer{upstreams: []*url.URL{dead, live}}
+	p.setPinnedUpstream(dead)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, winner, moved, err := p.recoverPin(ctx,
+		"dt-proxy-production-login.ankama-games.com:443", "127.0.0.1:443", 2*time.Second, dead)
+	if err != nil || !moved || conn == nil || winner == nil {
+		t.Fatalf("recoverPin failed: conn=%v winner=%v moved=%v err=%v", conn, winner, moved, err)
+	}
+	defer conn.Close()
+	if winner.String() != live.String() {
+		t.Fatalf("re-pin dialled %s, want the live egress %s", winner, live)
+	}
+	// The dead hop is recorded as failed by recordHop; the live one as a success.
+	if hp, ok := p.hopIdx[live.String()]; !ok || !hp.ok {
+		t.Fatalf("live hop was not recorded healthy: %+v", p.hopIdx[live.String()])
+	}
+	if !p.pinRecentlyDead(dead) {
+		t.Fatal("the address that just failed is still eligible to be pinned immediately")
+	}
+}
+
+func TestEstablishPinSkipsAnAddressThatJustFailed(t *testing.T) {
+	live, stopLive := fakeConnectUpstream(t)
+	defer stopLive()
+	dead := closedUpstreamURL(t)
+
+	// The dead address is first in the chain, exactly as the supervisor's pick would be. A
+	// re-pin must not dial it again inside the cooldown; it must go straight to the live hop.
+	p := &ProxyServer{upstreams: []*url.URL{dead, live}}
+	p.markPinDead(dead)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, winner, err := p.establishPin(ctx,
+		"dt-proxy-production-login.ankama-games.com:443", "127.0.0.1:443", 2*time.Second, nil, false)
+	if err != nil || conn == nil || winner == nil {
+		t.Fatalf("establishPin failed: conn=%v winner=%v err=%v", conn, winner, err)
+	}
+	defer conn.Close()
+	if winner.String() != live.String() {
+		t.Fatalf("establishPin chose %s, want the live egress %s", winner, live)
+	}
+	if hp, dialed := p.hopIdx[dead.String()]; dialed {
+		t.Fatalf("establishPin dialled a cooling-down address: %+v", hp)
+	}
+
+	// The cooldown is per process, not permanent: once it lapses the address is eligible again.
+	p.pinDeadMu.Lock()
+	p.pinDead[dead.String()] = time.Now().Add(-time.Second)
+	p.pinDeadMu.Unlock()
+	if p.pinRecentlyDead(dead) {
+		t.Fatal("an expired cooldown still reports the address as dead")
 	}
 }
 

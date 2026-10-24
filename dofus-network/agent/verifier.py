@@ -70,6 +70,7 @@ STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
 # data IS success.
 READ_ONLY_TOOLS = frozenset({
     "knowledge.search", "quest.list", "inv.list", "hdv.scan", "state.snapshot",
+    "fight.state", "fight.plan",
 })
 
 # Tools that are *supposed* to change the map / the cell. Used by drift only.

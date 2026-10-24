@@ -99,7 +99,8 @@ SYSTEM_PROMPT_COMPACT = (
     "Never invent game facts; use knowledge.search first. safe.stop is always allowed.\n\n"
     "Tools:\n"
     "knowledge.search(query*, kind=any, limit=5) - DofusDB lookup.\n"
-    "nav.goto(x, y, zaap, npc, map_id, lang=fr, from_x, from_y) - travel; exactly one target.\n"
+    "nav.goto(x, y, zaap, npc, map_id, cell, direction, npc_id, lang=fr, from_x, from_y) "
+    "- travel; map_id or direction reaches another map, cell is a spot on this one.\n"
     "nav.follow(name) - follow a character; empty = order giver.\n"
     "quest.list(area, level_min, level_max, dungeon_only=false, limit=10) - quests.\n"
     "quest.advance(quest_id*, step_id) - next actionable quest step.\n"
@@ -134,10 +135,184 @@ def _example_id(goal: str, tool: str, args: Dict[str, Any]) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _obs_first(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _obs_brief(value: Any, limit: int) -> str:
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"))
+    return text if len(text) <= limit else text[:max(limit - 1, 0)] + "…"
+
+
+def _obs_text(value: Any, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit].replace('"', "'")
+
+
+def _obs_objective(entry: Dict[str, Any], detail: int = 200) -> str:
+    """One objective as `quest Q objective O type T status S map M params "text"`.
+
+    Step objectives carry `id` and inherit their quest from the current objective,
+    so both spellings are read here rather than at each call site.
+    """
+    label = []
+    if entry.get("quest_id") is not None:
+        label.append(f"quest {entry.get('quest_id')}")
+    objective_id = _obs_first(entry.get("objective_id"), entry.get("id"))
+    if objective_id is not None:
+        label.append(f"objective {objective_id}")
+    bits = [" ".join(label) if label else "objective"]
+    if entry.get("type_id") is not None:
+        bits.append(f"type {entry.get('type_id')}")
+    if entry.get("status") is not None:
+        bits.append(f"status {entry.get('status')}")
+    if entry.get("map_id") is not None:
+        bits.append(f"map {entry.get('map_id')}")
+    params = entry.get("params")
+    if isinstance(params, dict) and params:
+        bits.append("params " + _obs_brief(params, max(detail // 2, 60)))
+    if entry.get("text"):
+        bits.append(f'text "{_obs_text(entry.get("text"), detail)}"')
+    return " ".join(bits)
+
+
 def _observation_text(observation: Any, limit: int = 1200) -> Optional[str]:
+    """Render the decision-relevant parts of an observation first.
+
+    The snapshot is a wide document: the map, the exits, the NPCs, every quest.
+    JSON-dumping it and cutting at a character budget put `quests_active` and
+    `inventory` ahead of the objective text and the exits — the two things a policy
+    actually needs to pick an action — so they fell off the end. Here the order is
+    deliberate: where the character is, what the objective asks for, what the map
+    offers, and only then everything else.
+    """
     if not isinstance(observation, dict) or not observation:
         return None
-    text = json.dumps(observation, ensure_ascii=False, sort_keys=True)
+
+    lines: List[str] = []
+    rendered: set = set()
+
+    position = observation.get("position") if isinstance(observation.get("position"), dict) else {}
+    character = observation.get("character") if isinstance(observation.get("character"), dict) else {}
+    map_block = observation.get("map") if isinstance(observation.get("map"), dict) else {}
+
+    map_id = _obs_first(observation.get("map_id"), position.get("map_id"), map_block.get("map_id"))
+    cell = _obs_first(observation.get("cell"), position.get("cell"), map_block.get("cell"))
+    x = _obs_first(position.get("x"), map_block.get("x"))
+    y = _obs_first(position.get("y"), map_block.get("y"))
+    where = [f"map {map_id}" if map_id is not None else "map unknown"]
+    if cell is not None:
+        where.append(f"cell {cell}")
+    if x is not None and y is not None:
+        where.append(f"at [{x},{y}]")
+    if observation.get("in_world") is not None:
+        where.append(f"in_world {bool(observation.get('in_world'))}")
+    lines.append("where: " + " ".join(where))
+    rendered.update(("map_id", "cell", "position", "map", "in_world"))
+
+    level = _obs_first(observation.get("level"), character.get("level"))
+    hp = observation.get("hp") if isinstance(observation.get("hp"), dict) else {}
+    status = []
+    if level is not None:
+        status.append(f"level {level}")
+    if hp:
+        status.append(f"hp {hp.get('life')}/{hp.get('max')}")
+        if hp.get("ap") is not None:
+            status.append(f"ap {hp.get('ap')}")
+        if hp.get("mp") is not None:
+            status.append(f"mp {hp.get('mp')}")
+    for key in ("in_fight", "in_dialog"):
+        if observation.get(key) is not None:
+            status.append(f"{key} {bool(observation.get(key))}")
+    if observation.get("kamas") is not None:
+        status.append(f"kamas {observation.get('kamas')}")
+    if status:
+        lines.append("character: " + " ".join(status))
+    rendered.update(("level", "character", "hp", "in_fight", "in_dialog", "kamas"))
+
+    objective = observation.get("current_objective")
+    if isinstance(objective, dict) and objective:
+        lines.append("objective: " + _obs_objective(objective))
+        rendered.add("current_objective")
+
+    ready = [entry for entry in (observation.get("ready_objectives") or [])
+             if isinstance(entry, dict)]
+    if ready:
+        shown = "; ".join(_obs_objective(entry, 120) for entry in ready[:2])
+        if len(ready) > 2:
+            shown += f"; +{len(ready) - 2} more"
+        lines.append("ready to hand in: " + shown)
+    rendered.add("ready_objectives")
+
+    step_objectives = [entry for entry in (observation.get("step_objectives") or [])
+                       if isinstance(entry, dict)]
+    if step_objectives:
+        shown = "; ".join(_obs_objective(entry, 100) for entry in step_objectives[:3])
+        if len(step_objectives) > 3:
+            shown += f"; +{len(step_objectives) - 3} more"
+        lines.append("step objectives: " + shown)
+    rendered.add("step_objectives")
+
+    exits = [entry for entry in (map_block.get("exits") or []) if isinstance(entry, dict)]
+    if exits:
+        parts = []
+        for entry in exits[:6]:
+            cells = entry.get("cells") or []
+            label = f"{entry.get('direction')}->{entry.get('map_id')}"
+            if cells:
+                label += " @[" + ",".join(str(c) for c in cells[:4]) + "]"
+            parts.append(label)
+        lines.append("exits: " + "; ".join(parts))
+    elif isinstance(map_block.get("neighbours"), dict) and map_block["neighbours"]:
+        lines.append("neighbours: " + _obs_brief(map_block["neighbours"], 160))
+
+    npcs = [entry for entry in (map_block.get("npcs") or []) if isinstance(entry, dict)]
+    if npcs:
+        shown = "; ".join(f"npc {entry.get('npc_id')}@cell {entry.get('cell')}"
+                          for entry in npcs[:8])
+        if len(npcs) > 8:
+            shown += f"; +{len(npcs) - 8} more"
+        lines.append("npcs here: " + shown)
+
+    interactives = [entry for entry in (map_block.get("interactives") or [])
+                    if isinstance(entry, dict)]
+    if interactives:
+        shown = "; ".join(
+            f"elem {entry.get('elem_id')}@cell {entry.get('cell')}"
+            + (f" skill {entry.get('skill_uid')}" if entry.get("skill_uid") is not None else "")
+            for entry in interactives[:6])
+        if len(interactives) > 6:
+            shown += f"; +{len(interactives) - 6} more"
+        lines.append("interactives here: " + shown)
+
+    last_nav = observation.get("last_nav")
+    if isinstance(last_nav, dict) and last_nav:
+        lines.append("last nav: " + _obs_brief(last_nav, 180))
+        rendered.add("last_nav")
+
+    inventory = observation.get("inventory")
+    if isinstance(inventory, dict):
+        items = [entry for entry in (inventory.get("items") or []) if isinstance(entry, dict)]
+        if items:
+            shown = ", ".join(f"{entry.get('gid')}x{entry.get('qty', 1)}"
+                              for entry in items[:12])
+            if len(items) > 12:
+                shown += f", +{len(items) - 12} more"
+            lines.append("inventory: " + shown)
+        rendered.add("inventory")
+
+    if observation.get("auto_fight") is not None:
+        lines.append(f"auto_fight: {bool(observation.get('auto_fight'))}")
+        rendered.add("auto_fight")
+
+    rest = {key: value for key, value in observation.items() if key not in rendered}
+    if rest:
+        lines.append("other: " + _obs_brief(rest, 320))
+
+    text = "\n".join(lines)
     if len(text) > limit:
         text = text[:limit] + "…"
     return text

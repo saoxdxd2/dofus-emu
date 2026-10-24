@@ -166,5 +166,17 @@ if (s.indexOf(fontProbeOld) === -1) {
 s = s.replace(fontProbeOld, fontProbeNew);
 console.log('11. Font fingerprinter probe-map builder short-circuited.');
 
+// 12. Re-read the viewport on every layout.
+//     updateScreen cached viewportWidth/Height with `||`, so _resizeUi() kept
+//     laying the game out at the size measured during boot and the window no
+//     longer stretched it. The mobile bundle already re-reads them.
+const viewportOld = 'f.viewportWidth=f.viewportWidth||l.document.documentElement.clientWidth,f.viewportHeight=f.viewportHeight||l.document.documentElement.clientHeight';
+const viewportNew = 'f.viewportWidth=l.document.documentElement.clientWidth||l.innerWidth||1024,f.viewportHeight=l.document.documentElement.clientHeight||l.innerHeight||640';
+if (s.indexOf(viewportOld) === -1) {
+    console.error('[SKIP] Patch 12: Cannot find cached viewport in updateScreen!');
+}
+s = s.replace(viewportOld, viewportNew);
+console.log('12. Layout re-reads the viewport size on every updateScreen().');
+
 fs.writeFileSync(targetPath, s, 'utf8');
 console.log('All changes written to ' + targetPath + ' successfully!');

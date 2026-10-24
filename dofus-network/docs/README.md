@@ -1,6 +1,6 @@
 # Docs map
 
-Eleven documents accumulated over the project. This is what each one is for, so
+Twelve documents accumulated over the project. This is what each one is for, so
 nobody has to read them all to find the answer to one question.
 
 **Start here → `PLAN.md`.** It is the only place that claims to be current.
@@ -14,6 +14,7 @@ nobody has to read them all to find the answer to one question.
 | `PLANNER_DESIGN.md` | How planning, economy and the strategy bandit fit together | yes |
 | `PIPELINE.md` | The data path: corpus → training → serving → logging | yes |
 | `EXPERIENCE_LEARNING.md` | How outcomes become posteriors without a reward model | yes |
+| `FAILURE_TO_SUPERVISION.md` | How kicks, refusals and regressions become gate labels, data and tests; GPU-only rule for evolution | **yes — active 2026-10-24** |
 | `CAPABILITY_REGISTRY.md` | The 16 tools as data: names, params, descriptions | yes |
 | `AI_ANALYSIS.md` | Why the encoder beat the decoder, with the measurements | yes — historical reasoning |
 | `BENCH_30M.md` | The 30M encoder benchmark that killed the 322M THX path | yes — historical |
@@ -26,6 +27,7 @@ nobody has to read them all to find the answer to one question.
 - *"How does this message look on the wire?"* → `PROTOCOL_NOTES.md`
 - *"Why is it designed this way?"* → `ARCH_REASSESSMENT.md`, then `PROJECT_LOG.md`
 - *"How does the model train and serve?"* → `PIPELINE.md` → `AI_ANALYSIS.md`
+- *"How do failures become data?"* → `FAILURE_TO_SUPERVISION.md`
 - *"Why did we reject X?"* → `PROJECT_LOG.md` (decisions) and
   `LATENT_AND_ONLINE_LEARNING.md` (judged proposals)
 

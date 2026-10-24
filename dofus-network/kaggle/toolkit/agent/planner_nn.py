@@ -20,20 +20,30 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.planner import QuestPlanner, _params, args_for_tool
+from agent.features import required_map
+from agent.planner import TALK_TYPES, QuestPlanner, _params, args_for_tool
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = REPO_ROOT / "models" / "tool_policy.onnx"
 
 
 class NNPlanner(QuestPlanner):
-    def __init__(self, model_path: Optional[Path] = None, **kwargs: Any) -> None:
+    def __init__(self, model_path: Optional[Path] = None,
+                 tool_penalty: Optional[Dict[str, float]] = None,
+                 **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.tools: List[str] = []
         self.session = None
         self.input_name = "features"
         self.expected_features = 0
         self._warned = False
+        # A prior on how much a tool costs when it is the wrong call. The network
+        # outputs a distribution over tools; the *decision* is not the argmax of that
+        # distribution unless every mistake costs the same, and they do not: a spurious
+        # nav.goto burns up to three steps in a world where travel is charged, while a
+        # spurious farm.start burns one. Subtracting the cost before the argmax is the
+        # decision-theoretic choice, and it is measurable.
+        self.tool_penalty = dict(tool_penalty or {})
         self.note = "no model (deterministic planner)"
         path = Path(model_path or DEFAULT_MODEL)
         if path.exists():
@@ -69,7 +79,12 @@ class NNPlanner(QuestPlanner):
                 raise ValueError("model wants %d features, featuriser gives %d"
                                  % (self.expected_features, x.shape[1]))
             logits = self.session.run(None, {self.input_name: x})[0][0]
-            return self.tools[int(max(range(len(logits)), key=lambda i: logits[i]))]
+            scores = list(logits)
+            if self.tool_penalty:
+                for name, cost in self.tool_penalty.items():
+                    if name in self.tools:
+                        scores[self.tools.index(name)] -= cost
+            return self.tools[int(max(range(len(scores)), key=lambda i: scores[i]))]
         except Exception as exc:  # noqa: BLE001
             # A shape mismatch used to be swallowed here and the planner silently fell
             # back to the if-chain, which looks like "the model is no better than the
@@ -90,7 +105,38 @@ class NNPlanner(QuestPlanner):
         tool = self._choose_tool(quest, step_idx, obj, obs)
         if tool is None:
             return super().plan_objective(quest, step_idx, obj, obs)
+        if tool == "nav.goto":
+            # The learned head chooses *whether* to travel; the planner still owns
+            # *how*. Bypassing this sent `nav.goto {map_id: 698953}` nine times to a
+            # client that only crosses an adjacent exit. A named target goes through
+            # `_travel_call` (which falls back to an edge when the graph does not
+            # know it); a generic DiscoverMap walks an observed exit.
+            need = required_map(obj)
+            if need is None and obj.get("type_id") in TALK_TYPES:
+                npc = _params(obj).get("parameter0")
+                if npc is not None and self.store is not None:
+                    try:
+                        need = self.store.get("npc_map", "npc:%d" % int(npc))
+                    except Exception:  # noqa: BLE001
+                        need = None
+            if need is not None:
+                try:
+                    need = int(need) or None
+                except (TypeError, ValueError):
+                    need = None
+            if need is not None:
+                if obs.get("map_id") == need:
+                    # Already at the objective's place; let the deterministic planner
+                    # do the thing (talk/fight) instead of pacing around the map.
+                    return super().plan_objective(quest, step_idx, obj, obs)
+                call = self._travel_call(obj, need, obs)
+            else:
+                call = self._explore_call(obj, obs)
+            if call is None:
+                return []
+            return [{"tool": call["tool"], "args": dict(call["args"]),
+                     "why": "learned choice: " + call["why"]}]
         args = self._args_for(tool, quest, obj, obs)
-        if tool in ("nav.goto", "quest.advance") and not args:
+        if tool == "quest.advance" and not args:
             return []
         return [{"tool": tool, "args": args, "why": "learned choice"}]

@@ -85,6 +85,12 @@
    "kind": "replace",
    "old": "d=function(){for(var e={},t=function(t){e[t]=bt.map(function(e){return c(t,e)})},i=0,n=gt;i<n.length;i++){var o=n[i];t(o)}return e}",
    "new": "d=function(){return{}}"
+  },
+  {
+   "id": 12,
+   "kind": "replace",
+   "old": "f.viewportWidth=f.viewportWidth||l.document.documentElement.clientWidth,f.viewportHeight=f.viewportHeight||l.document.documentElement.clientHeight",
+   "new": "f.viewportWidth=l.document.documentElement.clientWidth||l.innerWidth||1024,f.viewportHeight=l.document.documentElement.clientHeight||l.innerHeight||640"
   }
  ]
 }

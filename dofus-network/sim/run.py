@@ -77,12 +77,13 @@ def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
         if call is None:
             break
         ok, note = world.step(call.tool, call.args)
-        # Report the outcome back to the policy. A policy that cannot see whether its
-        # last call worked cannot learn a repair, and one that guesses from an
-        # observation delta is being trained on a different signal than it is served.
+        # Report the outcome back to the policy with the post-action state, as the
+        # live loop does. A policy that cannot see whether its last call worked cannot
+        # learn a repair, and one that guesses from an observation delta is being
+        # trained on a different signal than it is served.
         reporter = getattr(policy, "note_result", None)
         if reporter is not None:
-            reporter(call.tool, ok, note, obs)
+            reporter(call.tool, ok, note, world.state())
         if verbose and world.steps % 50 == 0:
             print("  step %4d  %-14s %-5s %s" % (world.steps, call.tool,
                                                  "ok" if ok else "no", note[:50]))

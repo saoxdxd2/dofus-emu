@@ -20,6 +20,8 @@ and a leak makes a validation score meaningless.
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -168,16 +170,127 @@ def travel_hops(here: Optional[int], there: Optional[int]) -> int:
 
 
 def required_map(obj: Dict[str, Any]) -> Optional[int]:
-    """The map an objective has to be done on, or None. `map_id: 0` means no map."""
-    t = objective_type(obj)
+    """The map an objective has to be done on, or None. `map_id: 0` means no map.
+
+    A DiscoverMap objective's `parameter0` is the *text id of the map's name*,
+    not a map id: in the KB all 765 type-4 objectives with a destination carry it
+    in `map_id`, and the 108 without one have `parameter0` values that appear in
+    no map table. The live tutorial objective 13541 held 698953 there, and
+    reading it as a destination made the client answer "map 698953 is not
+    adjacent" nine times in a row. Only `map_id` names a place.
+    """
     m = obj.get("map_id")
-    if not m and t == 4:
-        m = _params(obj).get("parameter0")
     try:
         m = int(m) if m is not None else None
     except (TypeError, ValueError):
         return None
     return m if m else None
+
+
+# -- map index ---------------------------------------------------------------
+
+_KNOWN_MAPS: Optional[set] = None
+
+
+def known_map(map_id: Any) -> bool:
+    """Whether `data/maps/_index.json` has this map, so a route can be planned.
+
+    This is the routing graph, not a whitelist of quest targets: it is used only
+    to decide whether a *destination map id* is something the agent can reason
+    about. An objective whose id is not in the graph is not assumed invalid -- it
+    may be a newer map -- it is treated as a detail-only objective and handed to
+    the policy's edge/cell actions instead of a made-up transition.
+    """
+    global _KNOWN_MAPS
+    try:
+        mid = int(map_id)
+    except (TypeError, ValueError):
+        return False
+    if _KNOWN_MAPS is None:
+        ids: set = set()
+        path = REPO_ROOT / "data" / "maps" / "_index.json"
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                if isinstance(raw, dict):
+                    for key in raw:
+                        try:
+                            ids.add(int(key))
+                        except (TypeError, ValueError):
+                            continue
+                elif isinstance(raw, list):
+                    for entry in raw:
+                        if isinstance(entry, dict) and entry.get("id") is not None:
+                            try:
+                                ids.add(int(entry["id"]))
+                            except (TypeError, ValueError):
+                                continue
+            except (OSError, ValueError):
+                ids = set()
+        _KNOWN_MAPS = ids
+    return mid in _KNOWN_MAPS
+
+
+# -- objective details -------------------------------------------------------
+#
+# A map objective can carry a bogus or missing destination (the tutorial's
+# "click the right edge" names a map id that is not in any table). Its own text
+# still says what to do. These read that text in four languages -- they do not
+# know any quest id, so the same rule applies to every objective with the same
+# instruction.
+
+_DIRECTIONS = (
+    ("right", r"\b(?:droite?|right|derecha|rechts)\b"),
+    ("left", r"\b(?:gauche|left|izquierda|links)\b"),
+    ("top", r"\b(?:haut|top|up|arriba|oben)\b"),
+    ("bottom", r"\b(?:bas|bottom|down|abajo|unten)\b"),
+)
+_EDGE_WORDS = r"(?:rebord|bord|borde|orilla|edge|border|rand|seite)"
+_CELL_RE = re.compile(
+    r"\b(?:cell(?:ule)?|case|casilla)\s*(?:n[°o.\s]*)?(\d{1,4})\b", re.IGNORECASE)
+
+
+def _fold(text: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", text.lower())
+    return "".join(ch for ch in nfkd if not unicodedata.combining(ch))
+
+
+def objective_text(obj: Dict[str, Any]) -> str:
+    text = obj.get("text")
+    return text if isinstance(text, str) else ""
+
+
+def direction_hint(obj: Dict[str, Any]) -> Optional[str]:
+    """A screen-edge direction named by the objective's own text, if any.
+
+    The edge-word test comes first so "the right item" is not read as an edge;
+    the single-direction fallback handles an instruction like "go right".
+    """
+    text = _fold(objective_text(obj))
+    if not text:
+        return None
+    for direction, pattern in _DIRECTIONS:
+        if re.search(_EDGE_WORDS + r"\s+(?:de\s+|du\s+|la\s+|le\s+|the\s+)?" + pattern,
+                     text):
+            return direction
+        if re.search(pattern + r"\s+(?:de\s+l['\u2019]|of\s+the\s+)?" + _EDGE_WORDS,
+                     text):
+            return direction
+    hits = [direction for direction, pattern in _DIRECTIONS if re.search(pattern, text)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def cell_hint(obj: Dict[str, Any]) -> Optional[int]:
+    """A cell number named by the objective's own text, if it is a map cell."""
+    match = _CELL_RE.search(_fold(objective_text(obj)))
+    if not match:
+        return None
+    try:
+        cell = int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return cell if 0 <= cell <= 559 else None
 
 
 def _err_slot(note: Optional[str]) -> str:
@@ -222,7 +335,7 @@ def objective_features(obj: Dict[str, Any], quest_level: int, step_index: int,
     if needed is not None:
         has_needed = 1.0 if (inv.get(needed) or inv.get(str(needed))) else 0.0
 
-    target_map = obj.get("map_id") or (p.get("parameter0") if t == 4 else None)
+    target_map = required_map(obj)
     on_target = 0.0
     if target_map and state.get("map_id"):
         on_target = 1.0 if int(state["map_id"]) == int(target_map) else 0.0

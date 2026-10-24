@@ -1,0 +1,50 @@
+{
+  "files": [
+    "trajectories\\default.jsonl"
+  ],
+  "steps": 270,
+  "with_before": 251,
+  "with_after": 252,
+  "stale_before": 30,
+  "after_sources": {
+    "response_snapshot": 82,
+    "query_data": 124,
+    "missing": 18,
+    "next_observation": 46
+  },
+  "labels": {
+    "game_failed": 70,
+    "query": 124,
+    "unlabelable": 29,
+    "noop": 26,
+    "quest_progress": 20,
+    "state_changed": 1
+  },
+  "verdicts": {
+    "failed": 73,
+    "advanced": 146,
+    "unknown": 26,
+    "noop": 25
+  },
+  "outcomes": {
+    "failed": 99,
+    "verified": 124,
+    "unverified": 47
+  },
+  "tools": {
+    "quest.advance": 116,
+    "state.snapshot": 136,
+    "safe.stop": 10,
+    "nav.goto": 8
+  },
+  "game_failures": {
+    "no NPC on this map to talk to; pass objective_id to validate directly": 70
+  },
+  "objective_claimed_rows": 23,
+  "trusted_progress_rows": 20,
+  "unique_progress_transitions": 6,
+  "repeated_progress_rows": 14,
+  "usable_sft_rows": 6,
+  "evidence_rows": 70,
+  "output": "data\\labeled\\steps.newlive.jsonl"
+}

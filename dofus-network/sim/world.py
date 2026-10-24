@@ -44,6 +44,36 @@ def _load(name: str) -> Any:
         return json.load(fh)
 
 
+_MAP_GRAPH: Optional[Dict[int, Dict[str, Any]]] = None
+
+
+def map_graph() -> Dict[int, Dict[str, Any]]:
+    """The simulator's routing graph, keyed by map id.
+
+    The live agent reads the Touch map index. The toolkit ships a superset that
+    also contains every map id the DofusDB knowledge base names, because a corpus
+    should not lose 91 discovery quests to a version mismatch. The synthetic edges
+    are a property of the simulator, never of the live router.
+    """
+    global _MAP_GRAPH
+    if _MAP_GRAPH is None:
+        path = REPO_ROOT / "data" / "maps" / "_index.json"
+        graph: Dict[int, Dict[str, Any]] = {}
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                for key, value in raw.items():
+                    try:
+                        graph[int(key)] = value
+                    except (TypeError, ValueError):
+                        continue
+            except (OSError, ValueError):
+                graph = {}
+        _MAP_GRAPH = graph
+    return _MAP_GRAPH
+
+
 @dataclass
 class Quest:
     id: int
@@ -97,6 +127,10 @@ class World:
             if _q.start_map:
                 self.map_id = int(_q.start_map)
                 break
+        # The places the character has stood on. A generic "discover a map"
+        # objective is satisfied by the first crossing to a map not in this set;
+        # named objectives are still matched by id.
+        self.visited: Set[int] = {int(self.map_id)} if self.map_id else set()
         self.kamas = 5000
         self.inventory: Dict[int, int] = {}
         self.capacity = DEFAULT_CAPACITY
@@ -142,6 +176,7 @@ class World:
         twin.npc_ids = self.npc_ids
         twin.level = self.level
         twin.map_id = self.map_id
+        twin.visited = set(self.visited)
         twin.kamas = self.kamas
         twin.inventory = dict(self.inventory)
         twin.quests_done = set(self.quests_done)
@@ -166,6 +201,27 @@ class World:
     def travel_hops(self, here: Optional[int], there: Optional[int]) -> int:
         """Steps to get from one map to another. One implementation, in features."""
         return travel_hops(here, there)
+
+    def exits(self) -> List[Dict[str, Any]]:
+        """The edges of the current map, in the shape the client reports."""
+        if self.map_id is None:
+            return []
+        entry = map_graph().get(int(self.map_id))
+        if not isinstance(entry, dict):
+            return []
+        neighbours = entry.get("neighbours") or {}
+        out: List[Dict[str, Any]] = []
+        for direction, key in (("top", "topNeighbourId"),
+                               ("bottom", "bottomNeighbourId"),
+                               ("left", "leftNeighbourId"),
+                               ("right", "rightNeighbourId")):
+            try:
+                dest = int(neighbours.get(key))
+            except (TypeError, ValueError):
+                continue
+            if dest > 0 and dest != self.map_id:
+                out.append({"direction": direction, "map_id": dest})
+        return out
 
     # -- observations ------------------------------------------------------
 
@@ -196,6 +252,15 @@ class World:
         self._previous_obs = dict(obs)
         return obs
 
+    def state(self) -> Dict[str, Any]:
+        """The truthful post-action snapshot, as a directive reply carries it.
+
+        Decisions use `observe()`, which can be stale; feedback must not. Reporting
+        the pre-action observation made a successful quest start look like a server
+        that never activated it, and the planner retired live quests for it.
+        """
+        return self._observe_now()
+
     def _observe_now(self) -> Dict[str, Any]:
         cur = self.current_objective()
         tracker = None
@@ -220,6 +285,10 @@ class World:
         return {
             "level": self.level,
             "map_id": self.map_id,
+            # The same nested block the live client returns. Exits are what make a
+            # discovery objective plannable: its text names no destination, so the
+            # only actionable move is crossing one of these edges.
+            "map": {"map_id": self.map_id, "cell": None, "exits": self.exits()},
             "kamas": self.kamas,
             "inventory": dict(self.inventory),
             "inventory_capacity": self.capacity,
@@ -333,28 +402,47 @@ class World:
 
     def _tool_nav_goto(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         target = args.get("map_id")
+        direction = args.get("direction")
         if target is None:
             target = args.get("mapId")
+        if target is None and direction:
+            # A direction is an edge, not a place: resolve it on the map the
+            # character is standing on. This is the move the live planner makes
+            # when a DiscoverMap objective names no destination.
+            picked = next((e for e in self.exits() if e["direction"] == direction), None)
+            if picked is None:
+                return False, "no %s exit on map %s" % (direction, self.map_id)
+            target = picked["map_id"]
         if target is None and "x" in args and "y" in args:
             target = int(args["x"]) * 1000 + int(args["y"])   # synthetic id
         if not target:
             return False, "no destination"
         hops = self.travel_hops(self.map_id, int(target))
-        self.map_id = int(target)
+        arrived = int(target)
+        discovered = arrived not in self.visited
+        self.map_id = arrived
+        self.visited.add(arrived)
         # Arriving is a state change the client can see immediately.
         self._force_fresh = True
         if self.travel_cost:
             # The call already consumed one step in step(); charge the rest.
             self.steps += max(0, hops - 1)
-        current = self.current_objective()
-        if current is not None:
-            picked = self._target(current[0], "map", int(target), MAP_TYPES)
-            if picked is not None:
-                # "Find the map: X" is satisfied by standing on it. Without this the
-                # objective is uncompletable and the planner travels in circles.
-                step_idx, obj_idx, _ = picked
-                self._complete_objective(current[0], step_idx, obj_idx)
-                return True, "arrived; map objective done (%d hops)" % hops
+        found = self._target_in_active("map", arrived, MAP_TYPES)
+        if found is not None:
+            # "Find the map: X" is satisfied by standing on it. Without this the
+            # objective is uncompletable and the planner travels in circles.
+            quest, step_idx, obj_idx, _ = found
+            self._complete_objective(quest, step_idx, obj_idx)
+            return True, "arrived; map objective done (%d hops)" % hops
+        if discovered:
+            # A discovery objective with no id in the KB is satisfied by entering a
+            # map that has not been visited this session.
+            for quest in self._active_quests():
+                for step_idx, obj_idx, obj in self._open_objectives(quest):
+                    if objective_type(obj) in MAP_TYPES and self._required_map(obj) is None:
+                        self._complete_objective(quest, step_idx, obj_idx)
+                        return True, ("crossed the %s edge; discovered map %d"
+                                      % (direction or "?", arrived))
         return True, "moved (%d hops)" % hops
 
     def _tool_nav_walk(self, args: Dict[str, Any]) -> Tuple[bool, str]:
@@ -430,6 +518,26 @@ class World:
                 return step_idx, obj_idx, obj
         return None
 
+    def _active_quests(self) -> List[Quest]:
+        return [self.quests[qid] for qid in sorted(self.active) if qid in self.quests]
+
+    def _target_in_active(self, want: str, value: Any, types: Set[int]
+                          ) -> Optional[Tuple[Quest, int, int, Dict[str, Any]]]:
+        """Resolve an explicitly named target against every active quest.
+
+        A player can fight a monster or gather for a delivery while another quest is
+        tracked; binding every call to the oldest active quest made the simulator
+        reject correct actions for any other quest as "wrong map", which is how a
+        benchmark that should measure planning turned into a repeated-failure loop.
+        """
+        if value is None:
+            return None
+        for quest in self._active_quests():
+            picked = self._target(quest, want, value, types)
+            if picked is not None:
+                return (quest,) + picked
+        return None
+
     def _tool_quest_advance(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         qid = args.get("quest_id") or args.get("quest")
         npc = args.get("npc_id") or args.get("npc")
@@ -484,18 +592,13 @@ class World:
 
     def _tool_farm_start(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         """Kill objectives need a monster on the current map; here one kill is one step."""
-        current = self.current_objective()
-        if current is None:
-            return False, "nothing to kill for"
-        quest = current[0]
-
         # `resource`, matching the client (`args.resource` starts harvesting) and the
         # contract. This read `item`, which the client never looked at and the validator
         # never accepted, so gathering for a delivery was unreachable in both worlds.
         wanted_resource = args.get("resource")
         if wanted_resource is not None:
-            picked = self._target(quest, "item", wanted_resource, DELIVER_TYPES)
-            if picked is None:
+            found = self._target_in_active("item", wanted_resource, DELIVER_TYPES)
+            if found is None:
                 return False, "no open delivery wants item %s" % wanted_resource
             # Gathering for a delivery is the same kind of step as a kill: one
             # action, one step of progress, no objective completed yet.
@@ -508,10 +611,10 @@ class World:
             return True, "gathered item %d" % item
 
         if args.get("monster") is not None:
-            picked = self._target(quest, "monster", args["monster"], KILL_TYPES)
-            if picked is None:
+            found = self._target_in_active("monster", args["monster"], KILL_TYPES)
+            if found is None:
                 return False, "no open objective for monster %s" % args["monster"]
-            step_idx, obj_idx, obj = picked
+            quest, step_idx, obj_idx, obj = found
             if objective_type(obj) in FIGHT_TYPES:
                 # A quest that says "in a fight" cannot be finished by farming in the
                 # open world. Keeping the two apart is what makes fight.join a decision.
@@ -524,6 +627,10 @@ class World:
 
         # No argument: fall back to the first open kill, which is what an older caller
         # (and the app's one-shot "farm" verb) means.
+        current = self.current_objective()
+        if current is None:
+            return False, "nothing to kill for"
+        quest = current[0]
         for step_idx, obj_idx, obj in self._open_objectives(quest):
             if objective_type(obj) in OPEN_KILL_TYPES:
                 wrong = self._wrong_map(obj)
@@ -562,21 +669,20 @@ class World:
         return True, "said"
 
     def _tool_fight_join(self, args: Dict[str, Any]) -> Tuple[bool, str]:
-        current = self.current_objective()
-        if current is None:
-            return False, "no fight to join"
-        quest = current[0]
-        picked = None
+        found = None
         if args.get("monster") is not None:
-            picked = self._target(quest, "monster", args["monster"], FIGHT_TYPES)
-        if picked is None:
-            for step_idx, obj_idx, obj in self._open_objectives(quest):
-                if objective_type(obj) in FIGHT_TYPES:
-                    picked = (step_idx, obj_idx, obj)
+            found = self._target_in_active("monster", args["monster"], FIGHT_TYPES)
+        if found is None:
+            for quest in self._active_quests():
+                for step_idx, obj_idx, obj in self._open_objectives(quest):
+                    if objective_type(obj) in FIGHT_TYPES:
+                        found = (quest, step_idx, obj_idx, obj)
+                        break
+                if found is not None:
                     break
-        if picked is None:
+        if found is None:
             return False, "current objective is not a fight"
-        step_idx, obj_idx, obj = picked
+        quest, step_idx, obj_idx, obj = found
         wrong = self._wrong_map(obj)
         if wrong:
             return False, wrong

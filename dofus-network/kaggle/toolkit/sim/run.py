@@ -66,8 +66,10 @@ class RulePolicy:
 
 
 def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
-        verbose: bool = False, noise: bool = False) -> Dict[str, Any]:
-    world = World(level=level, seed=seed, max_steps=steps, noise=noise)
+        verbose: bool = False, noise: bool = False,
+        travel_cost: bool = False, ordering: str = "step") -> Dict[str, Any]:
+    world = World(level=level, seed=seed, max_steps=steps, noise=noise,
+                  travel_cost=travel_cost)
     goal = GOALS[0]
     while world.steps < steps:
         obs = world.observe()
@@ -75,12 +77,13 @@ def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
         if call is None:
             break
         ok, note = world.step(call.tool, call.args)
-        # Report the outcome back to the policy. A policy that cannot see whether its
-        # last call worked cannot learn a repair, and one that guesses from an
-        # observation delta is being trained on a different signal than it is served.
+        # Report the outcome back to the policy with the post-action state, as the
+        # live loop does. A policy that cannot see whether its last call worked cannot
+        # learn a repair, and one that guesses from an observation delta is being
+        # trained on a different signal than it is served.
         reporter = getattr(policy, "note_result", None)
         if reporter is not None:
-            reporter(call.tool, ok, note, obs)
+            reporter(call.tool, ok, note, world.state())
         if verbose and world.steps % 50 == 0:
             print("  step %4d  %-14s %-5s %s" % (world.steps, call.tool,
                                                  "ok" if ok else "no", note[:50]))
@@ -88,6 +91,8 @@ def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
     score["policy"] = type(policy).__name__
     score["level"] = level
     score["noise"] = noise
+    score["travel_cost"] = travel_cost
+    score["ordering"] = ordering
     return score
 
 
@@ -102,21 +107,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--noise", action="store_true",
                     help="stochastic actions, stale and partial observations")
+    ap.add_argument("--ordering", choices=("step", "nearest"), default="step",
+                    help="which objective in the open step to pursue: the KB's order "
+                         "or the closest one")
+    ap.add_argument("--travel-cost", action="store_true",
+                    help="travel costs hops instead of one free step; without it the "
+                         "teacher is optimal by construction and nothing can beat it")
     args = ap.parse_args(argv)
 
     if args.policy == "planner":
         from agent.planner import QuestPlanner
-        policy: Any = QuestPlanner(level_hint=args.level)
+        policy: Any = QuestPlanner(level_hint=args.level, ordering=args.ordering)
     elif args.policy == "nn":
         from agent.planner_nn import NNPlanner
-        policy = NNPlanner(level_hint=args.level)
+        policy = NNPlanner(level_hint=args.level, ordering=args.ordering)
         print("# %s" % policy.note)
     elif args.policy == "random":
         policy = RandomPolicy(args.seed)
     else:
         policy = RulePolicy()
 
-    score = run(policy, args.level, args.steps, args.seed, args.verbose, args.noise)
+    score = run(policy, args.level, args.steps, args.seed, args.verbose, args.noise,
+                args.travel_cost, args.ordering)
     print(json.dumps(score, indent=1))
     return 0
 

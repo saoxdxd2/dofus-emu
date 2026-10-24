@@ -120,24 +120,45 @@ TRANSPORT_MARKERS = (
     "502", "503", "504", "temporarily",
 )
 
+# The game's own rules rejected this call. Asking again cannot change the answer:
+# a server-counted objective refuses every validation, and a quest the client
+# cannot see refuses every claim. A live session replayed one of these forever
+# because the text matched no marker and the taxonomy called it "unknown".
+REFUSAL_MARKERS = (
+    "completed by the server",
+    "perform the action instead of claiming",
+    "ended the connection; perform the objective instead",
+    "is not in the client quest model",
+    "is not part of quest",
+    "is not the current objective",
+    "the server counts this one itself",
+    "did not activate quest",
+    "the character is dead",
+)
+
 
 def error_class(error: Optional[str]) -> str:
-    """Three kinds of failure, because they need three different answers.
+    """Four kinds of failure, because they need four different answers.
 
     * ``structural`` — the environment cannot satisfy this call (no client, unknown
       tool). Retrying is a loop; measured 0 successes in 9 real attempts.
     * ``transport`` — the wire failed (timeout, refused). Retrying is correct and
       standard; nothing about the request was wrong.
+    * ``refused`` — a game rule rejected this specific call (a server-counted
+      objective, a quest whose prerequisites are unmet). The same call cannot
+      succeed now, whatever the network does.
     * ``action`` — the game refused (skill resisted, mob moved, dialogue did not
       open). Continuing with a different call beat retrying the same one by 2.3x in
       regret on 1,500 counterfactual states.
 
-    The old code had one bucket for all three and retried everything, which is why
-    it retried an absent client nine times.
+    The old code had one bucket for all of these and retried everything, which is why
+    it retried an absent client nine times and a rule refusal forever.
     """
     text = str(error or "").lower()
     if any(marker in text for marker in STRUCTURAL_MARKERS):
         return "structural"
+    if any(marker in text for marker in REFUSAL_MARKERS):
+        return "refused"
     if any(marker in text for marker in TRANSPORT_MARKERS):
         return "transport"
     if any(marker in text for marker in TRANSIENT_MARKERS):
@@ -355,6 +376,15 @@ class Controller:
         # window", and every retry of them failed too -- 0 for 9. Retrying an
         # unavailable environment is not resilience, it is a loop.
         kind = error_class(error)
+        if kind == "refused":
+            # A rule refusal is not a network hiccup. Re-issuing the call cannot
+            # succeed, and each replay costs a step in a session the server is
+            # already throttling; the planner's fallback is the way forward.
+            self._bump("continue", cause, False)
+            return Decision("continue", cause,
+                            "%s was refused by the game's rules; replaying it cannot succeed"
+                            % tool, None, "continue", 0.7)
+
         if kind == "action":
             # The game said no, not the network. Measured on 1,500 post-failure
             # states: continuing costs 0.058 regret, retrying 0.133. Re-issuing a

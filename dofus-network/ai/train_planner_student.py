@@ -83,7 +83,7 @@ def features(obj: Dict[str, Any], quest_level: int, step_index: int,
     if needed is not None:
         has_needed = 1.0 if (inv.get(needed) or inv.get(str(needed))) else 0.0
 
-    target_map = obj.get("map_id") or (params.get("parameter0") if t == 4 else None)
+    target_map = obj.get("map_id")
     on_target = 0.0
     if target_map:
         on_target = 1.0 if state.get("map_id") == target_map else 0.0
@@ -107,7 +107,7 @@ def _state_variants(obj: Dict[str, Any], level: int) -> List[Dict[str, Any]]:
             params = {}
 
     t = objective_type(obj)
-    target_map = obj.get("map_id") or (params.get("parameter0") if t == 4 else None)
+    target_map = obj.get("map_id")
     base = {"level": level, "map_id": None, "inventory": {}}
     variants = [dict(base, inventory={}, map_id=None)]
 

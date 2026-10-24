@@ -287,6 +287,64 @@ def test_loop_applies_the_decision() -> None:
     check("abort stops the goal", out == "abort", out)
 
 
+def test_the_policy_hears_its_outcomes() -> None:
+    """`note_result` existed on the planner and was never called.
+
+    The planner's attempt history was therefore always empty: it could not tell a tool
+    that had just failed from one it had never tried. Any history feature (and the
+    corpus built from these steps) would be a fiction. This runs the real loop against
+    a policy that records what it is told.
+    """
+    print("\n== policy feedback ==")
+    from agent.autopilot import Autopilot
+    from agent.runtime import ToolCall
+
+    tmp = Path(tempfile.mkdtemp())
+
+    class Result:
+        ok = True
+        error = None
+        data = {"snapshot": {"in_world": True, "position": {"map_id": 1, "cell": 100}}}
+
+    class Policy:
+        def __init__(self):
+            self.notes = []
+            self.chosen = 0
+
+        def choose(self, goal, obs, tools):
+            self.chosen += 1
+            if self.chosen > 1:
+                return None
+            return ToolCall("state.snapshot", {}, goal)
+
+        def note_result(self, tool, ok, note, obs):
+            self.notes.append((tool, ok, note))
+
+    class Runtime:
+        def __init__(self):
+            self.policy = Policy()
+            self.instance = None
+            self.executor = self
+
+        def current_observation(self):
+            return ({"in_world": True, "position": {"map_id": 1, "cell": 100}}, 0.0, "call")
+
+        def observe(self, snapshot, source="live"):
+            pass
+
+        def execute(self, tool, args, **kw):
+            return Result()
+
+    rt = Runtime()
+    ap = Autopilot(runtime=rt, goals=["q"], log_path=tmp / "a.jsonl",
+                   stop_file=tmp / "S", max_steps=1, interval=0.0,
+                   preflight=False, settle_s=0.0)
+    ap._run()
+    check("the loop reports each outcome to the policy",
+          bool(rt.policy.notes) and rt.policy.notes[0][0] == "state.snapshot",
+          str(rt.policy.notes[:1]))
+
+
 def test_onnx_head() -> None:
     """The neural head must load through onnxruntime and predict like the model."""
     print("\n== onnx head ==")
@@ -793,6 +851,11 @@ def test_the_planner_can_see_the_world() -> None:
         "current_objective": {"quest_id": 584, "step": 0},
         "step_objectives": [], "ready_objectives": [], "objectives_completed": 3,
         "inventory": {"kamas": 418, "items": [{"gid": 7405, "qty": 2}]},
+        "tutorial": {"active": False, "can_change_map": {}, "unblocked_cells": None,
+                     "unblocked_npc_id": None},
+        "map": {"map_id": 150736645, "neighbours": {"right": 150736646},
+                "exits": [], "npcs": [{"npc_id": 1280, "cell": 300}],
+                "interactives": []},
     }
     flat = flatten(snapshot)
 
@@ -879,6 +942,180 @@ def test_a_walk_gets_time_to_land() -> None:
     check("a call that changes nothing still ends as noop",
           (unchanged or {}).get("position", {}).get("cell") == 100,
           str((unchanged or {}).get("position")))
+
+
+def test_the_loop_uses_the_post_action_state() -> None:
+    """The state in a directive's reply is the *after*, and the loop must use it.
+
+    The bridge captures that snapshot immediately after the directive ran. The
+    loop ignored it whenever it had supplied its own `before`, then called
+    observe(), which handed back the same pre-action snapshot. Every step was
+    therefore judged against itself: settle waited on a state that could not
+    change, every action scored `noop`, and the controller retried actions that
+    had already landed.
+    """
+    print("\n== post-action state ==")
+    from agent.autopilot import Autopilot
+    from agent.runtime import ToolCall
+
+    tmp = Path(tempfile.mkdtemp())
+    before = {"in_world": True, "position": {"map_id": 1, "cell": 100}}
+    after = {"in_world": True, "position": {"map_id": 1, "cell": 200}}
+
+    class Policy:
+        def __init__(self):
+            self.chosen = 0
+
+        def choose(self, goal, obs, tools):
+            self.chosen += 1
+            return None if self.chosen > 1 else ToolCall("nav.goto", {"map_id": 1}, goal)
+
+    class Executor:
+        def __init__(self):
+            self.kw = {}
+            self.probes = 0
+
+        def execute(self, tool, args, **kw):
+            self.kw = kw
+
+            class Result:
+                ok = True
+                error = None
+                data = {"snapshot": after}
+            return Result()
+
+        def snapshot(self, instance=None):
+            self.probes += 1
+            return after
+
+    class Runtime:
+        def __init__(self):
+            self.policy = Policy()
+            self.executor = Executor()
+            self.instance = None
+            self.seen = []
+
+        def current_observation(self):
+            return before, 1234.0, "carried"
+
+        def observe(self, snapshot, source="live"):
+            self.seen.append(snapshot)
+
+        def note_observation(self, snapshot):
+            self.seen.append(snapshot)
+
+    rt = Runtime()
+    ap = Autopilot(runtime=rt, goals=["q"], log_path=tmp / "a.jsonl",
+                   stop_file=tmp / "S", max_steps=1, interval=0.0,
+                   preflight=False, settle_s=0.0)
+    ap._run()
+    step = ap.steps[0]
+    check("the step is judged against the post-action state",
+          step.verdict == "advanced" and step.observation_cell == 200,
+          "%s cell=%s" % (step.verdict, step.observation_cell))
+    check("the decision input is the pre-action state, with its real age",
+          rt.executor.kw.get("observation") is before
+          and rt.executor.kw.get("observation_age_ms") == 1234.0
+          and rt.executor.kw.get("observation_source") == "carried",
+          str({k: rt.executor.kw.get(k) for k in
+               ("observation_age_ms", "observation_source")}))
+    check("a reply that carries the state costs no extra probing round trip",
+          rt.executor.probes == 0, str(rt.executor.probes))
+
+    class Refusing(Executor):
+        def execute(self, tool, args, **kw):
+            class Result:
+                ok = True
+                error = None
+                data = {"snapshot": before,
+                        "response": {"result": {"ok": False,
+                                                "error": "no NPC on this map"}}}
+            return Result()
+
+    rt2 = Runtime()
+    rt2.executor = Refusing()
+    ap2 = Autopilot(runtime=rt2, goals=["q"], log_path=tmp / "b.jsonl",
+                    stop_file=tmp / "S", max_steps=1, interval=0.0,
+                    preflight=False, settle_s=0.0)
+    ap2._run()
+    refused = ap2.steps[0]
+    check("a game-level rejection is not recorded as a success",
+          refused.ok is False and refused.verdict == "failed"
+          and "no NPC" in str(refused.error),
+          "%s %s %s" % (refused.ok, refused.verdict, refused.error))
+
+
+def test_the_labeler_does_not_rewind_time() -> None:
+    """A retry carries the snapshot it already had; that snapshot is not an after.
+
+    When a claim succeeds the loop's next calls still hold the pre-claim snapshot.
+    The labeler used to adopt the first later observation as the after-state, so a
+    retry was paired with a state older than the claim that had just cleared it:
+    objective None -> objective active, a progress row that never happened. Every
+    retry in the burst produced another copy of it.
+    """
+    print("\n== labeler keeps time forward ==")
+    from agent.label_steps import label_file, mark_transitions, summarize
+
+    tmp = Path(tempfile.mkdtemp())
+    active = {
+        "position": {"map_id": 150736645, "cell": 342},
+        "kamas": 418,
+        "inventory": {"kamas": 418, "items": [{"gid": 1, "qty": 2}]},
+        "current_objective": {"quest_id": "4278", "objective_id": 13986, "status": 2},
+        "quests_active": {"4278": 0},
+        "ready_objectives": [{"objective_id": 13986, "quest_id": "4278"}],
+    }
+    cleared = {k: v for k, v in active.items() if k != "current_objective"}
+    cleared["current_objective"] = None
+    cleared["quests_active"] = {}
+    cleared["ready_objectives"] = []
+
+    def step(ts, tool, args, observation, reply):
+        return {
+            "kind": "step", "ts": ts, "instance": "default",
+            "tool": tool, "args": args, "ok": True, "latency_ms": 10.0,
+            "observation": observation,
+            "result": {"response": {"target": "default", "ok": True,
+                                    "result": {"ok": True, "data": reply},
+                                    "snapshot": reply}},
+        }
+
+    records = [
+        step(0.0, "state.snapshot", {}, active, active),
+        step(1.0, "quest.advance", {"quest_id": 4278, "objective_id": 13986},
+             active, cleared),
+        # The loop's refresh still carries the pre-claim snapshot; its own read
+        # proves the world has moved on.
+        step(2.0, "state.snapshot", {}, active, cleared),
+        step(3.0, "quest.advance", {"quest_id": 4278, "objective_id": 13986},
+             active, cleared),
+        step(4.0, "state.snapshot", {}, active, cleared),
+        step(5.0, "state.snapshot", {}, cleared, cleared),
+    ]
+    path = tmp / "rewind.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+    rows = label_file(path)
+    unique = mark_transitions(rows)
+    summary = summarize(rows, [str(path)], unique)
+
+    def current(row):
+        return (row.get("before") or {}).get("current_objective")
+
+    rewinds = [r for r in rows if current(r) is None
+               and isinstance((r.get("after") or {}).get("current_objective"), dict)]
+    check("one claim is one transition, however many retries follow",
+          unique == 1, "%d unique, %d progress rows" % (unique,
+              sum(1 for r in rows if r.get("label") == "quest_progress")))
+    check("a retry is never credited with an objective the claim already cleared",
+          not rewinds, "%d rewound row(s)" % len(rewinds))
+    check("the retry is a noop against the claim's own reply",
+          rows[3].get("label") == "noop", str(rows[3].get("label")))
+    check("the claim itself is the usable row",
+          rows[1].get("label") == "quest_progress"
+          and summary["usable_sft_rows"] == 1,
+          "%s / %d usable" % (rows[1].get("label"), summary["usable_sft_rows"]))
 
 
 def test_the_planner_can_call_what_it_plans() -> None:
@@ -1016,10 +1253,14 @@ def test_every_declared_tool_exists_in_the_client() -> None:
           str(missing) if missing else "%d of %d" % (len(directive), len(directive)))
     check("travel is one of them", "nav.goto" in handlers,
           "nav.goto %s" % ("present" if "nav.goto" in handlers else "MISSING"))
-    # debug.* handlers are diagnostics, not agent tools: they exist to ask the
-    # client what it actually contains when a reader is returning nulls.
+    # debug.* handlers, and the advisor's read-only market captures, are
+    # diagnostics rather than agent tools: they exist to ask the client what it
+    # actually contains when a reader is returning nulls. `advisor/cli.py` calls
+    # market.capture directly over the bridge; it is deliberately not in the
+    # model's action space.
+    diagnostic = {"hdv.prices", "market.capture"}
     phantom = sorted(h for h in (handlers - directive - local)
-                     if not h.startswith("debug."))
+                     if not h.startswith("debug.") and h not in diagnostic)
     check("the client has no handlers the contract does not declare", not phantom,
           str(phantom) if phantom else "none")
 
@@ -1049,6 +1290,462 @@ def test_a_ready_objective_is_claimed_first() -> None:
     call2 = p2.choose("do quests", obs2, None)
     check("a malformed ready entry does not stop the plan", call2 is not None,
           call2.tool if call2 else "no call")
+
+
+def test_objectives_the_kb_lacks() -> None:
+    """A quest the cached tables do not have is still plannable.
+
+    The tutorial the client starts on (3841) is newer than `quests_full.json`, so the
+    knowledge base had no row for it. The planner therefore had no type to translate and
+    could only re-send `QuestObjectiveValidationMessage`, which the server ignored — the
+    live run spent its entire budget on objective 13493 that way.
+
+    The client's own `dbObjectives` carries the type, parameters and map, and the
+    snapshot now reports them. These checks pin both halves: the snapshot must include
+    the metadata, and the planner must use it.
+    """
+    print("\n== objectives the KB lacks ==")
+    from agent.planner import CLAIM_ACTION_LIMIT, QuestPlanner
+
+    script = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
+    if script.exists():
+        text = script.read_text(encoding="utf-8", errors="replace")
+        check("the snapshot reports the objective's own type and parameters",
+              "dbObjectives" in text and "type_id" in text and "_objParams" in text,
+              "dbObjectives/type_id present" if "dbObjectives" in text else "metadata missing")
+        # 1.74 keeps the dialog's reply sender on gui.npcDialogHandler; requiring
+        # the view (npcDialogUi) failed every open dialog in a live session.
+        check("quest.advance can answer through npcDialogHandler",
+              "addOwner('gui.npcDialogHandler'" in text
+              and "typeof owner._uiReplyHandler === 'function'" in text
+              and "owner.replyHandler._uiReplyHandler" in text,
+              "handler fallback present"
+              if "addOwner('gui.npcDialogHandler'" in text else "handler fallback missing")
+
+    qid = 999999
+    p = QuestPlanner(level_hint=1)
+    check("the synthetic quest is genuinely absent from the KB", qid not in p.quests,
+          "%d quests" % len(p.quests))
+
+    obs = {"level": 1, "map_id": 1, "inventory": {}, "quests_active": {str(qid): 0},
+           "current_objective": {"quest_id": str(qid), "objective_id": 1, "status": 1,
+                                 "map_id": 12345, "type_id": 4},
+           "step_objectives": [{"id": 1, "status": 1, "done": False,
+                                "map_id": 12345, "type_id": 4}]}
+    call = p.choose("do quests", obs, None)
+    check("an unknown quest's map objective becomes nav.goto",
+          call is not None and call.tool == "nav.goto" and call.args.get("map_id") == 12345,
+          "%s %s" % (call.tool if call else None, call.args if call else None))
+
+    # The live stuck loop. Quest 3841's ready DiscoverMap objective carried
+    # 698953 in `parameters.parameter0` — the text id of the map's *name*, not a
+    # map id (the DB's `mapId` field is the place, and it was absent). Reading
+    # the text id as a destination made the client reject nav.goto nine times.
+    live = {"level": 2, "map_id": 147063812, "inventory": {},
+            "quests_active": {"3841": 0},
+            "map": {"map_id": 147063812,
+                    "exits": [{"direction": "left", "map_id": 147063300},
+                              {"direction": "right", "map_id": 147064324}]},
+            "current_objective": {"quest_id": "3841", "objective_id": 13541,
+                                  "status": 2, "type_id": 4,
+                                  "params": {"parameter0": 698953}},
+            "ready_objectives": [{"quest_id": 3841, "objective_id": 13541, "status": 2,
+                                  "type_id": 4, "params": {"parameter0": 698953}}],
+            "step_objectives": [{"id": 13541, "status": 2, "done": False, "type_id": 4,
+                                 "params": {"parameter0": 698953}}]}
+    p7 = QuestPlanner(level_hint=2)
+    first = p7.choose("do quests", live, None)
+    check("a type-4 text id is never sent as a map id",
+          first is not None and first.tool == "quest.advance"
+          and first.args.get("objective_id") == 13541,
+          "%s %s" % (first.tool if first else None, first.args if first else None))
+    p7.note_result(first.tool, False, "objective_server_counted", live)
+    live_call = p7.choose("do quests", live, None)
+    check("after a refused DiscoverMap claim the agent walks an exit",
+          live_call is not None and live_call.tool == "nav.goto"
+          and live_call.args.get("map_id") is None
+          and live_call.args.get("direction") in ("left", "right"),
+          "%s %s" % (live_call.tool if live_call else None,
+                     live_call.args if live_call else None))
+
+    adj = dict(live,
+               current_objective={"quest_id": "3841", "objective_id": 13541,
+                                  "status": 2, "type_id": 4, "map_id": 147064324,
+                                  "params": {"parameter0": 698953}},
+               ready_objectives=[{"quest_id": 3841, "objective_id": 13541, "status": 2,
+                                  "type_id": 4, "map_id": 147064324,
+                                  "params": {"parameter0": 698953}}],
+               step_objectives=[{"id": 13541, "status": 2, "done": False,
+                                 "map_id": 147064324, "type_id": 4,
+                                 "params": {"parameter0": 698953}}])
+    adj_call = QuestPlanner(level_hint=2).choose("do quests", adj, None)
+    check("a target that is one of this map's exits is still sent by id",
+          adj_call is not None and adj_call.args.get("map_id") == 147064324,
+          "%s %s" % (adj_call.tool if adj_call else None,
+                     adj_call.args if adj_call else None))
+
+    p8 = QuestPlanner(level_hint=2)
+    claim = p8.choose("do quests", live, None)
+    p8.note_result(claim.tool, False, "objective_server_counted", live)
+    probe = None
+    for _ in range(CLAIM_ACTION_LIMIT + 1):
+        probe = p8.choose("do quests", live, None)
+        if probe is None or 3841 in p8._skipped:
+            break
+        p8.note_result(probe.tool, True, "crossed", live)
+    check("exploration that never changes map is bounded",
+          3841 in p8._skipped,
+          "%s %s" % (probe.tool if probe else None, probe.args if probe else None))
+
+    obs_talk = dict(obs, current_objective={"quest_id": str(qid), "objective_id": 2,
+                                            "status": 1, "type_id": 9,
+                                            "params": {"parameter0": 77}},
+                    step_objectives=[{"id": 2, "status": 1, "done": False, "type_id": 9,
+                                      "params": {"parameter0": 77}}])
+    call = QuestPlanner(level_hint=1).choose("do quests", obs_talk, None)
+    check("an unknown quest's talk objective names its NPC",
+          call is not None and call.tool == "quest.advance"
+          and call.args.get("npc_id") == 77,
+          "%s %s" % (call.tool if call else None, call.args if call else None))
+
+    # A ready objective that does not move after validation: talk, and keep
+    # taking the action while it is accepted. Retirement needs evidence from
+    # `note_result`, not the passage of a plan pass: the safety guard refuses
+    # server-counted claims, and retiring after one fallback action would lose
+    # the quest the guard just protected.
+    p3 = QuestPlanner(level_hint=1)
+    ready = {"level": 1, "map_id": 147062786, "inventory": {},
+             "quests_active": {str(qid): 0},
+             "current_objective": {"quest_id": str(qid), "objective_id": 3, "status": 2,
+                                   "type_id": 1, "params": {"parameter0": 4231}},
+             "ready_objectives": [{"quest_id": str(qid), "objective_id": 3, "status": 2,
+                                   "type_id": 1, "params": {"parameter0": 4231}}],
+             "step_objectives": [{"id": 3, "status": 2, "done": False, "type_id": 1,
+                                  "params": {"parameter0": 4231}}]}
+    first = p3.choose("do quests", ready, None)
+    check("a ready objective is validated once",
+          first is not None and first.args.get("objective_id") == 3,
+          "%s %s" % (first.tool if first else None, first.args if first else None))
+    p3.note_result(first.tool, False, "claim refused", ready)
+    second = p3.choose("do quests", ready, None)
+    check("a refused claim falls back to the NPC",
+          second is not None and second.args.get("npc_id") == 4231
+          and "objective_id" not in second.args,
+          "%s %s" % (second.tool if second else None, second.args if second else None))
+    p3.note_result(second.tool, True, "talked", ready)
+    third = p3.choose("do quests", ready, None)
+    check("an accepted fallback keeps the quest on its action path",
+          third is not None and third.args.get("npc_id") == 4231,
+          "%s %s" % (third.tool if third else None, third.args if third else None))
+    for _ in range(3):
+        p3.note_result(third.tool, False, "no NPC on this map", ready)
+        third = p3.choose("do quests", ready, None)
+    check("three hard failures in a row retire the quest",
+          third is None or third.args.get("quest_id") != qid,
+          "%s %s" % (third.tool if third else None, third.args if third else None))
+
+    # The bound has to hold even when every action reports success: a tool that is
+    # accepted but never changes anything would otherwise loop forever.
+    p5 = QuestPlanner(level_hint=1)
+    p5.choose("do quests", ready, None)
+    p5.note_result("quest.advance", False, "claim refused", ready)
+    call = None
+    for _ in range(CLAIM_ACTION_LIMIT):
+        call = p5.choose("do quests", ready, None)
+        if call is not None:
+            p5.note_result(call.tool, True, "accepted", ready)
+    after = p5.choose("do quests", ready, None)
+    check("an accepted action that never changes anything is bounded",
+          after is None or after.args.get("quest_id") != qid,
+          "%s %s" % (after.tool if after else None, after.args if after else None))
+
+    # Crossing the world is progress, not an inert loop. A destination more than
+    # CLAIM_ACTION_LIMIT maps away must not exhaust the bound before arrival.
+    p6 = QuestPlanner(level_hint=1)
+    travel = {"level": 1, "map_id": 100, "inventory": {}, "quests_active": {},
+              "ready_objectives": [{"quest_id": 999997, "objective_id": 5, "status": 2,
+                                    "type_id": 4, "map_id": 200,
+                                    "params": {"parameter0": 55374}}],
+              "step_objectives": []}
+    crossed = 0
+    for _ in range(12):
+        travel["map_id"] = 100 + crossed
+        call = p6.choose("do quests", travel, None)
+        if call is None or 999997 in p6._skipped:
+            break
+        p6.note_result(call.tool, True, "moved", travel)
+        crossed += 1
+    check("map progress resets the action bound", crossed == 12,
+          "%d crossings before the puzzle was abandoned" % crossed)
+
+    # Not every ready objective is a conversation. The fallback is whatever the
+    # objective's own type translates to, so a ready kill is fought, not re-validated.
+    p4 = QuestPlanner(level_hint=1)
+    ready_kill = {"level": 1, "map_id": 147062786, "inventory": {},
+                  "quests_active": {}, "current_objective": None,
+                  "ready_objectives": [{"quest_id": 999998, "objective_id": 4,
+                                        "status": 2, "type_id": 6,
+                                        "params": {"parameter0": 182}}],
+                  "step_objectives": []}
+    p4.choose("do quests", ready_kill, None)
+    kill = p4.choose("do quests", ready_kill, None)
+    check("a ready kill falls back to the fight, not another claim",
+          kill is not None and kill.tool == "fight.join" and kill.args.get("monster") == 182,
+          "%s %s" % (kill.tool if kill else None, kill.args if kill else None))
+
+
+def test_the_tutorial_is_the_authority() -> None:
+    """While a tutorial step runs, its own gate decides what can happen next.
+
+    A live session walked left because the exit list is ordered left/right/top/
+    bottom and `_explore_call` took the first entry. The tutorial wanted the right
+    edge, and the crossing it forbade could not happen at all. Worse, the client's
+    `gotoNeighbourMap` bypasses the scenario gate: it walks to the border and asks
+    for a transition the tutorial refuses, which looks like a stuck character.
+    These checks pin the whole chain: the observation marks blocked exits, the
+    planner reads the step's NPC/cell gate before the quest graph, retirement is
+    undone when the situation changes, and the loop never blames an unrelated quest.
+    """
+    print("\n== tutorial gate ==")
+    from types import SimpleNamespace
+
+    from agent.autopilot import Autopilot, _map_of
+    from agent.executor import _MapGraph, _obs_map_exits
+    from agent.planner import QuestPlanner
+
+    exits = {"map": {"exits": [
+        {"direction": "left", "map_id": 1, "blocked": True},
+        {"direction": "right", "map_id": 2},
+    ]}}
+    check("a tutorial-blocked exit is not offered to the planner",
+          {e["direction"] for e in QuestPlanner._observed_exits(exits)} == {"right"},
+          str(QuestPlanner._observed_exits(exits)))
+    check("the executor does not route through a blocked exit",
+          _obs_map_exits(exits) == {2: "right"}, str(_obs_map_exits(exits)))
+
+    hinted = {"type_id": 4, "text": "Cliquez sur le rebord droit"}
+    pick = QuestPlanner._explore_call(hinted, {
+        "map": {"map_id": 100, "exits": [
+            {"direction": "left", "map_id": 1},
+            {"direction": "right", "map_id": 2},
+        ]}})
+    check("exploration follows the edge the objective's text names",
+          pick is not None and pick["args"].get("direction") == "right",
+          str(pick and pick["args"]))
+    blocked_only = QuestPlanner._explore_call({"type_id": 4}, {
+        "map": {"map_id": 100, "exits": [
+            {"direction": "left", "map_id": 1},
+            {"direction": "right", "map_id": 2, "blocked": True},
+        ]}})
+    check("exploration never picks a blocked crossing",
+          blocked_only is not None and blocked_only["args"].get("direction") == "left",
+          str(blocked_only and blocked_only["args"]))
+    held = QuestPlanner._travel_call({"type_id": 4}, 2, {
+        "map_id": 100,
+        "map": {"exits": [
+            {"direction": "left", "map_id": 2, "blocked": True},
+            {"direction": "top", "map_id": 9},
+        ]}})
+    check("a forbidden crossing waits instead of walking the contrary way",
+          held.get("tool") == "state.snapshot", str(held))
+
+    tmp = Path(tempfile.mkdtemp())
+    graph_path = tmp / "maps.json"
+    graph_path.write_text(json.dumps({
+        "1": {"id": 1, "neighbours": {"leftNeighbourId": 2, "rightNeighbourId": 3}},
+        "2": {"id": 2, "neighbours": {"rightNeighbourId": 1}},
+        "3": {"id": 3, "neighbours": {"leftNeighbourId": 1}},
+    }), encoding="utf-8")
+    graph = _MapGraph(path=graph_path)
+    check("a route avoids a blocked first edge when another exists",
+          graph.hop(1, 3, blocked_first={"left"}) == ("right", 3, 1),
+          str(graph.hop(1, 3, blocked_first={"left"})))
+    check("a route with only a blocked first edge is not routable",
+          graph.hop(1, 2, blocked_first={"left"}) is None,
+          str(graph.hop(1, 2, blocked_first={"left"})))
+
+    def tutorial_obs(**over):
+        obs = {"level": 2, "map_id": 100, "cell": 200, "inventory": {},
+               "quests_active": {"3841": 0},
+               "current_objective": {"quest_id": "3841", "objective_id": 13493,
+                                     "step": 1, "status": 1, "type_id": 1,
+                                     "params": {"parameter0": 3888}},
+               "step_objectives": [{"id": 13493, "status": 1, "done": False,
+                                    "type_id": 1, "params": {"parameter0": 3888}}],
+               "tutorial": {"active": True, "quest_id": 3841, "step_id": 1,
+                            "can_change_map": {"left": False, "right": False,
+                                               "top": False, "bottom": False},
+                            "unblocked_cells": [], "unblocked_npc_id": 3888}}
+        obs.update(over)
+        return obs
+
+    call = QuestPlanner(level_hint=2).choose("do quests", tutorial_obs(), None)
+    check("the tappable tutorial NPC is talked to before any quest-graph plan",
+          call is not None and call.tool == "quest.advance"
+          and call.args.get("npc_id") == 3888 and call.args.get("quest_id") == 3841,
+          "%s %s" % (call.tool if call else None, call.args if call else None))
+
+    movement = tutorial_obs(tutorial={"active": True, "quest_id": 3841, "step_id": 2,
+                                      "can_change_map": {"left": False, "right": True,
+                                                         "top": False, "bottom": False},
+                                      "unblocked_cells": [317, 318],
+                                      "unblocked_npc_id": 0})
+    call = QuestPlanner(level_hint=2).choose("do quests", movement, None)
+    check("the tutorial's allowed cells become the walk target",
+          call is not None and call.tool == "nav.goto"
+          and call.args.get("cell") in (317, 318),
+          "%s %s" % (call.tool if call else None, call.args if call else None))
+
+    waiting = tutorial_obs(quests_active={"999999": 0}, current_objective={},
+                           step_objectives=[], tutorial={
+                               "active": True, "quest_id": 3841, "step_id": 3,
+                               "can_change_map": {"left": False, "right": False,
+                                                  "top": False, "bottom": False},
+                               "unblocked_cells": [], "unblocked_npc_id": 0})
+    call = QuestPlanner(level_hint=2).choose("do quests", waiting, None)
+    check("no unrelated quest is started while the tutorial is active",
+          call is not None and call.tool == "state.snapshot",
+          "%s %s" % (call.tool if call else None, call.args if call else None))
+
+    p = QuestPlanner(level_hint=2)
+    before = tutorial_obs()
+    p._retire(3841, before)
+    check("a tutorial-stalled quest can be retired", 3841 in p._skipped,
+          str(sorted(p._skipped)))
+    p._reopen(tutorial_obs(map_id=101))
+    check("changing map reopens the quest the tutorial stalled", 3841 not in p._skipped,
+          str(sorted(p._skipped)))
+    p._skipped.add(424242)
+    p._reopen(tutorial_obs(map_id=102))
+    check("a permanently unplannable quest stays retired", 424242 in p._skipped,
+          str(sorted(p._skipped)))
+
+    check("the logged step now carries the nested map id",
+          _map_of({"position": {"map_id": 150736645, "cell": 328}}) == 150736645,
+          str(_map_of({"position": {"map_id": 150736645, "cell": 328}})))
+
+    class Policy:
+        current_quest = None
+
+        def __init__(self):
+            self.skipped = []
+
+        def skip(self, quest_id):
+            self.skipped.append(quest_id)
+
+    policy = Policy()
+    pilot = SimpleNamespace(runtime=SimpleNamespace(policy=policy))
+    blocker = SimpleNamespace(args={})
+    retired = Autopilot._retire_named_quest(
+        pilot, blocker, {"quests_active": {"3841": 0}})
+    check("a stuck call with no quest id does not retire the first active quest",
+          retired is None and policy.skipped == [],
+          "retired=%s skipped=%s" % (retired, policy.skipped))
+    policy.current_quest = 3841
+    retired = Autopilot._retire_named_quest(
+        pilot, blocker, {"quests_active": {"584": 0}})
+    check("a stuck call retires the quest the policy planned for",
+          retired == 3841 and policy.skipped == [3841],
+          "retired=%s skipped=%s" % (retired, policy.skipped))
+
+
+def test_a_quest_the_server_never_starts() -> None:
+    """`ok` from the client means "start request sent", not "quest active".
+
+    A live session spent every step after its first fight re-sending quest 584: the
+    client returned ok, the server never activated it, and the planner had no memory
+    of its own starts. `quests_active` is the only evidence that counts, and the
+    autopilot must retire the quest the repeated call names -- it used to retire the
+    first *active* quest (3841) instead, leaving the dead start in the curriculum.
+    """
+    print("\n== quest start ==")
+    from agent.controller import Controller, error_class
+    from agent.planner import START_ATTEMPT_LIMIT, QuestPlanner
+
+    script = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
+    text = script.read_text(encoding="utf-8", errors="replace")
+    check("the fight gate reads the character's life state, not playerData.lifePoints",
+          "pdF.lifePoints === 0" not in text and "_agentLife()" in text,
+          "stale playerData.lifePoints check removed" if "_agentLife()" in text
+          else "fight.join still trusts the stale field")
+    check("the snapshot reports whether the character is alive",
+          "snap.alive" in text and "snap.life_state" in text,
+          "alive/life_state present" if "snap.alive" in text else "missing")
+    check("a quest start is verified against the client's quest log",
+          "__agentQuestStarts" in text and "not_activated: true" in text,
+          "start request tracked" if "__agentQuestStarts" in text else "no verification")
+
+    def obs_with(active):
+        return {"level": 1, "map_id": 1, "inventory": {},
+                "quests_active": active, "quests_done": []}
+
+    def first_startable(planner):
+        for candidate in planner._curriculum(1):
+            if planner._plannable(candidate):
+                return candidate
+        return None
+
+    p = QuestPlanner(level_hint=1)
+    qid = first_startable(p)
+    check("the curriculum has a quest to start", qid is not None, str(qid))
+    if qid is not None:
+        p._curriculum = lambda level: [qid]
+        call = p.choose("do quests", obs_with({}), None)
+        check("an inactive quest is started with quest.advance",
+              call is not None and call.tool == "quest.advance"
+              and call.args.get("quest_id") == qid,
+              "%s %s" % (call.tool if call else None, call.args if call else None))
+        # The first report after a start is taken from the snapshot the decision was
+        # made from, so it cannot show the activation. Evidence starts with the next
+        # observation; retirement therefore needs one more attempt than the limit.
+        for _ in range(START_ATTEMPT_LIMIT + 1):
+            p.note_result("quest.advance", True, "start sent", obs_with({}))
+            call = p.choose("do quests", obs_with({}), None)
+        check("a quest the server never activates is retired",
+              qid in p._skipped,
+              "skipped=%s next=%s" % (sorted(p._skipped)[:5],
+                                      call.args if call else None))
+
+    p2 = QuestPlanner(level_hint=1)
+    qid2 = first_startable(p2)
+    if qid2 is not None:
+        p2._curriculum = lambda level: [qid2]
+        p2.choose("do quests", obs_with({}), None)
+        p2.note_result("quest.advance", True, "started", obs_with({str(qid2): 0}))
+        check("an activated start is not counted against the quest",
+              not p2._start_failures and qid2 not in p2._skipped,
+              "failures=%s" % p2._start_failures)
+
+    guard = ("objective 13499 (QuestObjectiveFightMonster) is completed by the server; "
+             "perform the action instead of claiming it")
+    check("a server-counted claim is a rule refusal", error_class(guard) == "refused",
+          error_class(guard))
+    c = Controller(state_dir=Path(tempfile.mkdtemp()), session="refusal")
+    d = c.on_step(Verdict("failed", 0.9, None, False, "rule"), "quest.advance", False,
+                  guard, {}, {})
+    check("a rule refusal is not retried", d.action == "continue",
+          "%s/%s" % (d.action, d.cause))
+
+    class _Policy:
+        def __init__(self):
+            self.skipped = []
+
+        def skip(self, quest_id):
+            self.skipped.append(quest_id)
+
+    class _Fake:
+        pass
+
+    fake = _Fake()
+    fake.runtime = _Fake()
+    fake.runtime.policy = _Policy()
+    named = _Fake()
+    named.args = {"quest_id": 584}
+    retired = Autopilot._retire_named_quest(
+        fake, named, {"quests_active": {"3841": 0}})
+    check("a repeated start retires the quest it names, not the active one",
+          retired == 584 and fake.runtime.policy.skipped == [584],
+          "retired=%s skipped=%s" % (retired, fake.runtime.policy.skipped))
 
 
 def test_verifier_reads_the_real_observation_shape() -> None:
@@ -1233,6 +1930,71 @@ def test_learned_planner_matches_the_teacher() -> None:
           "%d vs %d" % (student["quests"], teacher["quests"]))
 
 
+def test_learned_navigation_cannot_bypass_the_exit_rule() -> None:
+    """A learned nav.goto must cross a real edge, never a non-adjacent map id."""
+    print("\n== learned navigation ==")
+    try:
+        from agent.planner_nn import NNPlanner
+    except Exception as exc:  # noqa: BLE001
+        print("  [SKIP] %s" % exc)
+        return
+
+    nn = NNPlanner(level_hint=60)
+    nn._choose_tool = lambda *a, **k: "nav.goto"  # type: ignore[assignment]
+    here = 147063812
+    obs = {"map_id": here,
+           "map": {"map_id": here, "exits": [
+               {"direction": "left", "map_id": 987654321},
+               {"direction": "bottom", "map_id": 987654322}]}}
+
+    # Type 4 whose parameter0 is a map *name* id: the objective names no place.
+    generic = {"type_id": 4, "text": "Discover a map",
+               "parameters": {"parameter0": 698953}}
+    plan = nn.plan_objective({}, 0, generic, obs)
+    check("a learned generic DiscoverMap walks an observed exit",
+          len(plan) == 1 and plan[0]["tool"] == "nav.goto"
+          and plan[0]["args"] == {"direction": "left"},
+          str(plan))
+
+    # A named target the graph does not know and the client cannot cross to.
+    unknown = {"type_id": 4, "map_id": 987654399, "text": "Discover a map"}
+    plan = nn.plan_objective({}, 0, unknown, obs)
+    check("a learned unknown destination falls back to an exit",
+          len(plan) == 1 and plan[0]["tool"] == "nav.goto"
+          and plan[0]["args"] == {"direction": "left"}
+          and "map_id" not in plan[0]["args"],
+          str(plan))
+
+    adjacent = {"type_id": 4, "map_id": 987654321, "text": "Discover a map"}
+    plan = nn.plan_objective({}, 0, adjacent, obs)
+    check("a learned adjacent destination keeps its map id",
+          len(plan) == 1 and plan[0]["args"] == {"map_id": 987654321},
+          str(plan))
+
+    plan = nn.plan_objective({}, 0, generic,
+                             {"map_id": here, "map": {"map_id": here, "exits": []}})
+    check("a learned walk with no observed exit plans nothing", plan == [], str(plan))
+
+    from agent.knowledge_store import KnowledgeStore
+    store = KnowledgeStore(Path(tempfile.mkdtemp()) / "k.jsonl")
+    store.remember("npc_map", "npc:447", 147063300, source="observed", confidence=0.8)
+    talker = NNPlanner(level_hint=60, store=store)
+    talker._choose_tool = lambda *a, **k: "nav.goto"  # type: ignore[assignment]
+    talk = {"type_id": 1, "params": {"parameter0": 447}}
+    npc_obs = {"map_id": here, "map": {"map_id": here, "exits": [
+        {"direction": "right", "map_id": 147063300}]}}
+    plan = talker.plan_objective({"id": 9, "level_min": 60}, 0, talk, npc_obs)
+    check("a learned walk to a known NPC uses the stored map",
+          len(plan) == 1 and plan[0]["args"] == {"map_id": 147063300}, str(plan))
+
+    plan = talker.plan_objective({"id": 9, "level_min": 60}, 0, talk,
+                                 {"map_id": 147063300,
+                                  "map": {"map_id": 147063300, "exits": []}})
+    check("a learned walk when already at the NPC talks instead",
+          len(plan) == 1 and plan[0]["tool"] == "quest.advance"
+          and plan[0]["args"].get("npc_id") == 447, str(plan))
+
+
 def test_knowledge_store() -> None:
     """Knowledge lives in the store, so the model can stay small."""
     print("\n== knowledge store ==")
@@ -1313,6 +2075,21 @@ def test_knowledge_changes_the_plan() -> None:
     check("a learned npc_map adds travel to the plan",
           "nav.goto" not in before and bool(after) and after[0] == "nav.goto",
           "%s -> %s" % (before, after))
+
+    # The fact does not have to be written by hand. Any observation that shows
+    # the NPC on a map is the same fact, and this is how the agent fills the
+    # table the KB lacks while it plays. Use another NPC: an observed fact must
+    # not overwrite the human one above, and that rule is what makes the store
+    # trustworthy.
+    other = int(npc) + 1
+    planner.choose("q", {"map_id": 777, "map": {"map_id": 777,
+                     "npcs": [{"npc_id": other, "cell": 1}]},
+                     "quests_active": {}}, None)
+    learned = store.get("npc_map", "npc:%d" % other)
+    check("an observed map teaches where its NPCs are", learned == 777, str(learned))
+    check("an observation does not overwrite what a human taught",
+          store.get("npc_map", "npc:%d" % npc) == 4242,
+          str(store.get("npc_map", "npc:%d" % npc)))
 
     # And the other half of the contract: when the objective itself names a map,
     # travel does not need to be learned at all.
@@ -1401,6 +2178,258 @@ def test_preflight_is_inert_without_a_model() -> None:
     check("threshold without a model still cannot veto", v.preflight("hdv.buy", {}, base_obs()) is None)
 
 
+def test_combat_waiting_does_not_retire_quests() -> None:
+    print("\n== combat integration ==")
+    from unittest.mock import patch
+    from agent.planner import QuestPlanner
+    from agent.runtime import ToolCall
+
+    planner = QuestPlanner(level_hint=60)
+    call = planner.choose("do quests", {
+        "in_fight": True,
+        "ready_objectives": [{"quest_id": 584, "objective_id": 9001}],
+    }, None)
+    check("the planner observes instead of acting during combat",
+          call is not None and call.tool == "state.snapshot" and not call.args,
+          "%s %s" % (call.tool if call else None, call.args if call else None))
+
+    tmp = Path(tempfile.mkdtemp())
+    obs = base_obs(in_world=True, in_fight=True, objectives_completed=0)
+
+    class Result:
+        ok = True
+        error = None
+        data = {"snapshot": obs}
+
+    class Policy:
+        def __init__(self):
+            self.calls = 0
+
+        def choose(self, goal, observation, tools):
+            self.calls += 1
+            return ToolCall("state.snapshot", {}, goal) if self.calls <= 3 else None
+
+        def note_result(self, tool, ok, note, observation):
+            pass
+
+    class Runtime:
+        instance = None
+
+        def __init__(self):
+            self.policy = Policy()
+            self.executor = self
+
+        def current_observation(self):
+            return obs, 0.0, "call"
+
+        def execute(self, tool, args, **kwargs):
+            return Result()
+
+    retired = []
+    pilot = Autopilot(runtime=Runtime(), goals=["quest 584"],
+                      log_path=tmp / "fight.jsonl", stop_file=tmp / "STOP",
+                      max_steps=0, preflight=False, settle_s=0.0)
+    pilot.stall_limit = 1
+    pilot._retire_named_quest = lambda *args: retired.append(args) or 584
+    with patch("agent.autopilot.time.sleep") as sleep:
+        pilot._run()
+    check("combat snapshots do not retire the active quest", not retired, str(retired))
+    combat_steps = [step for step in pilot.steps if step.tool == "state.snapshot"]
+    check("combat waiting does not trip repeated-call detection", len(combat_steps) == 3,
+          "%d combat steps" % len(combat_steps))
+    check("combat observation history is cleared", not pilot._recent, str(pilot._recent))
+    check("combat polling uses the slower cadence",
+          sleep.call_count == 3 and all(c.args == (1.0,) for c in sleep.call_args_list),
+          str(sleep.call_args_list))
+
+
+def test_client_combat_handoff() -> None:
+    print("\n== client combat handoff ==")
+    script = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
+    text = script.read_text(encoding="utf-8")
+    check("a successful attack enables the fight driver",
+          "if (result.ok && window.__FarmBot) window.__FarmBot.setEnabled(true);" in text)
+    check("walk-then-attack records the asynchronous attack result",
+          "stage: result.ok ? 'attacked' : 'attack_failed'" in text)
+    check("an active fight does not select another monster",
+          "return _agentResult(true, { in_fight: true, auto_fight: !!window.__FarmBot });" in text)
+    check("missing fighter identity cannot authorise a turn",
+          "return window.gui.playerData.characterBaseInformations.id === id;\n                }\n"
+          "                return false;" in text)
+    check("the unused class-specific AoE spell is gone", "aoeSpellId" not in text)
+
+
+def test_fight_state_is_a_read_only_board() -> None:
+    """The combat board must be readable before anything is allowed to act on it.
+
+    `fight.state` is the eyes of the combat work: turn owner, every fighter's cell and
+    resources, and the controlled character's real spell descriptors. It is deliberately
+    a *read*: if this handler ever sends a message or casts, then a loop that only wanted
+    to look can move the character, and every later measurement of "what did the AI do"
+    becomes ambiguous. The check pins that separation, and pins the payload keys the
+    future solver will consume.
+    """
+    print("\n== fight.state board ==")
+    import json
+    import re
+
+    caps_path = REPO_ROOT / "data" / "capabilities.json"
+    js_path = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
+    if not caps_path.exists() or not js_path.exists():
+        print("  [SKIP] capabilities or client script not found")
+        return
+
+    caps = {c["id"]: c for c in json.loads(caps_path.read_text(encoding="utf-8"))["capabilities"]}
+    entry = caps.get("fight.state")
+    check("fight.state is a declared capability", entry is not None, str(entry))
+    check("fight.state takes no arguments", entry is not None and not (entry.get("params") or {}),
+          str((entry or {}).get("params")))
+    check("fight.state is a directive backed by the client",
+          entry is not None and entry.get("backend") == "directive"
+          and entry.get("directive") == "FIGHT_STATE",
+          "%s -> %s" % ((entry or {}).get("backend"), (entry or {}).get("directive")))
+
+    text = js_path.read_text(encoding="utf-8")
+    check("the FIGHT_STATE directive reaches the handler",
+          "'FIGHT_STATE': 'fight.state'" in text)
+    start = text.find("'fight.state': function")
+    check("the client has a fight.state handler", start >= 0)
+    if start >= 0:
+        body = text[start:text.find("\n            'nav.follow': function", start)]
+        mutators = [token for token in (
+            "_cmSend", "sendPacket", "castSpellOnTarget", "finishTurn", "setEnabled",
+            "_movePlayerOnMap", "gotoNeighbourMap", "_requestMapChange", "PASS_TURN",
+        ) if token in body]
+        check("fight.state only reads", not mutators, ", ".join(mutators) or "no writes")
+        for field in ("current_fighter_id", "is_my_turn", "fighters", "spells",
+                      "effects", "critical_effects", "cell", "hp", "max_hp", "ap", "mp",
+                      "map_id", "cells", "my_stats", "resist_percent", "resist_fixed",
+                      "critical_hit_probability"):
+            check("fight.state exposes %s" % field, field + ":" in body)
+
+    from agent import verifier
+    check("a fight.state read is not scored as a failed world change",
+          "fight.state" in verifier.READ_ONLY_TOOLS, str(sorted(verifier.READ_ONLY_TOOLS)))
+    # The verifier's ONNX head is width-locked to TOOL_ORDER. fight.state was appended
+    # to the capability registry but must not enter that vector until the head is
+    # retrained, or a working model silently starts failing on a shape mismatch.
+    check("fight.state is kept out of the width-locked verifier head",
+          "fight.state" not in verifier.TOOL_ORDER, str(len(verifier.TOOL_ORDER)))
+
+    from agent.executor import ToolExecutor, ToolResult
+
+    calls = []
+
+    def fake_dispatch(tool, args, **_kwargs):
+        calls.append((tool, args))
+        return ToolResult(tool=tool, ok=True, source="live", data={"response": {
+            "ok": True,
+            "result": {"ok": True, "data": {
+                "in_fight": True, "current_fighter_id": 7,
+                "fighters": [{"id": 7, "cell": 300}], "spells": [],
+            }},
+        }})
+
+    executor = object.__new__(ToolExecutor)
+    executor._dispatch = fake_dispatch
+    board = executor.fight_state()
+    check("the executor asks for fight.state with no arguments",
+          calls == [("fight.state", {})], str(calls))
+    check("the executor unwraps the bridge's nested board",
+          board is not None and board.get("in_fight") is True
+          and board.get("current_fighter_id") == 7
+          and board.get("fighters") == [{"id": 7, "cell": 300}], str(board))
+
+
+def test_fight_plan_scores_the_live_board_without_acting() -> None:
+    """fight.plan is the solver's only entry point, and it must stay read-only.
+
+    The plan is worth having only if it is derived from the live board rather than
+    from a guess, so this feeds a synthetic board through the executor exactly as
+    the bridge would and checks the arithmetic. It also pins that planning issues
+    no cast/move: one board read, zero writes.
+    """
+    print("\n== fight.plan solver ==")
+    import json
+
+    from agent import verifier
+    from agent.executor import ToolExecutor, ToolResult
+    from agent.schema import TOOLS_BY_NAME
+    from combat.battle_solver import _POINTS
+
+    caps_path = REPO_ROOT / "data" / "capabilities.json"
+    caps = {c["id"]: c for c in json.loads(caps_path.read_text(encoding="utf-8"))["capabilities"]}
+    entry = caps.get("fight.plan")
+    check("fight.plan is a declared capability", entry is not None, str(entry))
+    check("fight.plan is computed locally, not sent to the client",
+          entry is not None and entry.get("backend") == "local"
+          and not entry.get("directive"),
+          "%s -> %s" % ((entry or {}).get("backend"), (entry or {}).get("directive")))
+    check("fight.plan declares its search knobs",
+          set(((entry or {}).get("params") or {})) == {"beam_width", "max_actions"},
+          str(sorted(((entry or {}).get("params") or {}))))
+    check("the schema fallback also knows fight.plan", "fight.plan" in TOOLS_BY_NAME)
+    check("a fight.plan read is not scored as a failed world change",
+          "fight.plan" in verifier.READ_ONLY_TOOLS, str(sorted(verifier.READ_ONLY_TOOLS)))
+    check("fight.plan is kept out of the width-locked verifier head",
+          "fight.plan" not in verifier.TOOL_ORDER, str(len(verifier.TOOL_ORDER)))
+
+    me_cell = _POINTS[(20, 20)]
+    foe_cell = _POINTS[(21, 20)]
+    board = {
+        "in_fight": True,
+        "in_preparation": False,
+        "is_my_turn": True,
+        "my_id": 7,
+        "my_cell": me_cell,
+        "map_id": 1,
+        "cells": [3] * 560,
+        "my_stats": {},
+        "fighters": [
+            {"id": 7, "name": "Me", "cell": me_cell, "team": "player",
+             "hp": 1000, "max_hp": 1000, "ap": 3, "mp": 3, "shield": 0,
+             "level": 100, "alive": True, "is_me": True},
+            {"id": 8, "name": "Foe", "cell": foe_cell, "team": "enemy",
+             "hp": 100, "max_hp": 100, "ap": 4, "mp": 3, "shield": 0,
+             "level": 50, "alive": True},
+        ],
+        "spells": [{
+            "id": 1, "name": "Strike", "ap_cost": 3, "min_range": 1,
+            "range": 4, "castable": True, "max_cast_per_turn": 2,
+            "max_cast_per_target": 2,
+            "requires_los": False, "critical_hit_probability": 0,
+            "effects": [{"effect_id": 100, "dice_num": 10, "dice_side": 10}],
+            "critical_effects": [],
+        }],
+    }
+
+    calls = []
+
+    def fake_dispatch(tool, args, **_kwargs):
+        calls.append((tool, args))
+        return ToolResult(tool=tool, ok=True, source="live", data={"response": {
+            "ok": True, "result": {"ok": True, "data": board},
+        }})
+
+    executor = object.__new__(ToolExecutor)
+    executor._dispatch = fake_dispatch
+    result = executor.fight_plan({})
+    check("fight.plan succeeds on a live board", result.ok, result.error or "")
+    plan = result.data or {}
+    check("fight.plan chooses a cast", (plan.get("actions") or [{}])[0].get("kind") == "cast",
+          str(plan.get("actions")))
+    check("fight.plan does not walk when the target is already in range",
+          (plan.get("actions") or [{}])[0].get("mp_cost") == 0
+          and (plan.get("actions") or [{}])[0].get("move_to") is None,
+          str(plan.get("actions")))
+    check("fight.plan prices the cast from resistances and stats",
+          plan.get("expected_damage") == 10.0, str(plan.get("expected_damage")))
+    check("fight.plan spends the AP it says it spends",
+          plan.get("remaining_ap") == 0, str(plan.get("remaining_ap")))
+    check("planning reads the board and writes nothing",
+          calls == [("fight.state", {})], str(calls))
+
+
 def main() -> int:
     test_verdicts()
     test_residual_and_drift()
@@ -1420,20 +2449,31 @@ def main() -> int:
     test_the_emulator_stays_inside_its_box()
     test_the_model_chain_is_wired()
     test_a_walk_gets_time_to_land()
+    test_the_loop_uses_the_post_action_state()
+    test_the_labeler_does_not_rewind_time()
     test_a_dead_connection_stops_the_loop()
     test_layering_holds()
     test_a_ready_objective_is_claimed_first()
+    test_objectives_the_kb_lacks()
+    test_the_tutorial_is_the_authority()
+    test_a_quest_the_server_never_starts()
     test_verifier_reads_the_real_observation_shape()
     test_unlimited_means_unlimited()
     test_structural_failures_are_not_retried()
     test_learned_planner_matches_the_teacher()
+    test_learned_navigation_cannot_bypass_the_exit_rule()
     test_knowledge_store()
     test_knowledge_changes_the_plan()
     test_idle_trainer_respects_the_lock()
     test_planner_beats_the_rule_policy()
     test_controller_changes_the_next_action()
     test_loop_applies_the_decision()
+    test_the_policy_hears_its_outcomes()
     test_preflight_is_inert_without_a_model()
+    test_combat_waiting_does_not_retire_quests()
+    test_client_combat_handoff()
+    test_fight_state_is_a_read_only_board()
+    test_fight_plan_scores_the_live_board_without_acting()
 
     failed = [r for r in RESULTS if not r[1]]
     print("\n%d checks, %d failed" % (len(RESULTS), len(failed)))

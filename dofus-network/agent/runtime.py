@@ -344,6 +344,18 @@ class AgentRuntime:
         age_ms = (time.time() - self.last_observation_ts) * 1000.0
         return self.last_observation, round(age_ms, 1), "carried"
 
+    def note_observation(self, observation: Dict[str, Any]) -> None:
+        """Adopt a snapshot the bridge returned with a directive response.
+
+        The bridge captures it *after* the directive ran, so it is the state the
+        next decision should be made against. It is not logged as an observation
+        record: the next step records it as its own ``observation``, which is the
+        same pairing and avoids writing every snapshot twice.
+        """
+        self.last_observation = observation
+        self.last_observation_ts = time.time()
+        self.observations_seen += 1
+
     def execute_tool(
         self,
         tool: str,

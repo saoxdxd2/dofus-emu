@@ -1117,8 +1117,22 @@ namespace DofusFarm.Engine {
         private static bool IsLocalPortOpen(int port, int timeoutMs = 200) { return ProbeTcp("127.0.0.1", port, timeoutMs); }
 
         public static bool ProbeSocksEgress(int port, string destHost, int destPort, int timeoutMs) {
+            return ProbeSocksEgress("127.0.0.1", port, destHost, destPort, timeoutMs);
+        }
+
+        // End-to-end probe of a socks5 proxy, local or remote: the handshake and the CONNECT
+        // both have to succeed. A listener that accepts TCP but cannot carry a CONNECT is not a
+        // usable egress, and treating it as healthy is how a dead proxy gets pinned.
+        public static bool ProbeSocksEgress(string proxyUrl, string destHost, int destPort, int timeoutMs) {
+            Uri u;
+            if (!Uri.TryCreate(proxyUrl, UriKind.Absolute, out u)) return false;
+            int port = u.IsDefaultPort ? 1080 : u.Port;
+            return ProbeSocksEgress(u.Host, port, destHost, destPort, timeoutMs);
+        }
+
+        public static bool ProbeSocksEgress(string host, int port, string destHost, int destPort, int timeoutMs) {
             try {
-                using (var tcp = InProcessProxyServer.ConnectWithTimeout("127.0.0.1", port, Math.Min(timeoutMs, 3000), "timeout")) {
+                using (var tcp = InProcessProxyServer.ConnectWithTimeout(host, port, Math.Min(timeoutMs, 3000), "timeout")) {
                     tcp.ReceiveTimeout = timeoutMs;
                     var st = tcp.GetStream();
                     st.Write(new byte[] { 5, 1, 0 }, 0, 3);

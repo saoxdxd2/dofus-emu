@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="transparent" />
     <meta name="msapplication-tap-highlight" content="no">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: wss: ws: gap: cdvfile: http: 'unsafe-eval' 'unsafe-inline';">
-    <link rel="stylesheet" href="build/styles-native.css?v=ef5a1ca682">
+    <link rel="stylesheet" href="build/styles-native.css?v=ff4de029de">
     <style>
         html, body {
             width: 100% !important;
@@ -49,19 +49,29 @@
          loading it twice ran the whole agent twice (two FarmBot.init(), two
          connection bindings, one HUD). -->
     <script type="text/javascript" src="js/cordova-standalone-shim.js"></script>
-    <script type="text/javascript" src="js/cdn-relay-shim.js?v=ef5a1ca682"></script>
-    <script type="text/javascript" src="js/wizassets-shim.js?v=ef5a1ca682"></script>
-    <script type="text/javascript" src="js/debug-overlay.js?v=ef5a1ca682"></script>
+    <script type="text/javascript" src="js/cdn-relay-shim.js?v=ff4de029de"></script>
+    <script type="text/javascript" src="js/wizassets-shim.js?v=ff4de029de"></script>
+    <script type="text/javascript" src="js/debug-overlay.js?v=ff4de029de"></script>
 </head>
 <body class="dofusBody">
-    <script type="text/javascript" src="build/script.js?v=ef5a1ca682"></script>
+    <script type="text/javascript" src="build/script.js?v=ff4de029de"></script>
     <script type="text/javascript">
         (function() {
+            // The game creates the map widgets (mapBorder1/2, screenLeftover, sidebarBackground)
+            // only while the world UI is being built. _resizeUi touches all of them without a
+            // guard, so calling it on the login screen throws on the first setStyles and can
+            // leave a transition half-applied — the black screen after the loading screen.
+            function guiReadyForResize() {
+                var g = window.gui;
+                return !!(window.isoEngine && g && typeof g._resizeUi === 'function' &&
+                          g.playerData && g.mapBorder1 && g.mapBorder2 &&
+                          g.screenLeftover && g.sidebarBackground);
+            }
+
             function syncDimensions() {
+                if (!guiReadyForResize()) return;
                 try {
-                    if (window.gui && typeof window.gui._resizeUi === 'function') {
-                        window.gui._resizeUi();
-                    }
+                    window.gui._resizeUi();
                     if (window.isoEngine && window.isoEngine.mapScene && typeof window.isoEngine.mapScene.requireCompleteRefresh === 'function') {
                         window.isoEngine.mapScene.requireCompleteRefresh();
                     }
@@ -73,13 +83,15 @@
             window.addEventListener('resize', syncDimensions);
             window.addEventListener('orientationchange', syncDimensions);
 
+            // Keep polling until the world UI exists, not merely until `gui` and `isoEngine`
+            // are defined: those appear long before the widgets above.
             var attempts = 0;
             var bootInterval = setInterval(function() {
                 attempts++;
-                if (window.gui && window.isoEngine) {
+                if (guiReadyForResize()) {
                     clearInterval(bootInterval);
                     syncDimensions();
-                } else if (attempts >= 50) {
+                } else if (attempts >= 300) {
                     clearInterval(bootInterval);
                 }
             }, 200);

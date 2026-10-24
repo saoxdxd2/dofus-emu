@@ -1,0 +1,28 @@
+{
+ "workers": 4,
+ "rows": 155199,
+ "train": 139676,
+ "val": 15523,
+ "minutes": 26.0,
+ "depth": 5,
+ "tools": {
+  "quest.advance": 37.8,
+  "farm.start": 30.4,
+  "nav.goto": 21.4,
+  "fight.join": 6.1,
+  "inv.list": 1.1,
+  "inv.sell": 1.1,
+  "quest.list": 0.7,
+  "state.snapshot": 0.7,
+  "fight.pass": 0.1,
+  "hdv.scan": 0.1,
+  "knowledge.search": 0.1,
+  "safe.stop": 0.1,
+  "knowledge.remember": 0.1,
+  "chat.say": 0.1,
+  "nav.follow": 0.1,
+  "farm.stop": 0.1,
+  "hdv.list": 0.1,
+  "knowledge.forget": 0.1
+ }
+}

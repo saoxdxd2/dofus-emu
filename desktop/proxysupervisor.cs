@@ -626,13 +626,18 @@ namespace DofusFarm.Engine
                 {
                     int port = 1080;
                     try { port = new Uri(url).Port; } catch { }
-                    c.Healthy = FarmEngine.ProbeSocksEgress(port, "1.1.1.1", 443, ProbeTimeoutMs);
+                    c.Healthy = FarmEngine.ProbeSocksEgress(port, "1.1.1.1", 443, timeoutMs);
                     c.Note = c.Healthy ? "tunnel carries traffic" : "listening but no traffic (handshake blocked)";
                 }
                 else
                 {
-                    c.Healthy = FarmEngine.PortOpenPublic(url);
-                    c.Note = c.Healthy ? "socks5 listener up (not end-to-end tested)" : "socks5 listener down";
+                    // A listener that answers TCP says nothing about whether it carries a
+                    // CONNECT. Measured: a proxy passed the port check, then closed the game's
+                    // first login dial; the relay correctly refused to move the pin, and the
+                    // client sat on "server busy" because the cached pin could never recover.
+                    // Probe the whole path before ranking it.
+                    c.Healthy = FarmEngine.ProbeSocksEgress(url, "1.1.1.1", 443, timeoutMs);
+                    c.Note = c.Healthy ? "socks5 carried a CONNECT" : "listener up, no CONNECT";
                 }
                 c.LatencyMs = (int)(DateTime.UtcNow - t0).TotalMilliseconds;
                 return c;
@@ -757,7 +762,52 @@ namespace DofusFarm.Engine
                     parts.Add(c.Url);
                 }
             }
+
+            // The sticky-pin fast path deliberately keeps `Candidates` to the pin alone, so the
+            // two loops above had nothing to append and the relay was launched with a one-deep
+            // chain. It then had nowhere to fail over to: the pinned proxy flapped every ~10 s
+            // and every login fetch that landed in a down window failed closed ("server busy")
+            // while seven other egresses were answering the supervisor. Add unprobed hops from
+            // outside the candidate list. They are last resort only; the relay still dials the
+            // pin first, so the session's exit address does not change unless the pin dies.
+            if (parts.Count < max)
+            {
+                foreach (string u in UnprobedFallbackUrls(max))
+                {
+                    if (parts.Count >= max) break;
+                    if (u.IndexOf(',') >= 0 || parts.Contains(u)) continue;
+                    parts.Add(u);
+                }
+            }
             return string.Join(",", parts.ToArray());
+        }
+
+        /// <summary>
+        /// Extra hops for a chain that would otherwise be one deep, without probing them.
+        /// The relay races them only after the primary fails, so a dead entry costs nothing
+        /// until it is needed, and a missing entry costs the login.
+        /// </summary>
+        private List<string> UnprobedFallbackUrls(int max)
+        {
+            var urls = new List<string>();
+            try
+            {
+                NetworkSettings s = NetworkSettings.For(NetworkSettings.AppBase);
+                if (FarmEngine.IsWarpInstalled() && FarmEngine.IsWarpListening())
+                    urls.Add(s.SocksUrl);
+
+                string[] pool = FarmEngine.GetShuffledProxyPool();
+                if (pool != null)
+                {
+                    foreach (string p in pool)
+                    {
+                        if (urls.Count >= max) break;
+                        if (!string.IsNullOrEmpty(p)) urls.Add(p);
+                    }
+                }
+            }
+            catch { }
+            return urls;
         }
 
         public string HopChain(string exitUrl, int max)

@@ -409,6 +409,93 @@
             authDiag('fetch tap error: ' + e);
         }
 
+        // ---- Login outcome diagnostics ----
+        // The client maps every unrecognized auth failure to the same "maintenance"
+        // popup, so the log otherwise has no reason. Tap the UI entry points once they
+        // exist: the next run says which popup appeared and what dofus.login returned.
+        try {
+            var tapTries = 0;
+            var tapIv = setInterval(function () {
+                tapTries++;
+                try {
+                    var gui = window.gui;
+                    if (gui && !gui.__authPopupTap && typeof gui.openSimplePopup === 'function') {
+                        gui.__authPopupTap = true;
+                        window.__authPopupCount = 0;
+                        var wrapPopup = function (name) {
+                            var orig = gui[name];
+                            if (typeof orig !== 'function') return;
+                            gui[name] = function (a, b) {
+                                try {
+                                    if (window.__authPopupCount < 40) {
+                                        window.__authPopupCount++;
+                                        var title = '', msg = '';
+                                        if (a && typeof a === 'object') { title = a.title || ''; msg = a.message || ''; }
+                                        else if (name === 'openSimplePopup') { msg = a; title = b; }
+                                        else { msg = a; }
+                                        authDiag('popup ' + name + ' title=' + String(title || '').slice(0, 120) + ' message=' + String(msg || '').slice(0, 300));
+                                    }
+                                } catch (e) {}
+                                return orig.apply(this, arguments);
+                            };
+                        };
+                        wrapPopup('openSimplePopup');
+                        wrapPopup('openConfirmPopup');
+                        wrapPopup('openPopup');
+                        authDiag('popup tap installed');
+                    }
+
+                    var dofus = window.dofus;
+                    if (dofus && typeof dofus.login === 'function' && !dofus.__authLoginTap) {
+                        dofus.__authLoginTap = true;
+                        var origLogin = dofus.login;
+                        dofus.login = function (cb) {
+                            if (typeof cb === 'function') {
+                                var wrapped = function (err, res) {
+                                    try {
+                                        if (err) authDiag('dofus.login failed reason=' + (err.reason !== undefined ? err.reason : '?') + ' message=' + String(err.message || err).slice(0, 200));
+                                        else authDiag('dofus.login callback ok' + (res && res.disconnected ? ' (disconnected)' : ''));
+                                    } catch (e) {}
+                                    return cb.apply(this, arguments);
+                                };
+                                return origLogin.call(this, wrapped);
+                            }
+                            return origLogin.apply(this, arguments);
+                        };
+                        authDiag('dofus.login tap installed');
+                    }
+
+                    var cm = dofus && dofus.connectionManager;
+                    if (cm && typeof cm.on === 'function' && !cm.__authServerTap) {
+                        cm.__authServerTap = true;
+                        cm.on('ServersListMessage', function (msg) {
+                            try {
+                                var list = (msg && msg.servers) || [];
+                                var parts = [];
+                                for (var i = 0; i < list.length && i < 40; i++) {
+                                    parts.push(list[i].id + ':' + list[i].status + (list[i].isSelectable ? '+' : '-'));
+                                }
+                                authDiag('ServersList statuses ' + parts.join(','));
+                            } catch (e) {}
+                        });
+                        cm.on('SelectedServerRefusedMessage', function (msg) {
+                            try {
+                                authDiag('SelectedServerRefused serverId=' + (msg && msg.serverId) + ' error=' + (msg && msg.error) + ' status=' + (msg && msg.serverStatus));
+                            } catch (e) {}
+                        });
+                        authDiag('connection taps installed');
+                    }
+
+                    if (tapTries > 240) clearInterval(tapIv);
+                } catch (e) {
+                    authDiag('login tap error: ' + e);
+                    clearInterval(tapIv);
+                }
+            }, 250);
+        } catch (e) {
+            authDiag('login tap install error: ' + e);
+        }
+
         try {
             var wrapTries = 0;
             var iv = setInterval(function () {

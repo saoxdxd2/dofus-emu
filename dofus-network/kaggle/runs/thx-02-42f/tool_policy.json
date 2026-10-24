@@ -1,0 +1,31 @@
+{
+ "kind": "tool-policy",
+ "tools": [
+  "knowledge.search",
+  "nav.goto",
+  "nav.follow",
+  "quest.list",
+  "quest.advance",
+  "farm.start",
+  "farm.stop",
+  "fight.join",
+  "fight.pass",
+  "inv.list",
+  "inv.sell",
+  "hdv.scan",
+  "hdv.list",
+  "chat.say",
+  "state.snapshot",
+  "safe.stop",
+  "knowledge.remember",
+  "knowledge.forget"
+ ],
+ "features": 42,
+ "val_accuracy": 0.8224,
+ "teacher_agreement": 0.7054,
+ "ece": 0.0642,
+ "params": 48786,
+ "hidden": 192,
+ "depth": 2,
+ "rows": 145732
+}

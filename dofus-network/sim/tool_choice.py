@@ -145,7 +145,12 @@ def _perturb(world: World, rng: random.Random) -> None:
     """
     roll = rng.random()
     if roll < 0.30:
-        world.map_id = rng.choice([1001, 2002, 3003, 4004])   # wrong place
+        # A real map from the KB, not a made-up id: a wrong place has to be
+        # reachable, or the recovery is a hole rather than a decision.
+        places = [int(q.start_map) for q in world.quests.values() if q.start_map]
+        if places:
+            world.map_id = int(rng.choice(places))
+            world.visited.add(world.map_id)
     elif roll < 0.60:
         world.inventory.clear()                                # nothing carried
     elif roll < 0.70:
@@ -153,6 +158,28 @@ def _perturb(world: World, rng: random.Random) -> None:
         # a waste of a step. Without it inv.sell can never win a fork.
         for i in range(world.capacity):
             world.inventory[900000 + i] = 1
+
+
+def _planned_objective(world: World, planner: QuestPlanner
+                       ) -> Optional[tuple]:
+    """The objective the planner's last call is about.
+
+    The world's `current_objective()` is the oldest active quest. The planner may
+    deliberately work on a different one, and featurising the oldest while storing a
+    label for another quest teaches the model a mapping that does not exist.
+    """
+    qid = planner.current_quest
+    oid = planner.current_objective
+    if qid is None or oid is None:
+        return None
+    quest = world.quests.get(int(qid))
+    if quest is None:
+        return None
+    for step_idx, step in enumerate(quest.steps):
+        for obj_idx, obj in enumerate(step.get("objectives") or []):
+            if obj.get("id") == oid:
+                return quest, step_idx, obj_idx, obj
+    return None
 
 
 def episode(level: int, steps: int, seed: int, rng: random.Random,
@@ -172,14 +199,14 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             _perturb(world, rng)
 
         obs = world.observe()
-        current = world.current_objective()
         call = planner.choose("do all the quests", obs, None)
         if call is None:
             break
+        current = _planned_objective(world, planner)
         if current is None:
             # Accepting a quest: a real step, but there is no objective to featurise.
             ok, note = world.step(call.tool, call.args)
-            planner.note_result(call.tool, ok, note, obs)
+            planner.note_result(call.tool, ok, note, world.state())
             continue
 
         quest, step_idx, obj_idx, obj = current
@@ -208,7 +235,7 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             winner = call.tool
 
         ok, note = world.step(call.tool, call.args)
-        planner.note_result(call.tool, ok, note, obs)
+        planner.note_result(call.tool, ok, note, world.state())
         advanced = world.objectives_completed > base
 
         rows.append({
@@ -252,6 +279,9 @@ def _parallel(args: argparse.Namespace) -> int:
                "--out", str(root / ("w%d" % i))]
         if args.noise:
             cmd.append("--noise")
+        if args.travel_cost:
+            cmd.append("--travel-cost")
+        cmd += ["--ordering", args.ordering]
         if deadline:
             cmd += ["--deadline-epoch", "%.0f" % deadline]
         procs.append(subprocess.Popen(cmd, stdout=subprocess.DEVNULL,

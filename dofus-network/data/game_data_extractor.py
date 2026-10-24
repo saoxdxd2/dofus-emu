@@ -54,9 +54,10 @@ class SpellInfo:
     max_cast_per_turn: int = 2
     max_cast_per_target: int = 2
     cooldown: int = 0
-    crit_rate_base: int = 30  # 1/30
+    crit_rate_base: int = 30  # Legacy 1/N records
     crit_bonus_damage: int = 0
     effects: List[DamageEffect] = field(default_factory=list)
+    crit_rate_percent: Optional[float] = None
 
     def get_name(self, lang: str = "fr") -> str:
         lang = lang.lower()

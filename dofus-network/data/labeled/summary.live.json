@@ -1,0 +1,56 @@
+{
+  "files": [
+    "trajectories\\default.jsonl",
+    "trajectories\\default.20261023-045129.jsonl",
+    "trajectories\\default.20261023-045140.jsonl",
+    "trajectories\\default.20261023-045151.jsonl",
+    "trajectories\\default.20261023-050433.jsonl",
+    "trajectories\\dofus-05.jsonl"
+  ],
+  "steps": 763,
+  "with_before": 573,
+  "with_after": 599,
+  "stale_before": 34,
+  "after_sources": {
+    "response_snapshot": 258,
+    "query_data": 261,
+    "missing": 164,
+    "next_observation": 80
+  },
+  "labels": {
+    "game_failed": 225,
+    "query": 267,
+    "unlabelable": 207,
+    "noop": 46,
+    "quest_progress": 18
+  },
+  "verdicts": {
+    "failed": 228,
+    "advanced": 285,
+    "unknown": 204,
+    "noop": 46
+  },
+  "outcomes": {
+    "failed": 397,
+    "verified": 267,
+    "unverified": 99
+  },
+  "tools": {
+    "quest.advance": 276,
+    "state.snapshot": 388,
+    "safe.stop": 49,
+    "nav.goto": 6,
+    "quest.list": 35,
+    "inv.list": 9
+  },
+  "game_failures": {
+    "no NPC on this map to talk to; pass objective_id to validate directly": 225
+  },
+  "objective_claimed_rows": 20,
+  "trusted_progress_rows": 18,
+  "unique_progress_transitions": 4,
+  "repeated_progress_rows": 14,
+  "usable_sft_rows": 4,
+  "evidence_rows": 225,
+  "output": "data\\labeled\\steps.live.jsonl"
+}

@@ -26,7 +26,7 @@ at runtime.
 |---|---|
 | game bundle | **1.74.9**, downloaded from the server (was a cached 1.74.8) |
 | login | **works** — guest and Google both complete |
-| window resize | **works** (patch 0 guards `resizeWideScreen`) |
+| window resize | **fixed 2026-10-24** — `updateScreen` re-reads the live viewport every call (patch rule 12); the old build froze the boot-time size |
 | patches | 11 active, patch 4 skipped (markers moved in 1.74.9) |
 | updater | **transactional**: staging tree → re-apply patches → validate → commit with `.prev`; refuses a bundle that fails validation |
 | patch rules | one source (`tools/patch-rules.txt`, generated from `patch-engine.js`); `DofusFarm.exe --bundle-selftest` proves the runtime rules equal the build |

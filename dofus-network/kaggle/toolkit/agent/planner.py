@@ -26,30 +26,29 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from agent.features import ObsTracker  # noqa: E402
+from agent.observe import flatten
+from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E402
+                            KILL_TYPES, MAP_TYPES, ObsTracker, TALK_TYPES,
+                            _params, direction_hint, known_map,
+                            objective_type, required_map, travel_hops)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
 
-TALK_TYPES = {1, 9}
-MAP_TYPES = {4}
-AREA_TYPES = {5}
-KILL_TYPES = {0, 6, 14, 16}
-FIGHT_TYPES = {6}          # "in a fight": needs fight.join, not farm.start
-DELIVER_TYPES = {2, 3, 12}
-CRAFT_TYPES = {17}
+# A refused claim is the start of the objective's action path, not the end of the
+# quest. The planner retires a ready objective only after this many hard failures
+# in a row, or after this many actions that did not even change the map (a walk
+# that is crossing the world legitimately changes it, so only a truly inert
+# action loop reaches the second bound).
+CLAIM_FAILURE_LIMIT = 3
+CLAIM_ACTION_LIMIT = 10
 
-
-def _params(obj: Dict[str, Any]) -> Dict[str, Any]:
-    raw = obj.get("params")
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            return json.loads(raw.replace("'", '"'))
-        except ValueError:
-            return {}
-    return {}
+# A quest the server will not activate is a quest this session cannot do. The
+# client answers a `QuestStartRequestMessage` as sent whether or not the server
+# accepts it, and a quest with unmet prerequisites never enters `quests_active`;
+# a live session re-sent quest 584 every step for its whole budget. Three start
+# attempts that the observation says never activated retire it for the session.
+START_ATTEMPT_LIMIT = 3
 
 
 def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
@@ -62,15 +61,38 @@ def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
     """
     p = _params(obj)
     t = obj.get("type_id")
-    if tool in ("nav.goto", "nav.walk"):
+    if tool == "nav.goto":
+        # `parameter0` is not a destination for a DiscoverMap objective; it is
+        # the text id of the destination's name. Sending it as a map id is how
+        # a live session asked the client to cross to map 698953 nine times.
         need = obj.get("map_id")
-        if need is None and t in MAP_TYPES:
-            need = p.get("parameter0")
         try:
             need = int(need) if need is not None else None
         except (TypeError, ValueError):
             need = None
-        return {"map_id": need} if need else {}
+        if need:
+            return {"map_id": need}
+        # A discovery objective names no place, so the only legal move is an edge
+        # of the current map. This matters to the learned policy too: it picks the
+        # tool, then asks this function for the arguments, and an empty nav.goto is
+        # refused by the client before anything can be discovered.
+        block = obs.get("map") if isinstance(obs, dict) else None
+        exits = block.get("exits") if isinstance(block, dict) else None
+        candidates = []
+        for row in exits or []:
+            if not isinstance(row, dict):
+                continue
+            direction = row.get("direction")
+            try:
+                dest = int(row.get("map_id"))
+            except (TypeError, ValueError):
+                continue
+            if direction and dest > 0:
+                candidates.append({"direction": direction, "map_id": dest})
+        if candidates:
+            pick = next((e for e in candidates if not known_map(e["map_id"])), candidates[0])
+            return {"direction": pick["direction"]}
+        return {}
     if tool == "quest.advance":
         npc = p.get("parameter0") if t in (1, 9, 3) else p.get("parameter1")
         args: Dict[str, Any] = {"quest_id": int(quest["id"])}
@@ -82,9 +104,13 @@ def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
         return args
     if tool == "farm.start":
         if t in DELIVER_TYPES:
+            # `resource`, not `item`: the client reads `args.resource` to start
+            # harvesting, and `item` was rejected by the contract ("unknown argument(s)
+            # for farm.start: item"), so show-item, deliver and soul-stone objectives
+            # could not be planned at all.
             item = p.get("parameter1") if t == 3 else p.get("parameter0")
             try:
-                return {"item": int(item)} if item is not None else {}
+                return {"resource": int(item)} if item is not None else {}
             except (TypeError, ValueError):
                 return {}
         monster = p.get("parameter0")
@@ -106,7 +132,8 @@ class QuestPlanner:
 
     def __init__(self, level_hint: int = 60, max_quest_level: int = 200,
                  store: Any = None, curriculum: str = "greedy",
-                 seed: int = 0, focus: Optional[int] = None) -> None:
+                 seed: int = 0, focus: Optional[int] = None,
+                 ordering: str = "step") -> None:
         self.quests: Dict[int, Dict[str, Any]] = {}
         path = CACHE / "quests_full.json"
         if path.exists():
@@ -117,6 +144,10 @@ class QuestPlanner:
         self.level_hint = level_hint
         self.max_quest_level = max_quest_level
         self.current_quest: Optional[int] = None
+        # Which objective the call that `choose` just returned is about. The corpus
+        # needs this: featurising the world's oldest active objective labelled
+        # actions for a different quest whenever the planner skipped one.
+        self.current_objective: Optional[int] = None
         self._order: Optional[List[int]] = None
         # Monotone memory of what the observation ever said was finished. The
         # planner is otherwise a pure function of the observation, which is correct
@@ -142,6 +173,10 @@ class QuestPlanner:
         # curriculum always finishes the shortest quests first, and the shortest
         # quests are all the same shape.
         self.focus = focus
+        # "step" is the KB's order, which is arbitrary. "nearest" costs nothing to
+        # compute and is exactly optimal on this data (7.3 vs 7.3 travel steps per
+        # step), so the only reason to keep "step" is to have something to compare to.
+        self.ordering = ordering
         self._by_type: Optional[Dict[int, List[int]]] = None
         # History of its own attempts. The caller reports the outcome back through
         # `note_result`, so the policy sees exactly what the corpus saw — a policy
@@ -151,6 +186,31 @@ class QuestPlanner:
         # Discovered facts (npc -> map, for example) change plans without any
         # retraining. This is the point of keeping knowledge out of the weights.
         self.store = store
+        # How many times the planner has asked the server to validate a ready
+        # objective without it moving. `ready_objectives` repeats every step until
+        # something changes, so a planner with no memory of its own attempts
+        # re-sends the same message forever — which is exactly what a live session
+        # did, for its whole budget, on objective 13493.
+        self._claim_attempts: Dict[Tuple[int, int], int] = {}
+        # Consecutive hard failures (the caller reports them through `note_result`)
+        # and actions emitted since the map last changed. The fallback exists
+        # because the guard refuses some validations; retiring on the first action
+        # would turn every such refusal into a lost quest.
+        self._claim_failures: Dict[Tuple[int, int], int] = {}
+        self._claim_actions: Dict[Tuple[int, int], int] = {}
+        self._claim_map: Dict[Tuple[int, int], Any] = {}
+        # The (key, tool) of the last claim/fallback action, so `note_result` can
+        # attribute an outcome to the objective it was for instead of guessing.
+        self._pending_claim: Optional[Tuple[Tuple[int, int], str]] = None
+        # Start requests for quests that are not active yet. The client's ok only
+        # means the message was sent; `quests_active` in the next observation is
+        # the evidence that the server accepted it.
+        self._start_failures: Dict[int, int] = {}
+        # The snapshot a decision was made from predates the start request, so the
+        # first report after a start cannot be evidence that the server ignored it.
+        # The flag waits for the next observation before counting a failure.
+        self._start_waits: set = set()
+        self._pending_start: Optional[int] = None
 
     # -- curriculum --------------------------------------------------------
 
@@ -179,6 +239,89 @@ class QuestPlanner:
 
     # -- objective translation --------------------------------------------
 
+    @staticmethod
+    def _observed_exits(obs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The exits the client reports for the map it is standing on."""
+        if not isinstance(obs, dict):
+            return []
+        block = obs.get("map")
+        rows = block.get("exits") if isinstance(block, dict) else None
+        exits: List[Dict[str, Any]] = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            direction = row.get("direction")
+            try:
+                dest = int(row.get("map_id"))
+            except (TypeError, ValueError):
+                continue
+            if direction and dest > 0:
+                exits.append({"direction": direction, "map_id": dest})
+        return exits
+
+    @classmethod
+    def _explore_call(cls, obj: Dict[str, Any],
+                      obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Walk an exit of the current map when the destination is not nameable.
+
+        A DiscoverMap objective with no `map_id` is a generic discovery: the
+        client says "discover a map" and names none, so the only action that can
+        satisfy it is entering a map. Prefer a neighbour the routing graph does
+        not have, since that is the crossing that also extends what the agent
+        knows. None when the observation reports no walkable exits.
+        """
+        exits = cls._observed_exits(obs)
+        if not exits:
+            return None
+        probe = next((e for e in exits if not known_map(e["map_id"])), exits[0])
+        return {
+            "tool": "nav.goto",
+            "args": {"direction": probe["direction"]},
+            "why": ("objective %s: discover a map by walking the %s edge (-> %s)"
+                    % (obj.get("type_id"), probe["direction"], probe["map_id"])),
+        }
+
+    @classmethod
+    def _travel_call(cls, obj: Dict[str, Any], need: int,
+                     obs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """How to reach the objective's map, or the edge its text names.
+
+        A destination the routing graph does not know is not a reason to send a
+        ChangeMapMessage into the void. The objective's own text often carries
+        the actionable detail instead ("click the right edge"), so read that --
+        no quest id is involved, and the same rule covers every objective that
+        phrases a border crossing this way.
+
+        When there is neither a route nor a named edge, the client still cannot
+        change map by being handed an id: it only crosses an exit of the map it
+        is on. A live session re-sent `nav.goto {map_id: 698953}` nine times and
+        the client answered "map 698953 is not adjacent". Walking an exit is the
+        only move that can discover where an unindexed destination actually is.
+        """
+        try:
+            target = int(need)
+        except (TypeError, ValueError):
+            target = need
+        exits = cls._observed_exits(obs)
+        adjacent = any(exit_["map_id"] == target for exit_ in exits)
+        if not known_map(target) and not adjacent:
+            hint = direction_hint(obj)
+            if hint:
+                return {
+                    "tool": "nav.goto",
+                    "args": {"direction": hint},
+                    "why": ("objective %s: cross the %s edge (target map %s is not "
+                            "in the routing graph)" % (obj.get("type_id"), hint, target)),
+                }
+            explore = cls._explore_call(obj, obs)
+            if explore is not None:
+                return explore
+        return {
+            "tool": "nav.goto",
+            "args": {"map_id": target},
+            "why": "objective %s: go to map %s" % (obj.get("type_id"), target),
+        }
+
     def plan_objective(self, quest: Dict[str, Any], step_idx: int,
                        obj: Dict[str, Any], obs: Dict[str, Any]) -> List[Dict[str, Any]]:
         """The calls this objective needs, in order. Empty when unsupported."""
@@ -189,9 +332,8 @@ class QuestPlanner:
         # Where this objective has to happen. The knowledge base names a map for
         # 10,421 of its objectives and the world refuses to complete one from the
         # wrong place, so travelling is a precondition, not a suggestion.
+        # Only `map_id` is a place; see `required_map`.
         need = obj.get("map_id")
-        if need is None and t in MAP_TYPES:
-            need = p.get("parameter0")
         travel: List[Dict[str, Any]] = []
         if need is not None:
             try:
@@ -201,13 +343,16 @@ class QuestPlanner:
         if not need:          # 0 is the KB's "no map", not a destination
             need = None
         if need is not None and here != need:
-            travel = [{"tool": "nav.goto", "args": {"map_id": need},
-                       "why": "objective %s: go to map %d" % (t, need)}]
+            travel = [self._travel_call(obj, need, obs)]
 
         if t in MAP_TYPES:
             if need is not None:
                 return travel
-            return []
+            # A destination the DB does not name: discover one by walking out.
+            # This is the tutorial's "Découvrir une carte" shape, and it is also
+            # the only honest action when `parameter0` is a text id.
+            explore = self._explore_call(obj, obs)
+            return [explore] if explore is not None else []
 
         if t in TALK_TYPES:
             npc = p.get("parameter0")
@@ -262,7 +407,11 @@ class QuestPlanner:
             elif item is not None and not have:
                 # Getting the item is a farming problem; the honest first move is to
                 # go and farm it rather than pretend the delivery can happen.
-                calls.append({"tool": "farm.start", "args": {"item": item},
+                # `resource`, matching what the client reads and what the contract
+                # declares. This was `item`, which the validator rejected outright
+                # ("unknown argument(s) for farm.start: item"), so a deliver objective
+                # whose item was missing could never even be planned.
+                calls.append({"tool": "farm.start", "args": {"resource": item},
                               "why": "objective %d: need item %s first" % (t, item)})
             if npc is not None:
                 calls.append({"tool": "quest.advance",
@@ -311,18 +460,131 @@ class QuestPlanner:
         which is a different objective as soon as the first one is already done.
         That mismatch made a talk call complete a kill objective — every tool worked,
         so the tool choice was not a decision at all.
+
+        With ``ordering="nearest"`` it takes the closest open objective instead of the
+        first. The step order is arbitrary; the distance is not, and it is worth 22% of
+        the travel. Only usable when the tracker belongs to this quest — otherwise the
+        step list describes someone else's step and "nearest" would be a guess.
         """
-        tracker = obs.get("current_objective") or {}
         step = quest["steps"][step_idx]
         objectives = step.get("objectives") or []
+        tracker = obs.get("current_objective") or {}
+
+        if self.ordering == "nearest" and int(tracker.get("quest_id") or 0) == int(quest["id"]) \
+                and int(tracker.get("step", -1)) == int(step_idx):
+            done = {o.get("id") for o in (obs.get("step_objectives") or []) if o.get("done")}
+            here = obs.get("map_id")
+            best, best_cost = None, None
+            for obj in objectives:
+                if obj.get("id") in done:
+                    continue
+                if not self.plan_objective(quest, step_idx, obj, obs):
+                    continue
+                need = required_map(obj)
+                cost = travel_hops(here, need) if need else 0
+                if best_cost is None or cost < best_cost:
+                    best, best_cost = obj, cost
+            if best is not None:
+                return best
+
         if tracker and int(tracker.get("quest_id") or 0) == int(quest["id"]):
             for obj in objectives:
                 if obj.get("id") == tracker.get("objective_id"):
                     return obj
+            # The tracker names an objective that is not in the step we were given. The
+            # client reports `finishedCount` as the step index, and there is no promise
+            # that it matches the KB's numbering — so search the whole quest before
+            # concluding the objective does not exist. `args_for_tool` reads the
+            # objective's own params, so a corrected step index is not needed for the
+            # call itself.
+            for step in quest.get("steps") or []:
+                for obj in step.get("objectives") or []:
+                    if obj.get("id") == tracker.get("objective_id"):
+                        return obj
         for obj in objectives:
             if self.plan_objective(quest, step_idx, obj, obs):
                 return obj
         return None
+
+    # -- objectives the knowledge base does not contain --------------------
+
+    @staticmethod
+    def _objective_from_observation(entry: Any) -> Optional[Dict[str, Any]]:
+        """One observation objective in the shape `plan_objective` reads."""
+        if not isinstance(entry, dict):
+            return None
+        oid = entry.get("id", entry.get("objective_id"))
+        if oid is None:
+            return None
+        obj: Dict[str, Any] = {"id": oid}
+        if entry.get("type_id") is not None:
+            obj["type_id"] = entry["type_id"]
+        if entry.get("map_id"):
+            obj["map_id"] = entry["map_id"]
+        params = entry.get("params")
+        if isinstance(params, dict) and params:
+            obj["params"] = params
+        if entry.get("text"):
+            obj["text"] = entry["text"]
+        return obj
+
+    def _lookup_objective(self, quest_id: int, objective_id: Any,
+                          fallback: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """The objective's own row: the KB's when it has one, the client's otherwise.
+
+        The client serves quests newer than `quests_full.json` (the tutorial among
+        them) and reports their type and parameters in the snapshot. Refusing to plan
+        because the cached tables are old is how a whole session was spent
+        re-validating objective 13493.
+        """
+        quest = self.quests.get(int(quest_id))
+        if quest:
+            for step in quest.get("steps") or []:
+                for obj in step.get("objectives") or []:
+                    if str(obj.get("id")) == str(objective_id):
+                        if not isinstance(fallback, dict):
+                            return dict(obj)
+                        merged = dict(obj)
+                        params = dict(_params(merged))
+                        for key, value in _params(fallback).items():
+                            params.setdefault(key, value)
+                        if params:
+                            merged["params"] = params
+                        for key in ("type_id", "map_id"):
+                            if merged.get(key) is None and fallback.get(key) is not None:
+                                merged[key] = fallback[key]
+                        if not merged.get("text") and fallback.get("text"):
+                            merged["text"] = fallback["text"]
+                        return merged
+        return self._objective_from_observation(fallback or {})
+
+    def _observed_current(self, quest_id: int,
+                          obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        tracker = obs.get("current_objective") or {}
+        try:
+            if int(tracker.get("quest_id") or 0) != int(quest_id):
+                return None
+        except (TypeError, ValueError):
+            return None
+        oid = tracker.get("objective_id")
+        for entry in obs.get("step_objectives") or []:
+            if isinstance(entry, dict) and str(entry.get("id")) == str(oid):
+                return self._objective_from_observation(entry)
+        for entry in obs.get("ready_objectives") or []:
+            if isinstance(entry, dict) and str(entry.get("objective_id")) == str(oid):
+                return self._objective_from_observation(entry)
+        return None
+
+    def _plan_observed(self, quest_id: int, obj: Dict[str, Any],
+                       obs: Dict[str, Any], goal: str) -> Optional[Any]:
+        from agent.runtime import ToolCall
+
+        calls = self.plan_objective({"id": quest_id}, 0, obj, obs)
+        if not calls:
+            return None
+        self.current_quest = quest_id
+        self.current_objective = obj.get("id")
+        return ToolCall(calls[0]["tool"], dict(calls[0]["args"]), goal)
 
     def _plan_quest(self, quest_id: int, step_idx: int,
                     obs: Dict[str, Any], goal: str = "do all the quests") -> Optional[Any]:
@@ -339,12 +601,54 @@ class QuestPlanner:
             return None
         first = calls[0]
         self.current_quest = quest_id
+        self.current_objective = obj.get("id")
         return ToolCall(first["tool"], dict(first["args"]), goal)
 
     def note_result(self, tool: str, ok: bool, note: str, obs: Dict[str, Any]) -> None:
         """The caller reports what happened. Without this the policy cannot learn
         from its own failures, and any history feature would be a guess."""
         self.tracker.record(tool, ok, note, obs)
+        pending, self._pending_claim = self._pending_claim, None
+        started, self._pending_start = self._pending_start, None
+
+        if pending is not None and pending[1] == tool:
+            key = pending[0]
+            if key in self._claim_attempts:      # the objective may have moved on
+                if ok:
+                    self._claim_failures[key] = 0
+                else:
+                    self._claim_failures[key] = self._claim_failures.get(key, 0) + 1
+
+        if started is None or tool != "quest.advance":
+            return
+        # A start request that the observation does not show as active is not
+        # progress, regardless of what the client reported. The one exception is a
+        # quest that is already finished — the server removes it from the active
+        # list, so it must not be counted against the start bound either.
+        active = set()
+        for q in (obs.get("quests_active") or {}):
+            try:
+                active.add(int(q))
+            except (TypeError, ValueError):
+                continue
+        done = set()
+        for q in (obs.get("quests_done") or []):
+            try:
+                done.add(int(q))
+            except (TypeError, ValueError):
+                continue
+        if started in active or started in done:
+            self._start_failures.pop(started, None)
+            self._start_waits.discard(started)
+            return
+        if started not in self._start_waits:
+            self._start_waits.add(started)
+            return
+        self._start_failures[started] = self._start_failures.get(started, 0) + 1
+        if self._start_failures[started] >= START_ATTEMPT_LIMIT:
+            self._skipped.add(started)
+            self._start_failures.pop(started, None)
+            self._start_waits.discard(started)
 
     def fork(self) -> "QuestPlanner":
         """A planner for a counterfactual fork.
@@ -360,14 +664,24 @@ class QuestPlanner:
         twin.level_hint = self.level_hint
         twin.max_quest_level = self.max_quest_level
         twin.current_quest = self.current_quest
+        twin.current_objective = None    # a fork starts before its first action
         twin._order = self._order
         twin._seen_done = set(self._seen_done)
         twin._skipped = set(self._skipped)
+        twin._claim_attempts = dict(self._claim_attempts)
+        twin._claim_failures = dict(self._claim_failures)
+        twin._claim_actions = dict(self._claim_actions)
+        twin._claim_map = dict(self._claim_map)
+        twin._pending_claim = None       # a fork starts before its first action
+        twin._start_failures = dict(self._start_failures)
+        twin._start_waits = set(self._start_waits)
+        twin._pending_start = None
         twin._plannable_cache = self._plannable_cache   # pure function of the KB
         twin.store = self.store
         twin.curriculum = self.curriculum
         twin.rng = random.Random(self.rng.random())
         twin.focus = self.focus
+        twin.ordering = self.ordering
         twin._by_type = self._by_type
         twin.tracker = ObsTracker()
         return twin
@@ -401,20 +715,199 @@ class QuestPlanner:
         self._plannable_cache[quest_id] = ok
         return ok
 
+    def _learn_world(self, obs: Dict[str, Any]) -> None:
+        """Record where NPCs stand, from the map currently being looked at.
+
+        The knowledge base has no npc -> map table, so a talk objective that
+        names an NPC but no destination could not be planned at all: the plan
+        was "talk to npc 1280 from wherever you happen to be", which the client
+        correctly rejected. The observation carries the missing fact, and the
+        same fact serves every quest that names that NPC. This is discovery of
+        the world, not a rule about a quest.
+        """
+        if self.store is None:
+            return
+        details = obs.get("map")
+        if not isinstance(details, dict):
+            return
+        try:
+            here = int(obs.get("map_id") or details.get("map_id"))
+        except (TypeError, ValueError):
+            return
+        try:
+            known = {fact.key: fact for fact in self.store.find("npc_map", "npc:")}
+        except Exception:  # noqa: BLE001 - a fact store must not kill planning
+            known = {}
+        for npc in details.get("npcs") or []:
+            if not isinstance(npc, dict):
+                continue
+            npc_id = npc.get("npc_id", npc.get("templateId"))
+            try:
+                npc_id = int(npc_id)
+            except (TypeError, ValueError):
+                continue
+            key = "npc:%d" % npc_id
+            fact = known.get(key)
+            if fact is not None and fact.value == here:
+                continue
+            # The loop observes the same map every step. Writing a confirmed
+            # fact again would append one line per NPC per step, and starting a
+            # dispute with a human placement every step would eventually delete
+            # a fact a person put there deliberately.
+            if fact is not None and fact.source == "human":
+                continue
+            try:
+                self.store.remember("npc_map", key, here,
+                                    source="observed", confidence=0.9)
+            except Exception:  # noqa: BLE001 - a fact store must not kill planning
+                return
+
     def choose(self, goal: str, observation: Optional[Dict[str, Any]],
                tools: Optional[Sequence[str]] = None) -> Optional[Any]:
         from agent.runtime import ToolCall
 
-        obs = observation or {}
+        # A new decision supersedes an action whose result nobody reported. Keeping
+        # it would let a later `note_result` for a different call be attributed to
+        # the wrong objective.
+        self._pending_claim = None
+        self._pending_start = None
+        self.current_objective = None
+
+        # One normalisation for the nested snapshot, so `map_id`, `level` and the
+        # inventory-by-id lookup are present instead of None. Without it the planner
+        # could not tell which map it was on and never saw the items it already had.
+        obs = flatten(observation)
+        if obs.get("in_fight"):
+            return ToolCall("state.snapshot", {}, goal)
         self.tracker.observe(obs)
+        self._learn_world(obs)
         level = int(obs.get("level") or self.level_hint)
         active = obs.get("quests_active") or {}
         self._seen_done |= {int(q) for q in (obs.get("quests_done") or [])}
         active_ids = [int(k) for k in active.keys()]
 
+        # 0. Claim anything the game says is already done.
+        #
+        # objectiveStatus 2 (CAN_BE_FINISHED) means the conditions are met and the only
+        # thing missing is the validation call. That is free progress, and leaving it
+        # unclaimed is why a quest could look stuck while it was actually ready.
+        #
+        # The claim is attempted once. The entry repeats every step until something
+        # changes, so a planner without memory of its own attempts re-sends a message
+        # that has already been proven inert; the previous live session did exactly
+        # that for its entire budget. After a failed claim, fall back to the
+        # interaction the game itself uses for these objectives: walk to the NPC and
+        # talk to it.
+        ready_now = set()
+        for item in (obs.get("ready_objectives") or []):
+            try:
+                ready_now.add((int(item["quest_id"]), int(item["objective_id"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        # An objective that stops being ready is a new situation; a stale attempt
+        # count would skip validation on a later one.
+        for key in list(self._claim_attempts):
+            if key not in ready_now:
+                del self._claim_attempts[key]
+                self._claim_failures.pop(key, None)
+                self._claim_actions.pop(key, None)
+                self._claim_map.pop(key, None)
+
+        for item in (obs.get("ready_objectives") or [])[:1]:
+            try:
+                quest_id = int(item["quest_id"])
+                objective_id = int(item["objective_id"])
+            except (KeyError, TypeError, ValueError):
+                # A malformed ready-objective entry must not stop the plan, but it must
+                # not be silently swallowed either: a bare `continue` here hid a
+                # four-argument ToolCall for a while, and the branch never ran.
+                continue
+            if quest_id in self._skipped:
+                continue
+            obj = self._lookup_objective(quest_id, objective_id, item)
+            if obj is None:
+                continue
+            key = (quest_id, objective_id)
+            here = obs.get("map_id")
+
+            # A change of map is progress even while the objective stays ready:
+            # walking to a kill or an NPC can take several crossings. Reset only the
+            # action bound here — failures are reset by `note_result`, which is the
+            # only thing that knows whether the directive was accepted.
+            if key in self._claim_map and here is not None and here != self._claim_map[key]:
+                self._claim_actions[key] = 0
+            failures = self._claim_failures.get(key, 0)
+            actions = self._claim_actions.get(key, 0)
+            if failures >= CLAIM_FAILURE_LIMIT or actions >= CLAIM_ACTION_LIMIT:
+                # The action path has had its chance: three rejections in a row, or
+                # ten actions that did not move the character. Retire the quest rather
+                # than loop, but only now — not after the first fallback action.
+                self._skipped.add(quest_id)
+                continue
+
+            # A ready objective still has to happen where it happens. Status 2 is the
+            # client's opinion that the conditions are met; the server is the one that
+            # decides, and being on the wrong map is a precondition it will not waive.
+            need = required_map(obj)
+            if need and here != need:
+                self.current_quest = quest_id
+                self.current_objective = objective_id
+                call = self._travel_call(obj, need, obs)
+                self._claim_actions[key] = actions + 1
+                self._claim_map[key] = here
+                self._pending_claim = (key, call["tool"])
+                return ToolCall(call["tool"], dict(call["args"]), goal)
+
+            attempts = self._claim_attempts.get(key, 0)
+            if attempts == 0:
+                self._claim_attempts[key] = 1
+                self._claim_map[key] = here
+                self._pending_claim = (key, "quest.advance")
+                self.current_quest = quest_id
+                self.current_objective = objective_id
+                return ToolCall("quest.advance",
+                                {"quest_id": quest_id, "objective_id": objective_id}, goal)
+
+            # The claim did not move it. Do the objective's own action, and keep
+            # doing it while the caller reports success: the server requires the
+            # interaction that produced the status, and a guard refusal means the
+            # validation is not available at all. Talk walks to the NPC and talks; a
+            # kill farms or joins a fight; a map objective travels. For a talk
+            # objective this sends `npc_id` without `objective_id`, because the
+            # client prioritises the latter and would otherwise re-send the message
+            # that did not work.
+            calls = self.plan_objective({"id": quest_id}, 0, obj, obs)
+            if calls:
+                first = calls[0]
+                self.current_quest = quest_id
+                self.current_objective = objective_id
+                self._claim_actions[key] = actions + 1
+                self._claim_map[key] = here
+                self._pending_claim = (key, first["tool"])
+                return ToolCall(first["tool"], dict(first["args"]), goal)
+            # The objective's own type translates to nothing we can do (an area or
+            # a craft with no recipe). Retire only this case immediately.
+            self._skipped.add(quest_id)
+
         # 1. Continue an open quest if the observation says one is running.
         for qid, idx in sorted(active.items()):
-            if int(qid) not in self.quests:
+            quest_id = int(qid)
+            # A quest this session has given up on stays in `quests_active` — the
+            # game does not let go of it — but re-planning it every step produces the
+            # same call forever. `_skipped` used to filter only *new* quests, so
+            # retiring an active one had no effect at all.
+            if quest_id in self._skipped:
+                continue
+            if quest_id not in self.quests:
+                # The client serves quests the cached tables do not have — the tutorial
+                # it starts on is one of them. Its snapshot carries the objective's type
+                # and parameters, so this quest is plannable without the KB; before,
+                # "not in quests_full.json" meant the loop could not even try.
+                obj = self._observed_current(quest_id, obs)
+                if obj is not None:
+                    call = self._plan_observed(quest_id, obj, obs, goal)
+                    if call is not None:
+                        return call
                 continue
             call = self._plan_quest(int(qid), int(idx), obs, goal)
             if call is not None:
@@ -449,14 +942,36 @@ class QuestPlanner:
             if qid not in active_ids:
                 # Not active yet: accept it first. A quest is a contract before it
                 # is a list of objectives, and a kill-first quest is unstartable
-                # otherwise.
+                # otherwise. But a start the server never honours is not a contract:
+                # after START_ATTEMPT_LIMIT observations that never show it active,
+                # take another quest instead of re-sending the request forever.
+                if self._start_failures.get(qid, 0) >= START_ATTEMPT_LIMIT:
+                    self._skipped.add(qid)
+                    self._start_failures.pop(qid, None)
+                    self._start_waits.discard(qid)
+                    continue
                 self.current_quest = qid
+                self.current_objective = None   # accepting has no objective yet
+                self._pending_start = qid
                 return ToolCall("quest.advance", {"quest_id": qid}, goal)
             call = self._plan_quest(qid, int(active[str(qid)] if str(qid) in active else active[qid]), obs, goal)
             if call is not None:
                 return call
             self._skipped.add(qid)
         return None
+
+    def skip(self, quest_id: Any) -> None:
+        """Retire a quest the agent cannot advance.
+
+        Nothing inside `_plan_quest` can tell "not yet" from "not ever": it reads the
+        KB and the observation, and both say the objective is still open. Only the
+        loop knows it has tried three times with no change, so only the loop can say
+        this.
+        """
+        try:
+            self._skipped.add(int(quest_id))
+        except (TypeError, ValueError):
+            pass
 
     def plan_quest(self, quest_id: int, obs: Dict[str, Any]) -> List[Dict[str, Any]]:
         """The whole plan for a quest — used to build the SFT corpus."""

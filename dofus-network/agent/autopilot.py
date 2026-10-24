@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
+from agent.observe import flatten
 from agent.controller import Controller, Decision
 from agent.verifier import READ_ONLY_TOOLS, Verdict, Verifier, changed_keys
 from agent.schema import TOOL_SCHEMA, validate_call
@@ -78,6 +79,34 @@ LISTING_TOOLS = {"hdv.list", "inv.sell"}
 # That is what a live session showed: 30 steps of `quest.advance ok / noop`, the loop
 # cycling retry -> recover forever while the character was actually walking.
 SETTLE_TOOLS = {"quest.advance", "nav.goto", "fight.join", "farm.start"}
+
+# How old a snapshot may be before the loop refuses to decide on it.
+#
+# The bridge returns the post-action state with every directive, so the usual
+# decision input is well under this; only a long pause (`--interval`) or a
+# bridge that stopped answering makes the cache stale. An unknown age is not
+# fresh: it means nobody recorded when the snapshot was taken.
+OBS_FRESH_MS = 4000.0
+
+
+def _game_error(result: Any) -> Optional[str]:
+    """The game's own rejection, inside a transport-successful response.
+
+    A directive answers ``ok`` when the bridge executed it. Whether the *game*
+    accepted it is ``response.result.ok``, and 70 of 264 live calls were game
+    failures wearing a success flag ("no NPC on this map"). The loop has to see
+    that, or it retries a call the server already refused.
+    """
+    data = getattr(result, "data", None)
+    if not isinstance(data, dict):
+        return None
+    response = data.get("response")
+    if not isinstance(response, dict):
+        return None
+    inner = response.get("result")
+    if not isinstance(inner, dict) or inner.get("ok") is not False:
+        return None
+    return str(inner.get("error") or "the client rejected the call")
 
 # Minimum price we will ever list at. One kama is the floor the game itself
 # enforces; anything below it is a typo, not a strategy.
@@ -180,6 +209,12 @@ class Autopilot:
         self.steps: List[Step] = []
         self.open_listings: List[Dict[str, Any]] = []
         self._last_obs: Optional[Dict[str, Any]] = None
+        # Provenance of `_last_obs`, recorded with the step it justified. A
+        # snapshot the loop reused must not be written down as if it arrived
+        # with the call: that is the difference between a training pair and a
+        # snapshot paired with an action taken much later.
+        self._obs_age_ms: Optional[float] = None
+        self._obs_source: str = "call"
         self._recent: List[str] = []
         self._index = 0
         self._log_path().parent.mkdir(parents=True, exist_ok=True)
@@ -276,35 +311,63 @@ class Autopilot:
             if isinstance(best, dict) and changed_keys(before, best):
                 return best
             time.sleep(step_s)
-            nxt = self.observe()
+            # A negative budget forces a real re-read: the settle window exists
+            # to see the world *after* the action, and reusing the snapshot
+            # adopted when the directive returned compared the before-state with
+            # itself for the whole window. That is why every SETTLE_TOOL used to
+            # score `noop` no matter how far the character walked.
+            nxt = self.observe(max_age_ms=-1.0)
             if nxt:
                 best = nxt
         return best
 
-    def observe(self) -> Optional[Dict[str, Any]]:
-        """Return the freshest state we can get.
+    def observe(self, max_age_ms: float = OBS_FRESH_MS) -> Optional[Dict[str, Any]]:
+        """Return the freshest state we can get, and remember how fresh it is.
 
-        Prefers what the runtime already holds (the C# bridge piggybacks a
-        snapshot on every directive response, at age 0), and falls back to an
-        explicit `state.snapshot` when there is nothing yet -- at start-up, and
-        after a step that produced no snapshot.
+        The runtime holds the snapshot the bridge returned with the previous
+        directive. That snapshot is the state *after* that action, so it is a
+        legitimate decision input for the next one — but only while it is
+        recent. Anything older, or of unknown age, is fetched again: deciding
+        on an old snapshot is how the loop replays a plan against a world that
+        has already moved on.
         """
         current, age_ms, source = self.runtime.current_observation()
-        if isinstance(current, dict) and current and (age_ms is None or age_ms < 4000):
+        if (isinstance(current, dict) and current and age_ms is not None
+                and age_ms <= max_age_ms):
             self._last_obs = current
+            self._obs_age_ms, self._obs_source = age_ms, source
             return current
 
         if self.dry_run:
             return self._last_obs
 
-        result = self.runtime.executor.execute(
-            "state.snapshot", {}, instance=self.runtime.instance, source="live")
-        if result.ok and isinstance(result.data, dict):
-            snap = result.data.get("snapshot") or result.data
-            if isinstance(snap, dict) and snap:
-                self._last_obs = snap
-                self.runtime.observe(snap, source="live")
-                return snap
+        executor = getattr(self.runtime, "executor", None)
+        instance = getattr(self.runtime, "instance", None)
+        snap = None
+        # A polling read is not a step. `snapshot()` exists so the settle loop
+        # can re-read the state without writing a state.snapshot row for every
+        # poll; test doubles that only implement `execute` still work.
+        reader = getattr(executor, "snapshot", None)
+        if callable(reader):
+            snap = reader(instance=instance)
+        elif executor is not None:
+            result = executor.execute(
+                "state.snapshot", {}, instance=instance, source="live")
+            if result.ok and isinstance(getattr(result, "data", None), dict):
+                snap = result.data.get("snapshot") or result.data
+        if isinstance(snap, dict) and snap:
+            self._last_obs = snap
+            self._obs_age_ms, self._obs_source = 0.0, "call"
+            self.runtime.observe(snap, source="live")
+            return snap
+        if isinstance(current, dict) and current:
+            # No independent read path (a test double, or a bridge that just
+            # failed): use the runtime's copy, but say it is stale so the
+            # recorder never presents it as a fresh pairing.
+            self._last_obs = current
+            self._obs_age_ms, self._obs_source = age_ms, "stale"
+            return current
+        self._obs_source = "stale"
         return self._last_obs
 
     # -- guards --------------------------------------------------------------
@@ -341,11 +404,13 @@ class Autopilot:
                  latency_ms: float = 0.0) -> Verdict:
         """Ask the second agent. It returns verdict + residual + drift together,
         so the loop stops re-deriving them from different key lists."""
+        game_error = _game_error(result)
         return self.verifier.label(
             tool=(call.tool if call is not None else "-"),
             args=(dict(call.args) if call is not None else {}),
-            ok=bool(result.ok),
-            error=(None if result.ok else str(result.error)),
+            ok=bool(result.ok) and game_error is None,
+            error=(game_error if game_error is not None
+                   else (None if result.ok else str(result.error))),
             before=before,
             after=after,
             latency_ms=latency_ms,
@@ -457,18 +522,43 @@ class Autopilot:
                 started = time.perf_counter()
                 result = self.runtime.executor.execute(
                     call.tool, call.args, instance=self.runtime.instance,
-                    goal=goal, source="live", observation=before)
+                    goal=goal, source="live", observation=before,
+                    observation_age_ms=self._obs_age_ms,
+                    observation_source=self._obs_source)
                 # Stop the clock before observing. `observe()` can cost seconds when
                 # it has to ask a dead bridge, and counting that as the action's
                 # latency made every step look slow for the wrong reason.
                 latency_ms = (time.perf_counter() - started) * 1000.0
-                after = self.observe()
+                # The bridge returns the state immediately after the directive ran.
+                # Adopt it: it is the one after-state available without a second
+                # round trip. Calling observe() here handed back the pre-action
+                # snapshot instead, so settle compared `before` with `before` and
+                # every action looked inert.
+                data = getattr(result, "data", None)
+                snap = data.get("snapshot") if isinstance(data, dict) else None
+                if isinstance(snap, dict) and snap:
+                    adopt = getattr(self.runtime, "note_observation", None)
+                    if callable(adopt):
+                        adopt(snap)
+                    self._last_obs = snap
+                    self._obs_age_ms, self._obs_source = 0.0, "carried"
+                    after = snap
+                else:
+                    after = self.observe()
+
+                # Transport success is not game success. Keep the two apart: the
+                # first says the bridge reached the page, the second says the game
+                # accepted the action. The loop acts on the second.
+                game_error = _game_error(result)
+                step_ok = bool(result.ok) and game_error is None
+                step_error = (game_error if game_error is not None
+                              else (None if result.ok else str(result.error)))
 
                 # A walk is not finished when the call returns. Give the tools that move
                 # the character, open a dialog or start a fight a moment to land before
                 # judging them — otherwise every one of them scores `noop` and the loop
                 # retries an action that is already in flight.
-                if result.ok and call.tool in SETTLE_TOOLS:
+                if step_ok and call.tool in SETTLE_TOOLS:
                     after = self._settle(before, after)
 
                 # A closed connection is not a failed step.
@@ -504,6 +594,18 @@ class Autopilot:
                 v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
                 verdict = v.verdict
 
+                # Report the outcome back to the policy. `note_result` existed and was
+                # never called, so the planner's attempt history was always empty — it
+                # could not tell a tool that had just failed from one it had never
+                # tried, and any history feature trained on that would be a fiction.
+                reporter = getattr(self.runtime.policy, "note_result", None)
+                if reporter is not None:
+                    try:
+                        reporter(call.tool, step_ok,
+                                 str(step_error or verdict), after or {})
+                    except Exception:  # noqa: BLE001 - policy history must not kill a run
+                        pass
+
                 note = ""
                 if result.ok and call.tool in LISTING_TOOLS:
                     data = result.data if isinstance(result.data, dict) else {}
@@ -531,8 +633,8 @@ class Autopilot:
                     goal=goal,
                     tool=call.tool,
                     args=dict(call.args),
-                    ok=bool(result.ok),
-                    error=None if result.ok else str(result.error),
+                    ok=step_ok,
+                    error=step_error,
                     # The action's own latency, not the action plus the observation
                     # that followed it. Recomputed here it silently included the
                     # post-step snapshot, so a 200 ms query printed as 6 s.
@@ -551,14 +653,14 @@ class Autopilot:
                 self._emit(step)
                 self._index += 1
 
-                mark = "ok" if result.ok else "FAIL"
+                mark = "ok" if step_ok else "FAIL"
                 # Say what came back, not just that it came back. Without this the
                 # panel shows "inv.list ok advanced 165ms" forever and the user has
                 # no way to tell a working query from a silent no-op.
                 detail = _summarise(result)
                 print(f"[autopilot] {self._index:3d} {call.tool:14s} {mark:4s} "
                       f"{verdict:8s} {step.latency_ms:6.0f}ms{detail}"
-                      f"{'' if result.ok else '  ' + str(result.error)[:80]}")
+                      f"{'' if step_ok else '  ' + str(step_error)[:80]}")
 
                 if self.on_step:
                     try:
@@ -575,7 +677,7 @@ class Autopilot:
                     self.controller.observe_outcome(self._pending, v)
                     self._pending = None
 
-                decision = self.controller.on_step(v, call.tool, result.ok, result.error,
+                decision = self.controller.on_step(v, call.tool, step_ok, step_error,
                                                    before, after)
                 self._pending = decision
                 self.controller.save()
@@ -606,26 +708,32 @@ class Autopilot:
                 else:
                     failures = 0
 
+                if (after or {}).get("in_fight"):
+                    self._recent.clear()
+                    self._stall_since = self._index
+                    time.sleep(1.0)
+                    continue
+
                 # Stall detection on world progress. Repeating the same call is only
                 # one shape of a livelock; the commoner one here is the controller
                 # cycling retry -> recover -> continue forever, where no call repeats
                 # three times yet nothing is ever completed. `objectives_completed` is
                 # the honest measure of whether the session is getting anywhere.
+                #
+                # While a tutorial step runs, "no progress" is the script's state,
+                # not the quest's: the scenario holds the world still until its own
+                # target is tapped. Retiring the quest then blamed the only live
+                # quest for the tutorial's gate.
+                tutorial_active = _tutorial_active(after)
                 prog = (after or {}).get("objectives_completed")
                 if isinstance(prog, (int, float)):
                     if prog > self._best_progress:
                         self._best_progress = prog
                         self._stall_since = self._index
-                    elif self.max_steps <= 0 and self._index - self._stall_since >= self.stall_limit:
-                        qid = None
-                        try:
-                            active = list((before or {}).get("quests_active") or {})
-                            qid = int(active[0]) if active else None
-                        except (TypeError, ValueError):
-                            qid = None
-                        skipper = getattr(self.runtime.policy, "skip", None)
-                        if skipper is not None and qid is not None:
-                            skipper(qid)
+                    elif (not tutorial_active and self.max_steps <= 0
+                          and self._index - self._stall_since >= self.stall_limit):
+                        qid = self._retire_named_quest(call, before)
+                        if qid is not None:
                             print(f"[autopilot] {self.stall_limit} steps without progress; "
                                   f"retiring quest {qid} and taking another")
                         self._stall_since = self._index
@@ -642,20 +750,24 @@ class Autopilot:
                     self._recent.append(key)
                     if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
                         print(f"[autopilot] no progress: {call.tool} repeated 3x with no change")
+                        if tutorial_active:
+                            # The plan is waiting on the scripted step (a dialog
+                            # reply list that has not arrived, an NPC animation).
+                            # Retiring the quest or abandoning the goal here turns
+                            # the tutorial's timing into a lost session.
+                            print("[autopilot] the tutorial is holding this step open;"
+                                  " waiting instead of retiring the quest")
+                            self._recent.clear()
+                            self._stall_since = self._index
+                            time.sleep(1.0)
+                            continue
                         if self.max_steps <= 0:
                             # Retire the quest and take another, instead of ending the
                             # session. An objective that never moves is usually one
                             # this build cannot do at all (an area, a craft, an NPC
                             # that is elsewhere); the next quest may be fine.
-                            qid = None
-                            try:
-                                active = list((before or {}).get("quests_active") or {})
-                                qid = int(active[0]) if active else None
-                            except (TypeError, ValueError):
-                                qid = None
-                            skipper = getattr(self.runtime.policy, "skip", None)
-                            if skipper is not None and qid is not None:
-                                skipper(qid)
+                            qid = self._retire_named_quest(call, before)
+                            if qid is not None:
                                 print(f"[autopilot] retiring quest {qid}; taking another")
                                 self._recent.clear()
                                 continue
@@ -770,6 +882,38 @@ class Autopilot:
             print("[autopilot]   Pick a character and stand on a map, then start again.")
             raise SystemExit(4)
 
+    def _retire_named_quest(self, call: Any, before: Optional[Dict[str, Any]]) -> Optional[int]:
+        """Retire the quest a stuck call was about, not just the first active one.
+
+        A start loop on a quest that never becomes active (584) used to retire the
+        only quest that *was* active (3841): the dead start stayed in the curriculum
+        and was chosen again on the next plan pass, so the loop outlived the quest it
+        had wrongly blamed.
+        """
+        qid = None
+        try:
+            raw = (getattr(call, "args", None) or {}).get("quest_id")
+            if raw is not None:
+                qid = int(raw)
+        except (TypeError, ValueError):
+            qid = None
+        if qid is None:
+            # The policy knows which quest its last plan was for. The active list
+            # does not: it is ordered by the game, and taking its first entry
+            # retired the tutorial quest (3841) because a start loop for a
+            # different quest had stalled. Never guess from that list.
+            try:
+                raw = getattr(self.runtime.policy, "current_quest", None)
+                if raw is not None:
+                    qid = int(raw)
+            except (TypeError, ValueError):
+                qid = None
+        skipper = getattr(self.runtime.policy, "skip", None)
+        if skipper is None or qid is None:
+            return None
+        skipper(qid)
+        return qid
+
     def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
         """Turn agent 2's decision into what the actor does on the next step.
 
@@ -867,12 +1011,31 @@ def _summarise(result: Any) -> str:
         return ""
 
 
+def _tutorial_active(obs: Optional[Dict[str, Any]]) -> bool:
+    """Whether a scripted tutorial step is running on this observation."""
+    if not isinstance(obs, dict):
+        return False
+    block = obs.get("tutorial")
+    return isinstance(block, dict) and bool(block.get("active"))
+
+
 def _compact(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Only the keys the verifier reads, so a step row stays small but trainable."""
+    """Only the keys the verifier reads, so a step row stays small but trainable.
+
+    The snapshot nests position under `position.map_id`; reading only the top
+    level made every logged step say `observation_map: null` while the planner
+    (which flattens) knew exactly where the character stood.
+    """
     if not isinstance(obs, dict):
         return {}
+    flat = flatten(obs)
     keys = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size")
-    return {k: obs[k] for k in keys if k in obs}
+    out = {k: flat[k] for k in keys if k in flat}
+    tutorial = flat.get("tutorial")
+    if isinstance(tutorial, dict) and tutorial.get("active"):
+        out["tutorial"] = {"active": True, "quest_id": tutorial.get("quest_id"),
+                           "step_id": tutorial.get("step_id")}
+    return out
 
 
 def _cell_of(obs: Optional[Dict[str, Any]]) -> Optional[int]:
@@ -893,10 +1056,18 @@ def _cell_of(obs: Optional[Dict[str, Any]]) -> Optional[int]:
 def _map_of(obs: Optional[Dict[str, Any]]) -> Optional[int]:
     if not isinstance(obs, dict):
         return None
-    for key in ("map_id", "mapId", "map"):
+    for key in ("map_id", "mapId"):
         value = obs.get(key)
-        if isinstance(value, int):
+        if isinstance(value, int) and not isinstance(value, bool):
             return value
+    for block in (obs.get("position"), obs.get("map")):
+        if isinstance(block, dict):
+            value = block.get("map_id", block.get("mapId"))
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+    value = obs.get("map")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
     return None
 
 
@@ -986,6 +1157,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         directive_url=args.directive_url,
         instance=args.instance,
     )
+    # One store for facts learned by playing and facts the knowledge tools read:
+    # a planner that discovers "npc 1280 is on map X" must write the same place
+    # `knowledge.remember`/`knowledge.search` use, or the fact is invisible to
+    # the next session.
+    if hasattr(runtime.policy, "store") and runtime.policy.store is None:
+        runtime.policy.store = runtime.executor.store
     pilot = Autopilot(
         runtime=runtime,
         goals=goals,

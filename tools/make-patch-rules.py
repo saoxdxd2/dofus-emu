@@ -103,6 +103,10 @@ def main() -> None:
         old, new = replace_pair(src, old_var, new_var)
         rules.append({"id": rid, "kind": "replace", "old": old, "new": new})
 
+    # 12: updateScreen must re-read the viewport so the game follows the window
+    old, new = replace_pair(src, "viewportOld", "viewportNew")
+    rules.append({"id": 12, "kind": "replace", "old": old, "new": new})
+
     payload = {
         "version": 4,
         "note": "Client bundle patches. Applied at build time by tools/patch-engine.js "

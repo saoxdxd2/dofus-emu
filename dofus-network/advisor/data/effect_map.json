@@ -1,0 +1,1145 @@
+{
+ "generated_at": "2026-10-24T16:10:29+00:00",
+ "sources": {
+  "items_full": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\cache\\items_full.json",
+  "touch_equipments": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\scratch\\touch_allequipments.json"
+ },
+ "anchors": {
+  "111": "action_points",
+  "128": "movement_points"
+ },
+ "stats": {
+  "action_points": {
+   "effect_ids": [
+    111,
+    182
+   ],
+   "confidence": 0.9873,
+   "votes": {
+    "111": 78,
+    "182": 1
+   },
+   "samples": [
+    14063,
+    14080,
+    14094,
+    14090,
+    14169
+   ]
+  },
+  "agility": {
+   "effect_ids": [
+    119,
+    428,
+    123,
+    125,
+    182
+   ],
+   "confidence": 0.9294,
+   "votes": {
+    "119": 79,
+    "428": 3,
+    "123": 1,
+    "125": 1,
+    "182": 1
+   },
+   "samples": [
+    14081,
+    14098,
+    14080,
+    14082,
+    14083
+   ]
+  },
+  "ap_reduction": {
+   "effect_ids": [
+    410
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "410": 19
+   },
+   "samples": [
+    14076,
+    14159,
+    14082,
+    14171,
+    14066
+   ]
+  },
+  "chance": {
+   "effect_ids": [
+    123,
+    125,
+    426,
+    124,
+    182
+   ],
+   "confidence": 0.8929,
+   "votes": {
+    "123": 75,
+    "125": 4,
+    "426": 3,
+    "124": 1,
+    "182": 1
+   },
+   "samples": [
+    14087,
+    14085,
+    14086,
+    14099,
+    14057
+   ]
+  },
+  "critical_hit": {
+   "effect_ids": [
+    115,
+    112,
+    161,
+    752,
+    212,
+    213,
+    210,
+    211
+   ],
+   "confidence": 0.9551,
+   "votes": {
+    "115": 234,
+    "112": 4,
+    "161": 2,
+    "752": 1,
+    "212": 1,
+    "213": 1,
+    "210": 1,
+    "211": 1
+   },
+   "samples": [
+    14081,
+    14098,
+    14159,
+    14082,
+    14077
+   ]
+  },
+  "critical_resistance": {
+   "effect_ids": [
+    420
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "420": 24
+   },
+   "samples": [
+    14080,
+    14077,
+    11718,
+    13129,
+    13632
+   ]
+  },
+  "damage": {
+   "effect_ids": [
+    112,
+    115,
+    752,
+    176,
+    213,
+    428,
+    410,
+    720
+   ],
+   "confidence": 0.9208,
+   "votes": {
+    "112": 93,
+    "115": 2,
+    "752": 1,
+    "176": 1,
+    "213": 1,
+    "428": 1,
+    "410": 1,
+    "720": 1
+   },
+   "samples": [
+    8877,
+    11473,
+    11469,
+    9464,
+    11474
+   ]
+  },
+  "damage_air": {
+   "effect_ids": [
+    428
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "428": 20
+   },
+   "samples": [
+    14098,
+    14082,
+    14056,
+    14051,
+    14053
+   ]
+  },
+  "damage_critical": {
+   "effect_ids": [
+    418
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "418": 11
+   },
+   "samples": [
+    14094,
+    14095,
+    14056,
+    14073,
+    13642
+   ]
+  },
+  "damage_earth": {
+   "effect_ids": [
+    422
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "422": 6
+   },
+   "samples": [
+    12105,
+    12747,
+    14004,
+    12698,
+    12748
+   ]
+  },
+  "damage_fire": {
+   "effect_ids": [
+    424
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "424": 18
+   },
+   "samples": [
+    14066,
+    13117,
+    14065,
+    13118,
+    11736
+   ]
+  },
+  "damage_neutral": {
+   "effect_ids": [
+    430
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "430": 5
+   },
+   "samples": [
+    11739,
+    12697,
+    12695,
+    12696,
+    12035
+   ]
+  },
+  "damage_push": {
+   "effect_ids": [
+    414
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "414": 17
+   },
+   "samples": [
+    14098,
+    14067,
+    13643,
+    13127,
+    12117
+   ]
+  },
+  "damage_traps": {
+   "effect_ids": [
+    225,
+    176
+   ],
+   "confidence": 0.6667,
+   "votes": {
+    "225": 2,
+    "176": 1
+   },
+   "samples": [
+    7217,
+    7143
+   ]
+  },
+  "damage_water": {
+   "effect_ids": [
+    426,
+    422
+   ],
+   "confidence": 0.9333,
+   "votes": {
+    "426": 14,
+    "422": 1
+   },
+   "samples": [
+    14087,
+    14085,
+    14057,
+    13120,
+    13121
+   ]
+  },
+  "dodge": {
+   "effect_ids": [
+    752
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "752": 44
+   },
+   "samples": [
+    14068,
+    14066,
+    13115,
+    14053,
+    14058
+   ]
+  },
+  "dodge_ap": {
+   "effect_ids": [
+    160
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "160": 23
+   },
+   "samples": [
+    14063,
+    14067,
+    13197,
+    14052,
+    13124
+   ]
+  },
+  "dodge_mp": {
+   "effect_ids": [
+    161
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "161": 22
+   },
+   "samples": [
+    14086,
+    14130,
+    14068,
+    14071,
+    13115
+   ]
+  },
+  "heals": {
+   "effect_ids": [
+    178,
+    161,
+    182
+   ],
+   "confidence": 0.9574,
+   "votes": {
+    "178": 45,
+    "161": 1,
+    "182": 1
+   },
+   "samples": [
+    14079,
+    14085,
+    13129,
+    14064,
+    13117
+   ]
+  },
+  "initiative": {
+   "effect_ids": [
+    174
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "174": 167
+   },
+   "samples": [
+    14081,
+    14092,
+    14159,
+    14082,
+    14087
+   ]
+  },
+  "intelligence": {
+   "effect_ids": [
+    126,
+    424,
+    125,
+    182
+   ],
+   "confidence": 0.9367,
+   "votes": {
+    "126": 74,
+    "424": 3,
+    "125": 1,
+    "182": 1
+   },
+   "samples": [
+    14081,
+    14080,
+    14079,
+    14130,
+    14066
+   ]
+  },
+  "movement_points": {
+   "effect_ids": [
+    128,
+    117,
+    222,
+    168
+   ],
+   "confidence": 0.9712,
+   "votes": {
+    "128": 101,
+    "117": 1,
+    "222": 1,
+    "168": 1
+   },
+   "samples": [
+    14087,
+    14078,
+    14096,
+    14162,
+    14066
+   ]
+  },
+  "mp_reduction": {
+   "effect_ids": [
+    412
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "412": 11
+   },
+   "samples": [
+    14054,
+    13897,
+    13658,
+    14059,
+    13127
+   ]
+  },
+  "pods": {
+   "effect_ids": [
+    158
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "158": 24
+   },
+   "samples": [
+    8283,
+    8473,
+    8461,
+    13584,
+    9174
+   ]
+  },
+  "power": {
+   "effect_ids": [
+    138,
+    124
+   ],
+   "confidence": 0.9753,
+   "votes": {
+    "138": 79,
+    "124": 2
+   },
+   "samples": [
+    14063,
+    14094,
+    14095,
+    14096,
+    11718
+   ]
+  },
+  "prospecting": {
+   "effect_ids": [
+    176,
+    124,
+    210,
+    123,
+    115,
+    753
+   ],
+   "confidence": 0.9683,
+   "votes": {
+    "176": 214,
+    "124": 3,
+    "210": 1,
+    "123": 1,
+    "115": 1,
+    "753": 1
+   },
+   "samples": [
+    14076,
+    14080,
+    14082,
+    14085,
+    14066
+   ]
+  },
+  "range": {
+   "effect_ids": [
+    117,
+    111,
+    182,
+    222
+   ],
+   "confidence": 0.9784,
+   "votes": {
+    "117": 136,
+    "111": 1,
+    "182": 1,
+    "222": 1
+   },
+   "samples": [
+    14076,
+    14081,
+    14089,
+    15356,
+    14088
+   ]
+  },
+  "reflect_damage": {
+   "effect_ids": [
+    220
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "220": 1
+   },
+   "samples": [
+    6988
+   ]
+  },
+  "res_fixed_air": {
+   "effect_ids": [
+    242
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "242": 12
+   },
+   "samples": [
+    13116,
+    13132,
+    13121,
+    14286,
+    12109
+   ]
+  },
+  "res_fixed_earth": {
+   "effect_ids": [
+    240
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "240": 10
+   },
+   "samples": [
+    14093,
+    14054,
+    14057,
+    14160,
+    12682
+   ]
+  },
+  "res_fixed_fire": {
+   "effect_ids": [
+    243,
+    176
+   ],
+   "confidence": 0.9167,
+   "votes": {
+    "243": 11,
+    "176": 1
+   },
+   "samples": [
+    14161,
+    13131,
+    12104,
+    11710,
+    12679
+   ]
+  },
+  "res_fixed_neutral": {
+   "effect_ids": [
+    244
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "244": 9
+   },
+   "samples": [
+    14170,
+    13120,
+    11712,
+    12102,
+    12685
+   ]
+  },
+  "res_fixed_water": {
+   "effect_ids": [
+    241,
+    123
+   ],
+   "confidence": 0.9,
+   "votes": {
+    "241": 9,
+    "123": 1
+   },
+   "samples": [
+    13641,
+    14050,
+    14283,
+    12854,
+    12654
+   ]
+  },
+  "res_percent_air": {
+   "effect_ids": [
+    212
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "212": 12
+   },
+   "samples": [
+    14169,
+    14097,
+    14168,
+    13123,
+    11623
+   ]
+  },
+  "res_percent_earth": {
+   "effect_ids": [
+    210,
+    426,
+    242
+   ],
+   "confidence": 0.8824,
+   "votes": {
+    "210": 15,
+    "426": 1,
+    "242": 1
+   },
+   "samples": [
+    14099,
+    14160,
+    13132,
+    13118,
+    12855
+   ]
+  },
+  "res_percent_fire": {
+   "effect_ids": [
+    213
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "213": 17
+   },
+   "samples": [
+    14086,
+    13115,
+    14168,
+    14057,
+    14287
+   ]
+  },
+  "res_percent_neutral": {
+   "effect_ids": [
+    214,
+    160
+   ],
+   "confidence": 0.9231,
+   "votes": {
+    "214": 12,
+    "160": 1
+   },
+   "samples": [
+    14095,
+    14161,
+    13129,
+    12418,
+    12089
+   ]
+  },
+  "res_percent_water": {
+   "effect_ids": [
+    211,
+    176
+   ],
+   "confidence": 0.9412,
+   "votes": {
+    "211": 16,
+    "176": 1
+   },
+   "samples": [
+    14092,
+    14098,
+    14085,
+    14168,
+    14051
+   ]
+  },
+  "res_push": {
+   "effect_ids": [
+    416
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "416": 11
+   },
+   "samples": [
+    14068,
+    11720,
+    14051,
+    12101,
+    11576
+   ]
+  },
+  "strength": {
+   "effect_ids": [
+    118,
+    422,
+    125,
+    138,
+    124,
+    182
+   ],
+   "confidence": 0.9091,
+   "votes": {
+    "118": 80,
+    "422": 3,
+    "125": 2,
+    "138": 1,
+    "124": 1,
+    "182": 1
+   },
+   "samples": [
+    14076,
+    14078,
+    14097,
+    14054,
+    14056
+   ]
+  },
+  "summons": {
+   "effect_ids": [
+    182,
+    115,
+    111,
+    117,
+    112
+   ],
+   "confidence": 0.9255,
+   "votes": {
+    "182": 87,
+    "115": 3,
+    "111": 2,
+    "117": 1,
+    "112": 1
+   },
+   "samples": [
+    14079,
+    14162,
+    13644,
+    13124,
+    9461
+   ]
+  },
+  "tackle": {
+   "effect_ids": [
+    753
+   ],
+   "confidence": 1.0,
+   "votes": {
+    "753": 33
+   },
+   "samples": [
+    14092,
+    14094,
+    14078,
+    14169,
+    14170
+   ]
+  },
+  "vitality": {
+   "effect_ids": [
+    125,
+    178,
+    126,
+    119,
+    118,
+    138,
+    182
+   ],
+   "confidence": 0.9859,
+   "votes": {
+    "125": 491,
+    "178": 2,
+    "126": 1,
+    "119": 1,
+    "118": 1,
+    "138": 1,
+    "182": 1
+   },
+   "samples": [
+    14076,
+    14081,
+    14089,
+    14092,
+    14098
+   ]
+  },
+  "wisdom": {
+   "effect_ids": [
+    124,
+    138,
+    125,
+    416,
+    182
+   ],
+   "confidence": 0.9899,
+   "votes": {
+    "124": 392,
+    "138": 1,
+    "125": 1,
+    "416": 1,
+    "182": 1
+   },
+   "samples": [
+    14076,
+    14081,
+    14089,
+    14098,
+    14063
+   ]
+  },
+  "_meta": {
+   "matched_items": 959,
+   "touch_items": 2235,
+   "curated_effects": 1,
+   "unique_effects": 45
+  },
+  "weapon_damage": {
+   "effect_ids": [
+    100
+   ],
+   "confidence": 1.0,
+   "votes": {},
+   "samples": []
+  }
+ },
+ "effect_to_key": {
+  "111": "action_points",
+  "119": "agility",
+  "410": "ap_reduction",
+  "123": "chance",
+  "115": "critical_hit",
+  "420": "critical_resistance",
+  "112": "damage",
+  "428": "damage_air",
+  "418": "damage_critical",
+  "422": "damage_earth",
+  "424": "damage_fire",
+  "430": "damage_neutral",
+  "414": "damage_push",
+  "225": "damage_traps",
+  "426": "damage_water",
+  "752": "dodge",
+  "160": "dodge_ap",
+  "161": "dodge_mp",
+  "178": "heals",
+  "174": "initiative",
+  "126": "intelligence",
+  "128": "movement_points",
+  "412": "mp_reduction",
+  "158": "pods",
+  "138": "power",
+  "176": "prospecting",
+  "117": "range",
+  "220": "reflect_damage",
+  "242": "res_fixed_air",
+  "240": "res_fixed_earth",
+  "243": "res_fixed_fire",
+  "244": "res_fixed_neutral",
+  "241": "res_fixed_water",
+  "212": "res_percent_air",
+  "210": "res_percent_earth",
+  "213": "res_percent_fire",
+  "214": "res_percent_neutral",
+  "211": "res_percent_water",
+  "416": "res_push",
+  "118": "strength",
+  "182": "summons",
+  "753": "tackle",
+  "125": "vitality",
+  "124": "wisdom",
+  "100": "weapon_damage"
+ },
+ "confidence": {
+  "111": {
+   "key": "action_points",
+   "votes": 78,
+   "share": 0.9873
+  },
+  "119": {
+   "key": "agility",
+   "votes": 79,
+   "share": 0.9294
+  },
+  "410": {
+   "key": "ap_reduction",
+   "votes": 19,
+   "share": 1.0
+  },
+  "123": {
+   "key": "chance",
+   "votes": 75,
+   "share": 0.8929
+  },
+  "115": {
+   "key": "critical_hit",
+   "votes": 234,
+   "share": 0.9551
+  },
+  "420": {
+   "key": "critical_resistance",
+   "votes": 24,
+   "share": 1.0
+  },
+  "112": {
+   "key": "damage",
+   "votes": 93,
+   "share": 0.9208
+  },
+  "428": {
+   "key": "damage_air",
+   "votes": 20,
+   "share": 1.0
+  },
+  "418": {
+   "key": "damage_critical",
+   "votes": 11,
+   "share": 1.0
+  },
+  "422": {
+   "key": "damage_earth",
+   "votes": 6,
+   "share": 1.0
+  },
+  "424": {
+   "key": "damage_fire",
+   "votes": 18,
+   "share": 1.0
+  },
+  "430": {
+   "key": "damage_neutral",
+   "votes": 5,
+   "share": 1.0
+  },
+  "414": {
+   "key": "damage_push",
+   "votes": 17,
+   "share": 1.0
+  },
+  "225": {
+   "key": "damage_traps",
+   "votes": 2,
+   "share": 0.6667
+  },
+  "426": {
+   "key": "damage_water",
+   "votes": 14,
+   "share": 0.9333
+  },
+  "752": {
+   "key": "dodge",
+   "votes": 44,
+   "share": 1.0
+  },
+  "160": {
+   "key": "dodge_ap",
+   "votes": 23,
+   "share": 1.0
+  },
+  "161": {
+   "key": "dodge_mp",
+   "votes": 22,
+   "share": 1.0
+  },
+  "178": {
+   "key": "heals",
+   "votes": 45,
+   "share": 0.9574
+  },
+  "174": {
+   "key": "initiative",
+   "votes": 167,
+   "share": 1.0
+  },
+  "126": {
+   "key": "intelligence",
+   "votes": 74,
+   "share": 0.9367
+  },
+  "128": {
+   "key": "movement_points",
+   "votes": 101,
+   "share": 0.9712
+  },
+  "412": {
+   "key": "mp_reduction",
+   "votes": 11,
+   "share": 1.0
+  },
+  "158": {
+   "key": "pods",
+   "votes": 24,
+   "share": 1.0
+  },
+  "138": {
+   "key": "power",
+   "votes": 79,
+   "share": 0.9753
+  },
+  "176": {
+   "key": "prospecting",
+   "votes": 214,
+   "share": 0.9683
+  },
+  "117": {
+   "key": "range",
+   "votes": 136,
+   "share": 0.9784
+  },
+  "220": {
+   "key": "reflect_damage",
+   "votes": 1,
+   "share": 1.0
+  },
+  "242": {
+   "key": "res_fixed_air",
+   "votes": 12,
+   "share": 1.0
+  },
+  "240": {
+   "key": "res_fixed_earth",
+   "votes": 10,
+   "share": 1.0
+  },
+  "243": {
+   "key": "res_fixed_fire",
+   "votes": 11,
+   "share": 0.9167
+  },
+  "244": {
+   "key": "res_fixed_neutral",
+   "votes": 9,
+   "share": 1.0
+  },
+  "241": {
+   "key": "res_fixed_water",
+   "votes": 9,
+   "share": 0.9
+  },
+  "212": {
+   "key": "res_percent_air",
+   "votes": 12,
+   "share": 1.0
+  },
+  "210": {
+   "key": "res_percent_earth",
+   "votes": 15,
+   "share": 0.8824
+  },
+  "213": {
+   "key": "res_percent_fire",
+   "votes": 17,
+   "share": 1.0
+  },
+  "214": {
+   "key": "res_percent_neutral",
+   "votes": 12,
+   "share": 0.9231
+  },
+  "211": {
+   "key": "res_percent_water",
+   "votes": 16,
+   "share": 0.9412
+  },
+  "416": {
+   "key": "res_push",
+   "votes": 11,
+   "share": 1.0
+  },
+  "118": {
+   "key": "strength",
+   "votes": 80,
+   "share": 0.9091
+  },
+  "182": {
+   "key": "summons",
+   "votes": 87,
+   "share": 0.9255
+  },
+  "753": {
+   "key": "tackle",
+   "votes": 33,
+   "share": 1.0
+  },
+  "125": {
+   "key": "vitality",
+   "votes": 491,
+   "share": 0.9859
+  },
+  "124": {
+   "key": "wisdom",
+   "votes": 392,
+   "share": 0.9899
+  },
+  "100": {
+   "key": "weapon_damage",
+   "votes": 1,
+   "share": 1.0,
+   "source": "weapon-effect inspection"
+  }
+ },
+ "non_stat_effect_ids": [
+  "281",
+  "282",
+  "283",
+  "284",
+  "285",
+  "286",
+  "287",
+  "288",
+  "289",
+  "290"
+ ]
+}

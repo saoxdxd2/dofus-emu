@@ -1,0 +1,246 @@
+{
+ "hidden": 192,
+ "depth": 2,
+ "params": 48786,
+ "val_accuracy": 0.8224,
+ "train_accuracy": 0.8173,
+ "teacher_agreement_on_val": 0.7054,
+ "lift_over_teacher": 0.1169,
+ "macro_f1": 0.2143,
+ "ece": 0.0642,
+ "best_epoch": 90,
+ "per_class": [
+  {
+   "tool": "knowledge.search",
+   "support": 11,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "nav.goto",
+   "support": 4507,
+   "predicted": 5463,
+   "recall": 0.918,
+   "precision": 0.757,
+   "f1": 0.83
+  },
+  {
+   "tool": "nav.follow",
+   "support": 8,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "quest.list",
+   "support": 85,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "quest.advance",
+   "support": 4562,
+   "predicted": 4162,
+   "recall": 0.829,
+   "precision": 0.908,
+   "f1": 0.867
+  },
+  {
+   "tool": "farm.start",
+   "support": 4052,
+   "predicted": 4289,
+   "recall": 0.848,
+   "precision": 0.801,
+   "f1": 0.824
+  },
+  {
+   "tool": "farm.stop",
+   "support": 8,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "fight.join",
+   "support": 917,
+   "predicted": 577,
+   "recall": 0.617,
+   "precision": 0.981,
+   "f1": 0.758
+  },
+  {
+   "tool": "fight.pass",
+   "support": 11,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "inv.list",
+   "support": 142,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "inv.sell",
+   "support": 138,
+   "predicted": 83,
+   "recall": 0.464,
+   "precision": 0.771,
+   "f1": 0.579
+  },
+  {
+   "tool": "hdv.scan",
+   "support": 8,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "hdv.list",
+   "support": 5,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "chat.say",
+   "support": 7,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "state.snapshot",
+   "support": 81,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "safe.stop",
+   "support": 11,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "knowledge.remember",
+   "support": 13,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "knowledge.forget",
+   "support": 8,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  }
+ ],
+ "confusion_top": [
+  {
+   "true": "quest.advance",
+   "predicted": "nav.goto",
+   "n": 498
+  },
+  {
+   "true": "farm.start",
+   "predicted": "nav.goto",
+   "n": 413
+  },
+  {
+   "true": "quest.advance",
+   "predicted": "farm.start",
+   "n": 278
+  },
+  {
+   "true": "nav.goto",
+   "predicted": "farm.start",
+   "n": 247
+  },
+  {
+   "true": "fight.join",
+   "predicted": "nav.goto",
+   "n": 235
+  },
+  {
+   "true": "farm.start",
+   "predicted": "quest.advance",
+   "n": 192
+  },
+  {
+   "true": "fight.join",
+   "predicted": "farm.start",
+   "n": 113
+  },
+  {
+   "true": "nav.goto",
+   "predicted": "quest.advance",
+   "n": 111
+  },
+  {
+   "true": "inv.list",
+   "predicted": "farm.start",
+   "n": 93
+  },
+  {
+   "true": "inv.sell",
+   "predicted": "farm.start",
+   "n": 63
+  },
+  {
+   "true": "state.snapshot",
+   "predicted": "nav.goto",
+   "n": 56
+  },
+  {
+   "true": "quest.list",
+   "predicted": "nav.goto",
+   "n": 56
+  }
+ ],
+ "decision": {
+  "expected_gain_model": 0.7106,
+  "expected_gain_teacher": 0.6487,
+  "expected_gain_oracle": 0.7405,
+  "gain_capture": 0.9597
+ },
+ "sweep": [
+  {
+   "hidden": 192,
+   "depth": 2,
+   "params": 48786,
+   "val_accuracy": 0.8224,
+   "train_accuracy": 0.8173,
+   "teacher_agreement_on_val": 0.7054,
+   "lift_over_teacher": 0.1169,
+   "macro_f1": 0.2143,
+   "ece": 0.0642,
+   "best_epoch": 90,
+   "decision": {
+    "expected_gain_model": 0.7106,
+    "expected_gain_teacher": 0.6487,
+    "expected_gain_oracle": 0.7405,
+    "gain_capture": 0.9597
+   }
+  }
+ ]
+}

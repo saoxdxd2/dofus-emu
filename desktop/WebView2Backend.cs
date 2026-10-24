@@ -148,6 +148,43 @@ namespace DofusFarm.Engine
                 }
             }
 
+            // Seed the page with claim signatures that already ended a session.
+            // The list is extracted from recorded trajectories by
+            // ai/safety_examples.py. It is data, not a hard-coded quest list: a
+            // missing file means the page starts with live memory only.
+            if (!string.IsNullOrEmpty(options.DisguiseScript))
+            {
+                try
+                {
+                    string[] seedCandidates = new[]
+                    {
+                        Path.Combine(Directory.GetCurrentDirectory(), "dofus-network", "data", "safety", "kick_signatures.json"),
+                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dofus-network", "data", "safety", "kick_signatures.json"),
+                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "safety", "kick_signatures.json"),
+                        Path.Combine(Path.GetDirectoryName(typeof(WebView2Backend).Assembly.Location) ?? "", "data", "safety", "kick_signatures.json")
+                    };
+                    foreach (string seedPath in seedCandidates)
+                    {
+                        if (string.IsNullOrEmpty(seedPath) || !File.Exists(seedPath)) continue;
+                        string seedJson = File.ReadAllText(seedPath, Encoding.UTF8).Trim();
+                        // A malformed seed would be a syntax error in front of the
+                        // whole injected agent, so accept only a flat array of
+                        // strings; anything else is ignored and live memory still
+                        // works.
+                        if (Regex.IsMatch(seedJson, "^\\[\\s*(\"[^\"]*\"\\s*(,\\s*\"[^\"]*\"\\s*)*)?\\]$"))
+                        {
+                            options.DisguiseScript = "window.__agentKnownKickSignatures=" + seedJson + ";\n" + options.DisguiseScript;
+                            OnLog?.Invoke("[AGENT] seeded known kick signatures from " + seedPath);
+                        }
+                        break;
+                    }
+                }
+                catch (Exception seedEx)
+                {
+                    OnLog?.Invoke("[AGENT] could not seed kick signatures: " + seedEx.Message);
+                }
+            }
+
             // Default entry URL points to our standalone Dofus Touch client if present, else test probe
             if (string.IsNullOrEmpty(options.EntryUrl))
             {

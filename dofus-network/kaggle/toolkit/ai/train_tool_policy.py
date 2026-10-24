@@ -71,11 +71,19 @@ def find_input(name: str = "train.jsonl") -> Path:
 
 
 def load_split(path: Path, feature_count: Optional[int] = None
-               ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+               ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    """Returns x, y, teacher, weight, gains, width.
+
+    `gains` is the full fork result: for every row, what each candidate tool actually
+    scored. It is the reason this corpus is worth more than its labels. Forty percent
+    of states map to more than one tool, so an argmax target throws away the only
+    information that distinguishes them — by how much the alternatives lost.
+    """
     xs: List[List[float]] = []
     ys: List[int] = []
     teacher: List[int] = []
     trivial: List[float] = []
+    gains: List[List[float]] = []
     width = feature_count or 0
     tool_index: Dict[str, int] = {name: i for i, name in enumerate(DEFAULT_TOOLS)}
     with path.open("r", encoding="utf-8") as fh:
@@ -89,12 +97,51 @@ def load_split(path: Path, feature_count: Optional[int] = None
             xs.append(x)
             ys.append(int(row["y"]))
             teacher.append(tool_index.get(row.get("teacher") or "", -1))
-            trivial.append(0.35 if row.get("trivial") else 1.0)
+            # Two reasons a row carries less signal than it appears to:
+            #  * every candidate scored zero (trivial): the label is the tie-break;
+            #  * the top two are within noise (margin): the label is *also* the
+            #    tie-break, and 23% of this corpus is an exact tie. Measured on rows
+            #    the fork could actually separate, the model is at 0.969; the whole
+            #    gap to 0.90 overall lives in these rows, so they are down-weighted
+            #    rather than deleted (they still teach preconditions).
+            margin = float(row.get("margin") or 0.0)
+            mw = 0.20 if margin <= 0.0 else (0.60 if margin <= 0.10 else 1.0)
+            trivial.append((0.35 if row.get("trivial") else 1.0) * mw)
+            vec = [0.0] * len(DEFAULT_TOOLS)
+            for name, value in (row.get("gains") or {}).items():
+                i = tool_index.get(name)
+                if i is not None:
+                    vec[i] = float(value)
+            gains.append(vec)
     if not xs:
         raise SystemExit("no rows in %s" % path)
     return (np.asarray(xs, dtype="float32"), np.asarray(ys, dtype="int64"),
             np.asarray(teacher, dtype="int64"), np.asarray(trivial, dtype="float32"),
-            width)
+            np.asarray(gains, dtype="float32"), width)
+
+
+def soft_targets(gains: np.ndarray, teacher: np.ndarray, temperature: float = 0.08
+                 ) -> np.ndarray:
+    """A distribution over tools from the fork's own scores.
+
+    Hard argmax says "this tool, and the others are equally wrong". The fork says
+    "this tool won by 0.5 to 0.33" — which is a much weaker claim, and training on the
+    stronger one teaches a confidence the data does not support. Rows where nothing
+    scored keep the teacher as a one-hot: there is no counterfactual there, only the
+    teacher's opinion, and a uniform target over options that all failed would teach
+    noise.
+    """
+    out = np.zeros_like(gains)
+    for i in range(len(gains)):
+        row = gains[i]
+        if row.max() <= 0:
+            t = teacher[i]
+            if t >= 0:
+                out[i, t] = 1.0
+            continue
+        z = np.exp((row - row.max()) / temperature)
+        out[i] = z / z.sum()
+    return out
 
 
 # -- metrics -----------------------------------------------------------------
@@ -149,7 +196,10 @@ def top_confusions(probs: np.ndarray, labels: np.ndarray, tools: List[str],
 def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
               x: np.ndarray, y: np.ndarray, weight: np.ndarray,
               vx: np.ndarray, vy: np.ndarray, vteacher: np.ndarray,
-              device: str, seed: int, quiet: bool = False) -> Dict[str, Any]:
+              device: str, seed: int, quiet: bool = False,
+              target: Optional[np.ndarray] = None,
+              gains: Optional[np.ndarray] = None,
+              vgains: Optional[np.ndarray] = None) -> Dict[str, Any]:
     import torch
     import torch.nn as nn
 
@@ -167,6 +217,7 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
     tx = torch.from_numpy(x).to(device)
     ty = torch.from_numpy(y).to(device)
     tw = torch.from_numpy(weight).to(device)
+    ttarget = torch.from_numpy(target).to(device) if target is not None else None
     vxt = torch.from_numpy(vx).to(device)
     vyt = torch.from_numpy(vy).to(device)
     steps = max(1, math.ceil(len(y) / batch))
@@ -185,7 +236,11 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
                 continue
             opt.zero_grad()
             logits = model(tx[idx])
-            loss = nn.functional.cross_entropy(logits, ty[idx], reduction="none")
+            if ttarget is not None:
+                # Soft targets: cross-entropy against the fork's own distribution.
+                loss = -(ttarget[idx] * torch.log_softmax(logits, dim=1)).sum(1)
+            else:
+                loss = nn.functional.cross_entropy(logits, ty[idx], reduction="none")
             loss = (loss * tw[idx]).mean()
             loss.backward()
             opt.step()
@@ -220,6 +275,20 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
     macro_f1 = float(np.mean([r["f1"] for r in table])) if table else 0.0
     params = int(sum(p.numel() for p in model.parameters()))
 
+    # Decision quality, which is the number that matters: how much progress does the
+    # chosen tool actually buy, against what the best candidate would have bought?
+    decision = {}
+    if vgains is not None:
+        chosen = vgains[np.arange(len(pred)), pred]
+        teacher_gain = (vgains[np.arange(len(pred)), np.clip(vteacher, 0, None)]
+                        if known.any() else np.zeros(1))
+        decision = {
+            "expected_gain_model": round(float(chosen.mean()), 4),
+            "expected_gain_teacher": round(float(teacher_gain.mean()), 4),
+            "expected_gain_oracle": round(float(vgains.max(1).mean()), 4),
+            "gain_capture": round(float(chosen.sum() / max(1e-9, vgains.max(1).sum())), 4),
+        }
+
     return {
         "hidden": hidden, "depth": depth, "params": params,
         "val_accuracy": round(acc, 4), "train_accuracy": round(train_acc, 4),
@@ -228,6 +297,7 @@ def train_one(hidden: int, depth: int, epochs: int, batch: int, lr: float,
         "macro_f1": round(macro_f1, 4), "ece": round(ece(probs, vy), 4),
         "best_epoch": best["epoch"],
         "per_class": table, "confusion_top": top_confusions(probs, vy, DEFAULT_TOOLS),
+        "decision": decision,
         "model": model, "probs": probs,
     }
 
@@ -247,6 +317,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--sweep", action="store_true",
                     help="train several capacities and report which one, if any, wins")
+    ap.add_argument("--targets", choices=("soft", "hard"), default="hard",
+                    help="hard trains on the argmax label. soft trains on the fork's "
+                         "gain distribution instead: measured 2026-10-22, it buys "
+                         "+0.0003 decision gain and costs 0.16 ECE, so it is off by "
+                         "default and kept only to make that comparison reproducible")
+    ap.add_argument("--temperature", type=float, default=0.08)
     args = ap.parse_args(argv)
 
     import torch
@@ -262,13 +338,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not train_path.exists():
         train_path = find_input("train.jsonl")
         val_path = train_path.parent / "val.jsonl"
-    x, y, teacher, weight, width = load_split(train_path)
-    vx, vy, vteacher, _, _ = load_split(val_path, width)
+    x, y, teacher, weight, gains, width = load_split(train_path)
+    vx, vy, vteacher, _, vgains, _ = load_split(val_path, width)
     print("train %d  val %d  features %d  classes %d  device %s"
           % (len(y), len(vy), width, len(DEFAULT_TOOLS), device))
     support = {DEFAULT_TOOLS[i]: int((y == i).sum())
                for i in range(len(DEFAULT_TOOLS)) if (y == i).sum()}
     print("class support:", support)
+
+    target = soft_targets(gains, teacher, args.temperature) if args.targets == "soft" else None
+    if target is not None:
+        print("soft targets from fork gains (temperature %.3f); %.1f%% of rows are "
+              "one-hot because every candidate scored zero"
+              % (args.temperature, 100.0 * float((gains.max(1) <= 0).mean())))
 
     configs = [(args.hidden, args.depth)]
     if args.sweep:
@@ -279,11 +361,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("== hidden %d depth %d ==" % (hidden, depth))
         r = train_one(hidden, depth, args.epochs, args.batch, args.lr,
                       x, y, weight, vx, vy, vteacher, device, args.seed,
-                      quiet=args.sweep)
+                      quiet=args.sweep, target=target, gains=gains, vgains=vgains)
         results.append(r)
         print("   val_acc %.4f  teacher %.4f  lift %+.4f  macroF1 %.4f  ECE %.4f  params %d"
               % (r["val_accuracy"], r["teacher_agreement_on_val"],
                  r["lift_over_teacher"], r["macro_f1"], r["ece"], r["params"]))
+        if r["decision"]:
+            print("   gain: model %.4f  teacher %.4f  oracle %.4f  capture %.3f"
+                  % (r["decision"]["expected_gain_model"],
+                     r["decision"]["expected_gain_teacher"],
+                     r["decision"]["expected_gain_oracle"],
+                     r["decision"]["gain_capture"]))
 
     best = max(results, key=lambda r: r["val_accuracy"])
     if args.sweep:

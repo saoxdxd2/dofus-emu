@@ -424,28 +424,29 @@ def test_knowledge_changes_the_plan() -> None:
 
     # A talk objective the KB does not place on a map: the plan has no travel of its
     # own, so any nav.goto after this point can only come from the learned fact.
-    qid = None
+    found = None
     for q, data in planner.quests.items():
-        for step in data["steps"]:
-            for o in step.get("objectives") or []:
+        for si, step in enumerate(data["steps"]):
+            for oi, o in enumerate(step.get("objectives") or []):
                 if o.get("type_id") in (1, 9) and not o.get("map_id"):
-                    qid = q
+                    found = (q, si, oi)
                     break
-            if qid:
+            if found:
                 break
-        if qid:
+        if found:
             break
-    if qid is None:
+    if found is None:
         print("  [SKIP] no unplaced talk objective in the KB")
         return
 
-    obj = planner.quests[qid]["steps"][0]["objectives"][0]
+    qid, si, oi = found
+    obj = planner.quests[qid]["steps"][si]["objectives"][oi]
     npc = _json.loads(str(obj["params"]).replace("'", '"'))["parameter0"]
     obs = {"map_id": None, "inventory": {}}
 
-    before = [c["tool"] for c in planner.plan_objective(planner.quests[qid], 0, obj, obs)]
+    before = [c["tool"] for c in planner.plan_objective(planner.quests[qid], si, obj, obs)]
     store.remember("npc_map", "npc:%d" % npc, 4242, source="human", confidence=0.9)
-    after = [c["tool"] for c in planner.plan_objective(planner.quests[qid], 0, obj, obs)]
+    after = [c["tool"] for c in planner.plan_objective(planner.quests[qid], si, obj, obs)]
 
     check("a learned npc_map adds travel to the plan",
           "nav.goto" not in before and after and after[0] == "nav.goto",

@@ -115,14 +115,19 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
     # -- navigation ----------------------------------------------------------
     ToolSpec(
         name="nav.goto",
-        description="Travel to a target position. Exactly one of: [x,y] coordinates, "
-                    "a zaap name, an NPC, or a map id.",
+        description="Travel to a target: [x,y] coordinates, a zaap name, an NPC, a "
+                    "map id, a cell (a specific spot on this map), or a direction "
+                    "(leave by that edge).",
         params={
             "x": _p("int", "Target X coordinate."),
             "y": _p("int", "Target Y coordinate."),
             "zaap": _p("str", "Zaap name, any language."),
             "npc": _p("str", "NPC name to travel to."),
             "map_id": _p("int", "Raw map id."),
+            "cell": _p("int", "Walk to this cell on the current map."),
+            "direction": _p("str", "Leave by this edge of the current map.",
+                            enum=["left", "right", "top", "bottom"]),
+            "npc_id": _p("int", "Walk to this NPC's cell, by template id."),
             "lang": _p("str", "Reply language.", enum=["fr", "en", "es", "de"], default="fr"),
             "from_x": _p("int", "Current X (default 4)."),
             "from_y": _p("int", "Current Y (default -19)."),
@@ -234,6 +239,29 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
         backend="directive",
         directive="PASS_TURN",
         returns="ack",
+    ),
+    ToolSpec(
+        name="fight.state",
+        description="Read the live combat board: turn owner, fighters, cells, HP/AP/MP, "
+                    "team membership, and the controlled character's spell descriptors.",
+        params={},
+        backend="directive",
+        directive="FIGHT_STATE",
+        returns="turn, fighter and spell facts from the live client",
+    ),
+    ToolSpec(
+        name="fight.plan",
+        description="Read the live board and compute this turn's legal move-and-cast plan: "
+                    "exact cell geometry, line of sight, AP/MP, cooldowns, resistances, "
+                    "damage and healing. Read-only; it never casts or moves anything.",
+        params={
+            "beam_width": _p("int", "How many partial turns to keep while searching.",
+                             default=16),
+            "max_actions": _p("int", "Maximum casts to consider in the plan.",
+                              default=4),
+        },
+        backend="local",
+        returns="actions with cells/targets/AP/MP/damage, plus expected totals",
     ),
     # -- inventory / market --------------------------------------------------
     ToolSpec(
@@ -519,8 +547,10 @@ def _special_rules(name: str, args: Dict[str, Any]) -> Optional[str]:
         has_half_xy = ("x" in args) != ("y" in args)
         if has_half_xy:
             return "nav.goto needs both x and y, or neither"
-        if not (has_xy or "zaap" in args or "npc" in args or "map_id" in args):
-            return "nav.goto needs one of: x+y, zaap, npc, map_id"
+        targets = ("map_id", "zaap", "npc", "cell", "direction", "npc_id")
+        if not (has_xy or any(key in args for key in targets)):
+            return ("nav.goto needs one of: x+y, zaap, npc, map_id, cell, "
+                    "direction, npc_id")
     if name == "inv.sell":
         if not args.get("item") and not args.get("all"):
             return "inv.sell needs an item name or all=true"

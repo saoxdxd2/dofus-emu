@@ -3,8 +3,8 @@
 Implements the exact damage formulas:
     RawDamage = floor(BaseRoll * (1 + (PrimaryStat + Power) / 100)) + UniversalFlatDamage + ElementalFlatDamage
     CritRawDamage = floor(CritBaseRoll * (1 + (PrimaryStat + Power) / 100)) + UniversalFlatDamage + ElementalFlatDamage + CritFlatDamage
-    DamageAfterPercent = floor(RawDamage * (1 - ResPercent / 100))
-    FinalDamage = max(0, DamageAfterPercent - ResFixed - ArmorShield)
+    DamageAfterFixed = max(0, RawDamage - ResFixed - CriticalResFixed)
+    FinalDamage = max(0, floor(DamageAfterFixed * (1 - ResPercent / 100)) - ArmorShield)
 
 Includes:
 - Turn-to-Kill (TTK) prediction
@@ -18,7 +18,7 @@ from __future__ import annotations
 import itertools
 import math
 import threading
-from dataclasses import astuple, dataclass, field
+from dataclasses import astuple, dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from data.game_data_extractor import (
@@ -54,6 +54,7 @@ class CharacterStats:
     # Critical Bonuses
     critical_hit: int = 0  # +Crit (e.g. +10 CC)
     damage_critical: int = 0
+    heals: int = 0
 
     def get_stat_for_element(self, element: str) -> int:
         elem = element.upper()
@@ -103,6 +104,8 @@ class TargetStats:
     res_fixed_air: int = 0
     # Armor Shield (e.g. Feca Armors)
     armor_shield: int = 0
+    res_fixed_critical: int = 0
+    is_player: bool = False
 
     @classmethod
     def from_monster_grade(cls, monster: MonsterInfo, grade_num: int = 1, lang: str = "fr") -> TargetStats:
@@ -200,6 +203,12 @@ class DofusDamageCalculator:
             denom = max(2, base_crit_rate - crit_bonus)
             return min(0.5, max(0.01, 1.0 / denom))
 
+    @staticmethod
+    def calculate_crit_probability(base_percent: float, crit_bonus: int) -> float:
+        if base_percent <= 0:
+            return 0.0
+        return min(100, max(1, base_percent + crit_bonus)) / 100.0
+
     @classmethod
     def calculate_spell_damage(
         cls,
@@ -208,7 +217,10 @@ class DofusDamageCalculator:
         target: TargetStats,
     ) -> SpellDamageResult:
         """Compute exact min, max, average, and crit damage for a spell."""
-        crit_rate = cls.calculate_crit_rate(spell.crit_rate_base, char.agility, char.critical_hit)
+        if spell.crit_rate_percent is not None:
+            crit_rate = cls.calculate_crit_probability(spell.crit_rate_percent, char.critical_hit)
+        else:
+            crit_rate = cls.calculate_crit_rate(spell.crit_rate_base, char.agility, char.critical_hit)
 
         breakdowns: List[DamageBreakdown] = []
         tot_min, tot_max, tot_avg = 0, 0, 0.0
@@ -218,11 +230,11 @@ class DofusDamageCalculator:
             elem = eff.element.upper()
             if elem == "HEAL":
                 # Healing scales with Intelligence and flat heal
-                mult = 1.0 + (char.intelligence / 100.0)
-                h_min = math.floor(eff.min_roll * mult) + char.damage
-                h_max = math.floor(eff.max_roll * mult) + char.damage
-                ch_min = math.floor((eff.crit_min_roll or eff.min_roll) * mult) + char.damage + char.damage_critical
-                ch_max = math.floor((eff.crit_max_roll or eff.max_roll) * mult) + char.damage + char.damage_critical
+                stat_percent = 100 + char.intelligence
+                h_min = (eff.min_roll * stat_percent) // 100 + char.heals
+                h_max = (eff.max_roll * stat_percent) // 100 + char.heals
+                ch_min = ((eff.crit_min_roll or eff.min_roll) * stat_percent) // 100 + char.heals
+                ch_max = ((eff.crit_max_roll or eff.max_roll) * stat_percent) // 100 + char.heals
                 b = DamageBreakdown(
                     element=elem, base_min=eff.min_roll, base_max=eff.max_roll,
                     final_min=h_min, final_max=h_max, final_avg=(h_min + h_max) / 2.0,
@@ -240,30 +252,29 @@ class DofusDamageCalculator:
             stat = char.get_stat_for_element(elem)
             flat = char.get_flat_for_element(elem)
             res_pct = target.get_res_percent(elem)
+            if target.is_player:
+                res_pct = min(res_pct, 35)
             res_fix = target.get_res_fixed(elem)
             armor = target.armor_shield
 
-            stat_mult = 1.0 + ((stat + char.power) / 100.0)
-            res_mult = 1.0 - (res_pct / 100.0)
+            stat_percent = 100 + stat + char.power
+            resistance_percent = 100 - res_pct
 
             # Normal roll
-            raw_min = math.floor(eff.min_roll * stat_mult) + flat
-            raw_max = math.floor(eff.max_roll * stat_mult) + flat
-            after_pct_min = math.floor(raw_min * res_mult)
-            after_pct_max = math.floor(raw_max * res_mult)
-            f_min = max(0, after_pct_min - res_fix - armor)
-            f_max = max(0, after_pct_max - res_fix - armor)
+            raw_min = (eff.min_roll * stat_percent) // 100 + flat
+            raw_max = (eff.max_roll * stat_percent) // 100 + flat
+            f_min = max(0, (max(0, raw_min - res_fix) * resistance_percent) // 100 - armor)
+            f_max = max(0, (max(0, raw_max - res_fix) * resistance_percent) // 100 - armor)
             f_avg = (f_min + f_max) / 2.0
 
             # Critical roll
             c_base_min = eff.crit_min_roll if eff.crit_min_roll > 0 else eff.min_roll
             c_base_max = eff.crit_max_roll if eff.crit_max_roll > 0 else eff.max_roll
-            c_raw_min = math.floor(c_base_min * stat_mult) + flat + char.damage_critical
-            c_raw_max = math.floor(c_base_max * stat_mult) + flat + char.damage_critical
-            c_after_pct_min = math.floor(c_raw_min * res_mult)
-            c_after_pct_max = math.floor(c_raw_max * res_mult)
-            cf_min = max(0, c_after_pct_min - res_fix - armor)
-            cf_max = max(0, c_after_pct_max - res_fix - armor)
+            c_raw_min = (c_base_min * stat_percent) // 100 + flat + char.damage_critical
+            c_raw_max = (c_base_max * stat_percent) // 100 + flat + char.damage_critical
+            c_res_fix = res_fix + target.res_fixed_critical
+            cf_min = max(0, (max(0, c_raw_min - c_res_fix) * resistance_percent) // 100 - armor)
+            cf_max = max(0, (max(0, c_raw_max - c_res_fix) * resistance_percent) // 100 - armor)
             cf_avg = (cf_min + cf_max) / 2.0
 
             b = DamageBreakdown(
@@ -385,8 +396,10 @@ class SpellRotationOptimizer:
         # 1. Precalculate damage for each spell against target
         calc_results: Dict[int, SpellDamageResult] = {}
         for sp in available_spells:
-            if sp.effects:
-                calc_results[sp.id] = DofusDamageCalculator.calculate_spell_damage(sp, char, target)
+            damage_effects = [effect for effect in sp.effects if effect.element.upper() != "HEAL"]
+            if damage_effects:
+                damage_spell = replace(sp, effects=damage_effects)
+                calc_results[sp.id] = DofusDamageCalculator.calculate_spell_damage(damage_spell, char, target)
 
         if not calc_results:
             return OptimalRotationResult(

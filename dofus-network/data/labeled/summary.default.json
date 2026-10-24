@@ -1,0 +1,50 @@
+{
+  "files": [
+    "trajectories\\default.jsonl"
+  ],
+  "steps": 264,
+  "with_before": 245,
+  "with_after": 250,
+  "stale_before": 28,
+  "after_sources": {
+    "response_snapshot": 112,
+    "query_data": 123,
+    "next_observation": 15,
+    "missing": 14
+  },
+  "labels": {
+    "game_failed": 85,
+    "query": 123,
+    "unlabelable": 14,
+    "noop": 33,
+    "quest_progress": 9
+  },
+  "verdicts": {
+    "failed": 85,
+    "advanced": 132,
+    "unknown": 14,
+    "noop": 33
+  },
+  "outcomes": {
+    "failed": 99,
+    "verified": 123,
+    "unverified": 42
+  },
+  "tools": {
+    "quest.advance": 114,
+    "state.snapshot": 135,
+    "safe.stop": 9,
+    "nav.goto": 6
+  },
+  "game_failures": {
+    "no NPC on this map to talk to; pass objective_id to validate directly": 70,
+    "client directive failed: no client instance is running (start one in DofusFarm first)": 15
+  },
+  "objective_claimed_rows": 11,
+  "trusted_progress_rows": 9,
+  "unique_progress_transitions": 3,
+  "repeated_progress_rows": 6,
+  "usable_sft_rows": 3,
+  "evidence_rows": 85,
+  "output": "data\\labeled\\steps.default.jsonl"
+}

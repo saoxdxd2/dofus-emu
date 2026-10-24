@@ -1,0 +1,166 @@
+{
+ "hidden": 192,
+ "depth": 2,
+ "params": 48786,
+ "val_accuracy": 0.8428,
+ "train_accuracy": 0.8098,
+ "teacher_agreement_on_val": 0.7144,
+ "lift_over_teacher": 0.1284,
+ "macro_f1": 0.4609,
+ "ece": 0.0493,
+ "best_epoch": 60,
+ "per_class": [
+  {
+   "tool": "nav.goto",
+   "support": 595,
+   "predicted": 728,
+   "recall": 0.951,
+   "precision": 0.777,
+   "f1": 0.856
+  },
+  {
+   "tool": "quest.list",
+   "support": 5,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "quest.advance",
+   "support": 462,
+   "predicted": 455,
+   "recall": 0.881,
+   "precision": 0.895,
+   "f1": 0.888
+  },
+  {
+   "tool": "farm.start",
+   "support": 445,
+   "predicted": 398,
+   "recall": 0.798,
+   "precision": 0.892,
+   "f1": 0.842
+  },
+  {
+   "tool": "fight.join",
+   "support": 81,
+   "predicted": 41,
+   "recall": 0.506,
+   "precision": 1.0,
+   "f1": 0.672
+  },
+  {
+   "tool": "inv.list",
+   "support": 17,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  },
+  {
+   "tool": "inv.sell",
+   "support": 8,
+   "predicted": 6,
+   "recall": 0.375,
+   "precision": 0.5,
+   "f1": 0.429
+  },
+  {
+   "tool": "state.snapshot",
+   "support": 6,
+   "predicted": 0,
+   "recall": 0.0,
+   "precision": 0.0,
+   "f1": 0.0
+  }
+ ],
+ "confusion_top": [
+  {
+   "true": "farm.start",
+   "predicted": "nav.goto",
+   "n": 68
+  },
+  {
+   "true": "quest.advance",
+   "predicted": "nav.goto",
+   "n": 44
+  },
+  {
+   "true": "fight.join",
+   "predicted": "nav.goto",
+   "n": 32
+  },
+  {
+   "true": "farm.start",
+   "predicted": "quest.advance",
+   "n": 22
+  },
+  {
+   "true": "nav.goto",
+   "predicted": "quest.advance",
+   "n": 16
+  },
+  {
+   "true": "nav.goto",
+   "predicted": "farm.start",
+   "n": 11
+  },
+  {
+   "true": "quest.advance",
+   "predicted": "farm.start",
+   "n": 11
+  },
+  {
+   "true": "fight.join",
+   "predicted": "farm.start",
+   "n": 8
+  },
+  {
+   "true": "inv.list",
+   "predicted": "quest.advance",
+   "n": 6
+  },
+  {
+   "true": "inv.list",
+   "predicted": "nav.goto",
+   "n": 6
+  },
+  {
+   "true": "state.snapshot",
+   "predicted": "nav.goto",
+   "n": 5
+  },
+  {
+   "true": "inv.list",
+   "predicted": "farm.start",
+   "n": 5
+  }
+ ],
+ "decision": {
+  "expected_gain_model": 0.6042,
+  "expected_gain_teacher": 0.51,
+  "expected_gain_oracle": 0.6239,
+  "gain_capture": 0.9685
+ },
+ "sweep": [
+  {
+   "hidden": 192,
+   "depth": 2,
+   "params": 48786,
+   "val_accuracy": 0.8428,
+   "train_accuracy": 0.8098,
+   "teacher_agreement_on_val": 0.7144,
+   "lift_over_teacher": 0.1284,
+   "macro_f1": 0.4609,
+   "ece": 0.0493,
+   "best_epoch": 60,
+   "decision": {
+    "expected_gain_model": 0.6042,
+    "expected_gain_teacher": 0.51,
+    "expected_gain_oracle": 0.6239,
+    "gain_capture": 0.9685
+   }
+  }
+ ]
+}

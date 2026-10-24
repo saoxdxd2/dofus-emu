@@ -48,10 +48,10 @@
   {
    "id": "nav.goto",
    "verb": "nav",
-   "description": "Travel to a target position. Exactly one of: [x,y] coordinates, a zaap name, an NPC, or a map id.",
+   "description": "Travel to a target. Give one of: [x,y] coordinates, a zaap name, an NPC, a map id, a cell, or a direction. `direction` leaves by that edge; `cell` walks to that specific spot on the current map.",
    "backend": "directive",
    "directive": "NAV_GOTO",
-   "returns": "transition request ack; the server refuses it when the target map is not adjacent",
+   "returns": "transition ack; for an adjacent map the client walks to the border cell first, and a non-adjacent target is refused with the current map's exits",
    "params": {
     "x": {
      "type": "int",
@@ -73,10 +73,31 @@
      "doc": "NPC name to travel to.",
      "required": false
     },
+    "npc_id": {
+     "type": "int",
+     "doc": "NPC id on the current map, as listed in snapshot.map.npcs.",
+     "required": false
+    },
     "map_id": {
      "type": "int",
      "doc": "Raw map id.",
      "required": false
+    },
+    "cell": {
+     "type": "int",
+     "doc": "Walk to this cell on the current map (a specific spot).",
+     "required": false
+    },
+    "direction": {
+     "type": "str",
+     "doc": "Leave by this edge of the current map.",
+     "required": false,
+     "enum": [
+      "left",
+      "right",
+      "top",
+      "bottom"
+     ]
     },
     "lang": {
      "type": "str",
@@ -544,6 +565,37 @@
      "doc": "Why it is wrong (kept in the log).",
      "required": false,
      "default": ""
+    }
+   }
+  },
+  {
+   "id": "fight.state",
+   "verb": "fight",
+   "description": "Read the live combat board: turn owner, fighters, cells, HP/AP/MP, team membership, and the controlled character's spell descriptors.",
+   "backend": "directive",
+   "directive": "FIGHT_STATE",
+   "returns": "turn, fighter and spell facts from the live client",
+   "params": {}
+  },
+  {
+   "id": "fight.plan",
+   "verb": "fight",
+   "description": "Read the live board and compute this turn's legal move-and-cast plan: exact cell geometry, line of sight, AP/MP, cooldowns, resistances, damage and healing. Read-only; it never casts or moves anything.",
+   "backend": "local",
+   "directive": null,
+   "returns": "actions with cells/targets/AP/MP/damage, plus expected totals",
+   "params": {
+    "beam_width": {
+     "type": "int",
+     "doc": "How many partial turns to keep while searching.",
+     "required": false,
+     "default": 16
+    },
+    "max_actions": {
+     "type": "int",
+     "doc": "Maximum casts to consider in the plan.",
+     "required": false,
+     "default": 4
     }
    }
   }
