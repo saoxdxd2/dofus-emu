@@ -24,6 +24,60 @@
     }
     window.__DofusFarmAgentLoaded = true;
 
+    // The login page fetches config.json exactly once, and its XHR treats every non-200
+    // -- including status 0 from a socket that died -- as fatal: it shows "Server busy"
+    // and reloads the whole app. The relay now moves the session egress before the first
+    // byte is delivered, but a request already in flight when that happens still sees the
+    // dead socket. Retrying this one GET turns a broken login into a slow one. Only the
+    // config file is retried: every other request in the game has its own retry semantics
+    // that a blind replay could break.
+    (function () {
+        var proto = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
+        if (!proto || proto.__dofusFarmConfigRetry) return;
+        var rawOpen = proto.open;
+        var rawSend = proto.send;
+        var configName = /(?:^|\/)config\.json(?:\?|$)/;
+        var maxRetries = 2;
+        proto.open = function (method, url) {
+            var retryable = String(method || '').toUpperCase() === 'GET' &&
+                configName.test(String(url || ''));
+            this.__dofusFarmRetry = retryable ? { method: method, url: url, attempt: 0 } : null;
+            return rawOpen.apply(this, arguments);
+        };
+        proto.send = function (body) {
+            var state = this.__dofusFarmRetry;
+            if (!state) return rawSend.apply(this, arguments);
+            var xhr = this;
+            var gameHandler = xhr.onreadystatechange;
+            var deliver = function (ev) {
+                if (xhr.readyState !== 4) {
+                    if (gameHandler) return gameHandler.call(xhr, ev);
+                    return;
+                }
+                var status = 0;
+                try { status = Number(xhr.status) || 0; } catch (e) {}
+                if ((status === 0 || status >= 500) && state.attempt < maxRetries) {
+                    state.attempt += 1;
+                    setTimeout(function () {
+                        try {
+                            // The native open: the patched one would reset the retry count.
+                            rawOpen.call(xhr, state.method, state.url, true);
+                            xhr.onreadystatechange = deliver;
+                            rawSend.call(xhr, body);
+                        } catch (e) {
+                            if (gameHandler) gameHandler.call(xhr, ev);
+                        }
+                    }, 500 * state.attempt);
+                    return;
+                }
+                if (gameHandler) gameHandler.call(xhr, ev);
+            };
+            xhr.onreadystatechange = deliver;
+            return rawSend.apply(this, arguments);
+        };
+        proto.__dofusFarmConfigRetry = true;
+    })();
+
     function cfg(val, fallback) {
         return (!val || val.indexOf('__' + 'DEVICE_') === 0) ? fallback : val;
     }
@@ -1986,6 +2040,12 @@
             }
             var kind = (db && db._type) || target._type || null;
             var SERVER_TYPES = {
+                // GoToNpc is the talk objective. The server counts the NPC
+                // conversation, not a validation: measured 2026-10-24, claiming
+                // tutorial objective 13922 (QuestObjectiveGoToNpc, "Talk to Ayin
+                // Spyr") while the NPC was not on the map was followed 230 ms
+                // later by serverDisconnecting SERVER_GONE.
+                QuestObjectiveGoToNpc: true,
                 QuestObjectiveDiscoverMap: true,
                 QuestObjectiveDiscoverSubArea: true,
                 QuestObjectiveFightMonster: true,
@@ -2004,15 +2064,28 @@
             };
             var typeId = db && db.typeId != null ? Number(db.typeId)
                 : (target.typeId != null ? Number(target.typeId) : null);
-            // Fallback for builds where _type is absent: 4 and 6 are the
-            // DiscoverMap and FightMonster ids in this client's database, the
-            // two types whose claims were followed by a disconnect.
-            if (!kind && (typeId === 4 || typeId === 6)) {
-                kind = typeId === 4 ? 'QuestObjectiveDiscoverMap' : 'QuestObjectiveFightMonster';
+            // Fallback for builds where _type is absent: 1 is GoToNpc (measured on
+            // objective 13922), 4 and 6 are the DiscoverMap and FightMonster ids in
+            // this client's database, all types whose claims were followed by a
+            // disconnect.
+            if (!kind && (typeId === 1 || typeId === 4 || typeId === 6)) {
+                kind = typeId === 1 ? 'QuestObjectiveGoToNpc'
+                    : (typeId === 4 ? 'QuestObjectiveDiscoverMap' : 'QuestObjectiveFightMonster');
             }
             if (kind && SERVER_TYPES[kind]) {
-                return { ok: false, reason: 'objective_server_counted', type: kind,
+                return { ok: false, reason: 'objective_server_counted', type: kind, type_id: typeId,
+                         params: (db && db.parameters) || target.parameters || null,
                          error: 'objective ' + oid + ' (' + kind + ') is completed by the server; '
+                             + 'perform the action instead of claiming it' };
+            }
+            // An unresolvable type is not permission to claim. Types absent from
+            // SERVER_TYPES (FreeForm, Criterion) are still allowed below, but only
+            // when the client model names them; an unnamed objective may be one the
+            // server counts, and a wrong claim ends the connection.
+            if (!kind) {
+                return { ok: false, reason: 'objective_type_unknown', type_id: typeId,
+                         params: (db && db.parameters) || target.parameters || null,
+                         error: 'objective ' + oid + ' has no resolvable type in the client model; '
                              + 'perform the action instead of claiming it' };
             }
             try {
@@ -2298,6 +2371,13 @@
                 // no change and calls the step a noop, and the loop retires a quest
                 // that was actually progressing.
                 snap.in_dialog = !!(pd && pd.isInDialog);
+                // The dialog itself: the question and every reply, with the
+                // server reply id aligned to each string. `in_dialog` alone told
+                // the policy that a choice existed but not what the choices were,
+                // so it could only pick index 0 and hope.
+                try {
+                    snap.dialog = _agentDialogState();
+                } catch (e) { snap.dialog = null; }
                 // Why the previous connection ended, if it did. Carried in the
                 // observation so a session that died of a kick can be told apart from one
                 // that was closed by hand — the two look identical from the host side.
@@ -3024,11 +3104,23 @@
                 var a = actors[k] || {};
                 var d = a.data || {};
                 var si = d.staticInfos || a.staticInfos || {};
-                var template = si.npcId != null ? si.npcId : (a.npcId != null ? a.npcId : null);
+                // The actor's template id lives on `data.npcId`: the bundle's own
+                // isNPC() and getActorFromNpcId() both read it there. `staticInfos`
+                // exists on some builds but not this one, which is why this list was
+                // always empty and the map looked NPC-less.
+                var template = d.npcId != null ? d.npcId
+                    : (si.npcId != null ? si.npcId : (a.npcId != null ? a.npcId : null));
                 if (template == null || Number(template) <= 0) continue;
+                // The actor is constructed with `actorId` = contextual id; it has
+                // no `contextualId` or `id` property. Sending the template id (or
+                // undefined) in NpcGenericActionRequestMessage talks to nobody.
+                var cid = a.actorId != null ? a.actorId
+                    : (d.contextualId != null ? d.contextualId
+                    : (a.contextualId != null ? a.contextualId
+                    : (a.id != null ? a.id : k)));
                 out.push({
                     templateId: Number(template),
-                    contextualId: a.contextualId != null ? a.contextualId : a.id,
+                    contextualId: Number(cid),
                     cell: a.cellId != null ? a.cellId : (a.position && a.position.cell)
                 });
             }
@@ -3049,11 +3141,13 @@
                         var hit = am.getActorFromNpcId(Number(templateId));
                         if (hit) {
                             var hd = hit.data || {};
-                            var hsi = hd.staticInfos || hit.staticInfos || {};
+                            var hcid = hit.actorId != null ? hit.actorId
+                                : (hd.contextualId != null ? hd.contextualId
+                                : (hit.contextualId != null ? hit.contextualId : hit.id));
                             return {
                                 actor: {
-                                    templateId: Number(templateId),
-                                    contextualId: hit.contextualId != null ? hit.contextualId : hit.id,
+                                    templateId: hd.npcId != null ? Number(hd.npcId) : Number(templateId),
+                                    contextualId: hcid != null ? Number(hcid) : null,
                                     cell: hit.cellId != null ? hit.cellId : (hit.position && hit.position.cell),
                                     isNpc: typeof hit.isNPC === 'function' ? !!hit.isNPC() : null
                                 },
@@ -3070,6 +3164,227 @@
                 return { actor: null, seen: seen, all: list };
             }
             return { actor: list.length ? list[0] : null, seen: seen, all: list };
+        };
+
+        // Same grid the bundle uses (getMapPointFromCellId). Two cells are
+        // neighbours when their grid points differ by one on each axis at most;
+        // diagonal neighbours included, because the client allows diagonal steps.
+        var _cellsAdjacent = function (a, b) {
+            var point = function (cell) {
+                var t = Number(cell) % 14 - Math.floor(Number(cell) / 28);
+                return { x: t + 19, y: t + Math.floor(Number(cell) / 14) };
+            };
+            var pa = point(a), pb = point(b);
+            return Math.max(Math.abs(pa.x - pb.x), Math.abs(pa.y - pb.y)) === 1;
+        };
+
+        // The bundle reads the player's map from `gui.playerData.position.mapId`;
+        // `isoEngine.mapData.mapId` is absent on this build. A null npcMapId makes
+        // the server ignore a talk request, so this must be the same source the
+        // client itself uses.
+        var _currentMapId = function () {
+            try {
+                var pd = window.gui && window.gui.playerData;
+                if (pd && pd.position && pd.position.mapId != null) {
+                    return Number(pd.position.mapId);
+                }
+                var mr = window.isoEngine && window.isoEngine.mapRenderer;
+                if (mr && mr.map && mr.map.id != null) return Number(mr.map.id);
+            } catch (e) {}
+            return null;
+        };
+
+        // Dialog and monster-group observation.
+        //
+        // A dialog is a choice, not a button: the server sends a question and a
+        // list of replies, and only one of them advances the objective. Choosing
+        // by index works, but an index means nothing to a policy that has to
+        // understand the text, and it breaks as soon as the reply order changes.
+        // The client already holds the resolved strings -- `npcDialogUi` gets the
+        // formatted question and replies from `nextQuestionAsync`, while
+        // `npcDialogHandler` holds the server reply ids -- so expose both,
+        // aligned by index, and never re-resolve text ids here.
+        var _agentPlainText = function (value) {
+            if (value == null) return null;
+            var t = String(value);
+            // Strip markup before decoding entities: a decoded `&lt;` would
+            // otherwise look like a tag to the next pass.
+            t = t.replace(/<br\s*\/?>/gi, ' ')
+                 .replace(/<\/(p|div|li)>/gi, ' ')
+                 .replace(/<[^>]*>/g, '');
+            t = t.replace(/&nbsp;/gi, ' ')
+                 .replace(/&lt;/gi, '<')
+                 .replace(/&gt;/gi, '>')
+                 .replace(/&quot;/gi, '"')
+                 .replace(/&#39;|&apos;/gi, "'")
+                 .replace(/&amp;/gi, '&')
+                 .replace(/&#(x?[0-9a-f]+);/gi, function (m, code) {
+                     var n = (code[0] === 'x' || code[0] === 'X')
+                         ? parseInt(code.slice(1), 16) : parseInt(code, 10);
+                     return isNaN(n) ? m : String.fromCharCode(n);
+                 });
+            return t.replace(/\s+/g, ' ').trim();
+        };
+        var _agentNormalizeText = function (value) {
+            var t = _agentPlainText(value);
+            if (t == null) return null;
+            try {
+                t = t.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            } catch (e) {}
+            return t.toLowerCase();
+        };
+        var _agentDialogInfo = function () {
+            var pd = (window.gui && window.gui.playerData) || null;
+            var ui = (window.gui && window.gui.npcDialogUi) || null;
+            var handler = (window.gui && window.gui.npcDialogHandler) || null;
+            // The ids and the texts live on different objects: the handler
+            // receives `replyIds` from NpcDialogCreationMessage, the view
+            // receives the formatted strings. Prefer a populated list.
+            var ids = (handler && handler.replyIds && handler.replyIds.length)
+                ? handler.replyIds
+                : ((ui && ui.replyIds && ui.replyIds.length)
+                    ? ui.replyIds
+                    : ((handler && handler.replyIds) || (ui && ui.replyIds) || null));
+            var texts = (ui && ui.replies) ? ui.replies : [];
+            var npcData = (handler && handler.npcData) || (ui && ui.npcData) || null;
+            return {
+                in_dialog: !!(pd && pd.isInDialog),
+                ui: ui,
+                handler: handler,
+                ids: ids,
+                texts: texts,
+                message: (ui && ui.currentMsg != null)
+                    ? _agentPlainText(ui.currentMsg) : null,
+                name_id: (ui && ui.npcName != null) ? ui.npcName
+                    : (npcData && npcData.nameId != null ? npcData.nameId : null),
+                npc_id: (npcData && npcData.id != null) ? Number(npcData.id) : null
+            };
+        };
+        // Resolve what the policy read back to the index the client sends. Kept
+        // separate from the handler so the same rule is testable offline.
+        var _agentReplyIndexForText = function (text) {
+            var ui = (window.gui && window.gui.npcDialogUi) || null;
+            var texts = (ui && ui.replies) || [];
+            var wantText = _agentNormalizeText(text);
+            var hits = [];
+            for (var i = 0; i < texts.length; i++) {
+                if (_agentNormalizeText(texts[i]) === wantText) hits.push(i);
+            }
+            return { hits: hits, count: texts.length };
+        };
+        var _agentDialogState = function () {
+            var info = _agentDialogInfo();
+            if (!info.in_dialog) return { open: false };
+            var texts = info.texts || [];
+            var ids = info.ids || [];
+            var count = Math.max(texts.length, ids.length);
+            var replies = [];
+            for (var i = 0; i < count && i < 12; i++) {
+                var rid = ids[i] != null ? Number(ids[i]) : null;
+                replies.push({
+                    index: i,
+                    text: texts[i] != null ? _agentPlainText(texts[i]) : null,
+                    reply_id: rid != null && !isNaN(rid) ? rid : (ids[i] != null ? ids[i] : null)
+                });
+            }
+            return {
+                open: true,
+                npc_id: info.npc_id,
+                name_id: info.name_id,
+                message: info.message,
+                replies: replies,
+                reply_count: count,
+                ids_ready: !!(info.ids && info.ids.length),
+                text_ready: !!texts.length
+            };
+        };
+
+        // Every monster group on the current map, in the shape the client itself
+        // reads. The group id is the actor id sent in
+        // GameRolePlayAttackMonsterRequestMessage; `staticInfos` carries one
+        // main creature plus underlings, each with its own level and boss flags.
+        // Only fields the client actually provides are exposed -- a missing level
+        // stays null instead of becoming 0, so an estimator can tell "unknown"
+        // from "level zero".
+        var _listMonsterGroups = function () {
+            var am = window.actorManager
+                || (window.isoEngine && window.isoEngine.actorManager) || null;
+            var actors = (am && (am.actors || am.actorList)) || null;
+            var out = [];
+            if (!actors) return out;
+            for (var k in actors) {
+                if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
+                var a = actors[k] || {};
+                var d = a.data || {};
+                var ty = d.type || a._type || a.type;
+                if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
+                var si = d.staticInfos || a.staticInfos || {};
+                var members = [];
+                var addMember = function (m) {
+                    if (!m) return;
+                    var light = m.staticInfos || m;
+                    var id = m.creatureGenericId != null ? m.creatureGenericId
+                        : (light.creatureGenericId != null
+                            ? light.creatureGenericId : null);
+                    if (id == null) return;
+                    members.push({
+                        monster_id: Number(id),
+                        level: light.level != null ? Number(light.level) : null,
+                        is_boss: !!light.isBoss,
+                        is_mini_boss: !!light.isMiniBoss
+                    });
+                };
+                addMember(si.mainCreatureLightInfos);
+                var underlings = si.underlings || [];
+                for (var u = 0; u < underlings.length; u++) addMember(underlings[u]);
+                // Older payloads nested the list under `monsters`; keep it as a
+                // fallback so a build change does not silently empty this.
+                var legacy = si.monsters || d.monsters || [];
+                if (!members.length && legacy.length) {
+                    for (var m2 = 0; m2 < legacy.length; m2++) {
+                        addMember(legacy[m2]);
+                    }
+                }
+                var ids = [];
+                var total = 0;
+                var known = 0;
+                var maxLevel = null;
+                var boss = false;
+                for (var mi = 0; mi < members.length; mi++) {
+                    var mem = members[mi];
+                    ids.push(mem.monster_id);
+                    if (mem.level != null && !isNaN(mem.level)) {
+                        total += mem.level;
+                        known += 1;
+                        if (maxLevel == null || mem.level > maxLevel) maxLevel = mem.level;
+                    }
+                    if (mem.is_boss) boss = true;
+                }
+                var cid = a.actorId != null ? a.actorId
+                    : (d.contextualId != null ? d.contextualId
+                    : (a.contextualId != null ? a.contextualId
+                    : (a.id != null ? a.id : Number(k))));
+                var gid = cid != null ? Number(cid) : null;
+                out.push({
+                    group_id: gid != null && !isNaN(gid) ? gid : null,
+                    contextualId: gid != null && !isNaN(gid) ? gid : null,
+                    cell: a.cellId != null ? a.cellId
+                        : (a.position && a.position.cell),
+                    monster_ids: ids,
+                    members: members.slice(0, 8),
+                    member_count: members.length,
+                    levels_known: known,
+                    // Null unless every level is known: a partial sum would look
+                    // like a weaker group than it is.
+                    total_level: (members.length && known === members.length)
+                        ? total : null,
+                    max_level: maxLevel,
+                    is_boss: boss,
+                    scale_level: d.scaleLevel != null ? Number(d.scaleLevel) : null,
+                    static_keys: Object.keys(si).slice(0, 12)
+                });
+            }
+            return out;
         };
 
         // What the tutorial currently allows.
@@ -3235,6 +3550,8 @@
                              skill_uid: el.skillInstanceUid };
                 });
             } catch (e) {}
+            var allGroups = [];
+            try { allGroups = _listMonsterGroups(); } catch (e) { allGroups = []; }
             return {
                 map_id: mapId,
                 cell: playerCell,
@@ -3243,7 +3560,9 @@
                 neighbours: neighbours,
                 exits: exits,
                 npcs: npcs,
-                interactives: interactives
+                interactives: interactives,
+                groups: allGroups.slice(0, 20),
+                group_count: allGroups.length
             };
         };
 
@@ -3965,10 +4284,13 @@
                         if (targetGroup) break;
                     }
                     if (targetGroup) {
-                        var hit = _agentHandlers['fight.join']({
-                            group_id: targetGroup.contextualId != null ? targetGroup.contextualId : targetGroup.id
-                        });
-                        return hit;
+                        // The actor is constructed with `actorId`; `contextualId` and
+                        // `id` do not exist on it, and an undefined group id is a
+                        // request the server cannot answer.
+                        var tgid = targetGroup.actorId != null ? targetGroup.actorId
+                            : (targetGroup.contextualId != null ? targetGroup.contextualId
+                            : targetGroup.id);
+                        return _agentHandlers['fight.join']({ group_id: tgid });
                     }
                 }
 
@@ -4059,6 +4381,7 @@
                 // objective was rejected by the schema before it reached the game.
                 var wantMonster = parseInt(args && args.monster, 10) || null;
                 var pick = want ? (actors[want] || null) : null;
+                var pickKey = pick ? want : null;
                 if (!pick) {
                     var seenMonsters = [];
                     for (var k in actors) {
@@ -4080,6 +4403,7 @@
                             if (!hit) continue;
                         }
                         pick = a;
+                        pickKey = k;
                         break;
                     }
                     if (!pick && wantMonster) {
@@ -4093,7 +4417,18 @@
                 if (!pick) return _agentResult(false, { map_id: (window.gui && window.gui.playerData
                         && window.gui.playerData.position && window.gui.playerData.position.mapId) },
                     'no monster group on this map');
-                var gid = pick.contextualId != null ? pick.contextualId : pick.id;
+                // Actors are keyed by contextual id and carry it as `actorId`;
+                // `contextualId`/`id` are undefined (the NPC reader had the same
+                // defect). Fall back to the map key, which is that same id.
+                var gid = pick.actorId != null ? pick.actorId
+                    : (pick.contextualId != null ? pick.contextualId
+                    : (pick.id != null ? pick.id : Number(pickKey)));
+                if (gid == null || isNaN(Number(gid))) {
+                    return _agentResult(false, { cell: pick.cellId != null ? pick.cellId
+                            : (pick.position && pick.position.cell) },
+                        'monster group actor has no contextual id');
+                }
+                gid = Number(gid);
                 var cell = pick.cellId != null ? pick.cellId : (pick.position && pick.position.cell);
                 var ua = am.userActor;
                 var attack = function () {
@@ -4459,7 +4794,7 @@
             //
             // Targets, exactly one:
             //   cell       walk to that cell on this map (a specific spot)
-            //   npc_id     walk to that NPC's cell on this map
+            //   npc_id     walk next to that NPC on this map (its cell is occupied)
             //   direction  leave by that edge (left/right/top/bottom)
             //   map_id     go to that map; adjacent maps are left by their edge,
             //              and a far map is reported with the exits of this one
@@ -4472,6 +4807,10 @@
                 var wantCell = parseInt(a.cell !== undefined ? a.cell : a.cellId, 10);
                 var npcId = parseInt(a.npc_id !== undefined ? a.npc_id : a.npcId, 10) || null;
                 if (isNaN(wantCell)) wantCell = null;
+                // An NPC stands on its own cell, so walking there has to stop on a
+                // free neighbour. `_movePlayerOnMap(cell, true, ...)` is the client's
+                // form for exactly that; passing false paths onto the occupied cell.
+                var stopAdjacent = false;
                 var dir = String(a.direction || a.dir || '').toLowerCase().trim();
                 if (dir === 'up') dir = 'top';
                 if (dir === 'down') dir = 'bottom';
@@ -4498,7 +4837,10 @@
                 if (wantCell == null && npcId) {
                     var found = _findNpcActor(npcId);
                     var actor = found && found.actor;
-                    if (actor && actor.cell != null) wantCell = actor.cell;
+                    if (actor && actor.cell != null) {
+                        wantCell = actor.cell;
+                        stopAdjacent = true;
+                    }
                     if (wantCell == null) {
                         return _agentResult(false, { npc_id: npcId, map_id: here,
                             npcs: details.npcs },
@@ -4679,7 +5021,7 @@
                         'nav.goto needs one of: cell, npc_id, direction, or a map_id '
                         + 'different from ' + here);
                 }
-                if (tutorialActive && allowedCells && details.cell != null
+                if (tutorialActive && allowedCells && !stopAdjacent && details.cell != null
                         && Number(wantCell) !== Number(details.cell)
                         && allowedCells.indexOf(Number(wantCell)) < 0) {
                     return refuseRestricted('tutorial_blocked',
@@ -4699,7 +5041,7 @@
                     // The callback fires after the server confirms; the request itself
                     // goes out synchronously inside the call, so ok here means "asked",
                     // and the next state.snapshot says whether the character moved.
-                    var walked = iso._movePlayerOnMap(wantCell, false, function (err) {
+                    var walked = iso._movePlayerOnMap(wantCell, stopAdjacent, function (err) {
                         if (err) {
                             walkOutcome.error = String(err);
                             window.__agentLastNav = { at: Date.now(),
@@ -4762,33 +5104,7 @@
                 return _agentResult(true, out);
             },
             'debug.groups': function() {
-                var am = window.actorManager
-                    || (window.isoEngine && window.isoEngine.actorManager) || null;
-                var actors = (am && am.actors) || {};
-                var out = [];
-                for (var k in actors) {
-                    if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
-                    var a = actors[k] || {};
-                    var ty = (a.data && a.data.type) || a._type || a.type;
-                    if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
-                    var d = a.data || {};
-                    var si = d.staticInfos || a.staticInfos || {};
-                    var mons = si.monsters || d.monsters || [];
-                    var ids = [];
-                    for (var mi = 0; mi < mons.length; mi++) {
-                        var mm = mons[mi] || {};
-                        var mid = mm.creatureGenericId != null ? mm.creatureGenericId
-                            : (mm.genericId != null ? mm.genericId
-                            : (mm.monsterId != null ? mm.monsterId : null));
-                        if (mid != null) ids.push(Number(mid));
-                    }
-                    out.push({
-                        contextualId: a.contextualId != null ? a.contextualId : a.id,
-                        cell: a.cellId != null ? a.cellId : (a.position && a.position.cell),
-                        monster_ids: ids,
-                        static_keys: Object.keys(si).slice(0, 12)
-                    });
-                }
+                var out = _listMonsterGroups();
                 return _agentResult(true, { count: out.length, groups: out });
             },
             'debug.npcs': function() {
@@ -4937,7 +5253,7 @@
                 return _agentEffectDbReport(args);
             },
             'debug.version': function() {
-                return _agentResult(true, { build: '2026-10-24b' });
+                return _agentResult(true, { build: '2026-10-24c' });
             },
             'debug.probe': function() {
                 var out = {};
@@ -5020,6 +5336,32 @@
                 if (pd0 && pd0.isInDialog) {
                     var want = (args && args.reply !== undefined) ? parseInt(args.reply, 10) : 0;
                     if (isNaN(want)) want = 0;
+                    // A reply can be named by the text the policy saw instead of
+                    // by an index. Indices are positional and change with the
+                    // server's ordering; the text is what the policy reasons
+                    // about. Exact normalized match only -- a fuzzy match could
+                    // silently pick "Non, merci" for "Oui".
+                    if (args && args.reply_text != null) {
+                        var resolved = _agentReplyIndexForText(args.reply_text);
+                        var hits = resolved.hits;
+                        if (!hits.length) {
+                            return _agentResult(false, { reply_text: args.reply_text,
+                                reply_count: resolved.count },
+                                'no dialog reply matches the given text');
+                        }
+                        if (hits.length > 1) {
+                            return _agentResult(false, { reply_text: args.reply_text,
+                                candidates: hits },
+                                'the given reply text matches ' + hits.length + ' replies');
+                        }
+                        if (args.reply !== undefined
+                                && parseInt(args.reply, 10) !== hits[0]) {
+                            return _agentResult(false, { reply: args.reply,
+                                reply_text_index: hits[0] },
+                                'reply and reply_text point at different choices');
+                        }
+                        want = hits[0];
+                    }
                     // Which object owns the reply sender differs by build. On 1.74
                     // `gui.npcDialogHandler` receives NpcDialogCreationMessage and
                     // holds both `replyIds` and `_uiReplyHandler`, while
@@ -5098,13 +5440,25 @@
                             'dialog has ' + ids.length + ' replies; asked for index ' + want);
                     }
                     try {
+                        var talkUi = (window.gui && window.gui.npcDialogUi) || null;
+                        var talkTexts = (talkUi && talkUi.replies) || [];
+                        var talkQuestion = (talkUi && talkUi.currentMsg != null)
+                            ? _agentPlainText(talkUi.currentMsg) : null;
+                        var talkReply = talkTexts[want] != null
+                            ? _agentPlainText(talkTexts[want]) : null;
+                        var talkReplyId = ids[want] != null ? ids[want] : null;
                         pick.fn.call(pick.owner, want);
+                        // Question + chosen reply + server id is the free label
+                        // for the dialog policy: an outcome later says whether
+                        // this choice advanced the objective.
                         window.__agentLastTalk = {
                             at: Date.now(), stage: 'replied', replied: want,
                             replies: ids.length, reply_ids: ids.slice(0, 8),
-                            via: pick.label
+                            reply_id: talkReplyId, reply_text: talkReply,
+                            question: talkQuestion, via: pick.label
                         };
                         return _agentResult(true, { replied: want, replies: ids.length,
+                            reply_id: talkReplyId, reply_text: talkReply,
                             via: pick.label });
                     } catch (e) {
                         window.__agentLastTalk = {
@@ -5242,8 +5596,7 @@
                     // The right answer here is "you are on the wrong map", because that
                     // is what the agent can act on. The old code either talked to
                     // somebody else or reported a bare "no NPC".
-                    var here = null;
-                    try { here = window.isoEngine.currentMapId || (window.isoEngine.mapData && window.isoEngine.mapData.mapId) || null; } catch (e) {}
+                    var here = _currentMapId();
                     window.__agentLastTalk = { at: Date.now(), stage: 'npc_not_on_map',
                         wanted_npc: wantNpc, map_id: here, npcs_here: npcIds };
                     return _agentResult(false, { quest_id: questId, wanted_npc: wantNpc,
@@ -5255,11 +5608,17 @@
                     return _agentResult(false, { quest_id: questId },
                         'no NPC on this map to talk to; pass objective_id to validate directly');
                 }
-                var mapId = null;
-                try { mapId = window.isoEngine.currentMapId || (window.isoEngine.mapData && window.isoEngine.mapData.mapId) || null; } catch (e) {}
-                // The wire field is the actor's contextual id (the bundle sends
-                // `npcId: l.contextualId`). Sending the template id talks to nobody,
-                // which is why a talk objective opened no dialog.
+                if (npc.contextualId == null || isNaN(Number(npc.contextualId))) {
+                    return _agentResult(false, {
+                        quest_id: questId, npc_template: npc.templateId,
+                        npc_cell: npc.cell },
+                        'npc ' + npc.templateId + ' has no actor id in the client model, '
+                            + 'so a talk request cannot name it');
+                }
+                var mapId = _currentMapId();
+                // The wire field is the actor's contextual id, which this build
+                // stores as `actorId` (the menu sends `npcId: actorId`). The template
+                // id talks to nobody.
                 var doTalk = function () {
                     return _cmSend('NpcGenericActionRequestMessage',
                         { npcId: npc.contextualId, npcActionId: 3, npcMapId: mapId });
@@ -5274,25 +5633,73 @@
                         || (window.isoEngine && window.isoEngine.actorManager);
                     ua = am2 && am2.userActor;
                 } catch (e) {}
-                if (ua && npc.cell != null && ua.cellId !== npc.cell
-                        && window.isoEngine
-                        && typeof window.isoEngine._movePlayerOnMap === 'function') {
+                var myCell = ua && ua.cellId != null ? Number(ua.cellId) : null;
+                var npcCell = npc.cell != null ? Number(npc.cell) : null;
+                var talkData = { quest_id: questId, npc_template: npc.templateId,
+                    npc_contextual_id: npc.contextualId, map_id: mapId,
+                    npc_cell: npcCell, my_cell: myCell };
+
+                // Already next to the NPC: the talk request is valid immediately.
+                if (myCell != null && npcCell != null && _cellsAdjacent(myCell, npcCell)) {
+                    var talkNow = doTalk();
+                    window.__agentLastTalk = { at: Date.now(),
+                        stage: talkNow.ok ? 'talked' : 'talk_failed',
+                        npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
+                        map_id: mapId, npc_cell: npcCell, my_cell: myCell,
+                        error: talkNow.ok ? null : String(talkNow.error || '') };
+                    talkData.via = 'talked';
+                    return _agentResult(talkNow.ok, talkData, talkNow.ok ? null : talkNow.error);
+                }
+
+                // The NPC stands on its own cell, and the server does not accept a
+                // move onto it. `_movePlayerOnMap(cell, true, cb)` is the client's own
+                // "walk next to this cell, then call me" form — the same one it uses
+                // before harvesting or opening a door. Passing false (the old call)
+                // aimed the path at the occupied cell, which never arrived.
+                var iso2 = window.isoEngine;
+                if (myCell != null && npcCell != null && iso2
+                        && typeof iso2._movePlayerOnMap === 'function') {
+                    var walkError = null;
+                    var moved = null;
                     try {
-                        window.isoEngine._movePlayerOnMap(npc.cell, false, function () {
+                        moved = iso2._movePlayerOnMap(npcCell, true, function (err) {
+                            if (err) {
+                                walkError = String(err && err.message || err);
+                                window.__agentLastTalk = { at: Date.now(), stage: 'walk_failed',
+                                    npc_template: npc.templateId,
+                                    npc_contextual_id: npc.contextualId, map_id: mapId,
+                                    npc_cell: npcCell, my_cell: myCell, error: walkError };
+                                return;
+                            }
                             try { doTalk(); } catch (e) {}
                         });
-                        window.__agentLastTalk = { at: Date.now(), stage: 'walking_then_talking', npc_template: npc.templateId, npc_contextual_id: npc.contextualId, map_id: mapId, npc_cell: npc.cell, my_cell: ua.cellId };
-                        return _agentResult(true, { quest_id: questId,
+                    } catch (e) { walkError = String(e); }
+                    if (moved != null && !walkError) {
+                        window.__agentLastTalk = { at: Date.now(), stage: 'walking_then_talking',
+                            npc_template: npc.templateId,
+                            npc_contextual_id: npc.contextualId, map_id: mapId,
+                            npc_cell: npcCell, my_cell: myCell };
+                        talkData.via = 'walking to npc then talking';
+                        return _agentResult(true, talkData);
+                    }
+                    if (walkError) {
+                        window.__agentLastTalk = { at: Date.now(), stage: 'walk_failed',
                             npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
-                            map_id: mapId, via: 'walking to npc then talking',
-                            npc_cell: npc.cell, my_cell: ua.cellId });
-                    } catch (e) {}
+                            map_id: mapId, npc_cell: npcCell, my_cell: myCell,
+                            error: walkError };
+                        return _agentResult(false, talkData,
+                            'could not walk next to npc ' + npc.templateId + ': ' + walkError);
+                    }
                 }
-                var talk = doTalk();
-                window.__agentLastTalk = { at: Date.now(), stage: talk.ok ? 'talked' : 'talk_failed', npc_template: npc.templateId, npc_contextual_id: npc.contextualId, map_id: mapId, error: talk.ok ? null : String(talk.error || '') };
-                return _agentResult(talk.ok, { quest_id: questId, npc_template: npc.templateId,
-                    npc_contextual_id: npc.contextualId, map_id: mapId },
-                    talk.ok ? null : talk.error);
+                // No movement API or no path: report the honest failure instead of
+                // sending a talk the server will ignore from this distance.
+                window.__agentLastTalk = { at: Date.now(), stage: 'not_adjacent',
+                    npc_template: npc.templateId, npc_contextual_id: npc.contextualId,
+                    map_id: mapId, npc_cell: npcCell, my_cell: myCell };
+                return _agentResult(false, talkData,
+                    'npc ' + npc.templateId + ' is at cell ' + npcCell
+                        + ' and the character is at cell ' + myCell
+                        + '; the client could not walk next to it');
             },
             'inv.sell': function(args) {
                 // Same wire call as hdv.list; resolved through the map, not `this`,

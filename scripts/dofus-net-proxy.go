@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1036,7 +1037,16 @@ func (p *ProxyServer) dialUpstreamHttp(u *url.URL, dest string, timeout time.Dur
 // session. An open-but-silent socket is what kept a dead egress pinned forever: the client sat
 // on a login screen while the relay refused to move because one stale connection still counted.
 // Real game traffic sends heartbeats well inside this window.
-const gameIdleWindow = 60 * time.Second
+const (
+	gameIdleWindow = 60 * time.Second
+	// firstByteProveTimeout is how long a pinned hop has to answer after the client's
+	// first payload. A working hop answers within an RTT; a proxy that accepts CONNECT
+	// and then black-holes the stream answers never.
+	firstByteProveTimeout = 5 * time.Second
+	// firstClientPayloadWait bounds the wait for the client's opening bytes
+	// (a TLS ClientHello, normally already in flight when CONNECT returns).
+	firstClientPayloadWait = 3 * time.Second
+)
 
 // pinDeadCooldown keeps a pin that just failed from being chosen again immediately. Public
 // proxies on this line flap on a ~10 s cycle, so retrying the same address on the next dial
@@ -1103,7 +1113,10 @@ func (a activityWriter) Write(b []byte) (int, error) {
 
 func (p *ProxyServer) registerGameTunnel() (*gameTunnel, func()) {
 	t := &gameTunnel{}
-	t.touch()
+	// Registration is not activity. A tunnel that has not moved a byte yet must not
+	// count as a live session: the login screen opens one, its exit swallows traffic,
+	// and that "session" used to protect the dead pin for a full idle window while the
+	// client sat on a screen that could never load.
 	p.gameMu.Lock()
 	if p.gameConns == nil {
 		p.gameConns = make(map[*gameTunnel]struct{})
@@ -1370,16 +1383,25 @@ func (p *ProxyServer) dialDirect(ctx context.Context, dest string) (net.Conn, er
 	return (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", target)
 }
 
-func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error) {
-	if host, port, err := net.SplitHostPort(dest); err == nil {
-		if h := strings.ToLower(host); h == "dofus.local" || h == "dofus.localhost" {
-			mapped := net.JoinHostPort(loginHost, port)
-			virtualHostRewriteOnce.Do(func() {
-				log.Printf("[ROUTE] %s -> %s (the client resolved its socket against the page origin)", dest, mapped)
-			})
-			dest = mapped
-		}
+// mapVirtualHost sends the page's own hostname to the real login server. Every dial
+// path shares it so a route picked here is the same route doDial would have used.
+func mapVirtualHost(dest string) string {
+	host, port, err := net.SplitHostPort(dest)
+	if err != nil {
+		return dest
 	}
+	if h := strings.ToLower(host); h == "dofus.local" || h == "dofus.localhost" {
+		mapped := net.JoinHostPort(loginHost, port)
+		virtualHostRewriteOnce.Do(func() {
+			log.Printf("[ROUTE] %s -> %s (the client resolved its socket against the page origin)", dest, mapped)
+		})
+		return mapped
+	}
+	return dest
+}
+
+func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error) {
+	dest = mapVirtualHost(dest)
 	if p.exitURL != nil {
 		p.exitMu.Lock()
 		blocked := time.Now().Before(p.exitBlockedUntil)
@@ -1554,18 +1576,28 @@ func halfCloseOrClose(c net.Conn) {
 	}
 }
 
-func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, tunnel *gameTunnel) {
+// pipeTunnel moves both directions. firstServer is the answer the first-byte proof
+// already read: it is handed to the client before the upstream is read again, and the
+// client's own opening bytes are never replayed because the proof wrote them once.
+func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, tunnel *gameTunnel, firstServer []byte) {
 	tuneTCPConn(clientConn)
 	tuneTCPConn(destConn)
+	if len(firstServer) > 0 {
+		if _, err := clientConn.Write(firstServer); err != nil {
+			_ = destConn.Close()
+			_ = clientConn.Close()
+			return
+		}
+	}
 	var sentBytes, recvBytes int64
 	done := make(chan struct{}, 2)
-	copyDir := func(dst, src net.Conn, counter *int64, pre *bufio.ReadWriter) {
+	copyDir := func(dst, src net.Conn, counter *int64, buffered *bufio.ReadWriter) {
 		out := io.Writer(dst)
 		if tunnel != nil {
 			out = activityWriter{w: dst, touch: tunnel.touch}
 		}
-		if pre != nil && pre.Reader.Buffered() > 0 {
-			n, _ := io.CopyN(out, pre, int64(pre.Reader.Buffered()))
+		if buffered != nil && buffered.Reader.Buffered() > 0 {
+			n, _ := io.CopyN(out, buffered, int64(buffered.Reader.Buffered()))
 			atomic.AddInt64(counter, n)
 		}
 		buf := bufPool.Get().([]byte)
@@ -1589,6 +1621,143 @@ func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWrite
 	p.telemetry.recordClose(atomic.LoadInt64(&sentBytes), atomic.LoadInt64(&recvBytes))
 }
 
+// chainEgressIsFailoverable reports whether this relay chooses the session's exit from
+// the upstream chain. A fixed exit is the session's address by definition and is never
+// swapped; a direct path has no pin to move.
+func (p *ProxyServer) chainEgressIsFailoverable() bool {
+	return p.exitURL == nil && !p.allowDirect && p.upstreamURL != nil && len(p.upstreams) > 0
+}
+
+// dialChainRoute mirrors the chain branch of doDial but reports the hop that carried the
+// CONNECT, so a tunnel that never answers can be re-pinned knowingly.
+func (p *ProxyServer) dialChainRoute(ctx context.Context, dest string) (net.Conn, *url.URL, error) {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 1500 * time.Millisecond)
+		}
+		var conn net.Conn
+		var hop *url.URL
+		if conn, hop, err = p.dialUpstreamAny(ctx, dest, 6*time.Second); err == nil {
+			upstreamHealthy.Store(true)
+			return conn, hop, nil
+		}
+	}
+	upstreamHealthy.Store(false)
+	upstreamFallbackOnce.Do(func() {
+		log.Printf("[UPSTREAM] dial to %s via the chain failed (%v); refusing to fall back to a direct connection because that would expose the real IP.", dest, err)
+	})
+	return nil, nil, fmt.Errorf("upstream chain unavailable and direct dial disabled: %w", err)
+}
+
+// readClientPrelude reads the client's opening payload. For a tunneled TLS connection
+// that is the ClientHello, and no upstream can answer before the whole record arrived:
+// after the first read, finish the record so the proof waits for an answer that can
+// actually come instead of timing out on a half-delivered handshake.
+func readClientPrelude(c net.Conn, clientBuf *bufio.ReadWriter) []byte {
+	var out []byte
+	if clientBuf != nil && clientBuf.Reader.Buffered() > 0 {
+		n := clientBuf.Reader.Buffered()
+		b := make([]byte, n)
+		if _, err := io.ReadFull(clientBuf, b); err == nil {
+			out = b
+		}
+	}
+	if len(out) == 0 {
+		_ = c.SetReadDeadline(time.Now().Add(firstClientPayloadWait))
+		b := make([]byte, 8192)
+		n, _ := c.Read(b)
+		_ = c.SetReadDeadline(time.Time{})
+		if n > 0 {
+			out = b[:n]
+		}
+	}
+	if len(out) >= 5 && out[0] == 0x16 {
+		if need := 5 + int(binary.BigEndian.Uint16(out[3:5])); need > len(out) && need <= 5+18432 {
+			rest := make([]byte, need-len(out))
+			_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+			n, _ := io.ReadFull(c, rest)
+			_ = c.SetReadDeadline(time.Time{})
+			if n > 0 {
+				out = append(out, rest[:n]...)
+			}
+		}
+	}
+	return out
+}
+
+// proveRoute sends the client's opening bytes down an established tunnel and waits for
+// the first byte back. A CONNECT that only reached the proxy's front door looks the same
+// as a working one until this read: the proxy accepts, then forwards nothing.
+func proveRoute(destConn net.Conn, payload []byte) ([]byte, bool) {
+	_ = destConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if _, err := destConn.Write(payload); err != nil {
+		return nil, false
+	}
+	_ = destConn.SetDeadline(time.Now().Add(firstByteProveTimeout))
+	buf := make([]byte, 8192)
+	n, _ := destConn.Read(buf)
+	_ = destConn.SetDeadline(time.Time{})
+	if n > 0 {
+		return buf[:n], true
+	}
+	return nil, false
+}
+
+// proveGameUpstream gates the session on a byte from the far side.
+//
+// A dead public proxy can complete the CONNECT — so every dial looks fine — and then
+// never forward the TLS handshake. The relay used to pin that hop, register the tunnel
+// as a live session, and leave the login page's config.json request to time out. That is
+// the "dofus.local says server busy" alert followed by a login screen that never
+// progresses. Until the first upstream byte nothing has been delivered to the server, so
+// changing the hop cannot split a session; after it, the pin is never touched.
+func (p *ProxyServer) proveGameUpstream(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, routed *url.URL, dest string, tunnel *gameTunnel) (net.Conn, *url.URL, []byte) {
+	first := readClientPrelude(clientConn, clientBuf)
+	if len(first) == 0 {
+		// The client has not spoken yet; there is nothing to prove and nothing to replay.
+		return destConn, routed, nil
+	}
+	// Touch as soon as the far side answers, not after the caller gets control back:
+	// a concurrent tunnel's re-pin reads liveGameSessions, and a proven session must
+	// already be visible to it.
+	proven := func() {
+		if tunnel != nil {
+			tunnel.touch()
+		}
+	}
+	if answer, ok := proveRoute(destConn, first); ok {
+		proven()
+		return destConn, routed, answer
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 9*time.Second)
+		socksTarget := p.resolver.resolveAddr(ctx, dest, "443")
+		next, winner, moved, err := p.recoverPin(ctx, dest, socksTarget, 6*time.Second, routed)
+		cancel()
+		if !moved {
+			// A proven game tunnel exists, so the exit is carrying the session. Moving it
+			// to rescue this one would risk the session that is working.
+			log.Printf("[UPSTREAM] %s has not answered the game handshake yet, but another game tunnel is live; keeping the pin", routed.Redacted())
+			return destConn, routed, nil
+		}
+		if err != nil {
+			log.Printf("[UPSTREAM] %s swallowed the game handshake and no other hop could be dialled (%v); leaving the tunnel on the current hop", routed.Redacted(), err)
+			return destConn, routed, nil
+		}
+		_ = destConn.Close()
+		log.Printf("[UPSTREAM] %s swallowed the game handshake for %s; moving to %s before any byte was delivered", routed.Redacted(), dest, winner.Redacted())
+		destConn, routed = next, winner
+		if answer, ok := proveRoute(destConn, first); ok {
+			proven()
+			return destConn, routed, answer
+		}
+		p.markPinDead(routed)
+	}
+	log.Printf("[UPSTREAM] no egress carried a first byte for %s; the tunnel stays on %s and the request may fail", dest, routed.Redacted())
+	return destConn, routed, nil
+}
+
 func (p *ProxyServer) dialTunnel(host, defPort string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer cancel()
@@ -1597,7 +1766,17 @@ func (p *ProxyServer) dialTunnel(host, defPort string) (net.Conn, error) {
 
 func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	dest := ensureHostPort(r.Host, "443")
-	destConn, err := p.dialTunnel(r.Host, "443")
+	game := isGameDestination(dest)
+	var destConn net.Conn
+	var routed *url.URL
+	var err error
+	if game && p.chainEgressIsFailoverable() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		destConn, routed, err = p.dialChainRoute(ctx, mapVirtualHost(dest))
+		cancel()
+	} else {
+		destConn, err = p.dialTunnel(r.Host, "443")
+	}
 	if err != nil {
 		http.Error(w, "Connection Failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -1623,12 +1802,16 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[TUNNEL] CONNECT -> %s (%s)", dest, p.model)
 	}
 	var tunnel *gameTunnel
-	if isGameDestination(dest) {
+	if game {
 		var release func()
 		tunnel, release = p.registerGameTunnel()
 		defer release()
 	}
-	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel)
+	var firstServer []byte
+	if game && routed != nil {
+		destConn, _, firstServer = p.proveGameUpstream(clientConn, clientBuf, destConn, routed, mapVirtualHost(dest), tunnel)
+	}
+	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel, firstServer)
 }
 
 func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -1663,7 +1846,7 @@ func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		tunnel, release = p.registerGameTunnel()
 		defer release()
 	}
-	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel)
+	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel, nil)
 }
 
 func atomicReplaceFile(src, dst string) error {

@@ -4,8 +4,13 @@ This supersedes the status tables scattered across `ARCH_REASSESSMENT.md`,
 `PRETRAIN_GAPS.md` and `PIPELINE.md`. Those remain as the reasoning; this file is
 what is true **now** and what happens **next**.
 
-Last rewritten: 2026-10-22 (evening), after the client-update incident, the
-network rework and the second-agent link.
+Last rewritten: 2026-10-24, after the dialog/monster observation contract and the
+strategist replan.
+
+**The "third agent" design, the language layer and the training split now live in
+`AGENT3_PLAN.md`.** This file stays the living status: what is true now and what
+runs next. Read the two together: `AGENT3_PLAN.md` says why, this file says
+where we are.
 
 ---
 
@@ -13,8 +18,10 @@ network rework and the second-agent link.
 
 A Dofus Touch agent that takes a goal in natural language ("I want kamas", "do the
 quests", "beat this monster") and carries it out unattended: plan, move, fight,
-farm, trade, learn from outcomes. Two agents inside ~200 MB per instance, no cloud
-at runtime.
+farm, trade, learn from outcomes. An actor and a strategist inside ~200 MB per
+instance, no cloud at runtime. The strategist understands French quest text and
+dialogs, knows whether a fight is winnable, and can recommend the stats or gear
+that would change the answer.
 
 ---
 
@@ -84,6 +91,20 @@ for exactly that: disconnect, stop the service, flush DNS, probe.
 
 Deliberately **rules first**: waiting for a dataset inverts the dependency. The
 loop has to run and fail, and the labels fall out of it.
+
+### Strategist observation (added 2026-10-24)
+
+| item | value |
+|---|---|
+| `map.groups` | actor id, cell, monster ids, per-member level/boss flags, `total_level` only when every level is known |
+| `map.npcs` / `map.interactives` / `map.exits` | already in the snapshot; groups join them |
+| `snap.dialog` | French question + replies with `{index,text,reply_id}`, readiness flags; no text-id lookup reimplemented |
+| `quest.advance` | accepts `reply_text`; resolves exactly one normalized match to the index the client sends, refuses ambiguity |
+| tests | `node tools/test_dialog_groups.js` → 28 cases; `node tools/test_npc_actor.js` → 7; `node tools/test_claim_guard.js` → 18 |
+| live status | **offline-tested only**; the agent injects at document creation, so a full app restart is required |
+
+`debug.version` reports `2026-10-24c`. The live checklist is in
+`AGENT3_PLAN.md` §4.1.
 
 ### Window layout: pages, not one long column
 
@@ -178,12 +199,12 @@ added.
 | 4 | `quest_id` as entity reference | call → >85% | **done** (94.5%) |
 | 5 | Gazetteer boundary snapping | item errors −36 | **done** |
 | 6 | Class imbalance for never-selected tools | per-tool floor ≥80% | **open** |
-| 7 | Observation in the harness | ≥1,000 non-null records | **implemented, not exercised** — unit-tested only |
+| 7 | Observation in the harness | ≥1,000 non-null records | **implemented, not exercised** — dialog/groups now present; live session still pending |
 | 8 | Click accuracy | measurable | **unblocked by 7**, not started |
 | 9 | **Client auto-update** | a build change needs no human | **done** (2026-10-22) |
 | 10 | **Patch-engine hardening** | one stale patch cannot discard the rest | **done** (2026-10-22) |
 | 11 | **Market verbs** (`hdv.scan` / `hdv.list` / `inv.sell`) | buy + list round-trip on a live instance | **built** — needs a live test |
-| 12 | **Quest verb** (`quest.advance`) | talk → dialog → objective validated | **built** — needs a live test |
+| 12 | **Quest verb** (`quest.advance`) | talk → dialog → objective validated | **talk validated live 2026-10-24**; multi-reply choice and validation still need a live test |
 | 13 | **Harvest** (`InteractiveUseRequestMessage`) | collect a resource node | **built** — needs a live test |
 | 14 | **Price resolution** | `price_rule` becomes a concrete number | **open — the linking gap** |
 | 15 | **Account strategy** | instances survive a client update | **decision needed** |
@@ -192,6 +213,13 @@ added.
 | 18 | **Second agent linked** (rules + human, model optional) | labels on every step, offline smoke test green | **done** (2026-10-22) |
 | 19 | **Drift → real replan** | `REPLAN` calls `ScheduleManager.replan` | **open** — one wire, needs a live plan |
 | 20 | **Verifier model** (`build_verifier_sft` → `train_verifier` → INT8) | beats the rule baseline on the same session | **open** — needs one live session first |
+| 21 | **Monster groups in every snapshot** (`map.groups`) | a planner can see every group on every map | **built 2026-10-24** — offline-tested, live pending |
+| 22 | **Dialog text + replies + `reply_text`** | the policy can choose by meaning, not index | **built 2026-10-24** — offline-tested, live pending |
+| 23 | **Knowledge spine** (client DB + achievements + placeholder resolver + guide refs) | every live objective resolves to typed entities | **open** — M1 |
+| 24 | **Dialog policy v0** (deterministic, labels from objective deltas) | 100 live dialogs, top-1 > baseline | **open** — M2 |
+| 25 | **`fight.estimate` v0** (analytic + calibrated) | 50 live fights, calibration error <0.1 | **open** — M3 |
+| 26 | **Strategist merge** (planner + advisor, one interface) | four questions answered from one observation | **open** — M4 |
+| 27 | **TPU combat self-play** | reproducible vectorised encounters on TPU | **open** — after the encounter model; no longer blocked on the quest corpus |
 
 ---
 
@@ -253,21 +281,35 @@ lives in the page, while the *decision* (may this listing happen at all) lives i
 `agent/autopilot.py` where the tests can see it. The guard is the thing that would
 lose money, not the subtraction.
 
-## 5. Next three things, in order
+## 5. Next five things, in order
 
-1. **One live session.** Launch an instance, let the loop run for a few hundred
-   steps, and keep `autopilot.jsonl`. This is not a feature — it is the only thing
-   that turns three "built, needs a live test" rows into evidence, and it is the
-   input for the verifier dataset. Everything below is blocked on it.
-2. **Verify the verbs on that session**: `hdv.scan` → `hdv.list` round-trip,
-   `quest.advance` (NPC → dialog → objective), one harvest. Each already reports
-   its missing precondition by name, so a failure tells you which one.
-3. **Drift → replan.** The loop prints `REPLAN`; wire it to
-   `ScheduleManager.replan("drop_rate_drift")` and measure whether replanning
-   helps. Small, and it closes the only loop the second agent can influence.
+The full architecture and the reasons are in `AGENT3_PLAN.md`; this is the
+execution order.
+
+1. **Live-validate M0.** Full app restart, then the checklist in
+   `AGENT3_PLAN.md` §4.1: `debug.version` = `2026-10-24c`, non-empty
+   `map.groups`, French `snap.dialog` with aligned reply ids, one
+   `reply_text` round-trip. This is the only step that turns 21/22 into evidence.
+2. **One live session with labels.** Let the loop run for a few hundred steps and
+   keep `autopilot.jsonl`. Verify `hdv.scan` → `hdv.list`, `quest.advance`
+   (NPC → dialog → objective), one harvest, and — now that groups are visible —
+   one `fight.estimate` row before a fight and its outcome after. This is the
+   verifier and dialog dataset.
+3. **Knowledge spine (M1).** Harvest the Touch client DB (task #27), enrich
+   achievement objectives, build the canonical store and placeholder resolver,
+   and index papycha as reference-only with attribution. Before the dialog policy
+   can be evaluated, the objectives have to resolve.
+4. **Dialog policy v0 (M2) and drift → replan.** The deterministic ranker logs
+   every choice with the objective delta; the same rows feed the encoder later.
+   In parallel, wire `REPLAN` to `ScheduleManager.replan("drop_rate_drift")` and
+   measure whether replanning helps.
+5. **Fight estimate v0 (M3).** Analytic, calibrated, with `confidence: low` and
+   named missing inputs. The planner uses it before any fight; buying stays
+   human.
 
 Then the model work resumes: item 3 (`farm.start` labels) and item 6 (class
-imbalance), then the verifier head (item 20).
+imbalance), the verifier head (item 20), then the strategist merge (M4) and the
+TPU combat self-play pilot (M5).
 
 ---
 
@@ -281,6 +323,11 @@ imbalance), then the verifier head (item 20).
    against the new code or accept the unpatched transition (map changes work, the
    watchdog is missing).
 3. **Harvest capture.** Who does the 60-second recording.
+4. **Multilingual encoder.** Benchmark a small multilingual sentence encoder on
+   French dialog ranking before committing; do not assume an English checkpoint
+   transfers. See `AGENT3_PLAN.md` §11.2.
+5. **Fight threshold.** Start at `p_win ≥ 0.90`; confirm whether a 5% expected
+   death chance is acceptable for quest bosses (default: no).
 
 ---
 
@@ -311,3 +358,14 @@ imbalance), then the verifier head (item 20).
    (wifi <-> ethernet) and returns by itself; the proxy keeps listening and keeps
    failing closed, and the host reconnects WARP before starting an instance. A
    forty-second tunnel gap must cost forty seconds, not a restart.
+12. **Text is an observation, not a program.** The model proposes `reply_text`;
+   the client resolves it to a reply id; the handler sends it. Never fabricate a
+   protocol message from parsed text.
+13. **Unknown is not zero.** A missing level, price or monster input stays null
+   and forces an abstain, never a default.
+14. **Reference is not training.** Papycha's content signal forbids AI training;
+   guides are RAG with attribution, never labels.
+15. **The planner may estimate; only the server decides.** A win probability is a
+   falsifiable claim; the outcome row is the answer.
+16. **Every head abstains when its inputs are missing.** An abstain is a logged,
+   valid decision; a guess is not.

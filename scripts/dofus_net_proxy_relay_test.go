@@ -298,6 +298,9 @@ func TestThePinHoldsWhileGameTrafficLivesAndMovesOnlyWhenItDoesNot(t *testing.T)
 	const dest = "dt-proxy-production-login.ankama-games.com:443"
 
 	tunnel, release := p.registerGameTunnel()
+	// Registration is not traffic. A session in progress is one that has moved bytes,
+	// and that is what the pin exists to protect.
+	tunnel.touch()
 	conn, winner, moved, err := p.recoverPin(ctx, dest, "127.0.0.1:443", 2*time.Second, dead)
 	if err != nil || moved || conn != nil || winner != nil {
 		release()
@@ -396,5 +399,61 @@ func TestIsLocalRequestHost(t *testing.T) {
 	}
 	if isLocalRequestHost("10.0.0.5:8880") || isLocalRequestHost("example.com") {
 		t.Fatal("non-loopback hosts must be rejected")
+	}
+}
+
+// A hop that accepts the CONNECT and then carries nothing must not be able to keep itself
+// pinned. The login page opens one game tunnel, that hop swallows the handshake, and the
+// old registration-time touch made the socket look like a live session for a full idle
+// window while config.json timed out. Nothing has been delivered before the first upstream
+// byte, so moving the pin cannot split a session.
+func TestAnUnprovenGameTunnelDoesNotProtectThePin(t *testing.T) {
+	live, stopLive := fakeConnectUpstream(t)
+	defer stopLive()
+	dead := closedUpstreamURL(t)
+
+	p := &ProxyServer{upstreams: []*url.URL{dead, live}}
+	p.setPinnedUpstream(dead)
+
+	_, release := p.registerGameTunnel()
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, winner, moved, err := p.recoverPin(ctx,
+		"dt-proxy-production-login.ankama-games.com:443", "127.0.0.1:443", 2*time.Second, dead)
+	if err != nil || !moved || conn == nil || winner == nil {
+		t.Fatalf("a tunnel that never moved a byte kept the dead pin: conn=%v winner=%v moved=%v err=%v",
+			conn, winner, moved, err)
+	}
+	defer conn.Close()
+	if winner.String() != live.String() {
+		t.Fatalf("re-pin chose %s, want the live egress %s", winner, live)
+	}
+}
+
+func TestProveRouteRequiresAByteFromTheFarSide(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	go func() {
+		buf := make([]byte, 64)
+		_, _ = server.Read(buf) // swallow the handshake, answer nothing
+		_ = server.Close()
+	}()
+	if _, ok := proveRoute(client, []byte("hello")); ok {
+		t.Fatal("proveRoute accepted a tunnel that never answered")
+	}
+
+	echoClient, echoServer := net.Pipe()
+	defer echoClient.Close()
+	defer echoServer.Close()
+	go func() {
+		buf := make([]byte, 64)
+		n, _ := echoServer.Read(buf)
+		_, _ = echoServer.Write(append([]byte("re:"), buf[:n]...))
+	}()
+	answer, ok := proveRoute(echoClient, []byte("hello"))
+	if !ok || string(answer) != "re:hello" {
+		t.Fatalf("proveRoute got %q ok=%v, want the upstream answer", answer, ok)
 	}
 }

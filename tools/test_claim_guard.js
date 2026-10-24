@@ -63,6 +63,14 @@ const cases = [
         200, 200, false, 'known_kick_signature'],
     ['server-counted type refuses', makeQuest({ dbObjectives: { 200: { _type: 'QuestObjectiveFightMonster' } } }),
         {}, 200, 200, false, 'objective_server_counted'],
+    ['talk-to-npc type refuses', makeQuest({ dbObjectives: { 200: { _type: 'QuestObjectiveGoToNpc' } } }),
+        {}, 200, 200, false, 'objective_server_counted'],
+    ['talk-to-npc numeric fallback refuses', makeQuest({ dbObjectives: { 200: {} } }),
+        {}, 200, 200, false, 'objective_server_counted'],
+    ['unresolved type refuses', makeQuest({
+        objectives: [{ objectiveId: 200, objectiveStatus: 2 }],
+        dbObjectives: {}
+    }), {}, 200, 200, false, 'objective_type_unknown'],
     ['discover-map numeric fallback refuses', makeQuest({ dbObjectives: { 200: { typeId: 4 } } }),
         {}, 200, 200, false, 'objective_server_counted'],
     ['not ready refuses', makeQuest({

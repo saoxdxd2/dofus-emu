@@ -50,12 +50,25 @@ Three identities matter to the server, and all three are now pinned:
   survived a dead first proxy in testing.
 - **One client script.** `scripts/mobile-disguise.js` is the only copy; the two unreferenced
   duplicates were deleted, and a check now fails if a second copy appears.
-- **143 automated checks, 0 failing.**
+- **The tutorial is the authority.** The scenario manager, not the quest graph, decides what
+  can happen next while a scripted step runs. The snapshot now carries the step's own gate
+  (`active`, `quest_id`, `step_id`, `can_change_map`, `unblocked_cells`, `unblocked_npc_id`)
+  and every exit says whether it is `blocked`. `nav.goto` refuses a crossing the step disabled,
+  an NPC other than the one it allows, and a same-map cell outside its allowed set (stage
+  `tutorial_blocked`). The planner obeys the gate before anything else — answer an open dialog,
+  talk to the allowed NPC, walk to an allowed cell — then waits (`state.snapshot`) instead of
+  starting unrelated quests. Exploration and travel ignore blocked exits and prefer the
+  objective's direction hint, so a tutorial that only allows `right` no longer produces a walk
+  to `left`.
+- **Giving up on a quest is reversible.** A stall retires that quest *in that situation*
+  (`step`, tracker objective, map, tutorial gate); a changed step, a map change, or the
+  tutorial ending reopens it. Permanent retirements (no tool can express the objective) are
+  kept separate. This is what lets the AI resume after the player advances the quest manually.
+- **244 automated checks, 0 failing.**
 
 ## The kick, and why it happened
 
-Three separate holes were found and fixed, in this order. Each was measured, not guessed.
-
+Four separate holes were found and fixed, in this order. Each was measured, not guessed.
 1. **The relay failed over mid-session.** A dead upstream silently moved the exit IP.
    The first guard refused to move only while `connsActive > 0` — but that count includes
    background sockets and drops to zero during a reconnect. The rule is now about the session,
@@ -73,21 +86,35 @@ Three separate holes were found and fixed, in this order. Each was measured, not
    the same second. Fixed: `pinMu` — the first game dial decides, the rest wait. The first dial
    also uses the supervisor's pick (`p.upstreams[0]`) instead of racing the pool, which could
    previously pin an address the supervisor had never recorded.
+4. **A hop that accepts CONNECT and then carries nothing trapped the session on it.** Public
+   proxies sometimes finish the TCP/SOCKS/CONNECT handshake and then swallow the stream. The
+   freshly registered game tunnel counted as "live" (registration called `touch()`), so rule 1
+   protected that dead address for a full 60 s while the login page's `config.json` timed out.
+   That is the "dofus.local says server busy" alert, followed by a reload into a login screen
+   that never completes. Registration is no longer activity, and a game tunnel is now proven by
+   the first byte from the far side: the client's ClientHello is held, sent to the pinned hop,
+   and a hop that answers nothing is replaced before the tunnel carries the session. Until that
+   byte nothing has been delivered, so the swap cannot split a session; after it the pin is
+   never touched. The injected script also retries the login `config.json` GET twice (network
+   errors and 5xx only), so a request already in flight during the swap survives it.
 
 The result: `setPinnedUpstream` writes only when the pin is nil, so one session has exactly one
-address. The only writer that can replace a pin is `recoverPin`, and it runs only when the pinned
-egress has failed *and* no game tunnel has moved bytes for 60 s. That is a new session, and the
-log says `session egress re-pinned` so it is never mistaken for the old one moving. The
-`exit changed` log line no longer exists — the code path that produced it was removed.
+address. The only writer that can replace a pin is `recoverPin`, and it runs only when no game
+tunnel has moved bytes for 60 s — either because the pinned egress failed, or because it has not
+carried the first byte yet. A re-pin before that first byte is not a move: the server has not seen
+the session. After it, the address is fixed for the session. The log says
+`session egress re-pinned` so it is never mistaken for the old one moving. The `exit changed` log
+line no longer exists — the code path that produced it was removed.
 
 A second hole explained the 23:23 incident specifically: a public SOCKS5 proxy was ranked
 because its port accepted TCP, then closed the game's first CONNECT. `ProbeSocksEgress` now
 performs the SOCKS handshake *and* a CONNECT for remote candidates too, not just a port check.
 
 Verified in this pass: the relay builds and its unit tests pass — destination classification,
-the live-traffic hold, the stale-session replacement, and skipping the dead address on re-pin.
-The rebuilt binaries contain both new paths, and the 143-check smoke verifier passes. A live
-session is still the only proof; see `PLAN.md` #1.
+the live-traffic hold, the stale-session replacement, the first-byte proof and silent-socket
+replacement, and skipping the dead address on re-pin. The rebuilt binaries contain both new
+paths, and the 244-check smoke verifier passes. A live session is still the only proof; see
+`PLAN.md` #1.
 
 ## Measured limits — the numbers that shape every decision
 

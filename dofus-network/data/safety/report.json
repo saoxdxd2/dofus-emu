@@ -20,23 +20,25 @@
   "synthetic.jsonl",
   "synthetic_quests.jsonl"
  ],
- "validations": 54,
- "kicks_in_log": 143,
- "kicks_attributed": 14,
- "safe_examples": 40,
+ "validations": 57,
+ "kicks_in_log": 156,
+ "kicks_attributed": 16,
+ "safe_examples": 41,
  "signatures": {
   "3841/13495": 1,
   "3841/13499": 2,
+  "3841/13922": 1,
+  "3841/13924": 1,
   "4266/7934": 1,
   "4278/13986": 10
  },
  "gap_ms": {
-  "median": 230.0,
+  "median": 230.5,
   "max": 479.0
  },
  "map_age_ms_at_kick": {
-  "median": 4471.0,
-  "max": 28498.0
+  "median": 4736.5,
+  "max": 41826.0
  },
  "window_ms": 3000.0,
  "out": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\safety"

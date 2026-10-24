@@ -24,7 +24,11 @@ playing is a bug. A re-pin is legitimate only after the client has dropped and n
 moved bytes for 60 s — the next login should then complete. `exit changed` no longer exists.
 
 While it plays, also watch the autopilot log: objectives should close, not the same ready
-objective being re-validated every cycle.
+objective being re-validated every cycle. During the tutorial the AI must obey the scenario
+(cross only where the step allows, talk to the NPC it allows, otherwise wait) and must resume
+the tutorial quest after you advance it by hand or change map. A `tutorial_blocked` stage with
+the step's gate in the payload is the refusal working; a walk toward a disabled edge is a bug.
+The autopilot log's `observation_map` is flattened now, so map changes are visible there.
 
 **If it still kicks:** the log between `session egress pinned` and the disconnect is the whole
 diagnosis. There would be a fourth hole I haven't found — that log narrows it to one line.
