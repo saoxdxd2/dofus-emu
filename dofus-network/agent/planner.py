@@ -21,12 +21,12 @@ does not need to know which one it is talking to.
 
 from __future__ import annotations
 
-import json
 import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agent.observe import flatten
+from agent.jsonio import loads as fast_loads
 from agent.dialog_policy import rank_dialog
 from agent.awareness import quest_key, scene_key
 from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E402
@@ -143,10 +143,9 @@ class QuestPlanner:
         self.quests: Dict[int, Dict[str, Any]] = {}
         path = CACHE / "quests_full.json"
         if path.exists():
-            with path.open("r", encoding="utf-8") as fh:
-                for q in json.load(fh):
-                    if q.get("steps"):
-                        self.quests[int(q["id"])] = q
+            for q in fast_loads(path.read_bytes()):
+                if q.get("steps"):
+                    self.quests[int(q["id"])] = q
         self.level_hint = level_hint
         self.max_quest_level = max_quest_level
         self.current_quest: Optional[int] = None

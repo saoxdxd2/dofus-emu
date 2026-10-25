@@ -21,13 +21,14 @@ import pickle
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from combat.battle_solver import BattleSolver, Board, TurnPlan
+from combat.battle_solver import (BattleSolver, Board, Fighter, LiveSpell,
+                                  TurnPlan)
 from combat.encounter import model
 from combat.encounter.env import Config, action_masks, initial_state, observe
 from combat.observation import build_observation, validate_observation
@@ -63,6 +64,7 @@ class LivePolicy:
         # values still enter as traced arrays, so nothing about the instance is
         # baked into the graph.
         self._bundle = jax.jit(self._forward_bundle)
+        self._select = jax.jit(self._select_impl)
 
     # -- binding -------------------------------------------------------------
 
@@ -105,25 +107,16 @@ class LivePolicy:
                 if len(chosen) == 4:
                     break
         chosen = chosen[:4]
+        chosen.extend(_empty_spell_row() for _ in range(4 - len(chosen)))
         names = {sid: spell.name for sid, spell in by_id.items()}
-        slots: List[Dict[str, Any]] = []
-        for slot, row in enumerate(chosen):
-            slots.append({
-                "slot": slot, "spell_id": int(row["id"]),
-                "name": names.get(row["id"], ""),
-                "ap": row["ap"], "rmin": row["rmin"], "rmax": row["rmax"],
-                "damage": round(float(row["damage"]), 2),
-                "heal": round(float(row["heal"]), 2),
-                "element": int(row["element"]), "ally": bool(row["ally"]),
-            })
-        while len(chosen) < 4:
-            chosen.append(_empty_spell_row())
-        while len(slots) < 4:
-            slots.append({
-                "slot": len(slots), "spell_id": 0, "name": "", "ap": 6.0,
-                "rmin": 0.0, "rmax": 0.0, "damage": 0.0, "heal": 0.0,
-                "element": 0, "ally": False,
-            })
+        slots = [{
+            "slot": slot, "spell_id": int(row["id"]),
+            "name": names.get(row["id"], ""),
+            "ap": row["ap"], "rmin": row["rmin"], "rmax": row["rmax"],
+            "damage": round(float(row["damage"]), 2),
+            "heal": round(float(row["heal"]), 2),
+            "element": int(row["element"]), "ally": bool(row["ally"]),
+        } for slot, row in enumerate(chosen)]
         return slots, chosen
 
     def _bind_targets(self, board: Board) -> List[Dict[str, Any]]:
@@ -163,33 +156,42 @@ class LivePolicy:
             acting_team=jnp.zeros((1,), dtype=jnp.int32))
         return model.forward(params, obs, glob, attention), masks
 
+    def _select_impl(self, logits: Dict[str, jax.Array],
+                     masks: Dict[str, jax.Array]) -> jax.Array:
+        """All argmax/softmax work on device; one small transfer to the host.
+
+        The old path moved six arrays to NumPy separately, which cost more than
+        the model forward itself on a CPU-sized board.
+        """
+        spell_scores = jnp.where(masks["spell"][0, 0], logits["spell"][0, 0],
+                                 -1e9)
+        spell_slot = jnp.argmax(spell_scores)
+        finite = jnp.exp(spell_scores - jnp.max(spell_scores))
+        probability = finite[spell_slot] / jnp.sum(finite)
+
+        move_scores = jnp.where(masks["move"][0, 0], logits["move"][0, 0], -1e9)
+        move = jnp.where(jnp.any(masks["move"][0, 0]),
+                         jnp.argmax(move_scores), 1)
+
+        target_scores = jnp.where(masks["target"][0, 0],
+                                  logits["target"][0, 0], -1e9)
+        target_any = jnp.any(masks["target"][0, 0], axis=-1)
+        target_choice = jnp.argmax(target_scores, axis=-1)[spell_slot]
+        target_slot = jnp.where(
+            spell_slot < self.cfg.spells,
+            jnp.where(target_any[spell_slot], target_choice, -1),
+            0,
+        )
+        value = logits["value"][0]
+        return jnp.stack([move, spell_slot, target_slot,
+                          probability, value]).astype(jnp.float32)
+
     def _choose(self, logits: Dict[str, jax.Array],
                 masks: Dict[str, jax.Array]
                 ) -> Tuple[int, int, int, float, float]:
-        spell_logits = np.asarray(logits["spell"][0, 0], dtype=np.float64)
-        spell_mask = np.asarray(masks["spell"][0, 0], dtype=bool)
-        spell_scores = np.where(spell_mask, spell_logits, -1e9)
-        spell_slot = int(np.argmax(spell_scores))
-
-        move_logits = np.asarray(logits["move"][0, 0], dtype=np.float64)
-        move_mask = np.asarray(masks["move"][0, 0], dtype=bool)
-        move_scores = np.where(move_mask, move_logits, -1e9)
-        move = int(np.argmax(move_scores)) if move_mask.any() else 1
-
-        if spell_slot == self.cfg.spells:
-            target_slot = 0
-        else:
-            target_logits = np.asarray(
-                logits["target"][0, 0, spell_slot], dtype=np.float64)
-            target_mask = np.asarray(
-                masks["target"][0, 0, spell_slot], dtype=bool)
-            target_scores = np.where(target_mask, target_logits, -1e9)
-            target_slot = int(np.argmax(target_scores)) if target_mask.any() else -1
-
-        finite = np.exp(spell_scores - np.max(spell_scores))
-        probability = float(finite[spell_slot] / finite.sum())
-        value = float(np.asarray(logits["value"])[0])
-        return move, spell_slot, target_slot, probability, value
+        values = np.asarray(self._select(logits, masks), dtype=np.float64)
+        return (int(values[0]), int(values[1]), int(values[2]),
+                float(values[3]), float(values[4]))
 
     def _path_to(self, board: Board, start: int, goal: Optional[int]
                  ) -> List[int]:
@@ -246,6 +248,93 @@ class LivePolicy:
             return float(delta)
         return -float(abs(delta))
 
+    def _castable_pair(self, board: Board, slot: Dict[str, Any],
+                       target: Dict[str, Any]
+                       ) -> Optional[Tuple[LiveSpell, Fighter, int]]:
+        """The chosen spell/target, or None when the pair itself is invalid."""
+        spell_id = int(slot["spell_id"])
+        spell = next((s for s in board.spells if s.id == spell_id), None)
+        if spell is None or not spell.castable or spell.need_free_cell:
+            return None
+        if spell.ap_cost <= 0 or spell.ap_cost > board.my_ap:
+            return None
+        if (spell.max_cast_per_turn is not None
+                and spell.casts_this_turn >= spell.max_cast_per_turn):
+            return None
+        if spell.min_cast_interval > 0 and spell.casts_this_turn > 0:
+            return None
+        target_id = int(target["fighter_id"])
+        fighter = next((f for f in board.fighters if f.id == target_id), None)
+        if fighter is None or not fighter.alive or target.get("cell") is None:
+            return None
+        is_enemy = fighter.team != "player" and fighter.id != board.my_id
+        # Only damaging casts belong on enemies and only pure heals on our
+        # side: a hybrid damage+heal spell on an ally would hurt them.
+        if is_enemy:
+            if not spell.has_damage:
+                return None
+        elif spell.has_damage:
+            return None
+        if spell.need_taken_cell and fighter.cell not in {
+                f.cell for f in board.fighters
+                if f.alive and f.id != board.my_id}:
+            return None
+        return spell, fighter, int(target["cell"])
+
+    @staticmethod
+    def _legal(board: Board, spell: LiveSpell, origin: int, target_cell: int,
+               occupied: FrozenSet[int]) -> bool:
+        """Range bracket, ring and line of sight for one cast position."""
+        distance = board.cells.distance(origin, target_cell)
+        if distance < spell.min_range or distance > spell.max_range:
+            return False
+        if target_cell not in board.cells.range_cells(
+                origin, spell.min_range, spell.max_range,
+                spell.cast_in_line, spell.cast_in_diagonal):
+            return False
+        return not spell.requires_los or board.cells.has_los(
+            origin, target_cell, occupied)
+
+    def _direct_cast(self, board: Board, slot: Dict[str, Any],
+                     target: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """A legal cast of the actor's own choice needs no beam search.
+
+        The policy has already chosen the spell and target; the solver exists
+        to find a legal realization. When the target is in range and visible
+        from the current cell, that realization is exactly one cast.
+        """
+        pair = self._castable_pair(board, slot, target)
+        if pair is None:
+            return None
+        spell, fighter, target_cell = pair
+        occupied = frozenset(f.cell for f in board.fighters
+                             if f.alive and f.id != board.my_id)
+        if not self._legal(board, spell, board.my_cell, target_cell, occupied):
+            return None
+        return {"type": "cast", "spellId": spell.id,
+                "targetId": fighter.id, "cell": target_cell}
+
+    def _cast_cell(self, board: Board, slot: Dict[str, Any],
+                   target: Dict[str, Any]) -> Optional[int]:
+        """Cheapest reachable cell from which the chosen cast is legal.
+
+        Used when the target is out of range from the current cell: walk to
+        that cell now, then the next decision casts directly. This is the
+        same legality check without running a full turn search.
+        """
+        pair = self._castable_pair(board, slot, target)
+        if pair is None:
+            return None
+        spell, _fighter, target_cell = pair
+        occupied = frozenset(f.cell for f in board.fighters
+                             if f.alive and f.id != board.my_id)
+        for cell in board.cells.reachable(board.my_cell, board.my_mp,
+                                          occupied):
+            if cell != board.my_cell and self._legal(
+                    board, spell, cell, target_cell, occupied):
+                return cell
+        return None
+
     def _realize(self, board: Board, spell_slot: int, target_slot: int,
                  move: int, slots: Sequence[Dict[str, Any]],
                  targets: Sequence[Dict[str, Any]]
@@ -264,6 +353,17 @@ class LivePolicy:
         if target_id is None:
             return None, True, "target_slot_empty"
 
+        direct = self._direct_cast(board, slot, target)
+        if direct is not None:
+            return direct, False, "policy_direct"
+
+        move_cell = self._cast_cell(board, slot, target)
+        if move_cell is not None:
+            path = self._path_to(board, board.my_cell, move_cell)
+            if len(path) > 1:
+                return ({"type": "move", "cell": int(move_cell),
+                         "path": path}, True, "policy_move")
+
         plans = self.solver.plan_candidates(board, self.plan_k)
         matching: List[TurnPlan] = []
         for plan in plans:
@@ -277,15 +377,31 @@ class LivePolicy:
                     matching.append(plan)
                     break
         if matching:
-            best = max(matching, key=lambda plan: self._move_score(
-                board, plan, target, move))
-            return self._action_for_plan(board, best), False, "policy"
+            return self._emit(
+                board, max(matching, key=lambda plan: self._move_score(
+                    board, plan, target, move)), False, "policy", "policy_move")
 
         fallback = next((plan for plan in plans
                          if plan.actions and plan.actions[0].kind != "pass"), None)
         if fallback is None:
             return {"type": "pass"}, True, "no_legal_plan"
-        return self._action_for_plan(board, fallback), True, "solver_fallback"
+        return self._emit(board, fallback, True, "solver_fallback", "solver_move")
+
+    def _emit(self, board: Board, plan: TurnPlan, fallback: bool, reason: str,
+              walk_reason: str) -> Tuple[Dict[str, Any], bool, str]:
+        """The plan's first action; walk first when its cast starts elsewhere.
+
+        The page casts from the character's current cell. A plan that folds a
+        walk into its cast must emit that walk now, or the client sees an
+        out-of-range cast and the turn stalls.
+        """
+        first = plan.actions[0]
+        if first.kind == "cast" and int(first.from_cell) != int(board.my_cell):
+            path = self._path_to(board, board.my_cell, int(first.from_cell))
+            if len(path) > 1:
+                return ({"type": "move", "cell": int(first.from_cell),
+                         "path": path}, True, walk_reason)
+        return self._action_for_plan(board, plan), fallback, reason
 
     # -- request -------------------------------------------------------------
 
@@ -358,7 +474,8 @@ class LivePolicy:
         try:
             plan = self._current_plan(board)
             tables, spec = board_encounter(
-                board, plan, self.cfg, first_team=0, player_rows=player_rows)
+                board, plan, self.cfg, first_team=0, player_rows=player_rows,
+                as_jax=False)
             logits, masks = self._bundle(
                 self.params, spec, tables,
                 float(max(0, board.my_ap)), float(max(0, board.my_mp)),

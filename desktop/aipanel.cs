@@ -29,6 +29,7 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
+using DofusFarm.Engine;
 
 namespace DofusFarm.UI
 {
@@ -693,6 +694,7 @@ namespace DofusFarm.UI
             sb.Append(" --log \"").Append(logFile).Append("\"");
             if (minutes > 0) sb.Append(" --minutes ").Append(minutes.ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (_settings.DryRun) sb.Append(" --dry-run");
+            if (!RuntimeSettings.Current.FightBoards) sb.Append(" --no-fight-boards");
 
             // Use the verifier if one has been trained. It is optional by design:
             // without it the loop labels with rules, which is still a valid label.

@@ -18,6 +18,7 @@ from ``encounter_selfplay.pkl`` (override with ``--checkpoint``).
 from __future__ import annotations
 
 import argparse
+import atexit
 import sys
 import threading
 import time
@@ -37,24 +38,73 @@ POLICY: Optional[LivePolicy] = None
 DECISION_LOCK = threading.Lock()
 LOG_PATH = REPO_ROOT / "trajectories" / "live_policy_decisions.jsonl"
 LOG_MAX_BYTES = 64 * 1024 * 1024
+# A decision row is several KB. Opening, writing and closing the log per
+# decision cost about a millisecond; keeping one handle and flushing each row
+# costs ~0.1 ms and loses nothing if the process is killed. (Block flushing is
+# ~0.008 ms but can drop the last rows on TerminateProcess.)
+LOG_FLUSH_BYTES = 0
+_LOG_LOCK = threading.Lock()
+_LOG_HANDLE = None
+_LOG_OPEN_PATH: Optional[Path] = None
+_LOG_BYTES = 0
+_LOG_PENDING = 0
 
 
-def _rotate_log() -> None:
-    """Keep an unattended server from filling the disk with one JSONL file."""
+def _close_log_locked(flush: bool = True) -> None:
+    global _LOG_HANDLE, _LOG_OPEN_PATH, _LOG_PENDING
+    handle, _LOG_HANDLE = _LOG_HANDLE, None
+    _LOG_OPEN_PATH = None
+    _LOG_PENDING = 0
+    if handle is None:
+        return
     try:
-        if LOG_PATH.exists() and LOG_PATH.stat().st_size >= LOG_MAX_BYTES:
+        if flush:
+            handle.flush()
+    except OSError:
+        pass
+    finally:
+        try:
+            handle.close()
+        except OSError:
+            pass
+
+
+def _open_log_locked() -> None:
+    global _LOG_HANDLE, _LOG_OPEN_PATH, _LOG_BYTES, _LOG_PENDING
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _LOG_HANDLE = LOG_PATH.open("ab")
+    _LOG_OPEN_PATH = LOG_PATH
+    try:
+        _LOG_BYTES = LOG_PATH.stat().st_size
+    except OSError:
+        _LOG_BYTES = 0
+    _LOG_PENDING = 0
+
+
+def _rotate_log_locked() -> None:
+    """Keep an unattended server from filling the disk with one JSONL file."""
+    global _LOG_BYTES
+    _close_log_locked()
+    try:
+        if LOG_PATH.exists():
             stamp = time.strftime("%Y%m%d-%H%M%S")
             rotated = LOG_PATH.with_name(
                 f"{LOG_PATH.stem}.{stamp}{LOG_PATH.suffix}")
+            suffix = 0
+            while rotated.exists():
+                suffix += 1
+                rotated = LOG_PATH.with_name(
+                    f"{LOG_PATH.stem}.{stamp}-{suffix}{LOG_PATH.suffix}")
             LOG_PATH.rename(rotated)
     except OSError:
         pass
+    _LOG_BYTES = 0
+    _open_log_locked()
 
 
 def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> None:
+    global _LOG_BYTES, _LOG_PENDING
     try:
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _rotate_log()
         record = {
             "time": time.time(),
             "fight_id": payload.get("fight_id"),
@@ -62,10 +112,32 @@ def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> None:
             "my_id": payload.get("my_id"),
             "decision": decision,
         }
-        with LOG_PATH.open("ab") as handle:
-            handle.write(dumps_bytes(record) + b"\n")
+        line = dumps_bytes(record) + b"\n"
+        with _LOG_LOCK:
+            if _LOG_HANDLE is None or _LOG_OPEN_PATH != LOG_PATH:
+                _close_log_locked()
+                _open_log_locked()
+            if _LOG_BYTES + len(line) >= LOG_MAX_BYTES:
+                _rotate_log_locked()
+            _LOG_HANDLE.write(line)
+            _LOG_BYTES += len(line)
+            _LOG_PENDING += len(line)
+            if _LOG_PENDING >= LOG_FLUSH_BYTES:
+                _LOG_HANDLE.flush()
+                _LOG_PENDING = 0
     except OSError:
-        pass
+        # An unwritable log must never stop the fight API.
+        with _LOG_LOCK:
+            try:
+                _close_log_locked(flush=False)
+            except Exception:  # noqa: BLE001 - best effort close
+                pass
+
+
+@atexit.register
+def _flush_decision_log() -> None:
+    with _LOG_LOCK:
+        _close_log_locked()
 
 
 def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -123,8 +195,17 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
         if self.path != "/v1/combat/decide":
             self._reply({"ok": False, "error": "not found"}, 404)
             return
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length)
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            self._reply({"ok": False, "action": None,
+                         "reason": "bad_request:invalid_content_length"}, 400)
+            return
+        if length > 8 * 1024 * 1024:
+            self._reply({"ok": False, "action": None,
+                         "reason": "bad_request:body_too_large"}, 413)
+            return
+        raw = self.rfile.read(max(0, length))
         try:
             payload = loads(raw) if raw else {}
             if not isinstance(payload, dict):
@@ -145,7 +226,11 @@ def run_server(port: int = 8891,
                log_path: Optional[Path] = None) -> None:
     global POLICY, LOG_PATH
     if log_path is not None:
-        LOG_PATH = Path(log_path)
+        new_path = Path(log_path)
+        if new_path != LOG_PATH:
+            with _LOG_LOCK:
+                _close_log_locked()
+            LOG_PATH = new_path
     print("==========================================================")
     print("   DOFUS LIVE COMBAT POLICY API (PPO/PBT ACTOR)          ")
     print("==========================================================")

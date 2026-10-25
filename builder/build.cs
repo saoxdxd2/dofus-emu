@@ -93,6 +93,7 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "PriorityGovernor.cs"),
                 Path.Combine(desktopDir, "AiPanel.cs"),
                 Path.Combine(desktopDir, "NetSettings.cs"),
+                Path.Combine(desktopDir, "RuntimeSettings.cs"),
                 Path.Combine(desktopDir, "Pages.cs"),
                 Path.Combine(desktopDir, "MainForm.cs"),
                 Path.Combine(desktopDir, "Program.cs")

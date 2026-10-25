@@ -255,6 +255,10 @@ namespace DofusFarm.UI
 
         private int _logWritesSinceFlush = 0;
 
+        private const long LogMaxBytes = 64L * 1024 * 1024;
+
+        private long _logBytes = 0;
+
         private volatile string _pendingStatusText;
 
         private int _statusTextPending = 0;
@@ -830,9 +834,9 @@ namespace DofusFarm.UI
 
                 new DataGridViewTextBoxColumn { Name = "Name", HeaderText = "SLOT", Width = 78 },
 
-                new DataGridViewTextBoxColumn { Name = "Ram", HeaderText = "RAM", Width = 76 },
+                new DataGridViewTextBoxColumn { Name = "Ram", HeaderText = "HOST MEMORY", Width = 96 },
 
-                new DataGridViewTextBoxColumn { Name = "Cores", HeaderText = "CPU CORES", Width = 80 },
+                new DataGridViewTextBoxColumn { Name = "Cores", HeaderText = "HOST CPU", Width = 92 },
 
                 new DataGridViewTextBoxColumn { Name = "Device", HeaderText = "DEVICE PROFILE", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 135, MinimumWidth = 125 },
 
@@ -926,11 +930,13 @@ namespace DofusFarm.UI
 
 
 
-            _syncTimer = new System.Windows.Forms.Timer { Interval = 4000 };
+            int refreshMs = RuntimeSettings.Current.RefreshMs;
+
+            _syncTimer = new System.Windows.Forms.Timer { Interval = refreshMs > 0 ? refreshMs : 4000 };
 
             _syncTimer.Tick += OnSyncTimerTick;
 
-            _syncTimer.Start();
+            if (refreshMs > 0) _syncTimer.Start();
 
 
 
@@ -1155,7 +1161,7 @@ namespace DofusFarm.UI
                 // Changing the egress invalidates every relay that is already
                 // running: they hold the old upstream in their command line.
                 try { _engine.StopAllProxies(); } catch { }
-            });
+            }, ApplyRuntimeSettings);
             _pageShortcuts = new ShortcutsPage(baseDir, _aiPanel.Settings, delegate { _aiPanel.SaveSettings(); });
 
             // One line at startup that says how traffic will leave: the first
@@ -1576,6 +1582,8 @@ namespace DofusFarm.UI
 
             _watchdog.Start();
 
+            _watchdog.Enabled = RuntimeSettings.Current.Watchdog;
+
 
 
             _governor = new PriorityGovernor();
@@ -1814,7 +1822,103 @@ namespace DofusFarm.UI
 
         }
 
+        // Settings → Runtime. The timer is owned by the UI thread, so the
+        // settings page can retune it directly; the watchdog stays alive but
+        // ignores its ticks while disabled.
+        private void ApplyRuntimeSettings()
 
+        {
+
+            RuntimeSettings settings = RuntimeSettings.Current;
+
+            if (_syncTimer != null)
+
+            {
+
+                _syncTimer.Stop();
+
+                if (settings.RefreshMs > 0)
+
+                {
+
+                    _syncTimer.Interval = settings.RefreshMs;
+
+                    _syncTimer.Start();
+
+                }
+
+            }
+
+            if (_watchdog != null) _watchdog.Enabled = settings.Watchdog;
+
+            RefreshGrid(true);
+
+        }
+
+
+
+        private void OpenLogLocked(bool resetBytes)
+
+        {
+
+            _logWriter = new StreamWriter(new FileStream(LogFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = false };
+
+            if (resetBytes)
+
+            {
+
+                _logBytes = 0;
+
+                return;
+
+            }
+
+            try { _logBytes = new FileInfo(LogFilePath).Length; } catch { _logBytes = 0; }
+
+        }
+
+        // The app log is append-only and was never rotated: a long-running farm
+        // eventually fills the disk. Rotate at 64 MB like the other logs, with
+        // a unique name so two rotations cannot silently overwrite each other.
+        private void RotateLogLocked()
+
+        {
+
+            try { if (_logWriter != null) { _logWriter.Flush(); _logWriter.Dispose(); } } catch { }
+
+            _logWriter = null;
+
+            try
+
+            {
+
+                string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+
+                string dir = Path.GetDirectoryName(LogFilePath);
+
+                string stem = Path.GetFileNameWithoutExtension(LogFilePath);
+
+                string rotated = Path.Combine(dir, stem + "." + stamp + ".log");
+
+                int suffix = 0;
+
+                while (File.Exists(rotated))
+
+                {
+
+                    suffix++;
+
+                    rotated = Path.Combine(dir, stem + "." + stamp + "-" + suffix + ".log");
+
+                }
+
+                File.Move(LogFilePath, rotated);
+
+            }
+
+            catch { }
+
+        }
 
         private void Log(string msg)
 
@@ -1832,9 +1936,21 @@ namespace DofusFarm.UI
 
                     if (_logWriter == null)
 
-                        _logWriter = new StreamWriter(new FileStream(LogFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = false };
+                        OpenLogLocked(false);
+
+                    if (_logBytes >= LogMaxBytes)
+
+                    {
+
+                        RotateLogLocked();
+
+                        OpenLogLocked(true);
+
+                    }
 
                     _logWriter.WriteLine(msg);
+
+                    _logBytes += Encoding.UTF8.GetByteCount(msg) + Environment.NewLine.Length;
 
                     // Batch flushes: a flush syscall per line dominated disk
                     // I/O during log floods. Flush every 200 lines here, plus
@@ -1981,7 +2097,9 @@ namespace DofusFarm.UI
 
                     if (_isClosing) return;
 
-                    List<InstanceModel> list = _engine.GetInstances();
+                    // The periodic tick may reuse a recent live scan; a forced
+                    // refresh (start/stop, user action) always asks fresh.
+                    List<InstanceModel> list = _engine.GetInstances(!forceRedraw);
 
 
 
@@ -2025,6 +2143,10 @@ namespace DofusFarm.UI
 
                         {
 
+                            // WebView2 windows share the host process; the AVD
+                            // config's emulator RAM/cores are stale and would lie.
+                            bool hostShared = _activeBackend is WebView2Backend;
+
                             _grid.Rows.Clear();
 
                             int runningCount = 0;
@@ -2063,9 +2185,9 @@ namespace DofusFarm.UI
 
                                     inst.Name,
 
-                                    inst.RamMb > 0 ? (inst.RamMb + " MB") : "Shared",
+                                    hostShared ? "Shared" : (inst.RamMb > 0 ? (inst.RamMb + " MB") : "Auto"),
 
-                                    inst.Cores > 0 ? (inst.Cores + (inst.Cores == 1 ? " Core" : " Cores")) : "Shared",
+                                    hostShared ? "Shared" : (inst.Cores > 0 ? (inst.Cores + (inst.Cores == 1 ? " Core" : " Cores")) : "Auto"),
 
                                     inst.PhoneModelName ?? "Galaxy Tab S6",
 

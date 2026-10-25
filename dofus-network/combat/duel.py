@@ -18,9 +18,8 @@ be the v3 encounter rows now and Dofusbook builds later.
 
 from __future__ import annotations
 
-import copy
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -96,6 +95,10 @@ class Duelist:
     stats: Dict[str, float] = field(default_factory=dict)
     resist_fixed: Tuple[Tuple[str, int], ...] = ()
     alive: bool = True
+    # Derived from the immutable spell tuple; shared with counterfactual
+    # clones so six plan evaluations do not rescan the same spellbook.
+    _feature_cache: Dict[str, Any] = field(default_factory=dict, init=False,
+                                           repr=False, compare=False)
 
     @property
     def class_index(self) -> int:
@@ -103,6 +106,20 @@ class Duelist:
 
     def resist_value(self, element: str) -> int:
         return dict(self.resist).get(element.lower(), 0)
+
+    def spell_summary(self) -> Tuple[float, float, float, int]:
+        cached = self._feature_cache.get("summary")
+        if cached is None:
+            cached = _spell_summary(self)
+            self._feature_cache["summary"] = cached
+        return cached
+
+    def main_element(self) -> str:
+        cached = self._feature_cache.get("element")
+        if cached is None:
+            cached = _main_element(self)
+            self._feature_cache["element"] = cached
+        return cached
 
 
 def _resists(data: Any, row: int) -> Tuple[Tuple[str, int], ...]:
@@ -190,6 +207,29 @@ class DuelState:
 
     def by_id(self, ident: int) -> Duelist:
         return self.fighters[0] if self.fighters[0].id == ident else self.fighters[1]
+
+    def clone(self) -> "DuelState":
+        """A counterfactual state for one candidate plan.
+
+        Only the duelists and the turn counters are mutated by ``apply_plan``
+        and ``advance_turn``; the cell map, spell tuples and duel history are
+        not. ``copy.deepcopy`` walked all of them, including every cached
+        damage calculation on every spell, for each of the k plans per turn.
+        """
+        twins = []
+        for fighter in self.fighters:
+            twin = replace(fighter)
+            # The spellbook cannot change during a duel; share the derived
+            # summary instead of rebuilding it in every counterfactual.
+            twin._feature_cache = fighter._feature_cache
+            twins.append(twin)
+        return DuelState(
+            fighters=tuple(twins),
+            cells=self.cells, order=self.order, round=self.round,
+            turn=self.turn, done=self.done, winner=self.winner,
+            max_rounds=self.max_rounds, turns=self.turns,
+            history=self.history,
+        )
 
 
 def make_duel(data: Any, row_a: int, row_b: int, cells: CellMap,
@@ -321,8 +361,8 @@ def _main_element(d: Duelist) -> str:
 
 def state_features(state: DuelState, actor: Duelist) -> List[float]:
     opponent = state.fighters[1] if actor is state.fighters[0] else state.fighters[0]
-    damage, efficiency, heal, count = _spell_summary(actor)
-    element = _main_element(actor)
+    damage, efficiency, heal, count = actor.spell_summary()
+    element = actor.main_element()
     main_resist = opponent.resist_value(element)
     distance = float(state.cells.distance(actor.cell, opponent.cell))
     los = 1.0 if state.cells.has_los(actor.cell, opponent.cell) else 0.0
@@ -408,16 +448,38 @@ def random_policy(state: DuelState, actor: Duelist,
 def plan_scores(state: DuelState, actor: Duelist,
                 plans: Sequence[TurnPlan], model, tie_break: float = 1e-4
                 ) -> List[float]:
-    scores: List[float] = []
+    """Score every candidate plan, evaluating the model in one batch.
+
+    ``predict_proba([row])`` per plan paid the forest dispatch once per row;
+    a HistGradientBoosting forest evaluates every row through the same tree
+    walk, so the whole candidate set is one call. Terminal plans need no
+    prediction.
+    """
+    rows: List[Optional[List[float]]] = []
+    terminal: List[Optional[float]] = []
     for plan in plans:
-        clone = copy.deepcopy(state)
+        clone = state.clone()
         apply_plan(clone, plan)
         if clone.done:
-            score = 1.0 if clone.winner == actor.id else 0.0
+            rows.append(None)
+            terminal.append(1.0 if clone.winner == actor.id else 0.0)
         else:
-            score = plan_value(lookahead_features(clone, actor), model)
-        scores.append(score + tie_break * min(plan.score, 1000.0))
-    return scores
+            rows.append(lookahead_features(clone, actor))
+            terminal.append(None)
+    pending = [index for index, row in enumerate(rows) if row is not None]
+    predicted: List[float] = []
+    if model is not None and pending:
+        try:
+            predicted = [float(row[1]) for row in
+                         model.predict_proba([rows[i] for i in pending])]
+        except Exception:
+            # A rejected row must not turn the whole plan set into zeroes.
+            predicted = [plan_value(rows[i], model) for i in pending]
+    by_index = dict(zip(pending, predicted))
+    values = [terminal[index] if terminal[index] is not None
+              else by_index[index] for index in range(len(plans))]
+    return [value + tie_break * min(plan.score, 1000.0)
+            for value, plan in zip(values, plans)]
 
 
 def value_policy(state: DuelState, actor: Duelist,
@@ -452,7 +514,7 @@ def make_two_ply_policy(solver: BattleSolver, opponent_k: int = 4,
         best = plans[0]
         best_score = -1.0e9
         for plan in plans:
-            clone = copy.deepcopy(state)
+            clone = state.clone()
             apply_plan(clone, plan)
             if clone.done:
                 score = 1.0 if clone.winner == actor.id else 0.0

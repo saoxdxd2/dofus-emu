@@ -240,28 +240,46 @@ namespace DofusFarm.Engine
                 }
 
                 string label = string.IsNullOrEmpty(tool) ? directive : tool;
-                string script = "window.__agentDirective ? window.__agentDirective(" + body + ") "
-                    + ": JSON.stringify({ok:false,error:'__agentDirective missing (mobile-disguise.js not loaded in this page)'})";
-
-                string raw = RunOnForm(form, script, 8000);
+                // The directive and the post-action snapshot travel in one
+                // renderer call. Two ExecuteScriptAsync calls paid the WebView2
+                // IPC twice per action and left a window in which the world
+                // could change between the action and the state it was paired
+                // with. The page returns the final response envelope itself.
+                string payloadLiteral = string.IsNullOrEmpty(body) ? "{}" : body;
+                string combined = "window.__agentDirectiveWithSnapshot ? window.__agentDirectiveWithSnapshot({payload:"
+                    + payloadLiteral + ",id:" + JsonQuote(id) + ",target:" + JsonQuote(target) + "}) "
+                    + ": JSON.stringify({ok:false,error:'__agentDirectiveWithSnapshot missing'})";
+                bool legacy = false;
+                string raw = RunOnForm(form, combined, 10000);
                 if (raw == null)
                 {
                     WriteResponse(stream, 200, FailureJson(id, "directive '" + label + "' timed out or the client page is not ready"));
                     Log("[AGENT] " + label + " -> " + target + " TIMEOUT");
                     return;
                 }
-
                 string decoded = DecodeJsResult(raw);
-                // Piggyback the game state on the response. The Python recorder
-                // needs the state the action was taken against, and this is the
-                // only moment it is provably fresh (age 0). A separate poll
-                // would be a second clock and a second source of truth.
-                string snapshot = CaptureSnapshot(form);
-                string response = "{\"ok\":true,\"id\":" + JsonQuote(id) + ",\"target\":" + JsonQuote(target)
-                    + ",\"result\":" + (LooksLikeJson(decoded) ? decoded : JsonQuote(decoded))
-                    + ",\"snapshot\":" + snapshot + "}";
-                WriteResponse(stream, 200, response);
-                Log("[AGENT] " + label + " -> " + target + " ok");
+                if (decoded.IndexOf("\"error\":\"__agentDirectiveWithSnapshot missing\"",
+                        StringComparison.Ordinal) >= 0)
+                {
+                    // A page injected by an older build has no combined call.
+                    legacy = true;
+                    string script = "window.__agentDirective ? window.__agentDirective(" + body + ") "
+                        + ": JSON.stringify({ok:false,error:'__agentDirective missing (mobile-disguise.js not loaded in this page)'})";
+                    raw = RunOnForm(form, script, 8000);
+                    if (raw == null)
+                    {
+                        WriteResponse(stream, 200, FailureJson(id, "directive '" + label + "' timed out or the client page is not ready"));
+                        Log("[AGENT] " + label + " -> " + target + " TIMEOUT");
+                        return;
+                    }
+                    decoded = DecodeJsResult(raw);
+                    string snapshot = CaptureSnapshot(form);
+                    decoded = "{\"ok\":true,\"id\":" + JsonQuote(id) + ",\"target\":" + JsonQuote(target)
+                        + ",\"result\":" + (LooksLikeJson(decoded) ? decoded : JsonQuote(decoded))
+                        + ",\"snapshot\":" + snapshot + "}";
+                }
+                WriteResponse(stream, 200, decoded);
+                Log("[AGENT] " + label + " -> " + target + (legacy ? " ok (legacy two-call path)" : " ok"));
             }
         }
 
@@ -360,23 +378,40 @@ namespace DofusFarm.Engine
         {
             requestLine = null;
             body = "";
-            MemoryStream headerBuffer = new MemoryStream();
-            byte[] single = new byte[1];
-            int total = 0;
-            while (total < 16384)
+            // Read the header in blocks. This used to read one byte per socket
+            // call, so a 300-byte directive header cost 300 loopback reads on
+            // every agent request. A block can carry the first body bytes too,
+            // so the terminator offset bounds the header text and the remainder
+            // is preloaded into the body.
+            const int maxHeader = 16384;
+            byte[] chunk = new byte[4096];
+            MemoryStream received = new MemoryStream(1024);
+            int headerEnd = -1;
+            while (received.Length < maxHeader)
             {
                 int n;
-                try { n = stream.Read(single, 0, 1); }
+                try { n = stream.Read(chunk, 0, chunk.Length); }
                 catch { return false; }
                 if (n <= 0) return false;
-                headerBuffer.WriteByte(single[0]);
-                total++;
-                byte[] arr = headerBuffer.GetBuffer();
-                if (total >= 4 && arr[total - 4] == 13 && arr[total - 3] == 10
-                    && arr[total - 2] == 13 && arr[total - 1] == 10)
-                    break;
+                int before = (int)received.Length;
+                received.Write(chunk, 0, n);
+                byte[] arr = received.GetBuffer();
+                int len = before + n;
+                int scanFrom = Math.Max(0, before - 3);
+                for (int i = scanFrom; i + 3 < len; i++)
+                {
+                    if (arr[i] == 13 && arr[i + 1] == 10
+                        && arr[i + 2] == 13 && arr[i + 3] == 10)
+                    {
+                        headerEnd = i + 4;
+                        break;
+                    }
+                }
+                if (headerEnd >= 0) break;
             }
-            string headerText = Encoding.UTF8.GetString(headerBuffer.ToArray());
+            if (headerEnd < 0) return false;
+            byte[] buffer = received.GetBuffer();
+            string headerText = Encoding.UTF8.GetString(buffer, 0, headerEnd);
             string[] lines = headerText.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
             if (lines.Length == 0) return false;
             requestLine = lines[0];
@@ -397,7 +432,8 @@ namespace DofusFarm.Engine
             {
                 if (contentLength > 1048576) return false;
                 byte[] bodyBuffer = new byte[contentLength];
-                int read = 0;
+                int read = Math.Min((int)received.Length - headerEnd, contentLength);
+                if (read > 0) Buffer.BlockCopy(buffer, headerEnd, bodyBuffer, 0, read);
                 while (read < contentLength)
                 {
                     int n = stream.Read(bodyBuffer, read, contentLength - read);

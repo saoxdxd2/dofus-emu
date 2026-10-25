@@ -177,11 +177,17 @@ def evaluate_matchup(name: str, data, levels, cells, rows, games: int,
         outcomes.append(0 if winner == 1 else (1 if winner == 2 else 2))
         turns_count.append(state.turns)
         if capture and model is not None:
-            for turn in turns:
-                label = None if winner is None else float(winner == turn["actor"])
-                if label is not None:
-                    p = float(model.predict_proba([turn["post_features"]])[0][1])
-                    calibration.append((label, p))
+            labelled = [
+                (float(winner == turn["actor"]), turn["post_features"])
+                for turn in turns if winner is not None
+            ]
+            if labelled:
+                probabilities = model.predict_proba(
+                    [row for _label, row in labelled])[:, 1]
+                calibration.extend(
+                    (label, float(probability))
+                    for (label, _row), probability
+                    in zip(labelled, probabilities))
         games_done += 1
     wins = outcomes.count(0)
     losses = outcomes.count(1)

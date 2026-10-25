@@ -885,7 +885,8 @@ def _fallback_member(monster_id: int, level: int, is_boss: bool) -> EnemyMember:
     )
 
 
-def _enemy_facts(group: Dict[str, Any], canonical) -> EnemyFacts:
+def _enemy_facts(group: Dict[str, Any], canonical,
+                 monster_cache: Optional[Dict[int, Any]] = None) -> EnemyFacts:
     """Build the monster side from one `map.groups` entry and the canonical store."""
     members: List[EnemyMember] = []
     missing: List[str] = []
@@ -908,7 +909,14 @@ def _enemy_facts(group: Dict[str, Any], canonical) -> EnemyFacts:
         if level is None:
             missing.append("member.level:%d" % monster_id)
             continue
-        monster = canonical.monster(monster_id) if canonical is not None else None
+        if monster_cache is not None and monster_id in monster_cache:
+            monster = monster_cache[monster_id]
+        else:
+            monster = canonical.monster(monster_id) if canonical is not None else None
+            if monster_cache is not None:
+                monster_cache[monster_id] = monster
+                if len(monster_cache) > 2048:
+                    monster_cache.clear()
         if monster is None:
             missing.append("monster:%d" % monster_id)
             members.append(_fallback_member(monster_id, level, bool(row.get("is_boss"))))
@@ -1010,6 +1018,10 @@ class FightAdvisor:
         # The spell rotation only changes with the sheet, not with the group;
         # re-pricing it once per group on a 20-group map is wasted work.
         self._player_cache: Optional[PlayerFacts] = None
+        # Monster rows come from a read-only canonical store; the same monster
+        # usually appears in several groups and every group re-query was a
+        # separate SQLite round trip.
+        self._monster_cache: Dict[int, Any] = {}
 
     # -- inputs ------------------------------------------------------------
 
@@ -1155,7 +1167,7 @@ class FightAdvisor:
             )
         try:
             player = self._player(observation)
-            enemy = _enemy_facts(group, self.store)
+            enemy = _enemy_facts(group, self.store, self._monster_cache)
         except Exception as exc:  # noqa: BLE001 - report, do not crash the loop
             return unavailable(_as_int(group.get("group_id")),
                                "estimate failed: %s: %s" % (type(exc).__name__, exc))

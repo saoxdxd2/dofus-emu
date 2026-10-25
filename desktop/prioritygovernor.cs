@@ -15,6 +15,10 @@ namespace DofusFarm.Engine
         public IClientBackend Backend { get; set; }     // optional: lets the governor balance WebView2 instances
         private int _lastForegroundPid = -1;
         private readonly HashSet<int> _pinnedPids = new HashSet<int>();
+        // Last power-throttling state applied per WebView2 PID. Applying it
+        // opens and closes a process handle, so only reapply when the
+        // foreground/background role actually changes.
+        private readonly Dictionary<int, bool> _throttleState = new Dictionary<int, bool>();
         private int _runningState = 0;
         public volatile bool Enabled = true;
 
@@ -53,6 +57,7 @@ namespace DofusFarm.Engine
                 _slotCache.Clear();
                 _slotCoresCache.Clear();
             }
+            lock (_throttleState) { _throttleState.Clear(); }
         }
 
         private void Log(string message)
@@ -283,8 +288,13 @@ namespace DofusFarm.Engine
                 uint fgPid = 0;
                 if (hFg != IntPtr.Zero) Win32.GetWindowThreadProcessId(hFg, out fgPid);
 
-                GovernWebView2Processes(hFg, fgPid);
-                GovernQemuProcesses(hFg, fgPid);
+                // Both governors may need process ancestry; snapshot the process
+                // table once per tick instead of once per query.
+                Dictionary<int, List<int>> parents = null;
+                try { parents = Win32.SnapshotParentMap(); } catch { }
+
+                GovernWebView2Processes(hFg, fgPid, parents);
+                GovernQemuProcesses(hFg, fgPid, parents);
             }
             catch { }
             finally
@@ -293,13 +303,21 @@ namespace DofusFarm.Engine
             }
         }
 
-        private void GovernWebView2Processes(IntPtr hFg, uint fgPid)
+        private void GovernWebView2Processes(IntPtr hFg, uint fgPid,
+            Dictionary<int, List<int>> parents)
         {
             Process[] wvProcs = null;
             try
             {
                 wvProcs = Process.GetProcessesByName("msedgewebview2");
-                if (wvProcs == null || wvProcs.Length == 0) return;
+                if (wvProcs == null || wvProcs.Length == 0)
+                {
+                    // No WebView2 process is alive. Drop the cached roles so a
+                    // recycled PID is never mistaken for a process we already
+                    // throttled.
+                    lock (_throttleState) { _throttleState.Clear(); }
+                    return;
+                }
 
                 int activeBrowserPid = -1;
                 List<int> browserPids = (Backend != null) ? Backend.GetAllBrowserProcessIds() : null;
@@ -318,7 +336,7 @@ namespace DofusFarm.Engine
                     if (activeBrowserPid <= 0 && browserPids != null && browserPids.Count > 0)
                     {
                         HashSet<int> tree = null;
-                        try { tree = Win32.GetProcessTrees(new[] { (int)fgPid }); } catch { }
+                        try { tree = Win32.GetProcessTrees(new[] { (int)fgPid }, parents); } catch { }
                         foreach (int bPid in browserPids)
                         {
                             if (bPid == (int)fgPid || (tree != null && tree.Contains(bPid)))
@@ -333,7 +351,7 @@ namespace DofusFarm.Engine
                 HashSet<int> activeTree = null;
                 if (activeBrowserPid > 0)
                 {
-                    try { activeTree = Win32.GetProcessTrees(new[] { activeBrowserPid }); }
+                    try { activeTree = Win32.GetProcessTrees(new[] { activeBrowserPid }, parents); }
                     catch { activeTree = new HashSet<int> { activeBrowserPid }; }
                 }
 
@@ -347,9 +365,11 @@ namespace DofusFarm.Engine
                     _lastForegroundWvPid = 0;
                 }
 
+                HashSet<int> live = new HashSet<int>(wvProcs.Length);
                 for (int i = 0; i < wvProcs.Length; i++)
                 {
                     Process p = wvProcs[i];
+                    live.Add(p.Id);
                     try
                     {
                         bool isForeground = activeTree != null && activeTree.Contains(p.Id);
@@ -357,16 +377,38 @@ namespace DofusFarm.Engine
                         {
                             if (p.PriorityClass != ProcessPriorityClass.AboveNormal)
                                 p.PriorityClass = ProcessPriorityClass.AboveNormal;
-                            Win32.SetProcessPowerThrottling(p.Id, false);
                         }
                         else
                         {
                             if (p.PriorityClass != ProcessPriorityClass.BelowNormal)
                                 p.PriorityClass = ProcessPriorityClass.BelowNormal;
-                            Win32.SetProcessPowerThrottling(p.Id, true);
+                        }
+                        bool throttled = !isForeground;
+                        lock (_throttleState)
+                        {
+                            bool previous;
+                            if (!_throttleState.TryGetValue(p.Id, out previous) || previous != throttled)
+                            {
+                                // OpenProcess + SetProcessInformation + CloseHandle:
+                                // do it only when this process changes role.
+                                if (Win32.SetProcessPowerThrottling(p.Id, throttled))
+                                    _throttleState[p.Id] = throttled;
+                            }
                         }
                     }
                     catch { }
+                }
+                lock (_throttleState)
+                {
+                    List<int> stale = null;
+                    foreach (int pid in _throttleState.Keys)
+                    {
+                        if (live.Contains(pid)) continue;
+                        if (stale == null) stale = new List<int>();
+                        stale.Add(pid);
+                    }
+                    if (stale != null)
+                        for (int i = 0; i < stale.Count; i++) _throttleState.Remove(stale[i]);
                 }
             }
             catch { }
@@ -382,7 +424,8 @@ namespace DofusFarm.Engine
             }
         }
 
-        private void GovernQemuProcesses(IntPtr hFg, uint fgPid)
+        private void GovernQemuProcesses(IntPtr hFg, uint fgPid,
+            Dictionary<int, List<int>> parents)
         {
             Process[] qemuProcs = null;
             try
@@ -458,7 +501,7 @@ namespace DofusFarm.Engine
                 {
                     try
                     {
-                        HashSet<int> tree = Win32.GetProcessTrees(new[] { (int)fgPid });
+                        HashSet<int> tree = Win32.GetProcessTrees(new[] { (int)fgPid }, parents);
                         foreach (Process p in qemuProcs)
                         {
                             if (tree.Contains(p.Id))

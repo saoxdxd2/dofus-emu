@@ -277,19 +277,25 @@ def board_encounter(board: Board, plan: TurnPlan, cfg: Config,
                     first_team: int = 1,
                     player_rows: Optional[Sequence[Dict[str, Any]]] = None,
                     player_candidates: Optional[Sequence[Dict[str, Any]]] = None,
-                    enemy_rows: Optional[Dict[int, Sequence[Dict[str, Any]]]] = None
-                    ) -> Tuple[Dict[str, jax.Array],
-                               Dict[str, jax.Array]]:
+                    enemy_rows: Optional[Dict[int, Sequence[Dict[str, Any]]]] = None,
+                    as_jax: bool = True
+                    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Project the live board after ``plan`` into the encounter tensors.
 
     ``first_team`` is 0 for the live actor (the player is acting now) and 1 for
     the value head after the player's plan (the monsters act next). ``player_rows``
     lets the live actor pin the exact four spells it bound to the policy slots;
     the value head keeps its own impact-based selection.
+
+    ``as_jax=False`` keeps the tensors as NumPy when the caller immediately hands
+    them to a jitted function; JAX converts the leaves during dispatch. Building
+    seventeen individual JAX arrays here first was measurable in the live turn.
     """
     tables, spec = _allocate_encounter(cfg, 1)
     _fill_encounter(board, plan, cfg, tables, spec, 0, first_team,
                     player_rows, player_candidates, enemy_rows)
+    if not as_jax:
+        return tables, spec
     return ({key: jnp.asarray(value) for key, value in tables.items()},
             {key: jnp.asarray(value) for key, value in spec.items()})
 
@@ -297,9 +303,9 @@ def board_encounter(board: Board, plan: TurnPlan, cfg: Config,
 def board_encounters(board: Board, plans: Sequence[TurnPlan], cfg: Config,
                      first_team: int = 1,
                      player_candidates: Optional[Sequence[Dict[str, Any]]] = None,
-                     enemy_rows: Optional[Dict[int, Sequence[Dict[str, Any]]]] = None
-                     ) -> Tuple[Dict[str, jax.Array],
-                                Dict[str, jax.Array]]:
+                     enemy_rows: Optional[Dict[int, Sequence[Dict[str, Any]]]] = None,
+                     as_jax: bool = True
+                     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Project a whole candidate batch into one set of encounter tensors.
 
     The previous ranker built one 1-sample JAX tree per plan and concatenated
@@ -312,6 +318,8 @@ def board_encounters(board: Board, plans: Sequence[TurnPlan], cfg: Config,
     for index, plan in enumerate(plans):
         _fill_encounter(board, plan, cfg, tables, spec, index, first_team,
                         None, player_candidates, enemy_rows)
+    if not as_jax:
+        return tables, spec
     return ({key: jnp.asarray(value) for key, value in tables.items()},
             {key: jnp.asarray(value) for key, value in spec.items()})
 
@@ -342,7 +350,7 @@ def score_plan(params: Dict[str, Any], board: Board, plan: TurnPlan,
         return -1.0
     if not board.enemies:
         return 1.0
-    tables, spec = board_encounter(board, plan, cfg)
+    tables, spec = board_encounter(board, plan, cfg, as_jax=False)
     return -float(_batch_value(params, tables, spec, cfg)[0])
 
 
@@ -392,7 +400,7 @@ def rank_plans(params: Dict[str, Any], board: Board,
     plans = original + [original[-1]] * (batch - len(original))
     tables, spec = board_encounters(
         board, plans, cfg, player_candidates=player_candidates,
-        enemy_rows=enemy_cache)
+        enemy_rows=enemy_cache, as_jax=False)
     values = np.asarray(_batch_value(params, tables, spec, cfg))
     scored = [(-float(value) + _tactical_bonus(plan), plan)
               for value, plan in zip(values[:len(original)], original)]

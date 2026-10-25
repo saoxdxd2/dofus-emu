@@ -196,7 +196,6 @@ class ScheduleManager:
         elapsed = (step.finished_at - step.started_at) / 60.0
         leaf = self.leaf_cache[self.pointer] if self.pointer < len(self.leaf_cache) else None
         source = str(result.get("source") or "live")
-        level = self.player.level if self.player else 1
 
         # 1-3. normalise -> learn -> trace (shared with out-of-plan actions)
         entity: Dict[str, Any] = {}

@@ -25,6 +25,8 @@ Stdlib only on purpose: this must run under the bundled ``runtimes/python``
 interpreter with no torch, no network access, and while the game is live.
 """
 
+# ruff: noqa: F401 - the TYPE_CHECKING block documents lazy exports
+
 from __future__ import annotations
 
 from importlib import import_module

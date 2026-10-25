@@ -4,6 +4,8 @@ Public names are imported lazily: a caller that only needs ``CellPathfinder``
 or ``DofusWorldGraph`` should not pay for the quest cache and the NLP engine.
 """
 
+# ruff: noqa: F401 - the TYPE_CHECKING block documents lazy exports
+
 from __future__ import annotations
 
 from importlib import import_module

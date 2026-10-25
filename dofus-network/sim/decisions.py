@@ -191,7 +191,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # "continue" wins trivially and the corpus fills with rows where the decision
         # does not matter -- which is how a decision dataset ends up teaching nothing.
         if streak >= 1:
-            obs = world.observe()
+            world.observe()  # advances the snapshot's stale/fresh state
             x, best, gains = sample(world, planner, streak, last_ok, last_tool,
                                     last_args, last_note, world.last_obs_kind)
             rows.append({"x": x, "y": best, "gains": gains,

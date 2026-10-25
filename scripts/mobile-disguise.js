@@ -1804,7 +1804,15 @@
                         window.__agentLastFightTurn = { at: Date.now(), action: 'cast',
                             spell: action.spellId, target: action.targetId,
                             cell: action.cell, brain: meta || action.brain || null };
-                        ctx.fm.castSpellOnTarget(action.spellId, action.targetId, ctx.myId);
+                        // A teleport or a self buff targets a cell, not a
+                        // fighter; the target form has no id to send. Damage
+                        // and heal casts keep the target form.
+                        if (action.cell != null
+                            && (action.targetId == null || action.targetId === ctx.myId)) {
+                            ctx.fm.castSpell(action.spellId, action.cell, ctx.myId);
+                        } else {
+                            ctx.fm.castSpellOnTarget(action.spellId, action.targetId, ctx.myId);
+                        }
                         setTimeout(tick, 450);
                         return;
                     }
@@ -6302,6 +6310,41 @@
             } catch(err) {
                 return _agentResult(false, null, err.toString());
             }
+        };
+        // One renderer round-trip for the host: run the directive and read the
+        // post-action snapshot in the same script turn. The bridge used to make
+        // two ExecuteScriptAsync calls per action (one for the directive, one
+        // for the snapshot), paying the WebView2 IPC twice and exposing a
+        // window where the world changed between them. The returned envelope is
+        // the exact JSON the bridge used to assemble in C#.
+        window.__agentDirectiveWithSnapshot = function(request) {
+            request = request || {};
+            var result = null;
+            var error = null;
+            try {
+                result = window.__agentDirective(request.payload || {});
+            } catch (err) {
+                error = String(err);
+            }
+            var snapshot = null;
+            try {
+                snapshot = window.__agentSnapshot ? window.__agentSnapshot() : null;
+            } catch (err) {
+                snapshot = null;
+            }
+            var embedded = result;
+            if (typeof result === 'string') {
+                try { embedded = JSON.parse(result); } catch (e) { embedded = result; }
+            }
+            var envelope = {
+                ok: error === null,
+                id: request.id == null ? null : request.id,
+                target: request.target == null ? null : request.target,
+                result: embedded,
+                snapshot: snapshot
+            };
+            if (error !== null) envelope.error = error;
+            return JSON.stringify(envelope);
         };
         // The host pushes the AI loop's state here so the badge reflects reality
         // rather than whatever the page last assumed.

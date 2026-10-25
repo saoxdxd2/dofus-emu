@@ -186,8 +186,12 @@ class Autopilot:
         # Seconds to keep re-observing after an asynchronous tool before judging
         # it. 0 disables the wait (tests, dry runs).
         settle_s: float = 3.0,
+        # Optional training data. Off leaves the solver unaffected; it only
+        # stops writing the board snapshot rows used by a learned ranker.
+        fight_boards: bool = True,
     ) -> None:
         self.runtime = runtime
+        self.fight_boards = fight_boards
         self.goals = list(goals)
         self.log_path = Path(log_path)
         self.stop_file = Path(stop_file)
@@ -261,7 +265,17 @@ class Autopilot:
         # still a labelled example for a plan ranker.
         self.fight_board_path = self.log_path.with_name("fight_boards.jsonl")
         self._fight_board_at = 0.0
-        self._fight_board_key: Optional[str] = None
+        self._fight_board_key: Optional[bytes] = None
+        # Maintained in memory: stat() per step / per board was one syscall per
+        # append just to decide whether to rotate.
+        try:
+            self._log_size = self.log_path.stat().st_size
+        except OSError:
+            self._log_size = 0
+        try:
+            self._fight_log_size = self.fight_board_path.stat().st_size
+        except OSError:
+            self._fight_log_size = 0
         executor = getattr(runtime, "executor", None)
         if executor is not None and getattr(executor, "fights", None) is None:
             executor.fights = self.fights
@@ -288,16 +302,30 @@ class Autopilot:
     def _rotate_log(self) -> None:
         """Keep an unlimited run from producing one unbounded step log."""
         try:
-            if self.log_path.exists() and self.log_path.stat().st_size >= LOG_MAX_BYTES:
+            if self._log_size >= LOG_MAX_BYTES:
                 stamp = time.strftime("%Y%m%d-%H%M%S")
                 rotated = self.log_path.with_name(
                     f"{self.log_path.stem}.{stamp}{self.log_path.suffix}")
+                suffix = 0
+                while rotated.exists():
+                    suffix += 1
+                    rotated = self.log_path.with_name(
+                        f"{self.log_path.stem}.{stamp}-{suffix}{self.log_path.suffix}")
                 self.log_path.rename(rotated)
+                self._log_size = 0
         except OSError:
             pass
 
-    def _emit(self, step: Step) -> None:
+    def _append_log_line(self, blob: bytes) -> None:
         self._rotate_log()
+        try:
+            with self.log_path.open("ab") as handle:
+                handle.write(blob)
+            self._log_size += len(blob)
+        except OSError:
+            pass  # a full disk must not stop the bot from stopping cleanly
+
+    def _emit(self, step: Step) -> None:
         if not self._first_step_at:
             self._first_step_at = step.at
         self._last_step_at = step.at
@@ -309,11 +337,7 @@ class Autopilot:
         self.steps.append(step)
         if len(self.steps) > self.step_history:
             del self.steps[:len(self.steps) - self.step_history]
-        try:
-            with self.log_path.open("ab") as handle:
-                handle.write(_fast_dumps(step.as_dict()) + b"\n")
-        except OSError:
-            pass  # a full disk must not stop the bot from stopping cleanly
+        self._append_log_line(_fast_dumps(step.as_dict()) + b"\n")
 
     def _emit_decision(self, decision: Decision, call: ToolCall, result: Any,
                        obs: Optional[Dict[str, Any]]) -> None:
@@ -326,9 +350,7 @@ class Autopilot:
         and makes the log a bandit dataset (state, action, reward) instead of a
         transcript.
         """
-        try:
-            with self.log_path.open("ab") as handle:
-                handle.write(_fast_dumps({
+        self._append_log_line(_fast_dumps({
                     "kind": "decision",
                     "session": self.session,
                     "goal": None,
@@ -342,8 +364,6 @@ class Autopilot:
                     "obs": obs if isinstance(obs, dict) else {},
                     "at": time.time(),
                 }) + b"\n")
-        except OSError:
-            pass
 
     def _should_stop(self) -> Optional[str]:
         """A pre-existing stop file is reported explicitly.
@@ -390,21 +410,49 @@ class Autopilot:
                 return after
         deadline = time.monotonic() + self.settle_s
         best = after
+        delay = step_s
         while time.monotonic() < deadline:
             if isinstance(best, dict) and changed_keys(before, best):
+                self._record_settled(best, after)
                 return best
-            time.sleep(step_s)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(delay, remaining))
+            # Back off: a walk usually shows its first change quickly, but a
+            # long animation should not be polled at the fastest cadence for the
+            # whole window. This cuts settle HTTP reads roughly in half without
+            # delaying the first check or overrunning the deadline.
+            delay = min(delay * 1.6, max(step_s, 0.8))
             # A negative budget forces a real re-read: the settle window exists
             # to see the world *after* the action, and reusing the snapshot
             # adopted when the directive returned compared the before-state with
             # itself for the whole window. That is why every SETTLE_TOOL used to
             # score `noop` no matter how far the character walked.
-            nxt = self.observe(max_age_ms=-1.0)
+            # Polling is not a decision: do not write a full observation row
+            # for every 0.4 s retry (up to six per action). The final state is
+            # recorded once below, so the post-action snapshot is not lost.
+            nxt = self.observe(max_age_ms=-1.0, record=False)
             if nxt:
                 best = nxt
+        self._record_settled(best, after)
         return best
 
-    def observe(self, max_age_ms: float = OBS_FRESH_MS) -> Optional[Dict[str, Any]]:
+    def _record_settled(self, best: Any, after: Any) -> None:
+        # Record only a state produced by a poll. If no poll happened, `after`
+        # came either from observe() (already recorded) or from the directive's
+        # piggybacked snapshot (adopted without a row, as before).
+        if best is after or not isinstance(best, dict):
+            return
+        writer = getattr(self.runtime, "observe", None)
+        if callable(writer):
+            try:
+                writer(best, source="live")
+            except Exception:  # noqa: BLE001 - a log failure must not fail a step
+                pass
+
+    def observe(self, max_age_ms: float = OBS_FRESH_MS,
+                record: bool = True) -> Optional[Dict[str, Any]]:
         """Return the freshest state we can get, and remember how fresh it is.
 
         The runtime holds the snapshot the bridge returned with the previous
@@ -415,10 +463,10 @@ class Autopilot:
         has already moved on.
         """
         current, age_ms, source = self.runtime.current_observation()
-        current = enrich_observation(current, self.knowledge)
-        current = self._annotate_fights(current)
         if (isinstance(current, dict) and current and age_ms is not None
                 and age_ms <= max_age_ms):
+            current = self._annotate_fights(
+                enrich_observation(current, self.knowledge))
             self._last_obs = current
             self._obs_age_ms, self._obs_source = age_ms, source
             return current
@@ -444,12 +492,21 @@ class Autopilot:
             snap = self._annotate_fights(enrich_observation(snap, self.knowledge))
             self._last_obs = snap
             self._obs_age_ms, self._obs_source = 0.0, "call"
-            self.runtime.observe(snap, source="live")
+            if record:
+                self.runtime.observe(snap, source="live")
+            else:
+                # Adopt without writing a full observation row; the settle
+                # loop records the final state once.
+                note = getattr(self.runtime, "note_observation", None)
+                if callable(note):
+                    note(snap)
             return snap
         if isinstance(current, dict) and current:
             # No independent read path (a test double, or a bridge that just
             # failed): use the runtime's copy, but say it is stale so the
             # recorder never presents it as a fresh pairing.
+            current = self._annotate_fights(
+                enrich_observation(current, self.knowledge))
             self._last_obs = current
             self._obs_age_ms, self._obs_source = age_ms, "stale"
             return current
@@ -584,15 +641,23 @@ class Autopilot:
     def _append_fight_log(self, record: Dict[str, Any]) -> None:
         try:
             self.fight_board_path.parent.mkdir(parents=True, exist_ok=True)
-            if (self.fight_board_path.exists()
-                    and self.fight_board_path.stat().st_size >= LOG_MAX_BYTES):
+            if self._fight_log_size >= LOG_MAX_BYTES:
                 stamp = time.strftime("%Y%m%d-%H%M%S")
                 rotated = self.fight_board_path.with_name(
                     f"{self.fight_board_path.stem}.{stamp}"
                     f"{self.fight_board_path.suffix}")
+                suffix = 0
+                while rotated.exists():
+                    suffix += 1
+                    rotated = self.fight_board_path.with_name(
+                        f"{self.fight_board_path.stem}.{stamp}-{suffix}"
+                        f"{self.fight_board_path.suffix}")
                 self.fight_board_path.rename(rotated)
+                self._fight_log_size = 0
+            blob = _fast_dumps(_redact(record)) + b"\n"
             with self.fight_board_path.open("ab") as handle:
-                handle.write(_fast_dumps(_redact(record)) + b"\n")
+                handle.write(blob)
+            self._fight_log_size += len(blob)
         except OSError as exc:
             print(f"[autopilot] could not write fight board log: {exc}")
 
@@ -603,6 +668,8 @@ class Autopilot:
         the in-page bot is playing, so the board is observation data for a
         learned plan ranker, not a record of an action this agent chose.
         """
+        if not self.fight_boards:
+            return
         executor = getattr(self.runtime, "executor", None)
         reader = getattr(executor, "fight_state", None)
         if not callable(reader):
@@ -613,7 +680,7 @@ class Autopilot:
             return
         if not isinstance(board, dict) or not board.get("in_fight"):
             return
-        key = json.dumps({
+        key = _fast_dumps({
             "fight_id": board.get("fight_id"),
             "round": board.get("round"),
             "turn": board.get("current_fighter_id"),
@@ -624,7 +691,7 @@ class Autopilot:
                 for f in (board.get("fighters") or [])
                 if isinstance(f, dict)
             ],
-        }, sort_keys=True)
+        })
         if key == self._fight_board_key:
             return
         self._fight_board_key = key
@@ -692,7 +759,11 @@ class Autopilot:
             self._fight_wait_report = now
             print(f"[autopilot] fight wait {now - self._fight_wait_since:.0f}s; "
                   f"auto_fight={bool(observation.get('auto_fight'))}")
-        if now - self._fight_board_at >= 1.0:
+        # A fight board only changes on a turn/action, and those states last
+        # seconds. Sampling every second meant a second `fight_state` round
+        # trip per second on top of the loop's world snapshot for no new
+        # training row (the key dedupe ran only after the fetch).
+        if now - self._fight_board_at >= 2.0:
             self._fight_board_at = now
             self._record_fight_board(goal)
         time.sleep(1.0)
@@ -1379,6 +1450,7 @@ class Autopilot:
         return "continue"
 
     def summary(self, reason: str) -> Dict[str, Any]:
+        self.controller.save(force=True)
         data = {
             "reason": reason,
             "session": self.session,
@@ -1433,6 +1505,11 @@ def _summarise(result: Any) -> str:
                     break
             if bits:
                 return "  -> " + ", ".join(bits)
+            # Never stringify a whole bridge snapshot just to print 60 chars;
+            # some of them are hundreds of KB.
+            keys = [str(key) for key in list(data)[:6]]
+            more = "" if len(data) <= 6 else ", +%d" % (len(data) - 6)
+            return "  -> {%s%s}" % (", ".join(keys), more)
         if isinstance(data, list):
             return "  -> %d row(s)" % len(data)
         text = str(data)
@@ -1582,6 +1659,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "Costs real steps; 0 by default")
     parser.add_argument("--dry-run", action="store_true",
                         help="choose and guard, but never send a directive")
+    parser.add_argument("--no-fight-boards", dest="fight_boards",
+                        action="store_false", default=True,
+                        help="do not record fight board snapshots for training")
     return parser
 
 
@@ -1615,6 +1695,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         steps_per_goal=args.steps_per_goal,
         dry_run=args.dry_run,
         explore=args.explore,
+        fight_boards=args.fight_boards,
     )
     try:
         summary = pilot.run()

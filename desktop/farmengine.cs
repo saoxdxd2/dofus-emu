@@ -1450,15 +1450,39 @@ namespace DofusFarm.Engine {
             return _hostTotalRamMb;
         }
 
-        public List<InstanceModel> GetInstances() {
+        // ``adb devices`` spawns a process and the qemu port scan is a WMI
+        // query; the dashboard's 4 s tick paid both every time even when no
+        // instance changed. The periodic grid may reuse a recent answer;
+        // start/stop, the watchdog and the backend always ask fresh.
+        private const int LiveScanCacheMs = 12000;
+        private readonly object _liveCacheLock = new object();
+        private HashSet<string> _liveSerialsCache;
+        private DateTime _liveSerialsCacheUtc = DateTime.MinValue;
+
+        public List<InstanceModel> GetInstances(bool allowCachedLive = false) {
             var list = new List<InstanceModel>();
             if (!Directory.Exists(AvdHome)) return list;
-            HashSet<string> live = GetLiveSerials();
+            HashSet<string> live = null;
+            if (allowCachedLive) {
+                lock (_liveCacheLock) {
+                    if (_liveSerialsCache != null
+                        && (DateTime.UtcNow - _liveSerialsCacheUtc).TotalMilliseconds < LiveScanCacheMs)
+                        live = new HashSet<string>(_liveSerialsCache, StringComparer.OrdinalIgnoreCase);
+                }
+            }
+            if (live == null) {
+                live = GetLiveSerials();
+                lock (_liveCacheLock) {
+                    _liveSerialsCache = new HashSet<string>(live, StringComparer.OrdinalIgnoreCase);
+                    _liveSerialsCacheUtc = DateTime.UtcNow;
+                }
+            }
             var portToPid = new Dictionary<int, int>();
             if (HasRunningProcess("qemu-system-x86_64") || live.Count > 0) {
                 Dictionary<int, int> scan = null;
+                double scanTtl = allowCachedLive ? LiveScanCacheMs : 2000;
                 lock (_qemuScanLock) {
-                    if (_qemuScanCache != null && (DateTime.UtcNow - _qemuScanCacheUtc).TotalMilliseconds < 2000) scan = _qemuScanCache;
+                    if (_qemuScanCache != null && (DateTime.UtcNow - _qemuScanCacheUtc).TotalMilliseconds < scanTtl) scan = _qemuScanCache;
                 }
                 if (scan == null) {
                     var fresh = new Dictionary<int, int>();
@@ -1483,7 +1507,9 @@ namespace DofusFarm.Engine {
             foreach (string d in Directory.GetDirectories(AvdHome, "dofus-*.avd").OrderBy(x => x, StringComparer.Ordinal)) {
                 string name = Path.GetFileNameWithoutExtension(d);
                 if (name.Equals("dofus-template", StringComparison.OrdinalIgnoreCase)) continue;
-                int idx = ParseSlotIdx(name), port = 5554 + 2 * (idx - 1), ram = 1024, cores = 1, pid = 0;
+                // 0 means "size it at launch"; inventing 1024 MB / 1 core made
+                // the dashboard show an allocation no instance actually had.
+                int idx = ParseSlotIdx(name), port = 5554 + 2 * (idx - 1), ram = 0, cores = 0, pid = 0;
                 string serial = "emulator-" + port;
                 ReadConfigRamCores(Path.Combine(d, "config.ini"), ref ram, ref cores);
                 bool isRunning = live.Contains(serial);
@@ -1936,8 +1962,23 @@ namespace DofusFarm.Engine {
                         try {
                             writer = new StreamWriter(logFile, true, Encoding.UTF8) { AutoFlush = true };
                             StreamWriter w = writer;
+                            // One long emulator session must not grow this file past
+                            // the same 8 MB bound used before a relaunch. QEMU is
+                            // quiet normally, but a verbose boot or a repeating
+                            // error would otherwise fill the disk between launches.
+                            object logGate = new object();
+                            long written = 0;
+                            try { written = new FileInfo(logFile).Length; } catch { }
+                            const long logCap = 8L * 1024 * 1024;
                             DataReceivedEventHandler onData = delegate(object s, DataReceivedEventArgs e) {
-                                if (e.Data != null) { try { lock (w) w.WriteLine(e.Data); } catch { } }
+                                if (e.Data == null) return;
+                                try {
+                                    lock (logGate) {
+                                        if (written >= logCap) return;
+                                        w.WriteLine(e.Data);
+                                        written += e.Data.Length + 2;
+                                    }
+                                } catch { }
                             };
                             logged.OutputDataReceived += onData;
                             logged.ErrorDataReceived += onData;
@@ -2871,6 +2912,78 @@ namespace DofusFarm.Engine {
             return sb.ToString();
         }
 
+        // Request headers are scanned from blocks. The previous path used
+        // BufferedStream.ReadByte per character, which is one virtual call and
+        // one branch per header byte on every proxied request. Bytes after the
+        // header terminator stay in this buffer and are handed to the tunnel
+        // splice through Read, so no body byte is lost.
+        private sealed class BufferedLineReader : Stream {
+            private readonly Stream _inner;
+            private readonly byte[] _buffer;
+            private int _start;
+            private int _end;
+
+            public BufferedLineReader(Stream inner, int size) {
+                _inner = inner;
+                _buffer = new byte[size];
+            }
+
+            public override bool CanRead { get { return true; } }
+            public override bool CanSeek { get { return false; } }
+            public override bool CanWrite { get { return false; } }
+            public override long Length { get { throw new NotSupportedException(); } }
+            public override long Position {
+                get { throw new NotSupportedException(); }
+                set { throw new NotSupportedException(); }
+            }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) {
+                throw new NotSupportedException();
+            }
+            public override void SetLength(long value) {
+                throw new NotSupportedException();
+            }
+            public override void Write(byte[] buffer, int offset, int count) {
+                throw new NotSupportedException();
+            }
+
+            public override int Read(byte[] buffer, int offset, int count) {
+                if (count <= 0) return 0;
+                if (_start < _end) {
+                    int take = Math.Min(count, _end - _start);
+                    Buffer.BlockCopy(_buffer, _start, buffer, offset, take);
+                    _start += take;
+                    return take;
+                }
+                return _inner.Read(buffer, offset, count);
+            }
+
+            public string ReadLine() {
+                StringBuilder prefix = null;
+                while (true) {
+                    for (int i = _start; i < _end; i++) {
+                        if (_buffer[i] != (byte)'\n') continue;
+                        int length = i - _start;
+                        string tail = Encoding.ASCII.GetString(_buffer, _start, length);
+                        _start = i + 1;
+                        string line = prefix == null ? tail : prefix.ToString() + tail;
+                        if (line.EndsWith("\r", StringComparison.Ordinal))
+                            line = line.Substring(0, line.Length - 1);
+                        return line;
+                    }
+                    if (prefix == null) prefix = new StringBuilder(128);
+                    if (_end > _start)
+                        prefix.Append(Encoding.ASCII.GetString(_buffer, _start, _end - _start));
+                    _start = 0;
+                    _end = _inner.Read(_buffer, 0, _buffer.Length);
+                    if (_end <= 0) {
+                        _end = 0;
+                        return prefix.Length > 0 ? prefix.ToString() : null;
+                    }
+                }
+            }
+        }
+
         private void HandleClient(object obj) {
             var client = (TcpClient)obj;
             Interlocked.Increment(ref _connsTotal);
@@ -2878,12 +2991,12 @@ namespace DofusFarm.Engine {
             try {
                 client.NoDelay = true;
                 NetworkStream cStream = client.GetStream();
-                var cr = new BufferedStream(cStream, 8192);
-                string reqLine = ReadAsciiLine(cr);
+                var cr = new BufferedLineReader(cStream, 8192);
+                string reqLine = cr.ReadLine();
                 if (string.IsNullOrEmpty(reqLine)) { client.Close(); return; }
                 var headers = new List<string>();
                 string hostHeader = "";
-                for (string hLine; !string.IsNullOrEmpty(hLine = ReadAsciiLine(cr));) {
+                for (string hLine; !string.IsNullOrEmpty(hLine = cr.ReadLine());) {
                     if (hLine.StartsWith("Host:", StringComparison.OrdinalIgnoreCase)) hostHeader = hLine.Substring(5).Trim();
                     headers.Add(hLine);
                 }

@@ -56,15 +56,44 @@ _ANY_KIND_ORDER = ("monster", "quest", "item", "npc", "spell", "dungeon", "achie
 _NAME_KEYS_FLAT = ("name_fr", "name_en", "name_es", "name_de")
 
 
+def _accent_table() -> Dict[int, str]:
+    """Precomposed Latin characters -> their unaccented form.
+
+    ``_normalize`` is called hundreds of thousands of times while indexing the
+    item cache. ``NFKD`` plus a Python generator over every character was the
+    entire cold-start cost; a C-level ``str.translate`` table handles the Latin
+    range with identical results.
+    """
+    table: Dict[int, str] = {}
+    for code in range(0x00C0, 0x0250):
+        char = chr(code)
+        decomposed = unicodedata.normalize("NFKD", char)
+        stripped = "".join(ch for ch in decomposed
+                           if not unicodedata.combining(ch))
+        if stripped != char:
+            table[code] = stripped
+    return table
+
+
+_ACCENT_TABLE = _accent_table()
+
+
 def _normalize(text: Any) -> str:
     if not isinstance(text, str):
         return ""
-    nfkd = unicodedata.normalize("NFKD", text.lower())
+    lowered = text.lower()
+    if lowered.isascii():
+        return lowered
+    translated = lowered.translate(_ACCENT_TABLE)
+    if translated.isascii():
+        return translated
+    # Non-Latin scripts still go through the exact NFKD path.
+    nfkd = unicodedata.normalize("NFKD", translated)
     return "".join(ch for ch in nfkd if not unicodedata.combining(ch))
 
 
-def _localized_strings(record: Dict[str, Any]) -> List[str]:
-    """All human-readable strings of a record (localised names + description)."""
+def _name_strings(record: Dict[str, Any]) -> List[str]:
+    """Localised names only. Descriptions are matched but are not names."""
     out: List[str] = []
     name = record.get("name")
     if isinstance(name, dict):
@@ -75,12 +104,55 @@ def _localized_strings(record: Dict[str, Any]) -> List[str]:
         value = record.get(key)
         if isinstance(value, str):
             out.append(value)
+    return out
+
+
+def _description_strings(record: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
     description = record.get("description")
     if isinstance(description, dict):
         out.extend(str(v) for v in description.values() if isinstance(v, str))
     elif isinstance(description, str):
         out.append(description)
     return out
+
+
+def _localized_strings(record: Dict[str, Any]) -> List[str]:
+    """All human-readable strings of a record (localised names + description)."""
+    return _name_strings(record) + _description_strings(record)
+
+
+_INDEX_FIELDS = {
+    "item": ("id", "name", "level", "type_id", "price", "is_saleable"),
+    "spell": ("id", "name_fr", "name_en", "name_es", "type_id"),
+    "npc": ("id", "name", "actions"),
+    "achievement": ("id", "name", "description", "points", "level"),
+    "dungeon": ("id", "name", "level_min", "entrance_map_id",
+                "boss_monster_ids"),
+    "monster": ("id", "name", "name_fr", "name_en", "name_es", "name_de",
+                "is_boss"),
+}
+
+
+def _index_record(kind: str, record: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only fields a search result can expose; quests stay whole.
+
+    ``entries`` is a process-long cache. Retaining every raw item/monster row
+    after its normalized names are built was measurable resident memory for no
+    consumer.
+    """
+    fields = _INDEX_FIELDS.get(kind)
+    if fields is None:
+        return record
+    stored = {key: record.get(key) for key in fields}
+    if kind == "monster":
+        stored["is_boss"] = bool(record.get("is_boss", False))
+        grades = record.get("grades") or []
+        stored["grades"] = [
+            {"level": grade.get("level"), "life_points": grade.get("life_points")}
+            for grade in grades if isinstance(grade, dict)
+        ]
+    return stored
 
 
 @dataclass
@@ -139,8 +211,7 @@ class _MapGraph:
                 return self._edges
             edges: Dict[int, Dict[str, int]] = {}
             try:
-                with self.path.open("r", encoding="utf-8") as fh:
-                    payload = json.load(fh)
+                payload = loads(self.path.read_bytes())
             except (OSError, ValueError) as exc:
                 logger.warning("map index unavailable (%s): %s", self.path, exc)
                 payload = {}
@@ -332,9 +403,13 @@ class _KnowledgeIndex:
     def __init__(self, cache_dir: Path) -> None:
         self.cache_dir = cache_dir
         self._lock = threading.Lock()
-        self._entries: Dict[str, List[Tuple[int, str, List[str], Dict[str, Any]]]] = {}
+        self._entries: Dict[
+            str, List[Tuple[int, str, List[str], Dict[str, Any], str]]] = {}
+        self._search_cache: "OrderedDict[Tuple[str, str, int], List[Dict[str, Any]]]" = OrderedDict()
 
-    def entries(self, kind: str) -> List[Tuple[int, str, List[str], Dict[str, Any]]]:
+    def entries(
+        self, kind: str
+    ) -> List[Tuple[int, str, List[str], Dict[str, Any], str]]:
         with self._lock:
             cached = self._entries.get(kind)
             if cached is not None:
@@ -343,19 +418,27 @@ class _KnowledgeIndex:
             records: List[Dict[str, Any]] = []
             if path.exists():
                 try:
-                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    payload = loads(path.read_bytes())
                     if isinstance(payload, list):
                         records = payload
-                except (json.JSONDecodeError, OSError) as exc:
+                except (ValueError, OSError) as exc:
                     logger.warning(f"Unreadable cache file {path}: {exc}")
-            entries: List[Tuple[int, str, List[str], Dict[str, Any]]] = []
+            entries: List[
+                Tuple[int, str, List[str], Dict[str, Any], str]] = []
             for record in records:
                 if not isinstance(record, dict):
                     continue
-                names = _localized_strings(record)
-                names_norm = [_normalize(n) for n in names if n]
-                haystack = " ".join(names_norm)
-                entries.append((int(record.get("id") or 0), haystack, names_norm, record))
+                names_norm = [_normalize(n) for n in _name_strings(record) if n]
+                # Descriptions stay searchable in the haystack but do not get
+                # the exact/prefix *name* bonus; keeping a second normalized
+                # copy of them in names_norm duplicated 86% of the item index
+                # text for a bonus a description should not receive.
+                descriptions = [_normalize(d) for d in _description_strings(record) if d]
+                names_hay = " ".join(names_norm)
+                haystack = " ".join(names_norm + descriptions)
+                stored = _index_record(kind, record)
+                entries.append((int(record.get("id") or 0), haystack,
+                                names_norm, stored, names_hay))
             self._entries[kind] = entries
             return entries
 
@@ -368,32 +451,91 @@ class _KnowledgeIndex:
         query_norm = _normalize(query).strip()
         if not query_norm:
             return []
+        max_results = max(1, int(limit))
+        cache_key = (kind, query_norm, max_results)
+        with self._lock:
+            cached = self._search_cache.get(cache_key)
+            if cached is not None:
+                self._search_cache.move_to_end(cache_key)
+                return list(cached)
         tokens = [t for t in query_norm.split() if len(t) >= 2]
         kinds = _ANY_KIND_ORDER if kind == "any" else (kind,)
+        # A single token equal to the whole query cannot score when the query
+        # is absent from the haystack: every other term is a substring of the
+        # query. The haystack check is one C call; the old names-list scan ran
+        # first on every entry, including the overwhelming majority that do
+        # not match at all.
+        single_token = len(tokens) == 1 and tokens[0] == query_norm
+        token_count = len(tokens)
+
+        # A name-prefix match always outranks anything that only matches a
+        # description, an internal name substring, or individual tokens. When
+        # at least `limit` names start with the query, the top results are
+        # fully determined by the small name haystacks; the 16 MB description
+        # haystack does not need to be scanned.
+        if tokens:
+            bonus: List[Tuple[float, int, str, Dict[str, Any]]] = []
+            for k in kinds:
+                for record_id, _haystack, names_norm, record, names_hay \
+                        in self.entries(k):
+                    if query_norm not in names_hay:
+                        continue
+                    if any(name.startswith(query_norm) for name in names_norm):
+                        score = 6.0 if query_norm in names_norm else 4.0
+                        score += 2.0 + 1.5 + 0.5 * token_count
+                        bonus.append((score, record_id, k, record))
+            if len(bonus) >= max_results:
+                bonus.sort(key=lambda item: (-item[0], item[1]))
+                out = [
+                    {"kind": k, "score": round(score, 2), **_compact(k, record)}
+                    for score, _record_id, k, record in bonus[:max_results]
+                ]
+                return self._cache_results(cache_key, out)
 
         results: List[Tuple[float, int, str, Dict[str, Any]]] = []
+        append = results.append
         for k in kinds:
-            for record_id, haystack, names_norm, record in self.entries(k):
-                score = 0.0
-                if names_norm:
-                    if query_norm in names_norm:
-                        score += 6.0
-                    elif any(name.startswith(query_norm) for name in names_norm):
-                        score += 4.0
-                if query_norm and query_norm in haystack:
-                    score += 2.0
-                token_hits = sum(1 for t in tokens if t in haystack)
-                if tokens and token_hits == len(tokens):
-                    score += 1.5
-                score += 0.5 * token_hits
-                if score > 0:
-                    results.append((score, record_id, k, record))
+            for record_id, haystack, names_norm, record, _names_hay \
+                    in self.entries(k):
+                if query_norm not in haystack:
+                    if single_token or not tokens:
+                        continue
+                    token_hits = 0
+                    for token in tokens:
+                        if token in haystack:
+                            token_hits += 1
+                    if not token_hits:
+                        continue
+                    score = 1.5 if token_hits == token_count else 0.0
+                    score += 0.5 * token_hits
+                    append((score, record_id, k, record))
+                    continue
+                # A prefix hit settles the name score; the exact-equality
+                # scan only runs for the few entries that start with it.
+                if any(name.startswith(query_norm) for name in names_norm):
+                    score = 6.0 if query_norm in names_norm else 4.0
+                else:
+                    score = 0.0
+                score += 2.0
+                if tokens:
+                    # The full query is present, so every token is too.
+                    score += 1.5 + 0.5 * token_count
+                append((score, record_id, k, record))
 
         results.sort(key=lambda item: (-item[0], item[1]))
-        return [
+        out = [
             {"kind": k, "score": round(score, 2), **_compact(k, record)}
-            for score, _record_id, k, record in results[: max(1, int(limit))]
+            for score, _record_id, k, record in results[:max_results]
         ]
+        return self._cache_results(cache_key, out)
+
+    def _cache_results(self, cache_key: Tuple[str, str, int],
+                       out: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        with self._lock:
+            self._search_cache[cache_key] = out
+            while len(self._search_cache) > 128:
+                self._search_cache.popitem(last=False)
+        return list(out)
 
 
 def _compact(kind: str, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -1042,8 +1184,8 @@ class ToolExecutor:
         if not path.exists():
             return []
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            payload = loads(path.read_bytes())
+        except (ValueError, OSError):
             return []
         if not isinstance(payload, list):
             return []
@@ -1150,7 +1292,7 @@ class ToolExecutor:
                 map_to_sub = self._geography_index()["map_to_sub"]
 
         matched: List[Dict[str, Any]] = []
-        for _record_id, haystack, _names, record in entries:
+        for _record_id, haystack, _names, record, _names_hay in entries:
             if dungeon_only and not record.get("is_dungeon"):
                 continue
             quest_level = int(record.get("level_min") or 0)

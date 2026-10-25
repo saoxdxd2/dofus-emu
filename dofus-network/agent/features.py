@@ -25,6 +25,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agent.jsonio import loads as fast_loads
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = REPO_ROOT / "data" / "capabilities.json"
 
@@ -126,8 +128,7 @@ def map_index() -> Tuple[Dict[int, int], Dict[int, int]]:
         area_of: Dict[int, int] = {}
         path = REPO_ROOT / "data" / "cache" / "subareas_full.json"
         if path.exists():
-            with path.open("r", encoding="utf-8") as fh:
-                for sub in json.load(fh):
+            for sub in fast_loads(path.read_bytes()):
                     try:
                         sid = int(sub["id"])
                     except (KeyError, TypeError, ValueError):

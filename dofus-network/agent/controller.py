@@ -202,6 +202,11 @@ class Controller:
         self._last_obs_at = 0.0
         self._strategies: Dict[str, StrategyStat] = {}
         self._history: List[Dict[str, Any]] = []
+        # Controller state changes on every step, but a disk write per step is
+        # pure overhead: a live step is seconds apart and the file is a recovery
+        # aid, not a journal. The summary forces a final save.
+        self.save_interval = 2.0
+        self._last_save = 0.0
 
     # -- state ------------------------------------------------------------
 
@@ -221,14 +226,20 @@ class Controller:
                            for k, v in self._strategies.items()},
         }
 
-    def save(self) -> None:
+    def save(self, force: bool = False) -> None:
         """Persist across process restarts: the whole point of a long-term brain."""
+        path = self.state_dir / ("%s.json" % (self.session or "default"))
+        now = time.time()
+        if (not force and self._last_save
+                and now - self._last_save < self.save_interval
+                and path.exists()):
+            return
         try:
             self.state_dir.mkdir(parents=True, exist_ok=True)
             payload = self.stats()
             payload["strategies_raw"] = {k: asdict(v) for k, v in self._strategies.items()}
-            path = self.state_dir / ("%s.json" % (self.session or "default"))
             path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+            self._last_save = now
         except OSError:
             pass
 

@@ -137,6 +137,12 @@ class TrajectoryRecorder:
         self.instance = safe_instance
         self.max_bytes = max_bytes
         self.path = self.root / f"{safe_instance}.jsonl"
+        self._checkpoint_path = self.path.with_name(self.path.name + ".stats.json")
+        self._scan_pos = 0
+        # Maintained in memory: a stat() per append was one syscall per step
+        # just to decide whether to rotate.
+        self._size = 0
+        self._writes_since_checkpoint = 0
         self._lock = threading.Lock()
         self._counters: Dict[str, int] = {"lines": 0, "ok": 0, "fail": 0}
         self._tool_counts: Dict[str, int] = {}
@@ -145,38 +151,135 @@ class TrajectoryRecorder:
     # -- internals -----------------------------------------------------------
 
     def _scan_existing(self) -> None:
-        if not self.path.exists():
+        """Rebuild counters from the last checkpoint plus the new tail.
+
+        A 64 MB trajectory is mostly observation rows. Loading and parsing all
+        of it on every process start was pure repeated work; the sidecar stores
+        the byte offset and counters already accounted for, so a restart reads
+        only the records written since the last checkpoint.
+        """
+        size = self.path.stat().st_size if self.path.exists() else 0
+        self._size = size
+        checkpoint = self._read_checkpoint()
+        offset = 0
+        if (isinstance(checkpoint, dict)
+                and checkpoint.get("instance") == self.instance):
+            try:
+                offset = int(checkpoint.get("size") or 0)
+            except (TypeError, ValueError):
+                offset = -1
+            if 0 <= offset <= size:
+                counters = checkpoint.get("counters") or {}
+                tools = checkpoint.get("tools") or {}
+                if isinstance(counters, dict):
+                    for key in self._counters:
+                        try:
+                            self._counters[key] = int(counters.get(key, 0) or 0)
+                        except (TypeError, ValueError):
+                            self._counters[key] = 0
+                if isinstance(tools, dict):
+                    self._tool_counts = {
+                        str(key): int(value or 0) for key, value in tools.items()
+                    }
+            else:
+                offset = 0
+        if offset == 0 and size == 0:
             return
+        if offset == size:
+            self._scan_pos = offset
+            return
+        self._scan_from(offset)
+        self._size = max(size, self._scan_pos)
+
+    def _read_checkpoint(self) -> Optional[Dict[str, Any]]:
         try:
-            with self.path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = _fast_loads(line)
-                    except ValueError:
-                        continue  # a torn tail line from a crash is skipped, not fatal
-                    self._count(record)
+            payload = _fast_loads(self._checkpoint_path.read_bytes())
+        except (OSError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _save_checkpoint(self) -> None:
+        payload = {
+            "instance": self.instance,
+            "size": self._scan_pos,
+            "counters": dict(self._counters),
+            "tools": dict(self._tool_counts),
+        }
+        tmp = self._checkpoint_path.with_name(self._checkpoint_path.name + ".tmp")
+        try:
+            tmp.write_bytes(_fast_dumps(payload))
+            tmp.replace(self._checkpoint_path)
+        except OSError:
+            pass
+
+    def _scan_from(self, offset: int) -> None:
+        try:
+            with self.path.open("rb") as handle:
+                handle.seek(offset)
+                for raw in handle:
+                    self._scan_line(raw)
+                self._scan_pos = handle.tell()
         except OSError as exc:
             logger.warning(f"Could not scan existing trajectory file: {exc}")
+            return
+        self._save_checkpoint()
+
+    def _scan_line(self, raw: Any) -> None:
+        if isinstance(raw, (bytes, bytearray)):
+            line = bytes(raw).decode("utf-8", "replace")
+        else:
+            line = str(raw)
+        if not line or line in ("\n", "\r\n"):
+            return
+        self._counters["lines"] += 1
+        # Observation and decision rows dominate the file and are large; only
+        # step rows contribute to the tool counters. The marker check covers
+        # compact orjson rows and older stdlib rows without parsing the rest.
+        step_row = ('"kind":"step"' in line
+                    or '"kind": "step"' in line
+                    or ('"kind"' in line and '"step"' in line))
+        if not step_row:
+            return
+        try:
+            record = _fast_loads(line)
+        except ValueError:
+            return  # a torn tail line from a crash is skipped, not fatal
+        self._count_step(record)
 
     def _count(self, record: Dict[str, Any]) -> None:
         self._counters["lines"] += 1
-        if record.get("kind") == "step":
-            tool = str(record.get("tool", "?"))
-            self._tool_counts[tool] = self._tool_counts.get(tool, 0) + 1
-            if record.get("ok"):
-                self._counters["ok"] += 1
-            else:
-                self._counters["fail"] += 1
+        self._count_step(record)
+
+    def _count_step(self, record: Dict[str, Any]) -> None:
+        if record.get("kind") != "step":
+            return
+        tool = str(record.get("tool", "?"))
+        self._tool_counts[tool] = self._tool_counts.get(tool, 0) + 1
+        if record.get("ok"):
+            self._counters["ok"] += 1
+        else:
+            self._counters["fail"] += 1
 
     def _rotate_if_needed(self) -> None:
         try:
-            if self.path.exists() and self.path.stat().st_size >= self.max_bytes:
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            if self._size >= self.max_bytes:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
                 rotated = self.path.with_name(f"{self.path.stem}.{stamp}.jsonl")
+                # Two rotations can land in the same second when a test (or a
+                # very fast producer) writes several small files. Rename would
+                # fail on Windows and the file would keep growing past the cap.
+                suffix = 0
+                while rotated.exists():
+                    suffix += 1
+                    rotated = self.path.with_name(
+                        f"{self.path.stem}.{stamp}-{suffix}.jsonl")
                 self.path.rename(rotated)
+                # Counters stay cumulative across files; the new file starts at
+                # byte zero for the next checkpoint.
+                self._scan_pos = 0
+                self._size = 0
+                self._writes_since_checkpoint = 0
+                self._save_checkpoint()
                 logger.info(f"Rotated trajectory log to {rotated.name}")
         except OSError as exc:
             logger.warning(f"Trajectory rotation failed: {exc}")
@@ -192,15 +295,22 @@ class TrajectoryRecorder:
             "kind": kind,
         }
         record.update(_redact(payload))
+        blob = _fast_dumps(record) + b"\n"
         with self._lock:
             self._rotate_if_needed()
             try:
                 with self.path.open("ab") as handle:
-                    handle.write(_fast_dumps(record) + b"\n")
+                    handle.write(blob)
             except OSError as exc:
                 logger.error(f"Failed to write trajectory record: {exc}")
                 return record
+            self._scan_pos += len(blob)
+            self._size += len(blob)
             self._count(record)
+            self._writes_since_checkpoint += 1
+            if self._writes_since_checkpoint >= 32:
+                self._save_checkpoint()
+                self._writes_since_checkpoint = 0
         return record
 
     def observation(
@@ -326,13 +436,21 @@ class TrajectoryRecorder:
             with self.path.open("rb") as handle:
                 handle.seek(0, 2)
                 position = handle.tell()
-                data = b""
+                # Keep blocks separately and count newlines per block. The old
+                # loop prepended and re-counted the whole buffer on every step,
+                # which is O(total²) for a large tail (5,000 rows can be tens
+                # of MB of observations).
+                blocks: List[bytes] = []
+                newlines = 0
                 block = 64 * 1024
-                while position > 0 and data.count(b"\n") <= limit:
+                while position > 0 and newlines <= limit:
                     step = min(block, position)
                     position -= step
                     handle.seek(position)
-                    data = handle.read(step) + data
+                    chunk = handle.read(step)
+                    blocks.append(chunk)
+                    newlines += chunk.count(b"\n")
+                data = b"".join(reversed(blocks))
         except OSError:
             return []
         records: List[Dict[str, Any]] = []

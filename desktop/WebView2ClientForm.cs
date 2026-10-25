@@ -203,6 +203,36 @@ namespace DofusFarm.Engine
         private Button _btnReload;
         private System.Windows.Forms.Timer _telemetryTimer;
 
+        // Every window reports the host process's memory, so reading it once
+        // per window every 2 s created N Process objects for the same values.
+        private static readonly object HostMemoryLock = new object();
+        private static DateTime HostMemoryAt = DateTime.MinValue;
+        private static double HostWorkingSetMb;
+        private static double HostCommitMb;
+
+        private static void ReadHostMemory(out double workingSetMb, out double commitMb)
+        {
+            lock (HostMemoryLock)
+            {
+                DateTime now = DateTime.UtcNow;
+                if ((now - HostMemoryAt).TotalMilliseconds >= 1800)
+                {
+                    try
+                    {
+                        using (Process proc = Process.GetCurrentProcess())
+                        {
+                            HostWorkingSetMb = proc.WorkingSet64 / (1024.0 * 1024.0);
+                            HostCommitMb = proc.PrivateMemorySize64 / (1024.0 * 1024.0);
+                        }
+                    }
+                    catch { }
+                    HostMemoryAt = now;
+                }
+                workingSetMb = HostWorkingSetMb;
+                commitMb = HostCommitMb;
+            }
+        }
+
         private bool _autoZoomEnabled = true;
         private bool _autoFightEnabled = false;
         private bool _isUpdatingZoom = false;
@@ -753,10 +783,14 @@ namespace DofusFarm.Engine
             Controls.Add(_webView);
             _webView.BringToFront();
 
-            // Telemetry timer (measures memory and CPU)
-            _telemetryTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-            _telemetryTimer.Tick += (s, e) => UpdateMemoryUsage();
-            _telemetryTimer.Start();
+            // Telemetry timer (measures memory and CPU). Settings → Runtime can
+            // turn it off for farms that do not show the window statistics.
+            if (RuntimeSettings.Current.Telemetry)
+            {
+                _telemetryTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+                _telemetryTimer.Tick += (s, e) => UpdateMemoryUsage();
+                _telemetryTimer.Start();
+            }
         }
 
         public async Task StartAsync()
@@ -2670,38 +2704,26 @@ namespace DofusFarm.Engine
                 {
                     _lblMemory.Visible = (Width >= 620);
                 }
-                using (var proc = Process.GetCurrentProcess())
-                {
-                    _lblMemory.Text = string.Format("RAM: {0:F1} MB (Commit: {1:F1} MB)",
-                        proc.WorkingSet64 / (1024.0 * 1024.0),
-                        proc.PrivateMemorySize64 / (1024.0 * 1024.0));
-                }
+                double workingSetMb, commitMb;
+                ReadHostMemory(out workingSetMb, out commitMb);
+                _lblMemory.Text = string.Format("RAM: {0:F1} MB (Commit: {1:F1} MB)",
+                    workingSetMb, commitMb);
             }
             catch { }
         }
 
         public double GetWorkingSetMb()
         {
-            try
-            {
-                using (var proc = Process.GetCurrentProcess())
-                {
-                    return proc.WorkingSet64 / (1024.0 * 1024.0);
-                }
-            }
-            catch { return 0; }
+            double workingSetMb, commitMb;
+            ReadHostMemory(out workingSetMb, out commitMb);
+            return workingSetMb;
         }
 
         public double GetPrivateCommitMb()
         {
-            try
-            {
-                using (var proc = Process.GetCurrentProcess())
-                {
-                    return proc.PrivateMemorySize64 / (1024.0 * 1024.0);
-                }
-            }
-            catch { return 0; }
+            double workingSetMb, commitMb;
+            ReadHostMemory(out workingSetMb, out commitMb);
+            return commitMb;
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -3548,9 +3570,17 @@ namespace DofusFarm.Engine
                         FileInfo info = new FileInfo(path);
                         if (info.Exists && info.Length >= MaxBytes)
                         {
+                            string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
                             string rotated = Path.Combine(
-                                Directory_,
-                                "play_" + safe + "." + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + ".jsonl");
+                                Directory_, "play_" + safe + "." + stamp + ".jsonl");
+                            int suffix = 0;
+                            while (File.Exists(rotated))
+                            {
+                                suffix++;
+                                rotated = Path.Combine(
+                                    Directory_, "play_" + safe + "." + stamp
+                                    + "-" + suffix + ".jsonl");
+                            }
                             File.Move(path, rotated);
                         }
                     }

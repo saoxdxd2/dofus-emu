@@ -99,15 +99,23 @@ def _occupied(board: Board, *exclude: int) -> frozenset:
 
 def _geometry(board: Board, origin: Optional[int], spell: LiveSpell,
               target: Optional[int],
-              cells: Optional[Collection[int]] = None) -> Dict[str, Any]:
+              cells: Optional[Collection[int]] = None,
+              los_cache: Optional[Dict[Tuple[int, int], bool]] = None
+              ) -> Dict[str, Any]:
     """Current-cell distance / line of sight / range, or None when unknown."""
     if origin is None or target is None or not board.cells.flags:
         return {"distance": None, "has_los": None, "in_range": None}
     distance = board.cells.distance(origin, target)
     has_los = True
     if spell.requires_los:
-        has_los = board.cells.has_los(
-            origin, target, _occupied(board, origin, target))
+        pair = (origin, target)
+        cached = los_cache.get(pair) if los_cache is not None else None
+        if cached is None:
+            cached = board.cells.has_los(
+                origin, target, _occupied(board, origin, target))
+            if los_cache is not None:
+                los_cache[pair] = cached
+        has_los = cached
     if cells is None:
         cells = board.cells.range_cells(
             origin, spell.min_range, spell.max_range,
@@ -152,10 +160,12 @@ def _fighter_dict(board: Board, fighter: Optional[Fighter],
     if fighter is None:
         return None
     entries = []
+    los_cache: Dict[Tuple[int, int], bool] = {}
     for spell in spells:
         entry = _spell(spell)
         if reference is not None and fighter.id != board.my_id:
-            entry["geometry"] = _geometry(board, reference, spell, fighter.cell)
+            entry["geometry"] = _geometry(
+                board, reference, spell, fighter.cell, los_cache=los_cache)
         entries.append(entry)
     max_hp = int(fighter.max_hp)
     stat_values = _stats(stats)
@@ -194,6 +204,7 @@ def _derived(board: Board, me: Optional[Fighter], self_spells: List[LiveSpell],
              enemies: List[Fighter]) -> Dict[str, Any]:
     caster = board.character_stats() if me is not None else None
     self_entries: Dict[str, Any] = {}
+    los_cache: Dict[Tuple[int, int], bool] = {}
     for spell in self_spells:
         entry: Dict[str, Any] = {"targets": {}, "heal": None}
         if caster is not None and me is not None:
@@ -208,7 +219,9 @@ def _derived(board: Board, me: Optional[Fighter], self_spells: List[LiveSpell],
             for target in enemies:
                 if not target.alive:
                     continue
-                target_entry = _geometry(board, me.cell, spell, target.cell, cells)
+                target_entry = _geometry(
+                    board, me.cell, spell, target.cell, cells,
+                    los_cache=los_cache)
                 if spell.has_damage:
                     damage = _estimate(board, spell, caster, target, "damage")
                     if damage is not None:

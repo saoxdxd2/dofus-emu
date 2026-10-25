@@ -160,10 +160,17 @@ namespace DofusFarm.UI
         private readonly string _baseDir;
         private readonly Action<string> _log;
         private readonly Action _onApplyNetwork;
+        private readonly Action _onApplyRuntime;
 
         private readonly Label _flagsState;
         private readonly CheckBox _chkManual;
         private readonly CheckBox _chkNoUpdate;
+        private readonly Label _runtimeState;
+        private readonly ComboBox _refresh;
+        private readonly CheckBox _chkWatchdog;
+        private readonly CheckBox _chkTelemetry;
+        private readonly CheckBox _chkFightBoards;
+        private bool _suppressRuntime;
 
         private readonly ComboBox _mode;
         private readonly Label _modeNote;
@@ -176,11 +183,13 @@ namespace DofusFarm.UI
         private readonly Label _netState;
         private NetworkSettings _net;
 
-        public SettingsPage(string baseDir, Action<string> log, Action onApplyNetwork)
+        public SettingsPage(string baseDir, Action<string> log, Action onApplyNetwork,
+                            Action onApplyRuntime)
         {
             _baseDir = baseDir;
             _log = log;
             _onApplyNetwork = onApplyNetwork;
+            _onApplyRuntime = onApplyRuntime;
             _net = NetworkSettings.For(baseDir);
 
             Dock = DockStyle.Fill;
@@ -206,6 +215,39 @@ namespace DofusFarm.UI
             _flagsState = UiKit.Note("", 0, y + 54);
             Controls.Add(_flagsState);
             y += 86;
+
+            // ---- Runtime --------------------------------------------------
+            Controls.Add(UiKit.Heading("Runtime", 0, y));
+            Controls.Add(UiKit.Note("Dashboard refresh, self-healing and data collection. Saved to runtime.ini and applied immediately; window telemetry applies to windows opened afterwards.", 0, y + 26));
+            y += 54;
+
+            Controls.Add(UiKit.Field("Grid refresh", 0, y + 4));
+            _refresh = UiKit.Combo(new string[] { "2 s", "4 s", "8 s", "15 s", "Manual" },
+                RefreshIndex(RuntimeSettings.Current.RefreshMs), 134, y, 120);
+            _refresh.SelectedIndexChanged += delegate { ApplyRuntime(); };
+            Controls.Add(_refresh);
+            y += 34;
+
+            _chkWatchdog = UiKit.Check("Auto-heal stalled instances (watchdog restarts after the boot grace)", 0, y,
+                RuntimeSettings.Current.Watchdog);
+            _chkWatchdog.CheckedChanged += delegate { ApplyRuntime(); };
+            Controls.Add(_chkWatchdog);
+
+            _chkTelemetry = UiKit.Check("Show live memory telemetry on each client window", 0, y + 26,
+                RuntimeSettings.Current.Telemetry);
+            _chkTelemetry.CheckedChanged += delegate { ApplyRuntime(); };
+            Controls.Add(_chkTelemetry);
+
+            _chkFightBoards = UiKit.Check("Record fight boards for training (one snapshot per stable turn)", 0, y + 52,
+                RuntimeSettings.Current.FightBoards);
+            _chkFightBoards.CheckedChanged += delegate { ApplyRuntime(); };
+            Controls.Add(_chkFightBoards);
+
+            _runtimeState = UiKit.Note("", 0, y + 82);
+            Controls.Add(_runtimeState);
+            Controls.Add(UiKit.Button("Reset runtime defaults", 0, y + 108, 150,
+                Color.FromArgb(127, 29, 29), delegate { ResetRuntime(); }));
+            y += 148;
 
             // ---- Network --------------------------------------------------
             Controls.Add(UiKit.Heading("Network", 0, y));
@@ -312,6 +354,7 @@ namespace DofusFarm.UI
             y += 48;
 
             LoadFlags();
+            LoadRuntime();
             UpdateModeUi();
             RefreshNetState();
         }
@@ -648,6 +691,88 @@ namespace DofusFarm.UI
             _flagsState.Text = state + "   (takes effect on the next instance launch)";
         }
 
+        private static int RefreshIndex(int ms)
+        {
+            if (ms <= 0) return 4;
+            if (ms <= 2000) return 0;
+            if (ms <= 4000) return 1;
+            if (ms <= 8000) return 2;
+            return 3;
+        }
+
+        private int SelectedRefreshMs()
+        {
+            switch (_refresh.SelectedIndex)
+            {
+                case 0: return 2000;
+                case 1: return 4000;
+                case 2: return 8000;
+                case 3: return 15000;
+                default: return 0;
+            }
+        }
+
+        private void LoadRuntime()
+        {
+            _suppressRuntime = true;
+            try
+            {
+                RuntimeSettings loaded = RuntimeSettings.Load();
+                RuntimeSettings current = RuntimeSettings.Current;
+                current.RefreshMs = loaded.RefreshMs;
+                current.Watchdog = loaded.Watchdog;
+                current.Telemetry = loaded.Telemetry;
+                current.FightBoards = loaded.FightBoards;
+                _refresh.SelectedIndex = RefreshIndex(current.RefreshMs);
+                _chkWatchdog.Checked = current.Watchdog;
+                _chkTelemetry.Checked = current.Telemetry;
+                _chkFightBoards.Checked = current.FightBoards;
+                UpdateRuntimeNote();
+            }
+            finally { _suppressRuntime = false; }
+        }
+
+        private void ApplyRuntime()
+        {
+            if (_suppressRuntime) return;
+            RuntimeSettings settings = RuntimeSettings.Current;
+            settings.RefreshMs = SelectedRefreshMs();
+            settings.Watchdog = _chkWatchdog.Checked;
+            settings.Telemetry = _chkTelemetry.Checked;
+            settings.FightBoards = _chkFightBoards.Checked;
+            settings.Save();
+            UpdateRuntimeNote();
+            if (_log != null)
+                _log("[SETTINGS] runtime: refresh=" + (settings.RefreshMs > 0 ? settings.RefreshMs + "ms" : "manual") +
+                     ", watchdog=" + OnOff(settings.Watchdog) + ", telemetry=" + OnOff(settings.Telemetry) +
+                     ", fight-boards=" + OnOff(settings.FightBoards));
+            if (_onApplyRuntime != null) _onApplyRuntime();
+        }
+
+        private void ResetRuntime()
+        {
+            _suppressRuntime = true;
+            try
+            {
+                _refresh.SelectedIndex = RefreshIndex(4000);
+                _chkWatchdog.Checked = true;
+                _chkTelemetry.Checked = true;
+                _chkFightBoards.Checked = true;
+            }
+            finally { _suppressRuntime = false; }
+            ApplyRuntime();
+        }
+
+        private static string OnOff(bool value) { return value ? "on" : "off"; }
+
+        private void UpdateRuntimeNote()
+        {
+            RuntimeSettings s = RuntimeSettings.Current;
+            _runtimeState.Text = "Saved to " + RuntimeSettings.PathFor() + "  |  watchdog " +
+                                 OnOff(s.Watchdog) + ", telemetry " + OnOff(s.Telemetry) +
+                                 ", fight boards " + OnOff(s.FightBoards);
+        }
+
         private static bool PortOpen(string host, int port, int timeoutMs)
         {
             try
@@ -700,6 +825,7 @@ namespace DofusFarm.UI
         public void ReloadState()
         {
             LoadFlags();
+            LoadRuntime();
             _net = NetworkSettings.For(_baseDir);
             RefreshNetState();
         }
@@ -866,23 +992,61 @@ namespace DofusFarm.UI
             Reload();
         }
 
+        // The page refreshes every 4 s while visible; reading the whole app log
+        // (rotated at 64 MB) line by line to keep the last 260 lines turned a
+        // dashboard refresh into a full file scan. Read 8 KB blocks backwards
+        // until enough line breaks are seen, then decode only that tail.
         private string Tail(string path, int lines)
         {
             try
             {
                 if (!File.Exists(path)) return "(not created yet) " + path;
-                var queue = new Queue<string>();
+                const int block = 8192;
+                var chunks = new List<byte[]>();
+                int total = 0, newlines = 0;
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                using (var reader = new StreamReader(fs, Encoding.UTF8))
                 {
-                    string line;
-                    while ((line = reader.ReadLine()) != null)
+                    long pos = fs.Length;
+                    while (pos > 0 && newlines <= lines)
                     {
-                        queue.Enqueue(line);
-                        if (queue.Count > lines) queue.Dequeue();
+                        int toRead = (int)Math.Min(block, pos);
+                        pos -= toRead;
+                        byte[] buffer = new byte[toRead];
+                        fs.Seek(pos, SeekOrigin.Begin);
+                        int got = 0;
+                        while (got < toRead)
+                        {
+                            int read = fs.Read(buffer, got, toRead - got);
+                            if (read <= 0) break;
+                            got += read;
+                        }
+                        if (got == 0) break;
+                        if (got < toRead) Array.Resize(ref buffer, got);
+                        chunks.Add(buffer);
+                        total += got;
+                        for (int i = got - 1; i >= 0; i--)
+                            if (buffer[i] == (byte)'\n') newlines++;
                     }
                 }
-                return string.Join(Environment.NewLine, queue.ToArray());
+                byte[] bytes = new byte[total];
+                int offset = 0;
+                for (int i = chunks.Count - 1; i >= 0; i--)
+                {
+                    byte[] chunk = chunks[i];
+                    Buffer.BlockCopy(chunk, 0, bytes, offset, chunk.Length);
+                    offset += chunk.Length;
+                }
+                string[] parts = Encoding.UTF8.GetString(bytes).Split('\n');
+                // A file ending in a newline has a phantom empty final part;
+                // ReadLine never reports it as a line.
+                int count = (parts.Length > 0 && parts[parts.Length - 1].Length == 0)
+                    ? parts.Length - 1 : parts.Length;
+                int take = Math.Min(lines, count);
+                var tail = new string[take];
+                Array.Copy(parts, count - take, tail, 0, take);
+                for (int i = 0; i < take; i++)
+                    tail[i] = tail[i].TrimEnd('\r');
+                return string.Join(Environment.NewLine, tail);
             }
             catch (Exception ex) { return "(cannot read " + path + ": " + ex.Message + ")"; }
         }

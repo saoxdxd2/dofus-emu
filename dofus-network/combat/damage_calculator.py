@@ -372,6 +372,32 @@ class SpellRotationOptimizer:
     _rotation_cache: Dict[Tuple[Any, ...], "OptimalRotationResult"] = {}
     _rotation_cache_lock = threading.Lock()
 
+    @staticmethod
+    def _spell_signature(spell: SpellInfo) -> Tuple[Any, ...]:
+        """Everything the rotation search reads from a spell.
+
+        Keying on the id alone was unsafe: the same spell id at another grade
+        has different AP, limits and rolls. This also makes the cache write
+        (which had gone missing) correct.
+        """
+        return (
+            spell.id, spell.name_fr, spell.ap_cost,
+            spell.max_cast_per_turn, spell.max_cast_per_target,
+            spell.crit_rate_base, spell.crit_rate_percent,
+            spell.crit_bonus_damage,
+            tuple((e.element, e.min_roll, e.max_roll,
+                   e.crit_min_roll, e.crit_max_roll) for e in spell.effects),
+        )
+
+    @classmethod
+    def _remember(cls, key: Tuple[Any, ...],
+                  result: "OptimalRotationResult") -> "OptimalRotationResult":
+        with cls._rotation_cache_lock:
+            if len(cls._rotation_cache) >= cls._CACHE_MAXSIZE:
+                cls._rotation_cache.pop(next(iter(cls._rotation_cache)), None)
+            cls._rotation_cache[key] = result
+        return result
+
     @classmethod
     def optimize_turn(
         cls,
@@ -382,7 +408,7 @@ class SpellRotationOptimizer:
         """Exhaustively evaluates all legal spell combinations within AP budget."""
         cache_key = (
             astuple(char),
-            tuple(sp.id for sp in available_spells),
+            tuple(cls._spell_signature(sp) for sp in available_spells),
             astuple(target),
         )
         with cls._rotation_cache_lock:
@@ -399,13 +425,13 @@ class SpellRotationOptimizer:
                 calc_results[sp.id] = DofusDamageCalculator.calculate_spell_damage(damage_spell, char, target)
 
         if not calc_results:
-            return OptimalRotationResult(
+            return cls._remember(cache_key, OptimalRotationResult(
                 target_name=target.name, target_hp=target.current_hp,
                 character_ap=char.action_points, total_ap_spent=0, ap_remaining=char.action_points,
                 is_guaranteed_lethal=False, is_expected_lethal=False,
                 total_min_damage=0, total_max_damage=0, total_expected_damage=0.0,
                 estimated_turns_to_kill=99, rotation=[]
-            )
+            ))
 
         # 2. Build candidates respecting cast limits
         # Expand each spell up to min(max_cast_per_turn, max_cast_per_target, AP // ap_cost)
@@ -469,7 +495,7 @@ class SpellRotationOptimizer:
             for sp, res in chosen
         ]
 
-        return OptimalRotationResult(
+        return cls._remember(cache_key, OptimalRotationResult(
             target_name=target.name,
             target_hp=target.current_hp,
             character_ap=char.action_points,
@@ -482,4 +508,4 @@ class SpellRotationOptimizer:
             total_expected_damage=tot_ev,
             estimated_turns_to_kill=ttk,
             rotation=steps,
-        )
+        ))

@@ -94,7 +94,6 @@ def compute_baselines(series_map: dict[tuple, dict[str, Any]], split_index: list
     }
     for example_index in split_index:
         example = examples[example_index]
-        key = tuple(example["series_id"].split(":")) if False else None
         # Recover the series payload from the map using the stored identity.
         series_key = (example["source"], example["measurement_id"], example["probe_id"])
         payload = series_map.get(series_key)

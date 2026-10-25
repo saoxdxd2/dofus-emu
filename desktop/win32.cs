@@ -269,12 +269,10 @@ namespace DofusFarm.Native
             public int Height;
         }
 
-        public static HashSet<int> GetProcessTrees(IEnumerable<int> rootPids)
+        /// <summary>One process-table walk, reusable by several tree queries.</summary>
+        public static Dictionary<int, List<int>> SnapshotParentMap()
         {
-            HashSet<int> targets = rootPids != null ? new HashSet<int>(rootPids) : new HashSet<int>();
-            if (targets.Count == 0) return targets;
             Dictionary<int, List<int>> parentMap = new Dictionary<int, List<int>>();
-
             IntPtr snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
             if (snap != IntPtr.Zero && snap != (IntPtr)(-1))
             {
@@ -299,14 +297,29 @@ namespace DofusFarm.Native
                     CloseHandle(snap);
                 }
             }
+            return parentMap;
+        }
+
+        public static HashSet<int> GetProcessTrees(IEnumerable<int> rootPids)
+        {
+            return GetProcessTrees(rootPids, null);
+        }
+
+        public static HashSet<int> GetProcessTrees(IEnumerable<int> rootPids,
+            Dictionary<int, List<int>> parentMap)
+        {
+            HashSet<int> targets = rootPids != null ? new HashSet<int>(rootPids) : new HashSet<int>();
+            if (targets.Count == 0) return targets;
+            if (parentMap == null) parentMap = SnapshotParentMap();
 
             Queue<int> frontier = new Queue<int>(rootPids);
             while (frontier.Count > 0)
             {
                 int curr = frontier.Dequeue();
-                if (parentMap.ContainsKey(curr))
+                List<int> children;
+                if (parentMap.TryGetValue(curr, out children))
                 {
-                    foreach (int child in parentMap[curr])
+                    foreach (int child in children)
                     {
                         if (targets.Add(child))
                         {

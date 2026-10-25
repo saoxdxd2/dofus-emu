@@ -8,6 +8,8 @@ PEP 562 keeps ``from combat import TacticalCombatEngine`` working while paying
 for a module only when its name is actually used.
 """
 
+# ruff: noqa: F401 - the TYPE_CHECKING block documents lazy exports
+
 from __future__ import annotations
 
 from importlib import import_module

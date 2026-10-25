@@ -18,11 +18,14 @@ heal. Effect rolls follow the client's ``getMinMaxDamageFromRawEffect``:
 ``diceNum`` is the minimum and ``diceSide`` the maximum, with a zero
 ``diceSide`` meaning a fixed roll.
 
-Deliberately conservative: only direct single-target damage, steal, and heals
-are scored. Buffs, traps, glyphs, push/pull, AP/MP removal, and area zones are
-not planned yet; a spell that only has those effects is reported in ``notes``
-instead of being treated as a no-op damage spell. The executor must still
-validate every chosen action against the client and re-plan on disagreement.
+Positional mechanics use the same live effect ids: teleport (4) is planned as
+an alternate cast origin, push (5) and pull (6) move the target along the line
+from the caster, AP/MP loss (101/133/168, 169) is scored as denied enemy
+economy and AP/MP gain (111/120, 128) extends this turn's budget. Traps,
+glyphs, swap, carry, states and area zones are still not planned: a spell that
+only has those effects is reported in ``notes`` instead of being treated as a
+no-op. The executor must still validate every chosen action against the client
+and re-plan on disagreement.
 """
 
 from __future__ import annotations
@@ -60,9 +63,56 @@ ELEMENT_BY_EFFECT: Dict[int, Tuple[str, str]] = {
     143: ("heal", "HEAL"),
 }
 HEAL_EFFECT_IDS = frozenset({81, 108, 143})
+# Verified against the client's ACTION_* table (2026-10-25): a spell effect's
+# effectId is that table's action id, and the live payload carries ids, not
+# text. These are the tactical mechanics the one-turn damage planner does not
+# execute yet; classifying them keeps them out of "unknown effects" and gives
+# the solver and duel a generic vocabulary instead of per-spell handling.
+UTILITY_EFFECT_KINDS = {
+    4: "teleport",
+    5: "push",
+    6: "pull",
+    8: "swap",
+    50: "carry",
+    84: "ap_steal",
+    101: "ap_loss",
+    102: "ap_use",
+    104: "tackled",
+    111: "ap_gain",
+    120: "ap_gain",
+    128: "mp_gain",
+    132: "cleanse",
+    133: "ap_loss",
+    168: "ap_loss",
+    169: "mp_loss",
+    1041: "pushed",
+    1042: "pulled",
+}
+UTILITY_EFFECT_KINDS_BY_NAME = frozenset(UTILITY_EFFECT_KINDS.values())
+# Effects the one-turn planner can price with real board state. Teleport is a
+# cast origin, push/pull displace the target, AP/MP changes alter the economy;
+# the remaining utility ids stay reported as unmodelled.
+PLANNED_MECHANIC_KINDS = frozenset({
+    "teleport", "push", "pull", "ap_loss", "ap_steal",
+    "mp_loss", "ap_gain", "mp_gain",
+})
+# Value of one denied AP/MP in expected-damage units. A lost AP denies roughly
+# half a basic attack next turn; a lost MP strands a melee attacker one cell
+# short more often than it denies a full action.
+AP_DENIAL_WEIGHT = 6.0
+MP_DENIAL_WEIGHT = 3.0
+# An AP gained now is spent on another cast this turn, so it is worth part of
+# an attack immediately (the cast it enables is scored on its own as well).
+AP_GAIN_WEIGHT = 5.0
+MP_GAIN_WEIGHT = 1.5
+# Displacement is worth less than damage: one cell forced on an enemy only
+# matters when it cannot pay the MP back.
+PUSH_WEIGHT = 0.75
+TELEPORT_POSITIONS = 8
 _EPS = 1e-9
 
 
+@lru_cache(maxsize=1024)
 def cell_point(cell_id: int) -> Tuple[int, int]:
     """Cell id to map point, exactly as the client's getMapPointFromCellId."""
     t = cell_id % 14 - cell_id // 28
@@ -71,14 +121,39 @@ def cell_point(cell_id: int) -> Tuple[int, int]:
 
 _POINTS: Dict[Tuple[int, int], int] = {cell_point(c): c for c in range(NB_CELLS)}
 
+_CARDINAL_DIRS = ((0, 1), (-1, 0), (0, -1), (1, 0))
+_DIAGONAL_DIRS = ((1, 1), (-1, 1), (-1, -1), (1, -1))
+
+
+def _neighbour_table(diagonal: bool) -> Dict[int, Tuple[int, ...]]:
+    """Precomputed cell neighbours; zero coordinate math in BFS hot loops."""
+    table: Dict[int, Tuple[int, ...]] = {}
+    for cell in range(NB_CELLS):
+        x, y = cell_point(cell)
+        directions = _CARDINAL_DIRS + (_DIAGONAL_DIRS if diagonal else ())
+        table[cell] = tuple(
+            neighbour for dx, dy in directions
+            if (neighbour := _POINTS.get((x + dx, y + dy))) is not None
+        )
+    return table
+
+
+_CARDINAL_NEIGHBOURS = _neighbour_table(False)
+_DIAGONAL_NEIGHBOURS = _neighbour_table(True)
+
 
 def _js_round(value: float) -> float:
     """Math.round semantics (half toward +infinity), not Python's banker's rounding."""
     return math.floor(value + 0.5)
 
 
+@lru_cache(maxsize=16384)
 def line_points(x1: int, y1: int, x2: int, y2: int) -> List[Tuple[int, int]]:
-    """Port of the client's getLine: origin-exclusive, target-inclusive cells."""
+    """Port of the client's getLine: origin-exclusive, target-inclusive cells.
+
+    Pure in its four coordinates; the solver asks for the same pair on many
+    turns, and the cached list is only read by ``has_los``.
+    """
     out: List[Tuple[int, int]] = []
     sx, sy = x1 + 0.5, y1 + 0.5
     cx, cy = x2 + 0.5, y2 + 0.5
@@ -133,20 +208,20 @@ def line_points(x1: int, y1: int, x2: int, y2: int) -> List[Tuple[int, int]]:
 
 
 @lru_cache(maxsize=4096)
-def _range_ring(flags: Tuple[int, ...], origin: int, min_range: int,
+def _range_ring(limit: int, origin: int, min_range: int,
                 max_range: int, cast_in_line: bool,
                 cast_in_diagonal: bool) -> FrozenSet[int]:
-    """Cached spell range ring for one map/geometry.
+    """Cached spell range ring for one geometry.
 
-    The same ring is requested for the same map and spell on every fight turn.
-    Keying the cache by the cell flags keeps it correct when a caller supplies a
-    different (or shorter) map, while a repeated request reuses the flags tuple
-    and pays only a dictionary lookup.
+    A ring is pure geometry: the cell flags decide walkability and line of
+    sight, never which cells lie at a Manhattan radius. Only the map length
+    bounds it, so keying by that length shares rings across every 560-cell map
+    instead of caching a private copy per map and thrashing this cache.
     """
     if max_range < 0 or min_range > max_range:
         return frozenset()
     x, y = cell_point(origin)
-    limit = min(len(flags), NB_CELLS)
+    limit = min(limit, NB_CELLS)
     out: List[int] = []
     append = out.append
 
@@ -214,14 +289,8 @@ class CellMap:
         return abs(ax - bx) + abs(ay - by)
 
     def neighbours(self, cell: int, diagonal: bool = False) -> List[int]:
-        x, y = cell_point(cell)
-        out: List[int] = []
-        for dx, dy in ((0, 1), (-1, 0), (0, -1), (1, 0)):
-            out.append(_POINTS.get((x + dx, y + dy), -1))
-        if diagonal:
-            for dx, dy in ((1, 1), (-1, 1), (-1, -1), (1, -1)):
-                out.append(_POINTS.get((x + dx, y + dy), -1))
-        return [c for c in out if self.valid(c)]
+        table = _DIAGONAL_NEIGHBOURS if diagonal else _CARDINAL_NEIGHBOURS
+        return [c for c in table.get(cell, ()) if self.valid(c)]
 
     def has_los(self, a: int, b: int, occupied: FrozenSet[int] = frozenset()) -> bool:
         """The client's line check: actors and non-seeing cells block the line."""
@@ -243,6 +312,36 @@ class CellMap:
                 return False
         return True
 
+    def slide(self, origin: int, target: int, distance: int,
+              blocked: FrozenSet[int] = frozenset(),
+              toward: bool = False) -> int:
+        """Where a push (away) or pull (toward) leaves ``target``.
+
+        The client moves the target one point at a time along the sign of the
+        line from the caster; the first wall, free-cell violation or the
+        caster's own cell stops it. A pull never enters the caster's cell.
+        """
+        if distance <= 0 or origin == target:
+            return target
+        ox, oy = cell_point(origin)
+        tx, ty = cell_point(target)
+        dx = 0 if tx == ox else (1 if tx > ox else -1)
+        dy = 0 if ty == oy else (1 if ty > oy else -1)
+        if toward:
+            dx, dy = -dx, -dy
+        if dx == 0 and dy == 0:
+            return target
+        cell = target
+        for _ in range(int(distance)):
+            x, y = cell_point(cell)
+            nxt = _POINTS.get((x + dx, y + dy))
+            if nxt is None or not self.walkable(nxt):
+                break
+            if nxt == origin or nxt in blocked:
+                break
+            cell = nxt
+        return cell
+
     def reachable(self, start: int, mp: float,
                   occupied: FrozenSet[int] = frozenset()) -> Dict[int, float]:
         """Cells reachable with ``mp`` points; occupied cells are not enterable.
@@ -261,10 +360,8 @@ class CellMap:
             cost = best[cell]
             if cost + 1.0 > mp + _EPS:
                 continue
-            x, y = cell_point(cell)
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nxt = _POINTS.get((x + dx, y + dy))
-                if nxt is None or not self.walkable(nxt) or nxt in occupied:
+            for nxt in _CARDINAL_NEIGHBOURS.get(cell, ()):
+                if not self.walkable(nxt) or nxt in occupied:
                     continue
                 if nxt in best:
                     continue
@@ -277,10 +374,10 @@ class CellMap:
                     cast_in_diagonal: bool = False) -> FrozenSet[int]:
         """Port of getSpellRange: a ring, not a filled area.
 
-        Rings are cached per (map flags, spell geometry): a fight asks for the
-        same ring for every reachable cell on every turn.
+        Rings depend only on the geometry and the map length, so all maps of
+        the same size share them.
         """
-        return _range_ring(self.flags, origin, min_range, max_range,
+        return _range_ring(len(self.flags), origin, min_range, max_range,
                            cast_in_line, cast_in_diagonal)
 
 
@@ -297,14 +394,16 @@ class LiveEffect:
     target_id: Optional[int] = None
     duration: Optional[int] = None
 
-    @property
+    @cached_property
     def kind(self) -> str:
         if self.effect_id in HEAL_EFFECT_IDS:
             return "heal"
         entry = ELEMENT_BY_EFFECT.get(self.effect_id)
-        return entry[0] if entry else "other"
+        if entry:
+            return entry[0]
+        return UTILITY_EFFECT_KINDS.get(self.effect_id, "other")
 
-    @property
+    @cached_property
     def element(self) -> Optional[str]:
         if self.effect_id in HEAL_EFFECT_IDS:
             return "HEAL"
@@ -346,6 +445,54 @@ class LiveSpell:
     @cached_property
     def heal_effects(self) -> Tuple[LiveEffect, ...]:
         return tuple(e for e in self.effects if e.kind == "heal")
+
+    @cached_property
+    def utility_effects(self) -> Tuple[LiveEffect, ...]:
+        return tuple(e for e in self.effects
+                     if e.kind in UTILITY_EFFECT_KINDS_BY_NAME)
+
+    @cached_property
+    def has_utility(self) -> bool:
+        return bool(self.utility_effects)
+
+    @cached_property
+    def mechanic_effects(self) -> Tuple[LiveEffect, ...]:
+        return tuple(e for e in self.effects
+                     if e.kind in PLANNED_MECHANIC_KINDS)
+
+    @cached_property
+    def has_mechanic(self) -> bool:
+        return bool(self.mechanic_effects)
+
+    @cached_property
+    def is_teleport(self) -> bool:
+        return any(e.kind == "teleport" for e in self.effects)
+
+    @cached_property
+    def mechanic_rolls(self) -> Tuple[int, int, int, int, int, int]:
+        """Expected rolls: AP gain, MP gain, AP loss, MP loss, push, pull."""
+        ap_gain = mp_gain = ap_loss = mp_loss = push = pull = 0
+        for effect in self.effects:
+            kind = effect.kind
+            low = max(0, effect.min_roll)
+            high = max(low, effect.max_roll)
+            value = int(round((low + high) / 2.0))
+            if kind == "ap_steal":
+                ap_gain += value
+                ap_loss += value
+            elif kind == "ap_gain":
+                ap_gain += value
+            elif kind == "ap_loss":
+                ap_loss += value
+            elif kind == "mp_gain":
+                mp_gain += value
+            elif kind == "mp_loss":
+                mp_loss += value
+            elif kind == "push":
+                push += value
+            elif kind == "pull":
+                pull += value
+        return ap_gain, mp_gain, ap_loss, mp_loss, push, pull
 
     def _damage_info(self, wanted: Tuple[str, ...]) -> Optional[SpellInfo]:
         normal = [e for e in self.effects if e.kind in wanted]
@@ -394,11 +541,11 @@ class LiveSpell:
     def heal_info(self) -> Optional[SpellInfo]:
         return self._damage_info(("heal",))
 
-    @property
+    @cached_property
     def has_damage(self) -> bool:
         return bool(self.damage_effects)
 
-    @property
+    @cached_property
     def has_heal(self) -> bool:
         return bool(self.heal_effects)
 
@@ -689,7 +836,7 @@ def _effects(raw_list: Any) -> Tuple[LiveEffect, ...]:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PlannedAction:
     kind: str
     spell_id: int = 0
@@ -703,6 +850,8 @@ class PlannedAction:
     damage: float = 0.0
     healing: float = 0.0
     kills: bool = False
+    moved_target: Optional[int] = None
+    moved: int = 0
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -718,6 +867,8 @@ class PlannedAction:
             "damage": round(self.damage, 2),
             "healing": round(self.healing, 2),
             "kills": self.kills,
+            "moved_target": self.moved_target,
+            "moved": self.moved,
         }
 
 
@@ -749,7 +900,7 @@ class TurnPlan:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _CastTemplate:
     spell: LiveSpell
     target_id: int
@@ -758,9 +909,17 @@ class _CastTemplate:
     healing: float
     steal_heal: float
     target_max_hp: int
+    damage_int: int
+    ap_gain: int = 0
+    mp_gain: int = 0
+    ap_loss: int = 0
+    mp_loss: int = 0
+    utility: float = 0.0
+    move_target: Optional[int] = None
+    moved: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class _Node:
     cell: int
     ap: int
@@ -774,10 +933,20 @@ class _Node:
     healing: float
     kills: List[int]
     score: float
+    # Fighters a push/pull already moved this plan. The templates were
+    # generated from the board's start cells, so a later cast at the old cell
+    # would be illegal; a displaced target is terminal for this plan.
+    moved_targets: FrozenSet[int] = frozenset()
 
 
 KILL_BONUS = 0.35
 HEAL_WEIGHT = 0.8
+# How many cast positions to keep per spell/target when expanding a node.
+# Damage and AP do not depend on the position; the cheapest few are the ones
+# the beam can actually keep, and the live executor casts from the current
+# cell anyway.
+CAST_POSITIONS = 3
+_EMPTY_FROZENSET: FrozenSet[Any] = frozenset()
 
 
 class BattleSolver:
@@ -828,7 +997,8 @@ class BattleSolver:
             return self._pass(board, notes + ["no AP left"])
 
         skipped = sorted({s.name or str(s.id) for s in board.spells
-                          if not s.has_damage and not s.has_heal})
+                          if not s.has_damage and not s.has_heal
+                          and not s.has_mechanic})
         if skipped:
             notes.append("not modelled yet (buff/utility/area only): " + ", ".join(skipped))
         blocked = sorted({s.name or str(s.id) for s in board.spells if not s.castable})
@@ -840,13 +1010,16 @@ class BattleSolver:
         reach_cache: Dict[Tuple[int, int], Dict[int, float]] = {}
         los_cache: Dict[Tuple[int, int], bool] = {}
         estimate_cache: Dict[Tuple[int, int, str], Any] = {}
+        slide_cache: Dict[Tuple[int, int, int], Tuple[Optional[int], int]] = {}
         character = board.character_stats()
+        melee = any(spell.has_damage and spell.max_range <= 1
+                    for spell in board.spells)
 
         def templates(cell: int) -> List[_CastTemplate]:
             if cell in template_cache:
                 return template_cache[cell]
             out = self._templates(board, cell, character, occupied, los_cache,
-                                  estimate_cache)
+                                  estimate_cache, slide_cache, melee)
             template_cache[cell] = out
             return out
 
@@ -856,6 +1029,73 @@ class BattleSolver:
                 reach_cache[key] = board.cells.reachable(cell, mp, occupied)
             return reach_cache[key]
 
+        # Teleport is a second way to reach a cast origin. Only destinations
+        # that put some fighter back inside a castable range are interesting,
+        # and the list is capped so a large ring cannot explode the beam.
+        teleport_spells = [spell for spell in board.spells
+                           if spell.is_teleport and spell.castable
+                           and spell.ap_cost > 0 and not spell.need_taken_cell]
+        cast_ranges = [(spell.min_range, spell.max_range)
+                       for spell in board.spells
+                       if (spell.has_damage or spell.has_heal) and spell.castable]
+        fighter_cells = [f.cell for f in board.fighters if f.alive]
+        fighter_spells = {spell.id for spell in board.spells
+                          if spell.castable and not spell.is_teleport
+                          and not spell.need_free_cell
+                          and (spell.has_damage or spell.has_heal
+                               or spell.has_mechanic)}
+        enemy_ids = {f.id for f in board.fighters
+                     if f.alive and f.team != "player" and f.id != me.id}
+        teleport_cache: Dict[int, List[Tuple[int, LiveSpell]]] = {}
+
+        def teleports(cell: int) -> List[Tuple[int, LiveSpell]]:
+            cached = teleport_cache.get(cell)
+            if cached is not None:
+                return cached
+            options: Dict[int, LiveSpell] = {}
+            for spell in teleport_spells:
+                for dest in board.cells.range_cells(
+                        cell, spell.min_range, spell.max_range,
+                        spell.cast_in_line, spell.cast_in_diagonal):
+                    if dest == cell or dest in occupied \
+                            or not board.cells.walkable(dest):
+                        continue
+                    if not any(low <= board.cells.distance(dest, target_cell) <= high
+                               for low, high in cast_ranges
+                               for target_cell in fighter_cells):
+                        continue
+                    if spell.requires_los and not board.cells.has_los(
+                            cell, dest, occupied):
+                        continue
+                    current = options.get(dest)
+                    if current is None or spell.ap_cost < current.ap_cost:
+                        options[dest] = spell
+            if len(options) > TELEPORT_POSITIONS:
+                nearest = sorted(options, key=lambda dest: min(
+                    board.cells.distance(dest, target_cell)
+                    for target_cell in fighter_cells))
+                options = {dest: options[dest]
+                           for dest in nearest[:TELEPORT_POSITIONS]}
+            result = list(options.items())
+            teleport_cache[cell] = result
+            return result
+
+        def teleport_ready(spell: LiveSpell, node: _Node) -> bool:
+            uses = spell.casts_this_turn + node.spell_uses.get(spell.id, 0)
+            if spell.max_cast_per_turn is not None \
+                    and uses >= spell.max_cast_per_turn:
+                return False
+            if spell.min_cast_interval > 0 and uses > 0:
+                return False
+            return True
+
+        # The cheapest cast positions per spell/target depend only on the
+        # cell and MP a node expands from, not on its AP, uses or HP. Casting
+        # from the current cell is the common case, so the beam's eight nodes
+        # often share one (cell, MP) at a depth; build their buckets once.
+        bucket_cache: Dict[Tuple[int, float],
+                           List[Tuple[float, int, int, _CastTemplate,
+                                      Optional[LiveSpell]]]] = {}
         hp = {f.id: f.hp for f in board.fighters if f.alive}
         start = _Node(cell=me.cell, ap=board.my_ap, mp=float(board.my_mp), hp=hp,
                       spell_uses={}, target_uses={}, healed_by_target={},
@@ -865,6 +1105,19 @@ class BattleSolver:
         seen: Dict[Tuple[Any, ...], float] = {}
         expanded = 0
 
+        # Damage, AP cost and targets do not depend on the cell a spell is cast
+        # from; only the walk cost and the final position do. Expanding every
+        # reachable cell multiplied each frontier node by the whole zone, while
+        # the beam only ever keeps a handful of plans. Keep the cheapest few
+        # cells per spell/target, then restore reach order so equal-score ties
+        # resolve as before. The live executor casts from the current cell,
+        # so the discarded far cast positions were never emitted anyway.
+        # A wider beam keeps more alternatives, so it needs more positions per
+        # cast to stay faithful; the live beam (8) only needs the cheapest three.
+        reps_per_cast = max(1, min(
+            CAST_POSITIONS + max(0, self.beam_width - 8) // 2,
+            CAST_POSITIONS + 3,
+        ))
         for _depth in range(self.max_actions):
             candidates: List[_Node] = []
             for node in frontier:
@@ -872,91 +1125,200 @@ class BattleSolver:
                     notes.append("search stopped at the node budget")
                     break
                 expanded += 1
-                for cell, mp_cost in reach(node.cell, node.mp).items():
-                    for template in templates(cell):
-                        if template.target_id not in node.hp or node.hp[template.target_id] <= 0:
-                            continue
-                        spell = template.spell
-                        if spell.ap_cost > node.ap or not spell.castable:
-                            continue
-                        if spell.max_cast_per_turn is not None and (
-                                spell.casts_this_turn
-                                + node.spell_uses.get(spell.id, 0)
-                                >= spell.max_cast_per_turn):
-                            continue
-                        if (spell.min_cast_interval > 0 and (
-                                spell.casts_this_turn
-                                + node.spell_uses.get(spell.id, 0)) > 0):
-                            continue
-                        key_uses = (spell.id, template.target_id)
-                        if spell.max_cast_per_target is not None and (
-                                node.target_uses.get(key_uses, 0)
-                                >= spell.max_cast_per_target):
-                            continue
-                        target_hp = node.hp[template.target_id]
-                        dealt = min(template.damage, target_hp)
-                        kill = template.damage >= target_hp
+                walked = reach(node.cell, node.mp)
+                walk_key = (node.cell, round(node.mp, 3))
+                representatives = bucket_cache.get(walk_key)
+                if representatives is None:
+                    by_cast: Dict[Tuple[int, int],
+                                  List[Tuple[float, int, int, _CastTemplate]]] = {}
+                    for index, (cell, mp_cost) in enumerate(walked.items()):
+                        for template in templates(cell):
+                            key = (template.spell.id, template.target_id)
+                            bucket = by_cast.get(key)
+                            if bucket is None:
+                                by_cast[key] = [(mp_cost, index, cell, template)]
+                            elif len(bucket) < reps_per_cast:
+                                # ``reachable`` inserts cells in BFS order, so
+                                # MP cost is non-decreasing and the first
+                                # entries are already the cheapest few. Stop
+                                # storing once the bucket is full instead of
+                                # building a huge list and slicing it later.
+                                bucket.append((mp_cost, index, cell, template))
+                    representatives = []
+                    for bucket in by_cast.values():
+                        representatives.extend(
+                            (mp_cost, index, cell, template, None)
+                            for mp_cost, index, cell, template in bucket)
+                    representatives.sort(key=lambda item: item[1])
+                    bucket_cache[walk_key] = representatives
+                # A cast pair the walk already covers gains nothing from a
+                # teleport: the same spell would simply cost more AP. Only
+                # uncovered pairs are tried from teleport destinations, and
+                # each such pair uses the first (closest) destination. The
+                # live executor replans after each action, so a teleport is
+                # only searched as the turn opener; expanding it from every
+                # beam node at every depth multiplied the template work.
+                if teleport_spells and node.ap > 1 and _depth == 0:
+                    walked_targets = set()
+                    walked_spells = set()
+                    for _mp, _idx, _cell, template, _tele in representatives:
+                        walked_targets.add(template.target_id)
+                        walked_spells.add(template.spell.id)
+                    # If every enemy is already hit and every fighter spell
+                    # already has a legal cast position, a teleport can only
+                    # add AP cost: skip the destination search entirely.
+                    if not (enemy_ids <= walked_targets
+                            and fighter_spells <= walked_spells):
+                        covered = {(template.spell.id, template.target_id)
+                                   for _mp, _idx, _cell, template, _tele
+                                   in representatives}
+                        extra = []
+                        for dest, tele in teleports(node.cell):
+                            if dest in walked:
+                                continue
+                            if tele.ap_cost >= node.ap or not teleport_ready(tele, node):
+                                continue
+                            for template in templates(dest):
+                                key = (template.spell.id, template.target_id)
+                                if key in covered:
+                                    continue
+                                covered.add(key)
+                                extra.append(
+                                    (0.0, 1 << 30, dest, template, tele))
+                        if extra:
+                            representatives = representatives + extra
+                for mp_cost, _index, cell, template, tele in representatives:
+                    if template.target_id in node.moved_targets:
+                        continue
+                    target_hp = node.hp[template.target_id]
+                    if target_hp <= 0:
+                        continue
+                    spell = template.spell
+                    ap_cost = spell.ap_cost + (tele.ap_cost if tele is not None else 0)
+                    if ap_cost > node.ap:
+                        continue
+                    if spell.max_cast_per_turn is not None and (
+                            spell.casts_this_turn
+                            + node.spell_uses.get(spell.id, 0)
+                            >= spell.max_cast_per_turn):
+                        continue
+                    if (spell.min_cast_interval > 0 and (
+                            spell.casts_this_turn
+                            + node.spell_uses.get(spell.id, 0)) > 0):
+                        continue
+                    key_uses = (spell.id, template.target_id)
+                    if spell.max_cast_per_target is not None and (
+                            node.target_uses.get(key_uses, 0)
+                            >= spell.max_cast_per_target):
+                        continue
+                    dealt = min(template.damage, target_hp)
+                    kill = template.damage >= target_hp
+                    direct_gain = 0.0
+                    if template.healing != 0.0:
                         direct_gain = min(
                             template.healing,
                             max(0, template.target_max_hp - target_hp
-                                - node.healed_by_target.get(template.target_id, 0)),
+                                - node.healed_by_target.get(
+                                    template.target_id, 0)),
                         )
-                        steal_gain = 0.0
-                        if template.steal_heal > 0:
-                            steal_gain = min(
-                                template.steal_heal,
-                                max(0, me.max_hp - me.hp
-                                    - node.healed_by_target.get(me.id, 0)),
-                            )
-                        gained = direct_gain + steal_gain
-                        step_score = dealt + (KILL_BONUS * template.target_max_hp if kill else 0.0)
-                        step_score += HEAL_WEIGHT * gained
-                        if step_score <= 0:
-                            continue
+                    steal_gain = 0.0
+                    if template.steal_heal > 0:
+                        steal_gain = min(
+                            template.steal_heal,
+                            max(0, me.max_hp - me.hp
+                                - node.healed_by_target.get(me.id, 0)),
+                        )
+                    gained = direct_gain + steal_gain
+                    step_score = dealt + (KILL_BONUS * template.target_max_hp if kill else 0.0)
+                    step_score += HEAL_WEIGHT * gained + template.utility
+                    if step_score <= 0:
+                        continue
+                    if template.damage_int > 0:
                         new_hp = dict(node.hp)
-                        new_hp[template.target_id] = max(0, target_hp - int(round(template.damage)))
+                        new_hp[template.target_id] = max(
+                            0, target_hp - template.damage_int)
+                    else:
+                        new_hp = node.hp
+                    if direct_gain > 0 or steal_gain > 0:
                         healed_by_target = dict(node.healed_by_target)
                         if direct_gain > 0:
                             healed_by_target[template.target_id] = (
-                                healed_by_target.get(template.target_id, 0) + direct_gain)
+                                healed_by_target.get(template.target_id, 0)
+                                + direct_gain)
                         if steal_gain > 0:
                             healed_by_target[me.id] = (
                                 healed_by_target.get(me.id, 0) + steal_gain)
-                        uses = dict(node.spell_uses)
-                        uses[spell.id] = uses.get(spell.id, 0) + 1
-                        target_uses = dict(node.target_uses)
-                        target_uses[key_uses] = target_uses.get(key_uses, 0) + 1
-                        kills = node.kills + ([template.target_id] if kill else [])
-                        action = PlannedAction(
-                            kind="cast", spell_id=spell.id, spell_name=spell.name,
-                            from_cell=cell, move_to=cell if cell != node.cell else None,
-                            target_id=template.target_id, target_cell=template.target_cell,
-                            mp_cost=mp_cost, ap_cost=spell.ap_cost,
-                            damage=template.damage, healing=gained, kills=kill,
-                        )
-                        candidate = _Node(
-                            cell=cell, ap=node.ap - spell.ap_cost,
-                            mp=max(0.0, node.mp - mp_cost), hp=new_hp,
-                            spell_uses=uses, target_uses=target_uses,
-                            healed_by_target=healed_by_target,
-                            actions=node.actions + [action],
-                            damage=node.damage + dealt,
-                            healing=node.healing + gained,
-                            kills=kills, score=node.score + step_score,
-                        )
+                    else:
+                        healed_by_target = node.healed_by_target
+                    uses = dict(node.spell_uses)
+                    uses[spell.id] = uses.get(spell.id, 0) + 1
+                    if tele is not None:
+                        uses[tele.id] = uses.get(tele.id, 0) + 1
+                    target_uses = dict(node.target_uses)
+                    target_uses[key_uses] = target_uses.get(key_uses, 0) + 1
+                    kills = (node.kills if not kill
+                             else node.kills + [template.target_id])
+                    action = PlannedAction(
+                        kind="cast", spell_id=spell.id, spell_name=spell.name,
+                        from_cell=cell,
+                        move_to=(cell if cell != node.cell and tele is None
+                                 else None),
+                        target_id=template.target_id, target_cell=template.target_cell,
+                        mp_cost=mp_cost, ap_cost=spell.ap_cost,
+                        damage=template.damage, healing=gained, kills=kill,
+                        moved_target=template.move_target, moved=template.moved,
+                    )
+                    actions = node.actions
+                    if tele is not None:
+                        actions = actions + [PlannedAction(
+                            kind="cast", spell_id=tele.id, spell_name=tele.name,
+                            from_cell=node.cell, target_id=me.id,
+                            target_cell=cell, ap_cost=tele.ap_cost)]
+                    next_ap = node.ap - ap_cost + template.ap_gain
+                    if me.max_ap > 0:
+                        next_ap = min(next_ap, me.max_ap)
+                    next_mp = max(0.0, node.mp - mp_cost + template.mp_gain)
+                    if me.max_mp > 0:
+                        next_mp = min(next_mp, float(me.max_mp))
+                    candidate = _Node(
+                        cell=cell, ap=next_ap, mp=next_mp, hp=new_hp,
+                        spell_uses=uses, target_uses=target_uses,
+                        healed_by_target=healed_by_target,
+                        actions=actions + [action],
+                        damage=node.damage + dealt,
+                        healing=node.healing + gained,
+                        kills=kills, score=node.score + step_score,
+                        moved_targets=(node.moved_targets | {template.target_id}
+                                       if template.moved > 0
+                                       else node.moved_targets),
+                    )
+                    # The first expansion has one parent and every cast spends
+                    # AP, so no later state can equal a depth-0 candidate and
+                    # the one-parent level has nothing to deduplicate. Build
+                    # its state signature only from the second level on.
+                    if _depth:
                         signature = (
-                            candidate.cell, candidate.ap, round(candidate.mp, 3),
-                            tuple(sorted(candidate.hp.items())),
-                            tuple(sorted(candidate.spell_uses.items())),
-                            tuple(sorted(candidate.target_uses.items())),
-                            tuple(sorted(candidate.healed_by_target.items())),
+                            candidate.cell, candidate.ap, candidate.mp,
+                            # Fighter ids never enter or leave this dict; the
+                            # insertion order from the initial hp map is
+                            # stable, so sorting it on every candidate was
+                            # wasted work.
+                            tuple(candidate.hp.values()),
+                            # These maps are only used for equality. A
+                            # frozenset avoids sorting every pair to hash it.
+                            frozenset(candidate.spell_uses.items()),
+                            frozenset(candidate.target_uses.items()),
+                            (frozenset(candidate.healed_by_target.items())
+                             if candidate.healed_by_target else _EMPTY_FROZENSET),
+                            (candidate.moved_targets
+                             if candidate.moved_targets else _EMPTY_FROZENSET),
                         )
                         if signature in seen and seen[signature] >= candidate.score - _EPS:
                             continue
                         seen[signature] = candidate.score
-                        candidates.append(candidate)
-                        if candidate.score > best.score + _EPS:
-                            best = candidate
+                    candidates.append(candidate)
+                    if candidate.score > best.score + _EPS:
+                        best = candidate
             if not candidates:
                 break
             candidates.sort(key=lambda n: (-n.score, n.ap, -n.mp, len(n.actions)))
@@ -983,7 +1345,10 @@ class BattleSolver:
     def _templates(self, board: Board, cell: int, character: CharacterStats,
                    occupied: FrozenSet[int],
                    los_cache: Optional[Dict[Tuple[int, int], bool]] = None,
-                   estimate_cache: Optional[Dict[Tuple[int, int, str], Any]] = None
+                   estimate_cache: Optional[Dict[Tuple[int, int, str], Any]] = None,
+                   slide_cache: Optional[Dict[Tuple[int, int, int],
+                                                  Tuple[Optional[int], int]]] = None,
+                   melee: bool = False
                    ) -> List[_CastTemplate]:
         me = board.me
         assert me is not None
@@ -993,12 +1358,42 @@ class BattleSolver:
             return out
         my_id = board.my_id
         for spell in board.spells:
-            if spell.ap_cost <= 0 or not spell.castable:
+            if spell.ap_cost <= 0 or spell.ap_cost > board.my_ap:
                 continue
-            if not spell.has_damage and not spell.has_heal:
+            if not spell.castable:
                 continue
-            if spell.need_free_cell:
+            if (spell.max_cast_per_turn is not None
+                    and spell.casts_this_turn >= spell.max_cast_per_turn):
                 continue
+            if spell.min_cast_interval > 0 and spell.casts_this_turn > 0:
+                continue
+            has_damage = spell.has_damage
+            has_heal = spell.has_heal
+            if not has_damage and not has_heal and not spell.has_mechanic:
+                continue
+            # Teleports are handled as alternate cast origins; a spell that
+            # only needs a taken cell cannot be planned with this board.
+            if spell.is_teleport or spell.need_free_cell:
+                continue
+            ap_gain, mp_gain, ap_loss, mp_loss, push_roll, pull_roll = \
+                spell.mechanic_rolls
+            # Self economy buffs have no fighter target: the caster is the
+            # target and the effect adds to this turn's budget.
+            if (ap_gain or mp_gain) and not has_damage \
+                    and not has_heal and spell.min_range == 0 \
+                    and spell.max_range == 0:
+                out.append(_CastTemplate(
+                    spell=spell, target_id=me.id, target_cell=cell,
+                    damage=0.0, healing=0.0, steal_heal=0.0,
+                    target_max_hp=max(1, me.max_hp), damage_int=0,
+                    ap_gain=ap_gain, mp_gain=mp_gain,
+                    utility=(AP_GAIN_WEIGHT * ap_gain
+                             + MP_GAIN_WEIGHT * mp_gain),
+                ))
+                continue
+            enemy_utility = bool(ap_loss or mp_loss or push_roll or pull_roll)
+            is_steal = any(e.kind == "steal" for e in spell.damage_effects)
+            needs_taken = spell.need_taken_cell
             # A ring costs ~30 us; a Manhattan pre-check costs a few
             # comparisons and rejects the common case where every target is
             # outside the spell's reach from this cell.
@@ -1023,10 +1418,15 @@ class BattleSolver:
                     if not visible:
                         continue
                 is_enemy = target.team != "player" and target.id != my_id
+                if is_enemy:
+                    if not has_damage and not enemy_utility:
+                        continue
+                elif not has_heal:
+                    continue
                 damage = 0.0
                 healing = 0.0
                 steal_heal = 0.0
-                if is_enemy and spell.has_damage:
+                if is_enemy and has_damage:
                     key_damage = (spell.id, target.id, "damage")
                     if estimate_cache is not None and key_damage in estimate_cache:
                         result = estimate_cache[key_damage]
@@ -1035,9 +1435,9 @@ class BattleSolver:
                         if estimate_cache is not None:
                             estimate_cache[key_damage] = result
                     damage = result.expected_value if result else 0.0
-                    if any(e.kind == "steal" for e in spell.damage_effects):
+                    if is_steal:
                         steal_heal = damage
-                elif not is_enemy and spell.has_heal:
+                elif not is_enemy and has_heal:
                     key_heal = (spell.id, target.id, "heal")
                     if estimate_cache is not None and key_heal in estimate_cache:
                         result = estimate_cache[key_heal]
@@ -1046,18 +1446,70 @@ class BattleSolver:
                         if estimate_cache is not None:
                             estimate_cache[key_heal] = result
                     healing = result.expected_value if result else 0.0
-                elif not is_enemy and target.id == me.id and spell.has_damage:
+                elif not is_enemy and target.id == me.id and has_damage:
                     continue
-                if damage <= 0 and healing <= 0:
+                # Denial is capped by what the target actually has: removing
+                # AP a fighter already spent denies nothing.
+                if is_enemy:
+                    cap_ap = target.ap if target.ap > 0 else max(0, target.max_ap)
+                    cap_mp = target.mp if target.mp > 0 else max(0, target.max_mp)
+                    target_ap_loss = min(ap_loss, cap_ap)
+                    target_mp_loss = min(mp_loss, cap_mp)
+                    target_ap_gain = 0
+                    target_mp_gain = 0
+                else:
+                    target_ap_loss = 0
+                    target_mp_loss = 0
+                    target_ap_gain = ap_gain
+                    target_mp_gain = mp_gain
+                utility = (AP_DENIAL_WEIGHT * target_ap_loss
+                           + MP_DENIAL_WEIGHT * target_mp_loss
+                           + AP_GAIN_WEIGHT * target_ap_gain
+                           + MP_GAIN_WEIGHT * target_mp_gain)
+                move_target: Optional[int] = None
+                moved = 0
+                if is_enemy and (push_roll or pull_roll):
+                    key_slide = (spell.id, cell, target.id)
+                    cached_slide = (slide_cache.get(key_slide)
+                                    if slide_cache is not None else None)
+                    if cached_slide is not None:
+                        move_target, moved = cached_slide
+                    else:
+                        blocked = frozenset(
+                            f.cell for f in board.fighters
+                            if f.alive and f.id not in (me.id, target.id))
+                        before = board.cells.distance(cell, target.cell)
+                        destination = board.cells.slide(
+                            cell, target.cell, push_roll or pull_roll,
+                            blocked, toward=bool(pull_roll))
+                        after = board.cells.distance(cell, destination)
+                        move_target = destination if destination != target.cell else None
+                        moved = max(0, (after - before) if push_roll
+                                    else (before - after))
+                        if slide_cache is not None:
+                            slide_cache[key_slide] = (move_target, moved)
+                    if moved:
+                        if push_roll:
+                            # Forced movement is only fully denied when the
+                            # target lacks the MP to walk back.
+                            unrecovered = max(0, moved - max(0, target.mp))
+                            utility += PUSH_WEIGHT * (moved + 0.5 * unrecovered)
+                        elif melee:
+                            utility += PUSH_WEIGHT * moved
+                if damage <= 0 and healing <= 0 and utility <= 0:
                     continue
-                if spell.need_taken_cell and target.cell not in occupied:
+                if needs_taken and target.cell not in occupied:
                     continue
                 out.append(_CastTemplate(
                     spell=spell, target_id=target.id, target_cell=target.cell,
                     damage=damage, healing=healing, steal_heal=steal_heal,
                     target_max_hp=max(1, target.max_hp),
+                    damage_int=int(round(damage)),
+                    ap_gain=target_ap_gain, mp_gain=target_mp_gain,
+                    ap_loss=target_ap_loss, mp_loss=target_mp_loss,
+                    utility=utility, move_target=move_target, moved=moved,
                 ))
-        out.sort(key=lambda t: -max(t.damage, t.healing))
+        out.sort(key=lambda t: -(max(t.damage, t.healing) + t.utility))
         return out
 
     @staticmethod
