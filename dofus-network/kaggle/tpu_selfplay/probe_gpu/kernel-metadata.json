@@ -1,0 +1,20 @@
+{
+ "id": "tajdinenizar/dofus-gpu-probe",
+ "title": "Dofus GPU probe",
+ "code_file": "probe_gpu.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_tpu": false,
+ "machine_shape": "NvidiaTeslaT4",
+ "docker_image_pinning_type": "latest",
+ "enable_internet": false,
+ "keywords": [
+  "gpu"
+ ],
+ "dataset_sources": [],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": []
+}

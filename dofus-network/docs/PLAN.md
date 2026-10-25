@@ -103,8 +103,24 @@ loop has to run and fail, and the labels fall out of it.
 | tests | `node tools/test_dialog_groups.js` → 28 cases; `node tools/test_npc_actor.js` → 7; `node tools/test_claim_guard.js` → 18 |
 | live status | **offline-tested only**; the agent injects at document creation, so a full app restart is required |
 
-`debug.version` reports `2026-10-24c`. The live checklist is in
-`AGENT3_PLAN.md` §4.1.
+`debug.version` reports `2026-10-24f`, and every snapshot carries the same value
+as `agent_build`. The live checklist is in `AGENT3_PLAN.md` §4.1.
+
+### Knowledge spine (built 2026-10-24)
+
+| item | value |
+|---|---|
+| store | `knowledge/` → `data/knowledge/dofus_knowledge.sqlite` (43 MB, generated, ignored) |
+| builder | `python -m knowledge.build` — transactional temp file → atomic replace |
+| contents | 1,976 quests, 2,225 steps, 15,543 objectives, 2,781 achievements, 9,173 achievement objectives, 2,000 monsters, 6,472 NPCs, 21,554 items |
+| resolver | `CanonicalStore.resolve_objective(115)` → `Vaincre x1 Wabbit Gm en un seul combat`; unknown ids stay as placeholders and are reported |
+| provenance | all rows `source=dofusdb_cache`, `verified_live=0`; duplicate objective ids: 0 |
+| test | `python -m knowledge.selftest` → 23 checks, offline |
+| not yet | Touch client DB rows (#27), achievement objective details, interior map names, papycha reference index |
+
+`knowledge.CanonicalStore` is deliberately not `agent.knowledge_store.KnowledgeStore`:
+the first is the static reference, the second is the mutable discovery log. Two
+different lifetimes, two different names.
 
 ### Window layout: pages, not one long column
 
@@ -216,10 +232,10 @@ added.
 | 21 | **Monster groups in every snapshot** (`map.groups`) | a planner can see every group on every map | **built 2026-10-24** — offline-tested, live pending |
 | 22 | **Dialog text + replies + `reply_text`** | the policy can choose by meaning, not index | **built 2026-10-24** — offline-tested, live pending |
 | 23 | **Knowledge spine** (client DB + achievements + placeholder resolver + guide refs) | every live objective resolves to typed entities | **open** — M1 |
-| 24 | **Dialog policy v0** (deterministic, labels from objective deltas) | 100 live dialogs, top-1 > baseline | **open** — M2 |
-| 25 | **`fight.estimate` v0** (analytic + calibrated) | 50 live fights, calibration error <0.1 | **open** — M3 |
+| 24 | **Dialog policy v0** (deterministic, labels from objective deltas) | 100 live dialogs, top-1 > baseline | **built 2026-10-24** — ranker plus `ai/build_dialog_labels.py`, which pairs each chosen reply with the next objective state; offline-tested, 0 usable rows exist until a session has the M0 dialog contract |
+| 25 | **`fight.estimate` v0** (analytic + calibrated) | 50 live fights, calibration error <0.1 | **built 2026-10-24** — estimator, guard, outcome log, and an ECE-gated fitter; offline-tested. `p_win` stays `null` until the calibrator is fitted from live fights, so unattended fights are currently refused by design |
 | 26 | **Strategist merge** (planner + advisor, one interface) | four questions answered from one observation | **open** — M4 |
-| 27 | **TPU combat self-play** | reproducible vectorised encounters on TPU | **open** — after the encounter model; no longer blocked on the quest corpus |
+| 27 | **TPU combat self-play** | reproducible vectorised encounters on TPU | **built 2026-10-24** — `combat/encounter/` (JAX env + PPO + heuristic bootstrap) and `kaggle/tpu_selfplay/` (TPU kernel); CPU smoke and sim-label calibrator ECE 0.0299 (in-sample, sim only). TPU run pending the user's dataset/kernel upload |
 
 ---
 
@@ -286,30 +302,70 @@ lose money, not the subtraction.
 The full architecture and the reasons are in `AGENT3_PLAN.md`; this is the
 execution order.
 
-1. **Live-validate M0.** Full app restart, then the checklist in
-   `AGENT3_PLAN.md` §4.1: `debug.version` = `2026-10-24c`, non-empty
-   `map.groups`, French `snap.dialog` with aligned reply ids, one
-   `reply_text` round-trip. This is the only step that turns 21/22 into evidence.
+1. **Live-validate M0.** Full app restart, then `python ai/verify_live.py`
+   (from `dofus-network/`). It now encodes the checklist in
+   `AGENT3_PLAN.md` §4.1: exact `debug.version` = `2026-10-24f`, the
+   `map.groups` shape with member levels, French `snap.dialog` with aligned
+   reply ids, and a `reply_text` round-trip. PASS/FAIL/SKIP is printed per
+   check. This is the only step that turns 21/22 into evidence.
 2. **One live session with labels.** Let the loop run for a few hundred steps and
    keep `autopilot.jsonl`. Verify `hdv.scan` → `hdv.list`, `quest.advance`
    (NPC → dialog → objective), one harvest, and — now that groups are visible —
-   one `fight.estimate` row before a fight and its outcome after. This is the
-   verifier and dialog dataset.
+   one `fight.estimate` row before a fight and its outcome after. The autopilot
+   writes the estimate and its settlement to `trajectories/fight_outcomes.jsonl`;
+   that file is the calibration set, not a report. This is the verifier and
+   dialog dataset.
 3. **Knowledge spine (M1).** Harvest the Touch client DB (task #27), enrich
    achievement objectives, build the canonical store and placeholder resolver,
    and index papycha as reference-only with attribution. Before the dialog policy
-   can be evaluated, the objectives have to resolve.
+   can be evaluated, the objectives have to resolve. The papycha site accepted
+   TCP but returned no bytes from this host on 2026-10-24 (robots, sitemap, HTTP
+   and HTTPS, with and without `www`), so that index needs another egress; do not
+   route around it.
 4. **Dialog policy v0 (M2) and drift → replan.** The deterministic ranker logs
-   every choice with the objective delta; the same rows feed the encoder later.
-   In parallel, wire `REPLAN` to `ScheduleManager.replan("drop_rate_drift")` and
-   measure whether replanning helps.
-5. **Fight estimate v0 (M3).** Analytic, calibrated, with `confidence: low` and
-   named missing inputs. The planner uses it before any fight; buying stays
-   human.
+   every choice with the objective delta; `python -m ai.build_dialog_labels`
+   turns a session log into `data/dialog_labels/rows.jsonl` (question, replies,
+   chosen text, objective before/after, outcome) for the evaluation and the
+   encoder later. It skips choices whose observation did not expose the dialog
+   and counts them, so an old log cannot inflate the dataset. In parallel, wire
+   `REPLAN` to `ScheduleManager.replan("drop_rate_drift")` and measure whether
+   replanning helps.
+5. **Fight estimate v0 (M3)** — mostly built. `combat/fight_estimate.py` turns
+   the character sheet and one `map.groups` entry into turns-to-kill,
+   incoming damage, expected HP loss and named missing inputs;
+   `FightAdvisor.annotate` attaches it to every observation, and the autopilot
+   refuses `fight.join` / a visible `farm.start` target unless the estimate
+   passes. What remains is the probability: `p_win` is `null` until
+   `python -m combat.fight_estimate` has ≥20 resolved live fights with both
+   wins and losses, which is why fights are refused unattended today. The
+   fitter now reports ECE, Brier and log loss and refuses to install a
+   calibrator above the 0.10 gate (`--force` overrides, loudly). Every fight
+   already writes its claim and outcome to `trajectories/fight_outcomes.jsonl`.
+   The loop now treats a fight as a wait, not a planning hole: if any snapshot
+   says `in_fight`, it drops a pre-fight recovery order, arms auto-fight with a
+   no-target `fight.join` when `auto_fight` is false, and re-observes once a
+   second without issuing world actions until the fight ends. The page caches a
+   placement message that arrived while the bot was off and replays it on
+   enable, so a fight opened by a dialog still gets its ready click;
+   `debug.fight_state` reports placement, ready and turn state.
+   Buying stays human.
 
 Then the model work resumes: item 3 (`farm.start` labels) and item 6 (class
 imbalance), the verifier head (item 20), then the strategist merge (M4) and the
 TPU combat self-play pilot (M5).
+
+The M5 lane now exists end to end:
+
+* `combat/encounter/` — batched JAX environment (AP/MP, ranges, resists, heals,
+  initiative, team turn order), a shared policy/value head, PPO self-play, a
+  scripted first opponent, and a sim-label exporter;
+* `kaggle/tpu_selfplay/` — two-phase TPU kernel (heuristic bootstrap, then
+  self-play) and a self-contained dataset builder;
+* a 64-row CPU smoke produced a silver calibrator at ECE 0.0299, which proves
+  the pipeline but is **not** a live-calibrated probability. The live guard
+  stays on the bootstrap/tutorial envelopes until the M3 live gate. Sim rows
+  carry `source: "sim"`; the default `models/fight_calibrator.json` must remain
+  a live artifact.
 
 ---
 

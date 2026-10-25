@@ -1,0 +1,91 @@
+{
+ "generated_at": "2026-10-25T03:35:20Z",
+ "data": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\kaggle\\tpu_selfplay\\dataset\\encounters.npz",
+ "rows": {
+  "train": [
+   0,
+   4096
+  ],
+  "eval": [
+   4096,
+   6144
+  ]
+ },
+ "games": {
+  "train": 600,
+  "eval_per_matchup": 100
+ },
+ "value": {
+  "n_states": 4175,
+  "train_states": 3324,
+  "val_states": 851,
+  "train_games": 475,
+  "val_games": 119,
+  "val_auc": 0.9661186848436247,
+  "val_brier": 0.08061858872683979,
+  "val_accuracy": 0.882491186839013
+ },
+ "matchups": {
+  "value_vs_solver": {
+   "games": 100,
+   "side1_win": 0.46,
+   "side2_win": 0.53,
+   "draw": 0.01,
+   "mean_turns": 6.47,
+   "value_calibration": {
+    "n": 623,
+    "auc": 0.979789670970429,
+    "brier": 0.057693903369681845,
+    "ece": 0.036523027600454866
+   }
+  },
+  "solver_vs_value": {
+   "games": 100,
+   "side1_win": 0.53,
+   "side2_win": 0.46,
+   "draw": 0.01,
+   "mean_turns": 6.84,
+   "value_calibration": {
+    "n": 660,
+    "auc": 0.9612744235169864,
+    "brier": 0.0862549490800735,
+    "ece": 0.05270517114946997
+   }
+  },
+  "value_vs_random": {
+   "games": 100,
+   "side1_win": 0.65,
+   "side2_win": 0.33,
+   "draw": 0.02,
+   "mean_turns": 7.31
+  },
+  "solver_vs_random": {
+   "games": 100,
+   "side1_win": 0.6,
+   "side2_win": 0.39,
+   "draw": 0.01,
+   "mean_turns": 7.35
+  },
+  "solver_vs_solver": {
+   "games": 100,
+   "side1_win": 0.56,
+   "side2_win": 0.42,
+   "draw": 0.02,
+   "mean_turns": 7.14
+  },
+  "random_vs_random": {
+   "games": 100,
+   "side1_win": 0.46,
+   "side2_win": 0.48,
+   "draw": 0.06,
+   "mean_turns": 8.75
+  }
+ },
+ "elapsed_s": 358.6,
+ "notes": [
+  "1v1 initiative-ordered duel on real cells; direct damage/steal/heal only.",
+  "Value = gradient-boosted state win probability; lookahead over solver plans.",
+  "Train and eval rows are disjoint.",
+  "This is v4.0, not real-player PvP evidence yet."
+ ]
+}

@@ -1,0 +1,26 @@
+{
+ "id": "tajdinenizar/dofus-combat-gpu-v3",
+ "title": "Dofus combat GPU v3 resume",
+ "code_file": "train_selfplay.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_tpu": false,
+ "machine_shape": "NvidiaTeslaT4",
+ "docker_image_pinning_type": "latest",
+ "enable_internet": false,
+ "keywords": [
+  "gpu",
+  "self-play",
+  "jax",
+  "combat",
+  "resume"
+ ],
+ "dataset_sources": [
+  "tajdinenizar/dofus-encounter-tables"
+ ],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": []
+}

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import unicodedata
@@ -420,6 +421,7 @@ class ToolExecutor:
         timeout: float = 6.0,
         knowledge_store: Optional[Path] = None,
         recorder: Optional[TrajectoryRecorder] = None,
+        fight_advisor=None,
     ) -> None:
         self.sentinel_url = sentinel_url.rstrip("/")
         self.directive_url = directive_url or bridge_directive_url()
@@ -429,9 +431,13 @@ class ToolExecutor:
         # Discovered facts live here, not in the model and not in the cache. The
         # path is injectable so a test never writes to the user's real store.
         self.store = KnowledgeStore(knowledge_store)
+        # The fight estimator is shared with the autopilot so the guard and the
+        # tool answer from the same character sheet and the same cached estimates.
+        self.fights = fight_advisor
         self._zaaps_cache: Optional[List[Dict[str, Any]]] = None
         self._geo_index: Optional[Dict[str, Any]] = None
         self._maps = _MapGraph()
+        self._fight_value_cache: Optional[Tuple[Any, Any, Path]] = None
 
     # -- HTTP helpers --------------------------------------------------------
 
@@ -495,7 +501,8 @@ class ToolExecutor:
             if route and route.get("already_here"):
                 result = ToolResult(tool=tool, ok=True, source=source, data=route)
             else:
-                result = self._dispatch(tool, routed, source=source, instance=instance)
+                result = self._dispatch(tool, routed, source=source, instance=instance,
+                                        observation=observation)
                 if route and isinstance(result.data, dict):
                     result.data["route"] = route
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller and the log
@@ -558,13 +565,152 @@ class ToolExecutor:
         data = inner.get("data") if isinstance(inner, dict) else None
         return data if isinstance(data, dict) and data else None
 
+    def _attach_observation(self, result: ToolResult) -> None:
+        """Attach the normalized observation and contract to a fight.state read.
+
+        This is the live half of the training/live contract: the model gets the
+        facts the client actually sent (level, HP, spells, enemy spells) plus a
+        contract naming what is missing, so it cannot fill a low-level character
+        with a remembered level-200 build. A read failure is reported, not
+        raised: the raw fight state is still useful evidence.
+        """
+        if not result.ok or not isinstance(result.data, dict):
+            return
+        response = result.data.get("response")
+        inner = response.get("result") if isinstance(response, dict) else None
+        data = inner.get("data") if isinstance(inner, dict) else None
+        if not isinstance(data, dict):
+            return
+        observation = None
+        try:
+            from combat.battle_solver import Board
+            from combat.observation import build_observation, validate_observation
+
+            board = Board.from_fight_state(data)
+            observation = build_observation(board, source="live")
+            contract = validate_observation(observation)
+        except Exception as exc:  # noqa: BLE001 - a read probe must not kill the loop
+            contract = {
+                "version": 1, "ok": False, "actionable": False,
+                "value_ready": False,
+                "errors": [f"observation_failed:{type(exc).__name__}: {exc}"],
+                "warnings": [],
+            }
+        if observation is not None:
+            data["observation"] = observation
+        data["contract"] = contract
+        result.data["observation"] = observation
+        result.data["contract"] = contract
+
+    def _fight_value(self):
+        """Load the learned encounter value head once, or report why not.
+
+        The path is overridable so an experiment can point the live agent at a
+        candidate checkpoint without touching the installed default.
+        """
+        if self._fight_value_cache is not None:
+            return self._fight_value_cache
+        import pickle
+
+        import jax
+        import jax.numpy as jnp
+
+        from combat.encounter.env import Config
+
+        configured = os.environ.get("DOFUS_FIGHT_VALUE")
+        path = Path(configured) if configured else REPO_ROOT / "models" / "encounter_selfplay.pkl"
+        if not path.exists():
+            self._fight_value_cache = (None, None, path)
+            return self._fight_value_cache
+        try:
+            payload = pickle.loads(path.read_bytes())
+            params = jax.tree_util.tree_map(jnp.asarray, payload["params"])
+            saved = payload.get("config") or {}
+            cfg = Config(
+                allies=int(saved.get("allies", 1)),
+                enemies=int(saved.get("enemies", 4)),
+                spells=int(saved.get("spells", 4)),
+                max_rounds=int(saved.get("max_rounds", 24)),
+                max_dist=int(saved.get("max_dist", 12)),
+                casts_per_turn=int(saved.get("casts_per_turn", 4)),
+            )
+            self._fight_value_cache = (params, cfg, path)
+        except Exception as exc:  # noqa: BLE001 - a bad checkpoint must not kill the fight loop
+            logger.warning("fight value checkpoint unavailable (%s): %s", path, exc)
+            self._fight_value_cache = (None, None, path)
+        return self._fight_value_cache
+
+    def fight_advisor(self):
+        """The shared estimator, created on first use.
+
+        Loading the class spellbook and the canonical DB costs seconds, so it is
+        deferred until something actually asks about a monster.
+        """
+        if self.fights is None:
+            from combat.fight_estimate import FightAdvisor
+
+            self.fights = FightAdvisor()
+        return self.fights
+
+    def character_report(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Read the live character sheet (stats, spells, gear) without acting.
+
+        Same contract as ``snapshot``: a read is not a decision, so this never
+        records a step. The payload is exactly what the advisor's rules consume.
+        """
+        try:
+            result = self._directive(
+                "CHARACTER_REPORT", "debug.character",
+                {"spell_grades": True, "spell_effects": False},
+                "live", instance)
+        except Exception:  # noqa: BLE001 - a probe must never kill the loop
+            return None
+        data = self._client_payload(result)
+        if not data or not isinstance(data.get("character"), dict):
+            return None
+        return data
+
+    def fight_estimate(self, args: Dict[str, Any], source: str = "local",
+                       observation: Optional[Dict[str, Any]] = None,
+                       instance: Optional[str] = None) -> ToolResult:
+        """Estimate one monster group. Read-only: it never joins or casts.
+
+        A blocked estimate is still a successful read: ``ok`` says the tool
+        answered, ``allowed`` and ``blocked_reason`` say whether the fight may
+        start. Only a call that could not be answered at all is ``ok=False``.
+        """
+        advisor = self.fight_advisor()
+        if advisor.character is None:
+            report = self.character_report(instance)
+            if report is not None:
+                advisor.use_character_report(report)
+        if not isinstance(observation, dict) or not observation:
+            observation = self.snapshot(instance)
+        estimate = advisor.estimate(
+            observation,
+            group_id=args.get("group_id"),
+            monster=args.get("monster"),
+        )
+        unavailable = estimate.get("status") == "unavailable"
+        return ToolResult(
+            tool="fight.estimate",
+            ok=not unavailable,
+            source=source,
+            data=estimate,
+            error=str(estimate.get("blocked_reason")) if unavailable else None,
+        )
+
     def fight_plan(self, args: Dict[str, Any], source: str = "local") -> ToolResult:
         """Plan one combat turn from the live board. Read-only: it never acts.
 
         The solver is imported here rather than at module import so the agent can
-        start without the combat/data stack loaded.
+        start without the combat/data stack loaded. Every answer carries the
+        normalized live observation and its contract. The learned ranker is
+        opt-in and refuses to run when the observation is missing the stats or
+        enemy spell facts it would otherwise have to guess.
         """
         from combat.battle_solver import BattleSolver, Board
+        from combat.observation import build_observation, validate_observation
 
         payload = self.fight_state()
         if not payload:
@@ -572,18 +718,105 @@ class ToolExecutor:
                 tool="fight.plan", ok=False, source=source,
                 error="no live fight board: the client is not in a fight",
             )
+        ranker = str(args.get("ranker") or "solver")
+        rank_with_value = bool(args.get("rank_with_value", False))
+        if rank_with_value and ranker == "solver":
+            ranker = "value"
+        if ranker == "value":
+            rank_with_value = True
+
+        observation = None
+        contract = None
         try:
             board = Board.from_fight_state(payload)
+            observation = build_observation(board, source="live")
+            contract = validate_observation(observation)
             solver = BattleSolver(
                 beam_width=int(args.get("beam_width", 16) or 16),
                 max_actions=int(args.get("max_actions", 4) or 4),
             )
-            plan = solver.plan_turn(board)
+            top_k = int(args.get("top_k", 1) or 1)
+            checkpoint = None
+            refused = None
+            if rank_with_value:
+                top_k = max(top_k, 5)
+                plans = solver.plan_candidates(board, top_k)
+                checkpoint = None
+                params = cfg = None
+                if not contract["value_ready"]:
+                    refused = "observation_not_value_ready"
+                else:
+                    params, cfg, path = self._fight_value()
+                    checkpoint = str(path)
+                    if params is None:
+                        refused = "checkpoint_missing"
+                if refused is not None:
+                    data = {
+                        "plans": [plan.as_dict() for plan in plans],
+                        "value_ranked": False,
+                        "value_checkpoint": checkpoint,
+                        "value_refused": refused,
+                    }
+                else:
+                    from combat.plan_value import rank_plans
+
+                    ranked = rank_plans(params, board, plans, cfg)
+                    data = {
+                        "plans": [
+                            {"rank_score": round(score, 4), **plan.as_dict()}
+                            for score, plan in ranked
+                        ],
+                        "value_ranked": True,
+                        "value_checkpoint": checkpoint,
+                    }
+            elif top_k > 1:
+                plans = solver.plan_candidates(board, top_k)
+                data = {"plans": [plan.as_dict() for plan in plans]}
+            else:
+                data = solver.plan_turn(board).as_dict()
+            data["observation_version"] = observation["schema_version"]
+            data["observation"] = observation
+            data["contract"] = contract
+            data["ranker"] = {
+                "requested": ranker,
+                "used": bool(data.get("value_ranked")),
+                "scope": "encounter_v3_synthetic",
+                "live_calibrated": False,
+                "checkpoint": checkpoint,
+                "refused": refused,
+            }
         except Exception as exc:  # noqa: BLE001 - a bad board must not kill the loop
-            return ToolResult(tool="fight.plan", ok=False, error=str(exc), source=source)
-        return ToolResult(tool="fight.plan", ok=True, data=plan.as_dict(), source=source)
+            return ToolResult(
+                tool="fight.plan", ok=False, error=str(exc), source=source,
+                data={"observation": observation, "contract": contract}
+                if observation is not None else None,
+            )
+        return ToolResult(tool="fight.plan", ok=True, data=data, source=source)
 
     # -- internals -----------------------------------------------------------
+
+    @staticmethod
+    def _client_payload(result: ToolResult) -> Optional[Dict[str, Any]]:
+        """The game payload inside a directive envelope.
+
+        The bridge wraps answers as ``response.result.data`` and reports the
+        *game's* rejection in ``response.result.ok``, which is a different flag
+        from the transport one on ``ToolResult.ok``. Read both or a refused
+        directive looks like an empty success.
+        """
+        if not result.ok or not isinstance(result.data, dict):
+            return None
+        response = result.data.get("response")
+        if not isinstance(response, dict):
+            return None
+        inner = response.get("result")
+        if isinstance(inner, dict):
+            if inner.get("ok") is False:
+                return None
+            data = inner.get("data")
+            return data if isinstance(data, dict) else None
+        data = response.get("data")
+        return data if isinstance(data, dict) else None
 
     def _record(
         self,
@@ -671,7 +904,8 @@ class ToolExecutor:
                         "hops_remaining": hops, "source": "map_index"}
 
     def _dispatch(self, tool: str, args: Dict[str, Any], source: str,
-                  instance: Optional[str] = None) -> ToolResult:
+                  instance: Optional[str] = None,
+                  observation: Optional[Dict[str, Any]] = None) -> ToolResult:
         spec = TOOLS_BY_NAME[tool]
         if spec.backend == "local":
             if tool == "knowledge.search":
@@ -684,13 +918,18 @@ class ToolExecutor:
                 return self._knowledge_forget(args, source)
             if tool == "fight.plan":
                 return self.fight_plan(args, source)
+            if tool == "fight.estimate":
+                return self.fight_estimate(args, source, observation, instance)
             return ToolResult(tool=tool, ok=False, error=f"no local handler for {tool}", source=source)
         if spec.backend == "sentinel":
             if tool == "nav.goto":
                 return self._nav_goto(args, source)
             return ToolResult(tool=tool, ok=False, error=f"no sentinel handler for {tool}", source=source)
         if spec.backend == "directive":
-            return self._directive(spec.directive or tool.upper(), tool, args, source, instance)
+            result = self._directive(spec.directive or tool.upper(), tool, args, source, instance)
+            if tool == "fight.state":
+                self._attach_observation(result)
+            return result
         return ToolResult(tool=tool, ok=False, error=f"unknown backend '{spec.backend}'", source=source)
 
     # -- local handlers ------------------------------------------------------

@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.features import required_map
+from agent.features import FIGHT_TYPES, required_map
 from agent.planner import TALK_TYPES, QuestPlanner, _params, args_for_tool
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -105,6 +105,31 @@ class NNPlanner(QuestPlanner):
         tool = self._choose_tool(quest, step_idx, obj, obs)
         if tool is None:
             return super().plan_objective(quest, step_idx, obj, obs)
+        try:
+            obj_type = int(obj.get("type_id"))
+        except (TypeError, ValueError):
+            obj_type = None
+        if obj_type in FIGHT_TYPES:
+            monster = _params(obj).get("parameter0")
+            if self._visible_target(obs, monster) is False and self._map_npcs(obs):
+                # A scripted fight with no roaming group is started by a map NPC
+                # dialogue. The learned head cannot see the group list in its
+                # features, so it kept exploring an empty edge; the deterministic
+                # layer owns this interaction.
+                return super().plan_objective(quest, step_idx, obj, obs)
+        if tool == "quest.advance" and obj_type in self._server_counted_types:
+            # The head was trained on labels that predate "the server completes
+            # this type"; claiming one always fails. The constraint is not
+            # learnable from the state, so the deterministic layer owns it.
+            return super().plan_objective(quest, step_idx, obj, obs)
+        if tool == "fight.join":
+            # The corpus states carry no map block, so the head can learn that an
+            # objective is a fight but not whether the target stands on this map.
+            # The live tutorial proved the cost: join, refuse, forever. Let the
+            # deterministic planner search or wait when no group is visible.
+            monster = _params(obj).get("parameter0")
+            if self._visible_target(obs, monster) is False:
+                return super().plan_objective(quest, step_idx, obj, obs)
         if tool == "nav.goto":
             # The learned head chooses *whether* to travel; the planner still owns
             # *how*. Bypassing this sent `nav.goto {map_id: 698953}` nine times to a

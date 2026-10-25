@@ -37,3 +37,11 @@ data/kb/posteriors.json
 data/kb/traces.jsonl
 data/kb/decision_graph.json
 data/kb/thinking_cache.json
+
+# Knowledge spine: generated SQLite is rebuildable from data/cache
+data/knowledge/*.sqlite
+data/knowledge/*.sqlite.tmp
+data/knowledge/*.sqlite-*
+
+# Dialog labels are generated from trajectory logs
+data/dialog_labels/

@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agent.observe import flatten
+from agent.dialog_policy import rank_dialog
+from agent.awareness import quest_key, scene_key
 from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E402
                             KILL_TYPES, MAP_TYPES, ObsTracker, TALK_TYPES,
                             _params, direction_hint, known_map,
@@ -148,6 +150,7 @@ class QuestPlanner:
         self.level_hint = level_hint
         self.max_quest_level = max_quest_level
         self.current_quest: Optional[int] = None
+        self.last_dialog_decision: Optional[Dict[str, Any]] = None
         # Which objective the call that `choose` just returned is about. The corpus
         # needs this: featurising the world's oldest active objective labelled
         # actions for a different quest whenever the planner skipped one.
@@ -170,6 +173,11 @@ class QuestPlanner:
         # The observation the last decision was made from, so a retirement asked
         # for by the loop (`skip`) can record the situation it happened in.
         self._last_obs: Optional[Dict[str, Any]] = None
+        # What the last plan was made against. A claim/retry/start attempt from
+        # another map, quest step, dialogue or group set is not evidence about
+        # this one; the awareness layer resets those transients on change.
+        self._scene_key: Optional[str] = None
+        self._quest_key: Optional[str] = None
         self._plannable_cache: Dict[int, bool] = {}
         # "greedy" is the shipping policy: fewest objectives first. "random" exists
         # because a corpus must cover the decisions an agent faces, and the greedy
@@ -209,6 +217,11 @@ class QuestPlanner:
         self._claim_failures: Dict[Tuple[int, int], int] = {}
         self._claim_actions: Dict[Tuple[int, int], int] = {}
         self._claim_map: Dict[Tuple[int, int], Any] = {}
+        # A scripted fight can be started by a map NPC even when no monster group
+        # exists. Rotate through the NPCs on the current map when the objective is
+        # a fight and the map reports no group, so a wrong first NPC does not pin
+        # the planner to the same dialogue forever.
+        self._npc_tries: Dict[Tuple[int, int, int], int] = {}
         # The (key, tool) of the last claim/fallback action, so `note_result` can
         # attribute an outcome to the objective it was for instead of guessing.
         self._pending_claim: Optional[Tuple[Tuple[int, int], str]] = None
@@ -221,6 +234,16 @@ class QuestPlanner:
         # The flag waits for the next observation before counting a failure.
         self._start_waits: set = set()
         self._pending_start: Optional[int] = None
+        # Objective types the server counts and completes itself. Asking the
+        # client to validate one answers `objective_server_counted` without
+        # sending anything, so the claim attempt is pure waste — worse, on a
+        # live session it was followed by a disconnect. The action the objective
+        # names (talk, walk, fight) is the only thing that can move it.
+        self._server_counted_types = {1, 4, 5, 6}
+        # The map the character came from, so exploration does not immediately
+        # walk back through the exit it just used. Without this, a target on an
+        # unindexed map produces a two-map loop instead of a search.
+        self._prev_map: Optional[int] = None
 
     # -- curriculum --------------------------------------------------------
 
@@ -282,7 +305,8 @@ class QuestPlanner:
 
     @classmethod
     def _explore_call(cls, obj: Dict[str, Any],
-                      obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+                      obs: Optional[Dict[str, Any]],
+                      avoid: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Walk an exit of the current map when the destination is not nameable.
 
         A DiscoverMap objective with no `map_id` is a generic discovery: the
@@ -305,13 +329,133 @@ class QuestPlanner:
         if hint:
             probe = next((e for e in exits if e["direction"] == hint), None)
         if probe is None:
-            probe = next((e for e in exits if not known_map(e["map_id"])), exits[0])
+            candidates = [e for e in exits if avoid is None or e["map_id"] != avoid]
+            if not candidates:
+                candidates = exits  # all exits lead back; walking back beats stalling
+            probe = next((e for e in candidates if not known_map(e["map_id"])),
+                         candidates[0])
         return {
             "tool": "nav.goto",
             "args": {"direction": probe["direction"]},
             "why": ("objective %s: discover a map by walking the %s edge (-> %s)"
                     % (obj.get("type_id"), probe["direction"], probe["map_id"])),
         }
+
+    @staticmethod
+    def _visible_target(obs: Optional[Dict[str, Any]],
+                        monster: Any) -> Optional[bool]:
+        """Whether the map snapshot shows a group containing `monster`.
+
+        None means the observation carries no map block (the offline corpus
+        shape), so the caller keeps its historical choice instead of inventing
+        a search.
+        """
+        groups = None
+        block = obs.get("map") if isinstance(obs, dict) else None
+        if isinstance(block, dict) and isinstance(block.get("groups"), list):
+            groups = [row for row in block["groups"] if isinstance(row, dict)]
+        if groups is None and isinstance(obs, dict) and isinstance(obs.get("groups"), list):
+            # The guard reads `map.groups` with a flat `groups` fallback; reading
+            # one source here and the other there would let a join through on a
+            # map the estimator calls empty.
+            groups = [row for row in obs["groups"] if isinstance(row, dict)]
+        if groups is None:
+            return None
+        if monster is None:
+            return bool(groups)
+        try:
+            target = int(monster)
+        except (TypeError, ValueError):
+            return True   # a name the guard resolves; not ours to second-guess
+        for group in groups:
+            for raw in group.get("monster_ids") or []:
+                try:
+                    if int(raw) == target:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+            for member in group.get("members") or []:
+                if not isinstance(member, dict):
+                    continue
+                try:
+                    if int(member.get("monster_id")) == target:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+        return False
+
+    @staticmethod
+    def _map_npcs(obs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The NPCs the current map reports, by template id."""
+        if not isinstance(obs, dict):
+            return []
+        block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
+        raw = obs.get("npcs") or block.get("npcs") or []
+        out: List[Dict[str, Any]] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            npc_id = entry.get("npc_id", entry.get("templateId"))
+            try:
+                npc_id = int(npc_id)
+            except (TypeError, ValueError):
+                continue
+            if npc_id <= 0:
+                continue
+            out.append({"npc_id": npc_id, "cell": entry.get("cell"),
+                        "actor_id": entry.get("actor_id")})
+        return out
+
+    @staticmethod
+    def _cell_distance(a: Any, b: Any) -> int:
+        """Dofus cell distance; raw cell ids are not row-major."""
+        try:
+            first, second = int(a), int(b)
+        except (TypeError, ValueError):
+            return 1 << 30
+
+        def point(cell: int) -> Tuple[int, int]:
+            t = cell % 14 - cell // 28
+            return t + 19, t + cell // 14
+
+        ax, ay = point(first)
+        bx, by = point(second)
+        return abs(ax - bx) + abs(ay - by)
+
+    def _npc_talk_calls(self, quest: Dict[str, Any], obj: Dict[str, Any],
+                        obs: Dict[str, Any], type_id: Any
+                        ) -> List[Dict[str, Any]]:
+        """Ask a map NPC to open the scripted fight when no group is visible.
+
+        A `QuestObjectiveFightMonster` is not always a roaming group: the live
+        tutorial has the objective, an empty group list, and the NPC that starts
+        the encounter standing on the map. Keep the choice generic and rotate
+        through the map's NPCs so one wrong dialogue cannot pin the loop.
+        """
+        npcs = self._map_npcs(obs)
+        if not npcs:
+            return []
+        here = obs.get("cell")
+        if here is None:
+            position = obs.get("position") if isinstance(obs.get("position"), dict) else {}
+            block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
+            here = position.get("cell") or block.get("cell")
+        npcs.sort(key=lambda entry: self._cell_distance(here, entry.get("cell")))
+        quest_id = quest.get("id")
+        objective_id = obj.get("id", obj.get("objective_id"))
+        try:
+            key = (int(quest_id), int(objective_id), int(obs.get("map_id") or 0))
+        except (TypeError, ValueError):
+            return []
+        tries = self._npc_tries.get(key, 0)
+        npc = npcs[tries % len(npcs)]
+        self._npc_tries[key] = tries + 1
+        return [{
+            "tool": "quest.advance",
+            "args": {"quest_id": int(quest_id), "npc_id": int(npc["npc_id"])},
+            "why": ("objective %s: no group on this map; ask NPC %d to start "
+                    "the fight" % (type_id, int(npc["npc_id"]))),
+        }]
 
     @classmethod
     def _travel_call(cls, obj: Dict[str, Any], need: int,
@@ -379,6 +523,25 @@ class QuestPlanner:
             "args": {"map_id": target},
             "why": "objective %s: go to map %s" % (obj.get("type_id"), target),
         }
+
+    def _dialog_call(self, obs: Dict[str, Any], goal: str) -> Optional[Any]:
+        from agent.runtime import ToolCall
+
+        decision = rank_dialog(obs)
+        self.last_dialog_decision = decision
+        if decision is None:
+            return None
+        quest_id = decision.get("quest_id")
+        self.current_quest = quest_id
+        self.current_objective = decision.get("objective_id")
+        reply = decision.get("reply")
+        if decision.get("status") == "choose" and quest_id is not None and reply:
+            return ToolCall("quest.advance", {
+                "quest_id": quest_id,
+                "reply": reply["index"],
+                "reply_text": reply["text"],
+            }, goal)
+        return ToolCall("state.snapshot", {}, goal)
 
     # -- tutorial ----------------------------------------------------------
     #
@@ -614,6 +777,31 @@ class QuestPlanner:
             monster = p.get("parameter0")
             calls = list(travel)
             if t in FIGHT_TYPES:
+                visible = self._visible_target(obs, monster)
+                if visible is False:
+                    npc_calls = self._npc_talk_calls(quest, obj, obs, t)
+                    if npc_calls:
+                        return calls + npc_calls
+                    if obj.get("map_id"):
+                        # The objective names the map it must happen on. Groups
+                        # respawn there; walking away would only require walking
+                        # back, so wait for the spawn instead.
+                        return calls + [{
+                            "tool": "state.snapshot", "args": {},
+                            "why": ("objective %d: waiting for a group on map %s"
+                                    % (t, obj.get("map_id")))}]
+                    # `fight.join` can only attack a group the map reports. The
+                    # live tutorial had an empty map and a fight objective, and
+                    # the planner sent the join anyway; the guard refused it and
+                    # the run ended. The objective names the monster, so the
+                    # honest move is to go and find it.
+                    explore = self._explore_call(obj, obs, avoid=self._prev_map)
+                    if explore is not None:
+                        return calls + [explore]
+                    return calls + [{
+                        "tool": "state.snapshot", "args": {},
+                        "why": ("objective %d: target %s is not on this map and "
+                                "there is no exit to search" % (t, monster))}]
                 calls.append({"tool": "fight.join",
                               "args": {"monster": monster} if monster else {},
                               "why": "objective %d: fight" % t})
@@ -853,6 +1041,15 @@ class QuestPlanner:
                     self._claim_failures[key] = 0
                 else:
                     self._claim_failures[key] = self._claim_failures.get(key, 0) + 1
+            if not ok and ("objective_server_counted" in note
+                           or "completed by the server" in note):
+                # The client told us this type is completed by playing, not by
+                # claiming. Remember it for every quest, not just this one.
+                obj = self._lookup_objective(key[0], key[1], {}) or {}
+                try:
+                    self._server_counted_types.add(int(obj.get("type_id")))
+                except (TypeError, ValueError):
+                    pass
 
         if started is None or tool != "quest.advance":
             return
@@ -900,6 +1097,7 @@ class QuestPlanner:
         twin.max_quest_level = self.max_quest_level
         twin.current_quest = self.current_quest
         twin.current_objective = None    # a fork starts before its first action
+        twin.last_dialog_decision = None
         twin._order = self._order
         twin._seen_done = set(self._seen_done)
         twin._skipped = set(self._skipped)
@@ -913,6 +1111,8 @@ class QuestPlanner:
         twin._start_failures = dict(self._start_failures)
         twin._start_waits = set(self._start_waits)
         twin._pending_start = None
+        twin._server_counted_types = set(self._server_counted_types)
+        twin._prev_map = self._prev_map
         twin._plannable_cache = self._plannable_cache   # pure function of the KB
         twin.store = self.store
         twin.curriculum = self.curriculum
@@ -999,6 +1199,33 @@ class QuestPlanner:
             except Exception:  # noqa: BLE001 - a fact store must not kill planning
                 return
 
+    def _note_situation(self, obs: Dict[str, Any]) -> None:
+        """Forget retry/claim state that belonged to a different world state.
+
+        The character can move, a quest step can advance, a group can spawn or
+        the user can open a dialogue between two decisions. Reusing the previous
+        scene's attempt counters makes the next action wrong even when the model
+        reads the new observation correctly.
+        """
+        scene = scene_key(obs)
+        if scene != self._scene_key:
+            self._scene_key = scene
+            self._claim_attempts.clear()
+            self._claim_failures.clear()
+            self._claim_actions.clear()
+            self._claim_map.clear()
+            self._pending_claim = None
+            self._pending_start = None
+            self._start_failures.clear()
+            self._start_waits.clear()
+            self._npc_tries.clear()
+        quests = quest_key(obs)
+        if quests != self._quest_key:
+            self._quest_key = quests
+            self._skipped.clear()
+            self._skip_sigs.clear()
+            self._plannable_cache.clear()
+
     def choose(self, goal: str, observation: Optional[Dict[str, Any]],
                tools: Optional[Sequence[str]] = None) -> Optional[Any]:
         from agent.runtime import ToolCall
@@ -1009,16 +1236,25 @@ class QuestPlanner:
         self._pending_claim = None
         self._pending_start = None
         self.current_objective = None
+        self.last_dialog_decision = None
 
         # One normalisation for the nested snapshot, so `map_id`, `level` and the
         # inventory-by-id lookup are present instead of None. Without it the planner
         # could not tell which map it was on and never saw the items it already had.
         obs = flatten(observation)
+        here = obs.get("map_id")
+        previous = (self._last_obs or {}).get("map_id")
+        if here is not None and previous is not None and here != previous:
+            self._prev_map = previous
         self._last_obs = obs
+        self._note_situation(obs)
         if obs.get("in_fight"):
             return ToolCall("state.snapshot", {}, goal)
         self.tracker.observe(obs)
         self._learn_world(obs)
+        dialog = self._dialog_call(obs, goal)
+        if dialog is not None:
+            return dialog
         level = int(obs.get("level") or self.level_hint)
         active = obs.get("quests_active") or {}
         self._seen_done |= {int(q) for q in (obs.get("quests_done") or [])}
@@ -1115,6 +1351,16 @@ class QuestPlanner:
                 return ToolCall(call["tool"], dict(call["args"]), goal)
 
             attempts = self._claim_attempts.get(key, 0)
+            try:
+                type_id = int(obj.get("type_id"))
+            except (TypeError, ValueError):
+                type_id = None
+            if type_id in self._server_counted_types:
+                # `quest.advance` cannot validate this type: the client answers
+                # `objective_server_counted` and sends nothing. Go straight to
+                # the action the objective names instead of spending a step on
+                # a message that cannot work.
+                attempts = max(attempts, 1)
             if attempts == 0:
                 self._claim_attempts[key] = 1
                 self._claim_map[key] = here

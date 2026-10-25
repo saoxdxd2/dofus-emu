@@ -351,6 +351,16 @@ class Fighter:
     resist_percent: Tuple[Tuple[str, int], ...] = ()
     resist_fixed: Tuple[Tuple[str, int], ...] = ()
     critical_resistance: int = 0
+    initiative: int = 0
+    max_ap: int = 0
+    max_mp: int = 0
+    states: Tuple[Any, ...] = ()
+    is_boss: bool = False
+    is_summon: bool = False
+    is_companion: bool = False
+    summoner_id: Optional[int] = None
+    creature_generic_id: Optional[int] = None
+    spells: Tuple[LiveSpell, ...] = ()
 
     def _percent(self, element: str) -> int:
         return dict(self.resist_percent).get(element.lower(), 0)
@@ -394,6 +404,10 @@ class Board:
     spells: List[LiveSpell]
     my_stats: Dict[str, Any]
     cells: CellMap
+    round: Optional[int] = None
+    fight_id: Optional[int] = None
+    current_fighter_id: Optional[int] = None
+    last_actions: Tuple[Dict[str, Any], ...] = ()
 
     @classmethod
     def from_fight_state(cls, payload: Dict[str, Any]) -> "Board":
@@ -417,6 +431,11 @@ class Board:
             spells=[cls._spell(raw) for raw in payload.get("spells") or []],
             my_stats=dict(payload.get("my_stats") or {}),
             cells=CellMap.from_board(payload),
+            round=_int(payload.get("round")),
+            fight_id=_int(payload.get("fight_id")),
+            current_fighter_id=_int(payload.get("current_fighter_id")),
+            last_actions=tuple(action for action in payload.get("last_actions") or []
+                               if isinstance(action, dict)),
         )
 
     @staticmethod
@@ -443,6 +462,17 @@ class Board:
             resist_fixed=tuple(sorted((str(k), _int(v))
                                       for k, v in (raw.get("resist_fixed") or {}).items())),
             critical_resistance=_int(raw.get("critical_resistance"), 0),
+            initiative=_int(raw.get("initiative"), 0) or 0,
+            max_ap=_int(raw.get("max_ap"), 0) or 0,
+            max_mp=_int(raw.get("max_mp"), 0) or 0,
+            states=tuple(raw.get("states") or ()),
+            is_boss=bool(raw.get("is_boss")),
+            is_summon=bool(raw.get("is_summon")),
+            is_companion=bool(raw.get("is_companion")),
+            summoner_id=_int(raw.get("summoner_id")),
+            creature_generic_id=_int(raw.get("creature_generic_id")),
+            spells=tuple(Board._spell(spell) for spell in raw.get("spells") or []
+                         if isinstance(spell, dict)),
         )
 
     @staticmethod
@@ -560,12 +590,13 @@ def _effects(raw_list: Any) -> Tuple[LiveEffect, ...]:
         if effect_id is None:
             continue
         roll = _roll(raw)
-        if roll is None:
-            continue
+        # Utility effects (push, AP/MP loss, shields, states, traps) have no
+        # damage roll. Keep their id so the observation can name the mechanic
+        # and the contract can say the solver does not plan it yet.
         out.append(LiveEffect(
             effect_id=effect_id,
-            min_roll=roll[0],
-            max_roll=roll[1],
+            min_roll=roll[0] if roll else 0,
+            max_roll=roll[1] if roll else 0,
             target_id=_int(raw.get("target_id")),
             duration=_int(raw.get("duration")),
         ))
@@ -620,6 +651,7 @@ class TurnPlan:
     kills: List[int]
     score: float
     notes: List[str] = field(default_factory=list)
+    final_hp: Dict[int, int] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -632,6 +664,7 @@ class TurnPlan:
             "kills": self.kills,
             "score": round(self.score, 2),
             "notes": self.notes,
+            "final_hp": {str(k): int(v) for k, v in self.final_hp.items()},
         }
 
 
@@ -674,18 +707,44 @@ class BattleSolver:
         self.beam_width = max(1, beam_width)
         self.max_actions = max(0, max_actions)
         self.max_nodes = max(1, max_nodes)
+        self.last_candidates: List[TurnPlan] = []
+
+    def plan_candidates(self, board: Board, k: int = 5) -> List[TurnPlan]:
+        """The top-k distinct turn plans from the last search, pass included.
+
+        ``plan_turn`` still returns the single best plan; this exposes the
+        alternatives next to it so a learned ranker can choose between them.
+        The pass plan is always kept as an option, even when the search found
+        more action plans than ``k``.
+        """
+        self.plan_turn(board)
+        plans = self.last_candidates
+        pass_plan = next(
+            (plan for plan in plans
+             if plan.actions and plan.actions[0].kind == "pass"),
+            self._pass_plan(board, []))
+        action_plans = [plan for plan in plans
+                        if plan.actions and plan.actions[0].kind != "pass"]
+        limit = max(1, int(k))
+        return (action_plans[:max(0, limit - 1)] + [pass_plan])[:limit]
+
+    def _pass(self, board: Board, notes: List[str]) -> TurnPlan:
+        plan = self._pass_plan(board, notes)
+        self.last_candidates = [plan]
+        return plan
 
     def plan_turn(self, board: Board) -> TurnPlan:
+        self.last_candidates = []
         notes: List[str] = []
         if not board.in_fight or board.in_preparation or not board.is_my_turn:
-            return self._pass_plan(board, notes + ["not the controlled character's turn"])
+            return self._pass(board, notes + ["not the controlled character's turn"])
         me = board.me
         if me is None:
-            return self._pass_plan(board, notes + ["controlled fighter is missing from the board"])
+            return self._pass(board, notes + ["controlled fighter is missing from the board"])
         if not board.cells.valid(me.cell):
-            return self._pass_plan(board, notes + ["no cell flags for this map"])
+            return self._pass(board, notes + ["no cell flags for this map"])
         if board.my_ap <= 0:
-            return self._pass_plan(board, notes + ["no AP left"])
+            return self._pass(board, notes + ["no AP left"])
 
         skipped = sorted({s.name or str(s.id) for s in board.spells
                           if not s.has_damage and not s.has_heal})
@@ -820,18 +879,22 @@ class BattleSolver:
             frontier = candidates[:self.beam_width]
 
         if not best.actions:
-            return self._pass_plan(board, notes)
-        return TurnPlan(
-            actions=best.actions,
-            final_cell=best.cell,
-            remaining_ap=best.ap,
-            remaining_mp=best.mp,
-            expected_damage=best.damage,
-            expected_healing=best.healing,
-            kills=best.kills,
-            score=best.score,
-            notes=notes,
-        )
+            return self._pass(board, notes)
+        plan = self._to_plan(best, notes)
+        nodes = [best] + [node for node in frontier if node.actions]
+        plans: List[TurnPlan] = []
+        seen_plans = set()
+        for node in sorted(nodes, key=lambda item: (-item.score, item.ap, -item.mp)):
+            signature = tuple(
+                (action.kind, action.move_to, action.spell_id, action.target_id)
+                for action in node.actions)
+            if signature in seen_plans:
+                continue
+            seen_plans.add(signature)
+            plans.append(self._to_plan(node, notes))
+        plans.append(self._pass_plan(board, notes))
+        self.last_candidates = plans
+        return plan
 
     def _templates(self, board: Board, cell: int, character: CharacterStats,
                    occupied: FrozenSet[int]) -> List[_CastTemplate]:
@@ -928,6 +991,21 @@ class BattleSolver:
             info, character, target.target_stats())
 
     @staticmethod
+    def _to_plan(node: _Node, notes: List[str]) -> TurnPlan:
+        return TurnPlan(
+            actions=node.actions,
+            final_cell=node.cell,
+            remaining_ap=node.ap,
+            remaining_mp=node.mp,
+            expected_damage=node.damage,
+            expected_healing=node.healing,
+            kills=node.kills,
+            score=node.score,
+            notes=notes,
+            final_hp=dict(node.hp),
+        )
+
+    @staticmethod
     def _pass_plan(board: Board, notes: List[str]) -> TurnPlan:
         me = board.me
         return TurnPlan(
@@ -940,6 +1018,7 @@ class BattleSolver:
             kills=[],
             score=0.0,
             notes=notes,
+            final_hp={f.id: f.hp for f in board.fighters if f.alive},
         )
 
 

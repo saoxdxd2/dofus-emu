@@ -176,6 +176,8 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
                                       "game already accepts (objectiveStatus 2)."),
             "reply": _p("int", "Which dialog reply to choose, by index. Defaults to 0, "
                                "which is what an unanswered NPC dialog needs."),
+            "reply_text": _p("str", "Which dialog reply to choose, by the exact French text "
+                                    "reported in dialog.replies. With reply, both must agree."),
         },
         backend="directive",
         directive="QUEST_ADVANCE",
@@ -243,25 +245,58 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
     ToolSpec(
         name="fight.state",
         description="Read the live combat board: turn owner, fighters, cells, HP/AP/MP, "
-                    "team membership, and the controlled character's spell descriptors.",
+                    "team membership, and the controlled character's spell descriptors. "
+                    "The result also carries a versioned observation and a contract "
+                    "naming any fact the client did not expose.",
         params={},
         backend="directive",
         directive="FIGHT_STATE",
-        returns="turn, fighter and spell facts from the live client",
+        returns="turn, fighter and spell facts from the live client, plus observation/contract",
     ),
     ToolSpec(
         name="fight.plan",
         description="Read the live board and compute this turn's legal move-and-cast plan: "
                     "exact cell geometry, line of sight, AP/MP, cooldowns, resistances, "
-                    "damage and healing. Read-only; it never casts or moves anything.",
+                    "damage and healing. top_k > 1 also returns alternative plans "
+                    "(including pass) for a ranker. Read-only; it never casts or moves anything. "
+                    "Every answer carries the live observation and its contract.",
         params={
             "beam_width": _p("int", "How many partial turns to keep while searching.",
                              default=16),
             "max_actions": _p("int", "Maximum casts to consider in the plan.",
                               default=4),
+            "top_k": _p("int", "Also return this many candidate plans; 1 = best only.",
+                        default=1),
+            "rank_with_value": _p(
+                "bool", "Compatibility alias for ranker=value: rank candidates with "
+                        "the learned encounter value head.",
+                default=False),
+            "ranker": _p(
+                "str", "Which plan ranker to use. 'solver' keeps the solver order; "
+                        "'value' ranks candidates with the learned value head and "
+                        "refuses when the live observation lacks self stats or enemy "
+                        "spell facts.",
+                enum=["solver", "value"], default="solver"),
         },
         backend="local",
-        returns="actions with cells/targets/AP/MP/damage, plus expected totals",
+        returns=("actions with cells/targets/AP/MP/damage, plus the normalized live "
+                 "observation, its contract, and the ranker decision"),
+    ),
+    ToolSpec(
+        name="fight.estimate",
+        description="Estimate whether the controlled character can win a monster group "
+                    "visible on this map: turns to kill, incoming damage, expected HP "
+                    "loss, and a calibrated win probability. Read-only; it never joins "
+                    "or casts.",
+        params={
+            "group_id": _p("int", "Monster group id from map.groups."),
+            "monster": _p("id_or_name", "Monster id or name. When several visible "
+                                        "groups contain it, the least favourable one "
+                                        "is estimated."),
+        },
+        backend="local",
+        returns=("p_win (null until calibrated), raw_score, expected_hp_loss and turns, "
+                 "confidence, missing inputs, allowed and blocked_reason"),
     ),
     # -- inventory / market --------------------------------------------------
     ToolSpec(

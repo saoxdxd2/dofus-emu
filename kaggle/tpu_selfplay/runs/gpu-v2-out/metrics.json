@@ -1,0 +1,32 @@
+{
+ "device": "gpu",
+ "device_count": 2,
+ "samples": 2048,
+ "phase1_iters": 900,
+ "phase2_iters": 400,
+ "out": "/kaggle/working/encounter_selfplay.pkl",
+ "baseline": {
+  "baseline_heuristic_player_win": 0.703125,
+  "baseline_heuristic_enemy_win": 0.19482421875,
+  "baseline_heuristic_draw": 0.10205078125,
+  "baseline_rounds": 7.25048828125
+ },
+ "last": {
+  "iter": 400,
+  "loss": 0.032200735062360764,
+  "pg": 0.02256227470934391,
+  "vf": 0.03376022353768349,
+  "entropy": 0.7241653800010681,
+  "player_win": 0.7783203125,
+  "enemy_win": 0.2109375,
+  "draw": 0.0107421875,
+  "cast_rate": 0.26252107507686206,
+  "rounds": 6.208984375,
+  "player_hp_left": 0.4848262369632721,
+  "enemy_hp_left": 0.1184161826968193,
+  "eval_random_player_win": 0.966796875,
+  "eval_random_draw": 0.025390625,
+  "eval_heuristic_player_win": 0.83642578125,
+  "eval_heuristic_draw": 0.0166015625
+ }
+}

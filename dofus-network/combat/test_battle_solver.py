@@ -579,6 +579,24 @@ class SearchTests(unittest.TestCase):
         self.assertIsNotNone(plan)
         self.assertTrue(plan.actions)
 
+    def test_plan_candidates_are_distinct_and_include_pass(self):
+        spell = live_spell(max_range=4, max_cast_per_turn=2,
+                           max_cast_per_target=2)
+        board = board_with(cell(20, 20), cell(24, 20), foe_hp=1000,
+                           foe_max_hp=1000, my_ap=6, my_mp=2,
+                           spells=[spell])
+        solver = BattleSolver(beam_width=8, max_actions=2)
+        plans = solver.plan_candidates(board, 6)
+        self.assertGreaterEqual(len(plans), 2)
+        signatures = [
+            tuple((a.kind, a.move_to, a.spell_id, a.target_id)
+                  for a in plan.actions)
+            for plan in plans
+        ]
+        self.assertEqual(len(signatures), len(set(signatures)))
+        self.assertTrue(any(plan.actions[0].kind == "pass" for plan in plans))
+        self.assertIn("2", plans[0].as_dict()["final_hp"])
+
 
 class RealMapTests(unittest.TestCase):
     @classmethod

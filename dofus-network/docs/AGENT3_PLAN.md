@@ -245,7 +245,7 @@ Design constraints:
 
 1. Restart the app fully (the agent is injected at WebView2 document creation;
    `debug.reload` loads the old captured script).
-2. `debug.version` returns `2026-10-24c`.
+2. `debug.version` returns `2026-10-24f`.
 3. On a map with monsters, `state.snapshot.map.groups` is non-empty and
    `debug.groups` lists the same ids.
 4. Talk to an NPC with more than one reply: `snap.dialog.message` is French text,
@@ -284,7 +284,7 @@ and the recorder:
               "quest_step_advanced": true, "source": "live"},
   "verdict": {"verdict": "advanced", "residual": 1.0, "source": "rule"},
   "language": "fr",
-  "provenance": {"game_build": "1.74.9", "agent_build": "2026-10-24c"}
+  "provenance": {"game_build": "1.74.9", "agent_build": "2026-10-24f"}
 }
 ```
 
@@ -486,17 +486,18 @@ which is another reason not to put one in the loop.
 
 ### 8.3 TPU split (this is the answer to "did we drop it?")
 
-TPU was never dropped and never started. There is no TPU kernel in the repo; all
-three Kaggle kernels (`kaggle/trm`, `kaggle/hard`, `kaggle/seq`) have
-`enable_gpu: true`.
+TPU was never dropped. As of 2026-10-24 the first TPU kernel exists:
+`kaggle/tpu_selfplay/` runs a two-phase (heuristic bootstrap, then self-play)
+PPO job over the batched encounter environment in `combat/encounter/`. The older
+three Kaggle kernels (`kaggle/trm`, `kaggle/hard`, `kaggle/seq`) remain GPU.
 
 The correct split:
 
-1. **Combat self-play on TPU first.** Vectorise the encounter environment
-   (JAX/PyTorch-XLA): batch thousands of fights, train a value/policy head, use
-   it to generate `fight.estimate` labels. This is the workload TPUs are for:
-   many independent episodes, small per-step compute. It can start once the
-   encounter model of §7.3 exists; it does **not** need the Touch quest corpus.
+1. **Combat self-play on TPU first.** Done as a v0: `combat/encounter/` is a
+   batched JAX environment, PPO trains a shared policy/value head, and
+   `combat/encounter/labels.py` turns rollouts into `fight.estimate` rows. It
+   does **not** need the Touch quest corpus. The remaining gap is live
+   transfer: the sim calibrator is silver until the M3 live gate.
 2. **Quest/tool evolution on TPU later.** Parallel search over plan structures
    and tool sequences, gated on the Touch-specific DB rows (task #27) so the
    simulator matches the live client.
@@ -513,7 +514,7 @@ entry point, not a vague promise.
 
 | # | milestone | deliverable | gate |
 |---|---|---|---|
-| **M0** | observation v1 | `map.groups`, `snap.dialog`, `reply_text` in `quest.advance`; offline tests | live checklist §4.1 on a real session; `debug.version` = 2026-10-24c |
+| **M0** | observation v1 | `map.groups`, `snap.dialog`, `reply_text` in `quest.advance`; offline tests | live checklist §4.1 on a real session; `debug.version` = 2026-10-24f |
 | **M1** | knowledge spine | client DB harvest, achievement objectives, canonical SQLite, placeholder resolver, papycha reference cache | every active quest objective resolves to typed entities; 0 unresolved placeholders on 50 live objectives |
 | **M2** | dialog policy v0 | deterministic ranker + logging; labels from objective deltas | D0-D2; 100 live dialogs |
 | **M3** | fight estimate v0 | analytic estimator + calibration + planner thresholds; `fight.estimate` tool | 50 live fights; calibration error <0.1; zero avoidable deaths |

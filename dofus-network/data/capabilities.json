@@ -202,8 +202,12 @@
     "reply": {
      "type": "int",
      "required": false,
-     "default": 0,
      "doc": "Which dialog reply to choose, by index. Defaults to 0, which is what an unanswered NPC dialog needs."
+    },
+    "reply_text": {
+     "type": "str",
+     "required": false,
+     "doc": "Which dialog reply to choose, by the exact French text reported in dialog.replies. With reply, both must agree."
     }
    }
   },
@@ -571,19 +575,19 @@
   {
    "id": "fight.state",
    "verb": "fight",
-   "description": "Read the live combat board: turn owner, fighters, cells, HP/AP/MP, team membership, and the controlled character's spell descriptors.",
+   "description": "Read the live combat board: turn owner, fighters, cells, HP/AP/MP, team membership, and the controlled character's spell descriptors. The result also carries a versioned observation and a contract naming any fact the client did not expose.",
    "backend": "directive",
    "directive": "FIGHT_STATE",
-   "returns": "turn, fighter and spell facts from the live client",
+   "returns": "turn, fighter and spell facts from the live client, plus observation/contract",
    "params": {}
   },
   {
    "id": "fight.plan",
    "verb": "fight",
-   "description": "Read the live board and compute this turn's legal move-and-cast plan: exact cell geometry, line of sight, AP/MP, cooldowns, resistances, damage and healing. Read-only; it never casts or moves anything.",
+   "description": "Read the live board and compute this turn's legal move-and-cast plan: exact cell geometry, line of sight, AP/MP, cooldowns, resistances, damage and healing. top_k > 1 also returns alternative plans (including pass) for a ranker. Read-only; it never casts or moves anything. Every answer carries the live observation and its contract.",
    "backend": "local",
    "directive": null,
-   "returns": "actions with cells/targets/AP/MP/damage, plus expected totals",
+   "returns": "actions with cells/targets/AP/MP/damage, plus the normalized live observation, its contract, and the ranker decision",
    "params": {
     "beam_width": {
      "type": "int",
@@ -596,6 +600,48 @@
      "doc": "Maximum casts to consider in the plan.",
      "required": false,
      "default": 4
+    },
+    "top_k": {
+     "type": "int",
+     "doc": "Also return this many candidate plans; 1 = best only.",
+     "required": false,
+     "default": 1
+    },
+    "rank_with_value": {
+     "type": "bool",
+     "doc": "Compatibility alias for ranker=value: rank candidates with the learned encounter value head.",
+     "required": false,
+     "default": false
+    },
+    "ranker": {
+     "type": "str",
+     "doc": "Which plan ranker to use. 'solver' keeps the solver order; 'value' ranks candidates with the learned value head and refuses when the live observation lacks self stats or enemy spell facts.",
+     "required": false,
+     "enum": [
+      "solver",
+      "value"
+     ],
+     "default": "solver"
+    }
+   }
+  },
+  {
+   "id": "fight.estimate",
+   "verb": "fight",
+   "description": "Estimate whether the controlled character can win a monster group visible on this map: turns to kill, incoming damage, expected HP loss, and a calibrated win probability. Read-only; it never joins or casts.",
+   "backend": "local",
+   "directive": null,
+   "returns": "p_win (null until calibrated), raw_score, expected_hp_loss and turns, confidence, missing inputs, allowed and blocked_reason",
+   "params": {
+    "group_id": {
+     "type": "int",
+     "doc": "Monster group id from map.groups.",
+     "required": false
+    },
+    "monster": {
+     "type": "id_or_name",
+     "doc": "Monster id or name. When several visible groups contain it, the least favourable one is estimated.",
+     "required": false
     }
    }
   }

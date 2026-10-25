@@ -1077,7 +1077,16 @@
             },
             state: {
                 inFight: false,
-                myTurn: false
+                myTurn: false,
+                // A placement message is only actionable while the bot is
+                // enabled, but it stays valid until someone readies: the fight
+                // cannot start without that click. Keeping the last one lets an
+                // enable that arrives late still start the fight.
+                placement: null,
+                readied: false,
+                readying: false,
+                lastTurnId: null,
+                turnStartedAt: 0
             },
 
             // Farm session counters. The learning loop is only as good as the
@@ -1199,7 +1208,36 @@
                 this.enabled = !!val;
                 this.updateHud();
                 this.syncToHost();
+                if (this.enabled) this.resumeFight();
                 console.log('[FarmBot] Auto-fight state: ' + (this.enabled ? 'ACTIVE (Sub-20ms turns)' : 'INACTIVE (Manual play)'));
+            },
+
+            // Enabling mid-fight is not too late. A fight entered through a
+            // dialog or a quest starts in this client without `fight.join`, so
+            // the placement message can arrive while the bot is off. The fight
+            // is still sitting on the placement screen — nobody has readied —
+            // and replaying that message is what turns the bot on in practice.
+            resumeFight: function() {
+                var self = this;
+                if (!this.state.inFight) return;
+                if (this.state.placement && !this.state.readied && !this.state.readying) {
+                    var msg = this.state.placement;
+                    setTimeout(function() {
+                        if (!self.enabled || self.state.readied || self.state.readying) return;
+                        try { self.placeAndReady(msg); } catch (e) {}
+                    }, this.config.autoReadyDelayMs);
+                }
+                // A turn that began while the bot was off is only actionable
+                // inside the server's turn window. Outside it, a cast would be
+                // rejected and would look like a broken combat driver.
+                if (this.state.myTurn && this.state.lastTurnId != null
+                        && Date.now() - (this.state.turnStartedAt || 0) < 15000) {
+                    var fighterId = this.state.lastTurnId;
+                    setTimeout(function() {
+                        if (!self.enabled || !self.state.myTurn) return;
+                        self.executeOptimalTurn(null, fighterId);
+                    }, 250);
+                }
             },
 
             toggle: function() {
@@ -1527,10 +1565,26 @@
 
                 cm.on('GameFightStartingMessage', function(msg) {
                     self.state.inFight = true;
+                    self.state.myTurn = false;
+                    self.state.placement = null;
+                    self.state.readied = false;
+                    self.state.readying = false;
+                    self.state.lastTurnId = null;
+                    self.state.turnStartedAt = 0;
                     self.openFight();
                 });
 
                 cm.on('GameFightPlacementPossiblePositionsMessage', function(msg) {
+                    // Remember it even while disabled: the fight stays on this
+                    // screen until a ready is sent, so the message is still
+                    // valid once the bot is enabled a second later.
+                    self.state.placement = msg;
+                    window.__agentLastFightPlacement = {
+                        at: Date.now(),
+                        enabled: !!self.enabled,
+                        challengers: (msg && msg.positionsForChallengers
+                            && msg.positionsForChallengers.length) || 0
+                    };
                     if (!self.enabled) return;
                     setTimeout(function() {
                         try { self.placeAndReady(msg); } catch (e) {}
@@ -1538,25 +1592,37 @@
                 });
 
                 cm.on('GameFightTurnStartMessage', function(msg) {
+                    // Any turn means placement is over. A cached placement
+                    // replayed after this point is stale and would toggle
+                    // ready in the middle of an already-running fight.
+                    self.state.placement = null;
+                    if (!self.isUserActor(msg.id)) return;
+                    // Record my turn even while disabled, so enabling inside
+                    // the window can still act instead of waiting a full round.
+                    // While enabled, a repeated start for the same turn is
+                    // ignored: a second driver would spend AP the server never
+                    // authorised. TurnEnd (and fight end) release the flag.
+                    if (self.state.myTurn && self.enabled) return;
+                    self.state.myTurn = true;
+                    self.state.turnStartedAt = Date.now();
+                    self.state.lastTurnId = msg.id;
                     if (!self.enabled) return;
-                    // The same start can arrive twice while a turn is already being
-                    // played; a second driver would cast twice and spend AP the server
-                    // never authorised. TurnEnd (and fight end) release the flag.
-                    if (self.state.myTurn) return;
-                    if (self.isUserActor(msg.id)) {
-                        self.state.myTurn = true;
-                        self.state.turnStartedAt = Date.now();
-                        self.executeOptimalTurn(cm, msg.id);
-                    }
+                    self.executeOptimalTurn(cm, msg.id);
                 });
 
                 cm.on('GameFightTurnEndMessage', function(msg) {
-                    if (self.isUserActor(msg.id)) self.state.myTurn = false;
+                    if (!self.isUserActor(msg.id)) return;
+                    self.state.myTurn = false;
+                    self.state.lastTurnId = null;
                 });
 
                 cm.on('GameFightEndMessage', function(msg) {
                     self.state.inFight = false;
                     self.state.myTurn = false;
+                    self.state.placement = null;
+                    self.state.readied = false;
+                    self.state.readying = false;
+                    self.state.lastTurnId = null;
                     try { self.closeFight(); } catch(e) {
                         console.log('[FarmBot] closeFight failed: ' + e);
                     }
@@ -1570,20 +1636,44 @@
             // the actual sequence: GameFightPlacementPositionRequestMessage then
             // GameFightReadyMessage.
             placeAndReady: function(msg) {
-                var positions = (msg && msg.positionsForChallengers) || [];
+                if (this.state.readied || this.state.readying) return;
+                this.state.readying = true;
+                // The live message's position list has been an array in the
+                // captures, but an array-like object here used to throw on
+                // `.indexOf`; the throw skipped the ready send entirely and the
+                // fight waited forever. Copy whatever is there into an array,
+                // and ready even when no cell list is usable.
+                var raw = (msg && (msg.positionsForChallengers
+                    || msg.positions || msg.positionsForSpectators)) || [];
+                var positions = [];
+                try {
+                    for (var i = 0; raw && i < raw.length; i++) positions.push(raw[i]);
+                } catch (e) {}
                 var am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
                 var ua = am && am.userActor;
                 var current = ua && ua.cellId != null ? ua.cellId : null;
                 var cell = null;
-                if (positions.indexOf(current) !== -1) cell = current;
-                else if (positions.length) cell = positions[0];
+                if (positions.length) {
+                    cell = positions.indexOf(current) !== -1 ? current : positions[0];
+                } else {
+                    cell = current;
+                }
                 if (cell != null && cell !== current) {
                     this.sendPacket('GameFightPlacementPositionRequestMessage', { cellId: cell });
                 }
                 var self = this;
                 setTimeout(function() {
-                    self.sendPacket('GameFightReadyMessage', { isReady: true });
+                    var ok = self.sendPacket('GameFightReadyMessage', { isReady: true });
+                    window.__agentLastFightReady = {
+                        at: Date.now(), cell: cell, positions: positions.length,
+                        sent: !!ok, error: ok ? null : (self.lastSendError || null)
+                    };
+                    if (ok) {
+                        self.state.readied = true;
+                        self.state.placement = null;
+                    }
+                    self.state.readying = false;
                 }, 60);
             },
 
@@ -1602,29 +1692,147 @@
                         return;
                     }
                     var ctx = self._fightContext(fighterId);
-                    var action = ctx ? self._planFightAction(ctx) : null;
-                    if (!action) { self._endFightTurn(); return; }
-                    try {
-                        if (action.type === 'cast') {
-                            window.__agentLastFightTurn = { at: Date.now(), action: 'cast',
-                                spell: action.spellId, target: action.targetId, cell: action.cell };
-                            ctx.fm.castSpellOnTarget(action.spellId, action.targetId, ctx.myId);
-                            setTimeout(tick, 450);
-                            return;
+                    if (!ctx) { self._endFightTurn(); return; }
+                    if (!self._stillMyTurn(ctx)) return;
+                    if (self._askBrain(ctx, fighterId, tick)) return;
+                    self._localTick(ctx, fighterId, tick);
+                };
+                tick();
+            },
+
+            // The only authority for a fight action is the client's live turn
+            // owner. The action may arrive from the HTTP brain after the local
+            // turn state was set, or after the server ended the turn.
+            _stillMyTurn: function(ctx) {
+                try {
+                    if (!this.enabled || !this.state.myTurn || !ctx) return false;
+                    var fm = window.gui && window.gui.fightManager;
+                    if (!fm) return false;
+                    var current = fm.currentFighterId;
+                    return current != null && String(current) === String(ctx.myId);
+                } catch (e) { return false; }
+            },
+
+            _localTick: function(ctx, fighterId, tick) {
+                var self = this;
+                if (!self._stillMyTurn(ctx)) return;
+                var action = null;
+                try {
+                    action = self._planFightAction(ctx);
+                } catch (e) {
+                    window.__agentLastFightTurnError = {
+                        at: Date.now(), stage: 'plan', error: String(e) };
+                    self._endFightTurn();
+                    return;
+                }
+                if (!action) { self._endFightTurn(); return; }
+                self._executeAction(ctx, action, tick, fighterId, null);
+            },
+
+            // Ask the local policy API for one grounded action. The page sends
+            // the live fight.state (the same payload the planner uses), so the
+            // server binds the current level, spells and enemies; nothing about
+            // the character is cached. The local heuristic is the fallback when
+            // the server is down, slow or cannot express the policy's intent.
+            _askBrain: function(ctx, fighterId, tick) {
+                var self = this;
+                var url = window.__agentFightBrain;
+                if (!url || typeof fetch !== 'function') return false;
+                if (self._brainDownAt && Date.now() - self._brainDownAt < 30000) return false;
+                var state = null;
+                try {
+                    if (typeof window.__agentDirective === 'function') {
+                        var raw = window.__agentDirective({ tool: 'fight.state' });
+                        var parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                        if (parsed && parsed.ok && parsed.data) state = parsed.data;
+                    }
+                } catch (e) {}
+                if (!state || !state.in_fight) return false;
+                var done = false;
+                var finish = function(action, meta, error) {
+                    if (done) return;
+                    done = true;
+                    if (!self._stillMyTurn(ctx)) return;
+                    window.__agentLastFightBrain = {
+                        at: Date.now(), ok: !error && !!action, action: action || null,
+                        policy: meta || null, error: error || null
+                    };
+                    if (action) self._executeAction(ctx, action, tick, fighterId, meta);
+                    else self._localTick(ctx, fighterId, tick);
+                };
+                try {
+                    var controller = (typeof AbortController !== 'undefined')
+                        ? new AbortController() : null;
+                    var timer = controller ? setTimeout(function() {
+                        try { controller.abort(); } catch (e) {}
+                    }, 4000) : null;
+                    fetch(url.replace(/\/$/, '') + '/v1/combat/decide', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(state),
+                        signal: controller ? controller.signal : undefined
+                    }).then(function(response) {
+                        return response.json();
+                    }).then(function(reply) {
+                        if (timer) clearTimeout(timer);
+                        if (reply && reply.ok && reply.action) {
+                            finish(reply.action, reply.policy || null, null);
+                        } else {
+                            finish(null, reply && reply.policy ? reply.policy : null,
+                                (reply && (reply.reason || reply.error)) || 'no action');
+                        }
+                    }).catch(function(error) {
+                        if (timer) clearTimeout(timer);
+                        self._brainDownAt = Date.now();
+                        finish(null, null, String(error));
+                    });
+                } catch (e) {
+                    finish(null, null, String(e));
+                }
+                return true;
+            },
+
+            _executeAction: function(ctx, action, tick, fighterId, meta) {
+                var self = this;
+                if (!self._stillMyTurn(ctx)) return;
+                if (!action || action.type === 'pass') { self._endFightTurn(); return; }
+                try {
+                    if (action.type === 'cast') {
+                        var usable = false;
+                        try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, action.spellId); } catch (e) {}
+                        if (!usable) { self._localTick(ctx, fighterId, tick); return; }
+                        window.__agentLastFightTurn = { at: Date.now(), action: 'cast',
+                            spell: action.spellId, target: action.targetId,
+                            cell: action.cell, brain: meta || action.brain || null };
+                        ctx.fm.castSpellOnTarget(action.spellId, action.targetId, ctx.myId);
+                        setTimeout(tick, 450);
+                        return;
+                    }
+                    if (action.type === 'move') {
+                        var path = action.path;
+                        if ((!path || !path.length) && ctx.iso
+                            && typeof ctx.iso._displayPathInFight === 'function') {
+                            var found = ctx.iso._displayPathInFight(action.cell);
+                            path = found && found.reachable;
                         }
                         var mapId = (ctx.iso && ctx.iso.mapRenderer && ctx.iso.mapRenderer.map)
                             ? ctx.iso.mapRenderer.map.id : null;
-                        if (mapId == null) { self._endFightTurn(); return; }
+                        if (mapId == null || !path || !path.length) {
+                            self._localTick(ctx, fighterId, tick);
+                            return;
+                        }
                         window.__agentLastFightTurn = { at: Date.now(), action: 'move',
-                            cell: action.cell };
+                            cell: action.cell, path: path, brain: meta || action.brain || null };
                         self.sendPacket('GameMapMovementRequestMessage', {
-                            keyMovements: self._compressPath(action.path), mapId: mapId });
+                            keyMovements: self._compressPath(path), mapId: mapId });
                         setTimeout(tick, 700);
-                    } catch (e) {
-                        self._endFightTurn();
+                        return;
                     }
-                };
-                tick();
+                } catch (e) {
+                    window.__agentLastFightTurnError = {
+                        at: Date.now(), stage: 'act', error: String(e) };
+                }
+                self._endFightTurn();
             },
 
             _endFightTurn: function() {
@@ -1858,8 +2066,17 @@
             },
 
             sendPacket: function(messageType, payload) {
-                if (window.dofus && window.dofus.connectionManager) {
-                    window.dofus.connectionManager.sendMessage(messageType, payload);
+                try {
+                    if (window.dofus && window.dofus.connectionManager) {
+                        window.dofus.connectionManager.sendMessage(messageType, payload);
+                        this.lastSendError = null;
+                        return true;
+                    }
+                    this.lastSendError = 'connectionManager unavailable';
+                    return false;
+                } catch (e) {
+                    this.lastSendError = String(e);
+                    return false;
                 }
             },
 
@@ -1882,6 +2099,11 @@
 
         FarmBot.init();
         window.__FarmBot = FarmBot;
+        try {
+            if (typeof window.__agentFightBrain === 'undefined') {
+                window.__agentFightBrain = 'http://127.0.0.1:8891';
+            }
+        } catch (e) {}
     } catch(e) {}
 
     // 25b. Agent directive bus — driven by the C# AgentDirectiveBridge (127.0.0.1:8893),
@@ -1890,6 +2112,11 @@
     // JSON string; the host unwraps it and hands it back to the agent as the tool result,
     // so every directive lands in the trajectory recorder with a real outcome.
     try {
+        // One build string for the page and for `debug.version`. A client that
+        // was not fully restarted keeps the previous script, and the first
+        // symptom is a fix that appears not to work; this makes that visible
+        // in every recorded observation.
+        window.__agentBuild = '2026-10-25d';
         var _agentResult = function(ok, data, error) {
             return JSON.stringify({ ok: !!ok, data: data || null, error: error || null, at: Date.now() });
         };
@@ -2381,6 +2608,7 @@
                 // Why the previous connection ended, if it did. Carried in the
                 // observation so a session that died of a kick can be told apart from one
                 // that was closed by hand — the two look identical from the host side.
+                snap.agent_build = window.__agentBuild || null;
                 snap.last_disconnect = window.__agentLastDisconnect || null;
                 // What the last navigation attempt actually did. A failed walk and a
                 // rejected transition look identical in the position fields; this
@@ -4359,7 +4587,10 @@
                 try { managerFight = !!(fmF && fmF.isInFight && fmF.isInFight()); } catch (e) {}
                 if (!!(pdF && pdF.isFighting) || managerFight) {
                     if (window.__FarmBot) window.__FarmBot.setEnabled(true);
-                    return _agentResult(true, { in_fight: true, auto_fight: !!window.__FarmBot });
+                    // Report the latch, not the object: the controller uses this
+                    // answer to decide whether it still has to arm the page.
+                    return _agentResult(true, { in_fight: true,
+                        auto_fight: !!(window.__FarmBot && window.__FarmBot.enabled) });
                 }
                 var lifeF = _agentLife();
                 if (!lifeF.alive) {
@@ -4510,6 +4741,35 @@
                     return out;
                 };
 
+                var fighterSpellFacts = function(spell, spellId) {
+                    if (!spell) return { id: num(spellId) };
+                    var level = spell.spellLevel || null;
+                    var ap = num(level && level.apCost);
+                    if (ap === null) ap = num(spell.apCost);
+                    var name = null;
+                    try { name = text(spell.name); } catch (e) {}
+                    if (!name && level) name = text(level.name);
+                    if (!name) {
+                        try { name = text(spell.getName && spell.getName()); } catch (e) {}
+                    }
+                    return {
+                        id: num(spellId) !== null ? num(spellId) : num(spell.id),
+                        name: name,
+                        level: num(spell.level),
+                        ap_cost: ap,
+                        min_range: num(level && level.minRange),
+                        range: num(level && level.range),
+                        cast_in_line: !!(level && level.castInLine),
+                        cast_in_diagonal: !!(level && level.castInDiagonal),
+                        requires_los: !!(level && level.castTestLos),
+                        max_cast_per_turn: num(level && level.maxCastPerTurn),
+                        max_cast_per_target: num(level && level.maxCastPerTarget),
+                        min_cast_interval: num(level && level.minCastInterval),
+                        critical_hit_probability: num(level && level.criticalHitProbability),
+                        effects: effects(level && level.effects),
+                        critical_effects: effects(level && level.criticalEffect)
+                    };
+                };
                 var chars = pd.characters || {};
                 var base = pd.characterBaseInformations || {};
                 var myId = num(chars.controlledCharacterId);
@@ -4599,6 +4859,33 @@
                         if (!actor && !fighter) continue;
                         var data = (fighter && fighter.data) || (actor && actor.data) || {};
                         var stats = data.stats || {};
+                        var rawSpellList = [];
+                        try {
+                            if (Array.isArray(data.spells)) rawSpellList = data.spells;
+                            else if (data.spells && typeof data.spells === 'object') rawSpellList = Object.keys(data.spells);
+                            if (!rawSpellList.length && data.spellIds) {
+                                rawSpellList = Array.isArray(data.spellIds)
+                                    ? data.spellIds : Object.keys(data.spellIds);
+                            }
+                        } catch (e) {}
+                        var spellMap = {};
+                        try { spellMap = (fighter && fighter.spells) || {}; } catch (e) {}
+                        var spellIds = [];
+                        var seenSpells = {};
+                        var addSpell = function(value) {
+                            var sid = num(value);
+                            if (sid === null || seenSpells[sid]) return;
+                            seenSpells[sid] = true;
+                            spellIds.push(sid);
+                        };
+                        for (var sl = 0; sl < rawSpellList.length; sl++) addSpell(rawSpellList[sl]);
+                        for (var sm in spellMap) {
+                            if (Object.prototype.hasOwnProperty.call(spellMap, sm)) addSpell(sm);
+                        }
+                        var fighterSpells = [];
+                        for (var ei = 0; ei < spellIds.length; ei++) {
+                            fighterSpells.push(fighterSpellFacts(spellMap[spellIds[ei]], spellIds[ei]));
+                        }
                         var onTeam = false;
                         try { onTeam = !!fm.isFighterOnUsersTeam(id); } catch (e) {}
                         var cell = actor && actor.cellId != null ? num(actor.cellId) : null;
@@ -4660,8 +4947,17 @@
                             ap_dodge: num(stats.dodgePALostProbability),
                             mp_dodge: num(stats.dodgePMLostProbability),
                             tackle_block: num(stats.tackleBlock),
-                            tackle_evade: num(stats.tackleEvade)
+                            tackle_evade: num(stats.tackleEvade),
+                            spell_ids: spellIds,
+                            spells: fighterSpells
                         });
+                        if (id !== myId) {
+                            for (var ri = 0; ri < spellIds.length; ri++) {
+                                if (spellMap[spellIds[ri]]) continue;
+                                // Read-only cache fill: the client's own spell loader.
+                                try { fm.getFighterSpell(spellIds[ri], id, function() {}); } catch (e) {}
+                            }
+                        }
                     }
                 }
 
@@ -4773,6 +5069,42 @@
                         critical_effects: effects(level && level.criticalEffect)
                     };
                     state.spells.push(spellFacts);
+                }
+                var lastActions = [];
+                try {
+                    var stack = fm.fightMessagesStack || fm._fightMessagesStack || [];
+                    var start = Math.max(0, stack.length - 48);
+                    for (var ai = start; ai < stack.length; ai++) {
+                        var msg = stack[ai] || {};
+                        var mt = text(msg._messageType);
+                        if (!mt) continue;
+                        lastActions.push({
+                            type: mt,
+                            action_id: num(msg.actionId),
+                            source_id: num(msg.sourceId),
+                            target_id: num(msg.targetId),
+                            spell_id: num(msg.spellId),
+                            spell_level: num(msg.spellLevel),
+                            destination_cell: num(msg.destinationCellId),
+                            critical: num(msg.critical),
+                            value: num(msg.value),
+                            delta: num(msg.delta),
+                            effect_id: num(msg.effectId),
+                            cell: num(msg.cellId),
+                            key_movements: Array.isArray(msg.keyMovements)
+                                ? msg.keyMovements.slice(0, 32) : null
+                        });
+                    }
+                } catch (e) {}
+                state.last_actions = lastActions;
+                try { state.spell_cast_counts = fm.spellCastCounts || {}; } catch (e) {}
+                for (var la = 0; la < lastActions.length; la++) {
+                    var lastAction = lastActions[la];
+                    if (!lastAction.spell_id || lastAction.source_id === null
+                        || lastAction.source_id === myId) continue;
+                    // Load the spell descriptor the first time a monster casts it.
+                    try { fm.getFighterSpell(lastAction.spell_id, lastAction.source_id,
+                                             function() {}); } catch (e) {}
                 }
                 return _agentResult(true, state);
             },
@@ -4963,6 +5295,25 @@
                         from_map: here, to_map: Number(crossing.map_id),
                         direction: changeDir, cell: exitCell };
                     try {
+                        // `gotoNeighbourMap` walks to the border and sends the change
+                        // when the walk lands. A character already standing on a
+                        // border cell has nothing to walk, so the transition is never
+                        // sent: the call answers ok, the snapshot never changes, and
+                        // the loop repeats the same crossing forever. Live tutorial:
+                        // cell 322 was the left border cell and stage stayed
+                        // `walk_then_change` across every attempt.
+                        var currentCell = details.cell;
+                        var atEdge = currentCell != null && (crossing.cells || [])
+                            .some(function (c) { return Number(c) === Number(currentCell); });
+                        if (atEdge && typeof iso._requestMapChange === 'function') {
+                            iso._requestMapChange(Number(crossing.map_id), changeDir);
+                            outcome.via = 'isoEngine._requestMapChange';
+                            window.__agentLastNav = { at: Date.now(),
+                                stage: 'change_requested_at_edge', from_map: here,
+                                to_map: Number(crossing.map_id),
+                                direction: changeDir, cell: currentCell };
+                            return _agentResult(true, outcome);
+                        }
                         if (typeof iso.gotoNeighbourMap === 'function') {
                             // The x/y arguments only position the border arrow. The
                             // transition itself uses the direction and the cell.
@@ -5115,17 +5466,31 @@
                 setTimeout(function () {
                     try { window.location.reload(); } catch (e) {}
                 }, 250);
-                return _agentResult(true, { reloading: true, build: '2026-10-23a' });
+                return _agentResult(true, { reloading: true,
+                    build: window.__agentBuild || '2026-10-25d',
+                    note: 'a reload keeps the already-injected script; a full app '
+                        + 'restart is required to pick up a rebuilt one' });
             },
             'debug.fight_state': function() {
-                // Whether a fight was ever attempted, and how far it got. `fight.join` has
-                // never run against the game — 0 calls in 697 recorded steps — so the first
-                // attempt should report its own outcome rather than needing a guess.
+                // Where the fight chain stands: was it requested, did placement
+                // arrive, was a ready actually sent, and is the bot driving the
+                // turns. Those four are indistinguishable from the host when
+                // the fight simply sits there.
                 var pdG = (window.gui && window.gui.playerData) || null;
                 var fm = (window.gui && window.gui.fightManager) || null;
+                var fb = window.__FarmBot || null;
+                var st = (fb && fb.state) || null;
                 return _agentResult(true, {
                     in_fight: !!(pdG && pdG.isFighting) || !!(fm && fm.isInFight && fm.isInFight()),
+                    auto_fight: !!(fb && fb.enabled),
+                    my_turn: !!(st && st.myTurn),
+                    readied: !!(st && st.readied),
+                    placement_pending: !!(st && st.placement),
                     last: window.__agentLastFight || null,
+                    placement: window.__agentLastFightPlacement || null,
+                    ready: window.__agentLastFightReady || null,
+                    last_turn: window.__agentLastFightTurn || null,
+                    last_turn_error: window.__agentLastFightTurnError || null,
                     note: window.__agentLastFight ? null
                         : 'no fight attempted since this page loaded'
                 });
@@ -5160,6 +5525,98 @@
                 var d = window.__agentLastDisconnect || null;
                 return _agentResult(true, d || { none: true,
                     note: 'no disconnect observed since this page loaded' });
+            },
+            // Read-only client database index and paging.
+            //
+            // Task #27 needs the Touch-specific rows (quests, achievement
+            // objectives, monster grades) that the DofusDB cache does not have.
+            // Table names and row shapes differ by build, so this reports them
+            // first; a harvester written from a guess would page a table that
+            // does not exist. Sends nothing, writes nothing.
+            'debug.dbtables': function() {
+                var dbs = _agentDatabases();
+                if (!dbs) {
+                    return _agentResult(false, null, 'client databases are not loaded');
+                }
+                var tables = [];
+                for (var name in dbs) {
+                    if (!Object.prototype.hasOwnProperty.call(dbs, name)) continue;
+                    var t = dbs[name];
+                    tables.push({
+                        table: name,
+                        rows: (t && typeof t === 'object') ? Object.keys(t).length : null
+                    });
+                }
+                tables.sort(function(a, b) { return a.table < b.table ? -1 : 1; });
+                return _agentResult(true, { count: tables.length, tables: tables });
+            },
+            'debug.dbrows': function(args) {
+                args = args || {};
+                var dbs = _agentDatabases();
+                if (!dbs) {
+                    return _agentResult(false, null, 'client databases are not loaded');
+                }
+                var name = args.table != null ? String(args.table) : '';
+                if (!name || !Object.prototype.hasOwnProperty.call(dbs, name)) {
+                    return _agentResult(false, null, 'unknown or missing table: ' + name);
+                }
+                var table = dbs[name];
+                if (!table || typeof table !== 'object') {
+                    return _agentResult(false, null, 'table is not an object: ' + name);
+                }
+                var allIds = Object.keys(table);
+                var wanted = [];
+                if (Object.prototype.toString.call(args.ids) === '[object Array]') {
+                    for (var i = 0; i < args.ids.length && wanted.length < 200; i++) {
+                        var id = args.ids[i];
+                        if (Object.prototype.hasOwnProperty.call(table, id)) {
+                            wanted.push(String(id));
+                        }
+                    }
+                } else {
+                    var offset = _agentCap(args.offset, 0, allIds.length, 0);
+                    var limit = _agentCap(args.limit, 1, 200, 50);
+                    wanted = allIds.slice(offset, offset + limit);
+                }
+                var keys = {};
+                var rows = [];
+                for (var w = 0; w < wanted.length; w++) {
+                    var row = table[wanted[w]];
+                    if (!row || typeof row !== 'object') {
+                        rows.push({ id: wanted[w], db: false });
+                        continue;
+                    }
+                    var item = { id: row.id != null ? row.id : wanted[w], db: true };
+                    for (var f in row) {
+                        if (!Object.prototype.hasOwnProperty.call(row, f)) continue;
+                        var v = row[f];
+                        if (v === null || v === undefined) continue;
+                        if (typeof v === 'object') {
+                            if (Object.prototype.toString.call(v) === '[object Array]'
+                                    && v.length <= 80) {
+                                var simple = true;
+                                for (var ai = 0; ai < v.length; ai++) {
+                                    if (v[ai] !== null && typeof v[ai] === 'object') {
+                                        simple = false;
+                                        break;
+                                    }
+                                }
+                                if (simple) item[f] = v;
+                            }
+                            continue;
+                        }
+                        if (typeof v === 'string' && v.length > 500) v = v.slice(0, 500);
+                        if (Object.keys(keys).length < 60) keys[f] = true;
+                        item[f] = v;
+                    }
+                    rows.push(item);
+                }
+                return _agentResult(true, {
+                    table: name,
+                    count: allIds.length,
+                    keys: Object.keys(keys),
+                    rows: rows
+                });
             },
             // What the quest DB and the client's objective compass actually say.
             // The planner reads `parameter0` as a map id, but for some objective
@@ -5253,7 +5710,7 @@
                 return _agentEffectDbReport(args);
             },
             'debug.version': function() {
-                return _agentResult(true, { build: '2026-10-24c' });
+                return _agentResult(true, { build: window.__agentBuild || '2026-10-25d' });
             },
             'debug.probe': function() {
                 var out = {};

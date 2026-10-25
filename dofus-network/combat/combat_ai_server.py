@@ -1,204 +1,179 @@
-"""
-THX-01 ModernBERT Combat Decision AI Server for Dofus Touch.
+"""Live combat policy API for the in-game FarmBot.
 
-Loads dofus-network/models/dofus-thx01/model.safetensors via HuggingFace Transformers
-and serves tactical combat decisions over HTTP (127.0.0.1:8892).
+The page asks this server for one action per turn:
+
+    POST /v1/combat/decide   body = the raw ``fight.state`` payload
+
+The server binds that board to the encounter policy's slots (the live spells,
+the live enemies), runs the trained PPO/PBT actor, and maps the chosen
+spell/target/move intent onto the cell solver's legal plan. Nothing is
+hardcoded per class or level: every request rebuilds the binding.
+
+The previous 8892 server was a ModernBERT stance classifier with hardcoded Cra
+spells. It was never going to work for a different instance, and the page no
+longer called it. This file replaces that path; the model is the checkpoint
+from ``encounter_selfplay.pkl`` (override with ``--checkpoint``).
 """
 
 from __future__ import annotations
 
+import argparse
 import json
-import os
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Optional, Sequence
 
-# Ensure repository root is on sys.path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-if str(REPO_ROOT / "dofus-network") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "dofus-network"))
+for _path in (REPO_ROOT, REPO_ROOT / "dofus-network"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from combat.live_policy import DEFAULT_CHECKPOINT, LivePolicy
 
-MODEL_DIR = REPO_ROOT / "dofus-network" / "models" / "dofus-thx01"
-
-print("==========================================================")
-print("   DOFUS THX-01 COMBAT DECISION AI SERVER               ")
-print("==========================================================")
-print(f"Loading tokenizer from: {MODEL_DIR}")
-tokenizer = AutoTokenizer.from_pretrained(str(MODEL_DIR))
-
-print(f"Loading ModernBERT sequence classifier from: {MODEL_DIR / 'model.safetensors'}")
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = AutoModelForSequenceClassification.from_pretrained(str(MODEL_DIR), use_safetensors=True)
-model.to(device)
-model.eval()
-print(f"Model loaded on {device.upper()}! Parameters: {sum(p.numel() for p in model.parameters()):,}")
-
-# Load labels
-LABELS_PATH = MODEL_DIR / "labels.json"
-label_map = {}
-stances = ["BURST_LETHAL", "BUFF_AND_ENGAGE", "TRAP_AND_KITE", "SHIELD_DEFENSE"]
-if LABELS_PATH.exists():
-    with open(LABELS_PATH, "r", encoding="utf-8") as f:
-        lbl_data = json.load(f)
-        label_map = lbl_data.get("label_map", {})
-        stances = lbl_data.get("stances", stances)
-
-id2stance = {i: stances[i % len(stances)] for i in range(len(stances))}
+POLICY: Optional[LivePolicy] = None
+DECISION_LOCK = threading.Lock()
+LOG_PATH = REPO_ROOT / "trajectories" / "live_policy_decisions.jsonl"
 
 
-def evaluate_combat_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
-    t0 = time.perf_counter()
+def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> None:
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "time": time.time(),
+            "fight_id": payload.get("fight_id"),
+            "round": payload.get("round"),
+            "my_id": payload.get("my_id"),
+            "decision": decision,
+        }
+        with LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
-    player = payload.get("player", {})
-    monsters = payload.get("monsters", [])
-    
-    char_hp = player.get("hp", 100)
-    char_max_hp = player.get("maxHp", 100)
-    char_ap = player.get("ap", 6)
-    char_mp = player.get("mp", 3)
-    char_cell = player.get("cellId", 250)
-    breed = player.get("breed", "Cra")
 
-    # Pick primary monster target
-    target_monster = monsters[0] if monsters else {"id": -1, "name": "Monster", "hp": 500, "cellId": 284}
-    mob_hp = target_monster.get("hp", 500)
-    mob_cell = target_monster.get("cellId", 284)
-    mob_name = target_monster.get("name", "Unknown")
-
-    # Formulate state description for THX-01 ModernBERT
-    state_prompt = (
-        f"COMBAT | Class: {breed} | Self HP: {char_hp}/{char_max_hp} | "
-        f"AP: {char_ap} | MP: {char_mp} | Target: {mob_name} (HP: {mob_hp}, Cell: {mob_cell}) | "
-        f"Distance: {abs(char_cell - mob_cell) // 14}"
-    )
-
-    inputs = tokenizer(state_prompt, return_tensors="pt", max_length=512, truncation=True)
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-
-    with torch.no_grad():
-        logits = model(**inputs).logits
-        probs = torch.softmax(logits, dim=-1)[0]
-
-    pred_idx = int(probs.argmax())
-    confidence = float(probs[pred_idx])
-
-    # Map prediction to tactical stance
-    if char_hp < char_max_hp * 0.35:
-        stance = "SHIELD_DEFENSE"
-    elif mob_hp <= 400:
-        stance = "BURST_LETHAL"
-    else:
-        stance = id2stance.get(pred_idx % len(stances), "BURST_LETHAL")
-
-    # Plan actions based on stance & AP
-    actions = []
-    rem_ap = char_ap
-
-    # Default spell selection (Cra / AOE)
-    default_spells = player.get("spells", [])
-    aoe_spell = 164  # Flèche Explosive
-    buff_spell = 161 # Tir Puissant
-
-    if stance == "BUFF_AND_ENGAGE" and rem_ap >= 6:
-        # Cast buff then attack
-        actions.append({"type": "CAST", "spellId": buff_spell, "cellId": char_cell})
-        rem_ap -= 2
-        while rem_ap >= 4:
-            actions.append({"type": "CAST", "spellId": aoe_spell, "cellId": mob_cell})
-            rem_ap -= 4
-    else:
-        # Direct burst lethal
-        while rem_ap >= 4:
-            actions.append({"type": "CAST", "spellId": aoe_spell, "cellId": mob_cell})
-            rem_ap -= 4
-
-    # Calculate safe kite retreat if MP remaining
-    if char_mp > 0 and (stance in ["TRAP_AND_KITE", "SHIELD_DEFENSE"] or breed == "Cra"):
-        # Simple retreat away from enemy cell
-        retreat_cell = char_cell - (14 * min(char_mp, 2))
-        if retreat_cell > 0:
-            actions.append({"type": "MOVE", "cellId": retreat_cell})
-
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-
-    return {
-        "status": "ok",
-        "stance": stance,
-        "confidence": round(confidence, 4),
-        "targetMonsterId": target_monster.get("id"),
-        "targetCell": mob_cell,
-        "actions": actions,
-        "latency_ms": round(elapsed_ms, 2)
-    }
+def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if POLICY is None:
+        return {"ok": False, "action": None, "reason": "policy_not_loaded",
+                "latency_ms": 0.0}
+    started = time.perf_counter()
+    with DECISION_LOCK:
+        decision = POLICY.decide(payload)
+    decision["server_latency_ms"] = round(
+        (time.perf_counter() - started) * 1000.0, 1)
+    _log_decision(payload, decision)
+    return decision
 
 
 class CombatRequestHandler(BaseHTTPRequestHandler):
-    def do_OPTIONS(self):
-        self.send_response(200)
+    def _headers(self, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
+    def _reply(self, data: Dict[str, Any], status: int = 200) -> None:
+        self._headers(status)
+        self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+
+    def do_OPTIONS(self):
+        self._headers(200)
+
     def do_GET(self):
         if self.path == "/health":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "model": "dofus-thx01-modernbert", "device": device}).encode("utf-8"))
-        else:
-            self.send_response(404)
-            self.end_headers()
+            checkpoint = str(POLICY.checkpoint) if POLICY is not None else None
+            cfg = POLICY.cfg.__dict__ if POLICY is not None else None
+            self._reply({
+                "status": "ok" if POLICY is not None else "loading",
+                "model": "encounter_ppo_pbt_actor",
+                "checkpoint": checkpoint,
+                "config": cfg,
+                "backend": "jax",
+            })
+            return
+        self._reply({"ok": False, "error": "not found"}, 404)
 
     def do_POST(self):
-        if self.path == "/v1/combat/decide":
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length).decode("utf-8")
-            try:
-                data = json.loads(body) if body else {}
-                response_data = evaluate_combat_turn(data)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps(response_data).encode("utf-8"))
-            except Exception as ex:
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "error", "message": str(ex)}).encode("utf-8"))
-        else:
-            self.send_response(404)
-            self.end_headers()
+        if self.path != "/v1/combat/decide":
+            self._reply({"ok": False, "error": "not found"}, 404)
+            return
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(length).decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(body) if body else {}
+            if not isinstance(payload, dict):
+                raise ValueError("request body must be a JSON object")
+            self._reply(decide(payload))
+        except Exception as exc:  # noqa: BLE001 - the page falls back on error
+            self._reply({"ok": False, "action": None,
+                         "reason": f"bad_request:{type(exc).__name__}: {exc}"}, 400)
 
     def log_message(self, format, *args):
-        # Suppress noisy standard logs, print concise summary
         pass
 
 
-def run_server(port: int = 8892):
-    server = ThreadingHTTPServer(("127.0.0.1", port), CombatRequestHandler)
-    print(f"\n[OK] THX-01 Combat AI Server active on http://127.0.0.1:{port}")
-    print("Endpoints:")
-    print(f"  GET  http://127.0.0.1:{port}/health")
-    print(f"  POST http://127.0.0.1:{port}/v1/combat/decide")
-    print("Ready for real-time game client requests.\n")
+def run_server(port: int = 8891,
+               checkpoint: Path = DEFAULT_CHECKPOINT,
+               beam_width: int = 8,
+               max_actions: int = 4,
+               log_path: Optional[Path] = None) -> None:
+    global POLICY, LOG_PATH
+    if log_path is not None:
+        LOG_PATH = Path(log_path)
+    print("==========================================================")
+    print("   DOFUS LIVE COMBAT POLICY API (PPO/PBT ACTOR)          ")
+    print("==========================================================")
+    print(f"checkpoint: {checkpoint}")
+    POLICY = LivePolicy(checkpoint=Path(checkpoint), beam_width=beam_width,
+                        max_actions=max_actions)
+    print(f"slots: {POLICY.cfg.spells} spells | {POLICY.cfg.enemies} enemies")
+    print(f"decision log: {LOG_PATH}")
+    print("warming up the policy and solver...")
+    try:
+        POLICY.warmup()
+        print("warm-up done")
+    except Exception as exc:  # noqa: BLE001 - a warm-up must not block the API
+        print(f"warm-up failed: {type(exc).__name__}: {exc}")
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", int(port)), CombatRequestHandler)
+    except OSError as exc:
+        print(f"[ERROR] cannot bind 127.0.0.1:{port}: {exc}")
+        print("Stop the old combat server on port 8892, or start this one on "
+              "another port and set window.__agentFightBrain to that URL.")
+        raise SystemExit(1)
+    server.daemon_threads = True
+    print(f"[OK] listening on http://127.0.0.1:{port}")
+    print("  GET  /health")
+    print("  POST /v1/combat/decide")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down Combat AI server...")
+        print("\nshutting down")
         server.shutdown()
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("port", nargs="?", type=int, default=8891)
+    parser.add_argument("--checkpoint", default=str(DEFAULT_CHECKPOINT))
+    parser.add_argument("--beam-width", type=int, default=8)
+    parser.add_argument("--max-actions", type=int, default=4)
+    parser.add_argument("--log", default=str(
+        REPO_ROOT / "trajectories" / "live_policy_decisions.jsonl"))
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    run_server(port=args.port, checkpoint=Path(args.checkpoint),
+               beam_width=args.beam_width, max_actions=args.max_actions,
+               log_path=Path(args.log))
+    return 0
+
+
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8892
-    run_server(port)
+    raise SystemExit(main())

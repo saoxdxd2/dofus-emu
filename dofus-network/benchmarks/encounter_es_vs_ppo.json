@@ -1,0 +1,924 @@
+{
+ "generated_at": "2026-10-25T03:59:35Z",
+ "data": "kaggle\\tpu_selfplay\\dataset\\encounters.npz",
+ "row_slice": {
+  "start": 0,
+  "samples": 1024
+ },
+ "environment": {
+  "allies": 1,
+  "enemies": 4,
+  "spells": 4,
+  "max_rounds": 24,
+  "max_dist": 12,
+  "casts_per_turn": 4
+ },
+ "seeds": [
+  1,
+  2
+ ],
+ "policies": {
+  "random_player": {
+   "overall": {
+    "n": 2048,
+    "player_win": 0.23583984375,
+    "enemy_win": 0.72412109375,
+    "draw": 0.0400390625,
+    "player_win_ci95": [
+     0.216796875,
+     0.25537109375
+    ],
+    "rounds": 8.39404296875,
+    "player_hp_left": 0.15921740978956223,
+    "enemy_hp_left": 0.5557720363140106,
+    "seeds": [
+     1,
+     2
+    ]
+   },
+   "slices": {
+    "all": {
+     "n": 2048,
+     "player_win": 0.23583984375,
+     "enemy_win": 0.72412109375,
+     "draw": 0.0400390625
+    },
+    "boss": {
+     "n": 290,
+     "player_win": 0.09310344827586207,
+     "enemy_win": 0.8655172413793103,
+     "draw": 0.041379310344827586
+    },
+    "non_boss": {
+     "n": 1758,
+     "player_win": 0.2593856655290102,
+     "enemy_win": 0.7007963594994312,
+     "draw": 0.03981797497155859
+    },
+    "first": {
+     "n": 476,
+     "player_win": 0.3697478991596639,
+     "enemy_win": 0.5861344537815126,
+     "draw": 0.04411764705882353
+    },
+    "second": {
+     "n": 1572,
+     "player_win": 0.19529262086513996,
+     "enemy_win": 0.7659033078880407,
+     "draw": 0.03880407124681934
+    },
+    "focus_1": {
+     "n": 780,
+     "player_win": 0.2512820512820513,
+     "enemy_win": 0.6743589743589744,
+     "draw": 0.07435897435897436
+    },
+    "focus_2": {
+     "n": 1042,
+     "player_win": 0.22744721689059502,
+     "enemy_win": 0.7504798464491362,
+     "draw": 0.022072936660268713
+    },
+    "focus_3": {
+     "n": 226,
+     "player_win": 0.22123893805309736,
+     "enemy_win": 0.7743362831858407,
+     "draw": 0.004424778761061947
+    },
+    "main_resist_negative": {
+     "n": 830,
+     "player_win": 0.1819277108433735,
+     "enemy_win": 0.7903614457831325,
+     "draw": 0.027710843373493974
+    },
+    "main_resist_low": {
+     "n": 1210,
+     "player_win": 0.2743801652892562,
+     "enemy_win": 0.6768595041322314,
+     "draw": 0.048760330578512395
+    },
+    "main_resist_high": {
+     "n": 8,
+     "player_win": 0.0,
+     "enemy_win": 1.0,
+     "draw": 0.0
+    },
+    "group_1": {
+     "n": 506,
+     "player_win": 0.5909090909090909,
+     "enemy_win": 0.3300395256916996,
+     "draw": 0.07905138339920949
+    },
+    "group_2": {
+     "n": 828,
+     "player_win": 0.1859903381642512,
+     "enemy_win": 0.7717391304347826,
+     "draw": 0.042270531400966184
+    },
+    "group_3": {
+     "n": 440,
+     "player_win": 0.05454545454545454,
+     "enemy_win": 0.9318181818181818,
+     "draw": 0.013636363636363636
+    },
+    "group_4": {
+     "n": 274,
+     "player_win": 0.021897810218978103,
+     "enemy_win": 0.9744525547445255,
+     "draw": 0.0036496350364963502
+    },
+    "level_1_20": {
+     "n": 664,
+     "player_win": 0.31626506024096385,
+     "enemy_win": 0.6370481927710844,
+     "draw": 0.046686746987951805
+    },
+    "level_21_40": {
+     "n": 702,
+     "player_win": 0.21652421652421652,
+     "enemy_win": 0.7336182336182336,
+     "draw": 0.04985754985754986
+    },
+    "level_41_60": {
+     "n": 682,
+     "player_win": 0.1774193548387097,
+     "enemy_win": 0.7991202346041055,
+     "draw": 0.02346041055718475
+    },
+    "level_61_plus": {
+     "n": 0
+    }
+   },
+   "per_seed": [
+    {
+     "seed": 1,
+     "n": 1024,
+     "player_win": 0.2333984375,
+     "enemy_win": 0.72265625,
+     "draw": 0.0439453125,
+     "player_win_ci95": [
+      0.2079833984375,
+      0.25881347656249987
+     ],
+     "rounds": 8.384765625,
+     "player_hp_left": 0.16212552785873413,
+     "enemy_hp_left": 0.5581158399581909
+    },
+    {
+     "seed": 2,
+     "n": 1024,
+     "player_win": 0.23828125,
+     "enemy_win": 0.7255859375,
+     "draw": 0.0361328125,
+     "player_win_ci95": [
+      0.2119140625,
+      0.265625
+     ],
+     "rounds": 8.4033203125,
+     "player_hp_left": 0.15630929172039032,
+     "enemy_hp_left": 0.5534282326698303
+    }
+   ],
+   "delta_vs_heuristic": {
+    "all": -0.3774,
+    "boss": -0.2931,
+    "non_boss": -0.3914,
+    "first": -0.3992,
+    "second": -0.3709,
+    "focus_1": -0.3026,
+    "focus_2": -0.4213,
+    "focus_3": -0.4336,
+    "main_resist_negative": -0.3795,
+    "main_resist_low": -0.3785,
+    "main_resist_high": 0.0,
+    "group_1": -0.2391,
+    "group_2": -0.4831,
+    "group_3": -0.4682,
+    "group_4": -0.1679,
+    "level_1_20": -0.3313,
+    "level_21_40": -0.4017,
+    "level_41_60": -0.3974,
+    "level_61_plus": null
+   }
+  },
+  "heuristic_mirror": {
+   "overall": {
+    "n": 2048,
+    "player_win": 0.61328125,
+    "enemy_win": 0.3173828125,
+    "draw": 0.0693359375,
+    "player_win_ci95": [
+     0.59178466796875,
+     0.63330078125
+    ],
+    "rounds": 6.9521484375,
+    "player_hp_left": 0.40022408962249756,
+    "enemy_hp_left": 0.24152055382728577,
+    "seeds": [
+     1,
+     2
+    ]
+   },
+   "slices": {
+    "all": {
+     "n": 2048,
+     "player_win": 0.61328125,
+     "enemy_win": 0.3173828125,
+     "draw": 0.0693359375
+    },
+    "boss": {
+     "n": 290,
+     "player_win": 0.38620689655172413,
+     "enemy_win": 0.5310344827586206,
+     "draw": 0.08275862068965517
+    },
+    "non_boss": {
+     "n": 1758,
+     "player_win": 0.6507394766780432,
+     "enemy_win": 0.2821387940841866,
+     "draw": 0.0671217292377702
+    },
+    "first": {
+     "n": 476,
+     "player_win": 0.7689075630252101,
+     "enemy_win": 0.1638655462184874,
+     "draw": 0.06722689075630252
+    },
+    "second": {
+     "n": 1572,
+     "player_win": 0.5661577608142494,
+     "enemy_win": 0.3638676844783715,
+     "draw": 0.06997455470737914
+    },
+    "focus_1": {
+     "n": 780,
+     "player_win": 0.5538461538461539,
+     "enemy_win": 0.3076923076923077,
+     "draw": 0.13846153846153847
+    },
+    "focus_2": {
+     "n": 1042,
+     "player_win": 0.6487523992322457,
+     "enemy_win": 0.32437619961612285,
+     "draw": 0.026871401151631478
+    },
+    "focus_3": {
+     "n": 226,
+     "player_win": 0.6548672566371682,
+     "enemy_win": 0.3185840707964602,
+     "draw": 0.02654867256637168
+    },
+    "main_resist_negative": {
+     "n": 830,
+     "player_win": 0.5614457831325301,
+     "enemy_win": 0.3783132530120482,
+     "draw": 0.060240963855421686
+    },
+    "main_resist_low": {
+     "n": 1210,
+     "player_win": 0.6528925619834711,
+     "enemy_win": 0.27107438016528923,
+     "draw": 0.07603305785123966
+    },
+    "main_resist_high": {
+     "n": 8,
+     "player_win": 0.0,
+     "enemy_win": 1.0,
+     "draw": 0.0
+    },
+    "group_1": {
+     "n": 506,
+     "player_win": 0.8300395256916996,
+     "enemy_win": 0.05138339920948617,
+     "draw": 0.11857707509881422
+    },
+    "group_2": {
+     "n": 828,
+     "player_win": 0.6690821256038647,
+     "enemy_win": 0.2632850241545894,
+     "draw": 0.06763285024154589
+    },
+    "group_3": {
+     "n": 440,
+     "player_win": 0.5227272727272727,
+     "enemy_win": 0.42727272727272725,
+     "draw": 0.05
+    },
+    "group_4": {
+     "n": 274,
+     "player_win": 0.1897810218978102,
+     "enemy_win": 0.7956204379562044,
+     "draw": 0.014598540145985401
+    },
+    "level_1_20": {
+     "n": 664,
+     "player_win": 0.6475903614457831,
+     "enemy_win": 0.25301204819277107,
+     "draw": 0.09939759036144578
+    },
+    "level_21_40": {
+     "n": 702,
+     "player_win": 0.6182336182336182,
+     "enemy_win": 0.301994301994302,
+     "draw": 0.07977207977207977
+    },
+    "level_41_60": {
+     "n": 682,
+     "player_win": 0.5747800586510264,
+     "enemy_win": 0.39589442815249265,
+     "draw": 0.02932551319648094
+    },
+    "level_61_plus": {
+     "n": 0
+    }
+   },
+   "per_seed": [
+    {
+     "seed": 1,
+     "n": 1024,
+     "player_win": 0.61328125,
+     "enemy_win": 0.3173828125,
+     "draw": 0.0693359375,
+     "player_win_ci95": [
+      0.58203125,
+      0.6435791015624999
+     ],
+     "rounds": 6.9521484375,
+     "player_hp_left": 0.40022408962249756,
+     "enemy_hp_left": 0.24152055382728577
+    },
+    {
+     "seed": 2,
+     "n": 1024,
+     "player_win": 0.61328125,
+     "enemy_win": 0.3173828125,
+     "draw": 0.0693359375,
+     "player_win_ci95": [
+      0.58203125,
+      0.6435791015624999
+     ],
+     "rounds": 6.9521484375,
+     "player_hp_left": 0.40022408962249756,
+     "enemy_hp_left": 0.24152055382728577
+    }
+   ],
+   "delta_vs_heuristic": {
+    "all": 0.0,
+    "boss": 0.0,
+    "non_boss": 0.0,
+    "first": 0.0,
+    "second": 0.0,
+    "focus_1": 0.0,
+    "focus_2": 0.0,
+    "focus_3": 0.0,
+    "main_resist_negative": 0.0,
+    "main_resist_low": 0.0,
+    "main_resist_high": 0.0,
+    "group_1": 0.0,
+    "group_2": 0.0,
+    "group_3": 0.0,
+    "group_4": 0.0,
+    "level_1_20": 0.0,
+    "level_21_40": 0.0,
+    "level_41_60": 0.0,
+    "level_61_plus": null
+   }
+  },
+  "ppo": {
+   "overall": {
+    "n": 2048,
+    "player_win": 0.7255859375,
+    "enemy_win": 0.25927734375,
+    "draw": 0.01513671875,
+    "player_win_ci95": [
+     0.70556640625,
+     0.744140625
+    ],
+    "rounds": 6.8505859375,
+    "player_hp_left": 0.3963678628206253,
+    "enemy_hp_left": 0.143783301115036,
+    "seeds": [
+     1,
+     2
+    ]
+   },
+   "slices": {
+    "all": {
+     "n": 2048,
+     "player_win": 0.7255859375,
+     "enemy_win": 0.25927734375,
+     "draw": 0.01513671875
+    },
+    "boss": {
+     "n": 290,
+     "player_win": 0.5655172413793104,
+     "enemy_win": 0.4241379310344828,
+     "draw": 0.010344827586206896
+    },
+    "non_boss": {
+     "n": 1758,
+     "player_win": 0.7519908987485779,
+     "enemy_win": 0.23208191126279865,
+     "draw": 0.015927189988623434
+    },
+    "first": {
+     "n": 476,
+     "player_win": 0.8823529411764706,
+     "enemy_win": 0.11134453781512606,
+     "draw": 0.0063025210084033615
+    },
+    "second": {
+     "n": 1572,
+     "player_win": 0.678117048346056,
+     "enemy_win": 0.30407124681933845,
+     "draw": 0.017811704834605598
+    },
+    "focus_1": {
+     "n": 780,
+     "player_win": 0.7410256410256411,
+     "enemy_win": 0.23205128205128206,
+     "draw": 0.026923076923076925
+    },
+    "focus_2": {
+     "n": 1042,
+     "player_win": 0.7197696737044146,
+     "enemy_win": 0.2706333973128599,
+     "draw": 0.009596928982725527
+    },
+    "focus_3": {
+     "n": 226,
+     "player_win": 0.6991150442477876,
+     "enemy_win": 0.3008849557522124,
+     "draw": 0.0
+    },
+    "main_resist_negative": {
+     "n": 830,
+     "player_win": 0.6674698795180722,
+     "enemy_win": 0.3144578313253012,
+     "draw": 0.018072289156626505
+    },
+    "main_resist_low": {
+     "n": 1210,
+     "player_win": 0.768595041322314,
+     "enemy_win": 0.21818181818181817,
+     "draw": 0.013223140495867768
+    },
+    "main_resist_high": {
+     "n": 8,
+     "player_win": 0.25,
+     "enemy_win": 0.75,
+     "draw": 0.0
+    },
+    "group_1": {
+     "n": 506,
+     "player_win": 0.958498023715415,
+     "enemy_win": 0.03557312252964427,
+     "draw": 0.005928853754940711
+    },
+    "group_2": {
+     "n": 828,
+     "player_win": 0.8079710144927537,
+     "enemy_win": 0.18478260869565216,
+     "draw": 0.007246376811594203
+    },
+    "group_3": {
+     "n": 440,
+     "player_win": 0.6090909090909091,
+     "enemy_win": 0.36818181818181817,
+     "draw": 0.022727272727272728
+    },
+    "group_4": {
+     "n": 274,
+     "player_win": 0.23357664233576642,
+     "enemy_win": 0.7226277372262774,
+     "draw": 0.043795620437956206
+    },
+    "level_1_20": {
+     "n": 664,
+     "player_win": 0.7740963855421686,
+     "enemy_win": 0.20783132530120482,
+     "draw": 0.018072289156626505
+    },
+    "level_21_40": {
+     "n": 702,
+     "player_win": 0.7435897435897436,
+     "enemy_win": 0.23504273504273504,
+     "draw": 0.021367521367521368
+    },
+    "level_41_60": {
+     "n": 682,
+     "player_win": 0.6598240469208211,
+     "enemy_win": 0.3343108504398827,
+     "draw": 0.005865102639296188
+    },
+    "level_61_plus": {
+     "n": 0
+    }
+   },
+   "per_seed": [
+    {
+     "seed": 1,
+     "n": 1024,
+     "player_win": 0.7255859375,
+     "enemy_win": 0.2587890625,
+     "draw": 0.015625,
+     "player_win_ci95": [
+      0.697265625,
+      0.7529296875
+     ],
+     "rounds": 6.8544921875,
+     "player_hp_left": 0.3958125412464142,
+     "enemy_hp_left": 0.14286528527736664
+    },
+    {
+     "seed": 2,
+     "n": 1024,
+     "player_win": 0.7255859375,
+     "enemy_win": 0.259765625,
+     "draw": 0.0146484375,
+     "player_win_ci95": [
+      0.697265625,
+      0.7529541015624999
+     ],
+     "rounds": 6.8466796875,
+     "player_hp_left": 0.3969231843948364,
+     "enemy_hp_left": 0.14470131695270538
+    }
+   ],
+   "delta_vs_heuristic": {
+    "all": 0.1123,
+    "boss": 0.1793,
+    "non_boss": 0.1013,
+    "first": 0.1134,
+    "second": 0.112,
+    "focus_1": 0.1872,
+    "focus_2": 0.071,
+    "focus_3": 0.0442,
+    "main_resist_negative": 0.106,
+    "main_resist_low": 0.1157,
+    "main_resist_high": 0.25,
+    "group_1": 0.1285,
+    "group_2": 0.1389,
+    "group_3": 0.0864,
+    "group_4": 0.0438,
+    "level_1_20": 0.1265,
+    "level_21_40": 0.1254,
+    "level_41_60": 0.085,
+    "level_61_plus": null
+   }
+  },
+  "es": {
+   "overall": {
+    "n": 2048,
+    "player_win": 0.6923828125,
+    "enemy_win": 0.3037109375,
+    "draw": 0.00390625,
+    "player_win_ci95": [
+     0.671875,
+     0.7119140625
+    ],
+    "rounds": 5.46728515625,
+    "player_hp_left": 0.4071989506483078,
+    "enemy_hp_left": 0.1648867502808571,
+    "seeds": [
+     1,
+     2
+    ]
+   },
+   "slices": {
+    "all": {
+     "n": 2048,
+     "player_win": 0.6923828125,
+     "enemy_win": 0.3037109375,
+     "draw": 0.00390625
+    },
+    "boss": {
+     "n": 290,
+     "player_win": 0.506896551724138,
+     "enemy_win": 0.49310344827586206,
+     "draw": 0.0
+    },
+    "non_boss": {
+     "n": 1758,
+     "player_win": 0.7229806598407281,
+     "enemy_win": 0.2724687144482366,
+     "draw": 0.004550625711035267
+    },
+    "first": {
+     "n": 476,
+     "player_win": 0.8382352941176471,
+     "enemy_win": 0.15756302521008403,
+     "draw": 0.004201680672268907
+    },
+    "second": {
+     "n": 1572,
+     "player_win": 0.6482188295165394,
+     "enemy_win": 0.3479643765903308,
+     "draw": 0.003816793893129771
+    },
+    "focus_1": {
+     "n": 780,
+     "player_win": 0.7192307692307692,
+     "enemy_win": 0.27564102564102566,
+     "draw": 0.005128205128205128
+    },
+    "focus_2": {
+     "n": 1042,
+     "player_win": 0.6746641074856046,
+     "enemy_win": 0.32341650671785027,
+     "draw": 0.0019193857965451055
+    },
+    "focus_3": {
+     "n": 226,
+     "player_win": 0.6814159292035398,
+     "enemy_win": 0.30973451327433627,
+     "draw": 0.008849557522123894
+    },
+    "main_resist_negative": {
+     "n": 830,
+     "player_win": 0.6313253012048192,
+     "enemy_win": 0.3686746987951807,
+     "draw": 0.0
+    },
+    "main_resist_low": {
+     "n": 1210,
+     "player_win": 0.7371900826446282,
+     "enemy_win": 0.256198347107438,
+     "draw": 0.006611570247933884
+    },
+    "main_resist_high": {
+     "n": 8,
+     "player_win": 0.25,
+     "enemy_win": 0.75,
+     "draw": 0.0
+    },
+    "group_1": {
+     "n": 506,
+     "player_win": 0.9486166007905138,
+     "enemy_win": 0.05138339920948617,
+     "draw": 0.0
+    },
+    "group_2": {
+     "n": 828,
+     "player_win": 0.7729468599033816,
+     "enemy_win": 0.2222222222222222,
+     "draw": 0.004830917874396135
+    },
+    "group_3": {
+     "n": 440,
+     "player_win": 0.55,
+     "enemy_win": 0.4409090909090909,
+     "draw": 0.00909090909090909
+    },
+    "group_4": {
+     "n": 274,
+     "player_win": 0.20437956204379562,
+     "enemy_win": 0.7956204379562044,
+     "draw": 0.0
+    },
+    "level_1_20": {
+     "n": 664,
+     "player_win": 0.7379518072289156,
+     "enemy_win": 0.25903614457831325,
+     "draw": 0.0030120481927710845
+    },
+    "level_21_40": {
+     "n": 702,
+     "player_win": 0.7264957264957265,
+     "enemy_win": 0.2706552706552707,
+     "draw": 0.002849002849002849
+    },
+    "level_41_60": {
+     "n": 682,
+     "player_win": 0.6129032258064516,
+     "enemy_win": 0.3812316715542522,
+     "draw": 0.005865102639296188
+    },
+    "level_61_plus": {
+     "n": 0
+    }
+   },
+   "per_seed": [
+    {
+     "seed": 1,
+     "n": 1024,
+     "player_win": 0.69140625,
+     "enemy_win": 0.3046875,
+     "draw": 0.00390625,
+     "player_win_ci95": [
+      0.662109375,
+      0.720703125
+     ],
+     "rounds": 5.458984375,
+     "player_hp_left": 0.4069103002548218,
+     "enemy_hp_left": 0.165908083319664
+    },
+    {
+     "seed": 2,
+     "n": 1024,
+     "player_win": 0.693359375,
+     "enemy_win": 0.302734375,
+     "draw": 0.00390625,
+     "player_win_ci95": [
+      0.6640625,
+      0.72265625
+     ],
+     "rounds": 5.4755859375,
+     "player_hp_left": 0.4074876010417938,
+     "enemy_hp_left": 0.16386541724205017
+    }
+   ],
+   "delta_vs_heuristic": {
+    "all": 0.0791,
+    "boss": 0.1207,
+    "non_boss": 0.0722,
+    "first": 0.0693,
+    "second": 0.0821,
+    "focus_1": 0.1654,
+    "focus_2": 0.0259,
+    "focus_3": 0.0265,
+    "main_resist_negative": 0.0699,
+    "main_resist_low": 0.0843,
+    "main_resist_high": 0.25,
+    "group_1": 0.1186,
+    "group_2": 0.1039,
+    "group_3": 0.0273,
+    "group_4": 0.0146,
+    "level_1_20": 0.0904,
+    "level_21_40": 0.1083,
+    "level_41_60": 0.0381,
+    "level_61_plus": null
+   }
+  }
+ },
+ "contract": {
+  "ppo": {
+   "checkpoint_loads": true,
+   "feat_dim_matches": true,
+   "global_dim_matches": true,
+   "checkpoint_config_matches_spells": true,
+   "checkpoint_config_matches_actors": true,
+   "tables_finite": true,
+   "pass_always_legal": true,
+   "actor_mask_matches_team": true,
+   "attn_mask_is_alive": true,
+   "observation_finite": true,
+   "value_finite": true
+  },
+  "es": {
+   "checkpoint_loads": true,
+   "feat_dim_matches": true,
+   "global_dim_matches": true,
+   "checkpoint_config_matches_spells": true,
+   "checkpoint_config_matches_actors": true,
+   "tables_finite": true,
+   "pass_always_legal": true,
+   "actor_mask_matches_team": true,
+   "attn_mask_is_alive": true,
+   "observation_finite": true,
+   "value_finite": true
+  }
+ },
+ "calibration": {
+  "ppo": {
+   "n": 1008,
+   "wins": 743,
+   "losses": 265,
+   "raw": {
+    "ece": 0.13213924282049214,
+    "brier": 0.14026122110439546,
+    "logloss": 0.7532889780967279,
+    "auc": 0.9134358857921326
+   },
+   "platt": {
+    "ece": 0.058897173152434715,
+    "brier": 0.10530647082599795,
+    "logloss": 0.33148259183610673,
+    "auc": 0.9134358857921326
+   },
+   "reliability": [
+    {
+     "range": [
+      0,
+      0.2
+     ],
+     "n": 315,
+     "predicted": 0.02326878160238266,
+     "actual": 0.3396825396825397
+    },
+    {
+     "range": [
+      0.2,
+      0.4
+     ],
+     "n": 37,
+     "predicted": 0.28140631318092346,
+     "actual": 0.5945945945945946
+    },
+    {
+     "range": [
+      0.4,
+      0.6
+     ],
+     "n": 37,
+     "predicted": 0.5000327825546265,
+     "actual": 0.7297297297297297
+    },
+    {
+     "range": [
+      0.6,
+      0.8
+     ],
+     "n": 37,
+     "predicted": 0.7111867666244507,
+     "actual": 0.7837837837837838
+    },
+    {
+     "range": [
+      0.8,
+      1.01
+     ],
+     "n": 582,
+     "predicted": 0.9834645986557007,
+     "actual": 0.9587628865979382
+    }
+   ],
+   "analytic": {
+    "ece": 0.04415941678509247,
+    "brier": 0.09849802114788067,
+    "logloss": 0.3103753460865132,
+    "auc": 0.9161037634103423
+   },
+   "blend": {
+    "ece": 0.04880986423786475,
+    "brier": 0.08942360981653069,
+    "logloss": 0.2889698567777951,
+    "auc": 0.9380427995685985
+   }
+  },
+  "es": {
+   "n": 1020,
+   "wins": 708,
+   "losses": 312,
+   "raw": {
+    "ece": 0.5277745734646906,
+    "brier": 0.5277714789949752,
+    "logloss": 8.440412510945386,
+    "auc": 0.595669409875552
+   },
+   "platt": {
+    "ece": 0.40634350507201256,
+    "brier": 0.39551678789407485,
+    "logloss": 5.976471215875343,
+    "auc": 0.40902248093135285
+   },
+   "reliability": [
+    {
+     "range": [
+      0,
+      0.2
+     ],
+     "n": 783,
+     "predicted": 7.034676673356444e-05,
+     "actual": 0.6500638569604087
+    },
+    {
+     "range": [
+      0.4,
+      0.6
+     ],
+     "n": 1,
+     "predicted": 0.5623025894165039,
+     "actual": 0.0
+    },
+    {
+     "range": [
+      0.8,
+      1.01
+     ],
+     "n": 236,
+     "predicted": 0.9999999403953552,
+     "actual": 0.8432203389830508
+    }
+   ],
+   "analytic": {
+    "ece": 0.06139192466366742,
+    "brier": 0.11172034330266081,
+    "logloss": 0.3530030074794353,
+    "auc": 0.9071657968687274
+   },
+   "blend": {
+    "ece": 0.06241190965288805,
+    "brier": 0.11460451054597623,
+    "logloss": 0.37210651670194916,
+    "auc": 0.9059363709353674
+   }
+  }
+ },
+ "elapsed_s": 184.7,
+ "notes": [
+  "The row slice defaults to the first rows, which the v3 resume run did not train on (it took the tail).",
+  "Calibration uses the initial state and the actual first team; the value is negated for enemy-first rows. Draws are excluded.",
+  "Simulation only. This is not live combat evidence."
+ ]
+}

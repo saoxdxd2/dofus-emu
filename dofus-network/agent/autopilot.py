@@ -55,9 +55,14 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
 from agent.observe import flatten
+from agent.awareness import character_key
+from agent.thinking import ThinkingLayer
+from agent.knowledge_context import enrich_observation, load_default_store
 from agent.controller import Controller, Decision
 from agent.verifier import READ_ONLY_TOOLS, Verdict, Verifier, changed_keys
 from agent.schema import TOOL_SCHEMA, validate_call
+from agent.recorder import _redact
+from combat.fight_estimate import FightAdvisor, FightOutcomeLog
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOG = REPO_ROOT / "trajectories" / "autopilot.jsonl"
@@ -79,6 +84,10 @@ LISTING_TOOLS = {"hdv.list", "inv.sell"}
 # That is what a live session showed: 30 steps of `quest.advance ok / noop`, the loop
 # cycling retry -> recover forever while the character was actually walking.
 SETTLE_TOOLS = {"quest.advance", "nav.goto", "fight.join", "farm.start"}
+
+# Tools that can start a fight. Both go through the estimator before the client
+# sees them, so an unattended fight only begins with a passing estimate.
+FIGHT_TOOLS = {"fight.join", "farm.start"}
 
 # How old a snapshot may be before the loop refuses to decide on it.
 #
@@ -142,6 +151,10 @@ class Step:
     session: str = ""
     source: str = "rule"          # which agent produced the label: rule | model | human
     at: float = field(default_factory=time.time)
+    # The claim and its settlement. A fight step without these cannot be used
+    # for calibration: the estimate that authorised it would be lost.
+    fight_estimate: Optional[Dict[str, Any]] = None
+    fight_outcome: Optional[Dict[str, Any]] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -183,6 +196,8 @@ class Autopilot:
         # The verifier answers "did that work"; the controller decides what the
         # actor does next, which is the part that used to be missing.
         self.preflight = preflight
+        self.world_poll_s = 3.0
+        self.world_report_s = 30.0
         self.settle_s = settle_s
         # Steps allowed without `objectives_completed` rising before the current quest
         # is considered stuck. Only applies to unlimited runs.
@@ -193,6 +208,10 @@ class Autopilot:
                                      seed=explore_seed)
         self.controller.set_objective("; ".join(goals))
         self.controller.load()
+        # After the fast policy repeats the same failure, this layer searches the
+        # untried interactions the current board supports. It never replays a
+        # recent call, and it yields back to the controller when exhausted.
+        self.thinking = ThinkingLayer()
         self.on_replan = None            # set by the host: (reason, decision) -> None
         self._forced_call: Optional[ToolCall] = None
         self._hinted = False
@@ -208,6 +227,30 @@ class Autopilot:
 
         self.steps: List[Step] = []
         self.open_listings: List[Dict[str, Any]] = []
+        self.knowledge = load_default_store()
+        # Agent 3's read-only answers: one shared estimator behind both the guard
+        # and the `fight.estimate` tool, so a step and its refusal cannot disagree.
+        self.fights = FightAdvisor()
+        self.fight_log = FightOutcomeLog()
+        self._character_at = 0.0     # last accepted sheet
+        self._character_try = 0.0    # last attempt, successful or not
+        self._character_key: Optional[str] = None
+        self.character_ttl_s = 60.0
+        self.character_retry_s = 30.0
+        # The page owns a fight once it starts. These track the wait so the loop
+        # can arm the in-page bot periodically and say how long the wait has been.
+        self._fight_arm_at = 0.0
+        self._fight_wait_since: Optional[float] = None
+        self._fight_wait_report = 0.0
+        # Board snapshots are the raw material for cell-level combat training:
+        # the in-page bot plays, but the board and the eventual outcome are
+        # still a labelled example for a plan ranker.
+        self.fight_board_path = self.log_path.with_name("fight_boards.jsonl")
+        self._fight_board_at = 0.0
+        self._fight_board_key: Optional[str] = None
+        executor = getattr(runtime, "executor", None)
+        if executor is not None and getattr(executor, "fights", None) is None:
+            executor.fights = self.fights
         self._last_obs: Optional[Dict[str, Any]] = None
         # Provenance of `_last_obs`, recorded with the step it justified. A
         # snapshot the loop reused must not be written down as if it arrived
@@ -216,6 +259,10 @@ class Autopilot:
         self._obs_age_ms: Optional[float] = None
         self._obs_source: str = "call"
         self._recent: List[str] = []
+        # Guard refusals are decisions, not crashes. A refused call is reported to
+        # the policy and the controller, and the loop takes another step; only the
+        # same refusal three times in a row is a dead end for the goal.
+        self._refusals: List[str] = []
         self._index = 0
         self._log_path().parent.mkdir(parents=True, exist_ok=True)
 
@@ -332,6 +379,8 @@ class Autopilot:
         has already moved on.
         """
         current, age_ms, source = self.runtime.current_observation()
+        current = enrich_observation(current, self.knowledge)
+        current = self._annotate_fights(current)
         if (isinstance(current, dict) and current and age_ms is not None
                 and age_ms <= max_age_ms):
             self._last_obs = current
@@ -356,6 +405,7 @@ class Autopilot:
             if result.ok and isinstance(getattr(result, "data", None), dict):
                 snap = result.data.get("snapshot") or result.data
         if isinstance(snap, dict) and snap:
+            snap = self._annotate_fights(enrich_observation(snap, self.knowledge))
             self._last_obs = snap
             self._obs_age_ms, self._obs_source = 0.0, "call"
             self.runtime.observe(snap, source="live")
@@ -369,6 +419,59 @@ class Autopilot:
             return current
         self._obs_source = "stale"
         return self._last_obs
+
+    # -- the fight advisor ---------------------------------------------------
+
+    def _refresh_character(self, force: bool = False) -> None:
+        """Keep the advisor's character sheet current, and cheap to keep.
+
+        The estimator needs stats, spells and HP, which only `debug.character`
+        provides. Polling it every step would be a second round trip per action;
+        the sheet only changes on a level-up or an equipment change. A 60-second
+        TTL is the fallback, and a character signature (level, max HP, breed,
+        spells, equipment) forces an immediate refresh when the player changes
+        something mid-run.
+        """
+        if self.dry_run:
+            return
+        sheet = self.fights.character
+        now = time.time()
+        signature = character_key(self._last_obs)
+        changed = (sheet is not None and self._character_key is not None
+                   and signature != self._character_key)
+        if not force and not changed and sheet is not None \
+                and (now - self._character_at) < self.character_ttl_s:
+            return
+        # A failed fetch must not count as a fresh sheet: without this gate the
+        # first attempt before login would lock fights out for the whole TTL.
+        if not force and not changed \
+                and (now - self._character_try) < self.character_retry_s:
+            return
+        if changed:
+            print("[autopilot] character sheet changed; refreshing")
+        executor = getattr(self.runtime, "executor", None)
+        reader = getattr(executor, "character_report", None)
+        if not callable(reader):
+            return
+        self._character_try = now
+        report = reader(instance=getattr(self.runtime, "instance", None))
+        if report is not None and self.fights.use_character_report(report):
+            self._character_at = now
+            self._character_key = signature
+
+    def _annotate_fights(self, obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Attach the per-group estimate the planner reads on this map.
+
+        The actor never sees this; it is the controller's view of "can I take
+        that group". Maps without monsters cost nothing, and the estimate is
+        cached by group composition, not recomputed per snapshot.
+        """
+        if not isinstance(obs, dict) or not obs or obs.get("in_fight"):
+            return obs
+        if not self.fights.groups(obs):
+            return obs
+        self._refresh_character()
+        return self.fights.annotate(obs)
 
     # -- guards --------------------------------------------------------------
 
@@ -395,7 +498,161 @@ class Autopilot:
         ok, err = validate_call(call.tool, call.args)
         if not ok:
             return f"refused: schema rejected the call ({err})"
+        if call.tool in FIGHT_TOOLS:
+            return self._fight_guard(call)
         return None
+
+    def _fight_guard(self, call: ToolCall) -> Optional[str]:
+        """Refuse a fight the estimator cannot say yes to.
+
+        The plan's rule is explicit: no unattended fight without a calibrated
+        estimate that clears the threshold, the HP-loss limit, and the boss
+        opt-in. A failed estimate is not permission to try.
+        """
+        observation = self._last_obs
+        if not isinstance(observation, dict) or not observation:
+            return "refused: no observation, so this fight cannot be estimated"
+        if observation.get("in_fight"):
+            return None  # already committed; the fight loop owns it now
+        self._refresh_character()
+        return self.fights.assess_call(call.tool, dict(call.args or {}), observation)
+
+    def _track_fight(self, before: Optional[Dict[str, Any]],
+                     after: Optional[Dict[str, Any]]):
+        """Write the estimate when a fight starts, and the outcome when it ends.
+
+        These two rows are the calibration set: the estimate is a falsifiable
+        claim, and the HP before/after is the evidence. A fight that starts
+        without an estimate (the session began mid-fight) writes nothing.
+        """
+        if not isinstance(after, dict):
+            return None, None
+        was = bool(isinstance(before, dict) and before.get("in_fight"))
+        now = bool(after.get("in_fight"))
+        if now and not was and self.fight_log.pending is None:
+            estimate = self.fights.last_estimate
+            if isinstance(estimate, dict) and estimate.get("features"):
+                self.fight_log.start(estimate, before, session=self.session)
+                return estimate, None
+            return None, None
+        # A fight can also end between two steps, so the resolution is driven
+        # by the pending claim, not by watching `in_fight` go false.
+        if self.fight_log.pending is not None and not now:
+            outcome = self.fight_log.resolve(after, session=self.session)
+            self._record_fight_outcome(outcome, after)
+            return None, outcome
+        return None, None
+
+    # -- combat board capture ------------------------------------------------
+
+    def _append_fight_log(self, record: Dict[str, Any]) -> None:
+        try:
+            self.fight_board_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.fight_board_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(_redact(record), ensure_ascii=False) + "\n")
+        except OSError as exc:
+            print(f"[autopilot] could not write fight board log: {exc}")
+
+    def _record_fight_board(self, goal: Optional[str]) -> None:
+        """Snapshot the live board once per distinct turn/HP/cell state.
+
+        This is read-only and deliberately separate from the action trajectory:
+        the in-page bot is playing, so the board is observation data for a
+        learned plan ranker, not a record of an action this agent chose.
+        """
+        executor = getattr(self.runtime, "executor", None)
+        reader = getattr(executor, "fight_state", None)
+        if not callable(reader):
+            return
+        try:
+            board = reader()
+        except Exception:  # noqa: BLE001 - a diagnostic read must not break the loop
+            return
+        if not isinstance(board, dict) or not board.get("in_fight"):
+            return
+        key = json.dumps({
+            "fight_id": board.get("fight_id"),
+            "round": board.get("round"),
+            "turn": board.get("current_fighter_id"),
+            "my_cell": board.get("my_cell"),
+            "my_turn": board.get("is_my_turn"),
+            "fighters": [
+                [f.get("id"), f.get("hp"), f.get("cell"), f.get("alive")]
+                for f in (board.get("fighters") or [])
+                if isinstance(f, dict)
+            ],
+        }, sort_keys=True)
+        if key == self._fight_board_key:
+            return
+        self._fight_board_key = key
+        self._append_fight_log({
+            "kind": "fight_board",
+            "run": self.session,
+            "goal": goal,
+            "board": board,
+        })
+
+    def _record_fight_outcome(self, outcome: Optional[Dict[str, Any]],
+                              observation: Optional[Dict[str, Any]]) -> None:
+        if not isinstance(outcome, dict):
+            return
+        self._append_fight_log({
+            "kind": "fight_outcome",
+            "run": self.session,
+            "outcome": outcome,
+            "observation": observation,
+        })
+
+    def _wait_out_fight(self, observation: Dict[str, Any],
+                        goal: Optional[str] = None) -> None:
+        """Hold the goal while the page plays the fight.
+
+        A fight is turn-based: most of its wall-clock time belongs to the
+        server and the animations, not to the policy. Issuing quest or travel
+        directives during that time cannot work, and a recovery order formed
+        before the fight (`safe.stop` in particular) disables the in-page bot
+        that clicks ready. So the loop stays here and re-observes; the fight
+        end is the signal to resume the goal on fresh state.
+
+        Fights also start without `fight.join` -- a dialog reply or a quest can
+        open one -- so auto-fight can be off when the first in-fight snapshot
+        arrives. `fight.join` with no target only arms the bot when a fight is
+        already open; it never attacks a second group.
+        """
+        if self._forced_call is not None:
+            self._forced_call = None
+            print("[autopilot] dropping a pre-fight recovery order; the fight "
+                  "owns the next action")
+        now = time.time()
+        if self._fight_wait_since is None:
+            self._fight_wait_since = now
+            self._fight_wait_report = now
+            print("[autopilot] in a fight; waiting out the turns instead of "
+                  "sending world actions")
+        if (not self.dry_run and not observation.get("auto_fight")
+                and now - self._fight_arm_at >= 5.0):
+            self._fight_arm_at = now
+            executor = getattr(self.runtime, "executor", None)
+            if executor is not None:
+                result = executor.execute(
+                    "fight.join", {}, instance=getattr(self.runtime, "instance", None),
+                    goal=goal, source="live", observation=observation,
+                    observation_age_ms=self._obs_age_ms,
+                    observation_source=self._obs_source)
+                data = getattr(result, "data", None)
+                armed = bool(isinstance(data, dict) and data.get("auto_fight"))
+                print("[autopilot] auto-fight was off; arm -> "
+                      + ("on" if armed else "not yet")
+                      + ("" if getattr(result, "ok", False)
+                         else " (" + str(getattr(result, "error", ""))[:80] + ")"))
+        if now - self._fight_wait_report >= 30.0:
+            self._fight_wait_report = now
+            print(f"[autopilot] fight wait {now - self._fight_wait_since:.0f}s; "
+                  f"auto_fight={bool(observation.get('auto_fight'))}")
+        if now - self._fight_board_at >= 1.0:
+            self._fight_board_at = now
+            self._record_fight_board(goal)
+        time.sleep(1.0)
 
     # -- labelling -----------------------------------------------------------
 
@@ -430,6 +687,10 @@ class Autopilot:
         try:
             return self._run()
         finally:
+            # A fight still open when the session ends is not a win or a loss;
+            # recording it as unresolved keeps it out of the calibration set
+            # without losing the fact that it happened.
+            self.fight_log.flush("session_end")
             self._clear_lock()
 
     def _run(self) -> Dict[str, Any]:
@@ -439,7 +700,8 @@ class Autopilot:
               f"{' (dry run)' if self.dry_run else ''}")
         if self.preflight:
             self._warn_if_no_bridge()
-            self._require_world()
+            if not self._require_world():
+                return self.summary("stopped while waiting for the world")
 
         for goal in self.goals:
             failures = 0
@@ -465,6 +727,22 @@ class Autopilot:
                     return self.summary(reason)
 
                 before = self.observe()
+                if isinstance(before, dict) and before.get("in_fight"):
+                    # The page is playing a turn-based fight. Planning a quest
+                    # step here was the live failure: `quest.advance` ran for
+                    # minutes against a board, and the ready click never came
+                    # because auto-fight had never been armed.
+                    self._wait_out_fight(before, goal)
+                    taken -= 1  # waiting is not one of the goal's directives
+                    continue
+                self._fight_wait_since = None
+                self._fight_wait_report = 0.0
+                self._fight_arm_at = 0.0
+                if self.fight_log.pending is not None:
+                    # The fight can end between two steps. Record its outcome
+                    # with this fresh observation instead of waiting for the
+                    # next action, which may never come if the run stops here.
+                    self._track_fight(None, before)
                 if self._forced_call is not None:
                     call = self._forced_call
                     self._forced_call = None
@@ -499,10 +777,62 @@ class Autopilot:
                 if refusal:
                     self._emit(Step(index=self._index, goal=goal, tool=call.tool,
                                     args=dict(call.args), ok=False, error=refusal,
-                                    latency_ms=0.0, verdict="blocked", note=refusal))
+                                    latency_ms=0.0, verdict="blocked", note=refusal,
+                                    session=self.session, source="guard"))
+                    self._index += 1
                     print(f"[autopilot] {refusal}")
+                    # A refusal is an outcome the policy must see. The planner only
+                    # learns a claim was server-counted or a target unreachable if
+                    # the refusal is reported back; before, it was dropped and the
+                    # same call was chosen again on the next step.
+                    reporter = getattr(self.runtime.policy, "note_result", None)
+                    if reporter is not None:
+                        try:
+                            reporter(call.tool, False, refusal, before or {})
+                        except Exception:  # noqa: BLE001 - history must not kill a run
+                            pass
+                    decision = self.controller.on_step(
+                        Verdict("blocked", 0.9, None, False, "guard"),
+                        call.tool, False, refusal, before, None)
+                    self.controller.save()
+                    self._emit_decision(decision, call, None, before)
+                    if decision.action == "replan":
+                        self._apply_decision(decision, goal, call)
+                    # A guard refusal is deterministic: no recovery call can turn
+                    # it into a yes, and the controller's recovery hint (a plain
+                    # snapshot) would reset the refusal streak below. Let the
+                    # planner choose again instead.
+                    key = (f"{call.tool}|"
+                           f"{json.dumps(call.args, sort_keys=True, ensure_ascii=False)}|"
+                           f"{refusal}")
+                    if self._refusals and self._refusals[-1] == key:
+                        self._refusals.append(key)
+                    else:
+                        self._refusals = [key]
+                    if len(self._refusals) < 3:
+                        if self.interval:
+                            time.sleep(self.interval)
+                        continue
+                    # The same refused call three times in a row is a dead end:
+                    # the report above did not change the plan. Retire the quest
+                    # it belongs to and let the next plan pass choose another,
+                    # instead of ending the whole run as a silent success.
+                    self._refusals.clear()
+                    if _tutorial_active(before):
+                        print("[autopilot] the tutorial is holding this step open; "
+                              "waiting instead of abandoning the goal")
+                        time.sleep(1.0)
+                        continue
+                    qid = self._retire_named_quest(call, before)
+                    if qid is not None:
+                        print(f"[autopilot] retiring quest {qid}; taking another")
+                        continue
+                    print(f"[autopilot] the guard refuses every route to {goal!r}; "
+                          "moving on")
                     break
 
+                # A call that made it past the guard ends any refusal streak.
+                self._refusals.clear()
                 if self.dry_run:
                     self._emit(Step(index=self._index, goal=goal, tool=call.tool,
                                     args=dict(call.args), ok=True, error=None,
@@ -537,6 +867,7 @@ class Autopilot:
                 data = getattr(result, "data", None)
                 snap = data.get("snapshot") if isinstance(data, dict) else None
                 if isinstance(snap, dict) and snap:
+                    snap = enrich_observation(snap, self.knowledge)
                     adopt = getattr(self.runtime, "note_observation", None)
                     if callable(adopt):
                         adopt(snap)
@@ -591,6 +922,8 @@ class Autopilot:
                                          + (f" ({reason})" if reason else ""))
                         break
 
+                fight_estimate, fight_outcome = self._track_fight(before, after)
+
                 v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
                 verdict = v.verdict
 
@@ -607,6 +940,10 @@ class Autopilot:
                         pass
 
                 note = ""
+                dialog_decision = getattr(self.runtime.policy, "last_dialog_decision", None)
+                if isinstance(dialog_decision, dict) and (before or {}).get("in_dialog"):
+                    note = ("dialog_%s: %s" % (dialog_decision.get("status"),
+                                               dialog_decision.get("reason")))
                 if result.ok and call.tool in LISTING_TOOLS:
                     data = result.data if isinstance(result.data, dict) else {}
                     source = str(data.get("price_source") or "")
@@ -648,6 +985,8 @@ class Autopilot:
                     observation_map=_map_of(after),
                     obs_before=_compact(before),
                     obs_after=_compact(after),
+                    fight_estimate=fight_estimate,
+                    fight_outcome=fight_outcome,
                     note=note,
                 )
                 self._emit(step)
@@ -862,25 +1201,65 @@ class Autopilot:
               " would look like it finished.")
         raise SystemExit(3)
 
-    def _require_world(self) -> None:
-        """Refuse to run when the character is not in the game world.
+    def _require_world(self) -> bool:
+        """Wait until the character is in the game world, then start.
 
-        The client stays *connected* at character selection. There is no map, no cell
-        and no NPC, so every directive answers ok and changes nothing — the loop then
-        burns its budget, decides the plan is stuck, and exits 0. That is
-        indistinguishable from a broken agent, and it is the state this project spent a
-        night debugging. One snapshot settles it.
+        The client stays *connected* at character selection. There is no map, no
+        cell and no NPC, so every directive answers ok and changes nothing — the
+        loop then burns its budget, decides the plan is stuck, and exits 0. That
+        is indistinguishable from a broken agent, and it is the state this
+        project spent a night debugging.
+
+        Being at the login screen when the AI is switched on is a wait, not an
+        end: the human signs in when they can, which can take minutes. There is
+        no deadline here. The wait ends when a map appears, when the operator
+        stops the run, or when the client stops answering — and the last two are
+        reported as such instead of looking like a finished session.
         """
-        obs = self.observe()
-        if not obs:
-            return
-        pos = obs.get("position") or {}
-        if obs.get("in_world") is False or pos.get("map_id") in (None, 0):
-            print("[autopilot] FATAL: the character is not in the world.")
-            print("[autopilot]   The client is connected but reports no map and no cell,"
-                  " which is the character-selection screen.")
-            print("[autopilot]   Pick a character and stand on a map, then start again.")
-            raise SystemExit(4)
+        if self.dry_run:
+            return True
+        waiting_since = time.time()
+        last_report = waiting_since
+        announced = False
+        while True:
+            reason = self._should_stop()
+            if reason:
+                print("[autopilot] stopping while waiting for the world: " + reason)
+                return False
+            obs = self.observe()
+            pos = obs.get("position") if isinstance(obs, dict) else None
+            map_id = pos.get("map_id") if isinstance(pos, dict) else None
+            if isinstance(obs, dict) and obs and obs.get("in_world") is not False \
+                    and map_id not in (None, 0):
+                if announced:
+                    print("[autopilot] the character is in the world; starting")
+                return True
+            # A stale snapshot with no bridge behind it is a closed client, not a
+            # slow login; waiting there would park the run forever.
+            if self._obs_source != "call" and not self._bridge_alive():
+                print("[autopilot] the client stopped answering while waiting for "
+                      "the world; stopping")
+                return False
+            now = time.time()
+            if not announced:
+                print("[autopilot] the character is not in the world yet (login "
+                      "screen or loading); waiting until a map appears")
+                announced = True
+                last_report = now
+            elif now - last_report >= self.world_report_s:
+                print("[autopilot] still waiting for the world (%ds); log in and "
+                      "stand on a map" % int(now - waiting_since))
+                last_report = now
+            time.sleep(self.world_poll_s)
+
+    @staticmethod
+    def _bridge_alive() -> bool:
+        try:
+            from agent.bridge import reachable
+
+            return bool(reachable())
+        except Exception:  # noqa: BLE001 - a probe must not end a run
+            return True
 
     def _retire_named_quest(self, call: Any, before: Optional[Dict[str, Any]]) -> Optional[int]:
         """Retire the quest a stuck call was about, not just the first active one.
@@ -933,6 +1312,15 @@ class Autopilot:
         if decision.action == "replan":
             self.replan_requested += 1
             print(f"[autopilot] REPLAN ({decision.cause}): {decision.reason}")
+            thought = self.thinking.propose(
+                goal, self._last_obs, self.steps[-8:], decision)
+            if thought is not None:
+                self._forced_call = ToolCall(
+                    tool=thought.tool, args=dict(thought.args), goal=goal)
+                print(f"[autopilot] THINK ({decision.cause}): {thought.why} "
+                      f"-> {thought.tool} {thought.args}")
+                return "think"
+            print("[autopilot] THINK: no untried alternative; falling back to the scheduler")
             if self.on_replan is not None:
                 try:
                     self.on_replan(decision.reason, decision)
@@ -1029,8 +1417,17 @@ def _compact(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not isinstance(obs, dict):
         return {}
     flat = flatten(obs)
-    keys = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size")
+    keys = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
+            "in_dialog", "in_fight", "objectives_completed")
     out = {k: flat[k] for k in keys if k in flat}
+    for key in ("current_objective", "ready_objectives", "dialog", "knowledge"):
+        if flat.get(key) is not None:
+            out[key] = flat[key]
+    # The planner's view of the map's groups. Bounded: a full map can list
+    # dozens, and a step row is not a snapshot.
+    estimates = flat.get("fight_estimates")
+    if isinstance(estimates, list) and estimates:
+        out["fight_estimates"] = estimates[:8]
     tutorial = flat.get("tutorial")
     if isinstance(tutorial, dict) and tutorial.get("active"):
         out["tutorial"] = {"active": True, "quest_id": tutorial.get("quest_id"),
