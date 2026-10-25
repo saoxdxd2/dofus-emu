@@ -30,7 +30,7 @@ from agent.observe import flatten
 from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E402
                             KILL_TYPES, MAP_TYPES, ObsTracker, TALK_TYPES,
                             _params, direction_hint, known_map,
-                            objective_type, required_map, travel_hops)
+                            required_map, travel_hops)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"

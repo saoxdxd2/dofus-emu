@@ -14,10 +14,9 @@ Provides:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
-from .world_graph import Direction, DofusWorldGraph, MapCoord, NavigationStep
+from .world_graph import DofusWorldGraph, NavigationStep
 
 
 @dataclass

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 def _digest(value: Any) -> str:
@@ -107,10 +107,13 @@ def _scene_components(obs: Dict[str, Any]) -> Dict[str, Any]:
         (str(key), value) for key, value in active.items()) \
         if isinstance(active, dict) else []
     ready = obs.get("ready_objectives") or []
-    ready_key = sorted(
-        (_objective_key(item).get("id"), _objective_key(item).get("quest_id"),
-         _objective_key(item).get("status"))
-        for item in ready if isinstance(item, dict))
+    ready_key = []
+    for item in ready:
+        if not isinstance(item, dict):
+            continue
+        key = _objective_key(item)
+        ready_key.append((key.get("id"), key.get("quest_id"), key.get("status")))
+    ready_key.sort()
     return {
         "map_id": _map_id(obs),
         "in_fight": bool(obs.get("in_fight")),

@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import json
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from agent.features import (DELIVER_TYPES, FIGHT_TYPES, KILL_TYPES,  # noqa: F401
                             MAP_TYPES, OPEN_KILL_TYPES, TALK_TYPES,

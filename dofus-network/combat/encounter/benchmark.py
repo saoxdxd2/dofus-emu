@@ -28,12 +28,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import pickle
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -42,8 +41,7 @@ import numpy as np
 from combat.encounter import model
 from combat.encounter.env import Config, action_masks, initial_state, observe
 from combat.encounter.labels import _enemy_facts, _player_facts
-from combat.encounter.train import (SPEC_KEYS, TABLE_KEYS, load_encounters,
-                                    make_baseline_rollout, make_eval_rollout)
+from combat.encounter.train import (SPEC_KEYS, TABLE_KEYS, make_baseline_rollout, make_eval_rollout)
 from combat.fight_estimate import estimate_from_facts, fit_calibrator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent

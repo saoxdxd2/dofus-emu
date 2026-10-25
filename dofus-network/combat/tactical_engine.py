@@ -10,18 +10,16 @@ Handles advanced game mechanics beyond single-turn greedy damage:
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from combat.damage_calculator import (
     CharacterStats,
     DofusDamageCalculator,
-    SpellDamageResult,
     TargetStats,
 )
-from data.game_data_extractor import DamageEffect, GameDataRepository, MonsterInfo, SpellInfo
+from data.game_data_extractor import SpellInfo
 
 
 class TacticalStance(Enum):

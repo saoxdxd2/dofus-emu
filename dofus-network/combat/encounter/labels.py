@@ -122,7 +122,6 @@ def export(args: argparse.Namespace) -> int:
     final = rollout(params, state0, tables, jax.random.PRNGKey(args.seed))
     winner = np.asarray(final["winner"])
 
-    player_team = jnp.zeros((take,), dtype=jnp.int32)
     acting_team = state0["acting_team"]
     obs, glob, mask = observe(state0, tables, cfg, acting_team=acting_team)
     acting_values = np.asarray(

@@ -20,7 +20,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
-from typing import Any
+from typing import Any, List
 import urllib.parse
 import torch
 import torch.nn as nn
@@ -31,19 +31,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from networkhealth.inference import ForecastResult, MultiInstanceNetworkHealth, Observation
-from data.game_data_extractor import GameDataRepository, MonsterGrade, MonsterInfo, SpellInfo
+from networkhealth.inference import MultiInstanceNetworkHealth
+from data.game_data_extractor import GameDataRepository, SpellInfo
 from combat.damage_calculator import (
     CharacterStats,
     DofusDamageCalculator,
-    OptimalRotationResult,
-    SpellDamageResult,
     SpellRotationOptimizer,
     TargetStats,
 )
-from combat.tactical_engine import TacticalCombatEngine, TacticalStance, TacticalTurnPlan
+from combat.tactical_engine import TacticalCombatEngine
 from combat.episodic_memory import EpisodicSkillMemory
-from navigation.world_graph import DofusWorldGraph, CellPathfinder
+from navigation.world_graph import DofusWorldGraph
 from navigation.resource_graph import ResourceKnowledgeGraph
 from navigation.quest_graph import QuestKnowledgeGraph
 from navigation.nlp_intent_engine import DofusNLPEngine

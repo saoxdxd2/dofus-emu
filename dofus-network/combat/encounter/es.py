@@ -24,14 +24,13 @@ import json
 import pickle
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import jax
 import jax.numpy as jnp
 from jax import flatten_util
 import numpy as np
 
-from combat.encounter import model
 from combat.encounter.env import Config, initial_state
 from combat.encounter.train import (TABLE_KEYS, load_encounters,
                                     make_eval_rollout)

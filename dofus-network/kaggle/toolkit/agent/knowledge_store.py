@@ -27,7 +27,7 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Higher wins a conflict. Same discipline as label weighting: a human correction
 # outranks what the loop inferred, and an observation outranks a guess.
@@ -35,6 +35,8 @@ SOURCE_RANK = {"human": 3, "observed": 2, "derived": 1, "guess": 0}
 
 DEFAULT_TTL_DAYS = 45          # unused for this long and it is dropped
 DISPUTES_TO_DROP = 3           # contradicted this many times and it is dropped
+COMPACT_BYTES = 8 * 1024 * 1024
+COMPACT_EVERY = 512            # writes between size checks
 
 
 def _now() -> float:
@@ -69,6 +71,7 @@ class KnowledgeStore:
             os.environ.get("LOCALAPPDATA", str(Path.home()))) / "DofusFarm" / "knowledge.jsonl"
         self.ttl = ttl_days * 86400.0
         self._facts: Dict[Tuple[str, str], Fact] = {}
+        self._writes = 0
         self.load()
 
     # -- persistence -------------------------------------------------------
@@ -99,6 +102,16 @@ class KnowledgeStore:
         except OSError:
             pass
 
+    def _maybe_compact(self) -> None:
+        self._writes += 1
+        if self._writes % COMPACT_EVERY:
+            return
+        try:
+            if self.path.exists() and self.path.stat().st_size >= COMPACT_BYTES:
+                self.compact()
+        except OSError:
+            pass
+
     def compact(self) -> int:
         """Rewrite the log with only the live facts. Returns how many were dropped.
 
@@ -122,6 +135,7 @@ class KnowledgeStore:
     def remember(self, kind: str, key: str, value: Any, source: str = "observed",
                  confidence: float = 0.5) -> Tuple[bool, str]:
         """Add or update a fact. Returns (changed, note)."""
+        self._maybe_compact()
         if not kind or not key:
             return False, "kind and key are required"
         if source not in SOURCE_RANK:

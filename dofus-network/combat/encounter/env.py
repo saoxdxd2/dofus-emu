@@ -26,7 +26,7 @@ acting team), which is exactly ``fight.estimate``'s missing number.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp

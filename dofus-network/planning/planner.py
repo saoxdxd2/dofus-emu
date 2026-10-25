@@ -20,12 +20,10 @@ actually asks.
 
 from __future__ import annotations
 
-import heapq
-import itertools
 import math
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from planning.economy import CostModel, Economy, Estimate, PlayerState
 from planning.kb import KnowledgeBase
@@ -410,7 +408,7 @@ class Planner:
                 branches.append(craft)
 
         if not branches:
-            branches.append(self._quest_only(item))
+            branches.append(self._quest_only(item, qty))
 
         branches.sort(key=lambda node: node.minutes)
         if self.ranker is not None:
@@ -535,7 +533,7 @@ class Planner:
                   "item_id": item.id, "qty": qty, "ingredients": len(item.recipe)},
         )
 
-    def _quest_only(self, item) -> PlanNode:
+    def _quest_only(self, item, qty: int = 1) -> PlanNode:
         """No price, no drops, no recipe: the item is locked behind a chain."""
         quests = self.kb.quests_for_level(max(1, item.level), limit=3)
         return PlanNode(

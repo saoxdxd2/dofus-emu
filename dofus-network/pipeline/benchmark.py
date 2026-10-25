@@ -9,6 +9,7 @@ Runs both models on the same Dofus decision suite and produces:
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
 import time
 from pathlib import Path

@@ -20,15 +20,14 @@ import pickle
 import random
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from combat.battle_solver import (BattleSolver, Board, CellMap, Fighter,
-                                  LiveEffect, LiveSpell, _POINTS)
-from combat.encounter import model
+                                  LiveEffect, LiveSpell)
 from combat.encounter.build_dataset import ELEMENTS
 from combat.encounter.env import Config
 from combat.plan_value import rank_plans, score_plan

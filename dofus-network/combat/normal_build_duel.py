@@ -33,7 +33,7 @@ from combat.battle_solver import BattleSolver
 from combat.encounter.build_dataset import load_class_loadouts
 from combat.duel import (CLASS_NAMES, DuelState, Duelist, _live_spell,
                          engaged_cells, load_map, make_two_ply_policy,
-                         play_game, random_policy, solver_policy,
+                         play_game, solver_policy,
                          value_policy)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

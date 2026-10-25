@@ -14,7 +14,7 @@ order; buying spends kamas with no undo, so the advisor stops at a signal.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from statistics import median
 from typing import Any, Dict, List, Optional, Sequence
 

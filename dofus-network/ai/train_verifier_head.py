@@ -24,10 +24,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -83,7 +82,6 @@ def build_model(n_features: int, hidden: int, dropout: float):
 
 
 def evaluate(model, x, y) -> Dict[str, Any]:
-    import numpy as np
     import torch
 
     with torch.no_grad():

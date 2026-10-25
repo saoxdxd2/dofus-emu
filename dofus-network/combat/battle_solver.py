@@ -27,10 +27,11 @@ validate every chosen action against the client and re-plan on disagreement.
 
 from __future__ import annotations
 
-import heapq
 import math
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple
+from functools import cached_property, lru_cache
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from combat.damage_calculator import (
     CharacterStats,
@@ -131,6 +132,62 @@ def line_points(x1: int, y1: int, x2: int, y2: int) -> List[Tuple[int, int]]:
     return out
 
 
+@lru_cache(maxsize=4096)
+def _range_ring(flags: Tuple[int, ...], origin: int, min_range: int,
+                max_range: int, cast_in_line: bool,
+                cast_in_diagonal: bool) -> FrozenSet[int]:
+    """Cached spell range ring for one map/geometry.
+
+    The same ring is requested for the same map and spell on every fight turn.
+    Keying the cache by the cell flags keeps it correct when a caller supplies a
+    different (or shorter) map, while a repeated request reuses the flags tuple
+    and pays only a dictionary lookup.
+    """
+    if max_range < 0 or min_range > max_range:
+        return frozenset()
+    x, y = cell_point(origin)
+    limit = min(len(flags), NB_CELLS)
+    out: List[int] = []
+    append = out.append
+
+    if min_range == 0:
+        cell = _POINTS.get((x, y))
+        if cell is not None and cell < limit:
+            append(cell)
+    for radius in range(max(1, min_range), max_range + 1):
+        if cast_in_line and cast_in_diagonal:
+            points = (
+                (x - radius, y), (x + radius, y),
+                (x, y - radius), (x, y + radius),
+                (x - radius, y - radius), (x - radius, y + radius),
+                (x + radius, y - radius), (x + radius, y + radius),
+            )
+        elif cast_in_line:
+            points = ((x - radius, y), (x + radius, y),
+                      (x, y - radius), (x, y + radius))
+        elif cast_in_diagonal:
+            points = ((x - radius, y - radius), (x - radius, y + radius),
+                      (x + radius, y - radius), (x + radius, y + radius))
+        else:
+            # Diamond perimeter: |dx| + |dy| == radius. Inlined because the
+            # solver asks for a ring for every reachable cell.
+            for dx in range(-radius, radius + 1):
+                dy = radius - abs(dx)
+                cell = _POINTS.get((x + dx, y - dy))
+                if cell is not None and cell < limit:
+                    append(cell)
+                if dy:
+                    cell = _POINTS.get((x + dx, y + dy))
+                    if cell is not None and cell < limit:
+                        append(cell)
+            continue
+        for px, py in points:
+            cell = _POINTS.get((px, py))
+            if cell is not None and cell < limit:
+                append(cell)
+    return frozenset(out)
+
+
 @dataclass(frozen=True)
 class CellMap:
     """Cell flags for one map, in the client's own bit encoding."""
@@ -174,13 +231,15 @@ class CellMap:
         bx, by = cell_point(b)
         line = line_points(ax, ay, bx, by)
         last = len(line) - 1
+        flags = self.flags
+        limit = min(len(flags), NB_CELLS)
         for index, point in enumerate(line):
             cell = _POINTS.get(point)
-            if cell is None or not self.valid(cell):
+            if cell is None or cell >= limit:
                 return False
             if index < last and cell in occupied:
                 return False
-            if not self.sees(cell):
+            if (flags[cell] & 2) != 2:
                 return False
         return True
 
@@ -193,76 +252,36 @@ class CellMap:
         """
         if not self.walkable(start):
             return {}
+        # Every step costs exactly one MP, so breadth-first order is already the
+        # cheapest order. A heap here paid O(V log V) for nothing.
         best: Dict[int, float] = {start: 0.0}
-        queue: List[Tuple[float, int]] = [(0.0, start)]
+        queue: deque = deque([start])
         while queue:
-            cost, cell = heapq.heappop(queue)
-            if cost > best.get(cell, math.inf) + _EPS:
+            cell = queue.popleft()
+            cost = best[cell]
+            if cost + 1.0 > mp + _EPS:
                 continue
             x, y = cell_point(cell)
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nxt = _POINTS.get((x + dx, y + dy))
                 if nxt is None or not self.walkable(nxt) or nxt in occupied:
                     continue
-                new_cost = cost + 1.0
-                if new_cost > mp + _EPS:
+                if nxt in best:
                     continue
-                if new_cost + _EPS < best.get(nxt, math.inf):
-                    best[nxt] = new_cost
-                    heapq.heappush(queue, (new_cost, nxt))
+                best[nxt] = cost + 1.0
+                queue.append(nxt)
         return best
 
     def range_cells(self, origin: int, min_range: int, max_range: int,
                     cast_in_line: bool = False,
-                    cast_in_diagonal: bool = False) -> List[int]:
-        """Port of getSpellRange: a ring, not a filled area."""
-        if max_range < 0 or min_range > max_range:
-            return []
-        x, y = cell_point(origin)
-        points: List[Tuple[int, int]] = []
-        if min_range == 0:
-            points.append((x, y))
+                    cast_in_diagonal: bool = False) -> FrozenSet[int]:
+        """Port of getSpellRange: a ring, not a filled area.
 
-        def diamond(radius: int) -> Iterable[Tuple[int, int]]:
-            for r in range(radius):
-                s = radius - r
-                yield x + r, y - s
-                yield x + s, y + r
-                yield x - r, y + s
-                yield x - s, y - r
-
-        def cross(radius: int) -> Iterable[Tuple[int, int]]:
-            yield x - radius, y
-            yield x + radius, y
-            yield x, y - radius
-            yield x, y + radius
-
-        def diagonal(radius: int) -> Iterable[Tuple[int, int]]:
-            yield x - radius, y - radius
-            yield x - radius, y + radius
-            yield x + radius, y - radius
-            yield x + radius, y + radius
-
-        for radius in range(max(1, min_range), max_range + 1):
-            if cast_in_line and cast_in_diagonal:
-                points.extend(cross(radius))
-                points.extend(diagonal(radius))
-            elif cast_in_line:
-                points.extend(cross(radius))
-            elif cast_in_diagonal:
-                points.extend(diagonal(radius))
-            else:
-                points.extend(diamond(radius))
-
-        out: List[int] = []
-        seen = set()
-        for point in points:
-            cell = _POINTS.get(point)
-            if cell is None or not self.valid(cell) or cell in seen:
-                continue
-            seen.add(cell)
-            out.append(cell)
-        return out
+        Rings are cached per (map flags, spell geometry): a fight asks for the
+        same ring for every reachable cell on every turn.
+        """
+        return _range_ring(self.flags, origin, min_range, max_range,
+                           cast_in_line, cast_in_diagonal)
 
 
 # ---------------------------------------------------------------------------
@@ -317,13 +336,63 @@ class LiveSpell:
     zone_size: Optional[int] = None
     zone_shape: Optional[str] = None
 
-    @property
-    def damage_effects(self) -> List[LiveEffect]:
-        return [e for e in self.effects if e.kind in ("damage", "steal")]
+    # The solver asks these thousands of times per plan; recomputing the filter
+    # from the effect tuple each time was measurable. The spell is immutable, so
+    # the first answer is the only answer.
+    @cached_property
+    def damage_effects(self) -> Tuple[LiveEffect, ...]:
+        return tuple(e for e in self.effects if e.kind in ("damage", "steal"))
 
-    @property
-    def heal_effects(self) -> List[LiveEffect]:
-        return [e for e in self.effects if e.kind == "heal"]
+    @cached_property
+    def heal_effects(self) -> Tuple[LiveEffect, ...]:
+        return tuple(e for e in self.effects if e.kind == "heal")
+
+    def _damage_info(self, wanted: Tuple[str, ...]) -> Optional[SpellInfo]:
+        normal = [e for e in self.effects if e.kind in wanted]
+        if not normal:
+            return None
+        critical: Dict[str, List[LiveEffect]] = {}
+        for effect in self.critical_effects:
+            if effect.kind in wanted:
+                critical.setdefault(effect.element or "HEAL", []).append(effect)
+        damage_effects: List[DamageEffect] = []
+        for effect in normal:
+            pool = critical.get(effect.element or "HEAL") or []
+            crit = pool.pop(0) if pool else None
+            damage_effects.append(DamageEffect(
+                element=effect.element or "NEUTRAL",
+                min_roll=effect.min_roll,
+                max_roll=effect.max_roll,
+                crit_min_roll=crit.min_roll if crit else 0,
+                crit_max_roll=crit.max_roll if crit else 0,
+            ))
+        return SpellInfo(
+            id=self.id,
+            name_fr=self.name,
+            name_en=self.name,
+            name_es="",
+            breed_id=0,
+            level=1,
+            ap_cost=max(1, self.ap_cost),
+            min_range=self.min_range,
+            max_range=self.max_range,
+            cast_in_line=self.cast_in_line,
+            cast_in_diagonal=self.cast_in_diagonal,
+            cast_test_los=self.requires_los,
+            effects=damage_effects,
+            crit_rate_percent=self.critical_hit_probability or 0.0,
+        )
+
+    # The damage/hit conversion depends only on the spell. Building the effect
+    # list, critical pairing and SpellInfo on every (cell, target) estimate was
+    # repeated work in the solver, the observation builder and the live policy.
+    @cached_property
+    def damage_info(self) -> Optional[SpellInfo]:
+        return self._damage_info(("damage", "steal"))
+
+    @cached_property
+    def heal_info(self) -> Optional[SpellInfo]:
+        return self._damage_info(("heal",))
 
     @property
     def has_damage(self) -> bool:
@@ -362,13 +431,25 @@ class Fighter:
     creature_generic_id: Optional[int] = None
     spells: Tuple[LiveSpell, ...] = ()
 
+    @cached_property
+    def _percent_map(self) -> Dict[str, int]:
+        return dict(self.resist_percent)
+
+    @cached_property
+    def _fixed_map(self) -> Dict[str, int]:
+        return dict(self.resist_fixed)
+
     def _percent(self, element: str) -> int:
-        return dict(self.resist_percent).get(element.lower(), 0)
+        return self._percent_map.get(element.lower(), 0)
 
     def _fixed(self, element: str) -> int:
-        return dict(self.resist_fixed).get(element.lower(), 0)
+        return self._fixed_map.get(element.lower(), 0)
 
     def target_stats(self) -> TargetStats:
+        return self._target_stats
+
+    @cached_property
+    def _target_stats(self) -> TargetStats:
         return TargetStats(
             name=self.name or str(self.id),
             max_hp=self.max_hp,
@@ -757,12 +838,15 @@ class BattleSolver:
         occupied = frozenset(f.cell for f in board.fighters if f.alive and f.id != me.id)
         template_cache: Dict[int, List[_CastTemplate]] = {}
         reach_cache: Dict[Tuple[int, int], Dict[int, float]] = {}
+        los_cache: Dict[Tuple[int, int], bool] = {}
+        estimate_cache: Dict[Tuple[int, int, str], Any] = {}
         character = board.character_stats()
 
         def templates(cell: int) -> List[_CastTemplate]:
             if cell in template_cache:
                 return template_cache[cell]
-            out = self._templates(board, cell, character, occupied)
+            out = self._templates(board, cell, character, occupied, los_cache,
+                                  estimate_cache)
             template_cache[cell] = out
             return out
 
@@ -897,13 +981,17 @@ class BattleSolver:
         return plan
 
     def _templates(self, board: Board, cell: int, character: CharacterStats,
-                   occupied: FrozenSet[int]) -> List[_CastTemplate]:
+                   occupied: FrozenSet[int],
+                   los_cache: Optional[Dict[Tuple[int, int], bool]] = None,
+                   estimate_cache: Optional[Dict[Tuple[int, int, str], Any]] = None
+                   ) -> List[_CastTemplate]:
         me = board.me
         assert me is not None
         out: List[_CastTemplate] = []
-        enemy_ids = {f.id for f in board.enemies}
+        targets = [f for f in board.fighters if f.alive]
         if not board.cells.walkable(cell):
             return out
+        my_id = board.my_id
         for spell in board.spells:
             if spell.ap_cost <= 0 or not spell.castable:
                 continue
@@ -911,29 +999,52 @@ class BattleSolver:
                 continue
             if spell.need_free_cell:
                 continue
-            in_range = set(board.cells.range_cells(
+            # A ring costs ~30 us; a Manhattan pre-check costs a few
+            # comparisons and rejects the common case where every target is
+            # outside the spell's reach from this cell.
+            if not any(board.cells.distance(cell, target.cell) <= spell.max_range
+                       for target in targets):
+                continue
+            in_range = board.cells.range_cells(
                 cell, spell.min_range, spell.max_range,
-                spell.cast_in_line, spell.cast_in_diagonal))
+                spell.cast_in_line, spell.cast_in_diagonal)
             if not in_range:
                 continue
-            targets = [f for f in board.fighters if f.alive]
             for target in targets:
                 if target.cell not in in_range:
                     continue
-                if spell.requires_los and not board.cells.has_los(
-                        cell, target.cell, occupied):
-                    continue
-                is_enemy = target.id in enemy_ids
+                if spell.requires_los:
+                    pair = (cell, target.cell)
+                    visible = los_cache.get(pair) if los_cache is not None else None
+                    if visible is None:
+                        visible = board.cells.has_los(cell, target.cell, occupied)
+                        if los_cache is not None:
+                            los_cache[pair] = visible
+                    if not visible:
+                        continue
+                is_enemy = target.team != "player" and target.id != my_id
                 damage = 0.0
                 healing = 0.0
                 steal_heal = 0.0
                 if is_enemy and spell.has_damage:
-                    result = self._estimate(board, spell, character, target, "damage")
+                    key_damage = (spell.id, target.id, "damage")
+                    if estimate_cache is not None and key_damage in estimate_cache:
+                        result = estimate_cache[key_damage]
+                    else:
+                        result = self._estimate(board, spell, character, target, "damage")
+                        if estimate_cache is not None:
+                            estimate_cache[key_damage] = result
                     damage = result.expected_value if result else 0.0
                     if any(e.kind == "steal" for e in spell.damage_effects):
                         steal_heal = damage
                 elif not is_enemy and spell.has_heal:
-                    result = self._estimate(board, spell, character, target, "heal")
+                    key_heal = (spell.id, target.id, "heal")
+                    if estimate_cache is not None and key_heal in estimate_cache:
+                        result = estimate_cache[key_heal]
+                    else:
+                        result = self._estimate(board, spell, character, target, "heal")
+                        if estimate_cache is not None:
+                            estimate_cache[key_heal] = result
                     healing = result.expected_value if result else 0.0
                 elif not is_enemy and target.id == me.id and spell.has_damage:
                     continue
@@ -952,41 +1063,9 @@ class BattleSolver:
     @staticmethod
     def _estimate(board: Board, spell: LiveSpell, character: CharacterStats,
                   target: Fighter, mode: str) -> Optional[SpellDamageResult]:
-        wanted = ("damage", "steal") if mode == "damage" else ("heal",)
-        normal = [e for e in spell.effects if e.kind in wanted]
-        if not normal:
+        info = spell.damage_info if mode == "damage" else spell.heal_info
+        if info is None:
             return None
-        critical: Dict[str, List[LiveEffect]] = {}
-        for effect in spell.critical_effects:
-            if effect.kind in wanted:
-                critical.setdefault(effect.element or "HEAL", []).append(effect)
-        damage_effects: List[DamageEffect] = []
-        for effect in normal:
-            pool = critical.get(effect.element or "HEAL") or []
-            crit = pool.pop(0) if pool else None
-            damage_effects.append(DamageEffect(
-                element=effect.element or "NEUTRAL",
-                min_roll=effect.min_roll,
-                max_roll=effect.max_roll,
-                crit_min_roll=crit.min_roll if crit else 0,
-                crit_max_roll=crit.max_roll if crit else 0,
-            ))
-        info = SpellInfo(
-            id=spell.id,
-            name_fr=spell.name,
-            name_en=spell.name,
-            name_es="",
-            breed_id=0,
-            level=1,
-            ap_cost=max(1, spell.ap_cost),
-            min_range=spell.min_range,
-            max_range=spell.max_range,
-            cast_in_line=spell.cast_in_line,
-            cast_in_diagonal=spell.cast_in_diagonal,
-            cast_test_los=spell.requires_los,
-            effects=damage_effects,
-            crit_rate_percent=spell.critical_hit_probability or 0.0,
-        )
         return DofusDamageCalculator.calculate_spell_damage(
             info, character, target.target_stats())
 

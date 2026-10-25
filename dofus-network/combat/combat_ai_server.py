@@ -18,7 +18,6 @@ from ``encounter_selfplay.pkl`` (override with ``--checkpoint``).
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import threading
 import time
@@ -32,15 +31,30 @@ for _path in (REPO_ROOT, REPO_ROOT / "dofus-network"):
         sys.path.insert(0, str(_path))
 
 from combat.live_policy import DEFAULT_CHECKPOINT, LivePolicy
+from agent.jsonio import dumps_bytes, loads
 
 POLICY: Optional[LivePolicy] = None
 DECISION_LOCK = threading.Lock()
 LOG_PATH = REPO_ROOT / "trajectories" / "live_policy_decisions.jsonl"
+LOG_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _rotate_log() -> None:
+    """Keep an unattended server from filling the disk with one JSONL file."""
+    try:
+        if LOG_PATH.exists() and LOG_PATH.stat().st_size >= LOG_MAX_BYTES:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            rotated = LOG_PATH.with_name(
+                f"{LOG_PATH.stem}.{stamp}{LOG_PATH.suffix}")
+            LOG_PATH.rename(rotated)
+    except OSError:
+        pass
 
 
 def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> None:
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _rotate_log()
         record = {
             "time": time.time(),
             "fight_id": payload.get("fight_id"),
@@ -48,8 +62,8 @@ def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> None:
             "my_id": payload.get("my_id"),
             "decision": decision,
         }
-        with LOG_PATH.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        with LOG_PATH.open("ab") as handle:
+            handle.write(dumps_bytes(record) + b"\n")
     except OSError:
         pass
 
@@ -68,20 +82,28 @@ def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class CombatRequestHandler(BaseHTTPRequestHandler):
-    def _headers(self, status: int = 200) -> None:
+    # The page sends one request per turn; keep-alive avoids a new loopback
+    # connection for every turn.
+    protocol_version = "HTTP/1.1"
+
+    def _reply(self, data: Dict[str, Any], status: int = 200) -> None:
+        body = dumps_bytes(data)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-
-    def _reply(self, data: Dict[str, Any], status: int = 200) -> None:
-        self._headers(status)
-        self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        self.wfile.write(body)
 
     def do_OPTIONS(self):
-        self._headers(200)
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self):
         if self.path == "/health":
@@ -102,9 +124,9 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
             self._reply({"ok": False, "error": "not found"}, 404)
             return
         length = int(self.headers.get("Content-Length", 0) or 0)
-        body = self.rfile.read(length).decode("utf-8", errors="replace")
+        raw = self.rfile.read(length)
         try:
-            payload = json.loads(body) if body else {}
+            payload = loads(raw) if raw else {}
             if not isinstance(payload, dict):
                 raise ValueError("request body must be a JSON object")
             self._reply(decide(payload))
@@ -142,8 +164,8 @@ def run_server(port: int = 8891,
         server = ThreadingHTTPServer(("127.0.0.1", int(port)), CombatRequestHandler)
     except OSError as exc:
         print(f"[ERROR] cannot bind 127.0.0.1:{port}: {exc}")
-        print("Stop the old combat server on port 8892, or start this one on "
-              "another port and set window.__agentFightBrain to that URL.")
+        print(f"Stop the process already using 127.0.0.1:{port}, or start this "
+              "one on another port and set window.__agentFightBrain to that URL.")
         raise SystemExit(1)
     server.daemon_threads = True
     print(f"[OK] listening on http://127.0.0.1:{port}")

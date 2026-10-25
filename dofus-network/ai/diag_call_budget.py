@@ -139,7 +139,6 @@ def unsolvable_reason(row: Dict[str, Any]) -> Optional[str]:
                 continue
             # Not spelled out verbatim. An entity reference is still solvable
             # when the gazetteer can resolve a surface form from the goal.
-            from ai.gazetteer import Gazetteer
             gaz = _gazetteer()
             if gaz is not None and gaz.lookup_name(key, goal):
                 continue

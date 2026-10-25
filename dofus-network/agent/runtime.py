@@ -18,7 +18,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
-from agent.bridge import directive_url as bridge_directive_url
 from agent.executor import ToolExecutor, ToolResult
 from agent.recorder import TrajectoryRecorder
 from agent.schema import tool_names

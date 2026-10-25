@@ -40,7 +40,6 @@ except ModuleNotFoundError:  # running a report from another working directory
 from .models import (
     ELEMENTS,
     EquipmentItem,
-    MarketSnapshot,
     effect_number,
 )
 

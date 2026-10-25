@@ -17,9 +17,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import urllib.parse
 import urllib.request
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -426,7 +427,7 @@ class QuestKnowledgeGraph:
                 "title": title,
                 "summary": clean_paragraphs[:8],
                 "coordinates": parsed_coords,
-                "fetched_at": time.time() if "time" in globals() else 0,
+                "fetched_at": time.time(),
             }
             cached_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             return result

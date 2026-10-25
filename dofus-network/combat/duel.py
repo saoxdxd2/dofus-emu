@@ -492,7 +492,6 @@ def play_game(state: DuelState, policies: Dict[int, Policy],
               model=None, k: int = 6, capture: bool = False
               ) -> Tuple[DuelState, List[Dict[str, Any]]]:
     records: List[Dict[str, Any]] = []
-    winner: Optional[int] = None
     while not state.done:
         state.turns += 1
         actor = state.actor
@@ -527,10 +526,8 @@ def play_game(state: DuelState, policies: Dict[int, Policy],
             }
             records.append(record)
         if state.done:
-            winner = state.winner
             break
         advance_turn(state)
         if state.done:
-            winner = state.winner
             break
     return state, records

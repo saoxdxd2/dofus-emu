@@ -10,7 +10,6 @@ import statistics
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 if os.environ.get("PYTHONUNBUFFERED") != "1":
     sys.stdout.reconfigure(line_buffering=True, write_through=True, encoding="utf-8")
@@ -336,6 +335,7 @@ def run_extraction_benchmark(model, is_original):
 def run_dofus_suite(model, is_original, suite):
     item_results = []
     latencies = []
+    correct = 0
     correct_by_cat = {}
     for item in suite:
         state = item["state"]

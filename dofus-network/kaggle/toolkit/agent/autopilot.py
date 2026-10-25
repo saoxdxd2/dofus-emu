@@ -46,7 +46,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -153,7 +152,16 @@ class Autopilot:
         self.dry_run = dry_run
         self.on_step = on_step
 
+        # Recent steps for the thinking layer and the UI. The run itself is
+        # unlimited, so this list must not be: the counters below keep the full
+        # history's information without holding every observation it carried.
         self.steps: List[Step] = []
+        self.step_history = 256
+        self._step_total = 0
+        self._verdict_counts: Dict[str, int] = {}
+        self._source_counts: Dict[str, int] = {}
+        self._first_step_at = 0.0
+        self._last_step_at = 0.0
         self.open_listings: List[Dict[str, Any]] = []
         self._last_obs: Optional[Dict[str, Any]] = None
         self._recent: List[str] = []
@@ -166,7 +174,17 @@ class Autopilot:
         return self.log_path
 
     def _emit(self, step: Step) -> None:
+        if not self._first_step_at:
+            self._first_step_at = step.at
+        self._last_step_at = step.at
+        self._step_total += 1
+        self._verdict_counts[step.verdict] = (
+            self._verdict_counts.get(step.verdict, 0) + 1)
+        self._source_counts[step.source] = (
+            self._source_counts.get(step.source, 0) + 1)
         self.steps.append(step)
+        if len(self.steps) > self.step_history:
+            del self.steps[:len(self.steps) - self.step_history]
         try:
             with self.log_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(step.as_dict(), ensure_ascii=False) + "\n")
@@ -341,6 +359,7 @@ class Autopilot:
                     self._index += 1
                     key = f"{call.tool}|{json.dumps(call.args, sort_keys=True, ensure_ascii=False)}"
                     self._recent.append(key)
+                    del self._recent[:-32]
                     if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
                         print(f"[autopilot] dry run: {call.tool} repeats with nothing to change; "
                               f"moving on from {goal!r}")
@@ -459,6 +478,7 @@ class Autopilot:
                     self._recent.clear()
                 else:
                     self._recent.append(key)
+                    del self._recent[:-32]
                     if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
                         print(f"[autopilot] no progress: {call.tool} repeated 3x with no change; "
                               f"abandoning {goal!r}")
@@ -572,25 +592,21 @@ class Autopilot:
         return "continue"
 
     def summary(self, reason: str) -> Dict[str, Any]:
-        counts: Dict[str, int] = {}
-        for step in self.steps:
-            counts[step.verdict] = counts.get(step.verdict, 0) + 1
-        sources: Dict[str, int] = {}
-        for step in self.steps:
-            sources[step.source] = sources.get(step.source, 0) + 1
         data = {
             "reason": reason,
             "session": self.session,
-            "steps": len(self.steps),
-            "verdicts": counts,
-            "label_sources": sources,
+            "steps": self._step_total,
+            "verdicts": dict(self._verdict_counts),
+            "label_sources": dict(self._source_counts),
             "replan_requested": self.replan_requested,
             "controller": self.controller.stats(),
             "open_listings": len(self.open_listings),
             "log": str(self.log_path),
-            "elapsed_s": round(self.steps[-1].at - self.steps[0].at, 1) if len(self.steps) > 1 else 0.0,
+            "elapsed_s": (round(self._last_step_at - self._first_step_at, 1)
+                          if self._step_total > 1 else 0.0),
         }
-        print(f"[autopilot] done: {reason} | {counts} | {len(self.open_listings)} open listing(s)")
+        print(f"[autopilot] done: {reason} | {self._verdict_counts} | "
+              f"{len(self.open_listings)} open listing(s)")
         return data
 
 

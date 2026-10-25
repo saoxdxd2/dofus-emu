@@ -206,19 +206,27 @@ class TrajectoryRecorder:
         }
 
     def tail(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Read the last ``limit`` records (best effort)."""
-        limit = max(1, int(limit))
+        """Read the last ``limit`` records without loading the whole file."""
+        limit = max(1, min(int(limit), 5000))
         if not self.path.exists():
             return []
         try:
-            with self.path.open("r", encoding="utf-8") as handle:
-                lines = handle.readlines()
+            with self.path.open("rb") as handle:
+                handle.seek(0, 2)
+                position = handle.tell()
+                data = b""
+                block = 64 * 1024
+                while position > 0 and data.count(b"\n") <= limit:
+                    step = min(block, position)
+                    position -= step
+                    handle.seek(position)
+                    data = handle.read(step) + data
         except OSError:
             return []
         records: List[Dict[str, Any]] = []
-        for line in lines[-limit:]:
+        for raw in data.splitlines()[-limit:]:
             try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
+                records.append(json.loads(raw.decode("utf-8", "replace")))
+            except ValueError:
                 continue
         return records

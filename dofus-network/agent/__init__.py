@@ -25,20 +25,50 @@ Stdlib only on purpose: this must run under the bundled ``runtimes/python``
 interpreter with no torch, no network access, and while the game is live.
 """
 
-from agent.schema import TOOL_SCHEMA, ToolSpec, tool_names, validate_call
-from agent.recorder import TrajectoryRecorder
-from agent.executor import ToolExecutor, ToolResult
-from agent.runtime import AgentRuntime, RulePolicy, ToolCall
+from __future__ import annotations
 
-__all__ = [
-    "TOOL_SCHEMA",
-    "ToolSpec",
-    "tool_names",
-    "validate_call",
-    "TrajectoryRecorder",
-    "ToolExecutor",
-    "ToolResult",
-    "AgentRuntime",
-    "RulePolicy",
-    "ToolCall",
-]
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+_EXPORTS = {
+    "TOOL_SCHEMA": "agent.schema",
+    "ToolSpec": "agent.schema",
+    "tool_names": "agent.schema",
+    "validate_call": "agent.schema",
+    "TrajectoryRecorder": "agent.recorder",
+    "ToolExecutor": "agent.executor",
+    "ToolResult": "agent.executor",
+    "AgentRuntime": "agent.runtime",
+    "RulePolicy": "agent.runtime",
+    "ToolCall": "agent.runtime",
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    """Import public names on first use.
+
+    ``agent.jsonio`` and ``agent.recorder`` are used by the combat server and
+    lightweight tools; importing the whole executor/runtime/urllib stack just
+    because the package was touched adds startup time and resident memory to
+    processes that never execute a world action.
+    """
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError("module 'agent' has no attribute %r" % name)
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_EXPORTS))
+
+
+if TYPE_CHECKING:  # pragma: no cover - type checkers only
+    from agent.executor import ToolExecutor, ToolResult
+    from agent.recorder import TrajectoryRecorder
+    from agent.runtime import AgentRuntime, RulePolicy, ToolCall
+    from agent.schema import TOOL_SCHEMA, ToolSpec, tool_names, validate_call
+

@@ -17,7 +17,7 @@ import json
 import pickle
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import jax
 import jax.numpy as jnp

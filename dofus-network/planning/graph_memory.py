@@ -26,11 +26,9 @@ what the planner already considers possible.
 from __future__ import annotations
 
 import json
-import math
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from planning.experience import BetaRate, LogNormalDuration
 from planning.kb import REPO_ROOT

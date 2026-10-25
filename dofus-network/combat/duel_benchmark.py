@@ -12,7 +12,6 @@ seeded, and the value policy is compared with the solver and random baselines.
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import pickle
 import random
@@ -23,10 +22,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from combat.battle_solver import BattleSolver
-from combat.duel import (FEATURE_NAMES, DuelState, apply_plan, load_map,
+from combat.duel import (FEATURE_NAMES, load_map,
                          make_duel, make_two_ply_policy, play_game,
-                         random_policy, solver_policy, state_features,
-                         value_policy)
+                         random_policy, solver_policy, value_policy)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATA = REPO_ROOT / "kaggle" / "tpu_selfplay" / "dataset" / "encounters.npz"
@@ -173,7 +171,6 @@ def evaluate_matchup(name: str, data, levels, cells, rows, games: int,
         if state is None:
             continue
         policies = {1: policy_a, 2: policy_b}
-        before = state
         state, turns = play_game(state, policies, solver, rng, model=model,
                                  capture=capture)
         winner = state.winner

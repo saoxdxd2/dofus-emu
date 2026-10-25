@@ -16,6 +16,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:

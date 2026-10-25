@@ -22,7 +22,7 @@ import re
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PLAY_LOG = REPO_ROOT / "trajectories" / "play_dofus-05.jsonl"

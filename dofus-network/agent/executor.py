@@ -24,12 +24,13 @@ import unicodedata
 import urllib.error
 import urllib.request
 import uuid
-from collections import deque
-from dataclasses import dataclass, field
+from collections import OrderedDict, deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent.bridge import directive_url as bridge_directive_url, opener_for
+from agent.jsonio import dumps_bytes, loads
 from agent.recorder import TrajectoryRecorder
 from agent.knowledge_store import KnowledgeStore
 from agent.schema import TOOLS_BY_NAME, validate_call
@@ -123,8 +124,14 @@ class _MapGraph:
 
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = Path(path) if path else REPO_ROOT / "data" / "maps" / "_index.json"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._edges: Optional[Dict[int, Dict[str, int]]] = None
+        self._reverse_edges: Optional[Dict[int, List[Tuple[int, str]]]] = None
+        # A journey asks for the same target map on every step while the
+        # character crosses one map at a time. The BFS tree rooted at the target
+        # answers every hop in O(1); four recent targets are enough.
+        self._trees: "OrderedDict[int, Dict[int, Tuple[str, int, int]]]" = OrderedDict()
+        self._tree_limit = 4
 
     def edges(self) -> Dict[int, Dict[str, int]]:
         with self._lock:
@@ -159,20 +166,59 @@ class _MapGraph:
             self._edges = edges
             return edges
 
-    def hop(self, here: Optional[int], target: Optional[int],
-            blocked_first: Optional[set] = None) -> Optional[Tuple[str, int, int]]:
-        """First step from `here` towards `target`: (direction, next map, hops left).
+    def reverse_edges(self) -> Dict[int, List[Tuple[int, str]]]:
+        """Neighbour -> (previous map, direction) for reverse BFS trees."""
+        with self._lock:
+            cached = self._reverse_edges
+            if cached is not None:
+                return cached
+        reverse: Dict[int, List[Tuple[int, str]]] = {}
+        for node, exits in self.edges().items():
+            for direction, neighbour in exits.items():
+                reverse.setdefault(neighbour, []).append((node, direction))
+        with self._lock:
+            self._reverse_edges = reverse
+        return reverse
 
-        `blocked_first` names directions the tutorial forbids on the current map.
-        They are skipped for the first step only: the gate belongs to the scenario
-        step, not to the other maps on the route.
+    def _tree(self, target: int) -> Dict[int, Tuple[str, int, int]]:
+        """BFS tree rooted at ``target``: node -> (direction, next map, hops).
+
+        Built on the reversed graph so the direction stored on each node is the
+        one the character should take from that node. Cached per target: a
+        multi-map journey reuses the same destination for many steps.
         """
-        if here is None or target is None or here == target:
-            return None
+        with self._lock:
+            cached = self._trees.get(target)
+            if cached is not None:
+                self._trees.move_to_end(target)
+                return cached
+        tree: Dict[int, Tuple[str, int, int]] = {target: ("", target, 0)}
+        queue: deque = deque([target])
+        while queue:
+            node = queue.popleft()
+            distance = tree[node][2] + 1
+            for previous, direction in self.reverse_edges().get(node, ()):
+                if previous in tree:
+                    continue
+                tree[previous] = (direction, node, distance)
+                queue.append(previous)
+        with self._lock:
+            self._trees[target] = tree
+            while len(self._trees) > self._tree_limit:
+                self._trees.popitem(last=False)
+        return tree
+
+    def _hop_bfs(self, here: int, target: int,
+                 blocked_first: set) -> Optional[Tuple[str, int, int]]:
+        """Forward BFS for the rare gated-first-step case.
+
+        The cached tree gives the shortest path without constraints, but that
+        path may start through a direction the tutorial blocks. Its distance is
+        also unsafe to reuse for an alternative neighbour: the tree path from
+        that neighbour can run back through `here`, which the forward search
+        must not do. This bounded BFS keeps the old, correct behaviour.
+        """
         edges = self.edges()
-        if here not in edges or target not in edges:
-            return None
-        blocked_first = blocked_first or set()
         parent: Dict[int, Tuple[Optional[int], Optional[str]]] = {here: (None, None)}
         queue: deque = deque([here])
         while queue:
@@ -198,6 +244,26 @@ class _MapGraph:
         if not path:
             return None
         return path[0], edges[here][path[0]], len(path)
+
+    def hop(self, here: Optional[int], target: Optional[int],
+            blocked_first: Optional[set] = None) -> Optional[Tuple[str, int, int]]:
+        """First step from `here` towards `target`: (direction, next map, hops left).
+
+        `blocked_first` names directions the tutorial forbids on the current map.
+        They are skipped for the first step only: the gate belongs to the scenario
+        step, not to the other maps on the route.
+        """
+        if here is None or target is None or here == target:
+            return None
+        tree = self._tree(target)
+        entry = tree.get(here)
+        if entry is None:
+            return None
+        direction, next_map, hops = entry
+        blocked_first = blocked_first or set()
+        if direction in blocked_first:
+            return self._hop_bfs(here, target, blocked_first)
+        return direction, next_map, hops
 
 
 def _obs_map_id(observation: Optional[Dict[str, Any]]) -> Optional[int]:
@@ -450,7 +516,7 @@ class ToolExecutor:
         data = None
         headers = {"Accept": "application/json"}
         if body is not None:
-            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            data = dumps_bytes(body)
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
@@ -460,11 +526,11 @@ class ToolExecutor:
             # failure point, and a 502 whenever the proxy could not reach a port that
             # only listens on this machine.
             with opener_for(url).open(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8", errors="replace")
+                raw = response.read()
                 try:
-                    return True, json.loads(raw)
-                except json.JSONDecodeError:
-                    return True, {"raw": raw[:4000]}
+                    return True, loads(raw)
+                except ValueError:
+                    return True, {"raw": raw.decode("utf-8", errors="replace")[:4000]}
         except urllib.error.HTTPError as exc:
             return False, f"HTTP {exc.code} from {url}: {exc.read()[:400].decode('utf-8', errors='replace')}"
         except urllib.error.URLError as exc:

@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 
 from ..contract import ModelBundle, load_checkpoint
-from ..features import FEATURE_NAMES, HORIZONS, SEQ_LEN, Normaliser
+from ..features import FEATURE_NAMES, SEQ_LEN, Normaliser
 from ..identity_mask import IdentityMaskConfig, InstanceIdentityMasker
 
 

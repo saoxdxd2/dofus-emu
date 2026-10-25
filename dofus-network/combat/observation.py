@@ -13,7 +13,7 @@ from the fetched stats and spell effects, and is labelled with its basis.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Collection, Dict, List, Optional, Tuple
 
 from combat.battle_solver import BattleSolver, Board, Fighter, LiveSpell
 from combat.damage_calculator import CharacterStats
@@ -98,7 +98,8 @@ def _occupied(board: Board, *exclude: int) -> frozenset:
 
 
 def _geometry(board: Board, origin: Optional[int], spell: LiveSpell,
-              target: Optional[int]) -> Dict[str, Any]:
+              target: Optional[int],
+              cells: Optional[Collection[int]] = None) -> Dict[str, Any]:
     """Current-cell distance / line of sight / range, or None when unknown."""
     if origin is None or target is None or not board.cells.flags:
         return {"distance": None, "has_los": None, "in_range": None}
@@ -107,9 +108,10 @@ def _geometry(board: Board, origin: Optional[int], spell: LiveSpell,
     if spell.requires_los:
         has_los = board.cells.has_los(
             origin, target, _occupied(board, origin, target))
-    cells = board.cells.range_cells(
-        origin, spell.min_range, spell.max_range,
-        spell.cast_in_line, spell.cast_in_diagonal)
+    if cells is None:
+        cells = board.cells.range_cells(
+            origin, spell.min_range, spell.max_range,
+            spell.cast_in_line, spell.cast_in_diagonal)
     return {
         "distance": distance,
         "has_los": bool(has_los),
@@ -197,10 +199,16 @@ def _derived(board: Board, me: Optional[Fighter], self_spells: List[LiveSpell],
         if caster is not None and me is not None:
             if spell.has_heal:
                 entry["heal"] = _estimate(board, spell, caster, me, "heal")
+            # The range ring is a property of (origin, spell), not of the target;
+            # computing it once instead of once per enemy keeps this linear in
+            # the number of enemies.
+            cells = board.cells.range_cells(
+                me.cell, spell.min_range, spell.max_range,
+                spell.cast_in_line, spell.cast_in_diagonal)
             for target in enemies:
                 if not target.alive:
                     continue
-                target_entry = _geometry(board, me.cell, spell, target.cell)
+                target_entry = _geometry(board, me.cell, spell, target.cell, cells)
                 if spell.has_damage:
                     damage = _estimate(board, spell, caster, target, "damage")
                     if damage is not None:
@@ -251,13 +259,13 @@ def build_observation(board: Board, source: str = "live") -> Dict[str, Any]:
     everything = list(self_spells)
     for fighter in board.fighters:
         everything.extend(fighter.spells)
-    unmodeled = sorted({effect.effect_id
-                        for spell in everything
-                        for effect in list(spell.effects) + list(spell.critical_effects)
-                        if effect.kind == "other"})
-    kinds = sorted({effect.kind
-                    for spell in everything
-                    for effect in list(spell.effects) + list(spell.critical_effects)})
+    kinds: set = set()
+    unmodeled: set = set()
+    for spell in everything:
+        for effect in spell.effects + spell.critical_effects:
+            kinds.add(effect.kind)
+            if effect.kind == "other":
+                unmodeled.add(effect.effect_id)
 
     return {
         "schema_version": OBSERVATION_VERSION,
@@ -294,8 +302,8 @@ def build_observation(board: Board, source: str = "live") -> Dict[str, Any]:
             for fighter in enemies
         ],
         "mechanics": {
-            "kinds": kinds,
-            "unmodeled_effect_ids": unmodeled,
+            "kinds": sorted(kinds),
+            "unmodeled_effect_ids": sorted(unmodeled),
         },
         "derived": _derived(board, me, self_spells, enemies),
         "observed": {

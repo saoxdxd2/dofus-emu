@@ -22,7 +22,6 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 RTT_MIN_MS, RTT_MAX_MS = 0.01, 60000.0

@@ -11,15 +11,13 @@ Implements model-based planning and lookahead rollouts:
 from __future__ import annotations
 
 import copy
-import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from combat.damage_calculator import (
     CharacterStats,
     DofusDamageCalculator,
-    SpellDamageResult,
     TargetStats,
 )
 from data.game_data_extractor import SpellInfo

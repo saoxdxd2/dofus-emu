@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -119,7 +118,6 @@ def decode_outputs(
         name = field["name"]
         ftype = field.get("type")
         enum = field.get("enum") or ()
-        default = field.get("default")
 
         if enum:
             head_index = enum_head_of.get(index)

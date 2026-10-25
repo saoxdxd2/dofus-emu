@@ -167,6 +167,7 @@ def probe(
     warmup: int,
     postprocess: bool,
     device: str,
+    threads: int = 0,
 ) -> Dict[str, Any]:
     from ai.encoder_serve import EncoderToolPolicy
 
@@ -231,7 +232,7 @@ def probe(
     return {
         "backend": stats["backend"],
         "device": device,
-        "threads": args.threads or None,
+        "threads": threads or None,
         "torch_threads": _torch_threads(),
         "postprocess": postprocess,
         "cases": len(goals),
@@ -325,6 +326,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         warmup=args.warmup,
         postprocess=not args.no_postprocess,
         device=args.device,
+        threads=args.threads,
     )
     print(_render(report))
     if args.out:

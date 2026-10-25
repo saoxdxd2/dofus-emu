@@ -13,12 +13,11 @@ numeric model for them; the report labels that clearly.
 
 from __future__ import annotations
 
-import math
 import re
 import sys
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 try:
     from combat.damage_calculator import CharacterStats, DofusDamageCalculator, TargetStats
@@ -30,7 +29,6 @@ except ModuleNotFoundError:  # running from another working directory
 
 from .models import (
     ELEMENTS,
-    PRIMARY_STAT,
     CharacterSnapshot,
     SpellState,
 )
@@ -769,7 +767,6 @@ def plan_spells(
     if not entries:
         empty = greedy_rotation([], ap_budget)
         options = budget_options(character.points)
-        chosen_budget = choose_budget(options)
         return SpellPlan(
             focus=focus, budget=0, budget_source="none",
             budget_assumption="no scoreable spells",

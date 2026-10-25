@@ -12,6 +12,7 @@ what the client provided.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -42,6 +43,56 @@ def _current_objective(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
+@lru_cache(maxsize=2048)
+def _knowledge_block(store: CanonicalStore, objective_id: int, language: str,
+                     tracker_quest_id: Any
+                     ) -> Dict[str, Any]:
+    """Resolve one objective for the observation contract.
+
+    The SQLite store is opened read-only and the objective text cannot change
+    while it is open, so the five queries behind `resolve_objective` were being
+    repeated on every snapshot for the same objective. The cache key includes
+    the tracker's quest id only because the miss path echoed it back.
+    """
+    resolved = store.resolve_objective(objective_id, language)
+    if resolved is None:
+        return {
+            "status": "objective_not_in_store",
+            "objective_id": objective_id,
+            "quest_id": tracker_quest_id,
+        }
+    quest_id = resolved.get("quest_id") or tracker_quest_id
+    quest = store.quest(int(quest_id)) if quest_id is not None else None
+    step = None
+    if quest:
+        for candidate in quest.get("steps") or []:
+            if candidate.get("step_index") == resolved.get("step_index"):
+                step = candidate
+                break
+    return {
+        "status": "resolved",
+        "language": language,
+        "objective_id": objective_id,
+        "quest_id": quest_id,
+        "objective": {
+            "text": resolved.get("text"),
+            "raw_text": resolved.get("raw_text"),
+            "type_id": resolved.get("type_id"),
+            "map_id": resolved.get("map_id"),
+            "params": resolved.get("params"),
+            "entities": resolved.get("entities") or [],
+            "unresolved": resolved.get("unresolved") or [],
+            "source": resolved.get("source"),
+        },
+        "quest_name": (quest or {}).get("names", {}).get(language)
+        or (quest or {}).get("names", {}).get("fr"),
+        "step_name": (step or {}).get("names", {}).get(language)
+        or (step or {}).get("names", {}).get("fr"),
+        "step_description": (step or {}).get("descriptions", {}).get(language)
+        or (step or {}).get("descriptions", {}).get("fr"),
+    }
+
+
 def enrich_observation(
     obs: Optional[Dict[str, Any]], store: Optional[CanonicalStore],
     language: str = "fr",
@@ -70,44 +121,13 @@ def enrich_observation(
                             "objective_id": tracker.get("objective_id")}
         return out
 
-    resolved = store.resolve_objective(objective_id, language)
-    if resolved is None:
-        out["knowledge"] = {
-            "status": "objective_not_in_store",
-            "objective_id": objective_id,
-            "quest_id": tracker.get("quest_id"),
-        }
-        return out
-
-    quest_id = resolved.get("quest_id") or tracker.get("quest_id")
-    quest = store.quest(int(quest_id)) if quest_id is not None else None
-    step = None
-    if quest:
-        for candidate in quest.get("steps") or []:
-            if candidate.get("step_index") == resolved.get("step_index"):
-                step = candidate
-                break
-
-    out["knowledge"] = {
-        "status": "resolved",
-        "language": language,
-        "objective_id": objective_id,
-        "quest_id": quest_id,
-        "objective": {
-            "text": resolved.get("text"),
-            "raw_text": resolved.get("raw_text"),
-            "type_id": resolved.get("type_id"),
-            "map_id": resolved.get("map_id"),
-            "params": resolved.get("params"),
-            "entities": resolved.get("entities") or [],
-            "unresolved": resolved.get("unresolved") or [],
-            "source": resolved.get("source"),
-        },
-        "quest_name": (quest or {}).get("names", {}).get(language)
-        or (quest or {}).get("names", {}).get("fr"),
-        "step_name": (step or {}).get("names", {}).get(language)
-        or (step or {}).get("names", {}).get("fr"),
-        "step_description": (step or {}).get("descriptions", {}).get(language)
-        or (step or {}).get("descriptions", {}).get("fr"),
-    }
+    tracker_quest_id = tracker.get("quest_id")
+    if tracker_quest_id is not None:
+        try:
+            tracker_quest_id = int(tracker_quest_id)
+        except (TypeError, ValueError):
+            tracker_quest_id = None
+    block = _knowledge_block(store, objective_id, language, tracker_quest_id)
+    # Shallow copy: the cached block must not be mutated by a caller.
+    out["knowledge"] = dict(block)
     return out

@@ -33,7 +33,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +45,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agent.executor import ToolExecutor
+from agent.jsonio import dumps_bytes, loads
 from agent.recorder import TrajectoryRecorder
 from agent.runtime import AgentRuntime, RulePolicy
 from agent.schema import TOOL_SCHEMA
@@ -79,7 +79,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         logger.debug("%s - %s", self.address_string(), format % args)
 
     def _send_json(self, status: int, payload: Any) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        body = dumps_bytes(payload)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -95,8 +95,8 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             return None
         raw = self.rfile.read(length)
         try:
-            payload = json.loads(raw.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            payload = loads(raw)
+        except (ValueError, UnicodeDecodeError):
             return None
         return payload if isinstance(payload, dict) else None
 

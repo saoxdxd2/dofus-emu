@@ -14,13 +14,17 @@ run for weeks without filling the disk.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
+import threading
 import time
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from agent.jsonio import dumps_bytes as _fast_dumps
+from agent.jsonio import loads as _fast_loads
 
 logger = logging.getLogger("dofus.agent.recorder")
 
@@ -35,24 +39,86 @@ REDACT_KEYS = {
     "proxy", "proxy_url", "cookie", "session",
 }
 _REDACTED = "[redacted]"
+_URL_CREDENTIALS = re.compile(r"://[^/\s:@]+:[^/\s@]+@")
+
+
+@lru_cache(maxsize=1024)
+def _is_secret_key(key: str) -> bool:
+    return key.strip().lower() in REDACT_KEYS
+
+
+def _contains_secret(value: Any) -> bool:
+    """Cheap read-only scan before the allocating redaction pass.
+
+    Most observations contain no secret at all, so the common path should not
+    rebuild tens of thousands of inventory nodes. The scan checks exactly the
+    conditions `_redact` acts on.
+    """
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if isinstance(key, str) and _is_secret_key(key):
+                    return True
+                if isinstance(child, (dict, list)):
+                    stack.append(child)
+                elif (isinstance(child, str) and "://" in child
+                      and "@" in child and ":" in child
+                      and _URL_CREDENTIALS.search(child)):
+                    return True
+        elif isinstance(item, list):
+            for child in item:
+                if isinstance(child, (dict, list)):
+                    stack.append(child)
+                elif (isinstance(child, str) and "://" in child
+                      and "@" in child and ":" in child
+                      and _URL_CREDENTIALS.search(child)):
+                    return True
+    return False
 
 
 def _redact(value: Any) -> Any:
     """Recursively redact secrets. Strings that embed credentials in URLs
-    (e.g. ``http://user:pass@host``) are scrubbed too."""
+    (e.g. ``http://user:pass@host``) are scrubbed too.
+
+    Returns the original object when nothing was redacted. Observations are
+    large (an inventory alone can be hundreds of KB), so the caller first runs
+    the read-only scan and skips this allocating pass entirely when it is safe.
+    """
+    if not _contains_secret(value):
+        return value
+    return _redact_copy(value)
+
+
+def _redact_copy(value: Any) -> Any:
     if isinstance(value, dict):
         out: Dict[str, Any] = {}
+        changed = False
         for key, item in value.items():
-            if isinstance(key, str) and key.strip().lower() in REDACT_KEYS:
+            if isinstance(key, str) and _is_secret_key(key):
                 out[key] = _REDACTED
-            else:
-                out[key] = _redact(item)
-        return out
+                changed = True
+                continue
+            redacted = _redact_copy(item)
+            if redacted is not item:
+                changed = True
+            out[key] = redacted
+        return out if changed else value
     if isinstance(value, list):
-        return [_redact(item) for item in value]
+        out = []
+        changed = False
+        for item in value:
+            redacted = _redact_copy(item)
+            if redacted is not item:
+                changed = True
+            out.append(redacted)
+        return out if changed else value
     if isinstance(value, str):
-        # user:password@host inside a URL
-        return re.sub(r"://[^/\s:@]+:[^/\s@]+@", "://[redacted]@", value)
+        if "://" in value and "@" in value and ":" in value:
+            scrubbed = _URL_CREDENTIALS.sub("://[redacted]@", value)
+            return scrubbed if scrubbed != value else value
+        return value
     return value
 
 
@@ -71,6 +137,7 @@ class TrajectoryRecorder:
         self.instance = safe_instance
         self.max_bytes = max_bytes
         self.path = self.root / f"{safe_instance}.jsonl"
+        self._lock = threading.Lock()
         self._counters: Dict[str, int] = {"lines": 0, "ok": 0, "fail": 0}
         self._tool_counts: Dict[str, int] = {}
         self._scan_existing()
@@ -87,8 +154,8 @@ class TrajectoryRecorder:
                     if not line:
                         continue
                     try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
+                        record = _fast_loads(line)
+                    except ValueError:
                         continue  # a torn tail line from a crash is skipped, not fatal
                     self._count(record)
         except OSError as exc:
@@ -125,14 +192,15 @@ class TrajectoryRecorder:
             "kind": kind,
         }
         record.update(_redact(payload))
-        self._rotate_if_needed()
-        try:
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError as exc:
-            logger.error(f"Failed to write trajectory record: {exc}")
-            return record
-        self._count(record)
+        with self._lock:
+            self._rotate_if_needed()
+            try:
+                with self.path.open("ab") as handle:
+                    handle.write(_fast_dumps(record) + b"\n")
+            except OSError as exc:
+                logger.error(f"Failed to write trajectory record: {exc}")
+                return record
+            self._count(record)
         return record
 
     def observation(
@@ -234,29 +302,43 @@ class TrajectoryRecorder:
         })
 
     def stats(self) -> Dict[str, Any]:
-        return {
-            "file": str(self.path),
-            "instance": self.instance,
-            "lines": self._counters["lines"],
-            "steps_ok": self._counters["ok"],
-            "steps_failed": self._counters["fail"],
-            "tools": dict(sorted(self._tool_counts.items())),
-        }
+        with self._lock:
+            return {
+                "file": str(self.path),
+                "instance": self.instance,
+                "lines": self._counters["lines"],
+                "steps_ok": self._counters["ok"],
+                "steps_failed": self._counters["fail"],
+                "tools": dict(sorted(self._tool_counts.items())),
+            }
 
     def tail(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Read the last ``limit`` records (best effort)."""
-        limit = max(1, int(limit))
+        """Read the last ``limit`` records without loading the whole file.
+
+        The recorder rotates at 64 MB, but the dashboard polls this endpoint, and
+        ``readlines()`` allocated the entire log on every poll just to keep the
+        final lines. Read backwards in blocks instead.
+        """
+        limit = max(1, min(int(limit), 5000))
         if not self.path.exists():
             return []
         try:
-            with self.path.open("r", encoding="utf-8") as handle:
-                lines = handle.readlines()
+            with self.path.open("rb") as handle:
+                handle.seek(0, 2)
+                position = handle.tell()
+                data = b""
+                block = 64 * 1024
+                while position > 0 and data.count(b"\n") <= limit:
+                    step = min(block, position)
+                    position -= step
+                    handle.seek(position)
+                    data = handle.read(step) + data
         except OSError:
             return []
         records: List[Dict[str, Any]] = []
-        for line in lines[-limit:]:
+        for raw in data.splitlines()[-limit:]:
             try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
+                records.append(_fast_loads(raw.decode("utf-8", "replace")))
+            except ValueError:
                 continue
         return records

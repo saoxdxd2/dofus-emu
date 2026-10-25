@@ -45,7 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from agent.features import (TOOLS, TOOL_INDEX, ObsTracker, objective_features,  # noqa: E402
+from agent.features import (TOOLS, TOOL_INDEX, objective_features,  # noqa: E402
                             objective_type)
 from agent.planner import QuestPlanner, args_for_tool  # noqa: E402
 from sim.world import World  # noqa: E402

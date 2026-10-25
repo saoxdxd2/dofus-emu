@@ -46,12 +46,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import time
 import uuid
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
 from agent.observe import flatten
@@ -62,11 +62,13 @@ from agent.controller import Controller, Decision
 from agent.verifier import READ_ONLY_TOOLS, Verdict, Verifier, changed_keys
 from agent.schema import TOOL_SCHEMA, validate_call
 from agent.recorder import _redact
+from agent.jsonio import dumps_bytes as _fast_dumps
 from combat.fight_estimate import FightAdvisor, FightOutcomeLog
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOG = REPO_ROOT / "trajectories" / "autopilot.jsonl"
 DEFAULT_STOP = REPO_ROOT / "AUTOPILOT_STOP"
+LOG_MAX_BYTES = 64 * 1024 * 1024
 
 # Tools that spend money irreversibly. Kept as a name list rather than a flag on
 # the schema so adding one is a deliberate, reviewable edit.
@@ -225,8 +227,20 @@ class Autopilot:
         self.dry_run = dry_run
         self.on_step = on_step
 
+        # Recent steps for the thinking layer and the UI. The run itself is
+        # unlimited, so this list must not be: the counters below keep the full
+        # history's information without holding every observation it carried.
         self.steps: List[Step] = []
-        self.open_listings: List[Dict[str, Any]] = []
+        self.step_history = 256
+        self._step_total = 0
+        self._verdict_counts: Dict[str, int] = {}
+        self._source_counts: Dict[str, int] = {}
+        self._first_step_at = 0.0
+        self._last_step_at = 0.0
+        # A long run can list hundreds of items; keep the recent ledger for
+        # inspection and the total for the summary.
+        self.open_listings: Deque[Dict[str, Any]] = deque(maxlen=512)
+        self._listing_total = 0
         self.knowledge = load_default_store()
         # Agent 3's read-only answers: one shared estimator behind both the guard
         # and the `fight.estimate` tool, so a step and its refusal cannot disagree.
@@ -271,11 +285,33 @@ class Autopilot:
     def _log_path(self) -> Path:
         return self.log_path
 
-    def _emit(self, step: Step) -> None:
-        self.steps.append(step)
+    def _rotate_log(self) -> None:
+        """Keep an unlimited run from producing one unbounded step log."""
         try:
-            with self.log_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(step.as_dict(), ensure_ascii=False) + "\n")
+            if self.log_path.exists() and self.log_path.stat().st_size >= LOG_MAX_BYTES:
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                rotated = self.log_path.with_name(
+                    f"{self.log_path.stem}.{stamp}{self.log_path.suffix}")
+                self.log_path.rename(rotated)
+        except OSError:
+            pass
+
+    def _emit(self, step: Step) -> None:
+        self._rotate_log()
+        if not self._first_step_at:
+            self._first_step_at = step.at
+        self._last_step_at = step.at
+        self._step_total += 1
+        self._verdict_counts[step.verdict] = (
+            self._verdict_counts.get(step.verdict, 0) + 1)
+        self._source_counts[step.source] = (
+            self._source_counts.get(step.source, 0) + 1)
+        self.steps.append(step)
+        if len(self.steps) > self.step_history:
+            del self.steps[:len(self.steps) - self.step_history]
+        try:
+            with self.log_path.open("ab") as handle:
+                handle.write(_fast_dumps(step.as_dict()) + b"\n")
         except OSError:
             pass  # a full disk must not stop the bot from stopping cleanly
 
@@ -291,8 +327,8 @@ class Autopilot:
         transcript.
         """
         try:
-            with self.log_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps({
+            with self.log_path.open("ab") as handle:
+                handle.write(_fast_dumps({
                     "kind": "decision",
                     "session": self.session,
                     "goal": None,
@@ -305,7 +341,7 @@ class Autopilot:
                     "error": getattr(result, "error", None),
                     "obs": obs if isinstance(obs, dict) else {},
                     "at": time.time(),
-                }, ensure_ascii=False) + "\n")
+                }) + b"\n")
         except OSError:
             pass
 
@@ -548,8 +584,15 @@ class Autopilot:
     def _append_fight_log(self, record: Dict[str, Any]) -> None:
         try:
             self.fight_board_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.fight_board_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(_redact(record), ensure_ascii=False) + "\n")
+            if (self.fight_board_path.exists()
+                    and self.fight_board_path.stat().st_size >= LOG_MAX_BYTES):
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                rotated = self.fight_board_path.with_name(
+                    f"{self.fight_board_path.stem}.{stamp}"
+                    f"{self.fight_board_path.suffix}")
+                self.fight_board_path.rename(rotated)
+            with self.fight_board_path.open("ab") as handle:
+                handle.write(_fast_dumps(_redact(record)) + b"\n")
         except OSError as exc:
             print(f"[autopilot] could not write fight board log: {exc}")
 
@@ -841,6 +884,7 @@ class Autopilot:
                     self._index += 1
                     key = f"{call.tool}|{json.dumps(call.args, sort_keys=True, ensure_ascii=False)}"
                     self._recent.append(key)
+                    del self._recent[:-32]
                     if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
                         print(f"[autopilot] dry run: {call.tool} repeats with nothing to change; "
                               f"moving on from {goal!r}")
@@ -960,6 +1004,7 @@ class Autopilot:
                             "at": time.time(),
                             "state": "open",
                         })
+                        self._listing_total += 1
                         note = "listing_open: fill depends on a buyer, not on us"
                     else:
                         note = ("listing_unverified: the client did not report where the price "
@@ -1087,6 +1132,7 @@ class Autopilot:
                     self._recent.clear()
                 else:
                     self._recent.append(key)
+                    del self._recent[:-32]
                     if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
                         print(f"[autopilot] no progress: {call.tool} repeated 3x with no change")
                         if tutorial_active:
@@ -1333,25 +1379,21 @@ class Autopilot:
         return "continue"
 
     def summary(self, reason: str) -> Dict[str, Any]:
-        counts: Dict[str, int] = {}
-        for step in self.steps:
-            counts[step.verdict] = counts.get(step.verdict, 0) + 1
-        sources: Dict[str, int] = {}
-        for step in self.steps:
-            sources[step.source] = sources.get(step.source, 0) + 1
         data = {
             "reason": reason,
             "session": self.session,
-            "steps": len(self.steps),
-            "verdicts": counts,
-            "label_sources": sources,
+            "steps": self._step_total,
+            "verdicts": dict(self._verdict_counts),
+            "label_sources": dict(self._source_counts),
             "replan_requested": self.replan_requested,
             "controller": self.controller.stats(),
-            "open_listings": len(self.open_listings),
+            "open_listings": self._listing_total,
             "log": str(self.log_path),
-            "elapsed_s": round(self.steps[-1].at - self.steps[0].at, 1) if len(self.steps) > 1 else 0.0,
+            "elapsed_s": (round(self._last_step_at - self._first_step_at, 1)
+                          if self._step_total > 1 else 0.0),
         }
-        print(f"[autopilot] done: {reason} | {counts} | {len(self.open_listings)} open listing(s)")
+        print(f"[autopilot] done: {reason} | {self._verdict_counts} | "
+              f"{self._listing_total} open listing(s)")
         return data
 
 

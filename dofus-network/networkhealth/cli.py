@@ -17,12 +17,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .data import download_data, load_jsonl, log, save_jsonl
+from .data import load_jsonl, log, save_jsonl
 from .provenance import write_manifest
 
 ARTIFACTS = Path("networkhealth_artifacts")
@@ -101,7 +100,7 @@ def cmd_prepare(args: argparse.Namespace) -> Path:
     import numpy as np
 
     from .features import HORIZONS, SEQ_LEN, build_examples, build_series_features
-    from .identity_mask import InstanceIdentityMasker, IdentityMaskConfig
+    from .identity_mask import InstanceIdentityMasker
 
     rows = load_jsonl(Path(args.input))
     if getattr(args, "mask_identity", True):
@@ -178,10 +177,9 @@ def cmd_baselines(args: argparse.Namespace) -> Path:
     """Baseline-only comparison, runnable without PyTorch."""
     import numpy as np
 
-    from . import baselines as baseline_lib
     from .evaluation import write_json
     from .features import HORIZONS, TARGET_BLOCK
-    from .splits import SplitConfig, build_split, compact_summary, describe_split, split_indices
+    from .splits import SplitConfig, build_split, compact_summary, split_indices
 
     features_path = Path(args.input)
     examples, payload = _load_examples(features_path)
@@ -281,7 +279,6 @@ def _detection(prob, truth, threshold: float = 0.5) -> dict[str, Any]:
 
 
 def cmd_train(args: argparse.Namespace) -> Path:
-    import numpy as np
 
     from .features import build_series_features
     from .splits import SplitConfig

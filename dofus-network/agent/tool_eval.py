@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from agent.schema import TOOLS_BY_NAME, canonicalize_args  # noqa: E402
+from agent.schema import canonicalize_args  # noqa: E402
 
 _TEXT_ARGS = {
     "query", "zaap", "npc", "name", "item", "area", "monster", "resource",

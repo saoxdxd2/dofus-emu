@@ -17,7 +17,7 @@ reasoner can replace the candidate generator later; the interface and the
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from agent.awareness import scene_key

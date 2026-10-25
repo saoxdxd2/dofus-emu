@@ -18,15 +18,14 @@ Architecture Overview:
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .features import FEATURE_NAMES, HORIZONS, TARGET_BLOCK
+from .features import FEATURE_NAMES, HORIZONS
 from .identity_mask import InstanceIdentityMaskLayer
 
 

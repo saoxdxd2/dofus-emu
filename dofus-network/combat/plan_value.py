@@ -14,13 +14,14 @@ solver still owns legality, line of sight, MP costs and damage.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from combat.battle_solver import BattleSolver, Board, Fighter, LiveSpell, TurnPlan
+from combat.battle_solver import BattleSolver, Board, Fighter, TurnPlan
 from combat.damage_calculator import CharacterStats
 from combat.encounter import model
 from combat.encounter.env import Config, initial_state, observe
@@ -173,9 +174,110 @@ def _enemy_rows(board: Board, fighter: Fighter, slots: int
     return rows, known
 
 
+def _allocate_encounter(cfg: Config, batch: int
+                        ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+    n = cfg.n_actors
+    tables = {key: np.zeros((batch, n, cfg.spells), dtype=np.float32)
+              for key in TABLE_KEYS if key not in ("spell_element", "spell_ally")}
+    tables["spell_element"] = np.zeros((batch, n, cfg.spells), dtype=np.int32)
+    tables["spell_ally"] = np.zeros((batch, n, cfg.spells), dtype=bool)
+    spec = {
+        "hp": np.zeros((batch, n), dtype=np.float32),
+        "max_hp": np.zeros((batch, n), dtype=np.float32),
+        "ap_max": np.zeros((batch, n), dtype=np.float32),
+        "mp_max": np.zeros((batch, n), dtype=np.float32),
+        "power": np.zeros((batch, n), dtype=np.float32),
+        "res": np.zeros((batch, n, 5), dtype=np.float32),
+        "dist": np.full((batch, n), 12.0, dtype=np.float32),
+        "initiative": np.zeros((batch, n), dtype=np.float32),
+        "alive": np.zeros((batch, n), dtype=bool),
+        "first_team": np.zeros((batch,), dtype=np.int32),
+    }
+    return tables, spec
+
+
+def _fill_encounter(board: Board, plan: TurnPlan, cfg: Config,
+                    tables: Dict[str, np.ndarray],
+                    spec: Dict[str, np.ndarray], index: int, first_team: int,
+                    player_rows: Optional[Sequence[Dict[str, Any]]],
+                    player_candidates: Optional[Sequence[Dict[str, Any]]],
+                    enemy_rows: Optional[Dict[int, Sequence[Dict[str, Any]]]]
+                    ) -> None:
+    enemies = board.enemies
+    player = board.me
+    hp = spec["hp"]
+    max_hp = spec["max_hp"]
+    ap_max = spec["ap_max"]
+    mp_max = spec["mp_max"]
+    power = spec["power"]
+    res = spec["res"]
+    dist = spec["dist"]
+    initiative = spec["initiative"]
+    alive = spec["alive"]
+
+    def fill_rows(actor: int, rows: Sequence[Dict[str, Any]]) -> None:
+        for slot, row in enumerate(rows[:cfg.spells]):
+            tables["spell_ap"][index, actor, slot] = row["ap"]
+            tables["spell_rmin"][index, actor, slot] = row["rmin"]
+            tables["spell_rmax"][index, actor, slot] = row["rmax"]
+            tables["spell_damage"][index, actor, slot] = row["damage"]
+            tables["spell_heal"][index, actor, slot] = row["heal"]
+            tables["spell_element"][index, actor, slot] = row["element"]
+            tables["spell_ally"][index, actor, slot] = row["ally"]
+
+    player_cell = int(plan.final_cell)
+    if player is not None:
+        hp[index, 0] = float(plan.final_hp.get(player.id, player.hp))
+        max_hp[index, 0] = float(max(1, player.max_hp))
+        ap_max[index, 0] = float(max(1, player.max_ap or board.my_ap))
+        mp_max[index, 0] = float(max(1, player.max_mp or board.my_mp))
+        res[index, 0] = _resists(player)
+        initiative[index, 0] = float(player.level)
+        power[index, 0] = 10.0 + float(player.level)
+        alive[index, 0] = bool(player.alive and hp[index, 0] > 0)
+        if player_rows is None:
+            candidates = list(player_candidates) if player_candidates is not None \
+                else _player_spell_rows(board, board.character_stats(), plan)
+            rows = _pick_player_spells(candidates, plan, cfg.spells)
+        else:
+            rows = list(player_rows)[:cfg.spells]
+            while len(rows) < cfg.spells:
+                rows.append(_empty_spell_row())
+        fill_rows(0, rows)
+
+    for offset, fighter in enumerate(enemies[:cfg.enemies], start=1):
+        hp[index, offset] = float(plan.final_hp.get(fighter.id, fighter.hp))
+        max_hp[index, offset] = float(max(1, fighter.max_hp))
+        ap_max[index, offset] = float(max(1, fighter.max_ap or fighter.ap))
+        mp_max[index, offset] = float(max(1, fighter.max_mp or fighter.mp))
+        res[index, offset] = _resists(fighter)
+        initiative[index, offset] = float(fighter.level)
+        power[index, offset] = (10.0 + (1.5 if fighter.is_boss else 1.0)
+                                * float(fighter.level))
+        alive[index, offset] = bool(fighter.alive and hp[index, offset] > 0)
+        if enemy_rows is not None and fighter.id in enemy_rows:
+            rows = list(enemy_rows[fighter.id])
+        else:
+            rows, _known = _enemy_rows(board, fighter, cfg.spells)
+        fill_rows(offset, rows)
+
+    live_enemies = [f for f, keep in zip(enemies[:cfg.enemies], alive[index, 1:])
+                    if keep]
+    if player is not None and player.alive:
+        if live_enemies:
+            dist[index, 0] = min(_distance(board, player_cell, f.cell)
+                                 for f in live_enemies)
+        for offset, fighter in enumerate(enemies[:cfg.enemies], start=1):
+            if alive[index, offset]:
+                dist[index, offset] = _distance(board, fighter.cell, player_cell)
+    spec["first_team"][index] = int(first_team)
+
+
 def board_encounter(board: Board, plan: TurnPlan, cfg: Config,
                     first_team: int = 1,
-                    player_rows: Optional[Sequence[Dict[str, Any]]] = None
+                    player_rows: Optional[Sequence[Dict[str, Any]]] = None,
+                    player_candidates: Optional[Sequence[Dict[str, Any]]] = None,
+                    enemy_rows: Optional[Dict[int, Sequence[Dict[str, Any]]]] = None
                     ) -> Tuple[Dict[str, jax.Array],
                                Dict[str, jax.Array]]:
     """Project the live board after ``plan`` into the encounter tensors.
@@ -185,86 +287,45 @@ def board_encounter(board: Board, plan: TurnPlan, cfg: Config,
     lets the live actor pin the exact four spells it bound to the policy slots;
     the value head keeps its own impact-based selection.
     """
-    n = cfg.n_actors
-    enemies = board.enemies
-    player = board.me
-    fighters: List[Optional[Fighter]] = [player] + enemies[:cfg.enemies]
-    fighters += [None] * (n - len(fighters))
-
-    hp = np.zeros((1, n), dtype=np.float32)
-    max_hp = np.zeros((1, n), dtype=np.float32)
-    ap_max = np.zeros((1, n), dtype=np.float32)
-    mp_max = np.zeros((1, n), dtype=np.float32)
-    power = np.zeros((1, n), dtype=np.float32)
-    res = np.zeros((1, n, 5), dtype=np.float32)
-    dist = np.full((1, n), 12.0, dtype=np.float32)
-    initiative = np.zeros((1, n), dtype=np.float32)
-    alive = np.zeros((1, n), dtype=bool)
-    tables = {key: np.zeros((1, n, cfg.spells), dtype=np.float32)
-              for key in TABLE_KEYS if key not in ("spell_element", "spell_ally")}
-    tables["spell_element"] = np.zeros((1, n, cfg.spells), dtype=np.int32)
-    tables["spell_ally"] = np.zeros((1, n, cfg.spells), dtype=bool)
-
-    def fill_rows(actor: int, rows: Sequence[Dict[str, Any]]) -> None:
-        for slot, row in enumerate(rows[:cfg.spells]):
-            tables["spell_ap"][0, actor, slot] = row["ap"]
-            tables["spell_rmin"][0, actor, slot] = row["rmin"]
-            tables["spell_rmax"][0, actor, slot] = row["rmax"]
-            tables["spell_damage"][0, actor, slot] = row["damage"]
-            tables["spell_heal"][0, actor, slot] = row["heal"]
-            tables["spell_element"][0, actor, slot] = row["element"]
-            tables["spell_ally"][0, actor, slot] = row["ally"]
-
-    player_cell = int(plan.final_cell)
-    if player is not None:
-        hp[0, 0] = float(plan.final_hp.get(player.id, player.hp))
-        max_hp[0, 0] = float(max(1, player.max_hp))
-        ap_max[0, 0] = float(max(1, player.max_ap or board.my_ap))
-        mp_max[0, 0] = float(max(1, player.max_mp or board.my_mp))
-        res[0, 0] = _resists(player)
-        initiative[0, 0] = float(player.level)
-        power[0, 0] = 10.0 + float(player.level)
-        alive[0, 0] = bool(player.alive and hp[0, 0] > 0)
-        if player_rows is None:
-            rows = _pick_player_spells(
-                _player_spell_rows(board, board.character_stats(), plan),
-                plan, cfg.spells)
-        else:
-            rows = list(player_rows)[:cfg.spells]
-            while len(rows) < cfg.spells:
-                rows.append(_empty_spell_row())
-        fill_rows(0, rows)
-
-    for index, fighter in enumerate(enemies[:cfg.enemies], start=1):
-        hp[0, index] = float(plan.final_hp.get(fighter.id, fighter.hp))
-        max_hp[0, index] = float(max(1, fighter.max_hp))
-        ap_max[0, index] = float(max(1, fighter.max_ap or fighter.ap))
-        mp_max[0, index] = float(max(1, fighter.max_mp or fighter.mp))
-        res[0, index] = _resists(fighter)
-        initiative[0, index] = float(fighter.level)
-        power[0, index] = 10.0 + (1.5 if fighter.is_boss else 1.0) * float(fighter.level)
-        alive[0, index] = bool(fighter.alive and hp[0, index] > 0)
-        rows, _known = _enemy_rows(board, fighter, cfg.spells)
-        fill_rows(index, rows)
-
-    live_enemies = [f for f, keep in zip(enemies[:cfg.enemies], alive[0, 1:])
-                    if keep]
-    if player is not None and player.alive:
-        if live_enemies:
-            dist[0, 0] = min(_distance(board, player_cell, f.cell)
-                             for f in live_enemies)
-        for index, fighter in enumerate(enemies[:cfg.enemies], start=1):
-            if alive[0, index]:
-                dist[0, index] = _distance(board, fighter.cell, player_cell)
-
-    spec = {
-        "hp": hp, "max_hp": max_hp, "ap_max": ap_max, "mp_max": mp_max,
-        "power": power, "res": res, "dist": dist,
-        "initiative": initiative, "alive": alive,
-        "first_team": np.full((1,), int(first_team), dtype=np.int32),
-    }
+    tables, spec = _allocate_encounter(cfg, 1)
+    _fill_encounter(board, plan, cfg, tables, spec, 0, first_team,
+                    player_rows, player_candidates, enemy_rows)
     return ({key: jnp.asarray(value) for key, value in tables.items()},
             {key: jnp.asarray(value) for key, value in spec.items()})
+
+
+def board_encounters(board: Board, plans: Sequence[TurnPlan], cfg: Config,
+                     first_team: int = 1,
+                     player_candidates: Optional[Sequence[Dict[str, Any]]] = None,
+                     enemy_rows: Optional[Dict[int, Sequence[Dict[str, Any]]]] = None
+                     ) -> Tuple[Dict[str, jax.Array],
+                                Dict[str, jax.Array]]:
+    """Project a whole candidate batch into one set of encounter tensors.
+
+    The previous ranker built one 1-sample JAX tree per plan and concatenated
+    seventeen arrays. Allocating the batch once removes those per-plan device
+    transfers and the concatenate tree; the value head still sees exactly the
+    same per-candidate rows.
+    """
+    plans = list(plans)
+    tables, spec = _allocate_encounter(cfg, len(plans))
+    for index, plan in enumerate(plans):
+        _fill_encounter(board, plan, cfg, tables, spec, index, first_team,
+                        None, player_candidates, enemy_rows)
+    return ({key: jnp.asarray(value) for key, value in tables.items()},
+            {key: jnp.asarray(value) for key, value in spec.items()})
+
+
+@partial(jax.jit, static_argnums=(3,))
+def _batch_value(params: Dict[str, Any],
+                 tables: Dict[str, jax.Array],
+                 spec: Dict[str, jax.Array],
+                 cfg: Config) -> jax.Array:
+    """Value for a whole candidate batch in one compiled program."""
+    state = initial_state(spec, tables, cfg)
+    acting = jnp.ones((spec["hp"].shape[0],), dtype=jnp.int32)
+    obs, glob, mask = observe(state, tables, cfg, acting_team=acting)
+    return model.forward(params, obs, glob, mask)["value"]
 
 
 def score_plan(params: Dict[str, Any], board: Board, plan: TurnPlan,
@@ -282,11 +343,7 @@ def score_plan(params: Dict[str, Any], board: Board, plan: TurnPlan,
     if not board.enemies:
         return 1.0
     tables, spec = board_encounter(board, plan, cfg)
-    state = initial_state(spec, tables, cfg)
-    acting = jnp.ones((1,), dtype=jnp.int32)  # the monsters act next
-    obs, glob, mask = observe(state, tables, cfg, acting_team=acting)
-    values = model.forward(params, obs, glob, mask)["value"]
-    return -float(values[0])
+    return -float(_batch_value(params, tables, spec, cfg)[0])
 
 
 def _tactical_bonus(plan: TurnPlan) -> float:
@@ -307,10 +364,37 @@ def rank_plans(params: Dict[str, Any], board: Board,
     """Candidates sorted by player win value, best first.
 
     Ties are broken by the solver's damage/kill estimate so a certain win
-    picks the lethal plan rather than passing.
+    picks the lethal plan rather than passing. The spell tables that do not
+    depend on the candidate are built once per board, and all candidate values
+    are produced by one compiled batch instead of one eager forward each.
     """
-    scored = [(score_plan(params, board, plan, cfg) + _tactical_bonus(plan),
-               plan)
-              for plan in plans]
+    cfg = cfg or Config(max_rounds=24)
+    plans = list(plans)
+    if not plans:
+        return []
+    player = board.me
+    if player is not None and (not player.alive or player.hp <= 0):
+        return sorted([(-1.0 + _tactical_bonus(plan), plan) for plan in plans],
+                      key=lambda item: item[0], reverse=True)
+    if not board.enemies:
+        return sorted([(1.0 + _tactical_bonus(plan), plan) for plan in plans],
+                      key=lambda item: item[0], reverse=True)
+
+    player_candidates = _player_spell_rows(
+        board, board.character_stats(), plans[0])
+    enemy_cache = {fighter.id: _enemy_rows(board, fighter, cfg.spells)[0]
+                   for fighter in board.enemies[:cfg.enemies]}
+    # A varying batch size makes JAX recompile the value program for every
+    # distinct candidate count. Pad to a small fixed ladder and score the
+    # duplicates too, then keep only the real candidates.
+    original = list(plans)
+    batch = 8 if len(original) <= 8 else 1 << (len(original) - 1).bit_length()
+    plans = original + [original[-1]] * (batch - len(original))
+    tables, spec = board_encounters(
+        board, plans, cfg, player_candidates=player_candidates,
+        enemy_rows=enemy_cache)
+    values = np.asarray(_batch_value(params, tables, spec, cfg))
+    scored = [(-float(value) + _tactical_bonus(plan), plan)
+              for value, plan in zip(values[:len(original)], original)]
     scored.sort(key=lambda item: item[0], reverse=True)
     return scored

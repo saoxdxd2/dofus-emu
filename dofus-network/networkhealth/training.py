@@ -17,8 +17,6 @@ from a single time-sorted split with overlapping windows. Both are corrected her
 
 from __future__ import annotations
 
-import json
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,8 +26,7 @@ import numpy as np
 from . import baselines as baseline_lib
 from .evaluation import (HeadMetrics, comparison_table, compute_head_metrics,
                          measure_cost, write_json)
-from .features import (FEATURE_NAMES, HORIZONS, Normaliser, TARGET_BLOCK,
-                       build_examples, build_series_features)
+from .features import (FEATURE_NAMES, HORIZONS, Normaliser, TARGET_BLOCK)
 from .provenance import hash_file
 from .splits import SplitConfig, build_split, describe_split
 

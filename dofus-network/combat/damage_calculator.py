@@ -18,13 +18,10 @@ from __future__ import annotations
 import itertools
 import math
 import threading
-from dataclasses import astuple, dataclass, field, replace
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import astuple, dataclass, replace
+from typing import Any, Dict, List, Tuple
 
 from data.game_data_extractor import (
-    DamageEffect,
-    GameDataRepository,
-    MonsterGrade,
     MonsterInfo,
     SpellInfo,
 )

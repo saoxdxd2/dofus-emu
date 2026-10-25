@@ -14,11 +14,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Tuple
 
-from .world_graph import Direction, DofusWorldGraph, NavigationPath
-from .resource_graph import FarmLoop, ResourceKnowledgeGraph, ResourceSpot
-from .quest_graph import QuestGuide, QuestKnowledgeGraph
+from .world_graph import DofusWorldGraph
+from .resource_graph import ResourceKnowledgeGraph
+from .quest_graph import QuestKnowledgeGraph
 
 
 class NLPIntent(str, Enum):

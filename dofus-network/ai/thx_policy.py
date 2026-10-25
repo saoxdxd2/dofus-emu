@@ -33,7 +33,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agent.runtime import RulePolicy, ToolCall
-from agent.schema import TOOLS_BY_NAME, tool_names, validate_call
+from agent.schema import validate_call
 
 logger = __import__("logging").getLogger("dofus.ai.thx_policy")
 

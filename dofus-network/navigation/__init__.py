@@ -1,48 +1,65 @@
 """Dofus Spatial Navigation, Resource Knowledge Graph, and NLP Intent Engine.
+
+Public names are imported lazily: a caller that only needs ``CellPathfinder``
+or ``DofusWorldGraph`` should not pay for the quest cache and the NLP engine.
 """
 
-from .world_graph import (
-    CellPathfinder,
-    Direction,
-    DofusWorldGraph,
-    MapCoord,
-    NavigationPath,
-    NavigationStep,
-    ZaapLocation,
-)
-from .resource_graph import (
-    FarmLoop,
-    ResourceKnowledgeGraph,
-    ResourceNode,
-    ResourceSpot,
-)
-from .quest_graph import (
-    QuestGuide,
-    QuestKnowledgeGraph,
-    QuestStep,
-)
-from .nlp_intent_engine import (
-    DofusNLPEngine,
-    NLPIntent,
-    NLPQueryResult,
-)
+from __future__ import annotations
 
-__all__ = [
-    "CellPathfinder",
-    "Direction",
-    "DofusWorldGraph",
-    "MapCoord",
-    "NavigationPath",
-    "NavigationStep",
-    "ZaapLocation",
-    "FarmLoop",
-    "ResourceKnowledgeGraph",
-    "ResourceNode",
-    "ResourceSpot",
-    "QuestGuide",
-    "QuestKnowledgeGraph",
-    "QuestStep",
-    "DofusNLPEngine",
-    "NLPIntent",
-    "NLPQueryResult",
-]
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+_EXPORTS = {
+    "CellPathfinder": "navigation.world_graph",
+    "Direction": "navigation.world_graph",
+    "DofusWorldGraph": "navigation.world_graph",
+    "MapCoord": "navigation.world_graph",
+    "NavigationPath": "navigation.world_graph",
+    "NavigationStep": "navigation.world_graph",
+    "ZaapLocation": "navigation.world_graph",
+    "FarmLoop": "navigation.resource_graph",
+    "ResourceKnowledgeGraph": "navigation.resource_graph",
+    "ResourceNode": "navigation.resource_graph",
+    "ResourceSpot": "navigation.resource_graph",
+    "QuestGuide": "navigation.quest_graph",
+    "QuestKnowledgeGraph": "navigation.quest_graph",
+    "QuestStep": "navigation.quest_graph",
+    "DofusNLPEngine": "navigation.nlp_intent_engine",
+    "NLPIntent": "navigation.nlp_intent_engine",
+    "NLPQueryResult": "navigation.nlp_intent_engine",
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError("module 'navigation' has no attribute %r" % name)
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_EXPORTS))
+
+
+if TYPE_CHECKING:  # pragma: no cover - type checkers only
+    from navigation.nlp_intent_engine import DofusNLPEngine, NLPIntent, NLPQueryResult
+    from navigation.quest_graph import QuestGuide, QuestKnowledgeGraph, QuestStep
+    from navigation.resource_graph import (
+        FarmLoop,
+        ResourceKnowledgeGraph,
+        ResourceNode,
+        ResourceSpot,
+    )
+    from navigation.world_graph import (
+        CellPathfinder,
+        Direction,
+        DofusWorldGraph,
+        MapCoord,
+        NavigationPath,
+        NavigationStep,
+        ZaapLocation,
+    )
