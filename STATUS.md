@@ -1,7 +1,19 @@
 # STATUS.md — where the project stands
 
 Written 2026-10-23, late session. Companion to `PLAN.md` (what to do next).
-`now.md` is the long historical record; this file is the current truth.
+`now.md` is the long historical record.
+
+> **Superseded in part — 2026-10-26.** The network egress/kick analysis (§"The
+> kick") is still the best record of why the pin works and is kept as-is. Three
+> things below are now out of date: (1) the `smoke_verifier` gate and its
+> "244 checks" were **removed 2026-10-25** — the only surviving Python gate is
+> `advisor selftest` (122 checks), see `dofus-network/docs/KNOWN_GAPS.md` G8;
+> (2) the action space is **21 tools**, not 16; (3) `models/tool_policy.onnx` was
+> **retrained 2026-10-26** — the current artifact is 42 features → 21 logits,
+> 49,365 params, val **0.8599** (the 48,786 / 0.8632 numbers below are the prior
+> run). For the live running topology and which model is loaded by default, read
+> `dofus-network/docs/CURRENT.md`. This file is the current *reasoning*, not the
+> current *status*.
 
 Everything here is **measured** unless marked unknown.
 
@@ -64,7 +76,9 @@ Three identities matter to the server, and all three are now pinned:
   (`step`, tracker objective, map, tutorial gate); a changed step, a map change, or the
   tutorial ending reopens it. Permanent retirements (no tool can express the objective) are
   kept separate. This is what lets the AI resume after the player advances the quest manually.
-- **244 automated checks, 0 failing.**
+- **~~244 automated checks, 0 failing.~~** That was the `smoke_verifier` gate,
+  removed 2026-10-25. The surviving gate is `advisor selftest` (122 checks,
+  knowledge repository only) — `KNOWN_GAPS.md` G8.
 
 ## The kick, and why it happened
 
@@ -113,7 +127,8 @@ performs the SOCKS handshake *and* a CONNECT for remote candidates too, not just
 Verified in this pass: the relay builds and its unit tests pass — destination classification,
 the live-traffic hold, the stale-session replacement, the first-byte proof and silent-socket
 replacement, and skipping the dead address on re-pin. The rebuilt binaries contain both new
-paths, and the 244-check smoke verifier passes. A live session is still the only proof; see
+paths, and the 244-check smoke verifier passed *(that gate was since removed —
+KNOWN_GAPS.md G8)*. A live session is still the only proof; see
 `PLAN.md` #1.
 
 ## Measured limits — the numbers that shape every decision
@@ -152,7 +167,8 @@ session*; it cannot make it persist *across* sessions.
   contains decision-value and encoder checkpoints, nothing trained on network health.
 - **~~The trained planner is not in the selection path.~~ Closed 2026-10-24.** The
   installed 42-feature h192 head (48,786 params, 155,199 travel-cost rows,
-  validation 0.8632) is `models/tool_policy.onnx`, and the desktop launches with
+  validation 0.8632 — since retrained 2026-10-26 to 49,365 params, val 0.8599)
+  is `models/tool_policy.onnx`, and the desktop launches with
   `--policy planner`. On the corrected simulator it scores 83.6 quests vs the
   teacher's 81.7 (12 paired seeds, level 60, 400 steps, noise + travel cost), and
   140.0 vs 137.9 at 800 steps (8 seeds); at level 20 it scores 72.8 vs 72.1. It was

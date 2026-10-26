@@ -54,8 +54,8 @@ irreversible action can teach the wrong lesson:
 1. **Feasibility** — a level-1 character cannot fight a level-200 monster. This is
    a gate, not a cost penalty.
 2. **Safety** — `safe.stop`, spend limits, session caps. Never a learned policy.
-3. **The tool schema** — 16 tools, typed args. The model does not get to invent
-   one, however much evidence it thinks it has.
+3. **The tool schema** — 21 tools (see `CURRENT.md` §7), typed args. The model does
+   not get to invent one, however much evidence it thinks it has.
 
 Everything else is fair game.
 

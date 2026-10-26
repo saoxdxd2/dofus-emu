@@ -130,7 +130,7 @@ What is actually built and measured, in dependency order:
 | economy       | `planning/economy.py` Beta/Gamma/log-normal/Normal posteriors | 5.5 µs/update, ~1.6 KB/param                                           |
 | strategy      | `planning/bandit.py` `StrategyRanker`, Thompson + UCB rails   | `max_ratio`/`exploration_ratio`/`min_samples`                          |
 | memory        | `planning/graph_memory.py`, `thinking_cache.py`, `trace.py`   | structure-only cache, before/after audit                               |
-| actions       | `data/capabilities.json`, 16 typed tools                      | actions as data; description-derived anchors                           |
+| actions       | `data/capabilities.json`, 21 typed tools                      | actions as data; description-derived anchors                           |
 | policy NN     | `ai/encoder_policy.py`, 30M encoder                           | gen-2 val 94.7% tool / 88.3% gate call                                 |
 | deterministic | `ai/postprocess.py`, `ai/gazetteer.py`, `planning/kb.py`      | **net +2.4 pp** on gen-2, **+9.0 pp** on gen-1; no per-tool regression |
 | serving       | `ai/encoder_serve.py` `EncoderToolPolicy`                     | stateless per call, torch or ONNX                                      |

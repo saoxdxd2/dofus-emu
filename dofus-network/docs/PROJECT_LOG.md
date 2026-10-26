@@ -219,7 +219,8 @@ empty `dofus-brain-native/`. **52/52 tests still pass after the move.**
 — the singleton the C# talks to — imports `torch` at module scope and uses it in
 12 places for the THX classifier. So `requirements.txt` cannot shrink to
 `onnxruntime + numpy + tokenizers` until that path is replaced by the ONNX encoder
-policy, which is `PRETRAIN_GAPS` item W4. That single refactor is what unlocks the
+policy, which is the W4 item now tracked as `KNOWN_GAPS.md` G5 (formerly
+`PRETRAIN_GAPS`, deleted 2026-10-26). That single refactor is what unlocks the
 994 MB → ~110 MB runtime, and therefore the 600 MB installer.
 
 Order: **W4 (sentinel on ONNX, drop torch) → requirements shrink → payload

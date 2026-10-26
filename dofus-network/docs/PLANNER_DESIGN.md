@@ -1,5 +1,13 @@
 # Planner design — intelligence per megabyte of RAM
 
+> **Status note (2026-10-26).** The planning/economy/bandit reasoning below stands,
+> but one recommendation is **reversed by policy**: this doc treats `hdv.buy` as the
+> "single highest-value harness change". It is not — buying on the market is now
+> deliberately **forbidden** (`FORBIDDEN_TOOLS`, `agent/autopilot.py:77`) because a
+> purchase is irreversible. The `buy` branch is out of scope by design; use
+> `hdv.scan`/`hdv.list`/`inv.sell` (supply side) only. See `CURRENT.md` §7 for the
+> real 21-tool schema.
+
 Constraint, restated: **RAM, not disk.** One game instance gets ~90 MB; the whole
 AI side gets 70–150 MB for two agents. Inside that budget the agent must still be
 smart enough to answer "I am level 1, get me a level-200 item" with a plan that

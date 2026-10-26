@@ -128,9 +128,14 @@ back to the legacy C# 5 compiler otherwise.
 |---|---|---|
 | 8880 + slot | relay | HTTP/CONNECT proxy the client is pointed at |
 | 8890 | Sentinel | health/telemetry HTTP service |
-| 8893 | directive bridge | `POST /directive` → client tool calls |
+| 8891 | Combat AI | `POST /v1/combat/decide` (solver → ranker → live policy) |
+| 8893 | directive bridge | `POST /directive` → client tool calls (fallback; the live port is read from `bridge_port.txt`, seen at 8894 on a multi-slot box) |
+| 8895 | agent HTTP | `python -m agent.serve` — stdlib front for the agent layer |
 | 40000 | tunnel | local SOCKS5 (userspace WireGuard or system WARP) |
 | 5554, 5556, … | legacy Android | emulator console ports (only with `--include-legacy-emulator`) |
+
+(8892 was the old ModernBERT stance server — retired; combat moved to 8891. Full
+topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
 
 ---
 
@@ -518,6 +523,15 @@ A 24.9 M-parameter encoder that maps `(goal text, observation)` to
 INT8 is what ships: 25.4 MB, ~62 ms per decision, bit-identical to fp32 on the
 release gate.
 
+> **What actually runs (`--policy`).** The shipped default is **`rule`** — the
+> deterministic `QuestPlanner`, no model loaded. `--policy encoder` loads the 24.9M
+> encoder above. `--policy planner` loads a *different, much smaller* head:
+> `models/tool_policy.onnx` (42 features → 21 tool logits, 49,365 params, val
+> accuracy **0.8599**), where the ONNX does the `argmax` but the planner still owns
+> argument filling and safety gates. `models/verifier_head.onnx` is **orphaned**
+> (`--verifier-model` defaults to `None`) — see `dofus-network/docs/CURRENT.md` §5
+> and `KNOWN_GAPS.md` G6. "Tool policy" and "encoder" are not one model.
+
 ### 9.2 The planner (tier 2)
 
 An AND/OR search over the game database, costing every branch in **minutes**:
@@ -642,24 +656,37 @@ Training runs offline on Kaggle; `--resume` continues from a checkpoint, and
 
 ## 10. The agent loop and the second agent
 
-### 10.1 Tools (16, closed vocabulary)
+### 10.1 Tools (21, closed vocabulary)
+
+Runtime order is `data/capabilities.json`. `hdv.buy` is **not** in the vocabulary —
+buying is irreversible and is banned at runtime too (`FORBIDDEN_TOOLS`).
 
 | tool | backend | tool | backend |
 |---|---|---|---|
-| `knowledge.search` | local | `hdv.scan` | directive |
-| `quest.list` | local | `hdv.list` | directive |
-| `nav.goto` | sentinel | `inv.list` | directive |
-| `nav.follow` | directive | `inv.sell` | directive |
-| `quest.advance` | directive | `chat.say` | directive |
-| `farm.start` / `farm.stop` | directive | `state.snapshot` | directive |
-| `fight.join` / `fight.pass` | directive | `safe.stop` | directive |
+| `knowledge.search` | local | `inv.sell` | directive |
+| `quest.list` | local | `hdv.scan` | directive |
+| `knowledge.remember` | local | `hdv.list` | directive |
+| `knowledge.forget` | local | `chat.say` | directive |
+| `fight.plan` | local | `state.snapshot` | directive |
+| `fight.estimate` | local | `safe.stop` | directive |
+| `nav.goto` † | directive | `fight.state` | directive |
+| `nav.follow` | directive | `quest.advance` | directive |
+| `farm.start` | directive | `farm.stop` | directive |
+| `fight.join` | directive | `fight.pass` | directive |
+| `inv.list` | directive | | |
 
-`directive` means: the host posts JSON to `127.0.0.1:8893/directive`, the page's
-handler performs it and reports back. `hdv.buy` is deliberately absent.
+† `nav.goto` is a directive, but its name→map resolution is answered by the
+Sentinel on `127.0.0.1:8890`.
+
+`directive` means: the host posts JSON to `127.0.0.1:8893/directive` (fallback —
+the live port comes from `bridge_port.txt`), the page's handler performs it and
+reports back.
 
 ### 10.2 The loop
 
-`agent/autopilot.py`: **observe → choose → guard → execute → label → decide**.
+`agent/autopilot.py`: **observe → choose → guard → execute → settle → verify →
+decide**. The `settle` stage (see `CURRENT.md` §3) re-observes after a
+world-changing tool so a walk in flight is not scored `noop`.
 
 * No wall-clock budget and no interval by default (`steps=0` = unlimited). It
   stops when the goals are met, when it stops making progress, or when you stop it.
@@ -735,10 +762,15 @@ The loop has to run and fail first, and the labels fall out of it — every
 rule/model/human disagreement is a training sample.
 
 ```bash
-python -m agent.smoke_verifier                     # 25 checks, offline
+python -m advisor selftest                         # 122 checks, offline (knowledge repo only)
 python -m agent.verifier --stats
 python -m agent.verifier --label 98106503 4 failed "the listing never appeared"
 python run_autopilot.py --goals-file goals.txt --steps 0
+```
+
+> The old `python -m agent.smoke_verifier` gate (the loop/verifier contract checks)
+> was removed 2026-10-25; `advisor selftest` covers the item/set/spell repository,
+> **not** the agent loop wiring. See `dofus-network/docs/KNOWN_GAPS.md` G8.
 ```
 
 ---
@@ -900,18 +932,19 @@ cd scripts
 go test dofus-net-proxy.go dofus_net_proxy_bench_test.go dofus_net_proxy_equiv_test.go dofus_net_proxy_relay_test.go
 ```
 
-**Agent + verifier** (offline: no game, no network, no torch):
+**Agent** (offline: no game, no network, no torch):
 
 ```bat
 cd dofus-network
-python -m agent.smoke_verifier
-python -m agent.selftest
-python -m networkhealth.selftest
+python -m advisor selftest
 ```
 
-`smoke_verifier` covers: all four verdicts, residual arithmetic, all three drift
-rules, human override + scoping + reload, loop wiring, and the fact that
-pre-flight cannot veto without a model.
+> The previous three-command gate — `agent.smoke_verifier`, `agent.selftest`,
+> `networkhealth.selftest` — no longer exists; all three were removed 2026-10-25.
+> `advisor selftest` (122 checks) is the only surviving Python gate and it covers
+> the knowledge repository, not the loop/verifier contract (verdicts, residual
+> arithmetic, drift rules, loop wiring). Restoring that coverage is tracked as
+> `dofus-network/docs/KNOWN_GAPS.md` G8.
 
 ---
 
@@ -936,19 +969,26 @@ pre-flight cannot veto without a model.
 
 | file | what is in it |
 |---|---|
-| `dofus-network/docs/PLAN.md` | the authoritative plan and phase list |
+| `dofus-network/docs/CURRENT.md` | **the running-system map** — services/ports, the 7-stage loop, think-token pacing, model inventory, combat pipeline, the 21 tools |
+| `dofus-network/docs/KNOWN_GAPS.md` | **honest limits** — no keep-alive (INACTIVITY), no equip tool, dialog text unread, no vision, forecaster dark, live fight unverified, tests gone |
+| `dofus-network/docs/PLAN.md` | the authoritative plan and phase list (single status source) |
 | `dofus-network/docs/PROJECT_LOG.md` | every decision (D1–D21) with the falsifier |
-| `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, why no token CoT |
-| `dofus-network/docs/SECOND_AGENT.md` | the verifier: what is wired, how to test, what is left |
+| `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, why no token CoT (note: `hdv.buy` recommendation is now forbidden) |
+| `dofus-network/docs/SECOND_AGENT.md` | the verifier: design and how it was meant to be tested (test gate removed — see KNOWN_GAPS G8) |
+| `dofus-network/docs/AGENT2_DESIGN.md` | earlier second-agent design (superseded by AGENT3_PLAN) |
+| `dofus-network/docs/AGENT3_PLAN.md` | the current second-agent plan (design, not shipped) |
+| `dofus-network/docs/FAILURE_TO_SUPERVISION.md` | how kicks/refusals/regressions become labels, data and tests |
 | `dofus-network/docs/PROTOCOL_NOTES.md` | captured Dofus messages and field layouts |
 | `dofus-network/docs/PIPELINE.md` | data pipeline end to end |
-| `dofus-network/docs/PRETRAIN_GAPS.md` | what the pretraining is still missing |
-| `dofus-network/docs/LATENT_AND_ONLINE_LEARNING.md` | latent bus and online updates |
-| `dofus-network/docs/CAPABILITY_REGISTRY.md` | the 18 tools and their contracts |
+| `dofus-network/docs/CAPABILITY_REGISTRY.md` | the tools and their contracts as data (live count is 21) |
 | `dofus-network/docs/EXPERIENCE_LEARNING.md` | experience/replay design |
-| `dofus-network/docs/BENCH_30M.md` | encoder benchmark, 30-minute run |
-| `dofus-network/docs/ARCH_REASSESSMENT.md` | what changed and why |
-| `dofus-network/docs/AI_ANALYSIS.md` | analysis of the model behaviour |
+| `dofus-network/docs/LATENT_AND_ONLINE_LEARNING.md` | latent bus and online updates |
+| `dofus-network/docs/ARCH_REASSESSMENT.md` | the architectural argument (reasoning; status column superseded) |
+| `dofus-network/docs/README.md` | the docs map with reading order by question |
+
+*Deleted 2026-10-26 as obsolete:* `AI_ANALYSIS.md`, `BENCH_30M.md`,
+`PRETRAIN_GAPS.md`, `KAGGLE_RUNS.md`, `MORNING.md`. The one live item from
+`PRETRAIN_GAPS.md` (the Sentinel still importing torch) is now `KNOWN_GAPS.md` G5.
 
 ---
 

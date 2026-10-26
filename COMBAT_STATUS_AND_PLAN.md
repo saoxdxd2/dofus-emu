@@ -2,6 +2,15 @@
 
 Updated 2026-10-24. This document covers the combat-data, damage-math, and live fight-loop work. Network and quest behavior outside this scope remains governed by `STATUS.md` and `PLAN.md`.
 
+> **Ordering caveat (2026-10-26).** The training/ranker phases below (Phase 4, v3/v4
+> corpora) were built **before** Phase 1 was proven, and Phase 1 — a complete live
+> client fight — is **still unverified** (`executor.py` records
+> `live_calibrated: false`, `models/fight_calibrator.json` is absent, and the fight
+> tools were essentially never reached in the step history because runs stalled on
+> the talk objective). The "18 tools" figures are historical (the schema is now 21,
+> `CURRENT.md` §7). Live-combat status is tracked as
+> `dofus-network/docs/KNOWN_GAPS.md` G7.
+
 ## Current state
 
 The project now has an authoritative class-spell dataset, a corrected damage calculator, an autonomous fight driver connected to `fight.join`, and a read-only board tool plus a turn solver built on client-exact geometry. Offline verification passes. **A complete live client fight has not yet been verified**, so autonomous combat is integrated but not yet declared proven in the game.
@@ -79,6 +88,10 @@ Updated `dofus-network/agent/autopilot.py`.
 ### 4. Regression coverage
 
 Added combat integration checks to `dofus-network/agent/smoke_verifier.py`.
+*(That file — and the whole Python test suite — was removed 2026-10-25; these
+combat checks no longer run. See `dofus-network/docs/KNOWN_GAPS.md` G8. The
+"228/228 live, 68/68 toolkit" smoke counts below are historical, from before the
+removal.)*
 
 They pin:
 

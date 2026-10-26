@@ -42,7 +42,9 @@ inference side physically cannot mis-parse it.
 python -m pip install -r requirements.txt
 
 # Verify the pipeline without network access or PyTorch:
-python -m networkhealth.selftest
+# `networkhealth.selftest` was removed 2026-10-25 (no replacement self-test in this
+# path — see dofus-network/docs/KNOWN_GAPS.md G8). Use the offline `baselines` step:
+python -m networkhealth baselines --input networkhealth_artifacts/features.npz
 
 # Real run: collect -> clean -> prepare -> baselines
 python -m networkhealth collect  --days 7 --measurements 25

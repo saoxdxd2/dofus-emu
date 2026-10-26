@@ -1,11 +1,13 @@
 # PLAN — the living plan
 
-This supersedes the status tables scattered across `ARCH_REASSESSMENT.md`,
-`PRETRAIN_GAPS.md` and `PIPELINE.md`. Those remain as the reasoning; this file is
-what is true **now** and what happens **next**.
+This is the single status source. It supersedes the status tables scattered across
+`ARCH_REASSESSMENT.md` and `PIPELINE.md`, which remain as the reasoning. The
+running-system map is `CURRENT.md`; open defects and their evidence are in
+`KNOWN_GAPS.md` (the deleted `PRETRAIN_GAPS.md` had one live item left — it is now
+`KNOWN_GAPS.md` G5).
 
 Last rewritten: 2026-10-24, after the dialog/monster observation contract and the
-strategist replan.
+strategist replan. Doc-map reconciliation pass: 2026-10-26.
 
 **The "third agent" design, the language layer and the training split now live in
 `AGENT3_PLAN.md`.** This file stays the living status: what is true now and what
@@ -87,7 +89,7 @@ for exactly that: disconnect, stop the service, flush DNS, probe.
 | sources | human (`verdicts_human.jsonl`) > model (ONNX hook, inert) > rule (always) |
 | loop | `autopilot._verdict` returns the full `Verdict`; `Step` carries `session` + `source` |
 | drift | 3 explainable contradictions; two in a row prints `REPLAN` |
-| test | `python -m agent.smoke_verifier` → 25 checks, offline |
+| test | `advisor/selftest.py` (the old `smoke_verifier` gate was removed 2026-10-25 — see `KNOWN_GAPS.md` G8) |
 
 Deliberately **rules first**: waiting for a dataset inverts the dependency. The
 loop has to run and fail, and the labels fall out of it.
@@ -115,7 +117,7 @@ as `agent_build`. The live checklist is in `AGENT3_PLAN.md` §4.1.
 | contents | 1,976 quests, 2,225 steps, 15,543 objectives, 2,781 achievements, 9,173 achievement objectives, 2,000 monsters, 6,472 NPCs, 21,554 items |
 | resolver | `CanonicalStore.resolve_objective(115)` → `Vaincre x1 Wabbit Gm en un seul combat`; unknown ids stay as placeholders and are reported |
 | provenance | all rows `source=dofusdb_cache`, `verified_live=0`; duplicate objective ids: 0 |
-| test | `python -m knowledge.selftest` → 23 checks, offline |
+| test | ~~`python -m knowledge.selftest`~~ removed 2026-10-25 (the `knowledge` package now ships only `build.py`; no self-test) — see `KNOWN_GAPS.md` G8 |
 | not yet | Touch client DB rows (#27), achievement objective details, interior map names, papycha reference index |
 
 `knowledge.CanonicalStore` is deliberately not `agent.knowledge_store.KnowledgeStore`:

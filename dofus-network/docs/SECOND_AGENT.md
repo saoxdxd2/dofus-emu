@@ -4,6 +4,14 @@ The second agent is the **verifier**: it looks at what the first agent did and
 says whether it worked, how late it was, and whether the observation now
 contradicts what the step assumed.
 
+> **Status note (2026-10-26).** The `agent/smoke_verifier` gate referenced
+> throughout this doc was **removed 2026-10-25** along with the rest of the test
+> suite; the only surviving in-repo check is `advisor/selftest.py`
+> (`KNOWN_GAPS.md` G8). The design (verifier as second agent, step rows as
+> supervised examples) still describes intent; the runnable commands do not. The
+> learned verifier head is also **orphaned** in the shipped loop
+> (`--verifier-model` defaults to `None` — `KNOWN_GAPS.md` G6).
+
 It is no longer a design. `agent/verifier.py` exists, the loop uses it, and it
 runs **without a model** — rules today, model when there is one, human labels on
 top. The old framing ("we need data first") was backwards: the loop has to run
@@ -36,7 +44,8 @@ Every step row is now a supervised example: `(goal, tool, args, before, after) �
 cd dofus-network
 
 # link check, no game needed
-python -m agent.smoke_verifier
+# (was `python -m agent.smoke_verifier` — removed 2026-10-25, see KNOWN_GAPS.md G8)
+python -m advisor selftest
 
 # real run (produces the labels)
 python run_autopilot.py --goals-file goals.txt --steps 0 --policy rule
@@ -76,7 +85,9 @@ python ai/train_verifier_baseline.py \
     --out   models/verifier_baseline.json
 
 # 3. prove it loads and predicts
-python -m agent.smoke_verifier
+# was `python -m agent.smoke_verifier` — removed 2026-10-25 (KNOWN_GAPS.md G8).
+# The Verifier module itself still loads; to exercise it offline:
+python -m agent.verifier --stats
 ```
 
 Measured on the shipped artifact: **val accuracy 1.0 on 60 examples**. Read that

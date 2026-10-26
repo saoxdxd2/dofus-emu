@@ -77,7 +77,7 @@ repair examples instead of disappearing.
 | model/featuriser width drift | `features` in the ONNX metadata; `NNPlanner` warns once when it cannot match |
 | corpus workers dropped `--travel-cost` / `--ordering` | flags verified in the worker argv |
 | guard reasons drifting | `node tools/test_claim_guard.js` |
-| harness behaviour | `python agent/smoke_verifier.py` |
+| harness behaviour | `python -m advisor selftest` (the old `agent/smoke_verifier.py` gate was removed 2026-10-25 — `KNOWN_GAPS.md` G8) |
 
 ### 2.4 Accepted but inert → bounded attempts
 

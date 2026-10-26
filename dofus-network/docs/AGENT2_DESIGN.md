@@ -1,5 +1,10 @@
 # Agent 2 — what it is, how it is trained, and why
 
+> **Superseded.** This design was carried forward into `AGENT3_PLAN.md`; the loop
+> that actually runs today is `CURRENT.md` §2. Read this for the reasoning, not for
+> the current action space (it says 16 tools; the schema is 21) or the test gate
+> (`smoke_verifier`, removed 2026-10-25 — see `KNOWN_GAPS.md` G8).
+
 Status: design decided, first harness built (see §9). Written 2026-10-22 after the
 session in which the client was fixed, the loop ran for the first time, and the
 verifier/controller was wired.
@@ -448,7 +453,9 @@ Falsifiers, written before the work:
 * `sim/world.py` — symbolic world + `step()` with preconditions.
 * `sim/run.py` — episode runner and baselines, prints quests/1,000 steps.
 * `ai/build_planner_sft.py` — simulator → planner SFT corpus.
-* `python -m agent.smoke_verifier` covers the planner/sim wiring.
+* ~~`python -m agent.smoke_verifier`~~ covers the planner/sim wiring — **removed
+  2026-10-25**; the only surviving in-repo check is `advisor/selftest.py`
+  (`KNOWN_GAPS.md` G8).
 
 Everything above is offline and CPU-only.
 

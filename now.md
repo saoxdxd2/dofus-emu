@@ -11,11 +11,13 @@ was wrong, the correction is kept next to it, because the corrections are the us
 
 ---
 
-## For the morning: read MORNING.md first
+## What to read for "how do I run it"
 
-It has the exact order of operations (one reload, one command) and a table of every fix
-from the night of 2026-10-23 with the symptom each one removes. This document is the
-long-form record; MORNING.md is the checklist.
+`MORNING.md` (the 2026-10-23 night checklist) has been removed as obsolete. For the
+order of operations and every running service/port, read
+**`dofus-network/docs/CURRENT.md`**; for what is *not* working yet, read
+**`dofus-network/docs/KNOWN_GAPS.md`**. This document remains the long-form
+record of that night's plumbing fixes.
 
 ### The night of 2026-10-23 (00:00–06:00), in one paragraph
 
@@ -539,8 +541,9 @@ dofus-network/
 ## 7. How to run it
 
 ```bash
-# tests (127 checks)
-cd dofus-network && python agent/smoke_verifier.py
+# tests — the old smoke_verifier gate was removed 2026-10-25 (KNOWN_GAPS.md G8);
+# the surviving Python gate is the advisor's, which does not cover the loop:
+cd dofus-network && python -m advisor selftest   # 122 checks (knowledge repo only)
 
 # simulator scoreboard (always quote --noise)
 python sim/run.py --policy planner --level 60 --steps 400
