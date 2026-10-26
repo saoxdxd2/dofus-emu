@@ -1952,6 +1952,37 @@
                     : (pd.position && pd.position.cell != null ? pd.position.cell : null);
                 var controlled = chars.getControlledCharacter ? chars.getControlledCharacter() : null;
                 var stats = (controlled && controlled.characteristics) || {};
+                // Action and movement points from the two places the client actually keeps
+                // them, not from the constants this function used to fall back to. The
+                // fighter's own stats bag is authoritative during a turn (`actionPoints`,
+                // refilled to `maxActionPoints` on turn confirm); the character sheet mirrors
+                // it into `actionPointsCurrent` for controllable fighters only. Assuming 6 AP
+                // and 3 MP was not neutral: it let the fallback offer spells the client would
+                // refuse for want of AP, and capped the walk at the wrong distance. Which
+                // source answered is carried out so a live turn shows whether either exists on
+                // this build rather than silently trusting the guess.
+                var fighterBag = null;
+                try {
+                    var selfFighter = fm.getFighter ? fm.getFighter(myId) : null;
+                    fighterBag = (selfFighter && selfFighter.data && selfFighter.data.stats) || null;
+                } catch (e) {}
+                var ap = null, mp = null, apFrom = null, mpFrom = null;
+                if (fighterBag && fighterBag.actionPoints != null) {
+                    ap = Number(fighterBag.actionPoints); apFrom = 'fighter';
+                } else if (stats.actionPointsCurrent != null) {
+                    ap = Number(stats.actionPointsCurrent); apFrom = 'sheet';
+                } else if (fighterBag && fighterBag.maxActionPoints != null) {
+                    ap = Number(fighterBag.maxActionPoints); apFrom = 'fighterMax';
+                }
+                if (fighterBag && fighterBag.movementPoints != null) {
+                    mp = Number(fighterBag.movementPoints); mpFrom = 'fighter';
+                } else if (stats.movementPointsCurrent != null) {
+                    mp = Number(stats.movementPointsCurrent); mpFrom = 'sheet';
+                } else if (fighterBag && fighterBag.maxMovementPoints != null) {
+                    mp = Number(fighterBag.maxMovementPoints); mpFrom = 'fighterMax';
+                }
+                if (ap == null || isNaN(ap)) { ap = 6; apFrom = 'assumed'; }
+                if (mp == null || isNaN(mp)) { mp = 3; mpFrom = 'assumed'; }
                 var spells = (controlled && controlled.spellData
                     && controlled.spellData.getSpellListDependingOnGameMode)
                     ? controlled.spellData.getSpellListDependingOnGameMode() : {};
@@ -1974,8 +2005,7 @@
                         hp: st.lifePoints != null ? st.lifePoints : 1 });
                 }
                 return { fm: fm, iso: iso, am: am, myId: myId, myCell: myCell,
-                    ap: stats.actionPointsCurrent != null ? stats.actionPointsCurrent : 6,
-                    mp: stats.movementPointsCurrent != null ? stats.movementPointsCurrent : 3,
+                    ap: ap, mp: mp, ap_source: apFrom, mp_source: mpFrom,
                     spells: spells, enemies: enemies };
             },
 
@@ -2078,8 +2108,14 @@
                     try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, sid); } catch (e) {}
                     if (!usable) continue;
                     var desc = this._spellDescriptor(spell);
-                    candidates.push({ id: sid, spell: spell,
-                        cost: desc.apCost != null ? desc.apCost : 1 });
+                    var cost = desc.apCost != null ? desc.apCost : 1;
+                    // Spend only what the client says is left. `canCastThisSpell` above is
+                    // the game's own legality gate; this removes only the candidates that
+                    // would still be refused for want of action points, and it stands aside
+                    // when AP is an assumption rather than a reading -- an invented budget
+                    // must not be able to veto a real spell.
+                    if (ctx.ap_source !== 'assumed' && cost > ctx.ap) continue;
+                    candidates.push({ id: sid, spell: spell, cost: cost });
                 }
                 candidates.sort(function(a, b) { return b.cost - a.cost; });
                 var enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });
@@ -2740,10 +2776,12 @@
                 // this, so every step re-accepted a quest and nothing could progress.
                 //
                 // The client's own model (from the bundle): an active quest has
-                // `objectives[{objectiveId, objectiveStatus}]` and `finishedCount`, and
-                // objectiveStatus is {FINISHED:0, ACTIVE:1, CAN_BE_FINISHED:2}.
-                // Status 2 is the interesting one: the conditions are met and the
-                // objective only needs QuestObjectiveValidationMessage to be claimed.
+                // `objectives[{objectiveId, objectiveStatus}]` and a live `stepId`, and
+                // objectiveStatus is {FINISHED:0, ACTIVE:1, CAN_BE_FINISHED:2}. It does NOT
+                // carry `finishedCount`: the bundle assigns that only while building the
+                // finished-quests map, so on an active quest it is undefined (see
+                // `_questProgress`). Status 2 is the interesting one: the conditions are met
+                // and the objective only needs QuestObjectiveValidationMessage to be claimed.
                 // An objective's type and parameters live in the quest's own
                 // `dbObjectives` table, which the client loads from the game database
                 // and which is newer than any knowledge-base snapshot. Without them the
@@ -2819,7 +2857,28 @@
                     for (var k in meta) if (meta.hasOwnProperty(k)) base[k] = meta[k];
                     return base;
                 };
-                var qs = { active: {}, current: null, ready: [], step_objectives: [], completed: 0 };
+                // Where the character actually is in a quest. `finishedCount` cannot answer
+                // this: the bundle writes it only in the QuestValidatedMessage handler, after
+                // `removeActiveQuestById` and with the value 1, i.e. on the quest it is moving
+                // into the finished list. On an active quest the property is undefined, so a
+                // progress signal built on it reads 0 forever (14,899 live rows said so).
+                // The client's own criterion code measures the same thing as the position of
+                // the live `stepId` in `dbQuest.stepIds`, which the step handlers do update.
+                var _questProgress = function (q) {
+                    var out = {index: 0, step_id: 0};
+                    try {
+                        var sid = q && q.stepId;
+                        if (sid != null && !isNaN(Number(sid))) out.step_id = Number(sid);
+                        var sids = q && q.dbQuest && q.dbQuest.stepIds;
+                        if (Array.isArray(sids) && sids.length && out.step_id) {
+                            var at = sids.indexOf(out.step_id);
+                            if (at > 0) out.index = at;
+                        }
+                    } catch (e) {}
+                    return out;
+                };
+                var qs = { active: {}, steps: {}, current: null, ready: [],
+                    step_objectives: [], completed: 0, finished: 0 };
                 try {
                     var sq = pd && pd.quests && pd.quests.standardQuests;
                     if (sq && typeof sq.getListOfActiveQuestsId === 'function') {
@@ -2829,9 +2888,10 @@
                             var qid = qids[qi];
                             var q = sq.getActiveQuestById(qid);
                             if (!q) continue;
-                            var fin = Number(q.finishedCount || 0);
-                            qs.active[qid] = fin;
-                            qs.completed += fin;
+                            var prog = _questProgress(q);
+                            qs.active[qid] = prog.index;
+                            qs.steps[qid] = prog.step_id;
+                            qs.completed += prog.index;
                             var objs = q.objectives || [];
                             var dbs = q.dbObjectives || {};
                             perQuest[qid] = [];
@@ -2846,15 +2906,24 @@
                                     { quest_id: qid, objective_id: o.objectiveId }, meta));
                                 if (st !== 0 && !qs.current) {
                                     qs.current = _objEntry(
-                                        { quest_id: qid, step: fin,
+                                        { quest_id: qid, step: prog.index,
                                           objective_id: o.objectiveId, status: st }, meta);
                                 }
                             }
                         }
                         if (qs.current) qs.step_objectives = perQuest[qs.current.quest_id] || [];
+                        // Quests the character has actually finished. This is the one
+                        // progress quantity in the goal that only goes up, and the client
+                        // publishes it as a list of ids.
+                        if (typeof sq.getListOfFinishedQuestsId === 'function') {
+                            var fq = sq.getListOfFinishedQuestsId() || [];
+                            qs.finished = fq.length;
+                        }
                     }
                 } catch (e) {}
                 snap.quests_active = qs.active;
+                snap.quest_steps = qs.steps;
+                snap.quests_finished = qs.finished;
                 snap.current_objective = qs.current;
                 snap.ready_objectives = qs.ready;
                 snap.step_objectives = qs.step_objectives;
@@ -2935,6 +3004,81 @@
                     } else {
                         snap.inventory.raw_keys = Object.keys(inv).slice(0, 25);
                     }
+                    // G2's prerequisite is a read, not a verb: to equip anything the loop
+                    // first has to know what is worn and which saved sets exist. The client
+                    // keeps `objects`, `equippedItems`, `presets` and `itemSets` on the same
+                    // inventory class (its `moveAllItems` clears all four together), and the
+                    // send side is `InventoryPresetUseMessage {presetId}`, gated on
+                    // `isInFight()`/`blockPreset()` -- so a preset id is the only thing the
+                    // verb needs, and it is what has never been observable here.
+                    // Entry field names other than `objectGID` are NOT guessed: the first
+                    // equipped entry's own keys are captured so the next live run can name
+                    // them instead of a session inventing one.
+                    var bag = inv;
+                    if (bag.equippedItems == null && bag.presets == null
+                            && typeof bag.getCorrectInventory === 'function') {
+                        try { bag = bag.getCorrectInventory(bag._type) || bag; } catch (e) {}
+                    }
+                    var equipped = [];
+                    var eq = (bag && bag.equippedItems) || null;
+                    if (eq && typeof eq === 'object') {
+                        for (var slot in eq) {
+                            if (!Object.prototype.hasOwnProperty.call(eq, slot)) continue;
+                            if (equipped.length >= 24) break;
+                            var worn = eq[slot];
+                            var slotNum = parseInt(slot, 10);
+                            equipped.push({
+                                slot: isNaN(slotNum) ? String(slot) : slotNum,
+                                gid: worn && worn.objectGID != null ? Number(worn.objectGID) : null
+                            });
+                            if (equipped.length === 1) {
+                                try {
+                                    snap.inventory.equipped_entry_keys =
+                                        Object.keys(worn || {}).slice(0, 30);
+                                } catch (e) { snap.inventory.equipped_entry_keys = []; }
+                            }
+                        }
+                    }
+                    var presets = [];
+                    var ps = (bag && bag.presets) || null;
+                    if (ps && typeof ps === 'object') {
+                        var plist = Array.isArray(ps) ? ps : Object.keys(ps);
+                        for (var pi = 0; pi < plist.length && presets.length < 12; pi++) {
+                            var pid = Array.isArray(ps) ? null : plist[pi];
+                            var preset = Array.isArray(ps) ? plist[pi] : ps[pid];
+                            if (preset == null) continue;
+                            presets.push({
+                                preset_id: pid != null ? Number(pid)
+                                    : (preset.presetId != null ? Number(preset.presetId) : null),
+                                name: typeof preset.name === 'string' ? preset.name.slice(0, 40) : null,
+                                items: Array.isArray(preset.items) ? preset.items.length : null
+                            });
+                        }
+                    }
+                    var sets = [];
+                    var isets = (bag && bag.itemSets) || null;
+                    if (Array.isArray(isets)) {
+                        for (var si = 0; si < isets.length && sets.length < 12; si++) {
+                            var set = isets[si] || {};
+                            sets.push({
+                                name: typeof set.name === 'string' ? set.name.slice(0, 40) : null,
+                                items: Array.isArray(set.items) ? set.items.length : null
+                            });
+                        }
+                    }
+                    snap.inventory.equipped = equipped;
+                    snap.inventory.presets = presets;
+                    snap.inventory.item_sets = sets;
+                    // The verb is only wireable once the send guard is known too; reading it
+                    // is harmless and says whether a preset could be applied at all right now.
+                    try {
+                        snap.inventory.preset_blocked = !!(bag && typeof bag.blockPreset === 'function'
+                            && bag.blockPreset());
+                    } catch (e) {}
+                    try {
+                        snap.inventory.in_fight_inventory = !!(bag &&
+                            typeof bag.isInFight === 'function' && bag.isInFight());
+                    } catch (e) {}
                 }
             } catch(err) {
                 snap.error = err.toString();
@@ -3429,7 +3573,7 @@
         var _listNpcActors = function () {
             var am = window.actorManager
                 || (window.isoEngine && window.isoEngine.actorManager) || null;
-            var actors = (am && (am.actors || am.actorList)) || null;
+            var actors = (am && am.actors) || null;
             var out = [];
             if (!actors) return out;
             for (var k in actors) {
@@ -3588,6 +3732,7 @@
                 texts: texts,
                 message: (ui && ui.currentMsg != null)
                     ? _agentPlainText(ui.currentMsg) : null,
+                raw_msg: (ui && ui.currentMsg != null) ? ui.currentMsg : null,
                 name_id: (ui && ui.npcName != null) ? ui.npcName
                     : (npcData && npcData.nameId != null ? npcData.nameId : null),
                 npc_id: (npcData && npcData.id != null) ? Number(npcData.id) : null
@@ -3605,6 +3750,71 @@
             }
             return { hits: hits, count: texts.length };
         };
+        // A quest offer is a LINK, not a reply. The served bundle says so in one place: the dialog
+        // view parses /<a\shref=['"](.*?)['"]\s*>(.*?)<\/a>/gi out of the question text and hands
+        // each href to `_linkHandler`, which splits on "," and knows exactly three payloads --
+        // `startquest,<questId>` (sends QuestStartRequestMessage, then closes),
+        // `validateobjective,<questId>,<objectiveId>` (sends QuestObjectiveValidationMessage, then
+        // closes) and `map,<worldX>,<worldY>` (moves the compass). The published `message` has every
+        // tag stripped, so an offer the client renders as a clickable word is invisible to the
+        // policy -- and 212 of 212 live quest-start attempts were answered with a packet the client
+        // never sends for a start (KNOWN_GAPS G32). This is a read: nothing here sends anything.
+        var _agentDialogLinkPayloads = function (raw) {
+            var out = [];
+            if (raw == null) return out;
+            var anchor = /<a\shref=['"](.*?)['"]\s*>(.*?)<\/a>/gi;
+            var m;
+            while ((m = anchor.exec(String(raw))) !== null && out.length < 12) {
+                var parts = String(m[1]).split(',');
+                var kind = parts[0];
+                if (kind === 'startquest') {
+                    out.push({kind: kind, quest_id: Number(parts[1])});
+                } else if (kind === 'validateobjective') {
+                    out.push({kind: kind, quest_id: Number(parts[1]),
+                              objective_id: Number(parts[2])});
+                } else if (kind === 'map') {
+                    out.push({kind: kind, world_x: ~~parts[1], world_y: ~~parts[2]});
+                } else {
+                    out.push({kind: 'other', href: String(m[1]).slice(0, 60)});
+                }
+            }
+            return out;
+        };
+        var _agentDialogLinks = function (info) {
+            var links = [];
+            var collect = function (raw, from, index) {
+                var found = _agentDialogLinkPayloads(raw);
+                for (var k = 0; k < found.length; k++) {
+                    found[k].from = from;
+                    if (index != null) found[k].reply_index = index;
+                    links.push(found[k]);
+                }
+            };
+            collect(info.raw_msg, 'message', null);
+            var texts = info.texts || [];
+            for (var i = 0; i < texts.length && i < 12; i++) collect(texts[i], 'reply', i);
+            return links;
+        };
+        var _agentStartQuestOffered = function (links) {
+            for (var i = 0; i < links.length; i++) {
+                var q = links[i].quest_id;
+                if (links[i].kind === 'startquest' && typeof q === 'number'
+                        && !isNaN(q) && q > 0) return q;
+            }
+            return null;
+        };
+        // Which live object owns the client's own link handler. Calling `_linkHandler` is the
+        // faithful way to accept (it sends the message AND closes the dialog, exactly as a click
+        // does); `dofus.sendMessage` is the fallback. Detection is published instead of assumed,
+        // because wiring a verb to a method this build does not expose is the mistake G2 was held
+        // back for.
+        var _agentLinkHandlerOwner = function (info) {
+            if (info.ui && typeof info.ui._linkHandler === 'function') return 'gui.npcDialogUi';
+            if (info.handler && typeof info.handler._linkHandler === 'function') {
+                return 'gui.npcDialogHandler';
+            }
+            return null;
+        };
         var _agentDialogState = function () {
             var info = _agentDialogInfo();
             if (!info.in_dialog) return { open: false };
@@ -3620,6 +3830,7 @@
                     reply_id: rid != null && !isNaN(rid) ? rid : (ids[i] != null ? ids[i] : null)
                 });
             }
+            var links = _agentDialogLinks(info);
             return {
                 open: true,
                 npc_id: info.npc_id,
@@ -3629,7 +3840,10 @@
                 reply_count: count,
                 ids_ready: !!(info.ids && info.ids.length),
                 ids_present: info.ids != null,
-                text_ready: !!texts.length
+                text_ready: !!texts.length,
+                links: links,
+                start_quest: _agentStartQuestOffered(links),
+                link_handler: _agentLinkHandlerOwner(info)
             };
         };
 
@@ -3640,19 +3854,103 @@
         // Only fields the client actually provides are exposed -- a missing level
         // stays null instead of becoming 0, so an estimator can tell "unknown"
         // from "level zero".
+        // One group-membership read, shared by the map listing and the group search so the two
+        // cannot disagree about which actors a group contains. The served bundle answers this
+        // question itself: `actorManager.getActorFromMonsterId` matches `data.creatureGenericId`
+        // or `data.staticInfos.mainCreatureLightInfos.creatureGenericId`, and the client's own
+        // enumeration is `[mainCreatureLightInfos].concat(underlings)` -- nine sites each.
+        // `monsters` is the shape of the monster-group *reference* database, and `fight.join`
+        // used to read only that, so a named-monster join could never match on a map the listing
+        // showed as full of groups (KNOWN_GAPS G7). `actorList` appears nowhere in the bundle:
+        // the manager's collection is `actors`, which its constructor initialises to `{}`.
+        var _groupMembers = function (a) {
+            var d = (a && a.data) || {};
+            var si = d.staticInfos || (a && a.staticInfos) || {};
+            var members = [];
+            if (si.mainCreatureLightInfos) members.push(si.mainCreatureLightInfos);
+            if (Array.isArray(si.underlings)) members = members.concat(si.underlings);
+            if (!members.length && d.creatureGenericId != null) {
+                members = [{creatureGenericId: d.creatureGenericId, level: d.level}];
+            }
+            if (!members.length) {
+                var legacy = si.monsters || d.monsters || [];
+                if (Array.isArray(legacy)) members = legacy;
+            }
+            return members;
+        };
+        // One search for "which group on this map contains monster N", shared by `fight.join` and
+        // by the named-mob branch of `farm.start`. They used to walk the actors separately, so a
+        // focus order could be refused as "not on this map" by the loop that read `monsters`
+        // while the listing that read the live shape showed the group standing right there
+        // (KNOWN_GAPS G7). `wanted == null` means "any group", which is what a plain fight
+        // objective asks for. The scan never stops early: on a refusal, the ids that *were* found
+        // are the only way to tell a wrong generic id from an empty membership read.
+        // Deliberately wider than the client's own `getActorFromMonsterId`, which only sees the
+        // leader: a player is allowed to join a group whose named minion is not its boss, and a
+        // goal that arrives as a string still has to match (the client compares with `===`).
+        var _findMonsterGroup = function (wanted) {
+            var am = window.actorManager
+                || (window.isoEngine && window.isoEngine.actorManager) || null;
+            var actors = (am && am.actors) || null;
+            var out = {manager: !!am, path: am ? (am.actors ? 'actors' : 'none') : 'none',
+                group: null, key: null, groups: 0, monsters: []};
+            if (!actors) return out;
+            for (var k in actors) {
+                if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
+                var a = actors[k] || {};
+                var ty = (a.data && a.data.type) || a._type || a.type;
+                if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
+                out.groups += 1;
+                if (!out.group && wanted == null) { out.group = a; out.key = k; }
+                var members = _groupMembers(a);
+                for (var i = 0; i < members.length; i++) {
+                    var m = members[i] || {};
+                    var mid = m.creatureGenericId != null ? m.creatureGenericId
+                        : (m.genericId != null ? m.genericId : m.monsterId);
+                    if (mid == null) continue;
+                    var idn = Number(mid);
+                    if (out.monsters.length < 24 && out.monsters.indexOf(idn) < 0) {
+                        out.monsters.push(idn);
+                    }
+                    if (!out.group && wanted != null && idn === Number(wanted)) {
+                        out.group = a;
+                        out.key = k;
+                    }
+                }
+            }
+            return out;
+        };
         var _listMonsterGroups = function () {
             var am = window.actorManager
                 || (window.isoEngine && window.isoEngine.actorManager) || null;
-            var actors = (am && (am.actors || am.actorList)) || null;
+            var actors = (am && am.actors) || null;
             var out = [];
+            // An empty group list has three very different causes -- no actor collection,
+            // a collection whose actors never match the type filter, or a map that really
+            // has no group -- and all 4,782 recorded observations returned the same
+            // `groups: []`, which is the answer the planner was handed every time it wanted
+            // to join a fight. Counting what was iterated makes the next live map say which
+            // of the three it was, instead of another guess (KNOWN_GAPS G7).
+            var scan = {manager: !!am, path: null, seen: 0, matched: 0, types: {}};
+            if (am) {
+                scan.path = am.actors ? 'actors' : 'none';
+            }
+            window.__agentGroupScan = scan;
             if (!actors) return out;
             for (var k in actors) {
                 if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
                 var a = actors[k] || {};
                 var d = a.data || {};
                 var ty = d.type || a._type || a.type;
+                scan.seen += 1;
+                var tyKey = ty == null ? 'null' : String(ty);
+                if (scan.types[tyKey] == null && Object.keys(scan.types).length >= 24) {
+                    scan.types.other = (scan.types.other || 0) + 1;
+                } else {
+                    scan.types[tyKey] = (scan.types[tyKey] || 0) + 1;
+                }
                 if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
-                var si = d.staticInfos || a.staticInfos || {};
+                scan.matched += 1;
                 var members = [];
                 var addMember = function (m) {
                     if (!m) return;
@@ -3668,17 +3966,8 @@
                         is_mini_boss: !!light.isMiniBoss
                     });
                 };
-                addMember(si.mainCreatureLightInfos);
-                var underlings = si.underlings || [];
-                for (var u = 0; u < underlings.length; u++) addMember(underlings[u]);
-                // Older payloads nested the list under `monsters`; keep it as a
-                // fallback so a build change does not silently empty this.
-                var legacy = si.monsters || d.monsters || [];
-                if (!members.length && legacy.length) {
-                    for (var m2 = 0; m2 < legacy.length; m2++) {
-                        addMember(legacy[m2]);
-                    }
-                }
+                var rawMembers = _groupMembers(a);
+                for (var u = 0; u < rawMembers.length; u++) addMember(rawMembers[u]);
                 var ids = [];
                 var total = 0;
                 var known = 0;
@@ -3896,7 +4185,8 @@
                 npcs: npcs,
                 interactives: interactives,
                 groups: allGroups.slice(0, 20),
-                group_count: allGroups.length
+                group_count: allGroups.length,
+                groups_scan: window.__agentGroupScan || null
             };
         };
 
@@ -4587,31 +4877,24 @@
                 var wanted = args && args.monster ? parseInt(args.monster, 10) : null;
                 var targetGroupId = null;
                 if (wanted) {
-                    var amG = window.actorManager
-                        || (window.isoEngine && window.isoEngine.actorManager) || null;
-                    var actorsG = (amG && amG.actors) || {};
-                    var targetGroup = null;
-                    for (var gk in actorsG) {
-                        if (!Object.prototype.hasOwnProperty.call(actorsG, gk)) continue;
-                        var ga = actorsG[gk] || {};
-                        var gty = (ga.data && ga.data.type) || ga._type || ga.type;
-                        if (gty !== 'GameRolePlayGroupMonsterInformations') continue;
-                        var gsi = (ga.data && ga.data.staticInfos) || ga.staticInfos || {};
-                        var gm = gsi.monsters || (ga.data && ga.data.monsters) || [];
-                        for (var gmi = 0; gmi < gm.length; gmi++) {
-                            var gmm = gm[gmi] || {};
-                            var gid2 = gmm.creatureGenericId != null ? gmm.creatureGenericId
-                                : (gmm.genericId != null ? gmm.genericId : gmm.monsterId);
-                            if (Number(gid2) === wanted) { targetGroup = ga; break; }
-                        }
-                        if (targetGroup) break;
-                    }
+                    var hunt = _findMonsterGroup(wanted);
+                    var targetGroup = hunt.group;
                     if (!targetGroup) {
+                        // "not on this map" is only useful if the answer says what *was* on the
+                        // map: a wrong generic id in the goal, a map whose groups hold another
+                        // monster, and a map whose groups enumerate no members at all are three
+                        // different repairs (KNOWN_GAPS G7).
                         return _agentResult(false, {
                             auto_fight: !!(window.__FarmBot && window.__FarmBot.enabled),
                             requested: args || null,
+                            groups_seen: hunt.groups,
+                            monsters_here: hunt.monsters,
+                            actor_path: hunt.path,
                             note: 'target monster ' + wanted + ' is not on this map'
-                        }, 'target monster ' + wanted + ' is not on this map');
+                        }, 'target monster ' + wanted + ' is not on this map'
+                            + ' (' + hunt.groups + ' groups, here: '
+                            + (hunt.monsters.length ? hunt.monsters.join(',') : 'none')
+                            + ', actors: ' + hunt.path + ')');
                     }
                     // The actor is constructed with `actorId`; `contextualId` and
                     // `id` do not exist on it, and an undefined group id is a
@@ -4722,8 +5005,8 @@
                 var am = window.actorManager
                     || (window.isoEngine && window.isoEngine.actorManager) || null;
                 var iso = window.isoEngine || null;
-                if (!am || !am.actors) return _agentResult(false, null, 'actorManager unavailable');
-                var actors = am.actors;
+                var actors = am ? am.actors : null;
+                if (!actors) return _agentResult(false, null, 'actorManager unavailable');
                 var want = parseInt(args && args.group_id, 10) || null;
                 // The planner names a monster, not a group: an objective says "fight
                 // monster 447", and only the client knows which group contains it. The
@@ -4734,35 +5017,21 @@
                 var pick = want ? (actors[want] || null) : null;
                 var pickKey = pick ? want : null;
                 if (!pick) {
-                    var seenMonsters = [];
-                    for (var k in actors) {
-                        if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
-                        var a = actors[k] || {};
-                        var ty = (a.data && a.data.type) || a._type || a.type;
-                        if (ty !== 'GameRolePlayGroupMonsterInformations') continue;
-                        if (wantMonster) {
-                            var gsi = (a.data && a.data.staticInfos) || a.staticInfos || {};
-                            var gm = gsi.monsters || (a.data && a.data.monsters) || [];
-                            var hit = false;
-                            for (var gmi = 0; gmi < gm.length; gmi++) {
-                                var gmm = gm[gmi] || {};
-                                var mid = gmm.creatureGenericId != null ? gmm.creatureGenericId
-                                    : (gmm.genericId != null ? gmm.genericId : gmm.monsterId);
-                                if (mid != null) seenMonsters.push(Number(mid));
-                                if (Number(mid) === wantMonster) { hit = true; break; }
-                            }
-                            if (!hit) continue;
-                        }
-                        pick = a;
-                        pickKey = k;
-                        break;
-                    }
+                    // The same search the named-mob branch of `farm.start` runs, so a group that
+                    // one of them can find cannot be invisible to the other.
+                    var found = _findMonsterGroup(wantMonster);
+                    pick = found.group;
+                    pickKey = found.key;
                     if (!pick && wantMonster) {
+                        var where = found.groups
+                            ? (found.monsters.length ? 'here: ' + found.monsters.join(',')
+                                : found.groups + ' groups, no member id read')
+                            : 'no monster groups on this map';
                         return _agentResult(false, { wanted_monster: wantMonster,
-                            monsters_here: seenMonsters },
+                            groups_seen: found.groups, monsters_here: found.monsters,
+                            actor_path: found.path },
                             'no group on this map contains monster ' + wantMonster
-                            + (seenMonsters.length ? ' (here: ' + seenMonsters.join(',') + ')'
-                                                   : ' (no monster groups on this map)'));
+                            + ' (' + where + ')');
                     }
                 }
                 if (!pick) return _agentResult(false, { map_id: (window.gui && window.gui.playerData
@@ -5019,6 +5288,31 @@
                         if (!actor && !fighter) continue;
                         var data = (fighter && fighter.data) || (actor && actor.data) || {};
                         var stats = data.stats || {};
+                        // One sample per team of the keys this build really puts on each of
+                        // the three objects a fighter is made of. The stats maxima are now
+                        // read by name below, and this row is what proves that the bundle's
+                        // schema is the live one. The other two answer what is still unproven:
+                        // `creature_generic_id` came back null on all 11 fighters of the
+                        // recorded fight and `enemy_spells_missing` fired 290 times, so the
+                        // monster-identity and enemy-offence features the model wants have no
+                        // known source yet -- looking is cheaper than guessing (G25).
+                        // Cached per fight and per bag, so a long fight does not repeat it.
+                        var sampleFightKeys = function (storeName, bag) {
+                            var cache = window[storeName];
+                            if (!cache || cache.fight !== state.fight_id) {
+                                cache = window[storeName] =
+                                    {fight: state.fight_id, me: null, enemy: null};
+                            }
+                            var slot = (myId !== null && id === myId) ? 'me' : 'enemy';
+                            if (!cache[slot]) {
+                                try { cache[slot] = Object.keys(bag || {}).slice(0, 60); }
+                                catch (e) { cache[slot] = []; }
+                            }
+                            return {me: cache.me, enemy: cache.enemy};
+                        };
+                        state.stat_keys = sampleFightKeys('__agentFightStatKeys', stats);
+                        state.data_keys = sampleFightKeys('__agentFightDataKeys', data);
+                        state.fighter_keys = sampleFightKeys('__agentFightObjectKeys', fighter);
                         var rawSpellList = [];
                         try {
                             if (Array.isArray(data.spells)) rawSpellList = data.spells;
@@ -5069,12 +5363,29 @@
                             team_id: num(data.teamId),
                             is_me: myId !== null && id === myId,
                             alive: data.alive !== false && !(actor && actor.isDead),
+                            // `stats` is the fighter stats bag, whose schema in this build is
+                            // (lifePoints, effectiveMaxLifePoints, actionPoints,
+                            // maxActionPoints, movementPoints, maxMovementPoints, initiative,
+                            // shieldPoints, summoner) -- one object for every fighter, so the
+                            // enemy maxima need no separate discovery. The names below used to
+                            // be the *characteristics* sheet's (`maxLifePoints`,
+                            // `actionPointsCurrent`), which is a different bag; reading them
+                            // off a fighter yielded null on all 445 recorded enemy slots and
+                            // all 156 of our own, so the brain refused every live board
+                            // (KNOWN_GAPS G25). The sheet names that really exist are kept as
+                            // fallbacks; `actionPointsMax` and `movementPointsMax` were never
+                            // names this client has at all, and the bundle-name guard in
+                            // tools/test_fight_state_fields.js keeps that from creeping back.
                             hp: num(stats.lifePoints),
-                            max_hp: num(stats.maxLifePoints),
-                            ap: num(stats.actionPointsCurrent),
-                            max_ap: num(stats.actionPointsMax),
-                            mp: num(stats.movementPointsCurrent),
-                            max_mp: num(stats.movementPointsMax),
+                            max_hp: num(stats.effectiveMaxLifePoints != null
+                                ? stats.effectiveMaxLifePoints : stats.maxLifePoints),
+                            ap: num(stats.actionPoints != null
+                                ? stats.actionPoints : stats.actionPointsCurrent),
+                            max_ap: num(stats.maxActionPoints),
+                            mp: num(stats.movementPoints != null
+                                ? stats.movementPoints : stats.movementPointsCurrent),
+                            max_mp: num(stats.maxMovementPoints),
+                            initiative: num(stats.initiative),
                             shield: num(stats.shieldPoints),
                             level: num(fighter && fighter.level) !== null
                                 ? num(fighter.level) : num(data.level),
@@ -5161,6 +5472,32 @@
                         movement_points: charStat('movementPoints'),
                         critical_resistance: charStat('criticalDamageReduction')
                     };
+                }
+                // Fallback only: the fighter bag now supplies every fighter's maxima, so
+                // this loop exists for a build where a fighter's stats bag omits them.
+                // It reads only sources already in this handler -- the character sheet, and
+                // the my_stats block built above -- and only into slots that are still null.
+                // Nothing here invents a value for another fighter.
+                for (var fi = 0; fi < state.fighters.length; fi++) {
+                    var selfFighter = state.fighters[fi];
+                    if (!selfFighter || !selfFighter.is_me) continue;
+                    var sheet = null;
+                    try {
+                        sheet = pd.characters && pd.characters.mainCharacter
+                            && pd.characters.mainCharacter.characteristics;
+                    } catch (e) {}
+                    if (selfFighter.max_hp === null && sheet) {
+                        selfFighter.max_hp = num(sheet.effectiveMaxLifePoints != null
+                            ? sheet.effectiveMaxLifePoints : sheet.maxLifePoints);
+                    }
+                    if (state.my_stats) {
+                        if (selfFighter.max_ap === null) {
+                            selfFighter.max_ap = num(state.my_stats.action_points);
+                        }
+                        if (selfFighter.max_mp === null) {
+                            selfFighter.max_mp = num(state.my_stats.movement_points);
+                        }
+                    }
                 }
                 var spellList = {};
                 try {

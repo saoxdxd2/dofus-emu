@@ -44,6 +44,7 @@ repo root. It calls `safe.stop` on the way out so the client is not left mid-loo
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import time
@@ -1517,9 +1518,16 @@ class Autopilot:
                 # tried, and any history feature trained on that would be a fiction.
                 reporter = getattr(self.runtime.policy, "note_result", None)
                 if reporter is not None:
+                    # The refusal's own payload travels with the report. "no group here" and
+                    # "groups here, no member readable" share one sentence and need opposite
+                    # repairs (KNOWN_GAPS G7).
+                    reported: Sequence[Any] = (call.tool, step_ok,
+                                               str(step_error or verdict), after or {})
                     try:
-                        reporter(call.tool, step_ok,
-                                 str(step_error or verdict), after or {})
+                        if _accepts_detail(reporter):
+                            reporter(*reported, getattr(result, "data", None))
+                        else:
+                            reporter(*reported)
                     except Exception:  # noqa: BLE001 - policy history must not kill a run
                         pass
 
@@ -1600,7 +1608,8 @@ class Autopilot:
                 self._credit_pending(call, v)
 
                 decision = self.controller.on_step(v, call.tool, step_ok, step_error,
-                                                   before, after)
+                                                   before, after,
+                                                   detail=getattr(result, "data", None))
                 self._pending = decision
                 self.controller.save()
                 self._emit_decision(decision, call, result, after,
@@ -2006,7 +2015,7 @@ class Autopilot:
             self._recoveries_ok += 1
             self._recovery_wait_s += waited
         self._append_log_line(_fast_dumps({
-            "kind": "recovery",
+            "kind": "recovery_disabled",
             "session": self.session,
             "trigger": trigger,
             "reason": (str(reason or "")[:120] or None),
@@ -2314,6 +2323,10 @@ class Autopilot:
 
     def summary(self, reason: str) -> Dict[str, Any]:
         self.controller.save(force=True)
+        # The refusal buckets live on the policy. Reached through `getattr` all the way, because
+        # this call is what ends a run: a missing attribute here would lose the whole summary,
+        # and criterion 5 is measured from nothing else.
+        policy = getattr(getattr(self, "runtime", None), "policy", None)
         data = {
             "reason": reason,
             "session": self.session,
@@ -2335,6 +2348,12 @@ class Autopilot:
             # decided the turns -- which is the difference the whole combat goal rests on.
             "brain": {key: self._brain.get(key)
                       for key in ("state", "model", "mode", "reason", "when")},
+            # G7: which kind of group refusal the page gave, counted. A run that travelled
+            # because the named mob is on another map and a run whose client could not read the
+            # members of the groups under its nose are different failures with different fixes,
+            # and only these counts tell them apart afterwards.
+            "group_refusals": dict(getattr(policy, "_group_refusals", {}) or {}),
+            "group_read_broken": bool(getattr(policy, "_group_read_broken", False)),
             "controller": self.controller.stats(),
             "open_listings": self._listing_total,
             "log": str(self.log_path),
@@ -2344,6 +2363,19 @@ class Autopilot:
         print(f"[autopilot] done: {reason} | {self._verdict_counts} | "
               f"{self._listing_total} open listing(s)")
         return data
+
+
+def _accepts_detail(fn: Any) -> bool:
+    """Does this policy's outcome report take the refusal payload?
+
+    The call sits inside a `except Exception: pass`, because policy history must never kill a
+    run -- which is exactly why a wrong arity has to be checked rather than discovered: it would
+    be swallowed, and the planner would stop learning from failures with nothing printed.
+    """
+    try:
+        return "detail" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _summarise(result: Any) -> str:

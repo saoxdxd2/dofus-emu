@@ -62,7 +62,7 @@ VERDICTS = ("advanced", "noop", "failed", "blocked")
 # made progress on. `objectives_completed` covers the step-level version of the same thing.
 STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
               "in_dialog", "in_fight", "ready_objectives", "objectives_completed",
-              "quests_active")
+              "quests_active", "quests_finished", "quest_steps")
 
 # Tools that only read. A query cannot "change the world", so scoring it as
 # `noop` was wrong: it made every successful lookup look like a failure, and the

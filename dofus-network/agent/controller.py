@@ -268,7 +268,8 @@ class Controller:
 
     @staticmethod
     def cause_of(verdict: Any, tool: str, ok: bool, error: Optional[str],
-                 before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]]) -> str:
+                 before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]],
+                 detail: Any = None) -> str:
         """Why did it fail? Buckets exist because they need different responses.
 
         `unknown` is a last resort, not a default: an error text we recognise or an
@@ -300,8 +301,21 @@ class Controller:
                 or "offers no replies" in err):
             return "invalid_assumption"
         # The thing the call pointed at is not where we are standing.
+        #
+        # One exception, decided by the page's counts rather than by its sentence: groups on this
+        # map whose members could not be read is the *read* failing, and a table that files it
+        # beside "the mob is elsewhere" learns to travel -- which is how a defect in our own patch
+        # would spend a multi-hour run walking between maps never finding the target
+        # (KNOWN_GAPS G7). `stale_state` is the bucket that means "re-observe, do not move".
+        if tool in ("farm.start", "fight.join") and not ok:
+            from agent.planner import group_refusal_outcome
+            if group_refusal_outcome(detail, error) == "unread_members":
+                return "stale_state"
         if any(w in err for w in ("not on this map", "on the current map",
                                   "no visible group contains",
+                                  # The page's own join refusal, worded differently from the
+                                  # planner's; until now it landed in `unknown`.
+                                  "no group on this map",
                                   "no dialog reply matches")):
             return "wrong_target"
         # The client threw *while executing* the directive. Nothing we hold says
@@ -347,8 +361,8 @@ class Controller:
 
     def on_step(self, verdict: Any, tool: str, ok: bool, error: Optional[str],
                 before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]],
-                now: Optional[float] = None) -> Decision:
-        decision = self._decide(verdict, tool, ok, error, before, after, now)
+                now: Optional[float] = None, detail: Any = None) -> Decision:
+        decision = self._decide(verdict, tool, ok, error, before, after, now, detail)
         return self._maybe_explore(decision, error)
 
     def _maybe_explore(self, decision: Decision, error: Optional[str]) -> Decision:
@@ -381,12 +395,12 @@ class Controller:
 
     def _decide(self, verdict: Any, tool: str, ok: bool, error: Optional[str],
                 before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]],
-                now: Optional[float] = None) -> Decision:
+                now: Optional[float] = None, detail: Any = None) -> Decision:
         now = time.time() if now is None else now
         self.steps += 1
         name = getattr(verdict, "verdict", verdict)
         drift = bool(getattr(verdict, "drift", False))
-        cause = self.cause_of(verdict, tool, ok, error, before, after)
+        cause = self.cause_of(verdict, tool, ok, error, before, after, detail)
         self._cause_counts[cause] = self._cause_counts.get(cause, 0) + 1
 
         # Freshness gate: drift is only evidence if the observation is new. A

@@ -110,6 +110,10 @@ cd dofus-network
 python -m tools.session_report trajectories/default.jsonl "$LOCALAPPDATA/DofusFarm/autopilot.jsonl"
 python tools/recovery_report.py trajectories/default.jsonl "$LOCALAPPDATA/DofusFarm/autopilot.jsonl"
 python tools/dialog_labels.py            # census + writes data/dialog_labels.jsonl
+python tools/brain_readiness.py          # does a live board satisfy the combat contract?
+python tools/group_scan.py               # why was `map.groups` empty on every recorded map?
+python tools/brain_readiness.py          # does the page's own fight.state satisfy the contract?
+python tools/policy_over_record_boards.py  # what the trained actor would have done with them
 ```
 
 `tools/recovery_report.py` is new with this baseline: `session_report` gives throughput
@@ -123,6 +127,76 @@ labelled by what the server sent back (`QuestObjectiveValidatedMessage`,
 `LeaveDialogMessage` = ended) rather than by an observation that may predate the answer. Run it
 again after the next live session: the census is the measurement of whether dialog data now
 exists, and it prints its own verdict when it does not.
+
+**Which policy played the fights is now a field, not an assumption (G24).** Read the run's
+`kind:"brain"` rows (`state`, `model`, `cmd`) or the summary's `brain` object: `started`/`reused`
+means 127.0.0.1:8891 answered `/health` for that session, `no_interpreter` means the machine has
+no python that can import the brain, `port_held` means something else owns 8891. Then check
+`trajectories/live_policy_decisions.jsonl` for the turns themselves: each row logs
+`decision.contract.value_ready` and the contract's warning list, which is what says whether the
+actor had the features it was trained on or answered `policy_pass` from an incomplete board. The
+baseline has 8 rows and not one of them came from the page.
+
+That readiness question turned out to be answerable without waiting: `tools/brain_readiness.py`
+runs the contract over the 156 `fight.state` snapshots the loop already recorded, and **all 156 are
+rejected** (`max_hp`, `ap`, `max_ap`, `mp`, `max_mp` null on the self fighter; `initiative` key
+absent; enemy max hp missing on 445 slots). So "the brain is up" does not yet mean "the learned
+policy decides the turn" -- the page has to fill those fields first (KNOWN_GAPS G25). Re-run the
+reader after the next live session: `actionable=True value_ready=True` is the line that says the
+blocker moved.
+
+The model itself was then measured against those same real boards (`tools/policy_over_record_boards.py`,
+which states its fill hypothesis out loud): with the missing max values supplied, all 64 of its own
+turns become actionable and the trained actor answers **18 of 64 with a cast** at p50 3.3 ms --
+inside the page's 4 s fetch budget. That is an offline measurement of the policy on real geometry,
+not a live fight and not a win rate.
+
+**Quest progress is now measured by instruments that can move (G26/G27/G28).** This baseline prints
+`objectives +0, quests completed +0` followed by the starvation line naming the ready-objective head
+that held every step. That is the *pre-fix* corpus, and both halves of it were structural: the page
+derived progress from a property the client only writes when a quest *finishes* (G28), the claim loop
+read one entry of a client-ordered ready list (G26), and the wrappers it did act on were hunted as
+monsters they never were (G27). The four lines to read in the next run's
+`tools/session_report.py` output and its rows:
+
+- `quests completed +N` with **N > 0** — the monotone count from the client's own
+  `getListOfFinishedQuestsId()`, the only quest number in this goal that can only go up.
+- `quest_steps` changing inside a session, and `quests_active` holding a **nonzero** value: progress
+  now comes from the live `stepId` position in `dbQuest.stepIds`, which the step handlers do update.
+- The starvation line **absent** — it prints only when steps carried a ready objective and none was
+  completed, which is exactly the G26 defect.
+- No `fight.join`/`farm.start` refusal naming a free-form objective's `parameter0` (715354-shaped, six
+  digits), and no "no group on this map; ask NPC to start the fight" spent on a
+  `QuestObjectiveFreeForm` entry — such an objective now plans nothing, and the scan moves past it.
+
+All four require a run whose page build contains `_questProgress`; a zero from the older corpus is not
+a verdict about the character, it is the instrument. None of it has been observed live yet.
+
+**Quest requests are now only sent for quests this game has (G31), and `knowledge.status` can say
+"collision" (G30).** Two more lines to read in the next run, and both are *reductions* — the baseline
+corpus contains them, the fixed loop must not:
+
+- **No *start-shaped* `quest.advance` row whose `quest_id` never appears in that session's
+  client-reported quests.** Start-shaped means the arguments are a quest id and nothing else — no
+  `npc_id`, no `objective_id`, no `reply`, no `close` — because a `quest_id` on its own does not
+  identify a start (G31's first pass mistook 779 talk/reply/close rows for starts and reported 1,145;
+  `tools/quest_advance_shapes.py` is the classifier). The baseline corpora hold **366** such requests
+  and **all 366 name a quest this game has never shown** (16 distinct ids; one Dofus 2 quest, 584,
+  accounts for 297, and 310 of the 366 were immediate repeats) — **3.21 % of the 11,395 recorded rows**,
+  31 of 66 sessions, 28.1 % of its own rows in the average session that sent one and 119 starts in the
+  single worst. Since G31 the planner consults a session-scoped set of client-reported quest ids before
+  sending, so the count of never-reported starts must be **0** and those steps must appear as
+  `goal_unresolved` rows with no directive on the wire. This is the one quest number in the goal that
+  is pure waste: it cannot help progress, and each of the 366 was a request the server had to reject.
+- **`knowledge.status` reporting `objective_id_collision` instead of a foreign `resolved`.** In the
+  baseline corpus 3,567 of 8,777 enriched rows were `resolved` on another game's objective text. The
+  next run's rows should show that population labelled `objective_id_collision`, carrying the
+  client's quest id plus the store's for diagnosis and no text — and the dialog rows in it should
+  name the quest the character is actually doing, which is also why G34's labels must be re-derived
+  rather than reused.
+
+Neither line needs a new tool: both are read out of the `quest.advance` rows and the `knowledge` block
+the loop already writes.
 
 ## What is NOT baselined yet
 

@@ -181,6 +181,11 @@ class NNPlanner(QuestPlanner):
             return [{"tool": call["tool"], "args": dict(call["args"]),
                      "why": "learned choice: " + call["why"]}]
         args = self._args_for(tool, quest, obj, obs)
-        if tool == "quest.advance" and not args:
+        if not args and tool in ("quest.advance", "fight.join", "farm.start"):
+            # These three are meaningless without the thing they act on, and the client
+            # only says so after a round trip. `args_for_tool` returns empty when the
+            # objective's own class declares no such parameter, and an invented target is
+            # worse than no call: the loop hunts a creature that cannot exist and reads
+            # the refusal as a map problem.
             return []
         return [{"tool": tool, "args": args, "why": "learned choice"}]

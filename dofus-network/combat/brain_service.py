@@ -3,8 +3,16 @@
 Why this exists. The page asks ``http://127.0.0.1:8891/v1/combat/decide`` for every fight turn
 (``mobile-disguise.js`` ``_askBrain``). If nothing answers, the page records ``_brainDownAt`` and
 falls back to a hardcoded heuristic for 30 s at a time. Measured over the recorded corpus: 388
-in-fight observations, all of them played by that heuristic, and ``live_policy_decisions.jsonl``
-holds one warm-up row -- the trained policy has never taken a live turn.
+observations taken while a fight was open, and ``live_policy_decisions.jsonl`` holds 8 rows -- one
+server warm-up plus seven written while probing by hand today (``fight_id`` 1234 and 99, neither a
+page-supplied board). The trained policy has never taken a live turn.
+
+Starting the server is necessary and, on its own, not sufficient: all 156 recorded live
+``fight.state`` snapshots fail the observation contract (``max_hp``/``ap``/``mp`` null on the self
+fighter, ``initiative`` absent, enemy max hp missing), so the brain would answer
+``observation_not_actionable`` and the page would play its heuristic anyway. That half is KNOWN_GAPS
+G25; this module is G24, and its job is to make the availability a recorded fact rather than an
+assumption.
 
 Nothing starts the server. The host spawns the sentinel from
 ``desktop/mainform.cs:TryStartSingletonSentinel`` with the *embedded* interpreter, and the

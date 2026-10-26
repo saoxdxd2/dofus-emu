@@ -61,6 +61,29 @@ def _knowledge_block(store: CanonicalStore, objective_id: int, language: str,
             "objective_id": objective_id,
             "quest_id": tracker_quest_id,
         }
+    store_quest_id = resolved.get("quest_id")
+    if tracker_quest_id is not None and store_quest_id is not None:
+        try:
+            disagrees = int(store_quest_id) != int(tracker_quest_id)
+        except (TypeError, ValueError):
+            disagrees = False
+        if disagrees:
+            # The client named this objective while holding quest A, the store finds the
+            # same id under quest B. Measured over the live corpus: of the 23 (quest,
+            # objective) pairs the store could resolve, **all 23** disagreed about the
+            # quest and 17 disagreed about the objective's own type — objective 13900 is
+            # a talk-to-NPC for the client and "Vaincre x1 {monster,5243}" for the store.
+            # So a shared id is not the same objective, and publishing the store's text
+            # would rank NPC replies, label dialog outcomes and quote a quest name for
+            # content the character is not doing. The ids stay in the row for diagnosis;
+            # the content does not go any further.
+            return {
+                "status": "objective_id_collision",
+                "objective_id": objective_id,
+                "quest_id": tracker_quest_id,
+                "store_quest_id": store_quest_id,
+                "store_type_id": resolved.get("type_id"),
+            }
     quest_id = resolved.get("quest_id") or tracker_quest_id
     quest = store.quest(int(quest_id)) if quest_id is not None else None
     step = None

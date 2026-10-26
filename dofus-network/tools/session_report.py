@@ -86,10 +86,21 @@ def _summarise_session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     errors: Counter = Counter()
     latency: List[float] = []
     first_objectives = last_objectives = None
+    # Quests the character has finished, read from the client's finished list. Unlike
+    # `objectives_completed` (which was 0 in every recorded row because the page derived it
+    # from a field the client only sets on finished quests) this one can only go up.
+    first_finished = last_finished = None
     xp_values: List[float] = []
     kamas_values: List[float] = []
     levels: List[float] = []
     farm_kills = farm_xp = farm_kamas = 0.0
+    # The ready-objective census. `objectives_completed` says nothing about *why* it
+    # is zero: the world may have had nothing to claim, or the loop may have looked at
+    # one entry and never reached the rest. Those two read the same in the total and
+    # need opposite fixes, so the shape of the list is recorded next to it.
+    ready_steps = 0
+    ready_behind = 0
+    ready_heads: Counter = Counter()
     for row in steps:
         goal = row.get("goal")
         if goal:
@@ -108,7 +119,19 @@ def _summarise_session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         elif row.get("observation_map"):
             maps.add(row["observation_map"])
         obs = _obs(row)
+        ready = obs.get("ready_objectives")
+        if isinstance(ready, list) and ready:
+            ready_steps += 1
+            if len(ready) > 1:
+                ready_behind += 1
+            head = ready[0] if isinstance(ready[0], dict) else {}
+            ready_heads[str(head.get("text") or head.get("objective_id") or "?")] += 1
         completed = obs.get("objectives_completed")
+        finished = obs.get("quests_finished")
+        if isinstance(finished, (int, float)):
+            if first_finished is None:
+                first_finished = finished
+            last_finished = max(last_finished or 0, finished)
         if isinstance(completed, (int, float)):
             if first_objectives is None:
                 first_objectives = completed
@@ -146,6 +169,16 @@ def _summarise_session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "objectives_completed": (last_objectives - first_objectives
                                  if first_objectives is not None and last_objectives is not None
                                  else None),
+        # Whether the counter was readable at all. A log that never carried it cannot
+        # support a claim about what it did not do.
+        "objectives_observed": first_objectives is not None,
+        "quests_completed": (last_finished - first_finished
+                             if first_finished is not None and last_finished is not None
+                             else None),
+        "ready_steps": ready_steps,
+        "ready_steps_with_another_entry": ready_behind,
+        "ready_head": (ready_heads.most_common(1)[0][0] if ready_heads else None),
+        "ready_head_count": (ready_heads.most_common(1)[0][1] if ready_heads else 0),
         "maps": len(maps),
         "level": (max(levels) if levels else None),
         "xp_delta": (max(xp_values) - min(xp_values)) if xp_values else None,
@@ -192,6 +225,11 @@ def summarise(path: Path, gap_s: float = 180.0) -> Dict[str, Any]:
     interventions = [r for r in rows if r.get("kind") == "intervention"]
     manual_interventions = sum(int(r.get("events") or 0) for r in interventions)
     total_minutes = sum(s["minutes"] or 0.0 for s in summaries)
+    heads: Counter = Counter()
+    for s in summaries:
+        if s.get("ready_head"):
+            heads[str(s["ready_head"])] += int(s.get("ready_head_count") or 0)
+    top_head = heads.most_common(1)
     return {
         "file": str(path),
         "sessions": len(summaries),
@@ -201,6 +239,13 @@ def summarise(path: Path, gap_s: float = 180.0) -> Dict[str, Any]:
         "failed": sum(s["failed"] for s in summaries),
         "objectives_completed": sum(s["objectives_completed"] or 0
                                     for s in summaries),
+        "quests_completed": sum(s.get("quests_completed") or 0 for s in summaries),
+        "ready_steps": sum(int(s.get("ready_steps") or 0) for s in summaries),
+        "ready_steps_with_another_entry": sum(
+            int(s.get("ready_steps_with_another_entry") or 0) for s in summaries),
+        "ready_head": (top_head[0][0] if top_head else None),
+        "ready_head_count": (top_head[0][1] if top_head else 0),
+        "objectives_measured": sum(1 for s in summaries if s.get("objectives_observed")),
         "maps": sum(s["maps"] for s in summaries),
         "manual_interventions": manual_interventions,
         "intervention_rows": len(interventions),
@@ -229,10 +274,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("  sessions %d, wall %.1f min, steps %d, ok %d, failed %d"
               % (report["sessions"], report["wall_minutes"], report["steps"],
                  report["ok"], report["failed"]))
-        print("  objectives +%d, maps %d, manual interventions %d, recoveries %s"
-              % (report["objectives_completed"], report["maps"],
+        print("  objectives +%d, quests completed +%d, maps %d, manual interventions %d, "
+              "recoveries %s"
+              % (report["objectives_completed"], report["quests_completed"],
+                 report["maps"],
                  report.get("manual_interventions", 0),
                  report["recoveries"] or "{}"))
+        if (report["objectives_completed"] == 0 and report["ready_steps"]
+                and report["objectives_measured"]):
+            # The two readings that a total cannot tell apart: nothing was ever ready,
+            # or something was ready and the plan never reached it.
+            print('  ! %d step(s) carried a ready objective and none was completed; '
+                  'the head of that list was "%s" in %d of them, and %d step(s) had '
+                  'another entry behind it'
+                  % (report["ready_steps"], report["ready_head"],
+                     report["ready_head_count"],
+                     report["ready_steps_with_another_entry"]))
         for row in report["per_session"]:
             print("    %s  %5s min  steps %4d  ok %4d  fail %3d  obj %s  maps %s  lvl %s"
                   % (row["start"] or "?", row["minutes"], row["steps"], row["ok"],

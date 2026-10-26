@@ -32,8 +32,9 @@ from agent.dialog_policy import rank_dialog
 from agent.awareness import quest_key, scene_key
 from agent.features import (CRAFT_TYPES, DELIVER_TYPES,  # noqa: E402
                             KILL_TYPES, MAP_TYPES, ObsTracker, TALK_TYPES,
-                            _params, direction_hint, known_map,
-                            required_map, travel_hops)
+                            _params, declares_monster_target, direction_hint,
+                            known_map, required_map, travel_hops)
+from agent.verifier import READ_ONLY_TOOLS  # noqa: E402
 
 # Prompt routing. The panel pins the planner, so it must decide from the goal
 # text whether the user asked for quests, a farm session, or full auto; the old
@@ -71,6 +72,62 @@ def _goal_mode(goal: str) -> str:
         return "farm"
     return "order"
 
+
+GROUP_REFUSALS = ("elsewhere", "empty_map", "unread_members", "other")
+
+
+def refusal_payload(detail: Any) -> Dict[str, Any]:
+    """Find the refusal's own counts inside whatever envelope the bridge sent.
+
+    A directive result is `{directive_payload, response, snapshot}` and the page's answer sits a
+    level or two further in, so handing the raw `result.data` over would find no counts and fall
+    back to the sentence -- which is exactly the case the counts were added to separate. Bounded
+    walk, no recursion, and nothing found is an empty dict, not a guess.
+    """
+    node = detail
+    for _ in range(4):
+        if not isinstance(node, dict):
+            return {}
+        if "groups_seen" in node:
+            return node
+        for key in ("response", "result", "data", "value"):
+            if isinstance(node.get(key), dict):
+                node = node[key]
+                break
+        else:
+            return {}
+    return {}
+
+
+def group_refusal_outcome(detail: Any, note: Any = "") -> str:
+    """What a "no group for that monster" refusal actually says, from the page's own counts.
+
+    The refusal was one sentence and the loop knew one repair: travel. The page now answers with
+    how many groups it iterated and which monster ids it read inside them, which separates cases
+    with opposite answers (KNOWN_GAPS G7): the named mob lives on another map (travel), this map
+    carries no group at all (travel, or wait for a respawn), and groups *are* here but none of
+    their members could be read. The last one is a defect in the read — travelling the world for
+    it spends the rest of the run and never finds the mob, so it must not be routed like the
+    others.
+    """
+    data = refusal_payload(detail)
+    seen = data.get("groups_seen")
+    if seen is None:
+        # No counts: an older page, or a refusal that never reached the client. The sentence is
+        # all there is, and keeping it working is the pre-census behaviour, not a guess.
+        low = str(note or "").lower()
+        return "elsewhere" if "not on this map" in low else "other"
+    try:
+        seen = int(seen)
+    except (TypeError, ValueError):
+        return "other"
+    if seen <= 0:
+        return "empty_map"
+    here = data.get("monsters_here")
+    if isinstance(here, (list, tuple)) and len(here) > 0:
+        return "elsewhere"
+    return "unread_members"
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
 
@@ -81,6 +138,14 @@ CACHE = REPO_ROOT / "data" / "cache"
 # action loop reaches the second bound).
 CLAIM_FAILURE_LIMIT = 3
 CLAIM_ACTION_LIMIT = 10
+
+# How many ready objectives one plan step may look at. The client lists them in
+# its own quest order, which is not an order of actionability: a live session put
+# an un-actionable wrapper ("Complete the X quest", type 0 = kill) at index 0 in
+# 4,285 of 4,286 observations while a claimable talk objective sat at index 1,
+# and the loop read only index 0 — so `objectives_completed` never left 0 in
+# 11.4 hours. Bounded, because a plan step should not price every ready entry.
+READY_SCAN_LIMIT = 8
 
 # A quest the server will not activate is a quest this session cannot do. The
 # client answers a `QuestStartRequestMessage` as sent whether or not the server
@@ -156,18 +221,77 @@ def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
                 return {"resource": int(item)} if item is not None else {}
             except (TypeError, ValueError):
                 return {}
+        if declares_monster_target(obj) is False:
+            return {}
         monster = p.get("parameter0")
         try:
             return {"monster": int(monster)} if monster is not None else {}
         except (TypeError, ValueError):
             return {}
     if tool == "fight.join":
+        # Both monster routes need a creature id, and `parameter0` is one only when the
+        # client's own objective-parameter table says so. A text-only class carries a
+        # number the client formats into the objective text; hunting it is how a live
+        # session ordered `fight.join` on 715354 and then walked the world for it.
+        if declares_monster_target(obj) is False:
+            return {}
         monster = p.get("parameter0")
         try:
             return {"monster": int(monster)} if monster is not None else {}
         except (TypeError, ValueError):
             return {}
     return {}
+
+
+def client_quest_ids(obs: Dict[str, Any]) -> set:
+    """Every quest id the running client reported in this snapshot.
+
+    The four places the client names a quest: the active log, the finished list, the
+    tracker it is holding, and the ready-objective entries. Read defensively because the
+    page mixes string and numeric ids (`"3841"` and `3841` both appear), and an id that
+    cannot be read as an int is not evidence of anything.
+    """
+    out: set = set()
+    for raw in list((obs.get("quests_active") or {}).keys()) + list(obs.get("quests_done") or []):
+        try:
+            out.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    sources = [obs.get("current_objective")]
+    sources += list(obs.get("ready_objectives") or [])
+    for entry in sources:
+        if isinstance(entry, dict) and entry.get("quest_id") is not None:
+            try:
+                out.add(int(entry["quest_id"]))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def names_target(call: Dict[str, Any]) -> bool:
+    """Whether a planned call states the actor or place the objective needs.
+
+    A ready objective's own action path can degenerate into a detour: hunting a
+    group this map does not report ends in "walk out an exit and look" (`nav.goto`
+    with a direction and no map) or in a read. Neither names the thing the
+    objective is about, and a live session spent 4,285 steps on exactly such a
+    detour while a ready objective naming an NPC on a known map sat one entry
+    further down the same list. Ranking by "does this call name its target" comes
+    from the plan rather than from the objective type, so it covers every type the
+    planner can translate.
+    """
+    tool = call.get("tool")
+    args = call.get("args") or {}
+    if tool in READ_ONLY_TOOLS:
+        return False
+    if tool == "nav.goto":
+        return args.get("map_id") is not None
+    if tool == "quest.advance":
+        return (args.get("npc_id") is not None
+                or args.get("objective_id") is not None)
+    if tool in ("fight.join", "farm.start"):
+        return bool(args)
+    return True
 
 
 # How many times one answer may be asked on one page for one objective before the
@@ -205,6 +329,17 @@ class QuestPlanner:
         # for four hundred consecutive steps. A fact once observed cannot un-happen,
         # so remembering it costs nothing and removes a whole class of loop.
         self._seen_done: set = set()
+        # Every quest id the running client has shown this session -- its active list, its
+        # finished list, the tracker and the ready entries. A start request is only
+        # sendable for a quest *this game* has, and the cached tables are another game's
+        # (G29): all 366 bare `quest.advance {quest_id}` rows in the live corpus named an
+        # id the client never reported, 297 of them one Dofus 2 quest (G31, and the number
+        # itself was first read as 462-of-1,145 because talk and claim calls carry a
+        # quest_id too -- see tools/quest_advance_shapes.py). The 3-attempt bound did not
+        # stop the repetition because a scene change clears it. Monotone for the same
+        # reason `_seen_done` is: a quest this game has shown does not un-exist when the
+        # character walks to the next map.
+        self._client_quests: set = set()
         # Quests the planner has looked at and cannot plan (area objectives, crafts
         # with no recipe). Retiring them keeps the loop from re-deriving the same
         # dead end every step.
@@ -218,6 +353,10 @@ class QuestPlanner:
         # A targeted farm order that the page refused because the mob is not on
         # this map. The next farm plan walks an exit instead of asking again.
         self._farm_target_missing = False
+        # Which kind of group refusal the page last gave. Its counts answer more than its
+        # sentence does, and one of the four outcomes must not be routed like the others.
+        self._group_refusals = {key: 0 for key in GROUP_REFUSALS}
+        self._group_read_broken = False
         # A dialog whose reply list stays empty is a dead end; after a short
         # readiness grace the planner closes it rather than polling forever.
         self._dialog_waits = 0
@@ -284,10 +423,11 @@ class QuestPlanner:
         self._claim_actions: Dict[Tuple[int, int], int] = {}
         self._claim_map: Dict[Tuple[int, int], Any] = {}
         # A scripted fight can be started by a map NPC even when no monster group
-        # exists. Rotate through the NPCs on the current map when the objective is
-        # a fight and the map reports no group, so a wrong first NPC does not pin
-        # the planner to the same dialogue forever.
-        self._npc_tries: Dict[Tuple[int, int, int], int] = {}
+        # exists. Walk the NPCs on the current map when the objective is a fight and the map
+        # reports no group -- each one asked at most once per (quest, objective, map), remembered
+        # by identity because a count was wiped whenever the scene key moved and the rotation
+        # started over on the nearest NPC.
+        self._npc_asked: Dict[Tuple[int, int, int], set] = {}
         # The (key, tool) of the last claim/fallback action, so `note_result` can
         # attribute an outcome to the objective it was for instead of guessing.
         self._pending_claim: Optional[Tuple[Tuple[int, int], str]] = None
@@ -541,8 +681,9 @@ class QuestPlanner:
 
         A `QuestObjectiveFightMonster` is not always a roaming group: the live
         tutorial has the objective, an empty group list, and the NPC that starts
-        the encounter standing on the map. Keep the choice generic and rotate
-        through the map's NPCs so one wrong dialogue cannot pin the loop.
+        the encounter standing on the map. Keep the choice generic and walk the map's NPCs so one
+        wrong dialogue cannot pin the loop -- once each, then stop, because a dialogue that already
+        answered will answer the same way and the loop has no new question to ask.
         """
         npcs = self._map_npcs(obs)
         if not npcs:
@@ -559,9 +700,17 @@ class QuestPlanner:
             key = (int(quest_id), int(objective_id), int(obs.get("map_id") or 0))
         except (TypeError, ValueError):
             return []
-        tries = self._npc_tries.get(key, 0)
-        npc = npcs[tries % len(npcs)]
-        self._npc_tries[key] = tries + 1
+        asked = self._npc_asked.setdefault(key, set())
+        candidates = [entry for entry in npcs if entry["npc_id"] not in asked]
+        if not candidates:
+            # Every NPC here has already been asked and none of them opened the fight. Remembered
+            # by identity rather than by a counter: the counter was wiped on every scene flap, so
+            # the rotation restarted from the nearest NPC and the live log asked the same four of
+            # them 259 times for one kill objective (KNOWN_GAPS G17 family). A map that shows a
+            # new stranger is genuinely a new question, and this reopens for exactly that.
+            return []
+        npc = candidates[0]
+        asked.add(int(npc["npc_id"]))
         return [{
             "tool": "quest.advance",
             "args": {"quest_id": int(quest_id), "npc_id": int(npc["npc_id"])},
@@ -933,6 +1082,14 @@ class QuestPlanner:
             return calls
 
         if t in KILL_TYPES:
+            if declares_monster_target(obj) is False:
+                # `type_id` 0 was decoded as "monster" from the objective text, and the
+                # client's parameter table says otherwise: this class declares only a
+                # text parameter, so there is no group to hunt and no fight order to
+                # send. Travelling is still honest when the objective names a place;
+                # otherwise this objective asks for nothing, and the ready scan moves to
+                # the entry behind it that can be acted on.
+                return list(travel)
             monster = p.get("parameter0")
             calls = list(travel)
             visible = self._visible_target(obs, monster)
@@ -1066,10 +1223,10 @@ class QuestPlanner:
             for obj in objectives:
                 if obj.get("id") == tracker.get("objective_id"):
                     return obj
-            # The tracker names an objective that is not in the step we were given. The
-            # client reports `finishedCount` as the step index, and there is no promise
-            # that it matches the KB's numbering — so search the whole quest before
-            # concluding the objective does not exist. `args_for_tool` reads the
+            # The tracker names an objective that is not in the step we were given. The step
+            # index the page sends is the position of the live `stepId` in the client's own
+            # `dbQuest.stepIds`, which need not match the KB's numbering — so search the whole
+            # quest before concluding the objective does not exist. `args_for_tool` reads the
             # objective's own params, so a corrected step index is not needed for the
             # call itself.
             for step in quest.get("steps") or []:
@@ -1094,6 +1251,13 @@ class QuestPlanner:
         obj: Dict[str, Any] = {"id": oid}
         if entry.get("type_id") is not None:
             obj["type_id"] = entry["type_id"]
+        # The client's class name has to travel with the entry, or the parameter table
+        # is never consulted on the path live quests actually take: the KB holds no live
+        # quest id, so this fallback is *every* live quest, and without the name
+        # `declares_monster_target` can only answer "unknown" and the invented monster
+        # route stays in force (G27).
+        if isinstance(entry.get("type"), str) and entry.get("type"):
+            obj["type"] = entry["type"]
         if entry.get("map_id"):
             obj["map_id"] = entry["map_id"]
         params = entry.get("params")
@@ -1125,7 +1289,7 @@ class QuestPlanner:
                             params.setdefault(key, value)
                         if params:
                             merged["params"] = params
-                        for key in ("type_id", "map_id"):
+                        for key in ("type_id", "map_id", "type"):
                             if merged.get(key) is None and fallback.get(key) is not None:
                                 merged[key] = fallback[key]
                         if not merged.get("text") and fallback.get("text"):
@@ -1179,15 +1343,28 @@ class QuestPlanner:
         self.current_objective = obj.get("id")
         return ToolCall(first["tool"], dict(first["args"]), goal)
 
-    def note_result(self, tool: str, ok: bool, note: str, obs: Dict[str, Any]) -> None:
+    def note_result(self, tool: str, ok: bool, note: str, obs: Dict[str, Any],
+                    detail: Any = None) -> None:
         """The caller reports what happened. Without this the policy cannot learn
-        from its own failures, and any history feature would be a guess."""
+        from its own failures, and any history feature would be a guess.
+
+        `detail` is the refusal's own payload when the caller has one. It says more than
+        `note` does, and for a group refusal the difference is which repair is right.
+        """
         self.tracker.record(tool, ok, note, obs)
-        if tool == "farm.start":
+        if tool in ("farm.start", "fight.join"):
             if ok:
                 self._farm_target_missing = False
-            elif "not on this map" in str(note or "").lower():
-                self._farm_target_missing = True
+                self._group_read_broken = False
+            else:
+                outcome = group_refusal_outcome(detail, note)
+                self._group_refusals[outcome] = self._group_refusals.get(outcome, 0) + 1
+                # Groups are on this map but none of their members could be read: that is a
+                # broken read, not an absent mob, so travelling would spend the rest of the run
+                # and never find the target (KNOWN_GAPS G7).
+                self._group_read_broken = outcome == "unread_members"
+                if outcome in ("elsewhere", "empty_map"):
+                    self._farm_target_missing = True
         pending, self._pending_claim = self._pending_claim, None
         started, self._pending_start = self._pending_start, None
 
@@ -1268,6 +1445,7 @@ class QuestPlanner:
         twin.last_dialog_decision = None
         twin._order = self._order
         twin._seen_done = set(self._seen_done)
+        twin._client_quests = set(self._client_quests)
         twin._skipped = set(self._skipped)
         twin._skip_sigs = dict(self._skip_sigs)
         twin._last_obs = self._last_obs
@@ -1283,13 +1461,16 @@ class QuestPlanner:
         twin._claim_quarantine = set(self._claim_quarantine)
         twin._prev_map = self._prev_map
         twin._farm_target_missing = self._farm_target_missing
+        twin._group_refusals = dict(self._group_refusals)
+        twin._group_read_broken = self._group_read_broken
         twin._dialog_waits = 0
         twin._dialog_key = None
         # Which replies are spent is knowledge about the dialog, not about the
         # parent's scene: a fork that forgot it would re-ask a dead page.
         twin._dialog_asks = dict(self._dialog_asks)
         twin._dialog_exhausted = set(self._dialog_exhausted)
-        twin._npc_tries = dict(self._npc_tries)
+        twin._npc_asked = {key: set(value)
+                           for key, value in self._npc_asked.items()}
         # The twin is about to observe its own world for the first time. Inheriting
         # the parent's scene key would make its first observation look unchanged,
         # so the transient claim/retry state (which belongs to the parent's scene)
@@ -1401,7 +1582,9 @@ class QuestPlanner:
             self._pending_start = None
             self._start_failures.clear()
             self._start_waits.clear()
-            self._npc_tries.clear()
+            # `_npc_asked` is deliberately not cleared here. The NPCs on the map are the same
+            # NPCs, and a scene key moving is not a new answer to a question already asked --
+            # clearing it is what let 259 live steps re-ask four NPCs forever.
         quests = quest_key(obs)
         if quests != self._quest_key:
             self._quest_key = quests
@@ -1448,6 +1631,11 @@ class QuestPlanner:
             return self._rule_policy.choose(goal, obs, tools)
         if mode == "farm":
             target = _farm_target(goal)
+            if self._group_read_broken:
+                # No map answers this. One more read keeps the measurement alive while the
+                # loop's no-progress guard decides, instead of spending the session walking
+                # exits for a defect in our own client patch.
+                return ToolCall("state.snapshot", {}, goal)
             if target and self._farm_target_missing:
                 self._farm_target_missing = False
                 explore = self._explore_call({}, obs, avoid=self._prev_map)
@@ -1460,6 +1648,7 @@ class QuestPlanner:
         level = int(obs.get("level") or self.level_hint)
         active = obs.get("quests_active") or {}
         self._seen_done |= {int(q) for q in (obs.get("quests_done") or [])}
+        self._client_quests |= client_quest_ids(obs)
         active_ids = [int(k) for k in active.keys()]
         tutorial = self._tutorial(obs)
         # A changed tutorial step or map is a new situation; a quest given up on
@@ -1503,7 +1692,12 @@ class QuestPlanner:
                 self._claim_actions.pop(key, None)
                 self._claim_map.pop(key, None)
 
-        for item in (obs.get("ready_objectives") or [])[:1]:
+        # A ready entry whose planned call names no target is a detour — a read, or
+        # "walk out an exit and look for the group". Another ready objective may
+        # name an NPC or a map it can act on right now, so the detour is kept as the
+        # fallback and returned only if the scan finds nothing better.
+        detour: Optional[Tuple[Any, ...]] = None
+        for item in (obs.get("ready_objectives") or [])[:READY_SCAN_LIMIT]:
             try:
                 quest_id = int(item["quest_id"])
                 objective_id = int(item["objective_id"])
@@ -1585,6 +1779,10 @@ class QuestPlanner:
             calls = self.plan_objective({"id": quest_id}, 0, obj, obs)
             if calls:
                 first = calls[0]
+                if not names_target(first):
+                    if detour is None:
+                        detour = (key, actions, here, first, quest_id, objective_id)
+                    continue
                 self.current_quest = quest_id
                 self.current_objective = objective_id
                 self._claim_actions[key] = actions + 1
@@ -1596,6 +1794,20 @@ class QuestPlanner:
             if tutorial is not None:
                 continue
             self._skipped.add(quest_id)
+
+        if detour is not None:
+            # Nothing ready could be acted on directly. Take the detour after all:
+            # it is the respawn wait or the search the objective asked for, and the
+            # bounds on it (`_claim_actions`) still retire the quest if it never
+            # moves. Retiring a quest must not blind this loop to the ready
+            # objectives behind it, which is what one-entry scan did.
+            key, actions, here, first, quest_id, objective_id = detour
+            self.current_quest = quest_id
+            self.current_objective = objective_id
+            self._claim_actions[key] = actions + 1
+            self._claim_map[key] = here
+            self._pending_claim = (key, first["tool"])
+            return ToolCall(first["tool"], dict(first["args"]), goal)
 
         # 1. Continue an open quest if the observation says one is running.
         for qid, idx in sorted(active.items()):
@@ -1663,6 +1875,15 @@ class QuestPlanner:
                 # otherwise. But a start the server never honours is not a contract:
                 # after START_ATTEMPT_LIMIT observations that never show it active,
                 # take another quest instead of re-sending the request forever.
+                if qid not in self._client_quests:
+                    # G31: this game has never shown this quest, so asking to start it is
+                    # a request the server cannot honour -- and the attempt bound below
+                    # cannot be the guard, because a scene change clears it and a quest-log
+                    # change clears `_skipped`. Nothing here hard-codes a quest: an id the
+                    # client reports later becomes startable, and the client-side quest
+                    # capture (G29) is what will populate this set properly.
+                    self._skipped.add(qid)
+                    continue
                 if self._start_failures.get(qid, 0) >= START_ATTEMPT_LIMIT:
                     self._skipped.add(qid)
                     self._start_failures.pop(qid, None)

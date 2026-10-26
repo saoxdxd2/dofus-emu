@@ -11,17 +11,33 @@ Status and next moves live in `PLAN.md`; the reasoning behind decisions lives in
 ## 1. Services and ports
 
 Five processes cooperate. The host (WinForms, outside this repo) spawns the
-Python ones on demand; each binds one loopback port.
+Python ones on demand and the autopilot spawns the combat brain; each binds one
+loopback port.
 
 | service | entry point | port | job |
 |---|---|---|---|
 | **Autopilot** | `run_autopilot.py` → `agent.autopilot.main` | (client) | the autonomous loop: observe → choose → guard → execute → settle → verify → decide |
 | **Agent HTTP** | `python -m agent.serve` | **8895** | stdlib HTTP front for the agent layer (observe / plan / recorder) |
-| **Combat AI** | `combat/combat_ai_server.py` `run_server()` | **8891** | `POST /v1/combat/decide` — solver + learned ranker + live policy |
+| **Combat AI** | `combat/combat_ai_server.py` `run_server()`, started by the autopilot through `combat/brain_service.py` | **8891** | `POST /v1/combat/decide` — solver + learned ranker + live policy |
 | **Sentinel** | `networkhealth/sentinel.py` `run_sentinel_service()` | **8890** | health/telemetry + `nav.goto` name→map resolution |
 | **Directive bridge** | `agent/bridge.py` (host owns the listener) | **8893** (fallback) | `POST /directive` → client tool call; the *real* port is read from `%LOCALAPPDATA%\DofusFarm\bridge_port.txt` |
 
-Two facts about ports that have burned time before:
+Facts about ports that have burned time before:
+
+* **The host does not start 8891, and cannot.** `desktop/mainform.cs:342
+  TryStartSingletonSentinel` is the only Python service the host spawns, and it uses the
+  *embedded* interpreter, which has no `jax` (`combat/live_policy.py` needs it). Since
+  2026-10-26 the loop ensures the brain itself (`Autopilot._ensure_brain`, `--brain auto|off`),
+  probing for an interpreter that can import it and recording the outcome as a `kind:"brain"`
+  row. Before that, nothing on this machine had ever started it: see G24.
+
+* **Starting it is only half of a learned fight.** The brain also has to be handed a board it
+  can act on, and until 2026-10-26 `fight.state` read the *characteristics* sheet's field names
+  off each fighter's stats bag, so every maxima arrived as null and all 156 recorded boards were
+  rejected (`observation_not_actionable`). It now reads the names the served bundle actually
+  contains (`effectiveMaxLifePoints`, `actionPoints`/`maxActionPoints`,
+  `movementPoints`/`maxMovementPoints`, `initiative`) for monsters as well as for the character,
+  and the gate pins that no name outside the bundle can be read again. See G25.
 
 * **The bridge port is dynamic.** `DEFAULT_PORT = 8893` (`agent/bridge.py:21`) is
   only a fallback. The app publishes its chosen port to `bridge_port.txt` and the
@@ -41,6 +57,15 @@ embedded runtime's `python311._pth` resolves `..\dofus-network` to a directory
 that does not exist, so `-m` cannot find the package from the install root. The
 script puts its own directory on `sys.path` first and forwards argv untouched, so
 the argument surface stays exactly `agent.autopilot`'s.
+
+**How a change reaches the client.** The injected page patch is read from disk by
+`desktop/WebView2Backend.cs:121` as `<exe dir>/scripts/mobile-disguise.js`, and `DofusFarm.exe`
+sits at the repo root with `scripts/` beside it — so editing that file needs **no rebuild and no
+installer**; a page reload is what applies it (`desktop/aipanel.cs:437` says as much). The Python
+brain is launched the same way, from this tree. What *is* separately built is the served client
+bundle and its resilience rules (see `docs/KNOWN_GAPS.md` G12) — that is a different artifact from
+the injected patch, and confusing the two has cost time: a green `--bundle-selftest` says nothing
+about `mobile-disguise.js`, and a changed `mobile-disguise.js` says nothing about the bundle.
 
 ---
 
