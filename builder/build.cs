@@ -94,6 +94,7 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "AiPanel.cs"),
                 Path.Combine(desktopDir, "NetSettings.cs"),
                 Path.Combine(desktopDir, "RuntimeSettings.cs"),
+                Path.Combine(desktopDir, "PythonLocator.cs"),
                 Path.Combine(desktopDir, "Pages.cs"),
                 Path.Combine(desktopDir, "MainForm.cs"),
                 Path.Combine(desktopDir, "Program.cs")
@@ -121,9 +122,10 @@ namespace DofusBuild
             Console.WriteLine("\n[2/3] Compiling native C# uninstall.exe...");
             Console.ResetColor();
             string uninstallerCs = Path.Combine(desktopDir, "Uninstaller.cs");
+            string progressCs = Path.Combine(desktopDir, "ProgressBar.cs");
             string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
-            string uninstArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" {2}\"{3}\"",
-                setupIconArg, outUninstall, RefArgs(), uninstallerCs);
+            string uninstArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" {2}\"{3}\" \"{4}\"",
+                setupIconArg, outUninstall, RefArgs(), uninstallerCs, progressCs);
 
             if (RunCsc(uninstArgs) != 0)
             {
@@ -601,6 +603,8 @@ namespace DofusBuild
                     Path.Combine(desktopDir, "FarmEngine.cs"),
                     Path.Combine(desktopDir, "ProxySupervisor.cs"),
                     Path.Combine(desktopDir, "NetSettings.cs"),
+                    Path.Combine(desktopDir, "PythonLocator.cs"),
+                    Path.Combine(desktopDir, "ProgressBar.cs"),
                     Path.Combine(desktopDir, "Installer.cs")
                 };
                 string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";

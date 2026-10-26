@@ -270,16 +270,16 @@ def run_emotion_benchmark(model, is_original):
     return {"items": item_results, "aggregate": {"avg_latency_ms": round(statistics.mean(latencies), 3) if latencies else 0, "p50_latency_ms": round(statistics.median(latencies), 3) if latencies else 0, "p95_latency_ms": round(p95, 3), "max_latency_ms": round(max(latencies), 3) if latencies else 0, "overall_accuracy": round(correct / max(len(item_results), 1), 4), "correct": correct, "total_run": len(item_results), "skipped_local": skipped, "reference_acc": ORIGINAL_EMOTION_ACC / 100.0, "total_items": len(DAIR_EMOTION_SUITE)}}
 
 
-def run_typed_decisions_benchmark(model, is_original):
+def _run_qa_suite(model, is_original, suite, reference_acc, use_item_criteria):
     item_results = []
     latencies = []
     correct = 0
-    for item in TYPED_DECISIONS_SUITE:
+    for item in suite:
         qtype = item["type"]
         question = item["question"]
         expected = item["expected"]
-        criteria = item.get("criteria", {})
         if is_original:
+            criteria = item.get("criteria", {}) if use_item_criteria else {}
             questions = {qtype: {"type": qtype, "question": question, "criteria": criteria}}
             start = _now_ms()
             result = model.decide(question, questions)
@@ -299,38 +299,17 @@ def run_typed_decisions_benchmark(model, is_original):
             correct += 1
     sl = sorted(latencies)
     p95 = sl[int(len(sl) * 0.95)] if sl else 0
-    return {"items": item_results, "aggregate": {"avg_latency_ms": round(statistics.mean(latencies), 3) if latencies else 0, "p50_latency_ms": round(statistics.median(latencies), 3) if latencies else 0, "p95_latency_ms": round(p95, 3), "max_latency_ms": round(max(latencies), 3) if latencies else 0, "overall_accuracy": round(correct / max(len(item_results), 1), 4), "correct": correct, "total_run": len(item_results), "reference_acc": ORIGINAL_TYPED_DECISIONS_ACC / 100.0, "total_items": len(TYPED_DECISIONS_SUITE)}}
+    return {"items": item_results, "aggregate": {"avg_latency_ms": round(statistics.mean(latencies), 3) if latencies else 0, "p50_latency_ms": round(statistics.median(latencies), 3) if latencies else 0, "p95_latency_ms": round(p95, 3), "max_latency_ms": round(max(latencies), 3) if latencies else 0, "overall_accuracy": round(correct / max(len(item_results), 1), 4), "correct": correct, "total_run": len(item_results), "reference_acc": reference_acc / 100.0, "total_items": len(suite)}}
+
+
+def run_typed_decisions_benchmark(model, is_original):
+    return _run_qa_suite(model, is_original, TYPED_DECISIONS_SUITE,
+                         ORIGINAL_TYPED_DECISIONS_ACC, True)
 
 
 def run_extraction_benchmark(model, is_original):
-    item_results = []
-    latencies = []
-    correct = 0
-    for item in EXTRACTION_SUITE:
-        qtype = item["type"]
-        question = item["question"]
-        expected = item["expected"]
-        if is_original:
-            questions = {qtype: {"type": qtype, "question": question, "criteria": {}}}
-            start = _now_ms()
-            result = model.decide(question, questions)
-            elapsed = _now_ms() - start
-            pred = result.get("answers", {}).get(qtype)
-        else:
-            if qtype in ("number", "excerpt", "cite"):
-                continue
-            start = _now_ms()
-            result = model.classify(question)
-            elapsed = _now_ms() - start
-            pred = result["predicted_label"]
-        latencies.append(elapsed)
-        ok = _compare_prediction(pred, expected)
-        item_results.append({"id": item["id"], "type": qtype, "predicted": pred, "expected": expected, "correct": ok, "latency_ms": round(elapsed, 3)})
-        if ok:
-            correct += 1
-    sl = sorted(latencies)
-    p95 = sl[int(len(sl) * 0.95)] if sl else 0
-    return {"items": item_results, "aggregate": {"avg_latency_ms": round(statistics.mean(latencies), 3) if latencies else 0, "p50_latency_ms": round(statistics.median(latencies), 3) if latencies else 0, "p95_latency_ms": round(p95, 3), "max_latency_ms": round(max(latencies), 3) if latencies else 0, "overall_accuracy": round(correct / max(len(item_results), 1), 4), "correct": correct, "total_run": len(item_results), "reference_acc": ORIGINAL_EXTRACTION_ACC / 100.0, "total_items": len(EXTRACTION_SUITE)}}
+    return _run_qa_suite(model, is_original, EXTRACTION_SUITE,
+                         ORIGINAL_EXTRACTION_ACC, False)
 
 def run_dofus_suite(model, is_original, suite):
     item_results = []

@@ -848,12 +848,7 @@ class ToolExecutor:
         """
         if self._fight_value_cache is not None:
             return self._fight_value_cache
-        import pickle
-
-        import jax
-        import jax.numpy as jnp
-
-        from combat.encounter.env import Config
+        from combat.encounter.checkpoint import load_params_config
 
         configured = os.environ.get("DOFUS_FIGHT_VALUE")
         path = Path(configured) if configured else REPO_ROOT / "models" / "encounter_selfplay.pkl"
@@ -861,17 +856,7 @@ class ToolExecutor:
             self._fight_value_cache = (None, None, path)
             return self._fight_value_cache
         try:
-            payload = pickle.loads(path.read_bytes())
-            params = jax.tree_util.tree_map(jnp.asarray, payload["params"])
-            saved = payload.get("config") or {}
-            cfg = Config(
-                allies=int(saved.get("allies", 1)),
-                enemies=int(saved.get("enemies", 4)),
-                spells=int(saved.get("spells", 4)),
-                max_rounds=int(saved.get("max_rounds", 24)),
-                max_dist=int(saved.get("max_dist", 12)),
-                casts_per_turn=int(saved.get("casts_per_turn", 4)),
-            )
+            params, cfg = load_params_config(path)
             self._fight_value_cache = (params, cfg, path)
         except Exception as exc:  # noqa: BLE001 - a bad checkpoint must not kill the fight loop
             logger.warning("fight value checkpoint unavailable (%s): %s", path, exc)

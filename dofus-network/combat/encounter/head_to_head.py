@@ -24,29 +24,10 @@ import numpy as np
 from combat.encounter import model
 from combat.encounter.env import (Config, action_masks, initial_state, observe,
                                   sample_actions, step)
-from combat.encounter.train import SPEC_KEYS, TABLE_KEYS
+from combat.encounter.data import load_params, load_slice
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DATA = REPO_ROOT / "kaggle" / "tpu_selfplay" / "dataset" / "encounters.npz"
-
-
-def load_slice(path: Path, start: int, samples: int):
-    data = np.load(path)
-    n = int(data["hp"].shape[0])
-    start = max(0, min(start, n))
-    take = min(samples, n - start)
-    tables = {key: jnp.asarray(data[key][start:start + take])
-              for key in TABLE_KEYS}
-    spec = {key: jnp.asarray(data[key][start:start + take])
-            for key in SPEC_KEYS if key in data}
-    return tables, spec
-
-
-def load_params(path: Path):
-    import pickle
-
-    payload = pickle.loads(Path(path).read_bytes())
-    return jax.tree_util.tree_map(jnp.asarray, payload["params"])
 
 
 def make_rollout(cfg: Config, length: int):

@@ -311,16 +311,14 @@ class KnowledgeBase:
             return None
         return int(self._arrays["item_level"][index]), int(self._arrays["item_price"][index])
 
-    def find_items(self, query: str, lang: str = "fr", limit: int = 8) -> List[Item]:
+    def _name_hits(self, needle: str, ids: Any, table: str,
+                   lang: str) -> List[Tuple[int, int, int]]:
         from ai.data_splits import normalize
 
-        needle = normalize(query)
-        if len(needle) < 2:
-            return []
+        offsets = self._arrays[f"{table}_off"]
+        lengths = self._arrays[f"{table}_len"]
         hits: List[Tuple[int, int, int]] = []
-        offsets = self._arrays["item_name_off"]
-        lengths = self._arrays["item_name_len"]
-        for index in range(len(self.item_id)):
+        for index in range(len(ids)):
             name = self._names.get(int(offsets[index]), int(lengths[index]), lang)
             flat = normalize(name)
             if not flat:
@@ -333,8 +331,17 @@ class KnowledgeBase:
                 rank = 2
             else:
                 continue
-            hits.append((rank, int(self.item_id[index]), index))
+            hits.append((rank, int(ids[index]), index))
         hits.sort()
+        return hits
+
+    def find_items(self, query: str, lang: str = "fr", limit: int = 8) -> List[Item]:
+        from ai.data_splits import normalize
+
+        needle = normalize(query)
+        if len(needle) < 2:
+            return []
+        hits = self._name_hits(needle, self.item_id, "item_name", lang)
         return [self.item(item_id, lang) for _rank, item_id, _index in hits[:limit]]  # type: ignore[misc]
 
     # -- monster access ------------------------------------------------------
@@ -488,24 +495,7 @@ class KnowledgeBase:
         exact = self._quest_name_index().get(lang, {}).get(needle)
         if exact is not None:
             return [self.quest(quest_id, lang) for quest_id in exact[:limit]]
-        hits: List[Tuple[int, int, int]] = []
-        offsets = self._arrays["quest_name_off"]
-        lengths = self._arrays["quest_name_len"]
-        for index in range(len(self.quest_id)):
-            name = self._names.get(int(offsets[index]), int(lengths[index]), lang)
-            flat = normalize(name)
-            if not flat:
-                continue
-            if flat == needle:
-                rank = 0
-            elif flat.startswith(needle):
-                rank = 1
-            elif needle in flat:
-                rank = 2
-            else:
-                continue
-            hits.append((rank, int(self.quest_id[index]), index))
-        hits.sort()
+        hits = self._name_hits(needle, self.quest_id, "quest_name", lang)
         return [self.quest(int(quest_id), lang) for _rank, quest_id, _index in hits[:limit]]  # type: ignore[misc]
 
     def quest(self, quest_id: int, lang: str = "fr") -> Optional[Quest]:

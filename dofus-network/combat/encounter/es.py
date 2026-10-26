@@ -31,9 +31,10 @@ import jax.numpy as jnp
 from jax import flatten_util
 import numpy as np
 
+from combat.encounter.checkpoint import load_params_config
+from combat.encounter.data import load_slice
 from combat.encounter.env import Config, initial_state
-from combat.encounter.train import (TABLE_KEYS, load_encounters,
-                                    make_eval_rollout)
+from combat.encounter.train import load_encounters, make_eval_rollout
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_OUT = REPO_ROOT / "models" / "encounter_es.pkl"
@@ -56,33 +57,8 @@ def _fitness(final: Dict[str, jax.Array], cfg: Config) -> jax.Array:
     return jnp.mean(win + 0.1 * hp_ratio - 0.05 * draw)
 
 
-def _load_checkpoint(path: Path) -> Tuple[Dict[str, Any], Config]:
-    payload = pickle.loads(Path(path).read_bytes())
-    saved = payload.get("config") or {}
-    cfg = Config(
-        allies=int(saved.get("allies", 1)),
-        enemies=int(saved.get("enemies", 4)),
-        spells=int(saved.get("spells", 4)),
-        max_rounds=int(saved.get("max_rounds", 24)),
-        max_dist=int(saved.get("max_dist", 12)),
-        casts_per_turn=int(saved.get("casts_per_turn", 4)),
-    )
-    params = jax.tree_util.tree_map(jnp.asarray, payload["params"])
-    return params, cfg
-
-
-def _eval_slice(data_path: Path, start: int, samples: int):
-    data = np.load(data_path)
-    n = int(data["hp"].shape[0])
-    start = max(0, min(start, n))
-    take = min(samples, n - start)
-    tables = {key: jnp.asarray(data[key][start:start + take])
-              for key in TABLE_KEYS}
-    spec_keys = ("hp", "max_hp", "ap_max", "mp_max", "power", "res",
-                 "dist", "initiative", "alive", "first_team")
-    spec = {key: jnp.asarray(data[key][start:start + take])
-            for key in spec_keys if key in data}
-    return tables, spec
+def _load_checkpoint(path: Path):
+    return load_params_config(path)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -94,7 +70,7 @@ def run(args: argparse.Namespace) -> int:
     train_tables, train_spec = load_encounters(
         Path(args.data), samples=args.samples)
     train_state = initial_state(train_spec, train_tables, cfg)
-    eval_tables, eval_spec = _eval_slice(
+    eval_tables, eval_spec = load_slice(
         Path(args.data), args.eval_start, args.eval_samples)
     eval_state = initial_state(eval_spec, eval_tables, cfg)
     length = 2 * cfg.max_rounds

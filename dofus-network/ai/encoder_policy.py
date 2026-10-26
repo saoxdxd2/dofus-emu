@@ -27,6 +27,8 @@ if str(REPO_ROOT) not in sys.path:
 
 import torch
 from torch import nn
+
+from ai.transformer import build_trunk, init_weights
 from torch.nn import functional as F
 
 from agent import tool_dataset, tool_eval
@@ -115,20 +117,7 @@ class EncoderPolicy(nn.Module):
     def __init__(self, config: EncoderConfig) -> None:
         super().__init__()
         self.config = config
-        self.tok_emb = nn.Embedding(config.vocab_size, config.d_model)
-        self.pos_emb = nn.Embedding(config.max_seq_len, config.d_model)
-        layer = nn.TransformerEncoderLayer(
-            d_model=config.d_model,
-            nhead=config.n_heads,
-            dim_feedforward=config.ffn,
-            dropout=config.dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(
-            layer, num_layers=config.n_layers, enable_nested_tensor=False)
-        self.norm = nn.LayerNorm(config.d_model)
+        self.tok_emb, self.pos_emb, self.encoder, self.norm = build_trunk(config)
         self.field_emb = nn.Embedding(len(FIELDS), config.d_model)
         self.presence_bias = nn.Parameter(torch.zeros(len(FIELDS)))
         self.bool_bias = nn.Parameter(torch.zeros(len(FIELDS)))
@@ -141,16 +130,7 @@ class EncoderPolicy(nn.Module):
             for field_index in ENUM_FIELDS
         ])
         self.dropout = nn.Dropout(config.dropout)
-        self.apply(self._init)
-
-    @staticmethod
-    def _init(module: nn.Module) -> None:
-        if isinstance(module, nn.Linear):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        self.apply(init_weights)
 
     def forward(
         self,
@@ -711,16 +691,8 @@ def _tool_weights(rows: Sequence[Dict[str, Any]]) -> torch.Tensor:
     return torch.tensor(weights, dtype=torch.float)
 
 
-def _evaluate_rows(
-    model: EncoderPolicy,
-    tokenizer: Any,
-    rows: Sequence[Dict[str, Any]],
-    system_prompt: str,
-    batch_size: int,
-) -> Dict[str, Any]:
-    predictions = predict_rows(
-        model, tokenizer, rows, system_prompt, batch_size=batch_size)
-    cases = [
+def _cases_from_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
         {
             "id": str(row.get("id")),
             "lang": row.get("lang") or "auto",
@@ -730,7 +702,18 @@ def _evaluate_rows(
         }
         for row in rows
     ]
-    return tool_eval.evaluate(predictions, cases)
+
+
+def _evaluate_rows(
+    model: EncoderPolicy,
+    tokenizer: Any,
+    rows: Sequence[Dict[str, Any]],
+    system_prompt: str,
+    batch_size: int,
+) -> Dict[str, Any]:
+    predictions = predict_rows(
+        model, tokenizer, rows, system_prompt, batch_size=batch_size)
+    return tool_eval.evaluate(predictions, _cases_from_rows(rows))
 
 
 @torch.no_grad()
@@ -1109,17 +1092,7 @@ def evaluate(args: argparse.Namespace) -> Dict[str, Any]:
         rows = rows[:args.limit]
     predictions = predict_rows(
         model, tokenizer, rows, system_prompt, batch_size=args.batch_size)
-    cases = [
-        {
-            "id": str(row.get("id")),
-            "lang": row.get("lang") or "auto",
-            "goal": row.get("goal") or "",
-            "tool": row.get("tool"),
-            "args": row.get("args") or {},
-        }
-        for row in rows
-    ]
-    report = tool_eval.evaluate(predictions, cases)
+    report = tool_eval.evaluate(predictions, _cases_from_rows(rows))
     report["checkpoint"] = str(args.checkpoint)
     report["predictions"] = [
         {"id": key, "predicted": value} for key, value in predictions.items()]

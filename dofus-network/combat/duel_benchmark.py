@@ -21,7 +21,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from combat.cli import run_main
 from combat.battle_solver import BattleSolver
+from combat.metrics import auc as _auc, ece as _ece
 from combat.duel import (FEATURE_NAMES, load_map,
                          make_duel, make_two_ply_policy, play_game,
                          random_policy, solver_policy, value_policy)
@@ -53,37 +55,6 @@ def sample_pair(levels: np.ndarray, rows: Sequence[int],
 
 def _brier(y: np.ndarray, p: np.ndarray) -> float:
     return float(np.mean((p - y) ** 2))
-
-
-def _auc(y: np.ndarray, p: np.ndarray) -> float:
-    order = np.argsort(p)
-    y = y[order]
-    p = p[order]
-    ranks = np.empty(len(p), dtype=float)
-    i = 0
-    while i < len(p):
-        j = i
-        while j + 1 < len(p) and p[j + 1] == p[i]:
-            j += 1
-        ranks[i:j + 1] = (i + j) / 2.0 + 1.0
-        i = j + 1
-    positives = float(y.sum())
-    negatives = float(len(y) - positives)
-    if positives <= 0 or negatives <= 0:
-        return float("nan")
-    return float((ranks[y == 1].sum() - positives * (positives + 1) / 2.0)
-                 / (positives * negatives))
-
-
-def _ece(y: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
-    edges = np.linspace(0.0, 1.0, bins + 1)
-    total = 0.0
-    for k in range(bins):
-        upper = edges[k + 1] if k < bins - 1 else edges[k + 1] + 1e-9
-        mask = (p >= edges[k]) & (p < upper)
-        if mask.any():
-            total += mask.mean() * abs(p[mask].mean() - y[mask].mean())
-    return float(total)
 
 
 def fit_value(records: List[Dict[str, Any]], seed: int = 7):
@@ -305,8 +276,8 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    return run(build_parser().parse_args(argv))
+def main(argv=None):
+    return run_main(build_parser, run, argv)
 
 
 if __name__ == "__main__":

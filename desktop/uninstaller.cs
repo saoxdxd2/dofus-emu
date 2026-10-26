@@ -390,59 +390,6 @@ namespace DofusUninstall
         }
     }
 
-    public class UninstallProgressBar : Control
-    {
-        private int _value = 0;
-        public int Value
-        {
-            get { return _value; }
-            set
-            {
-                int clamped = Math.Min(100, Math.Max(0, value));
-                if (_value != clamped)
-                {
-                    _value = clamped;
-                    this.Invalidate();
-                }
-            }
-        }
-
-        public UninstallProgressBar()
-        {
-            this.SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
-            this.Height = 16;
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            if (this.Width <= 4 || this.Height <= 4) return;
-            Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-
-            Rectangle rect = new Rectangle(0, 0, this.Width - 1, this.Height - 1);
-            using (SolidBrush bg = new SolidBrush(Color.FromArgb(26, 28, 36)))
-            using (Pen border = new Pen(Color.FromArgb(45, 48, 62), 1f))
-            {
-                g.FillRectangle(bg, rect);
-                g.DrawRectangle(border, rect);
-            }
-
-            if (_value > 0)
-            {
-                int fillW = Math.Min(this.Width - 2, Math.Max(4, (int)Math.Round(((this.Width - 2) * _value) / 100.0)));
-                Rectangle fillRect = new Rectangle(1, 1, fillW, Math.Max(2, this.Height - 2));
-                using (LinearGradientBrush grad = new LinearGradientBrush(
-                    fillRect,
-                    Color.FromArgb(220, 38, 38),
-                    Color.FromArgb(239, 68, 68),
-                    LinearGradientMode.Horizontal))
-                {
-                    g.FillRectangle(grad, fillRect);
-                }
-            }
-        }
-    }
-
     public class UninstallForm : Form
     {
         private readonly string _targetDir;
@@ -452,7 +399,7 @@ namespace DofusUninstall
         private readonly bool _isForce;
 
         private Label _lblStatus;
-        private UninstallProgressBar _progBar;
+        private SmoothProgressBar _progBar;
         private Button _btnUninstall;
         private Button _btnCancel;
         private bool _isRunning = false;
@@ -499,7 +446,7 @@ namespace DofusUninstall
                 ForeColor = Color.FromArgb(203, 213, 225)
             };
 
-            _progBar = new UninstallProgressBar
+            _progBar = new SmoothProgressBar(16, Color.FromArgb(220, 38, 38), Color.FromArgb(239, 68, 68))
             {
                 Location = new Point(22, 122),
                 Size = new Size(440, 16),

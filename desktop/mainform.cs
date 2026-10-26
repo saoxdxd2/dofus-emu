@@ -447,119 +447,10 @@ namespace DofusFarm.UI
 
 
 
-        private static string JsonEscape(string s)
-
-        {
-
-            if (string.IsNullOrEmpty(s)) return "";
-
-            var sb = new StringBuilder(s.Length + 16);
-
-            foreach (char c in s)
-
-            {
-
-                switch (c)
-
-                {
-
-                    case '\\': sb.Append("\\\\"); break;
-
-                    case '"': sb.Append("\\\""); break;
-
-                    case '\b': sb.Append("\\b"); break;
-
-                    case '\f': sb.Append("\\f"); break;
-
-                    case '\n': sb.Append("\\n"); break;
-
-                    case '\r': sb.Append("\\r"); break;
-
-                    case '\t': sb.Append("\\t"); break;
-
-                    default: if (c < 32) sb.AppendFormat("\\u{0:X4}", (int)c); else sb.Append(c); break;
-
-                }
-
-            }
-
-            return sb.ToString();
-
-        }
-
-
-
         private static string FindPythonExecutable()
-
         {
-
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-
-            string appPortable = Path.Combine(baseDir, @"runtimes\python\python.exe");
-
-            if (File.Exists(appPortable)) return appPortable;
-
-            appPortable = Path.Combine(baseDir, @"python\python.exe");
-
-            if (File.Exists(appPortable)) return appPortable;
-
-
-
-            string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
-
-            foreach (string p in pathEnv.Split(';'))
-
-            {
-
-                if (string.IsNullOrEmpty(p)) continue;
-
-                try
-
-                {
-
-                    string candidate = Path.Combine(p.Trim(), "python.exe");
-
-                    if (File.Exists(candidate)) return candidate;
-
-                }
-
-                catch { }
-
-            }
-
-            string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            string pyPrograms = Path.Combine(localApp, @"Programs\Python");
-
-            if (Directory.Exists(pyPrograms))
-
-            {
-
-                try
-
-                {
-
-                    foreach (string dir in Directory.GetDirectories(pyPrograms, "Python3*"))
-
-                    {
-
-                        string candidate = Path.Combine(dir, "python.exe");
-
-                        if (File.Exists(candidate)) return candidate;
-
-                    }
-
-                }
-
-                catch { }
-
-            }
-
-            return null;
-
+            return PythonLocator.Find();
         }
-
-
 
         private static ComboBox CreateCombo(int x, int y, int width, object[] items, int selectedIndex)
 
@@ -1764,6 +1655,20 @@ namespace DofusFarm.UI
 
 
 
+        private void StartWebView2Instance(InstanceModel inst, int ram, int cores)
+        {
+            var opts = new ClientLaunchOptions
+            {
+                InstanceId = inst.Name,
+                DisplayName = inst.CustomName ?? inst.DisplayName,
+                SlotPort = inst.Port,
+                RamMb = inst.RamMb > 0 ? inst.RamMb : ram,
+                Cores = inst.Cores > 0 ? inst.Cores : cores,
+                Proxy = inst.Proxy
+            };
+            if (WireWebView2LocalProxy(opts, inst)) _webViewBackend.Start(opts);
+        }
+
         private void LaunchSelectedInWebView2()
 
         {
@@ -1786,25 +1691,7 @@ namespace DofusFarm.UI
 
             {
 
-                var opts = new ClientLaunchOptions
-
-                {
-
-                    InstanceId = inst.Name,
-
-                    DisplayName = inst.CustomName ?? inst.DisplayName,
-
-                    SlotPort = inst.Port,
-
-                    RamMb = inst.RamMb > 0 ? inst.RamMb : GetSelectedRam(),
-
-                    Cores = inst.Cores > 0 ? inst.Cores : GetSelectedCores(),
-
-                    Proxy = inst.Proxy
-
-                };
-
-                if (WireWebView2LocalProxy(opts, inst)) _webViewBackend.Start(opts);
+                StartWebView2Instance(inst, GetSelectedRam(), GetSelectedCores());
 
             }
 
@@ -2331,25 +2218,7 @@ namespace DofusFarm.UI
 
                             {
 
-                                var opts = new ClientLaunchOptions
-
-                                {
-
-                                    InstanceId = im.Name,
-
-                                    DisplayName = im.CustomName ?? im.DisplayName,
-
-                                    SlotPort = im.Port,
-
-                                    RamMb = im.RamMb > 0 ? im.RamMb : defaultRam,
-
-                                    Cores = im.Cores > 0 ? im.Cores : defaultCores,
-
-                                    Proxy = im.Proxy
-
-                                };
-
-                                if (WireWebView2LocalProxy(opts, im)) _webViewBackend.Start(opts);
+                                StartWebView2Instance(im, defaultRam, defaultCores);
 
                                 // Natural human stagger: 2.5s - 3.8s between client connection handshakes
 
@@ -2990,25 +2859,7 @@ namespace DofusFarm.UI
 
                                 {
 
-                                    var opts = new ClientLaunchOptions
-
-                                    {
-
-                                        InstanceId = inst.Name,
-
-                                        DisplayName = inst.CustomName ?? inst.DisplayName,
-
-                                        SlotPort = inst.Port,
-
-                                        RamMb = inst.RamMb > 0 ? inst.RamMb : GetSelectedRam(),
-
-                                        Cores = inst.Cores > 0 ? inst.Cores : GetSelectedCores(),
-
-                                        Proxy = inst.Proxy
-
-                                    };
-
-                                    if (WireWebView2LocalProxy(opts, inst)) _webViewBackend.Start(opts);
+                                    StartWebView2Instance(inst, GetSelectedRam(), GetSelectedCores());
 
                                 }
 
@@ -3465,21 +3316,9 @@ namespace DofusFarm.UI
 
         {
 
-            Text = isNew ? ("Add New Instance (" + slotName + ")") : ("Edit Instance — " + currentCustomName + " (" + slotName + ")");
-
-            Size = new Size(520, 385);
-
-            StartPosition = FormStartPosition.CenterParent;
-
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-
-            MaximizeBox = MinimizeBox = false;
-
-            BackColor = Color.FromArgb(22, 23, 30);
-
-            ForeColor = Color.White;
-
-            Font = new Font("Segoe UI", 9.5f);
+            UiKit.ApplyDialogChrome(this,
+                isNew ? ("Add New Instance (" + slotName + ")") : ("Edit Instance — " + currentCustomName + " (" + slotName + ")"),
+                new Size(520, 385));
 
 
 
@@ -3541,19 +3380,7 @@ namespace DofusFarm.UI
 
 
 
-            _btnRandomProfile = new Button
-
-            {
-
-                Text = "Random", Location = new Point(406, y - 1), Size = new Size(74, 26),
-
-                BackColor = Color.FromArgb(79, 70, 229), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
-
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), Cursor = Cursors.Hand
-
-            };
-
-            _btnRandomProfile.FlatAppearance.BorderSize = 0;
+            _btnRandomProfile = MakeRandomButton(y);
 
             _btnRandomProfile.Click += delegate { if (_profiles.Count > 0) lock (Rng) _cmbProfiles.SelectedIndex = Rng.Next(_profiles.Count); };
 
@@ -3573,19 +3400,7 @@ namespace DofusFarm.UI
 
             };
 
-            _btnRandomProxy = new Button
-
-            {
-
-                Text = "Random", Location = new Point(406, y - 1), Size = new Size(74, 26),
-
-                BackColor = Color.FromArgb(79, 70, 229), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
-
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), Cursor = Cursors.Hand
-
-            };
-
-            _btnRandomProxy.FlatAppearance.BorderSize = 0;
+            _btnRandomProxy = MakeRandomButton(y);
 
             _btnRandomProxy.Click += delegate
 
@@ -3707,6 +3522,18 @@ namespace DofusFarm.UI
 
         }
 
+        private static Button MakeRandomButton(int y)
+        {
+            var button = new Button
+            {
+                Text = "Random", Location = new Point(406, y - 1), Size = new Size(74, 26),
+                BackColor = Color.FromArgb(79, 70, 229), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), Cursor = Cursors.Hand
+            };
+            button.FlatAppearance.BorderSize = 0;
+            return button;
+        }
+
     }
 
 
@@ -3739,21 +3566,7 @@ namespace DofusFarm.UI
 
             TargetSlotName = targetSlotName;
 
-            Text = "Clone Instance — " + sourceDisplayName;
-
-            Size = new Size(440, 235);
-
-            StartPosition = FormStartPosition.CenterParent;
-
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-
-            MaximizeBox = MinimizeBox = false;
-
-            BackColor = Color.FromArgb(22, 23, 30);
-
-            ForeColor = Color.White;
-
-            Font = new Font("Segoe UI", 9.5f);
+            UiKit.ApplyDialogChrome(this, "Clone Instance — " + sourceDisplayName, new Size(440, 235));
 
 
 

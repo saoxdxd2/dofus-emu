@@ -52,7 +52,7 @@ def load_map(path: Path = DEFAULT_MAP) -> CellMap:
     return CellMap(tuple(int(cell.get("l", 0)) for cell in payload.get("cells", [])))
 
 
-def _live_spell(slot: int, ap: float, rmin: float, rmax: float,
+def live_spell(slot: int, ap: float, rmin: float, rmax: float,
                 damage: float, heal: float, element: int,
                 ally: bool) -> LiveSpell:
     if ally and heal > 0:
@@ -137,7 +137,7 @@ def duelist_from_row(data: Any, row: int, ident: int,
     for slot in range(damage.shape[0]):
         if damage[slot] <= 0 and heal[slot] <= 0:
             continue
-        spells.append(_live_spell(
+        spells.append(live_spell(
             slot, float(data["spell_ap"][row, 0, slot]),
             float(data["spell_rmin"][row, 0, slot]),
             float(data["spell_rmax"][row, 0, slot]),

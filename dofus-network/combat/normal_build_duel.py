@@ -31,10 +31,12 @@ import numpy as np
 
 from combat.battle_solver import BattleSolver
 from combat.encounter.build_dataset import load_class_loadouts
-from combat.duel import (CLASS_NAMES, DuelState, Duelist, _live_spell,
+from combat.duel import (CLASS_NAMES, DuelState, Duelist, live_spell,
                          engaged_cells, load_map, make_two_ply_policy,
                          play_game, solver_policy,
                          value_policy)
+
+from combat.cli import run_main
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MAP = REPO_ROOT / "data" / "maps" / "100139008.json"
@@ -146,7 +148,7 @@ def build_duelist(key: str, cell: int, ident: int,
         return None
     spells = []
     for slot, row in enumerate(_pick_spells(rows, spec["element"])):
-        spells.append(_live_spell(
+        spells.append(live_spell(
             slot, float(row["ap"]), float(row["rmin"]),
             float(row["rmax"]) + spec["po"], float(row["damage"]),
             float(row["heal"]), int(row["element"]), bool(row["ally"])))
@@ -255,8 +257,8 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    return run(build_parser().parse_args(argv))
+def main(argv=None):
+    return run_main(build_parser, run, argv)
 
 
 if __name__ == "__main__":

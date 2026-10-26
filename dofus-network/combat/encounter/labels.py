@@ -25,6 +25,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from combat.encounter import model
+from combat.encounter.checkpoint import config_from_payload
 from combat.encounter.env import Config, initial_state, observe
 from combat.encounter.train import make_eval_rollout
 from combat.fight_estimate import EnemyFacts, EnemyMember, PlayerFacts, estimate_from_facts
@@ -104,15 +105,7 @@ def _enemy_facts(spec: Dict[str, np.ndarray], b: int,
 
 def export(args: argparse.Namespace) -> int:
     payload = pickle.loads(Path(args.params).read_bytes())
-    saved = payload.get("config", {})
-    cfg = Config(
-        allies=int(saved.get("allies", 1)),
-        enemies=int(saved.get("enemies", 4)),
-        spells=int(saved.get("spells", 4)),
-        max_rounds=int(saved.get("max_rounds", 24)),
-        max_dist=int(saved.get("max_dist", 12)),
-        casts_per_turn=int(saved.get("casts_per_turn", 4)),
-    )
+    cfg = config_from_payload(payload)
     heads = int(payload.get("heads", 4))
     params = jax.tree_util.tree_map(jnp.asarray, payload["params"])
     _raw, tables, spec, take = _load(Path(args.data), args.samples)

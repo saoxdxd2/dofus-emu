@@ -38,10 +38,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from combat.metrics import auc as _auc, ece as _ece
 from combat.encounter import model
 from combat.encounter.env import Config, action_masks, initial_state, observe
 from combat.encounter.labels import _enemy_facts, _player_facts
-from combat.encounter.train import (SPEC_KEYS, TABLE_KEYS, make_baseline_rollout, make_eval_rollout)
+from combat.encounter.data import load_slice
+from combat.encounter.train import (TABLE_KEYS, make_baseline_rollout, make_eval_rollout)
 from combat.fight_estimate import estimate_from_facts, fit_calibrator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -68,20 +70,6 @@ class Checkpoint:
 # ---------------------------------------------------------------------------
 # data and checkpoints
 # ---------------------------------------------------------------------------
-
-
-def load_slice(path: Path, start: int, samples: int
-               ) -> Tuple[Dict[str, jax.Array], Dict[str, jax.Array]]:
-    """Load a fixed row range instead of ``load_encounters``' tail slice."""
-    data = np.load(path)
-    total = int(data["hp"].shape[0])
-    start = max(0, min(int(start), total))
-    take = min(int(samples), total - start)
-    tables = {key: jnp.asarray(data[key][start:start + take])
-              for key in TABLE_KEYS}
-    spec = {key: jnp.asarray(data[key][start:start + take])
-            for key in SPEC_KEYS if key in data}
-    return tables, spec
 
 
 def load_checkpoint(name: str, path: Path) -> Checkpoint:
@@ -262,37 +250,6 @@ def analytic_features(spec: Dict[str, Any], tables: Dict[str, Any],
         enemy = _enemy_facts(spec_np, b, cfg.allies)
         features.append(estimate_from_facts(player, enemy)["features"])
     return features
-
-
-def _auc(y: np.ndarray, p: np.ndarray) -> float:
-    order = np.argsort(p)
-    y = y[order]
-    p = p[order]
-    ranks = np.empty(len(p), dtype=float)
-    i = 0
-    while i < len(p):
-        j = i
-        while j + 1 < len(p) and p[j + 1] == p[i]:
-            j += 1
-        ranks[i:j + 1] = (i + j) / 2.0 + 1.0
-        i = j + 1
-    positives = float(y.sum())
-    negatives = float(len(y) - positives)
-    if positives <= 0 or negatives <= 0:
-        return float("nan")
-    return float((ranks[y == 1].sum() - positives * (positives + 1) / 2.0)
-                 / (positives * negatives))
-
-
-def _ece(y: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
-    edges = np.linspace(0.0, 1.0, bins + 1)
-    total = 0.0
-    for k in range(bins):
-        upper = edges[k + 1] if k < bins - 1 else edges[k + 1] + 1e-9
-        mask = (p >= edges[k]) & (p < upper)
-        if mask.any():
-            total += mask.mean() * abs(p[mask].mean() - y[mask].mean())
-    return float(total)
 
 
 def _binary_metrics(y: np.ndarray, p: np.ndarray) -> Dict[str, float]:

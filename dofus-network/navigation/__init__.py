@@ -8,8 +8,9 @@ or ``DofusWorldGraph`` should not pay for the quest cache and the NLP engine.
 
 from __future__ import annotations
 
-from importlib import import_module
 from typing import TYPE_CHECKING, Any
+
+from _lazy_exports import lazy_export
 
 _EXPORTS = {
     "CellPathfinder": "navigation.world_graph",
@@ -35,12 +36,7 @@ __all__ = list(_EXPORTS)
 
 
 def __getattr__(name: str) -> Any:
-    module_name = _EXPORTS.get(name)
-    if module_name is None:
-        raise AttributeError("module 'navigation' has no attribute %r" % name)
-    value = getattr(import_module(module_name), name)
-    globals()[name] = value
-    return value
+    return lazy_export(globals(), _EXPORTS, __name__, name)
 
 
 def __dir__() -> list[str]:

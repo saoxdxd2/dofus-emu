@@ -522,20 +522,7 @@ namespace DofusFarm.UI
 
         private static Button MakeButton(string text, Color back, Color hover, int x, int y, int w)
         {
-            var b = new Button();
-            b.Text = text;
-            b.Location = new Point(x, y);
-            b.Size = new Size(w, 28);
-            b.FlatStyle = FlatStyle.Flat;
-            b.FlatAppearance.BorderSize = 0;
-            b.BackColor = back;
-            b.ForeColor = Color.White;
-            b.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            b.Cursor = Cursors.Hand;
-            Color normal = back;
-            b.MouseEnter += delegate { b.BackColor = hover; };
-            b.MouseLeave += delegate { b.BackColor = normal; };
-            return b;
+            return UiKit.Button(text, x, y, w, back, null, hover, 28);
         }
 
         // -- settings <-> ui --------------------------------------------------

@@ -613,6 +613,16 @@ class Fighter:
         )
 
 
+def enemy_character(fighter: Fighter) -> CharacterStats:
+    """Damage stats for an enemy: base spell rolls, HP/AP/MP from the board."""
+    return CharacterStats(
+        name=fighter.name or str(fighter.id),
+        level=max(1, int(fighter.level)),
+        action_points=max(0, int(fighter.ap)),
+        movement_points=max(0, int(fighter.mp)),
+    )
+
+
 @dataclass
 class Board:
     map_id: Optional[int]

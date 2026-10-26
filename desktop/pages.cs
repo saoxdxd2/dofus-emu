@@ -31,43 +31,47 @@ namespace DofusFarm.UI
         public static readonly Color Accent = Color.FromArgb(129, 140, 248);
         public static readonly Color Input = Color.FromArgb(28, 30, 40);
 
+        public static void ApplyDialogChrome(Form form, string title, Size size)
+        {
+            form.Text = title;
+            form.Size = size;
+            form.StartPosition = FormStartPosition.CenterParent;
+            form.FormBorderStyle = FormBorderStyle.FixedDialog;
+            form.MaximizeBox = form.MinimizeBox = false;
+            form.BackColor = Color.FromArgb(22, 23, 30);
+            form.ForeColor = Color.White;
+            form.Font = new Font("Segoe UI", 9.5f);
+        }
+
+        private static Label MakeLabel(string text, Color color, int x, int y, Font font = null)
+        {
+            var l = new Label { Text = text, ForeColor = color, AutoSize = true, Location = new Point(x, y) };
+            if (font != null) l.Font = font;
+            return l;
+        }
+
         public static Label Heading(string text, int x, int y)
         {
-            var l = new Label();
-            l.Text = text;
-            l.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-            l.ForeColor = Text;
-            l.AutoSize = true;
-            l.Location = new Point(x, y);
-            return l;
+            return MakeLabel(text, Text, x, y, new Font("Segoe UI", 11f, FontStyle.Bold));
         }
 
         public static Label Sub(string text, int x, int y)
         {
-            var l = new Label();
-            l.Text = text;
-            l.ForeColor = Muted;
-            l.AutoSize = true;
-            l.Location = new Point(x, y);
-            return l;
+            return MakeLabel(text, Muted, x, y);
         }
 
         public static Label Note(string text, int x, int y)
         {
-            var l = new Label();
-            l.Text = text;
-            l.ForeColor = Faint;
-            l.AutoSize = true;
-            l.Location = new Point(x, y);
-            return l;
+            return MakeLabel(text, Faint, x, y);
         }
 
-        public static Button Button(string text, int x, int y, int w, Color back, EventHandler onClick)
+        public static Button Button(string text, int x, int y, int w, Color back, EventHandler onClick,
+                                    Color? hover = null, int height = 30)
         {
             var b = new Button();
             b.Text = text;
             b.Location = new Point(x, y);
-            b.Size = new Size(w, 30);
+            b.Size = new Size(w, height);
             b.FlatStyle = FlatStyle.Flat;
             b.FlatAppearance.BorderSize = 0;
             b.BackColor = back;
@@ -75,7 +79,7 @@ namespace DofusFarm.UI
             b.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
             b.Cursor = Cursors.Hand;
             Color normal = back;
-            b.MouseEnter += delegate { b.BackColor = Lighten(back); };
+            b.MouseEnter += delegate { b.BackColor = hover ?? Lighten(back); };
             b.MouseLeave += delegate { b.BackColor = normal; };
             if (onClick != null) b.Click += onClick;
             return b;
@@ -100,12 +104,7 @@ namespace DofusFarm.UI
 
         public static Label Field(string text, int x, int y)
         {
-            var l = new Label();
-            l.Text = text;
-            l.ForeColor = Muted;
-            l.AutoSize = true;
-            l.Location = new Point(x, y);
-            return l;
+            return MakeLabel(text, Muted, x, y);
         }
 
         public static TextBox Entry(string text, int x, int y, int w)

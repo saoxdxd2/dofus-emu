@@ -21,7 +21,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from combat.battle_solver import BattleSolver, Board, Fighter, TurnPlan
+from combat.battle_solver import (BattleSolver, Board, Fighter, TurnPlan,
+                                  enemy_character)
 from combat.damage_calculator import CharacterStats
 from combat.encounter import model
 from combat.encounter.env import Config, initial_state, observe
@@ -52,43 +53,43 @@ _DUMMY_ALLY = Fighter(
 )
 
 
-def _player_spell_rows(board: Board, character, plan: TurnPlan
-                       ) -> List[Dict[str, Any]]:
-    """The live spells as the abstract table, with stats folded into damage."""
-    dummy_foe = _DUMMY_FOE
-    dummy_ally = _DUMMY_ALLY
+def _spell_rows(board: Board, spells, caster: CharacterStats,
+                damage_target: Fighter, heal_target: Fighter
+                ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
-    for spell in board.spells:
-        damage = 0.0
-        heal = 0.0
+    for spell in spells:
+        damage = heal = 0.0
         element = 0
         ally = False
         if spell.has_damage:
             result = BattleSolver._estimate(
-                board, spell, character, dummy_foe, "damage")
+                board, spell, caster, damage_target, "damage")
             damage = float(result.expected_value) if result else 0.0
-            damage_effects = spell.damage_effects
-            if damage_effects:
+            effects = spell.damage_effects
+            if effects:
                 element = ELEMENT_INDEX.get(
-                    (damage_effects[0].element or "NEUTRAL").lower(), 0)
+                    (effects[0].element or "NEUTRAL").lower(), 0)
         if spell.has_heal:
             result = BattleSolver._estimate(
-                board, spell, character, dummy_ally, "heal")
+                board, spell, caster, heal_target, "heal")
             heal = float(result.expected_value) if result else 0.0
             ally = not spell.has_damage
-        if damage <= 0 and heal <= 0:
-            continue
-        rows.append({
-            "id": spell.id,
-            "ap": float(max(1, spell.ap_cost)),
-            "rmin": float(max(0, spell.min_range)),
-            "rmax": float(max(0, spell.max_range)),
-            "damage": damage,
-            "heal": heal,
-            "element": element,
-            "ally": ally,
-        })
+        if damage > 0 or heal > 0:
+            rows.append({
+                "id": spell.id, "ap": float(max(1, spell.ap_cost)),
+                "rmin": float(max(0, spell.min_range)),
+                "rmax": float(max(0, spell.max_range)),
+                "damage": damage, "heal": heal,
+                "element": element, "ally": ally,
+            })
     return rows
+
+
+def _player_spell_rows(board: Board, character, plan: TurnPlan
+                       ) -> List[Dict[str, Any]]:
+    """The live spells as the abstract table, with stats folded into damage."""
+    return _spell_rows(board, board.spells, character,
+                       _DUMMY_FOE, _DUMMY_ALLY)
 
 
 def _pick_player_spells(rows: List[Dict[str, Any]], plan: TurnPlan,
@@ -120,15 +121,6 @@ def _empty_spell_row() -> Dict[str, Any]:
             "damage": 0.0, "heal": 0.0, "element": 0, "ally": False}
 
 
-def _enemy_character(fighter: Fighter) -> CharacterStats:
-    return CharacterStats(
-        name=fighter.name or str(fighter.id),
-        level=max(1, int(fighter.level)),
-        action_points=max(0, int(fighter.ap)),
-        movement_points=max(0, int(fighter.mp)),
-    )
-
-
 def _enemy_rows(board: Board, fighter: Fighter, slots: int
                 ) -> Tuple[List[Dict[str, Any]], bool]:
     """The enemy's own spells, or zeros when the client has not loaded them.
@@ -140,36 +132,8 @@ def _enemy_rows(board: Board, fighter: Fighter, slots: int
     player = board.me
     if player is None or not fighter.spells:
         return [_empty_spell_row() for _ in range(slots)], False
-    caster = _enemy_character(fighter)
-    rows: List[Dict[str, Any]] = []
-    for spell in fighter.spells:
-        damage = 0.0
-        heal = 0.0
-        element = 0
-        ally = False
-        if spell.has_damage:
-            result = BattleSolver._estimate(board, spell, caster, player, "damage")
-            damage = float(result.expected_value) if result else 0.0
-            damage_effects = spell.damage_effects
-            if damage_effects:
-                element = ELEMENT_INDEX.get(
-                    (damage_effects[0].element or "NEUTRAL").lower(), 0)
-        if spell.has_heal:
-            result = BattleSolver._estimate(board, spell, caster, fighter, "heal")
-            heal = float(result.expected_value) if result else 0.0
-            ally = not spell.has_damage
-        if damage <= 0 and heal <= 0:
-            continue
-        rows.append({
-            "id": spell.id,
-            "ap": float(max(1, spell.ap_cost)),
-            "rmin": float(max(0, spell.min_range)),
-            "rmax": float(max(0, spell.max_range)),
-            "damage": damage,
-            "heal": heal,
-            "element": element,
-            "ally": ally,
-        })
+    caster = enemy_character(fighter)
+    rows = _spell_rows(board, fighter.spells, caster, player, fighter)
     rows.sort(key=lambda row: max(row["damage"], row["heal"]), reverse=True)
     known = bool(rows)
     rows = rows[:slots]
@@ -277,6 +241,13 @@ def _fill_encounter(board: Board, plan: TurnPlan, cfg: Config,
     spec["first_team"][index] = int(first_team)
 
 
+def _encounter_output(tables, spec, as_jax: bool):
+    if not as_jax:
+        return tables, spec
+    return ({key: jnp.asarray(value) for key, value in tables.items()},
+            {key: jnp.asarray(value) for key, value in spec.items()})
+
+
 def board_encounter(board: Board, plan: TurnPlan, cfg: Config,
                     first_team: int = 1,
                     player_rows: Optional[Sequence[Dict[str, Any]]] = None,
@@ -298,10 +269,7 @@ def board_encounter(board: Board, plan: TurnPlan, cfg: Config,
     tables, spec = _allocate_encounter(cfg, 1)
     _fill_encounter(board, plan, cfg, tables, spec, 0, first_team,
                     player_rows, player_candidates, enemy_rows)
-    if not as_jax:
-        return tables, spec
-    return ({key: jnp.asarray(value) for key, value in tables.items()},
-            {key: jnp.asarray(value) for key, value in spec.items()})
+    return _encounter_output(tables, spec, as_jax)
 
 
 def board_encounters(board: Board, plans: Sequence[TurnPlan], cfg: Config,
@@ -322,10 +290,7 @@ def board_encounters(board: Board, plans: Sequence[TurnPlan], cfg: Config,
     for index, plan in enumerate(plans):
         _fill_encounter(board, plan, cfg, tables, spec, index, first_team,
                         None, player_candidates, enemy_rows)
-    if not as_jax:
-        return tables, spec
-    return ({key: jnp.asarray(value) for key, value in tables.items()},
-            {key: jnp.asarray(value) for key, value in spec.items()})
+    return _encounter_output(tables, spec, as_jax)
 
 
 @partial(jax.jit, static_argnums=(3,))

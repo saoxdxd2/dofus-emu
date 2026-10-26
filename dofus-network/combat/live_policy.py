@@ -17,7 +17,6 @@ fallback when no candidate plan can express the chosen spell/target.
 
 from __future__ import annotations
 
-import pickle
 import time
 from collections import deque
 from pathlib import Path
@@ -30,6 +29,7 @@ import numpy as np
 from combat.battle_solver import (BattleSolver, Board, Fighter, LiveSpell,
                                   TurnPlan)
 from combat.encounter import model
+from combat.encounter.checkpoint import load_params_config
 from combat.encounter.env import Config, action_masks, initial_state, observe
 from combat.observation import build_observation, validate_observation
 from combat.plan_value import (board_encounter, _empty_spell_row,
@@ -45,17 +45,7 @@ class LivePolicy:
     def __init__(self, checkpoint: Optional[Path] = None,
                  beam_width: int = 8, max_actions: int = 4) -> None:
         self.checkpoint = Path(checkpoint or DEFAULT_CHECKPOINT)
-        payload = pickle.loads(self.checkpoint.read_bytes())
-        self.params = jax.tree_util.tree_map(jnp.asarray, payload["params"])
-        saved = payload.get("config") or {}
-        self.cfg = Config(
-            allies=int(saved.get("allies", 1)),
-            enemies=int(saved.get("enemies", 4)),
-            spells=int(saved.get("spells", 4)),
-            max_rounds=int(saved.get("max_rounds", 24)),
-            max_dist=int(saved.get("max_dist", 12)),
-            casts_per_turn=int(saved.get("casts_per_turn", 4)),
-        )
+        self.params, self.cfg = load_params_config(self.checkpoint)
         self.solver = BattleSolver(beam_width=int(beam_width),
                                    max_actions=int(max_actions))
         self.plan_k = max(2, int(beam_width))

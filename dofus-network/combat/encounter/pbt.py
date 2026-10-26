@@ -25,29 +25,12 @@ import numpy as np
 
 from combat.encounter import train as trainer
 from combat.encounter.env import Config, initial_state
-from combat.encounter.train import (SPEC_KEYS, TABLE_KEYS,
-                                    make_eval_rollout)
+from combat.encounter.data import load_params, load_slice
+from combat.encounter.train import make_eval_rollout
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DATA = REPO_ROOT / "kaggle" / "tpu_selfplay" / "dataset" / "encounters.npz"
 DEFAULT_INIT = REPO_ROOT / "models" / "encounter_selfplay.pkl"
-
-
-def load_slice(path: Path, start: int, samples: int):
-    data = np.load(path)
-    n = int(data["hp"].shape[0])
-    start = max(0, min(int(start), n))
-    take = min(int(samples), n - start)
-    tables = {key: jnp.asarray(data[key][start:start + take])
-              for key in TABLE_KEYS}
-    spec = {key: jnp.asarray(data[key][start:start + take])
-            for key in SPEC_KEYS if key in data}
-    return tables, spec
-
-
-def load_params(path: Path):
-    payload = pickle.loads(Path(path).read_bytes())
-    return jax.tree_util.tree_map(jnp.asarray, payload["params"])
 
 
 def eval_checkpoint(path: Path, data: Path, samples: int, max_rounds: int,

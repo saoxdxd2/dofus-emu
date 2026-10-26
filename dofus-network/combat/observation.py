@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Collection, Dict, List, Optional, Tuple
 
-from combat.battle_solver import BattleSolver, Board, Fighter, LiveSpell
+from combat.battle_solver import (BattleSolver, Board, Fighter, LiveSpell,
+                                  enemy_character)
 from combat.damage_calculator import CharacterStats
 
 OBSERVATION_VERSION = 1
@@ -143,17 +144,6 @@ def _estimate(board: Board, spell: LiveSpell, caster: CharacterStats,
     }
 
 
-def _enemy_caster(fighter: Fighter) -> CharacterStats:
-    # The client exposes enemy resistances but not their damage bonuses. This
-    # sheet keeps the spell's base rolls; the observation says so explicitly.
-    return CharacterStats(
-        name=fighter.name or str(fighter.id),
-        level=max(1, int(fighter.level)),
-        action_points=max(0, int(fighter.ap)),
-        movement_points=max(0, int(fighter.mp)),
-    )
-
-
 def _fighter_dict(board: Board, fighter: Optional[Fighter],
                   spells: List[LiveSpell], reference: Optional[int],
                   stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -233,7 +223,7 @@ def _derived(board: Board, me: Optional[Fighter], self_spells: List[LiveSpell],
     for enemy in enemies:
         if not enemy.alive or me is None:
             continue
-        caster_stats = _enemy_caster(enemy)
+        caster_stats = enemy_character(enemy)
         entries: Dict[str, Any] = {}
         for spell in enemy.spells:
             spell_entry: Dict[str, Any] = {}

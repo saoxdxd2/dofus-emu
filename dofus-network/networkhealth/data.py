@@ -27,6 +27,8 @@ from typing import Any
 import numpy as np
 import requests
 
+from .pagination import collect_ping_ids
+
 API = "https://atlas.ripe.net/api/v2"
 SOURCE_NAME = "ripe_atlas_ping"
 USER_AGENT = "NetworkHealthResearch/1.0 (public RIPE Atlas data; polite client)"
@@ -138,31 +140,9 @@ def discover_measurements(session: requests.Session, limit: int,
         "page_size": 500,
         "format": "json",
     }
-    ids: list[int] = []
-    seen: set[int] = set()
-    while url and len(ids) < limit:
-        payload = get_json(session, url, params=params, limiter=limiter)
-        params = None
-        records = payload.get("results", []) if isinstance(payload, dict) else payload
-        if not isinstance(records, list):
-            break
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            try:
-                mid = int(record["id"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if mid not in seen and str(record.get("type", "ping")).lower() == "ping":
-                seen.add(mid)
-                ids.append(mid)
-                if len(ids) >= limit:
-                    break
-        next_url = payload.get("next") if isinstance(payload, dict) else None
-        url = next_url if isinstance(next_url, str) and next_url.startswith("https://") else None
-    return ids
-
-
+    return collect_ping_ids(
+        lambda u, p: get_json(session, u, params=p, limiter=limiter),
+        url, params, limit)
 def row_rtt_ms(row: dict) -> float | None:
     """Median RTT of successful replies, or ``None`` when every reply failed.
 

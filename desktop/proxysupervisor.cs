@@ -733,14 +733,7 @@ namespace DofusFarm.Engine
             if (max < 2) return primary;
 
             var parts = new List<string> { primary };
-            foreach (ProxyCandidate c in Candidates)
-            {
-                if (parts.Count >= max) break;
-                if (c == null || !c.Healthy || string.IsNullOrEmpty(c.Url)) continue;
-                if (c.Url.IndexOf(',') >= 0) continue;
-                if (parts.Contains(c.Url)) continue;
-                parts.Add(c.Url);
-            }
+            AppendCandidates(parts, max, true);
 
             // Then the ones that did not answer the probe, as last resort.
             //
@@ -753,14 +746,7 @@ namespace DofusFarm.Engine
             // session.
             if (parts.Count < max)
             {
-                foreach (ProxyCandidate c in Candidates)
-                {
-                    if (parts.Count >= max) break;
-                    if (c == null || c.Healthy || string.IsNullOrEmpty(c.Url)) continue;
-                    if (c.Url.IndexOf(',') >= 0) continue;
-                    if (parts.Contains(c.Url)) continue;
-                    parts.Add(c.Url);
-                }
+                AppendCandidates(parts, max, false);
             }
 
             // The sticky-pin fast path deliberately keeps `Candidates` to the pin alone, so the
@@ -780,6 +766,18 @@ namespace DofusFarm.Engine
                 }
             }
             return string.Join(",", parts.ToArray());
+        }
+
+        private void AppendCandidates(List<string> parts, int max, bool healthy)
+        {
+            foreach (ProxyCandidate c in Candidates)
+            {
+                if (parts.Count >= max) break;
+                if (c == null || c.Healthy != healthy || string.IsNullOrEmpty(c.Url)) continue;
+                if (c.Url.IndexOf(',') >= 0) continue;
+                if (parts.Contains(c.Url)) continue;
+                parts.Add(c.Url);
+            }
         }
 
         /// <summary>

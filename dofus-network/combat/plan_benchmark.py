@@ -26,11 +26,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from combat.battle_solver import (BattleSolver, Board, CellMap, Fighter,
-                                  LiveEffect, LiveSpell)
+from combat.battle_solver import BattleSolver, Board, CellMap, Fighter
+from combat.duel import live_spell
 from combat.encounter.build_dataset import ELEMENTS
-from combat.encounter.env import Config
+from combat.encounter.checkpoint import config_from_payload
 from combat.plan_value import rank_plans, score_plan
+
+from combat.cli import run_main
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MAP = REPO_ROOT / "data" / "maps" / "100139008.json"
@@ -38,36 +40,11 @@ DEFAULT_DATA = REPO_ROOT / "kaggle" / "tpu_selfplay" / "dataset" / "encounters.n
 DEFAULT_CHECKPOINT = REPO_ROOT / "models" / "encounter_selfplay.pkl"
 DEFAULT_OUT = REPO_ROOT / "benchmarks" / "plan_v3.json"
 
-EFFECT_BY_ELEMENT = (100, 97, 99, 96, 98)  # neutral, earth, fire, water, air
-
 
 def load_map(path: Path) -> CellMap:
     payload = json.loads(path.read_text(encoding="utf-8"))
     flags = tuple(int(cell.get("l", 0)) for cell in payload.get("cells", []))
     return CellMap(flags)
-
-
-def _live_spell(slot: int, ap: float, rmin: float, rmax: float,
-                damage: float, heal: float, element: int,
-                ally: bool) -> LiveSpell:
-    effects: Tuple[LiveEffect, ...]
-    if ally and heal > 0:
-        effects = (LiveEffect(108, int(round(heal)), int(round(heal))),)
-    elif damage > 0:
-        effects = (LiveEffect(EFFECT_BY_ELEMENT[element % 5],
-                              int(round(damage)), int(round(damage))),)
-    else:
-        effects = ()
-    return LiveSpell(
-        id=1000 + slot, name=f"spell{slot}", ap_cost=max(1, int(round(ap))),
-        min_range=max(0, int(round(rmin))), max_range=max(0, int(round(rmax))),
-        cast_in_line=False, cast_in_diagonal=False, requires_los=True,
-        need_free_cell=False, need_taken_cell=False,
-        max_cast_per_turn=None, max_cast_per_target=None,
-        min_cast_interval=0, casts_this_turn=0, castable=True,
-        critical_hit_probability=0.0, effects=effects, critical_effects=(),
-        is_weapon=False, zone_size=None, zone_shape=None,
-    )
 
 
 def _resists(spec: Dict[str, np.ndarray], row: int,
@@ -115,7 +92,7 @@ def make_board(data: Dict[str, np.ndarray], row: int, cells: CellMap,
 
     spells = []
     for slot in range(spec["spell_ap"].shape[2]):
-        spells.append(_live_spell(
+        spells.append(live_spell(
             slot, float(spec["spell_ap"][row, 0, slot]),
             float(spec["spell_rmin"][row, 0, slot]),
             float(spec["spell_rmax"][row, 0, slot]),
@@ -159,15 +136,7 @@ def run(args: argparse.Namespace) -> int:
     started = time.time()
     payload = pickle.loads(Path(args.checkpoint).read_bytes())
     params = jax.tree_util.tree_map(jnp.asarray, payload["params"])
-    saved = payload.get("config") or {}
-    cfg = Config(
-        allies=int(saved.get("allies", 1)),
-        enemies=int(saved.get("enemies", 4)),
-        spells=int(saved.get("spells", 4)),
-        max_rounds=int(saved.get("max_rounds", 24)),
-        max_dist=int(saved.get("max_dist", 12)),
-        casts_per_turn=int(saved.get("casts_per_turn", 4)),
-    )
+    cfg = config_from_payload(payload)
     data = np.load(args.data)
     cells = load_map(Path(args.map))
     rng = random.Random(args.seed)
@@ -271,8 +240,8 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    return run(build_parser().parse_args(argv))
+def main(argv=None):
+    return run_main(build_parser, run, argv)
 
 
 if __name__ == "__main__":

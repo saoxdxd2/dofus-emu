@@ -29,6 +29,7 @@ from typing import Any, Iterable
 
 import requests
 
+from ..pagination import collect_ping_ids
 from ..provenance import utc_now_iso
 
 API = "https://atlas.ripe.net/api/v2"
@@ -181,34 +182,10 @@ def discover_measurements(session: requests.Session, limit: int,
         "page_size": max(20, min(500, page_size)),
         "format": "json",
     }
-    ids: list[int] = []
-    seen: set[int] = set()
-    while url and len(ids) < limit:
-        log(f"Querying active measurements index (found {len(ids)}/{limit})...")
-        payload = get_json(session, url, limiter=limiter, params=params,
-                           timeout=timeout, retries=retries)
-        params = None
-        records = payload.get("results", []) if isinstance(payload, dict) else payload
-        if not isinstance(records, list):
-            break
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            try:
-                mid = int(record["id"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if mid in seen:
-                continue
-            if str(record.get("type", "ping")).lower() != "ping":
-                continue
-            seen.add(mid)
-            ids.append(mid)
-            if len(ids) >= limit:
-                break
-        next_url = payload.get("next") if isinstance(payload, dict) else None
-        url = next_url if isinstance(next_url, str) and next_url.startswith("https://") else None
-    return ids
+    return collect_ping_ids(
+        lambda u, p: get_json(session, u, limiter=limiter, params=p,
+                              timeout=timeout, retries=retries),
+        url, params, limit, log)
 
 
 def row_rtt_ms(row: dict) -> tuple[float | None, int, int]:

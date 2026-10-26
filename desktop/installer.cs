@@ -62,99 +62,41 @@ namespace DofusStandaloneSetup
 
 
 
-        public static string ResolveDefaultInstallPath()
-
+        private static string RegistryInstallPath(RegistryKey root, string subkey,
+                                                  string value)
         {
-
-            // 1. Check HKCU Software\DofusFarm -> InstallPath
-
             try
-
             {
-
-                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(@"Software\DofusFarm"))
-
+                using (RegistryKey k = root.OpenSubKey(subkey))
                 {
-
                     if (k != null)
-
                     {
-
-                        string p = k.GetValue("InstallPath") as string;
-
-                        if (!string.IsNullOrEmpty(p) && (Directory.Exists(p) || File.Exists(Path.Combine(p, "DofusFarm.exe"))))
-
+                        string p = k.GetValue(value) as string;
+                        if (!string.IsNullOrEmpty(p)
+                            && (Directory.Exists(p)
+                                || File.Exists(Path.Combine(p, "DofusFarm.exe"))))
                             return p;
-
                     }
-
                 }
-
             }
-
             catch { }
+            return null;
+        }
 
-
-
-            // 2. Check HKCU Uninstall\DofusTouchFarm -> InstallLocation
-
-            try
-
-            {
-
-                using (RegistryKey uk = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm"))
-
-                {
-
-                    if (uk != null)
-
-                    {
-
-                        string p = uk.GetValue("InstallLocation") as string;
-
-                        if (!string.IsNullOrEmpty(p) && (Directory.Exists(p) || File.Exists(Path.Combine(p, "DofusFarm.exe"))))
-
-                            return p;
-
-                    }
-
-                }
-
-            }
-
-            catch { }
-
-
-
-            // 3. Check HKLM Uninstall\DofusTouchFarm -> InstallLocation
-
-            try
-
-            {
-
-                using (RegistryKey uk = Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm"))
-
-                {
-
-                    if (uk != null)
-
-                    {
-
-                        string p = uk.GetValue("InstallLocation") as string;
-
-                        if (!string.IsNullOrEmpty(p) && (Directory.Exists(p) || File.Exists(Path.Combine(p, "DofusFarm.exe"))))
-
-                            return p;
-
-                    }
-
-                }
-
-            }
-
-            catch { }
-
-
+        public static string ResolveDefaultInstallPath()
+        {
+            string found =
+                RegistryInstallPath(Registry.CurrentUser, @"Software\DofusFarm",
+                                    "InstallPath")
+                ?? RegistryInstallPath(
+                    Registry.CurrentUser,
+                    @"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm",
+                    "InstallLocation")
+                ?? RegistryInstallPath(
+                    Registry.LocalMachine,
+                    @"Software\Microsoft\Windows\CurrentVersion\Uninstall\DofusTouchFarm",
+                    "InstallLocation");
+            if (found != null) return found;
 
             // 4. Default: Program Files\DofusFarm
 
@@ -1913,118 +1855,9 @@ namespace DofusStandaloneSetup
         }
 
         private static string FindPythonExecutable(string targetDir = null)
-
         {
-
-            if (!string.IsNullOrEmpty(targetDir))
-
-            {
-
-                string localPort = Path.Combine(targetDir, @"runtimes\python\python.exe");
-
-                if (File.Exists(localPort)) return localPort;
-
-                localPort = Path.Combine(targetDir, @"python\python.exe");
-
-                if (File.Exists(localPort)) return localPort;
-
-            }
-
-
-
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-
-            string appPortable = Path.Combine(baseDir, @"runtimes\python\python.exe");
-
-            if (File.Exists(appPortable)) return appPortable;
-
-            appPortable = Path.Combine(baseDir, @"python\python.exe");
-
-            if (File.Exists(appPortable)) return appPortable;
-
-
-
-            string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
-
-            foreach (string p in pathEnv.Split(';'))
-
-            {
-
-                if (string.IsNullOrEmpty(p)) continue;
-
-                try
-
-                {
-
-                    string candidate = Path.Combine(p.Trim(), "python.exe");
-
-                    if (File.Exists(candidate)) return candidate;
-
-                }
-
-                catch { }
-
-            }
-
-
-
-            string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            string pyPrograms = Path.Combine(localApp, @"Programs\Python");
-
-            if (Directory.Exists(pyPrograms))
-
-            {
-
-                try
-
-                {
-
-                    foreach (string dir in Directory.GetDirectories(pyPrograms, "Python3*"))
-
-                    {
-
-                        string candidate = Path.Combine(dir, "python.exe");
-
-                        if (File.Exists(candidate)) return candidate;
-
-                    }
-
-                }
-
-                catch { }
-
-            }
-
-
-
-            foreach (string p in pathEnv.Split(';'))
-
-            {
-
-                if (string.IsNullOrEmpty(p)) continue;
-
-                try
-
-                {
-
-                    string candidate = Path.Combine(p.Trim(), "py.exe");
-
-                    if (File.Exists(candidate)) return candidate;
-
-                }
-
-                catch { }
-
-            }
-
-
-
-            return null;
-
+            return PythonLocator.Find(targetDir);
         }
-
-
 
         public static void EnsureDirectoryPermissions(string path)
 
@@ -2097,120 +1930,6 @@ namespace DofusStandaloneSetup
                 }
 
                 catch { }
-
-            }
-
-        }
-
-    }
-
-
-
-    /// <summary>
-
-    /// Custom-painted modern smooth progress bar with gradient fill (replaces chunky Windows Vista progress bar).
-
-    /// </summary>
-
-    public class SmoothProgressBar : Control
-
-    {
-
-        private int _value = 0;
-
-        public int Value
-
-        {
-
-            get { return _value; }
-
-            set
-
-            {
-
-                int clamped = Math.Min(100, Math.Max(0, value));
-
-                if (_value != clamped)
-
-                {
-
-                    _value = clamped;
-
-                    this.Invalidate();
-
-                }
-
-            }
-
-        }
-
-
-
-        public SmoothProgressBar()
-
-        {
-
-            this.SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
-
-            this.Height = 18;
-
-        }
-
-
-
-        protected override void OnPaint(PaintEventArgs e)
-
-        {
-
-            if (this.Width <= 4 || this.Height <= 4) return;
-
-            Graphics g = e.Graphics;
-
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-
-
-
-            Rectangle rect = new Rectangle(0, 0, this.Width - 1, this.Height - 1);
-
-            using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(26, 28, 36)))
-
-            using (Pen borderPen = new Pen(Color.FromArgb(45, 48, 62), 1f))
-
-            {
-
-                g.FillRectangle(bgBrush, rect);
-
-                g.DrawRectangle(borderPen, rect);
-
-            }
-
-
-
-            if (_value > 0)
-
-            {
-
-                int fillW = Math.Min(this.Width - 2, Math.Max(4, (int)Math.Round(((this.Width - 2) * _value) / 100.0)));
-
-                int fillH = Math.Max(2, this.Height - 2);
-
-                Rectangle fillRect = new Rectangle(1, 1, fillW, fillH);
-
-                using (LinearGradientBrush grad = new LinearGradientBrush(
-
-                    fillRect,
-
-                    Color.FromArgb(37, 99, 235),
-
-                    Color.FromArgb(16, 185, 129),
-
-                    LinearGradientMode.Horizontal))
-
-                {
-
-                    g.FillRectangle(grad, fillRect);
-
-                }
 
             }
 
@@ -2614,8 +2333,7 @@ namespace DofusStandaloneSetup
 
 
 
-            _progBar = new SmoothProgressBar
-
+            _progBar = new SmoothProgressBar(18, Color.FromArgb(37, 99, 235), Color.FromArgb(16, 185, 129))
             {
 
                 Location = new Point(25, 298),

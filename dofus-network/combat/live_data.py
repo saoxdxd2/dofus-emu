@@ -24,6 +24,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from combat.cli import run_main
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PLAY_LOG = REPO_ROOT / "trajectories" / "play_dofus-05.jsonl"
 DEFAULT_BOARDS = REPO_ROOT / "trajectories" / "fight_boards.jsonl"
@@ -286,8 +288,8 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    return run(build_parser().parse_args(argv))
+def main(argv=None):
+    return run_main(build_parser, run, argv)
 
 
 if __name__ == "__main__":

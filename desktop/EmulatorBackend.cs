@@ -102,7 +102,7 @@ namespace DofusFarm.Engine
 
         public void TileWindows(bool edgeToEdge)
         {
-            var pids = _engine.GetInstances().Where(i => i.IsRunning && i.Pid > 0).Select(i => i.Pid).ToList();
+            var pids = RunningPids();
             if (pids.Count > 0)
             {
                 DofusFarm.Native.Win32.ApplyFarmLayout(pids, edgeToEdge);
@@ -111,11 +111,16 @@ namespace DofusFarm.Engine
 
         public void CascadeWindows()
         {
-            var pids = _engine.GetInstances().Where(i => i.IsRunning && i.Pid > 0).Select(i => i.Pid).ToList();
+            var pids = RunningPids();
             if (pids.Count > 0)
             {
                 DofusFarm.Native.Win32.ApplyCascadeLayout(pids);
             }
+        }
+
+        private List<int> RunningPids()
+        {
+            return _engine.GetInstances().Where(i => i.IsRunning && i.Pid > 0).Select(i => i.Pid).ToList();
         }
 
         public ClientInstanceState GetState(string instanceId)

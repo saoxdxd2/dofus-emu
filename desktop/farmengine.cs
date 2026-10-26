@@ -1385,52 +1385,11 @@ namespace DofusFarm.Engine {
 
         private static int _hostPhysicalCores;
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct PROCESSOR_RELATIONSHIP {
-            public byte Flags, EfficiencyClass;
-            public byte Reserved0, Reserved1, Reserved2, Reserved3, Reserved4, Reserved5, Reserved6, Reserved7, Reserved8, Reserved9, Reserved10;
-            public byte Reserved11, Reserved12, Reserved13, Reserved14, Reserved15, Reserved16, Reserved17, Reserved18, Reserved19, Reserved20;
-            public ushort GroupCount;
-            public uint Reserved21;
-            public ulong GroupMask;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX {
-            public int Relationship;
-            public int Size;
-            public PROCESSOR_RELATIONSHIP Processor;
-        }
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetLogicalProcessorInformationEx(int relationshipType, IntPtr buffer, ref int returnedLength);
-
         private static int GetHostPhysicalCores() {
             if (_hostPhysicalCores > 0) return _hostPhysicalCores;
             int logical = Environment.ProcessorCount;
-            try { _hostPhysicalCores = QueryPhysicalCoreCount(); if (_hostPhysicalCores <= 0) _hostPhysicalCores = logical; } catch { _hostPhysicalCores = logical; }
+            try { _hostPhysicalCores = DofusFarm.Hardware.HardwareSpecs.CountPhysicalCoresEx(); if (_hostPhysicalCores <= 0) _hostPhysicalCores = logical; } catch { _hostPhysicalCores = logical; }
             return _hostPhysicalCores;
-        }
-
-        private static int QueryPhysicalCoreCount() {
-            int len = 0;
-            GetLogicalProcessorInformationEx(0, IntPtr.Zero, ref len);
-            if (len <= 0) return 0;
-            IntPtr buf = Marshal.AllocHGlobal(len);
-            try {
-                if (!GetLogicalProcessorInformationEx(0, buf, ref len)) return 0;
-                int structSize = Marshal.SizeOf(typeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX));
-                if (structSize <= 0) return 0;
-                int cores = 0, offset = 0;
-                while (offset + structSize <= len) {
-                    var entry = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)Marshal.PtrToStructure(buf + offset, typeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX));
-                    if (entry.Size <= 0) break;
-                    if (entry.Relationship == 0) cores++;
-                    offset += entry.Size;
-                }
-                return cores;
-            } finally { Marshal.FreeHGlobal(buf); }
         }
 
         public int GetDynamicRamMb(int requestedMb) {

@@ -139,6 +139,17 @@ def build(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _longest_surface(entries: Dict[str, Dict[str, int]], key: str) -> Optional[Any]:
+    best: Optional[Tuple[int, Any]] = None
+    for surface, values in entries.items():
+        if not _bounded_match(key, surface):
+            continue
+        candidate = (len(surface), _best(values))
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    return None if best is None else best[1]
+
+
 class Gazetteer:
     """Lookup over the corpus-derived surface forms."""
 
@@ -178,14 +189,7 @@ class Gazetteer:
             return _best(entries[digits])
         # Longest surface form contained in the text wins, so "avance la quête
         # Oscuras intenciones" resolves on the quest name, not on "quête".
-        best: Optional[Tuple[int, Any]] = None
-        for surface, values in entries.items():
-            if not _bounded_match(key, surface):
-                continue
-            candidate = (len(surface), _best(values))
-            if best is None or candidate[0] > best[0]:
-                best = candidate
-        return None if best is None else best[1]
+        return _longest_surface(entries, key)
 
     def lookup_quest_id(self, goal: str) -> Optional[int]:
         """Quest id from a quest *name* written in the goal.
@@ -221,14 +225,7 @@ class Gazetteer:
             return _best(entries[key])
         # Longest bounded surface form in the text wins, so "Parchemin de Vaelor"
         # resolves on the full name rather than on "Parchemin".
-        best: Optional[Tuple[int, str]] = None
-        for surface, values in entries.items():
-            if not _bounded_match(key, surface):
-                continue
-            candidate = (len(surface), _best(values))
-            if best is None or candidate[0] > best[0]:
-                best = candidate
-        return None if best is None else best[1]
+        return _longest_surface(entries, key)
 
     def stats(self) -> Dict[str, Any]:
         return {

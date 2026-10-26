@@ -657,6 +657,25 @@ namespace DofusFarm.Engine
         {
         }
 
+        private Button MakeToolbarButton(string text, Size size, Point location, Color back, Font font)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Size = size,
+                Location = location,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = back,
+                ForeColor = Color.White,
+                Font = font,
+                Cursor = Cursors.Hand
+            };
+            button.FlatAppearance.BorderSize = 0;
+            _toolbarPanel.Controls.Add(button);
+            return button;
+        }
+
         private void InitializeForm()
         {
             Text = string.Format("[WebView2] {0} - Dofus Farm", _displayName);
@@ -717,51 +736,16 @@ namespace DofusFarm.Engine
             _btnAutoFight.Click += (s, e) => ToggleAutoFight();
             _toolbarPanel.Controls.Add(_btnAutoFight);
 
-            _btnZoom = new Button
-            {
-                Text = "🔍 Auto",
-                Size = new Size(95, 24),
-                Location = new Point(Width - 275, 4),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(37, 99, 235),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
-                Cursor = Cursors.Hand
-            };
-            _btnZoom.FlatAppearance.BorderSize = 0;
+            _btnZoom = MakeToolbarButton("🔍 Auto", new Size(95, 24), new Point(Width - 275, 4),
+                Color.FromArgb(37, 99, 235), new Font("Segoe UI", 8.25f, FontStyle.Bold));
             _btnZoom.Click += (s, e) => CycleZoomMode();
-            _toolbarPanel.Controls.Add(_btnZoom);
 
-            _btnDevTools = new Button
-            {
-                Text = "🛠️ DevTools",
-                Size = new Size(84, 24),
-                Location = new Point(Width - 175, 4),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(51, 65, 85),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.25f),
-                Cursor = Cursors.Hand
-            };
-            _btnDevTools.FlatAppearance.BorderSize = 0;
+            _btnDevTools = MakeToolbarButton("🛠️ DevTools", new Size(84, 24), new Point(Width - 175, 4),
+                Color.FromArgb(51, 65, 85), new Font("Segoe UI", 8.25f));
             _btnDevTools.Click += (s, e) => { if (IsReady && _webView != null && _webView.CoreWebView2 != null) _webView.CoreWebView2.OpenDevToolsWindow(); };
-            _toolbarPanel.Controls.Add(_btnDevTools);
 
-            _btnReload = new Button
-            {
-                Text = "🔄 Reload",
-                Size = new Size(76, 24),
-                Location = new Point(Width - 86, 4),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(37, 99, 235),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
-                Cursor = Cursors.Hand
-            };
-            _btnReload.FlatAppearance.BorderSize = 0;
+            _btnReload = MakeToolbarButton("🔄 Reload", new Size(76, 24), new Point(Width - 86, 4),
+                Color.FromArgb(37, 99, 235), new Font("Segoe UI", 8.25f, FontStyle.Bold));
             _btnReload.Click += async (s, e) =>
             {
                 if (IsReady && _webView != null && _webView.CoreWebView2 != null)
@@ -1879,24 +1863,32 @@ namespace DofusFarm.Engine
             catch { }
         }
 
+        private static string PostJson(string url, string payload)
+        {
+            using (var client = new System.Net.WebClient())
+            {
+                client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
+                return client.UploadString(url, "POST", payload);
+            }
+        }
+
+        private static string QuoteEscape(string value)
+        {
+            return value.Replace("\"", "\\\"");
+        }
+
         private void QueryCentralSentinel(string sender, string text, bool isMod)
         {
             try
             {
-                using (var client = new System.Net.WebClient())
+                string payload = string.Format("{{\"instance_id\":\"{0}\",\"sender\":\"{1}\",\"text\":\"{2}\",\"is_mod\":{3}}}",
+                    _instanceId, QuoteEscape(sender), QuoteEscape(text), isMod ? "true" : "false");
+                string response = PostJson("http://127.0.0.1:8890/sentinel/eval_chat", payload);
+                if (!string.IsNullOrEmpty(response) && response.Contains("\"is_threat\":true"))
                 {
-                    client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
-                    string escapedSender = sender.Replace("\"", "\\\"");
-                    string escapedText = text.Replace("\"", "\\\"");
-                    string payload = string.Format("{{\"instance_id\":\"{0}\",\"sender\":\"{1}\",\"text\":\"{2}\",\"is_mod\":{3}}}",
-                        _instanceId, escapedSender, escapedText, isMod ? "true" : "false");
-                    string response = client.UploadString("http://127.0.0.1:8890/sentinel/eval_chat", "POST", payload);
-                    if (!string.IsNullOrEmpty(response) && response.Contains("\"is_threat\":true"))
-                    {
-                        Match mUrgency = Regex.Match(response, "\"urgency\"\\s*:\\s*\"([^\"]+)\"");
-                        string urgency = mUrgency.Success ? mUrgency.Groups[1].Value : "HIGH";
-                        _logCallback?.Invoke(string.Format("🧠 [{0}] Central THX-01 Sentinel flagged threat ({1}): \"{2}\"", _instanceId, urgency, text));
-                    }
+                    Match mUrgency = Regex.Match(response, "\"urgency\"\\s*:\\s*\"([^\"]+)\"");
+                    string urgency = mUrgency.Success ? mUrgency.Groups[1].Value : "HIGH";
+                    _logCallback?.Invoke(string.Format("🧠 [{0}] Central THX-01 Sentinel flagged threat ({1}): \"{2}\"", _instanceId, urgency, text));
                 }
             }
             catch { }
@@ -1906,18 +1898,12 @@ namespace DofusFarm.Engine
         {
             try
             {
-                using (var client = new System.Net.WebClient())
-                {
-                    client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
-                    string escapedSender = sender.Replace("\"", "\\\"");
-                    string escapedText = text.Replace("\"", "\\\"");
-                    string color = isMod ? "15158332" : "3447003"; // Red or Blue
-                    string title = isMod ? "🚨 MODERATOR IN-GAME ALERT" : "💬 In-Game Private Message";
-                    string payload = string.Format(
-                        "{{\"embeds\":[{{\"title\":\"{0}\",\"description\":\"**Account**: {1} ({2})\\n**Sender**: {3}\\n**Message**: {4}\",\"color\":{5}}}]}}",
-                        title, instanceId, displayName, escapedSender, escapedText, color);
-                    client.UploadString(webhookUrl, "POST", payload);
-                }
+                string color = isMod ? "15158332" : "3447003"; // Red or Blue
+                string title = isMod ? "🚨 MODERATOR IN-GAME ALERT" : "💬 In-Game Private Message";
+                string payload = string.Format(
+                    "{{\"embeds\":[{{\"title\":\"{0}\",\"description\":\"**Account**: {1} ({2})\n**Sender**: {3}\n**Message**: {4}\",\"color\":{5}}}]}}",
+                    title, instanceId, displayName, QuoteEscape(sender), QuoteEscape(text), color);
+                PostJson(webhookUrl, payload);
             }
             catch { }
         }

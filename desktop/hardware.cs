@@ -115,7 +115,7 @@ namespace DofusFarm.Hardware
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetLogicalProcessorInformationEx(int relationshipType, IntPtr buffer, ref int returnedLength);
 
-        private static int CountPhysicalCoresEx()
+        internal static int CountPhysicalCoresEx()
         {
             int len = 0;
             GetLogicalProcessorInformationEx(0, IntPtr.Zero, ref len);

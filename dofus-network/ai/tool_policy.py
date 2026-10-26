@@ -43,6 +43,7 @@ import torch
 from torch import nn
 
 from agent import tool_dataset, tool_eval
+from ai.transformer import build_trunk, init_weights
 
 PAD, BOS, EOS, UNK, ASSISTANT = "[PAD]", "[BOS]", "[EOS]", "[UNK]", "[ASSISTANT]"
 SPECIAL_TOKENS = [PAD, BOS, EOS, UNK, ASSISTANT]
@@ -147,32 +148,10 @@ class ToolPolicyLM(nn.Module):
     def __init__(self, config: PolicyConfig) -> None:
         super().__init__()
         self.config = config
-        self.tok_emb = nn.Embedding(config.vocab_size, config.d_model)
-        self.pos_emb = nn.Embedding(config.max_seq_len, config.d_model)
-        layer = nn.TransformerEncoderLayer(
-            d_model=config.d_model,
-            nhead=config.n_heads,
-            dim_feedforward=config.ffn,
-            dropout=config.dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(
-            layer, num_layers=config.n_layers, enable_nested_tensor=False)
-        self.norm = nn.LayerNorm(config.d_model)
+        self.tok_emb, self.pos_emb, self.encoder, self.norm = build_trunk(config)
         self.head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         self.head.weight = self.tok_emb.weight
-        self.apply(self._init)
-
-    @staticmethod
-    def _init(module: nn.Module) -> None:
-        if isinstance(module, nn.Linear):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        self.apply(init_weights)
 
     def forward(
         self,
