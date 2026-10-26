@@ -1318,6 +1318,298 @@ def test_reads_are_not_actions() -> None:
             shutil.rmtree(d, ignore_errors=True)
 
 
+def test_dialog_labels() -> None:
+    section("Dialog labels (criterion 4: a reply needs its outcome recorded to be learned)")
+    import inspect
+    import json as _json
+    from agent.autopilot import Autopilot
+
+    class _Policy:
+        last_dialog_decision = {"reason": "question tie-break", "quest_id": 3841,
+                                "scores": [{"index": 0, "text": "Yes.", "score": 0.0,
+                                            "question": 0.5},
+                                           {"index": 1, "text": "No.", "score": 0.0,
+                                            "question": 0.0}]}
+
+    class _Runtime:
+        policy = _Policy()
+
+    class _Session:
+        _record_dialog = Autopilot._record_dialog
+
+        def __init__(self, after: Dict[str, Any]) -> None:
+            self.session = "gate"
+            self._index = 4
+            self._dialogs = 0
+            self._dialog_stalls = 0
+            self.rows: List[Dict[str, Any]] = []
+            self.runtime = _Runtime()
+
+        def _append_log_line(self, blob: bytes) -> None:
+            self.rows.append(_json.loads(blob.decode("utf-8")))
+
+    PAGE = "Hello, Aiai. I'm a travelling sorcerer."
+    REPLIES = [{"index": 0, "text": "Say you want to change class."},
+               {"index": 1, "text": "Never mind."}]
+    before = {"dialog": {"open": True, "npc_id": 771, "name_id": "Sorcerer",
+                         "message": PAGE, "replies": REPLIES},
+              "knowledge": {"objective_id": 14070},
+              # A free-form objective is the one a reply can never validate; the row has
+              # to carry the type or the census cannot tell the two stalls apart.
+              "current_objective": {"objective_id": 14070, "type_id": 12}}
+    call = type("C", (), {"args": {"quest_id": 3841, "reply": 0,
+                                   "reply_text": "Say you want to change class."}})()
+
+    class _Result:
+        def __init__(self, ok=True, data=None, error=None):
+            self.ok, self.data, self.error = ok, data, error
+
+    SENT = _Result(True, {"replied": 0, "replies": 2, "reply_id": 41457,
+                          "reply_text": "Say you want to change class.",
+                          "via": "gui.npcDialogHandler._uiReplyHandler"})
+
+    def record(after, args=call.args, state=before, result=None):
+        s = _Session(after)
+        c = type("C", (), {"args": dict(args)})()
+        s._record_dialog(c, state, after, result)
+        return s, (s.rows[-1] if s.rows else None)
+
+    moved = {"dialog": {"open": True, "npc_id": 771, "message": "Which class interests you?"}}
+    s, row = record(moved, result=SENT)
+    check("a reply that moved the conversation is recorded as advanced, with its features",
+          row is not None and row["kind"] == "dialog" and row["outcome"] == "advanced"
+          and row["asked"] == 0 and row["npc_id"] == 771 and row["quest_id"] == 3841
+          and row["objective_id"] == 14070 and row["reason"] == "question tie-break"
+          and len(row["scores"]) == 2 and row["page"] == PAGE
+          and row["replies"] == [r["text"] for r in REPLIES], str(row))
+    check("the score that decided it is stored, so a scorer can be trained on the pair",
+          row["scores"][0]["score"] == 0.0 and row["scores"][0]["question"] == 0.5,
+          str(row["scores"]))
+    check("and it is counted, not just written",
+          (s._dialogs, s._dialog_stalls) == (1, 0), str(s._dialogs))
+    # G21: the dispatch half of the pair. The baseline replays one page 87 times against
+    # reply id 41457, and the wire log shows the server answering it with a leave. Without
+    # these fields the row cannot say who ended the conversation.
+    check("the id and the handler that answered are recorded with the choice",
+          row["reply_id"] == 41457
+          and row["via"] == "gui.npcDialogHandler._uiReplyHandler"
+          and row["dispatch_ok"] is True and row["error"] is None, str(row))
+    check("the objective type travels with the row, so a free-form stall is not read "
+          "as a bad ranking", row["objective_type"] == 12, str(row.get("objective_type")))
+    check("the page that came back is recorded, not just its verdict",
+          row["page_after"] == "Which class interests you?", str(row.get("page_after")))
+    _, row = record(moved)
+    check("a row is still written when the client gives no dispatch data back",
+          row is not None and row["reply_id"] is None and row["via"] is None
+          and row["dispatch_ok"] is True, str(row))
+    _, row = record(moved, result=_Result(False, None, "dialog has 2 replies; asked for index 5"))
+    check("a refused dispatch is a failed dispatch, and its reason is kept",
+          row["dispatch_ok"] is False and row["error"].startswith("dialog has 2 replies"),
+          str(row))
+
+    _, row = record({"dialog": {"open": True, "npc_id": 771, "message": PAGE}})
+    check("the same page after a reply is a stall, not silence",
+          row["outcome"] == "same page" and row["asked"] == 0, str(row))
+    s2, row = record({"dialog": {"open": False}})
+    check("a reply that closed the dialog is recorded as closed",
+          row["outcome"] == "closed" and s2._dialogs == 1, str(row))
+    check("and says who closed it: we did not ask, so the game ended it",
+          row["ended_by"] == "after_reply" and row["page_after"] is None, str(row))
+    _, row = record({"map_id": 10340})
+    check("an after-state without a dialog block says nothing and is called unknown",
+          row["outcome"] == "unknown" and row["ended_by"] is None, str(row))
+
+    # Non-dialog steps must not write rows: this instrument is a pairing, not a trace.
+    for args in ({"quest_id": 3841}, {"quest_id": 3841, "npc_id": 5}, {}):
+        _, row = record(moved, args=args)
+        check("a %s step writes no dialog row" % (args or "bare"), row is None, str(row))
+    _, closed = record(moved, args={"quest_id": 3841, "close": True})
+    check("an explicit close is a dialog action and is recorded as asked=close",
+          closed is not None and closed["asked"] == "close"
+          and closed["outcome"] == "advanced", str(closed))
+    _, closed = record({"dialog": {"open": False}}, args={"quest_id": 3841, "close": True})
+    check("a close we asked for is credited to us, not to the server",
+          closed["outcome"] == "closed" and closed["ended_by"] == "asked", str(closed))
+
+    s4 = _Session(moved)
+    s4._record_dialog(type("C", (), {"args": {"reply": 1, "reply_text": "No."}})(),
+                      {"dialog": {"open": False, "message": PAGE}}, moved)
+    check("a step taken with no dialog open cannot be attributed to one",
+          s4.rows == [] and s4._dialogs == 0, str(s4.rows))
+
+    src = inspect.getsource(Autopilot._run)
+    check("the pairing is taken on the step path, where both states and the dispatch "
+          "result exist",
+          src.index("self._record_dialog(call, before, after, result)") > src.index(
+              "fight_estimate, fight_outcome = self._track_fight(before, after)"))
+    summary_src = inspect.getsource(Autopilot.summary)
+    check("the summary reports dialog attempts and stalls",
+          '"dialogs": self._dialogs' in summary_src
+          and '"dialog_stalls": self._dialog_stalls' in summary_src)
+
+
+def test_report_instrument() -> None:
+    section("Baseline report (criterion 5: the instrument that measures the run)")
+    import contextlib
+    import importlib.util
+    import io
+
+    script = REPO_ROOT / "tools" / "recovery_report.py"
+    check("the report tool exists", script.exists(), str(script))
+    spec = importlib.util.spec_from_file_location("recovery_report", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def run_report(lines: List[str]) -> str:
+        tmp = Path(tempfile.mkdtemp())
+        log = tmp / "log.jsonl"
+        log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                code = module.main([str(log)])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return "%s\n(exit %s)" % (buf.getvalue(), code)
+
+    rows = [
+        json.dumps({"kind": "recovery", "session": "s", "trigger": "client_absent",
+                    "reason": "no client instance", "recovered": True,
+                    "waited_s": 3.5, "at": 1000.0}),
+        json.dumps({"kind": "wait", "session": "s", "goal": "g", "consecutive": 1,
+                    "reason": "the policy had no action to take", "escalated": "chat.say",
+                    "at": 1001.0}),
+        json.dumps({"kind": "wait", "session": "s", "goal": "g", "consecutive": 2,
+                    "reason": "the policy had no action to take", "at": 1002.0}),
+        json.dumps({"kind": "dialog", "session": "s", "index": 0, "quest_id": 1,
+                    "objective_id": 2, "npc_id": 7, "name_id": "Sorcerer",
+                    "page": "Hello", "replies": ["a", "b"], "asked": 0,
+                    "reply_text": "a", "reason": "question tie-break",
+                    "scores": [{"index": 0, "score": 0.0, "question": 0.5}],
+                    "outcome": "same page", "at": 1003.0}),
+        # The same page, asked again, this time with the G21 dispatch fields: a row written
+        # before they existed must still parse, and a repeat must be called out.
+        json.dumps({"kind": "dialog", "session": "s", "index": 1, "quest_id": 1,
+                    "objective_id": 2, "objective_type": 12, "npc_id": 7,
+                    "name_id": "Sorcerer", "page": "Hello", "replies": ["a", "b"],
+                    "asked": 0, "reply_text": "a", "reply_id": 41457,
+                    "via": "gui.npcDialogHandler._uiReplyHandler",
+                    "dispatch_ok": False, "error": "asked for index 5",
+                    "reason": "only reply", "scores": [],
+                    "outcome": "same page", "ended_by": None,
+                    "page_after": "Hello", "at": 1003.5}),
+        json.dumps({"kind": "dialog", "session": "s", "index": 2, "quest_id": 1,
+                    "objective_id": 2, "objective_type": 12, "npc_id": 7,
+                    "name_id": "Sorcerer", "page": "Hello", "replies": ["a"],
+                    "asked": 0, "reply_text": "a", "reply_id": 41457, "dispatch_ok": True,
+                    "reason": "only reply", "scores": [], "outcome": "closed",
+                    "ended_by": "after_reply", "page_after": None, "at": 1003.8}),
+        json.dumps({"index": 0, "session": "s", "goal": "g", "tool": "quest.advance",
+                    "args": {}, "ok": True, "error": None, "latency_ms": 20.0,
+                    "verdict": "advanced", "at": 1004.0}),
+        json.dumps({"kind": "decision", "session": "s", "action": "recover",
+                    "cause": "incomplete", "tool": "quest.advance", "at": 1005.0}),
+    ]
+    text = run_report(rows)
+    check("the report reads every row kind the loop writes",
+          "idle waits (G18" in text and "dialog replies" in text
+          and "recovery waits" in text and "productive-action success" in text,
+          text[:120])
+    check("waits are totalled with the escalation shown",
+          "2 passes in 1 run(s)" in text and "escalated to a real action" in text,
+          "\n".join(l for l in text.splitlines() if "passes" in l or "escalated" in l))
+    check("a stall is reported as a stall, and the dead primary signal is counted",
+          "2  same page" in text and "objective overlap > 0: 0 of 3" in text,
+          "\n".join(l for l in text.splitlines() if "same page" in l or "overlap" in l))
+    # G21: the report has to answer *who ended the dialog* and *how many times the same
+    # page was re-asked*, or the census reads as a ranking failure when it is a loop.
+    check("a row written before the dispatch fields still parses and is counted",
+          "dialog replies" in text and "3 attempt(s)" in text, text[:400])
+    check("the census says the game ended that dialog, not us",
+          "dialog ended by: {'after_reply': 1}" in text,
+          "\n".join(l for l in text.splitlines() if "ended by" in l))
+    check("the objective type is shown, so a free-form stall is visible as one",
+          "objective type ids: {'12': 2}" in text,
+          "\n".join(l for l in text.splitlines() if "objective type" in l))
+    check("a refused dispatch is not silently counted as an attempt that sent",
+          "dispatch refused (nothing went on the wire): 1" in text,
+          "\n".join(l for l in text.splitlines() if "refused" in l))
+    check("re-asking one page is called out by name",
+          "NOTE re-asked 3 x" in text,
+          "\n".join(l for l in text.splitlines() if "re-asked" in l))
+    check("the productive table counts the one world-changing step",
+          "quest.advance" in text and "1       1" in text,
+          "\n".join(l for l in text.splitlines() if "quest.advance" in l))
+
+    old = run_report([json.dumps({"index": 0, "session": "s", "goal": "g",
+                                 "tool": "nav.goto", "args": {}, "ok": True,
+                                 "error": None, "latency_ms": 5.0,
+                                 "verdict": "noop", "at": 1000.0})])
+    check("a log from before the instruments says so instead of printing zero",
+          "predates the recovery instrument" in old
+          and "predates the wait instrument" in old
+          and "predates the dialog instrument" in old, old[:200])
+
+
+def test_dialog_repeat_guard() -> None:
+    section("Dialog repeats (criterion 3: an answer that changed nothing is not a plan)")
+    import inspect
+    from agent.planner import DIALOG_ASK_LIMIT, QuestPlanner
+
+    HELMET = "Don't tell me you need help putting on a helmet?"
+
+    def obs(message=HELMET, objective_id=14070):
+        return {
+            "dialog": {"open": True, "npc_id": 3888, "name_id": "Ayin Spyr",
+                       "text_ready": True, "ids_ready": True, "message": message,
+                       "reply_count": 1, "ids_present": True,
+                       "replies": [{"index": 0, "text": "Yes, please.",
+                                    "reply_id": 41457}]},
+            "knowledge": {"quest_id": 3841, "objective_id": objective_id},
+            "current_objective": {"objective_id": objective_id, "type_id": 12},
+        }
+
+    def asked(call) -> bool:
+        return bool(call is not None and call.args.get("reply") is not None)
+
+    p = QuestPlanner()
+    first = p._dialog_call(obs(), "quest 3841")
+    check("a page the objective has never been asked about is answered",
+          asked(first) and first.args["reply"] == 0, first)
+    check("one retry is allowed, because the page can lag the world",
+          asked(p._dialog_call(obs(), "quest 3841")), "second ask refused")
+    third = p._dialog_call(obs(), "quest 3841")
+    check("the ask after that closes the conversation instead of repeating it",
+          third is not None and third.args.get("close") is True and not asked(third),
+          third)
+    fourth = p._dialog_call(obs(), "quest 3841")
+    check("a spent page is refused outright, so the re-open loop cannot resume",
+          fourth is None, fourth)
+    check("the refusal carries its own status, which is what the step note prints",
+          isinstance(p.last_dialog_decision, dict)
+          and p.last_dialog_decision.get("status") == "exhausted", p.last_dialog_decision)
+    check("the memory is keyed by the limit, not by a magic number in the test",
+          DIALOG_ASK_LIMIT == 2, str(DIALOG_ASK_LIMIT))
+
+    # The three ways a refusal would be wrong: a different objective, a page that
+    # really did move, and a fork that forgot.
+    q = QuestPlanner()
+    for _ in range(DIALOG_ASK_LIMIT + 2):
+        q._dialog_call(obs(), "quest 3841")
+    check("a reply spent on one objective is not spent on the next",
+          asked(q._dialog_call(obs(objective_id=14071), "quest 3841")), "objective-blind")
+    check("a page that changed is a fresh question",
+          asked(q._dialog_call(obs("Which class interests you?"), "quest 3841")),
+          "page-blind")
+    twin = q.fork()
+    spent = twin._dialog_call(obs(objective_id=14070), "quest 3841")
+    check("a fork inherits which pages are spent instead of starting the loop again",
+          spent is None, spent)
+    src = inspect.getsource(QuestPlanner.fork)
+    check("and the inheritance is real code, not a side effect of a shared default",
+          "_dialog_exhausted = set(self._dialog_exhausted)" in src, src[:120])
+
+
 def run() -> Tuple[int, List[str]]:
     test_verdict_vocabulary()
     test_verifier_rules()
@@ -1334,6 +1626,9 @@ def run() -> Tuple[int, List[str]]:
     test_absent_client_recovery()
     test_repair_credit()
     test_reads_are_not_actions()
+    test_dialog_labels()
+    test_dialog_repeat_guard()
+    test_report_instrument()
     test_settle_waits_for_promised_effect()
     test_intervention_instrument()
     test_js_page_suites()

@@ -341,6 +341,9 @@ class Autopilot:
         self._waits = 0
         self._consecutive_waits = 0
         self._forced_reason = ""
+        # Dialog attempts and whether the conversation moved: see _record_dialog.
+        self._dialogs = 0
+        self._dialog_stalls = 0
         self._first_step_at = 0.0
         self._last_step_at = 0.0
         # A long run can list hundreds of items; keep the recent ledger for
@@ -1481,6 +1484,7 @@ class Autopilot:
 
                 fight_estimate, fight_outcome = self._track_fight(before, after)
                 self._record_interventions(after)
+                self._record_dialog(call, before, after, result)
 
                 v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
                 verdict = v.verdict
@@ -2062,6 +2066,101 @@ class Autopilot:
             return recovered
         return True
 
+    def _record_dialog(self, call: Any, before: Any, after: Any,
+                       result: Any = None) -> None:
+        """Pair a dialog reply with the page it produced.
+
+        The ranker's *primary* signal is quest-objective token overlap, and on the 1,547
+        open dialogs in the recorded corpus it scored 0.0 on every single one: all 1,524
+        choices came from the question tie-break or from a page with one reply. Nothing in
+        any log says whether the reply it picked moved the conversation, so criterion (4)
+        -- replace the heuristic where data supports it -- has no data to support it. The
+        pairing exists for one step and then is thrown away; this writes it down.
+
+        Only dialog actions produce a row (a reply index or an explicit close), so the
+        cost is one row per talk attempt -- 110 in an entire baseline session-set.
+
+        The dispatch fields matter more than they look. The recorded corpus replays one
+        page 87 times against a single reply whose server id is 41457, and the wire log
+        shows the *server* answering that id with `LeaveDialogMessage`: the conversation
+        ends, the loop re-opens it, and `outcome` alone reads as "the ranker picked badly".
+        `reply_id` (which id went on the wire), `via` (which object answered), `dispatch_ok`
+        and `ended_by` are what separate "we ended it", "the server ended it" and "nothing
+        was sent" -- and `objective_type` is the feature that says whether any reply could
+        have validated the objective in the first place.
+        """
+        args = getattr(call, "args", None)
+        if not isinstance(args, dict):
+            return
+        chose = args.get("reply")
+        if chose is None and not args.get("close"):
+            return
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return
+        db = before.get("dialog")
+        if not isinstance(db, dict) or not db.get("open"):
+            return
+        da = after.get("dialog")
+        da = da if isinstance(da, dict) else {}
+        if not da:
+            outcome = "unknown"        # no dialog block came back: it says nothing
+        elif not da.get("open"):
+            outcome = "closed"
+        elif da.get("message") == db.get("message"):
+            outcome = "same page"
+        else:
+            outcome = "advanced"
+        asked = "close" if chose is None else int(chose)
+        # A dialog that is gone after a reply we did not ask to close was ended by the
+        # game, not by us. Without this split, `closed` flatters the agent: it looks like
+        # a completed exchange, and the loop re-opens the same page believing it moved.
+        ended_by = None
+        if outcome == "closed":
+            ended_by = "asked" if asked == "close" else "after_reply"
+        data = getattr(result, "data", None)
+        data = data if isinstance(data, dict) else {}
+        self._dialogs += 1
+        if outcome == "same page":
+            self._dialog_stalls += 1
+        kn = before.get("knowledge")
+        kn = kn if isinstance(kn, dict) else {}
+        tracker = before.get("current_objective")
+        tracker = tracker if isinstance(tracker, dict) else {}
+        # The ranker's own features, kept with the outcome: a row without the scores that
+        # produced the choice is a log line, not a training pair.
+        decision = getattr(getattr(self.runtime, "policy", None),
+                           "last_dialog_decision", None)
+        decision = decision if isinstance(decision, dict) else {}
+        replies = db.get("replies")
+        replies = replies if isinstance(replies, list) else []
+        self._append_log_line(_fast_dumps({
+            "kind": "dialog",
+            "session": self.session,
+            "index": self._index,
+            "quest_id": args.get("quest_id"),
+            "objective_id": kn.get("objective_id") or tracker.get("objective_id"),
+            "objective_type": kn.get("type_id", tracker.get("type_id")),
+            "npc_id": db.get("npc_id"),
+            "name_id": db.get("name_id"),
+            "page": str(db.get("message") or "")[:120],
+            "replies": [str(r.get("text") or "")[:80]
+                        for r in replies[:8] if isinstance(r, dict)],
+            "asked": asked,
+            "reply_text": str(args.get("reply_text") or "")[:80],
+            "reply_id": data.get("reply_id"),
+            "via": data.get("via"),
+            "dispatch_ok": bool(getattr(result, "ok", True)),
+            "error": None if getattr(result, "error", None) is None
+                     else str(result.error)[:120],
+            "reason": decision.get("reason"),
+            "scores": decision.get("scores")[:8] if isinstance(
+                decision.get("scores"), list) else [],
+            "outcome": outcome,
+            "ended_by": ended_by,
+            "page_after": str(da.get("message") or "")[:120] if da.get("open") else None,
+            "at": time.time(),
+        }) + b"\n")
+
     def _credit_pending(self, call: Any, verdict: Any) -> None:
         """Score the held repair decision -- but only against a step that could
         have moved the world.
@@ -2152,6 +2251,8 @@ class Autopilot:
             # Waits are reported, not counted as work. Before this, 3,010 of them were
             # the majority of "steps" and nearly all of the run's apparent success.
             "waits": self._waits,
+            "dialogs": self._dialogs,
+            "dialog_stalls": self._dialog_stalls,
             "controller": self.controller.stats(),
             "open_listings": self._listing_total,
             "log": str(self.log_path),

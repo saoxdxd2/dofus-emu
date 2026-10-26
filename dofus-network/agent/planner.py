@@ -170,6 +170,12 @@ def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
     return {}
 
 
+# How many times one answer may be asked on one page for one objective before the
+# planner treats that page as reply-insatisfiable. Two keeps the third strike as the
+# blocked one, which is how the rest of the loop already counts failures.
+DIALOG_ASK_LIMIT = 2
+
+
 class QuestPlanner:
     """A policy that plans over the quest graph."""
 
@@ -216,6 +222,12 @@ class QuestPlanner:
         # readiness grace the planner closes it rather than polling forever.
         self._dialog_waits = 0
         self._dialog_key: Any = None
+        # A page that came back unchanged after an answer will come back unchanged
+        # again: the answer is a function of the page, not of luck. The baseline asked
+        # the same reply on the same page 87 times against one objective. Count the
+        # asks per (npc, page, reply, objective) and stop once they buy nothing.
+        self._dialog_asks: Dict[Tuple[Any, ...], int] = {}
+        self._dialog_exhausted: set = set()
         # Plain orders (sell, inventory, travel) are already parsed by the rule
         # policy; the planner only owns quests/farm/auto. Built lazily.
         self._rule_policy: Any = None
@@ -660,6 +672,29 @@ class QuestPlanner:
             return ToolCall("state.snapshot", {}, goal)
         self._dialog_waits = 0
         if status == "choose" and quest_id is not None and reply:
+            ask = (dialog.get("npc_id"), dialog.get("message"), reply["index"],
+                   decision.get("objective_id"))
+            if ask in self._dialog_exhausted:
+                # The page came back unchanged twice for this exact answer. Asking a
+                # third time is not a plan, so decline the dialog action entirely and
+                # let the rest of the planner (and the instrumented wait) decide what
+                # the objective actually needs.
+                self.last_dialog_decision = {**decision, "status": "exhausted",
+                                             "reason": "reply already left this page unchanged"}
+                return None
+            n = self._dialog_asks.get(ask, 0) + 1
+            self._dialog_asks[ask] = n
+            if len(self._dialog_asks) > 256:
+                for stale in list(self._dialog_asks)[:32]:
+                    self._dialog_asks.pop(stale, None)
+            if n > DIALOG_ASK_LIMIT:
+                self._dialog_asks.pop(ask, None)
+                self._dialog_exhausted.add(ask)
+                # End the conversation once, so the map is not held open by a dialog
+                # that has nothing left to offer. The memo above stops the re-open loop.
+                return ToolCall("quest.advance", {
+                    "quest_id": int(quest_id or 0), "close": True,
+                }, goal)
             return ToolCall("quest.advance", {
                 "quest_id": quest_id,
                 "reply": reply["index"],
@@ -1250,6 +1285,10 @@ class QuestPlanner:
         twin._farm_target_missing = self._farm_target_missing
         twin._dialog_waits = 0
         twin._dialog_key = None
+        # Which replies are spent is knowledge about the dialog, not about the
+        # parent's scene: a fork that forgot it would re-ask a dead page.
+        twin._dialog_asks = dict(self._dialog_asks)
+        twin._dialog_exhausted = set(self._dialog_exhausted)
         twin._npc_tries = dict(self._npc_tries)
         # The twin is about to observe its own world for the first time. Inheriting
         # the parent's scene key would make its first observation look unchanged,

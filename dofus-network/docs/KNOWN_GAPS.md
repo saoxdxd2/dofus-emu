@@ -73,15 +73,44 @@ belong to the read-only advisor, a different path). So the agent cannot currentl
 produce a correct `presetId` (or a UID) from a fresh observation, and the exact client
 field that stores presets is not known offline.
 
-**Plan (do not skip the live step).** (1) read-shape change: expose
-`presets:[{presetId,name}]` in `_agentSnapshot` — but *only after* a live client shows
-where the preset list actually lives (guessing a field name is the bug class that made
-this project undebuggable, per `CLEANUP.md`). (2) add an `equip.preset` capability + a
-JS handler sending `InventoryPresetUseMessage{presetId}` and verifying via
-`InventoryPresetUseResultMessage`, behind the same schema gate. (3) validate the packet
-and verdict on a live session — never blind, because a wrong `presetId`/state is a
+**The "not known offline" half is now resolved — read out of the shipped bundle, not
+guessed (2026-10-26).** `client/www/build/script.js` contains, verbatim:
+
+- `window.gui.playerData.inventoryManager` → `.getCorrectInventory(gameMode)`,
+  `.getInventory(mode)`, `.getHeroInventory()`, `.getInventoryByOwnerAndType(ownerType, type)`;
+  `playerData.inventory` is the `MAIN` shortcut and `labyrinthInventory`/`heroInventory` the others;
+- each inventory object owns **`presets = {}`**, **`itemSets = {}`**, **`objects = {}`**,
+  **`equippedItems = {}`**, `quantityList`, `isLoaded`, `weight`/`maxWeight`, `_isUsingPreset`,
+  and `getCurrentWeapon()` (which is `equippedItems[weapon]`);
+- the result handling is an event, not a return value: `handlePresetUsed(e)` emits
+  `presetUsed` with `PRESET_USE_OK` / `PRESET_USE_OK_PARTIAL` / `PRESET_USE_ERR_UNKNOWN`
+  (and `handlePresetSaved` / `handlePresetUpdated` alongside it);
+- the send site is `sendMessage("InventoryPresetUseMessage", {presetId: e})`, guarded by
+  `!this.isInFight() || this.blockPreset()` — so a preset swap in fight is refused by the client
+  itself, and `disconnect()` clears `presets`/`objects`/`equippedItems`, which is why a stale read
+  of any of them must fail closed.
+- item instances expose `objectGID`/`gid` **and** `objectUID` (265 `objectUID` sites; the patch
+  already reads `it.objectGID != null ? it.objectGID : it.gid` at `mobile-disguise.js:2481`).
+
+Still genuinely live-only, and the reason this is not wired blind: none of
+`InventoryItemMoveMessage` / `PlayerMoveItemMessage` / `EquipItemMessage` exists in this bundle
+(zero hits), so the packet a real drag-to-slot sends is still unknown — and whether the tutorial's
+"Go and equip your new items." is satisfiable at all by a preset/`itemSets` use, versus requiring
+that unknown drag packet, is exactly the question the live capture answers. What the static read
+buys is that the capture can now be *designed*: dump
+`{presets: keys(inventoryManager.getCorrectInventory().presets), itemSets, equippedItems:
+slot → gid, objects: [{objectUID, gid, qty}]}` read-only, watch which of them changes when a human
+equips one item, and only then pick the verb.
+
+**Plan (do not skip the live step).** (1) read-shape change: expose the four maps above through
+`_agentSnapshot` — the field names are no longer a guess, but the *values* still need one live
+session to prove the accessor chain resolves on the running build. (2) add an `equip.preset`
+capability + a JS handler sending `InventoryPresetUseMessage{presetId}` and verifying via the
+`presetUsed` event and the post-state `equippedItems`, behind the same schema gate. (3) validate the
+packet and verdict on a live session — never blind, because a wrong `presetId`/state is a
 kick-adjacent action. Until (1)-(3) are done, any quest step gated on "equipped X" is a
-hard stop, not a delay.
+hard stop, not a delay — and since 2026-10-26 that is no longer hypothetical: the recorded corpus's
+first quest chain dies on precisely that instruction (see G3's root cause and G22).
 
 ---
 
@@ -759,6 +788,18 @@ which the gate caught as `waits 120` for two directives. So only a non-read coun
 `self.guard`, and a call the schema does not know costs a refusal row and ends the goal — the
 escalation cannot become the new loop, and it cannot smuggle past a safety rule.
 
+**Escalation yield, measured on the baseline rather than asserted.** The 1,581-pass spin covers
+1,592 trajectory observation rows in **3 distinct flattened scenes**, and in **3 of 3** the
+thinking layer's first two offers are real actions — `fight.join`, then `farm.start` — with its
+third offer being `state.snapshot`, the answer the filter now refuses. So on the one run that most
+needed it, the escalation is not decoration: the spin becomes ~40 overflow reads plus a pair of
+guarded attempts, and a refused `fight.join` ("no monster group on the current map") is a row with
+information in it, where 1,581 reads had none. Two honest limits on that reading: the replay calls
+`propose` with an empty recent-steps list and no decision, so the live diagnosis and candidate
+order will differ; and `farm.start` reached this way is refused by the quests-prompt fidelity gate
+(criterion 1, already pinned), so the realistic live sequence is one attempt and then retirement.
+This is an offline replay of recorded state — not a live result.
+
 **Cost, stated.** The loop still *asks* the policy every pass, so the CPU cost of an idle spin is
 unchanged; what changed is the traffic, the log and the reward. A stronger fix is an explicit
 `wait` intent from the planner instead of overloading a read with it — that is a vocabulary change
@@ -769,7 +810,7 @@ the training corpus, so `state.snapshot` will be rare among labelled actions at 
 That is intended — waiting is not an action with a reward — but it does change the action prior,
 and a policy that stops trying to wait would be a regression to notice, not to assume.
 
-**Verified:** 34 gate checks (165 total, 0 failed) driving the real loop end to end with a stub
+**Verified:** 34 gate checks (0 failed inside the current 206-check gate) driving the real loop end to end with a stub
 runtime: two directives produce exactly two step rows and exactly `2 × 40` wait rows, with two
 verifier labels and two controller calls over 82 policy passes — so a wait provably produces no
 verdict and no reward — plus the fall-out truth table, the pacing and `--interval` precedence, the
@@ -777,8 +818,8 @@ dry-run no-sleep, a directed wait carrying the thinking layer's own sentence as 
 rescue path both succeeding and giving up, and the escalation in both directions (an untried action
 is dispatched under the goal that waited, a read is refused as an answer, a schema-unknown proposal
 is refused by the guard, and each goal escalates for itself).
-`tools/mutate_cause_gate.py` carries **37 mutations**: the 33 already run were each caught, none
-missed; the 4 new ones (never escalating, not recording the escalation, accepting a read as an
+`tools/mutate_cause_gate.py` carries **42 mutations**: the 33 already run were each caught, none
+missed; the 9 new ones (never escalating, not recording the escalation, accepting a read as an
 escalation, and removing the per-goal reset) are **written but not yet run**, because that driver
 rewrites `agent/*.py` in the working tree for seconds at a time and someone was editing the same
 tree. Re-run it when nothing else is touching the checkout.
@@ -814,11 +855,148 @@ an action under the wrong prompt.
 policy: nothing is added to the action set, and no goal can inherit work it did not choose.
 
 **Verified:** the G18 section asserts each goal escalates for itself and that the two step rows
-belong to `work the 0 goal` and `work the 1 goal` respectively; 165 checks, 0 failed.
+belong to `work the 0 goal` and `work the 1 goal` respectively; 0 failed in the current 206-check gate.
 **Not verified:** that a live multi-goal run never carries a forced call over — reachable in a
 baseline replay, not in an offline gate. A mutation is prepared in
 `tools/mutate_cause_gate.py` (removing the three reset lines) and is pending the same quiet-window
 run as the G18 mutations.
+
+---
+
+## G20. The dialog ranker's primary signal decided nothing, and nothing recorded whether its choice worked
+
+Found by replaying the recorded corpus through `agent/dialog_policy.py` rather than trusting its
+docstring.
+
+**What the corpus says.** The trajectory files hold **1,547 snapshots with a dialog open** —
+23 with no replies, 319 with one, 1,205 with two. Running today's `rank_dialog` over all of them:
+1,524 `choose`, 23 `wait`, **0 abstain** — so the ranking is not what stopped the loop. But every
+one of those 1,524 choices came from the question tie-break (1,204) or from a page with a single
+reply (320), and **none from `objective token overlap`, the signal the module calls primary and
+"proven": it scored 0.0 on all 1,547 dialogs.** A signal that never fires is not a weak signal, it
+is a missing one, and the tie-break is the whole policy in practice.
+
+**The second half, which is the gap.** Pairing the 110 recorded reply choices with the page that
+followed them (the post-action snapshot, or the next open-dialog snapshot within 20 s): **90 ended
+on the same page, 19 advanced, 1 had nothing after.** `via` says the client really clicked —
+`gui.npcDialogHandler._uiReplyHandler` on 108 of them — so the replies were sent and the
+conversation mostly did not move, and no log line anywhere joined a choice to its outcome. That is
+why criterion (4) ("replace the hardcoded heuristic where data supports it") cannot be satisfied
+for dialogs yet: the module's own docstring says there are no `(question -> correct reply)`
+labels, and the loop has been producing and discarding them every session.
+
+**Also measured here, so nobody re-fixes a fixed thing:** 1,204 of the 1,547 dialog snapshots are
+the **same page** ("Class-Changing Sorcerer", 2 replies) and 262 are one Ayin Spyr page — the
+baseline's 1,581-pass spin (G18) sat inside an open dialog. On that recorded state the current
+planner returns `quest.advance {quest_id: 3841, reply: 0, reply_text: "Say you want to change
+class."}` instead of a read, so the spin was the pre-G3 planner falling through to a snapshot, not
+the ranker abstaining. G18 removed the symptom's cost; this entry is about the remaining cause.
+
+**Fix (this pass): write the label down.** `Autopilot._record_dialog` emits one `kind: "dialog"`
+row per dialog action — the NPC, the page text, every reply text, which index was asked (or
+`close`), **the ranker's own per-reply scores and reason**, and the outcome read from the
+after-state (`advanced` / `same page` / `closed` / `unknown`, where unknown means the after-state
+carried no dialog block and says nothing). `summary()` carries `dialogs` and `dialog_stalls`, and
+`recovery_report.py` prints the outcome census, the per-NPC split, the reason split and the count
+of choices where the primary signal actually fired — the number that was 0/1,547 offline.
+
+**Not the fix, stated plainly:** recording is not learning. With one live session this yields the
+first labelled set, and the honest next step is a scorer trained on `(page, replies, context
+features) -> outcome` that subsumes the tie-break, plus a stall rule that does not re-ask a reply
+whose page did not move (a general rule about dialog structure, not about any quest).
+
+**Verified:** 19 gate checks (206 total, 0 failed) — the four outcome cases, features stored with
+the pair, no row for a non-dialog step, no row with no dialog open, the call site on the step path
+where both states exist, and the report reading every row kind the loop writes (including a
+pre-instrument log saying *predates*, not *zero*). 5 more mutations cover it in
+`tools/mutate_cause_gate.py` (**42 total; 33 run and caught, 9 pending** a quiet-tree re-run).
+**Not verified:** that any live reply now advances a conversation — the 90/110 stall figure is a
+measurement of the *old* corpus, and the first run with dialog rows is what will say whether it is
+a client-path problem, a ranking problem, or a quest that needs an item rather than a reply.
+
+**Answered offline 2026-10-26 — it is the third one.** Reading `trajectories/default.jsonl` next to
+the wire log settles which of the three it was, and the answer is not the ranker:
+
+- the page is Ayin Spyr's *"In addition, equipment provides bonus Characteristics…"*, and its
+  **one** reply is `"Go and equip your new items."` (`reply_id 41457`, `reply_count 1`,
+  `ids_ready`/`text_ready` both true — so no readiness race and no identity mismatch);
+- the active objective is `14070`, `type: "QuestObjectiveFreeForm"`, `type_id 0`, text *`Complete
+  the "A Chaotic Arrival" quest.`*, `params.parameter0 = 715354`. A free-form objective is
+  satisfied by doing the thing, not by answering the NPC, so **no reply could have advanced it**;
+- `knowledge.status` for it is `objective_not_in_store`: the KB does not contain quest 3841 at
+  all, so the planner could not reason about the objective from data either;
+- the click path is correct and demonstrably works — elsewhere in the same log the page advances
+  41743 → 41741 — and 110 dispatches all report `via: gui.npcDialogHandler._uiReplyHandler`.
+  In `play_dofus-05.jsonl` the wire order inside one 340 s window is
+  `send NpcDialogReplyMessage{41457}` → **`recv LeaveDialogMessage`** → `send
+  LeaveDialogRequestMessage null` → `send NpcGenericActionRequestMessage`: the *server* ends the
+  conversation, 91 cycles of it.
+
+So G3's "talk objectives never complete" is, in the recorded corpus, **G2 in disguise**: the
+tutorial hands over equipment and asks the player to wear it, the loop has no equip verb, and it
+re-asks the instruction 87 times instead. Two things follow, and neither is a quest-specific
+hack: [G21](#g21-the-dialog-row-could-not-say-who-ended-the-conversation-2026-10-26) and
+[G22](#g22-the-loop-asked-the-same-reply-on-the-same-page-87-times-2026-10-26). The remaining
+client-side defect this trace exposes is cosmetic-to-moderate and still open: calling
+`_uiReplyHandler` directly skips the real click path `_sendReply(e)` (script.js:366 disables
+`replyElts[e]`, logs the reply to chat, closes the message bubble and clears `replyHandler`), so
+a synthetic answer leaves the bubble and the button set live.
+
+---
+
+## G21. The dialog row could not say who ended the conversation *(fixed 2026-10-26, offline-verified)*
+
+**Problem:** G20 records `outcome`, which is a comparison of two page texts. `closed` therefore
+covers three different events — we asked to close it, the server ended the conversation after our
+answer, or the world moved under us — and `same page` covers "the server ignored us" and "we
+never sent anything". The census cannot be read without that split, and the 91-cycle trace above
+is exactly the case it hides.
+
+**Fix:** `_record_dialog` now takes the dispatch result and the row carries `reply_id` (the id
+that went on the wire), `via` (which object answered), `dispatch_ok`, `error`, `objective_type`,
+`page_after`, and `ended_by ∈ {asked, after_reply}`. `after_reply` means the dialog is gone on the
+after-state although we asked for a reply and not a close — the server ended it. Rows written
+before this still parse: the report defaults the missing fields instead of dropping the row.
+
+**Verified:** 12 gate checks (206 total, 0 failed) — id/handler recorded, no-dispatch-data row
+still written, a refused send kept as `dispatch_ok: false` with its reason, `objective_type`
+travelling with the row, `page_after` empty-but-open vs closed, `ended_by` for both closers, and
+the report printing the "dialog ended by" census, the type ids, the refused-send count and a
+`NOTE re-asked N x` line naming the page.
+
+---
+
+## G22. The loop asked the same reply on the same page 87 times *(fixed 2026-10-26, offline-verified)*
+
+**Problem:** `_dialog_call` counted only `wait`/`abstain` passes (`_dialog_waits`, the grace that
+closes an empty dialog). A `choose` reset the counter to zero — so a page that came back unchanged
+was simply asked again, forever. That is the mechanism behind both the 90 s and 110 s stalls and
+the 87 identical rows, and it is a criterion-(3) dead loop: no human, no progress, no end.
+
+**Fix:** `DIALOG_ASK_LIMIT = 2` per `(npc_id, page, reply index, objective_id)`. The answer is a
+function of the page, so a repeat is evidence, not bad luck: after two identical asks the third
+becomes a `close`, and from then on the planner **declines the dialog action** (`_dialog_call`
+returns `None`) and records `status: "exhausted"` — which the step note already prints as
+`dialog_exhausted: reply already left this page unchanged`. Falling through to the rest of the
+planner is the point: the objective needs a verb, not an answer, and the instrumented wait
+(G18) then escalates and reports instead of grinding. A fork inherits the spent-page memory.
+
+**Why this is not the hardcoded policy criterion (4) is about:** it keys on dialog structure and
+objective identity, names no quest, no NPC and no reply text, and encodes no world knowledge — it
+is the loop bound criterion (3) asks for. The negative label it consumes is now in the log:
+`outcome: same page` / `ended_by: after_reply` is exactly what a trained dialog scorer should be
+fitted on, and when that scorer exists it can decide *which* reply to spend, while this guard
+still decides when asking is no longer an action.
+
+**Known limits, stated:** the memory keys on `objective_id`, so an objective that progresses
+without changing id keeps the page spent — the escape is the wait/escalation path, and the next
+live run says whether that is enough. A legitimately revisit-able page (same objective, state
+changed elsewhere) is refused after two unchanged asks. And `_uiReplyHandler` vs `_sendReply` is
+still open (G3 note above), so the bubble stays lit after a synthetic answer.
+
+**Verified:** 10 gate checks (206 total, 0 failed) driving the real `_dialog_call`: first ask,
+one retry, the third ask turned into a close, the refusal after that, the `exhausted` status,
+a different objective re-asking, a page that moved re-asking, and the fork inheriting the memory.
 
 ---
 
@@ -832,17 +1010,27 @@ run as the G18 mutations.
 3. **G12** map-transition resilience — **closed in the pipeline 2026-10-26** (rules in
    patch-engine + patch-rules, bundle rebuilt, selftest IDENTICAL, js-error-finder 23/0);
    watching a real stall self-heal is still owed.
-4. **G3** dialog reasoning — it is why the talk objective never completes (`objectives +0`
-   in every baseline session), and its dialog-close null-deref is now fixed.
-5. **G14** repair-label taxonomy — the 455 `unknown` rows are now classified and the
+4. **G3** dialog reasoning — root-caused offline 2026-10-26, and it was never the ranker: the
+   page it re-answered 87 times says *"Go and equip your new items."* and the objective behind it
+   is `QuestObjectiveFreeForm` (`objective 14070`, `knowledge: objective_not_in_store`), which no
+   reply can satisfy. **G22** bounds that re-ask (two asks, then a close, then a refusal) and
+   **G21** labels who ended the conversation; both are behind the gate, neither is live proof.
+5. **G2** equip — promoted by that trace: it is the missing verb that makes the first quest chain
+   completable, and the observation already carries `inventory` plus the objective's
+   `parameter0 = 715354`. Mechanism researched; wiring still needs the live capture it was gated on.
+6. **G14** repair-label taxonomy — the 455 `unknown` rows are now classified and the
    decision row records the game outcome; the data criterion (4) trains on exists. Needs the
    next run's histogram to show it helps.
-6. **G18** the read-as-action step mix — 3,010 of 4,287 baseline steps were looking, 3,005
+7. **G18** the read-as-action step mix — 3,010 of 4,287 baseline steps were looking, 3,005
    of them scored `advanced`. A wait now costs time instead of a step, bounded at 40 passes.
    This is the number that makes criterion (2) readable at all: read `steps`, `waits` and the
    productive rate together, not `steps` alone.
-7. **G8** test gate — 165 checks, delegating JS + Go + bundle `--check`; green, and the
-   five new sections are mutation-tested (`tools/mutate_cause_gate.py`: 33 of 37 mutations run
-   and caught, 4 more written and awaiting a quiet-window re-run while the tree is not being
-   edited or built).
-8. **G2** equip, **G5** forecaster, **G7** fight proof, then G4/G6/G9/G10.
+8. **G8** test gate — 206 checks, delegating JS + Go + bundle `--check`; green, and the
+   new sections are mutation-tested (`tools/mutate_cause_gate.py`: 33 of 42 mutations run
+   and caught, 9 more written and awaiting a quiet-window re-run while the tree is not being
+   edited or built). G21 and G22 have no mutation coverage yet.
+9. **G20/G21** dialog outcomes — the ranker's primary signal fired on 0 of 1,547 recorded dialogs
+   and 90 of 110 recorded replies left the page unchanged; the pairing plus the dispatch fields are
+   now logged, so the first live talk attempt produces the labels a scorer needs. Training on them
+   is the next step, not this one.
+10. **G5** forecaster, **G7** fight proof, then G4/G6/G9/G10.

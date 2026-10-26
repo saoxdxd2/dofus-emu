@@ -146,6 +146,20 @@ and objective deltas, and this gives the verdict/decision/cause/disconnect break
   40-pass bound. This run shows `no rows`, which means *predates the instrument*. Expect the
   next baseline's `steps` to fall to roughly a third of this for the same wall time — the
   comparable numbers there are `waits`, the productive rate and the recovery rows, not `steps`.
+- **Dialog reply labels** — the baseline proves the ranker *ran* (dialog opens were read and
+  replies were scored) but nothing recorded whether the reply it chose was right, so there is
+  no accuracy number to improve on, and criterion (4) cannot be closed for dialogs. Fixed
+  2026-10-26 (G20): each dialog interaction now writes `{"kind":"dialog", name_id, reason,
+  page, replies, scores, outcome}` where `outcome` is the objective comparison after the click
+  (`advanced` / `same page` / `closed` / `unknown`); `summary()` carries `dialogs` /
+  `dialog_stalls` and `recovery_report.py` prints the outcome census, the per-NPC count and how
+  often the primary score beat zero. This run shows `no rows -- this log predates the dialog
+  instrument`, which means *unmeasured*. G21 adds the dispatch half (`reply_id`, `via`,
+  `dispatch_ok`, `objective_type`, `ended_by`) and G22 bounds the re-ask, so the census is now
+  readable. **The old corpus's stall is root-caused** (KNOWN_GAPS G3): the page's only reply says
+  *"Go and equip your new items."* and the objective is `QuestObjectiveFreeForm`, so no reply could
+  have advanced it — expect `ended_by: after_reply` plus `objective_type: 0` rather than a ranking
+  story, and expect `advanced` to stay rare until G2 gives the loop an equip verb.
 - **Fights won** — `fight.join` failed 48× and the fight-outcome log is the calibration
   source; per G7 no live fight has been proven end to end.
 - **Farm cycles per hour** — `farm.start` failed only 3×, but no session shows a

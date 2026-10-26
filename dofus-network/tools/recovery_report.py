@@ -40,6 +40,10 @@ def main(argv):
     wait_reasons = Counter()
     escalations = Counter()
     longest = {}
+    dialogs = dlg_primary_hit = 0
+    dlg_outcome, dlg_npc, dlg_reasons = Counter(), Counter(), Counter()
+    dlg_end, dlg_otype, dlg_repeat = Counter(), Counter(), Counter()
+    dlg_dispatch_fail = 0
     steps = decs = 0
     inter_events = inter_rows = 0
     sessions = set()
@@ -55,6 +59,24 @@ def main(argv):
             rec_wait[trig] += float(r.get("waited_s") or 0.0)
             if r.get("recovered"):
                 rec_ok[trig] += 1
+        if r.get("kind") == "dialog":
+            dialogs += 1
+            dlg_outcome[str(r.get("outcome"))] += 1
+            dlg_npc[str(r.get("name_id") or r.get("npc_id"))] += 1
+            dlg_reasons[str(r.get("reason"))] += 1
+            if r.get("ended_by"):
+                dlg_end[str(r["ended_by"])] += 1
+            if r.get("objective_type") is not None:
+                dlg_otype[str(r["objective_type"])] += 1
+            if not r.get("dispatch_ok", True):
+                dlg_dispatch_fail += 1
+            # The loop signature: one page, one reply, asked again and again. Counting it
+            # is what tells a re-open loop apart from a conversation making slow progress.
+            dlg_repeat[(str(r.get("name_id") or r.get("npc_id")),
+                        str(r.get("page") or "")[:48], str(r.get("asked")))] += 1
+            if any(float(s.get("score") or 0.0) > 0.0
+                   for s in (r.get("scores") or []) if isinstance(s, dict)):
+                dlg_primary_hit += 1
         if r.get("kind") == "wait":
             waits += 1
             wait_reasons[str(r.get("reason") or "")[:52]] += 1
@@ -134,6 +156,32 @@ def main(argv):
                   "in it, so reads were dispatched again (see KNOWN_GAPS G18)" % overflow)
     else:
         print("\nidle waits: no rows -- this log predates the wait instrument")
+
+    # G20: a reply is only evidence if the page it produced is recorded with it. The
+    # ranker's primary signal (objective token overlap) scored 0.0 on all 1,524 dialogs in
+    # the baseline corpus; this table is what tells a future scorer what actually worked.
+    if dialogs:
+        print("\ndialog replies (criterion 2: did the conversation move?): %d attempt(s)"
+              % dialogs)
+        for outcome, n in dlg_outcome.most_common():
+            print("   %6d  %s" % (n, outcome))
+        print("   by npc:", dict(dlg_npc.most_common(8)))
+        print("   chosen by:", dict(dlg_reasons.most_common(6)))
+        if dlg_end:
+            # `after_reply` = the game ended the dialog after an answer we sent. If that
+            # dominates, the stall is not the ranker's: no reply validates that objective.
+            print("   dialog ended by:", dict(dlg_end.most_common()))
+        if dlg_otype:
+            print("   objective type ids:", dict(dlg_otype.most_common()))
+        if dlg_dispatch_fail:
+            print("   dispatch refused (nothing went on the wire):", dlg_dispatch_fail)
+        worst = [(n, k) for k, n in dlg_repeat.most_common(3) if n > 1]
+        for n, (who, page, asked) in worst:
+            print("   NOTE re-asked %d x: npc=%s reply=%s page=%r" % (n, who, asked, page))
+        print("   objective overlap > 0: %d of %d  (0 means the tie-break chose every time)"
+              % (dlg_primary_hit, dialogs))
+    else:
+        print("\ndialog replies: no rows -- this log predates the dialog instrument")
 
     print("\nverdicts:      ", dict(verdicts.most_common()))
     print("decision acts: ", dict(actions.most_common()))

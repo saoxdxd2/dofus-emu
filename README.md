@@ -765,7 +765,7 @@ The loop has to run and fail first, and the labels fall out of it — every
 rule/model/human disagreement is a training sample.
 
 ```bash
-python -m agent.regression                         # 165 checks, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits; delegates node JS + bundle resilience --check + go relay suites)
+python -m agent.regression                         # 206 checks, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + dialog repeats; delegates node JS + bundle resilience --check + go relay suites)
 python -m advisor selftest                         # 122 checks, offline (knowledge repo only)
 python -m agent.verifier --stats
 python -m agent.verifier --label 98106503 4 failed "the listing never appeared"
@@ -946,11 +946,11 @@ python -m advisor selftest
 
 > The previous three-command gate — `agent.smoke_verifier`, `agent.selftest`,
 > `networkhealth.selftest` — no longer exists; all three were removed 2026-10-25.
-> `agent.regression` (165 checks) rebuilds the loop/verifier contract (verdicts,
+> `agent.regression` (206 checks) rebuilds the loop/verifier contract (verdicts,
 > nested-alias changes, the claim-proof, tool-vocabulary equality, the `hdv.buy`
 > ban, dialog question tie-break, prompt/named-mob fidelity, the verifier-model
 > guard, the recovery layer's no-repeat/terminate invariant, the failure-cause
-> labels, absent-client rescue, repair credit, idle waits and the settle window) and
+> labels, absent-client rescue, repair credit, idle waits, dialog outcome labels, the baseline report itself and the settle window) and
 > delegates the JS
 > page suites to `node` **and the Go relay tests to `go`**; `advisor selftest` (122 checks)
 > covers the knowledge repository. Neither covers the C#

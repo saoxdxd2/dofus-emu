@@ -17,12 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 CTRL = ROOT / "agent" / "controller.py"
 AUTO = ROOT / "agent" / "autopilot.py"
 BRIDGE = ROOT / "agent" / "bridge.py"
+PLAN = ROOT / "agent" / "planner.py"
+REPORT = ROOT / "tools" / "recovery_report.py"
 
 SNIPPET = ("import agent.regression as r\n"
            "r.test_failure_causes()\n"
            "r.test_absent_client_recovery()\n"
            "r.test_repair_credit()\n"
            "r.test_reads_are_not_actions()\n"
+           "r.test_dialog_labels()\n"
+           "r.test_dialog_repeat_guard()\n"
+           "r.test_report_instrument()\n"
            "r.test_settle_waits_for_promised_effect()\n"
            "print('FAILURES=%d' % len(r._FAILURES))\n"
            "[print('  -', f[:74]) for f in r._FAILURES]\n")
@@ -151,6 +156,19 @@ MUTATIONS = [
     ("a read is accepted as an escalation", AUTO,
      'if candidate.tool not in idle and candidate.tool != "-":',
      "if True:"),
+    # ---- dialog outcome labels
+    ("the dialog row is not written as a dialog row", AUTO,
+     '            "kind": "dialog",', '            "kind": "dialog_disabled",'),
+    ("a stalled reply is reported as progress", AUTO,
+     '            outcome = "same page"', '            outcome = "advanced"'),
+    ("every step becomes a dialog row", AUTO,
+     "        if chose is None and not args.get(\"close\"):\n            return\n",
+     ""),
+    ("a reply sent with no dialog open is attributed to one", AUTO,
+     "        if not isinstance(db, dict) or not db.get(\"open\"):\n            return\n",
+     ""),
+    ("the pairing is never recorded", AUTO,
+     "                self._record_dialog(call, before, after)\n", ""),
 ]
 
 
