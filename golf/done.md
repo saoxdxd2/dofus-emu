@@ -34,7 +34,10 @@ reports. `Δ` is against the working-tree source at pass time.
 lines, **-2,039 (-21.4%)**. Including the two in-flight expectations: **-173,669 bytes
 (-33.7%)** over 8 files.
 
-## Rejected passes (kept in `golf/_rejected/`)
+## Rejected passes (reverted, not retained)
+
+The rollback deleted the staging copies, so these are recorded by diff rather than kept as
+files:
 
 - **`encoder_policy` agent rewrite** — 40,784 → 40,864 bytes (+80) while calling `tok_emb`
   twice and computing the `pooled @ field_weights.t()` projection twice instead of reusing
