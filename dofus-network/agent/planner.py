@@ -212,6 +212,10 @@ class QuestPlanner:
         # A targeted farm order that the page refused because the mob is not on
         # this map. The next farm plan walks an exit instead of asking again.
         self._farm_target_missing = False
+        # A dialog whose reply list stays empty is a dead end; after a short
+        # readiness grace the planner closes it rather than polling forever.
+        self._dialog_waits = 0
+        self._dialog_key: Any = None
         # Plain orders (sell, inventory, travel) are already parsed by the rule
         # policy; the planner only owns quests/farm/auto. Built lazily.
         self._rule_policy: Any = None
@@ -364,6 +368,11 @@ class QuestPlanner:
             return []
         block = obs.get("map")
         rows = block.get("exits") if isinstance(block, dict) else None
+        try:
+            here = int(obs.get("map_id") or (block or {}).get("map_id")
+                       or (obs.get("position") or {}).get("map_id") or 0)
+        except (TypeError, ValueError):
+            here = 0
         exits: List[Dict[str, Any]] = []
         for row in rows or []:
             if not isinstance(row, dict):
@@ -372,6 +381,11 @@ class QuestPlanner:
             try:
                 dest = int(row.get("map_id"))
             except (TypeError, ValueError):
+                continue
+            # A self-edge is not a crossing. The live tutorial map reported
+            # right -> its own map id; the client refused every attempt with
+            # "needs ... a map_id different from <here>".
+            if here and dest == here:
                 continue
             blocked = bool(row.get("blocked"))
             if blocked and not include_blocked:
@@ -608,12 +622,36 @@ class QuestPlanner:
         decision = rank_dialog(obs)
         self.last_dialog_decision = decision
         if decision is None:
+            self._dialog_waits = 0
+            self._dialog_key = None
             return None
+        dialog = obs.get("dialog") if isinstance(obs.get("dialog"), dict) else {}
+        key = (dialog.get("npc_id"), dialog.get("message"))
+        if key != self._dialog_key:
+            self._dialog_waits = 0
+            self._dialog_key = key
         quest_id = decision.get("quest_id")
         self.current_quest = quest_id
         self.current_objective = decision.get("objective_id")
         reply = decision.get("reply")
-        if decision.get("status") == "choose" and quest_id is not None and reply:
+        status = decision.get("status")
+        if status in ("wait", "abstain"):
+            self._dialog_waits += 1
+            reply_count = int(dialog.get("reply_count") or 0)
+            # A present-but-empty list is definitive; a missing list may still be
+            # loading its ids/text, so give it a longer grace before closing.
+            definitive_empty = (reply_count == 0
+                                and (dialog.get("ids_present") is True
+                                     or dialog.get("text_present") is True))
+            if (definitive_empty and self._dialog_waits >= 2) or self._dialog_waits >= 6:
+                self._dialog_waits = 0
+                self._dialog_key = None
+                return ToolCall("quest.advance", {
+                    "quest_id": int(quest_id or 0), "close": True,
+                }, goal)
+            return ToolCall("state.snapshot", {}, goal)
+        self._dialog_waits = 0
+        if status == "choose" and quest_id is not None and reply:
             return ToolCall("quest.advance", {
                 "quest_id": quest_id,
                 "reply": reply["index"],
@@ -1118,9 +1156,14 @@ class QuestPlanner:
                 else:
                     self._claim_failures[key] = self._claim_failures.get(key, 0) + 1
             if not ok and ("objective_server_counted" in note
-                           or "completed by the server" in note):
+                           or "completed by the server" in note
+                           or "ended the connection" in note
+                           or "perform the objective instead" in note):
                 # The client told us this type is completed by playing, not by
-                # claiming. Remember it for every quest, not just this one.
+                # claiming. A claim that ended the connection is the strongest
+                # version of the same fact; retrying it in a tutorial produced 15
+                # reconnect errors in one live baseline. Remember the type for
+                # every quest, not just this one.
                 obj = self._lookup_objective(key[0], key[1], {}) or {}
                 try:
                     self._server_counted_types.add(int(obj.get("type_id")))
@@ -1190,6 +1233,8 @@ class QuestPlanner:
         twin._server_counted_types = set(self._server_counted_types)
         twin._prev_map = self._prev_map
         twin._farm_target_missing = self._farm_target_missing
+        twin._dialog_waits = 0
+        twin._dialog_key = None
         twin._npc_tries = dict(self._npc_tries)
         # The twin is about to observe its own world for the first time. Inheriting
         # the parent's scene key would make its first observation look unchanged,

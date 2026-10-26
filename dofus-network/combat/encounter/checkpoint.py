@@ -31,5 +31,4 @@ def load_params_config(path: Path) -> Tuple[Dict[str, Any], Config]:
 
 
 def load_params(path: Path) -> Dict[str, Any]:
-    payload = pickle.loads(Path(path).read_bytes())
-    return jax.tree_util.tree_map(jnp.asarray, payload["params"])
+    return load_params_config(path)[0]

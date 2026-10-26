@@ -17,7 +17,7 @@ import pickle
 import random
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 

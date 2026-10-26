@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any, Dict
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from combat.encounter import train as trainer

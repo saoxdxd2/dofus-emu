@@ -30,7 +30,7 @@ from combat.battle_solver import (BattleSolver, Board, Fighter, LiveSpell,
                                   TurnPlan)
 from combat.encounter import model
 from combat.encounter.checkpoint import load_params_config
-from combat.encounter.env import Config, action_masks, initial_state, observe
+from combat.encounter.env import action_masks, initial_state, observe
 from combat.observation import build_observation, validate_observation
 from combat.plan_value import (board_encounter, _empty_spell_row,
                                _player_spell_rows)

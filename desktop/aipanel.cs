@@ -93,6 +93,28 @@ namespace DofusFarm.UI
             }
         }
 
+        public static void FillShortcutList(ListView list, Dictionary<string, int> bindings)
+        {
+            list.Items.Clear();
+            foreach (string action in Actions())
+            {
+                int code;
+                string label = bindings.TryGetValue(action, out code) && code != 0
+                    ? ((Keys)code).ToString() : "(unset)";
+                var item = new ListViewItem(ActionLabel(action));
+                item.SubItems.Add(label);
+                item.Tag = action;
+                list.Items.Add(item);
+            }
+        }
+
+        public static bool BlockUnbindableKey(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Tab || e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape) return true;
+            e.SuppressKeyPress = true;
+            return false;
+        }
+
         public static string PathFor(string baseDir)
         {
             return System.IO.Path.Combine(baseDir, "ai_settings.ini");
@@ -107,12 +129,8 @@ namespace DofusFarm.UI
                 if (!File.Exists(path)) return s;
                 foreach (string raw in File.ReadAllLines(path))
                 {
-                    string line = raw.Trim();
-                    if (line.Length == 0 || line.StartsWith("#")) continue;
-                    int eq = line.IndexOf('=');
-                    if (eq <= 0) continue;
-                    string key = line.Substring(0, eq).Trim();
-                    string val = line.Substring(eq + 1).Trim();
+                    string key, val;
+                    if (!Ini.TryKeyValue(raw, out key, out val, skipSemicolon: false)) continue;
                     switch (key)
                     {
                         case "mode": s.Mode = val; break;
@@ -253,24 +271,13 @@ namespace DofusFarm.UI
 
         private void Fill()
         {
-            _list.Items.Clear();
-            foreach (string a in AiSettings.Actions())
-            {
-                int code;
-                string label = _map.TryGetValue(a, out code) && code != 0
-                    ? ((Keys)code).ToString() : "(unset)";
-                var item = new ListViewItem(AiSettings.ActionLabel(a));
-                item.SubItems.Add(label);
-                item.Tag = a;
-                _list.Items.Add(item);
-            }
+            AiSettings.FillShortcutList(_list, _map);
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)
         {
             if (_list.SelectedItems.Count == 0) return;
-            if (e.KeyCode == Keys.Tab || e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape) return;
-            e.SuppressKeyPress = true;
+            if (AiSettings.BlockUnbindableKey(e)) return;
             string action = (string)_list.SelectedItems[0].Tag;
             _map[action] = (int)e.KeyData;
             Fill();

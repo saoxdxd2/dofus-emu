@@ -140,13 +140,9 @@ namespace DofusFarm.Engine
                 if (!File.Exists(path)) return s;
                 foreach (string raw in File.ReadAllLines(path))
                 {
-                    string line = raw.Trim();
-                    if (line.Length == 0 || line.StartsWith("#") || line.StartsWith(";")) continue;
-                    int eq = line.IndexOf('=');
-                    if (eq <= 0) continue;
-                    string key = line.Substring(0, eq).Trim().ToLowerInvariant();
-                    string val = line.Substring(eq + 1).Trim();
-                    switch (key)
+                    string key, val;
+                    if (!Ini.TryKeyValue(raw, out key, out val)) continue;
+                    switch (key.ToLowerInvariant())
                     {
                         case "mode": s.Mode = NormalizeMode(val); break;
                         case "socks_port": s.SocksPort = ClampInt(val, s.SocksPort, 1, 65535); break;

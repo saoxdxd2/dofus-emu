@@ -417,20 +417,14 @@ namespace DofusFarm.Engine
             var forms = _activeForms.Values.Where(f => !f.IsDisposed).ToList();
             if (forms.Count == 0) return;
 
-            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
-            int width = Math.Min(640, (int)(wa.Width * 0.5));
-            int height = Math.Min(800, (int)(wa.Height * 0.75));
-            int stepX = 45, stepY = 45;
-
             for (int i = 0; i < forms.Count; i++)
             {
                 var f = forms[i];
-                int x = wa.X + (i * stepX);
-                int y = wa.Y + (i * stepY);
+                Rectangle b = DofusFarm.Native.Win32.CascadeBounds(i);
                 SafeUiInvoke(f, () =>
                 {
                     f.WindowState = FormWindowState.Normal;
-                    f.SetBounds(x, y, width, height);
+                    f.SetBounds(b.X, b.Y, b.Width, b.Height);
                     f.BringToFront();
                 });
             }

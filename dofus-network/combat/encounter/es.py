@@ -24,7 +24,7 @@ import json
 import pickle
 import time
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Dict
 
 import jax
 import jax.numpy as jnp
@@ -57,14 +57,10 @@ def _fitness(final: Dict[str, jax.Array], cfg: Config) -> jax.Array:
     return jnp.mean(win + 0.1 * hp_ratio - 0.05 * draw)
 
 
-def _load_checkpoint(path: Path):
-    return load_params_config(path)
-
-
 def run(args: argparse.Namespace) -> int:
     started = time.time()
     if args.init:
-        params, cfg = _load_checkpoint(Path(args.init))
+        params, cfg = load_params_config(Path(args.init))
     else:
         raise SystemExit("--init is required; ES starts from the v3 checkpoint")
     train_tables, train_spec = load_encounters(

@@ -927,6 +927,14 @@ namespace DofusFarm.Engine
                 // 3a. Account credentials injection from pool (accounts.txt)
                 bool hasConfigAccount = !string.IsNullOrEmpty(_options.AccountLogin);
                 _explicitAccount = hasConfigAccount;
+                bool oauthLogin = false;
+                try
+                {
+                    oauthLogin = File.Exists(Path.Combine(
+                        AppDomain.CurrentDomain.BaseDirectory, "oauth-login.flag"));
+                }
+                catch { }
+                if (oauthLogin) _skipPoolSeed = true;
                 if (!hasConfigAccount && !_skipPoolSeed)
                 {
                     int slot = 0;
@@ -1090,6 +1098,19 @@ namespace DofusFarm.Engine
                         "if(had)console.log('[Auth] manual-login: cleared stored HAAPI key from a previous exit');}catch(e){}" +
                         "})();");
                 }
+                else if (oauthLogin)
+                {
+                    // Keep the profile's OAuth session, but drop the guest identity a
+                    // previous pool seed may have left behind. Clearing the HAAPI key
+                    // here would log the user out, so unlike manual-login it stays.
+                    await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
+                        "(function(){" +
+                        "try{var raw=localStorage.getItem('dofus.1');if(raw){var p=JSON.parse(raw);" +
+                        "if(p&&p['all#guestAccount']){delete p['all#guestAccount'];" +
+                        "localStorage.setItem('dofus.1',JSON.stringify(p));" +
+                        "console.log('[Auth] oauth-login: cleared stored guest identity, kept OAuth session');}}}catch(e){}" +
+                        "})();");
+                }
                 else
                 {
                     await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(accScript);
@@ -1103,6 +1124,10 @@ namespace DofusFarm.Engine
                 if (manualLogin)
                     _logCallback?.Invoke(string.Format(
                         "[{0}] manual-login: no credentials injected; any guest identity or HAAPI key from a previous exit was cleared",
+                        _instanceId));
+                else if (oauthLogin)
+                    _logCallback?.Invoke(string.Format(
+                        "[{0}] oauth-login: pool seeding skipped; keeping the profile's saved OAuth identity",
                         _instanceId));
                 else if (hasSeedAccount)
                     _logCallback?.Invoke(string.Format("[{0}] Registered visitor credentials injection for {1}", _instanceId, _options.AccountLogin));

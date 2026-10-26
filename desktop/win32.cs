@@ -551,6 +551,14 @@ namespace DofusFarm.Native
             }
         }
 
+        public static Rectangle CascadeBounds(int index)
+        {
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            int width = Math.Min(640, (int)(wa.Width * 0.5));
+            int height = Math.Min(800, (int)(wa.Height * 0.75));
+            return new Rectangle(wa.X + index * 45, wa.Y + index * 45, width, height);
+        }
+
         public static void ApplyCascadeLayout(IList<int> launcherPids)
         {
             if (launcherPids == null || launcherPids.Count == 0) return;
@@ -558,22 +566,15 @@ namespace DofusFarm.Native
             HideEmulatorConsole(launcherPids);
             HideEmulatorToolbar(launcherPids);
 
-            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
-            int width = Math.Min(640, (int)(wa.Width * 0.5));
-            int height = Math.Min(800, (int)(wa.Height * 0.75));
-            int stepX = 45;
-            int stepY = 45;
-
             for (int i = 0; i < launcherPids.Count; i++)
             {
                 IntPtr hWnd = FindDeviceWindow(launcherPids[i]);
                 if (hWnd != IntPtr.Zero)
                 {
                     ShowWindow(hWnd, SW_RESTORE);
-                    int x = wa.X + (i * stepX);
-                    int y = wa.Y + (i * stepY);
-                    MoveWindow(hWnd, x, y, width, height, true);
-                    SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x0040);
+                    Rectangle b = CascadeBounds(i);
+                    MoveWindow(hWnd, b.X, b.Y, b.Width, b.Height, true);
+                    SetWindowPos(hWnd, IntPtr.Zero, b.X, b.Y, b.Width, b.Height, 0x0040);
                     EnsureDeviceWindowInteractive(hWnd);
                 }
             }

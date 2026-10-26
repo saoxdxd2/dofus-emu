@@ -92,9 +92,13 @@ def _quest_id(obs: Dict[str, Any], obj: Dict[str, Any]) -> Optional[int]:
 
 def _exits(obs: Dict[str, Any]) -> List[str]:
     block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
+    here = _map_id_of(obs)
     out: List[str] = []
     for entry in block.get("exits") or obs.get("exits") or []:
         if not isinstance(entry, dict) or entry.get("blocked"):
+            continue
+        dest = _as_int(entry.get("map_id"))
+        if here is not None and dest == here:
             continue
         direction = entry.get("direction")
         if direction and direction not in out:

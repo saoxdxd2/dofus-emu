@@ -891,25 +891,14 @@ namespace DofusFarm.UI
 
         private void Fill()
         {
-            _list.Items.Clear();
-            foreach (string a in AiSettings.Actions())
-            {
-                int code;
-                string key = _settings.Shortcuts.TryGetValue(a, out code) && code != 0
-                    ? ((Keys)code).ToString() : "(unset)";
-                var item = new ListViewItem(AiSettings.ActionLabel(a));
-                item.SubItems.Add(key);
-                item.Tag = a;
-                _list.Items.Add(item);
-            }
+            AiSettings.FillShortcutList(_list, _settings.Shortcuts);
             UpdateStatus();
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)
         {
             if (_list.SelectedItems.Count == 0) return;
-            if (e.KeyCode == Keys.Tab || e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape) return;
-            e.SuppressKeyPress = true;
+            if (AiSettings.BlockUnbindableKey(e)) return;
             string action = (string)_list.SelectedItems[0].Tag;
 
             // A key can only mean one thing. Refuse a duplicate rather than

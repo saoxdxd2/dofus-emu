@@ -3531,6 +3531,7 @@
                 replies: replies,
                 reply_count: count,
                 ids_ready: !!(info.ids && info.ids.length),
+                ids_present: info.ids != null,
                 text_ready: !!texts.length
             };
         };
@@ -5853,6 +5854,32 @@
                 // (index) sends NpcDialogReplyMessage{replyId: replyIds[index]}.
                 var pd0 = (window.gui && window.gui.playerData) || null;
                 if (pd0 && pd0.isInDialog) {
+                    if (args && args.close) {
+                        // Some NPC dialogs are one-way text with an empty reply
+                        // list. There is no index to send; the client's own close
+                        // path is the handler's LeaveDialogRequestMessage.
+                        var closed = false;
+                        try {
+                            var closeHandler = window.gui && window.gui.npcDialogHandler;
+                            if (closeHandler && typeof closeHandler._closeDialog === 'function') {
+                                closeHandler._closeDialog();
+                                closed = true;
+                            } else if (window.dofus && typeof window.dofus.sendMessage === 'function') {
+                                window.dofus.sendMessage('LeaveDialogRequestMessage', null);
+                                closed = true;
+                            }
+                            var closeUi = window.gui && window.gui.npcDialogUi;
+                            if (closeUi && typeof closeUi.leaveDialog === 'function') {
+                                closeUi.leaveDialog();
+                                closed = true;
+                            }
+                        } catch (closeErr) {
+                            return _agentResult(false, null,
+                                'dialog close failed: ' + closeErr);
+                        }
+                        return _agentResult(closed, { stage: 'dialog_closed' },
+                            closed ? null : 'no dialog close path available');
+                    }
                     var want = (args && args.reply !== undefined) ? parseInt(args.reply, 10) : 0;
                     if (isNaN(want)) want = 0;
                     // A reply can be named by the text the policy saw instead of

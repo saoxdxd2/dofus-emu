@@ -1,0 +1,60 @@
+﻿# DofusFarm network settings - edited by Settings > Network, or by hand.
+#
+# MEASURED ON THIS MACHINE (2026-10-22, Maroc Telecom):
+#   Cloudflare WARP is unreachable. UDP is dropped outright (the WireGuard
+#   handshake never answers, MASQUE/QUIC times out, even DNS to 1.1.1.1 over UDP
+#   fails), so wireproxy, warp-plus and the system client all fail here. The only
+#   egress that carries traffic is a TCP proxy. That is exactly the case auto
+#   mode exists for: it probes the tunnel, the configured upstream and the pool,
+#   and keeps whatever actually works.
+#
+# mode:
+#   auto       (default) test every candidate for real, keep the fastest healthy
+#              one, fail over by itself, and reject any "proxy" whose exit IP is
+#              this machine's own address. Never falls back to direct.
+#   wireproxy  userspace WireGuard (bin\warp\wireproxy.exe). Binds a local SOCKS5
+#              port and nothing else: Windows routing, DNS and WiFi are untouched.
+#   warp       the installed Cloudflare WARP client (warp-cli). It rewrites
+#              routing and DNS for the whole PC - if the tunnel drops, your WiFi
+#              drops with it. Only choose this if you know you want that.
+#   custom     one upstream for every instance: upstream=socks5://host:port or
+#              http://host:port. Leave upstream empty to round-robin proxies.txt.
+#   direct     no tunnel. Ankama sees this machine's real IP.
+#
+# fail_closed=1 refuses to launch (and the relay refuses to dial) rather than
+# ever connecting direct. Setting it to 0 exposes your real IP when the upstream
+# is down - that is the trade, made explicitly.
+mode=auto
+
+# Local SOCKS5 port the tunnel binds (wireproxy / warp modes only).
+socks_port=40000
+
+# custom mode only. Empty = round-robin the live entries in proxies.txt.
+upstream=
+
+# First relay port. Instance slot N listens on base_port + N.
+base_port=8880
+
+fail_closed=1
+
+# Raw extra flags for dofus-net-proxy.exe, e.g.
+#   -dns 1.1.1.1 -prefetch-radius 3 -mods-dir C:\mods
+extra_args=
+
+# Blank = bin\warp\wireproxy.conf
+wireproxy_conf=
+
+# Blank = <install>\asset_cache\proxy.log
+log_path=
+
+# Sticky session: the address the game server sees, reached through the disposable pool.
+#
+# Public proxies die in under a minute (measured: 11 alive, 0 alive sixty seconds later), so a
+# session riding one directly ends when it does -- and the reconnect arrives from a new address,
+# which the server treats as a hijacked account. With an exit you control, a hop dying costs a
+# retry and the address never moves.
+#
+# Leave empty to use the plain pool. Set it to a proxy you own, e.g. a free Oracle Cloud VM
+# running a SOCKS5 listener:
+#   exit_proxy=socks5://203.0.113.10:1080
+exit_proxy=

@@ -131,7 +131,6 @@ def unsolvable_reason(row: Dict[str, Any]) -> Optional[str]:
             if _reference_resolves(key, value, goal):
                 continue
             return f"{key}_not_in_goal"
-            continue
         if isinstance(value, str):
             if not value:
                 continue

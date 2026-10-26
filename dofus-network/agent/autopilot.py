@@ -56,6 +56,8 @@ from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
 from agent.observe import flatten
 from agent.awareness import character_key
+from agent.features import DELIVER_TYPES
+from agent.planner import _goal_mode
 from agent.thinking import ThinkingLayer
 from agent.knowledge_context import enrich_observation, load_default_store
 from agent.controller import Controller, Decision
@@ -192,6 +194,10 @@ class Autopilot:
         # Seconds to keep re-observing after an asynchronous tool before judging
         # it. 0 disables the wait (tests, dry runs).
         settle_s: float = 3.0,
+        # Deliberate dwell after a world-changing action. The completion gate
+        # already waits for movement/dialogs; this is the short "thinking token"
+        # that lets animations and the next observation settle before deciding.
+        think_s: float = 0.25,
         # Optional training data. Off leaves the solver unaffected; it only
         # stops writing the board snapshot rows used by a learned ranker.
         fight_boards: bool = True,
@@ -211,6 +217,8 @@ class Autopilot:
         self.world_poll_s = 3.0
         self.world_report_s = 30.0
         self.settle_s = settle_s
+        self.think_s = max(0.0, float(think_s))
+        self._think_until = 0.0
         # Steps allowed without `objectives_completed` rising before the current quest
         # is considered stuck. Only applies to unlimited runs.
         self.stall_limit = 8
@@ -413,53 +421,127 @@ class Autopilot:
 
     # -- observation ---------------------------------------------------------
 
-    def _settle(self, before: Any, after: Any, step_s: float = 0.4) -> Any:
-        """Re-observe until the world shows the action landed, or time runs out.
+    @staticmethod
+    def _obs_map(obs: Any) -> Optional[int]:
+        if not isinstance(obs, dict):
+            return None
+        for value in (obs.get("map_id"), (obs.get("position") or {}).get("map_id"),
+                      (obs.get("map") or {}).get("map_id")):
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                continue
+        return None
 
-        A directive that starts a walk returns ok before the character has moved. Judging
-        it in that same instant produces `noop`, the controller retries, and the agent
-        looks broken while it is walking. This waits for the change the tool promised.
+    @staticmethod
+    def _obs_cell(obs: Any) -> Optional[int]:
+        if not isinstance(obs, dict):
+            return None
+        for value in (obs.get("cell"), (obs.get("position") or {}).get("cell"),
+                      (obs.get("map") or {}).get("cell")):
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                continue
+        return None
 
-        Returns the first observation that differs from `before`, or the last one seen if
-        nothing ever changed — so a genuinely inert call is still scored `noop`, just
-        after the wait rather than before it.
+    @classmethod
+    def _world_key(cls, obs: Any) -> Tuple[Any, ...]:
+        if not isinstance(obs, dict):
+            return ()
+        objective = obs.get("current_objective")
+        objective_id = objective.get("objective_id") if isinstance(objective, dict) else None
+        return (cls._obs_map(obs), cls._obs_cell(obs), bool(obs.get("in_dialog")),
+                bool(obs.get("in_fight")), objective_id,
+                obs.get("objectives_completed"), bool(obs.get("auto_fight")))
+
+    @classmethod
+    def _action_complete(cls, call: Any, before: Any, after: Any) -> bool:
+        """Has the action reached the state it promised, not just started?"""
+        if not isinstance(after, dict) or not after:
+            return False
+        before = before if isinstance(before, dict) else {}
+        tool = str(getattr(call, "tool", "") or "")
+        args = getattr(call, "args", {}) or {}
+        if tool == "nav.goto":
+            target = args.get("map_id")
+            if target is not None:
+                try:
+                    return cls._obs_map(after) == int(target)
+                except (TypeError, ValueError):
+                    return False
+            target_cell = args.get("cell")
+            if target_cell is not None:
+                try:
+                    return cls._obs_cell(after) == int(target_cell)
+                except (TypeError, ValueError):
+                    return False
+            before_map, after_map = cls._obs_map(before), cls._obs_map(after)
+            return bool(after_map) and after_map != before_map
+        if tool == "quest.advance":
+            if after.get("in_dialog") and not before.get("in_dialog"):
+                return True
+            if after.get("objectives_completed") != before.get("objectives_completed"):
+                return True
+            b_obj = before.get("current_objective")
+            a_obj = after.get("current_objective")
+            if (a_obj or {}).get("objective_id") != (b_obj or {}).get("objective_id"):
+                return True
+            before_map, after_map = cls._obs_map(before), cls._obs_map(after)
+            return bool(after_map) and after_map != before_map
+        if tool in ("fight.join", "farm.start"):
+            if after.get("in_fight") and not before.get("in_fight"):
+                return True
+            return bool(after.get("auto_fight")) and not bool(before.get("auto_fight"))
+        return bool(changed_keys(before, after))
+
+    def _settle(self, before: Any, after: Any, call: Any = None,
+                step_s: float = 0.4) -> Any:
+        """Wait until the action completes, then until the world is quiet.
+
+        Returning on the first cell change let the next directive interrupt a
+        walk or a dialog that was still running. The loop issues one action at a
+        time: wait for the tool's own completion predicate (map change, target
+        cell, dialog/objective, fight), or, for actions without one, until the
+        world has been stable for a short quiet window. Only then is the next
+        decision allowed, with the caller's think pause on top.
         """
         if self.settle_s <= 0:
             return after
         if not isinstance(before, dict):
-            # No baseline yet, which is the first step of every run.
-            #
-            # Returning here meant the very first action was always judged against nothing and
-            # scored `noop` — and the live log shows exactly that: `quest.advance ok noop 103ms`,
-            # a walk that had barely started. Take a baseline now and give the action its window
-            # like any other step.
             before = after if isinstance(after, dict) else None
             if before is None:
                 return after
-        deadline = time.monotonic() + self.settle_s
+        tool = str(getattr(call, "tool", "") or "")
+        window = self.settle_s
+        if tool in ("nav.goto", "quest.advance"):
+            window = max(window, 6.0)
+        elif tool in ("fight.join", "farm.start"):
+            window = max(window, 4.0)
+        deadline = time.monotonic() + window
+        quiet_s = min(0.8, max(0.4, self.think_s + 0.3))
         best = after
+        last_key = self._world_key(best)
+        last_change = time.monotonic()
         delay = step_s
         while time.monotonic() < deadline:
-            if isinstance(best, dict) and changed_keys(before, best):
-                self._record_settled(best, after)
-                return best
+            if isinstance(best, dict) and best:
+                if self._action_complete(call, before, best):
+                    self._record_settled(best, after)
+                    return best
+                key = self._world_key(best)
+                if key != last_key:
+                    last_key = key
+                    last_change = time.monotonic()
+                elif (changed_keys(before, best)
+                      and time.monotonic() - last_change >= quiet_s):
+                    self._record_settled(best, after)
+                    return best
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             time.sleep(min(delay, remaining))
-            # Back off: a walk usually shows its first change quickly, but a
-            # long animation should not be polled at the fastest cadence for the
-            # whole window. This cuts settle HTTP reads roughly in half without
-            # delaying the first check or overrunning the deadline.
             delay = min(delay * 1.6, max(step_s, 0.8))
-            # A negative budget forces a real re-read: the settle window exists
-            # to see the world *after* the action, and reusing the snapshot
-            # adopted when the directive returned compared the before-state with
-            # itself for the whole window. That is why every SETTLE_TOOL used to
-            # score `noop` no matter how far the character walked.
-            # Polling is not a decision: do not write a full observation row
-            # for every 0.4 s retry (up to six per action). The final state is
-            # recorded once below, so the post-action snapshot is not lost.
             nxt = self.observe(max_age_ms=-1.0, record=False)
             if nxt:
                 best = nxt
@@ -958,6 +1040,13 @@ class Autopilot:
                     print(f"[autopilot] stopping: {reason}")
                     return self.summary(reason)
 
+                # The thinking token: a short deliberate dwell after a
+                # world-changing action, on top of the completion gate. It is
+                # skipped for reads, which do not need animation time.
+                think = self._think_until - time.monotonic()
+                if think > 0:
+                    time.sleep(min(think, 1.0))
+
                 # Idle farm polls are adopted, not recorded: an hours-long farm
                 # would otherwise write a trajectory row every few seconds.
                 before = self.observe(record=not self._farm_wait)
@@ -987,6 +1076,14 @@ class Autopilot:
                     print(f"[autopilot] agent2 directs: {call.tool} {call.args}")
                 else:
                     call = self.runtime.policy.choose(goal, before or {}, tools)
+                if call is not None and call.tool == "farm.start" \
+                        and not self._farm_allowed(goal, before):
+                    # The learned planner has this gate too, but the ThinkingLayer
+                    # and controller can force a call around it. This is the one
+                    # invariant every source must respect: a quests prompt never
+                    # starts a farm session for a non-delivery objective.
+                    print("[autopilot] refusing farm.start under a quest goal")
+                    call = ToolCall("state.snapshot", {}, goal)
                 if call is None:
                     self._emit(Step(index=self._index, goal=goal, tool="-", args={},
                                     ok=False, error="policy returned no call",
@@ -1129,7 +1226,9 @@ class Autopilot:
                 # judging them — otherwise every one of them scores `noop` and the loop
                 # retries an action that is already in flight.
                 if step_ok and call.tool in SETTLE_TOOLS:
-                    after = self._settle(before, after)
+                    after = self._settle(before, after, call=call)
+                if call.tool not in READ_ONLY_TOOLS and call.tool not in LISTING_TOOLS:
+                    self._think_until = time.monotonic() + self.think_s
 
                 # A successful farm order is a standing state. In Auto mode hold
                 # the goal instead of asking the scheduler again; an Order-mode
@@ -1166,13 +1265,11 @@ class Autopilot:
                     fell_out = after.get("in_world") is False and (
                         before.get("in_world") is not False or bool(reason))
                     if fell_out:
-                        print("[autopilot] the client left the world mid-run"
-                              + (f" (reason: {reason})" if reason else "")
-                              + "; stopping instead of sending directives into a dead session")
-                        print("[autopilot]   log in again, then start the loop.")
-                        ended_because = ("the client left the world"
-                                         + (f" ({reason})" if reason else ""))
-                        break
+                        if not self._recover_world(reason):
+                            ended_because = ("the client left the world"
+                                             + (f" ({reason})" if reason else ""))
+                            break
+                        continue
 
                 fight_estimate, fight_outcome = self._track_fight(before, after)
 
@@ -1286,11 +1383,13 @@ class Autopilot:
                     # nothing wrong, then abandoned the goal with "goals exhausted".
                     reason = str(result.error or "")
                     if "no client instance" in reason or "not reachable" in reason:
-                        print("[autopilot] the client is gone: " + reason)
-                        print("[autopilot]   stopping. Launch an instance, log in, then start"
-                              " the loop again.")
-                        ended_because = "the client window closed"
-                        break
+                        print("[autopilot] the client is gone: " + reason
+                              + "; waiting for it to return instead of ending the session")
+                        if not self._recover_world("client window closed"):
+                            ended_because = "the client window closed"
+                            break
+                        print("[autopilot] the client is back; resuming")
+                        continue
 
                     failures += 1
                     if failures >= self.consecutive_failure_limit:
@@ -1339,26 +1438,22 @@ class Autopilot:
                 # world change means the goal is not reachable this way.
                 key = f"{call.tool}|{json.dumps(call.args, sort_keys=True, ensure_ascii=False)}"
                 # A standing farm order is the one action whose no-op is hidden
-                # by its own recovery snapshot: farm.start -> state.snapshot ->
-                # farm.start cleared the exact-repeat streak forever. Count only
-                # farm.start across recoveries; movement tools must keep using
-                # the normal streak because their late progress lands in the
-                # snapshot rather than the call.
-                track_standing = call.tool == "farm.start"
+                # by its own recovery snapshot. Count every settle tool by call
+                # signature across interleaved reads; a snapshot that changes
+                # nothing must not reset a navigation/quest no-op streak.
+                track_action = call.tool in SETTLE_TOOLS
                 if verdict == "advanced":
                     self._recent.clear()
-                    if track_standing:
-                        self._action_noops.clear()
+                    if track_action:
+                        self._action_noops.pop(key, None)
                 else:
-                    if track_standing:
-                        self._action_noops[call.tool] = (
-                            self._action_noops.get(call.tool, 0) + 1)
+                    if track_action:
+                        self._action_noops[key] = self._action_noops.get(key, 0) + 1
                     self._recent.append(key)
                     del self._recent[:-32]
                     repeated = (len(self._recent) >= 3
                                 and len(set(self._recent[-3:])) == 1)
-                    streak = (self._action_noops.get(call.tool, 0)
-                              if track_standing else 0)
+                    streak = self._action_noops.get(key, 0) if track_action else 0
                     if repeated or streak >= 3:
                         if streak >= 3 and not repeated:
                             print(f"[autopilot] no progress: {call.tool} no-op 3x "
@@ -1480,7 +1575,7 @@ class Autopilot:
               " would look like it finished.")
         raise SystemExit(3)
 
-    def _require_world(self) -> bool:
+    def _require_world(self, fresh: bool = False) -> bool:
         """Wait until the character is in the game world, then start.
 
         The client stays *connected* at character selection. There is no map, no
@@ -1505,7 +1600,9 @@ class Autopilot:
             if reason:
                 print("[autopilot] stopping while waiting for the world: " + reason)
                 return False
-            obs = self.observe()
+            # A recovery wait must not trust the snapshot from before the kick:
+            # it can still say in_world=true for a session that is already gone.
+            obs = self.observe(max_age_ms=-1.0 if fresh else OBS_FRESH_MS)
             pos = obs.get("position") if isinstance(obs, dict) else None
             map_id = pos.get("map_id") if isinstance(pos, dict) else None
             if isinstance(obs, dict) and obs and obs.get("in_world") is not False \
@@ -1532,6 +1629,17 @@ class Autopilot:
             time.sleep(self.world_poll_s)
 
     @staticmethod
+    def _farm_allowed(goal: str, obs: Optional[Dict[str, Any]]) -> bool:
+        """A quests prompt may farm only to gather a delivery item."""
+        if _goal_mode(goal) != "quest":
+            return True
+        obj = (obs or {}).get("current_objective") or {}
+        try:
+            return int(obj.get("type_id")) in DELIVER_TYPES
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
     def _bridge_alive() -> bool:
         try:
             from agent.bridge import reachable
@@ -1539,6 +1647,35 @@ class Autopilot:
             return bool(reachable())
         except Exception:  # noqa: BLE001 - a probe must not end a run
             return True
+
+    def _recover_world(self, reason: Optional[str] = None) -> bool:
+        """Wait for a kicked/reloaded client instead of ending the run.
+
+        A kick, relogin or connection reset returns the page to the login screen;
+        sending more directives into it only repeats the failure. The same wait
+        used before the first step is correct here too, and after the world
+        returns the queue of no-ops and a stale farm/fight wait must be cleared
+        so the next decision starts from the new session.
+        """
+        print("[autopilot] the client left the world mid-run"
+              + (f" (reason: {reason})" if reason else "")
+              + "; waiting for it to come back")
+        self._prepared_obs = None
+        if not self._require_world(fresh=True):
+            return False
+        print("[autopilot] the world is back; resuming")
+        self._recent.clear()
+        self._action_noops.clear()
+        self._stall_since = self._index
+        self._farm_wait = False
+        self._farm_wait_since = None
+        self._farm_wait_report = 0.0
+        self._fight_wait_since = None
+        self._fight_wait_report = 0.0
+        self._fight_arm_at = 0.0
+        self._forced_call = None
+        self._prepared_obs = None
+        return True
 
     def _retire_named_quest(self, call: Any, before: Optional[Dict[str, Any]]) -> Optional[int]:
         """Retire the quest a stuck call was about, not just the first active one.
@@ -1805,6 +1942,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--veto-threshold", type=float, default=0.0,
                         help="pre-flight veto confidence (0 = never veto; needs a model)")
     parser.add_argument("--interval", type=float, default=0.0, help="seconds between steps (0 = as fast as the client answers)")
+    parser.add_argument("--think", type=float, default=0.25,
+                        help="dwell after a world-changing action before the next decision")
     parser.add_argument("--steps-per-goal", type=int, default=8)
     parser.add_argument("--policy", choices=("rule", "encoder", "planner"), default="rule")
     parser.add_argument("--level-hint", type=int, default=60,
@@ -1854,6 +1993,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         veto_threshold=args.veto_threshold,
         minutes=args.minutes,
         interval=args.interval,
+        think_s=args.think,
         steps_per_goal=args.steps_per_goal,
         dry_run=args.dry_run,
         explore=args.explore,

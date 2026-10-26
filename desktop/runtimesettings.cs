@@ -52,10 +52,9 @@ namespace DofusFarm.Engine
                 if (!File.Exists(path)) return settings;
                 foreach (string line in File.ReadLines(path))
                 {
-                    int eq = line.IndexOf('=');
-                    if (eq <= 0) continue;
-                    string key = line.Substring(0, eq).Trim();
-                    string value = line.Substring(eq + 1).Trim();
+                    string key, value;
+                    if (!Ini.TryKeyValue(line, out key, out value,
+                                         skipHash: false, skipSemicolon: false)) continue;
                     if (Same(key, "refresh_ms"))
                     {
                         int ms;

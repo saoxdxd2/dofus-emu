@@ -20,7 +20,7 @@ import pickle
 import random
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp

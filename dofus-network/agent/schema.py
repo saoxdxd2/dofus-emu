@@ -178,6 +178,7 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
                                "which is what an unanswered NPC dialog needs."),
             "reply_text": _p("str", "Which dialog reply to choose, by the exact French text "
                                     "reported in dialog.replies. With reply, both must agree."),
+            "close": _p("bool", "Close an open dialog whose reply list is empty."),
         },
         backend="directive",
         directive="QUEST_ADVANCE",

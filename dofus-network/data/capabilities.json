@@ -208,6 +208,11 @@
      "type": "str",
      "required": false,
      "doc": "Which dialog reply to choose, by the exact French text reported in dialog.replies. With reply, both must agree."
+    },
+    "close": {
+     "type": "bool",
+     "required": false,
+     "doc": "Close an open dialog whose reply list is empty."
     }
    }
   },

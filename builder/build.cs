@@ -94,6 +94,7 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "AiPanel.cs"),
                 Path.Combine(desktopDir, "NetSettings.cs"),
                 Path.Combine(desktopDir, "RuntimeSettings.cs"),
+                Path.Combine(desktopDir, "Ini.cs"),
                 Path.Combine(desktopDir, "PythonLocator.cs"),
                 Path.Combine(desktopDir, "Pages.cs"),
                 Path.Combine(desktopDir, "MainForm.cs"),
@@ -334,7 +335,17 @@ namespace DofusBuild
                 || (p.IndexOf("/data/maps/", StringComparison.OrdinalIgnoreCase) >= 0
                     && p.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
                     && !p.EndsWith("/data/maps/_index.json", StringComparison.OrdinalIgnoreCase)
-                    && !p.EndsWith("/data/maps/100139008.json", StringComparison.OrdinalIgnoreCase));
+                    && !p.EndsWith("/data/maps/100139008.json", StringComparison.OrdinalIgnoreCase))
+                // Design docs, offline benchmark corpora and training-only
+                // checkpoints are never opened by the shipped runtime. They stay
+                // in the repo but do not need to cross the installer wire.
+                || p.IndexOf("/docs/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/benchmarks/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/colab/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/decision_sft", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/verifier_sft", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.EndsWith("/models/encounter_pbt.pkl", StringComparison.OrdinalIgnoreCase)
+                || p.EndsWith("/models/verifier_head.pt", StringComparison.OrdinalIgnoreCase);
         }
 
         static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir, bool includeLegacyEmulator = false)
@@ -445,9 +456,12 @@ namespace DofusBuild
                     Directory.CreateDirectory(stageRuntimes);
                     foreach (string dir in Directory.GetDirectories(repoRuntimes, "*", SearchOption.AllDirectories))
                     {
+                        string leaf = Path.GetFileName(dir);
                         if (dir.IndexOf("site-packages", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             dir.IndexOf("__pycache__", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            dir.IndexOf(".dist-info", StringComparison.OrdinalIgnoreCase) >= 0)
+                            dir.IndexOf(".dist-info", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            string.Equals(leaf, "Scripts", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(leaf, "share", StringComparison.OrdinalIgnoreCase))
                             continue;
                         Directory.CreateDirectory(dir.Replace(repoRuntimes, stageRuntimes));
                     }
@@ -456,7 +470,10 @@ namespace DofusBuild
                         if (file.IndexOf("site-packages", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             file.IndexOf("__pycache__", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             file.IndexOf(".dist-info", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            file.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase))
+                            file.IndexOf("\\Scripts\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            file.IndexOf("\\share\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            file.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase) ||
+                            file.EndsWith("python.cat", StringComparison.OrdinalIgnoreCase))
                             continue;
                         string destFile = file.Replace(repoRuntimes, stageRuntimes);
                         string parent = Path.GetDirectoryName(destFile);
@@ -474,7 +491,14 @@ namespace DofusBuild
                     foreach (string dir in Directory.GetDirectories(repoClient, "*", SearchOption.AllDirectories))
                         Directory.CreateDirectory(dir.Replace(repoClient, stageClient));
                     foreach (string file in Directory.GetFiles(repoClient, "*", SearchOption.AllDirectories))
+                    {
+                        // script.js.bak is patch-engine's pristine in-repo backup
+                        // (5.4 MB). The installed client only needs the patched
+                        // script.js, and patch-engine is run by the builder.
+                        if (file.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                            continue;
                         File.Copy(file, file.Replace(repoClient, stageClient), true);
+                    }
                 }
 
                 // Stage dofus-network AI engine & trained TRM-MoE checkpoint
@@ -603,6 +627,7 @@ namespace DofusBuild
                     Path.Combine(desktopDir, "FarmEngine.cs"),
                     Path.Combine(desktopDir, "ProxySupervisor.cs"),
                     Path.Combine(desktopDir, "NetSettings.cs"),
+                    Path.Combine(desktopDir, "Ini.cs"),
                     Path.Combine(desktopDir, "PythonLocator.cs"),
                     Path.Combine(desktopDir, "ProgressBar.cs"),
                     Path.Combine(desktopDir, "Installer.cs")

@@ -26,7 +26,7 @@ import numpy as np
 
 from combat.encounter import model
 from combat.encounter.checkpoint import config_from_payload
-from combat.encounter.env import Config, initial_state, observe
+from combat.encounter.env import initial_state, observe
 from combat.encounter.train import make_eval_rollout
 from combat.fight_estimate import EnemyFacts, EnemyMember, PlayerFacts, estimate_from_facts
 

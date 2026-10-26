@@ -301,12 +301,9 @@ namespace DofusFarm.Engine {
                     string overridePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client-version.ini");
                     if (File.Exists(overridePath)) {
                         foreach (string raw in File.ReadAllLines(overridePath)) {
-                            string line = raw.Trim();
-                            if (line.Length == 0 || line.StartsWith("#") || line.StartsWith(";")) continue;
-                            int eq = line.IndexOf('=');
-                            if (eq <= 0) continue;
-                            string key = line.Substring(0, eq).Trim().ToLowerInvariant();
-                            string val = line.Substring(eq + 1).Trim();
+                            string key, val;
+                            if (!Ini.TryKeyValue(raw, out key, out val)) continue;
+                            key = key.ToLowerInvariant();
                             if (key == "app" && string.IsNullOrEmpty(av)) av = val;
                             else if (key == "code" && string.IsNullOrEmpty(vc)) vc = val;
                             else if (key == "build" && string.IsNullOrEmpty(bv)) bv = val;
@@ -1271,7 +1268,14 @@ namespace DofusFarm.Engine {
                     NetworkSettings net = NetworkSettings.For(AppBaseDir);
                     var sb = new StringBuilder().AppendFormat("-port {0} -cache \"{1}\" -quiet", port, Path.Combine(AppBaseDir, "asset_cache"));
                     if (!string.IsNullOrEmpty(normalizedUpstream)) {
-                        string chain = ProxySupervisor.Instance.UpstreamChain(normalizedUpstream, 4);
+                        // Custom means the operator pinned one upstream. Adding
+                        // "resilience" hops from a dead pool here sent both game
+                        // and CDN traffic to random timing-out proxies while the
+                        // pinned tunnel was healthy.
+                        bool pinnedCustom = NetworkSettings.NormalizeMode(net.Mode) == NetworkSettings.ModeCustom
+                                            && !string.IsNullOrEmpty(net.Upstream);
+                        string chain = pinnedCustom ? normalizedUpstream
+                                                    : ProxySupervisor.Instance.UpstreamChain(normalizedUpstream, 4);
                         string exitProxy = (net.ExitProxy ?? "").Trim();
                         if (!string.IsNullOrEmpty(exitProxy)) {
                             sb.AppendFormat(" -upstream \"{0}\" -exit-proxy \"{1}\"", chain, exitProxy);
@@ -1280,7 +1284,11 @@ namespace DofusFarm.Engine {
                             sb.AppendFormat(" -upstream \"{0}\"", chain);
                             Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
                         }
-                        string[] assetEgresses = chain.Split(',').Skip(1).Select(x => x.Trim()).Where(x => x.Length > 0).Take(3).ToArray();
+                        // Include the primary egress. When the pool is dead and a
+                        // pinned/custom upstream is the only working route, the old
+                        // Skip(1) sent every asset through dead fallbacks (502s)
+                        // while the game socket on the primary was healthy.
+                        string[] assetEgresses = chain.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).Take(4).ToArray();
                         if (assetEgresses.Length > 0) {
                             sb.AppendFormat(" -cdn-upstream \"{0}\"", string.Join(",", assetEgresses));
                             Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> assets over {1} egress(es))...", port, assetEgresses.Length));
