@@ -460,17 +460,26 @@ def _best_span(start_logits, end_logits, length, max_span=32):
     k = 5 if length > 5 else length
     top_starts, start_indices = torch.topk(starts, k)
     top_ends, end_indices = torch.topk(ends, k)
-    start_values = top_starts.tolist()
+    values = top_starts.tolist()
+    start_indices = start_indices.tolist()
     end_values = top_ends.tolist()
-    best = None
-    for start_value, start_index in zip(start_values, start_indices.tolist()):
-        for end_value, end_index in zip(end_values, end_indices.tolist()):
+    end_indices = end_indices.tolist()
+    best = score = None
+    for start_value, start_index in zip(values, start_indices):
+        if score is not None and score >= start_value + end_values[0]:
+            break
+        for end_value, end_index in zip(end_values, end_indices):
             if end_index < start_index or end_index - start_index >= max_span:
                 continue
-            score = start_value + end_value
-            if best is None or score > best[0]:
-                best = (score, start_index, end_index)
-    return None if best is None else (best[1], best[2])
+            total = start_value + end_value
+            if score is not None:
+                if total <= score:
+                    break
+                if not total > score:
+                    continue
+            score = total
+            best = (start_index, end_index)
+    return best
 
 
 def _parse_span(text, field):
@@ -538,8 +547,8 @@ def predict_rows(model, tokenizer, rows, system_prompt, batch_size=16,
     predictions = {}
     items = iter(dataset.items)
     for batch in dataset.batches(batch_size, shuffle=False):
-        for item, prediction in zip(items, decode_batch(
-                model, tokenizer, batch, threshold=threshold)):
+        for prediction, item in zip(decode_batch(
+                model, tokenizer, batch, threshold=threshold), items):
             predictions[str(item["id"])] = prediction
     return predictions
 
