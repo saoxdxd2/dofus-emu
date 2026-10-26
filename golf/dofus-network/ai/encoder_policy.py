@@ -108,26 +108,27 @@ class EncoderPolicy(nn.Module):
         self.apply(init_weights)
 
     def forward(self, input_ids, attention_mask=None):
-        length = input_ids.shape[1]
+        batch, length = input_ids.shape
         if length > self.config.max_seq_len:
             raise ValueError(
                 f"sequence of {length} exceeds max_seq_len {self.config.max_seq_len}")
-        emb = self.tok_emb(input_ids)
-        hidden = emb + self.pos_emb(torch.arange(length, device=input_ids.device))
+        positions = torch.arange(length, device=input_ids.device)
+        hidden = self.tok_emb(input_ids) + self.pos_emb(positions)
         padding = None if attention_mask is None else attention_mask.eq(0)
         hidden = self.norm(self.encoder(hidden, src_key_padding_mask=padding))
-        if attention_mask is None:
-            pooled = hidden[:, -1]
+        if attention_mask is not None:
+            lengths = attention_mask.sum(dim=1).clamp_min(2)
+            pooled = hidden[torch.arange(batch, device=input_ids.device),
+                            (lengths - 2).clamp_min(0)]
         else:
-            index = (attention_mask.sum(dim=1).clamp_min(2) - 2).clamp_min(0)
-            pooled = hidden.gather(1, index.unsqueeze(-1)).squeeze(1)
+            pooled = hidden[:, -1]
         pooled = self.dropout(pooled)
         if self.config.use_anchors:
             weights = F.normalize(self.tool_head.weight, dim=-1)
             tool_logits = F.normalize(pooled, dim=-1) @ weights.t() * self.config.anchor_scale
             lexical_tool = torch.zeros_like(tool_logits)
         else:
-            lexical = self.lex_tool(emb)
+            lexical = self.lex_tool(self.tok_emb(input_ids))
             if attention_mask is not None:
                 lexical_weight = attention_mask.unsqueeze(-1).to(lexical.dtype)
             else:
@@ -138,12 +139,11 @@ class EncoderPolicy(nn.Module):
         field_weights = self.field_emb.weight
         start = torch.matmul(self.start_proj(hidden), field_weights.t()).transpose(1, 2)
         end = torch.matmul(self.end_proj(hidden), field_weights.t()).transpose(1, 2)
-        projection = torch.matmul(pooled, field_weights.t())
         return {
             "pooled": pooled,
             "tool": tool_logits + lexical_tool,
-            "presence": projection + self.presence_bias,
-            "bool": projection + self.bool_bias,
+            "presence": torch.matmul(pooled, field_weights.t()) + self.presence_bias,
+            "bool": torch.matmul(pooled, field_weights.t()) + self.bool_bias,
             "span_start": start,
             "span_end": end,
             "enum": [head(pooled) for head in self.enum_heads],
@@ -460,17 +460,26 @@ def _best_span(start_logits, end_logits, length, max_span=32):
     k = 5 if length > 5 else length
     top_starts, start_indices = torch.topk(starts, k)
     top_ends, end_indices = torch.topk(ends, k)
-    start_values = top_starts.tolist()
+    values = top_starts.tolist()
+    start_indices = start_indices.tolist()
     end_values = top_ends.tolist()
-    best = None
-    for start_value, start_index in zip(start_values, start_indices.tolist()):
-        for end_value, end_index in zip(end_values, end_indices.tolist()):
+    end_indices = end_indices.tolist()
+    best = score = None
+    for start_value, start_index in zip(values, start_indices):
+        if score is not None and score >= start_value + end_values[0]:
+            break
+        for end_value, end_index in zip(end_values, end_indices):
             if end_index < start_index or end_index - start_index >= max_span:
                 continue
-            score = start_value + end_value
-            if best is None or score > best[0]:
-                best = (score, start_index, end_index)
-    return None if best is None else (best[1], best[2])
+            total = start_value + end_value
+            if score is not None:
+                if total <= score:
+                    break
+                if not total > score:
+                    continue
+            score = total
+            best = (start_index, end_index)
+    return best
 
 
 def _parse_span(text, field):
@@ -538,8 +547,8 @@ def predict_rows(model, tokenizer, rows, system_prompt, batch_size=16,
     predictions = {}
     items = iter(dataset.items)
     for batch in dataset.batches(batch_size, shuffle=False):
-        for item, prediction in zip(items, decode_batch(
-                model, tokenizer, batch, threshold=threshold)):
+        for prediction, item in zip(decode_batch(
+                model, tokenizer, batch, threshold=threshold), items):
             predictions[str(item["id"])] = prediction
     return predictions
 
