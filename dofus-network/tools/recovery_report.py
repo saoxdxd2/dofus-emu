@@ -43,7 +43,8 @@ def main(argv):
     dialogs = dlg_primary_hit = 0
     dlg_outcome, dlg_npc, dlg_reasons = Counter(), Counter(), Counter()
     dlg_end, dlg_otype, dlg_repeat = Counter(), Counter(), Counter()
-    dlg_dispatch_fail = 0
+    dlg_after = Counter()
+    dlg_dispatch_fail = dlg_stale_stall = 0
     steps = decs = 0
     inter_events = inter_rows = 0
     sessions = set()
@@ -70,6 +71,9 @@ def main(argv):
                 dlg_otype[str(r["objective_type"])] += 1
             if not r.get("dispatch_ok", True):
                 dlg_dispatch_fail += 1
+            dlg_after[str(r.get("after_source") or "unrecorded")] += 1
+            if r.get("outcome") == "same page" and str(r.get("after_source")) == "stale":
+                dlg_stale_stall += 1
             # The loop signature: one page, one reply, asked again and again. Counting it
             # is what tells a re-open loop apart from a conversation making slow progress.
             dlg_repeat[(str(r.get("name_id") or r.get("npc_id")),
@@ -175,6 +179,13 @@ def main(argv):
             print("   objective type ids:", dict(dlg_otype.most_common()))
         if dlg_dispatch_fail:
             print("   dispatch refused (nothing went on the wire):", dlg_dispatch_fail)
+        # G23: a stall is only a stall if the state it was compared against was read after
+        # the answer. The old corpus labelled every multi-reply pair from a pre-answer
+        # read, which is why the live row records which read produced the outcome.
+        print("   outcome measured against a read of type:", dict(dlg_after.most_common()))
+        if dlg_stale_stall:
+            print("   NOTE %d stall(s) measured against a STALE read -- not evidence"
+                  % dlg_stale_stall)
         worst = [(n, k) for k, n in dlg_repeat.most_common(3) if n > 1]
         for n, (who, page, asked) in worst:
             print("   NOTE re-asked %d x: npc=%s reply=%s page=%r" % (n, who, asked, page))

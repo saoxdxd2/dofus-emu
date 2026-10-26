@@ -1342,6 +1342,7 @@ def test_dialog_labels() -> None:
             self._index = 4
             self._dialogs = 0
             self._dialog_stalls = 0
+            self._obs_source = "call"
             self.rows: List[Dict[str, Any]] = []
             self.runtime = _Runtime()
 
@@ -1398,6 +1399,8 @@ def test_dialog_labels() -> None:
           "as a bad ranking", row["objective_type"] == 12, str(row.get("objective_type")))
     check("the page that came back is recorded, not just its verdict",
           row["page_after"] == "Which class interests you?", str(row.get("page_after")))
+    check("and the label says which read produced it",
+          row["after_source"] == "call", str(row.get("after_source")))
     _, row = record(moved)
     check("a row is still written when the client gives no dispatch data back",
           row is not None and row["reply_id"] is None and row["via"] is None
@@ -1497,13 +1500,24 @@ def test_report_instrument() -> None:
                     "dispatch_ok": False, "error": "asked for index 5",
                     "reason": "only reply", "scores": [],
                     "outcome": "same page", "ended_by": None,
-                    "page_after": "Hello", "at": 1003.5}),
+                    "page_after": "Hello", "after_source": "call", "at": 1003.5}),
         json.dumps({"kind": "dialog", "session": "s", "index": 2, "quest_id": 1,
                     "objective_id": 2, "objective_type": 12, "npc_id": 7,
                     "name_id": "Sorcerer", "page": "Hello", "replies": ["a"],
                     "asked": 0, "reply_text": "a", "reply_id": 41457, "dispatch_ok": True,
                     "reason": "only reply", "scores": [], "outcome": "closed",
-                    "ended_by": "after_reply", "page_after": None, "at": 1003.8}),
+                    "ended_by": "after_reply", "page_after": None,
+                    "after_source": "call", "at": 1003.8}),
+        # The G23 case: a stall measured against a read that predates the answer is not
+        # evidence of a stall, and the report has to say so instead of counting it.
+        json.dumps({"kind": "dialog", "session": "s", "index": 3, "quest_id": 1,
+                    "objective_id": 2, "objective_type": 12, "npc_id": 7,
+                    "name_id": "Sorcerer", "page": "Hello", "replies": ["a", "b"],
+                    "asked": 0, "reply_text": "a", "reply_id": 41457, "dispatch_ok": True,
+                    "reason": "objective token overlap",
+                    "scores": [{"index": 0, "score": 0.0, "question": 0.0}],
+                    "outcome": "same page", "ended_by": None, "page_after": "Hello",
+                    "after_source": "stale", "at": 1004.2}),
         json.dumps({"index": 0, "session": "s", "goal": "g", "tool": "quest.advance",
                     "args": {}, "ok": True, "error": None, "latency_ms": 20.0,
                     "verdict": "advanced", "at": 1004.0}),
@@ -1519,24 +1533,33 @@ def test_report_instrument() -> None:
           "2 passes in 1 run(s)" in text and "escalated to a real action" in text,
           "\n".join(l for l in text.splitlines() if "passes" in l or "escalated" in l))
     check("a stall is reported as a stall, and the dead primary signal is counted",
-          "2  same page" in text and "objective overlap > 0: 0 of 3" in text,
+          "3  same page" in text and "objective overlap > 0: 0 of 4" in text,
           "\n".join(l for l in text.splitlines() if "same page" in l or "overlap" in l))
     # G21: the report has to answer *who ended the dialog* and *how many times the same
     # page was re-asked*, or the census reads as a ranking failure when it is a loop.
     check("a row written before the dispatch fields still parses and is counted",
-          "dialog replies" in text and "3 attempt(s)" in text, text[:400])
+          "dialog replies" in text and "4 attempt(s)" in text, text[:400])
     check("the census says the game ended that dialog, not us",
           "dialog ended by: {'after_reply': 1}" in text,
           "\n".join(l for l in text.splitlines() if "ended by" in l))
     check("the objective type is shown, so a free-form stall is visible as one",
-          "objective type ids: {'12': 2}" in text,
+          "objective type ids: {'12': 3}" in text,
           "\n".join(l for l in text.splitlines() if "objective type" in l))
     check("a refused dispatch is not silently counted as an attempt that sent",
           "dispatch refused (nothing went on the wire): 1" in text,
           "\n".join(l for l in text.splitlines() if "refused" in l))
     check("re-asking one page is called out by name",
-          "NOTE re-asked 3 x" in text,
+          "NOTE re-asked 4 x" in text,
           "\n".join(l for l in text.splitlines() if "re-asked" in l))
+    # G23: a stall measured against a stale read is not a stall, and the report must say
+    # which read produced each outcome instead of blending the two into one census.
+    check("the census says which kind of read each outcome was measured against",
+          "outcome measured against a read of type:" in text
+          and "'stale': 1" in text and "'unrecorded': 1" in text,
+          "\n".join(l for l in text.splitlines() if "read of type" in l))
+    check("a stall measured against a stale read is flagged as not evidence",
+          "NOTE 1 stall(s) measured against a STALE read" in text,
+          "\n".join(l for l in text.splitlines() if "STALE" in l))
     check("the productive table counts the one world-changing step",
           "quest.advance" in text and "1       1" in text,
           "\n".join(l for l in text.splitlines() if "quest.advance" in l))
@@ -1610,6 +1633,343 @@ def test_dialog_repeat_guard() -> None:
           "_dialog_exhausted = set(self._dialog_exhausted)" in src, src[:120])
 
 
+def test_dialog_label_reader() -> None:
+    section("Dialog label reader (G23: the census behind a published verdict)")
+    import importlib.util
+    import json as _json
+
+    tool = REPO_ROOT / "tools" / "dialog_labels.py"
+    check("the reader exists", tool.exists(), str(tool))
+    spec = importlib.util.spec_from_file_location("dialog_labels", tool)
+    dl = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dl)
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        def step(obs, args, source="call"):
+            return _json.dumps({"kind": "step", "ts": 10.0, "instance": "gate",
+                                "tool": "quest.advance", "args": args, "ok": True,
+                                "error": None, "observation": obs,
+                                "observation_source": source,
+                                "result": {"response": {"ok": True}}}) + "\n"
+
+        page = {"open": True, "npc_id": 7, "name_id": "Sorcerer",
+                "message": "Pick one", "reply_count": 2,
+                "replies": [{"index": 0, "text": "Yes", "reply_id": 10},
+                            {"index": 1, "text": "No", "reply_id": 11}]}
+        obs_with = lambda d, **kw: dict({"dialog": d, "current_objective": {
+            "objective_id": 14070, "type": "QuestObjectiveFreeForm", "type_id": 0}}, **kw)
+        log = tmp / "default.jsonl"
+        log.write_text(
+            step(obs_with(page), {"quest_id": 1, "reply": 1, "reply_text": "No"})
+            + _json.dumps({"kind": "observation", "ts": 10.4,
+                           "observation": obs_with({"open": True, "message": "Second page"},
+                                                   objectives_completed=3),
+                           "observation_source": "call"}) + "\n"
+            # a second dispatch whose only follower is a carried read of the same page
+            + step(obs_with(page), {"quest_id": 1, "close": True})
+            + _json.dumps({"kind": "step", "ts": 11.0, "tool": "nav.goto", "args": {},
+                           "observation": obs_with(page),
+                           "observation_source": "carried"}) + "\n",
+            encoding="utf-8")
+        got = dl.pairs(str(log))
+        check("a reply dispatch paired with a fresh read is labelled advanced",
+              len(got) == 2 and got[0]["outcome"] == "advanced"
+              and got[0]["asked"] == 1 and got[0]["reply_id"] == 11
+              and got[0]["reply_text"] == "No" and got[0]["reply_count"] == 2,
+              str(got[:1]))
+        check("the objective type travels with the reconstructed pair",
+              got[0]["objective_type"] == "QuestObjectiveFreeForm"
+              and got[0]["objective_id"] == 14070, str(got[0]))
+        check("the pair says which kind of read produced its label",
+              got[0]["after_source"] == "call" and got[1]["after_source"] == "carried",
+              str([r["after_source"] for r in got]))
+        check("a close ask with no reply id is still a pair, and not attributed to a reply",
+              got[1]["asked"] == "close" and got[1]["reply_id"] is None, str(got[1]))
+
+        play = tmp / "play_dofus-99.jsonl"
+        def ev(seq, kind, name, args=None, session="s"):
+            return _json.dumps({"type": "PLAY_LOG", "session": session, "seq": seq,
+                                "at": 1000 + seq, "event": dict({"kind": kind,
+                                                                 "name": name},
+                                                                **({"args": args} if args
+                                                                   else {}))}) + "\n"
+        play.write_text(
+            ev(1, "send", "NpcDialogReplyMessage", {"replyId": 10})
+            + ev(2, "recv", "QuestStepValidatedMessage")
+            + ev(3, "send", "NpcDialogReplyMessage", {"replyId": 11})
+            + ev(4, "recv", "LeaveDialogMessage")
+            + ev(5, "send", "NpcDialogReplyMessage", {"replyId": 12})
+            + ev(6, "send", "NpcGenericActionRequestMessage")
+            + ev(7, "send", "LeaveDialogRequestMessage") + "\n", encoding="utf-8")
+        wire = dl.wire_outcomes([str(play)])
+        check("a reply the server credited is labelled from the wire, not the cache",
+              wire[10]["wire_outcome"] == "quest progress", str(wire.get(10)))
+        check("a reply answered by a leave is labelled dialog ended",
+              wire[11]["wire_outcome"] == "dialog ended", str(wire.get(11)))
+        check("a reply cut off by the next action owns no response",
+              wire[12]["wire_outcome"] == "no response recorded", str(wire.get(12)))
+        check("the wire counts sends per reply id, so a repeated ask is visible",
+              wire[10]["sends"] == 1, str(wire[10]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_brain_autostart() -> None:
+    section("Combat brain autostart (G24: a fight cannot be 'learned' by accident)")
+    import inspect
+    import json as _json
+    from combat import brain_service as bs
+    from agent import autopilot as _am
+    from agent.autopilot import Autopilot
+
+    # -- the health probe ----------------------------------------------------
+    class _Resp:
+        def __init__(self, payload):
+            self._blob = _json.dumps(payload).encode("utf-8")
+
+        def read(self):
+            return self._blob
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    asked: Dict[str, Any] = {}
+    real_open = bs.urllib.request.urlopen
+
+    def fake_open(url, timeout=None):
+        asked["url"] = url
+        return _Resp(asked["payload"])
+
+    bs.urllib.request.urlopen = fake_open
+    try:
+        asked["payload"] = {"status": "ok", "model": "encounter_ppo_pbt_actor"}
+        check("a healthy brain is named by its checkpoint, which is the only proof "
+              "the trained policy is the one answering",
+              bs.brain_is_up(1234) == "encounter_ppo_pbt_actor", str(asked))
+        check("the health request goes to the port the caller was given, not a "
+              "hardcoded default",
+              asked["url"] == "http://127.0.0.1:1234/health", asked.get("url"))
+        asked["payload"] = {"status": "starting"}
+        check("a process that answers /health without 'ok' is not a brain",
+              bs.brain_is_up(1234) is None, str(asked))
+    finally:
+        bs.urllib.request.urlopen = real_open
+
+    # -- interpreter choice ---------------------------------------------------
+    import os
+    got = bs.candidate_interceptors({"DOFUS_BRAIN_PYTHON": "/opt/venv/bin/python"})
+    check("an operator-set interpreter wins, so nobody has to watch the loop probe",
+          got[0] == "/opt/venv/bin/python", str(got))
+    # The override names the interpreter that is already first in the list: the same
+    # binary spelled two ways must cost one probe, not two.
+    dupe = bs.candidate_interceptors({"DOFUS_BRAIN_PYTHON": sys.executable})
+    spelled = [p for p in dupe if os.path.normcase(p) == os.path.normcase(sys.executable)]
+    check("the same interpreter spelled differently is probed once, not twice",
+          len(spelled) == 1, str(dupe))
+    check("an interpreter is only a candidate if it can import what the server imports",
+          bs.pick_brain_interpreter(["/no/such/python", "/bad/python"],
+                                    probe=lambda exe: exe == "/bad/python") == "/bad/python")
+    check("no capable interpreter is an install problem, and the loop must not spin on it",
+          bs.pick_brain_interpreter(["/a", "/b"], probe=lambda exe: False) is None)
+
+    # -- the state machine -----------------------------------------------------
+    def run_ensure(**over):
+        spawned: List[Any] = []
+        spawn_record = over.pop("_spawn", {"spawned": True, "reason": "spawned", "pid": 7})
+        health = list(over.pop("_health", ["encounter_ppo_pbt_actor"]))
+        # A clock that only ever advances past the readiness deadline: the wait loop
+        # must terminate, and `not_ready` must be reachable in the gate.
+        ticks = iter([0.0, 60.0, 120.0, 180.0, 240.0, 300.0, 360.0])
+
+        def spawn(exe, port):
+            spawned.append((exe, port))
+            return dict(spawn_record)
+
+        def is_up(port):
+            return health.pop(0) if health else None
+
+        args = dict(port=8891, sleep=lambda s: None, clock=lambda: next(ticks),
+                    is_up=is_up, open_port=lambda port: False,
+                    pick=lambda: "/capable/python", spawn=spawn)
+        args.update(over)
+        return bs.ensure_brain(**args), {"spawned": spawned}
+
+    (state, detail), calls = run_ensure(dry_run=True)
+    check("a dry run touches no process and no port",
+          state == "dry_run" and not calls["spawned"], str((state, calls)))
+    (state, detail), calls = run_ensure()
+    check("a brain already answering is reused instead of started a second time",
+          state == "reused" and detail["model"] == "encounter_ppo_pbt_actor"
+          and not calls["spawned"], str((state, detail)))
+    (state, detail), calls = run_ensure(_health=[None], open_port=lambda port: True,
+                                        pick=lambda: "/x")
+    check("a port held by something that never answers /health is named as a "
+          "conflict, because the page will silently keep its fallback",
+          state == "port_held" and not calls["spawned"], str((state, detail)))
+    (state, detail), calls = run_ensure(_health=[None], pick=lambda: None)
+    check("no capable interpreter stops the attempt rather than retrying forever",
+          state == "no_interpreter" and not calls["spawned"], str((state, detail)))
+    (state, detail), calls = run_ensure(_health=[None, "encounter_ppo_pbt_actor"])
+    check("waiting for readiness is bounded, and the wait is reported",
+          state == "started" and detail["pid"] == 7
+          and calls["spawned"] == [("/capable/python", 8891)], str((state, detail)))
+    (state, detail), calls = run_ensure(_health=[None, None, None])
+    check("a spawn whose health never arrives is not_ready, never a silent success",
+          state == "not_ready" and detail["waited_s"] == 90.0
+          and "health never answered" in str(detail.get("reason")), str((state, detail)))
+    (state, detail), calls = run_ensure(_health=[None], _spawn={"spawned": False,
+                                                               "reason": "denied"})
+    check("a refused spawn is reported as its own state, with the OS reason",
+          state == "spawn_failed" and detail["reason"] == "denied", str((state, detail)))
+
+    # -- the loop's use of it ---------------------------------------------------
+    class _Ctl:
+        def save(self, force=False):
+            return None
+
+        def stats(self):
+            return {}
+
+    class _Shim(Autopilot):
+        """A real Autopilot with its collaborators withheld.
+
+        Subclassing rather than duck-typing keeps the production constant
+        (BRAIN_FINAL_STATES) out of the fixture: if the loop stops treating
+        `no_interpreter` as final, this section notices instead of agreeing.
+        """
+
+        def __init__(self):
+            self.brain_mode = "auto"
+            self.preflight = True
+            self.dry_run = False
+            self.session = "gate"
+            self.brain_retry_s = 300.0
+            self._brain: Dict[str, Any] = {}
+            self._brain_attempts = 0
+            self._brain_try_at = 0.0
+            self.rows: List[Any] = []
+            # Enough of the loop's bookkeeping for the real summary() to run: the
+            # brain field is only checked if the field is read where it is written.
+            self.controller = _Ctl()
+            self.log_path = Path("gate.jsonl")
+            self._step_total = 0
+            self._verdict_counts: Dict[str, int] = {}
+            self._source_counts: Dict[str, int] = {}
+            self.replan_requested = 0
+            self._intervention_total = 0
+            self._recoveries = 0
+            self._recoveries_ok = 0
+            self._recovery_wait_s = 0.0
+            self._waits = 0
+            self._dialogs = 0
+            self._dialog_stalls = 0
+            self.open_listings: List[Any] = []
+            self._listing_total = 0
+            self._first_step_at = 0.0
+            self._last_step_at = 0.0
+
+        def _append_log_line(self, blob):
+            self.rows.append(_json.loads(blob.decode("utf-8")
+                                         if isinstance(blob, bytes) else blob))
+
+    real_ensure = _am.ensure_brain
+    probes: List[int] = []
+
+    def counting_ensure(dry_run=False):
+        probes.append(1)
+        if dry_run:
+            return "dry_run", {"reason": "dry run does not start services"}
+        return "started", {"model": "encounter_ppo_pbt_actor", "pid": 9,
+                           "cmd": ["python", "combat_ai_server.py", "8891"]}
+
+    _am.ensure_brain = counting_ensure
+    real_time = _am.time.time
+
+    def at(epoch, call):
+        """Drive one probe as if the wall clock had reached `epoch`."""
+        _am.time.time = lambda: epoch
+        try:
+            call()
+        finally:
+            _am.time.time = real_time
+
+    try:
+        shim = _Shim()
+        shim.brain_mode = "off"
+        at(1000.0, lambda: Autopilot._ensure_brain(shim))
+        check("--brain off leaves the page's heuristic fallback in charge, and says so "
+              "by never probing", probes == [] and shim._brain == {}, str(probes))
+        shim = _Shim()
+        shim.preflight = False
+        at(1000.0, lambda: Autopilot._ensure_brain(shim))
+        check("a loop built without preflight is the gate's synthetic run, so it starts "
+              "no services on the developer's machine",
+              probes == [], str(probes))
+        shim = _Shim()
+        at(1000.0, lambda: Autopilot._ensure_brain(shim, "fight_start"))
+        row = shim._brain
+        check("the probe is recorded as a row, not only printed",
+              len(shim.rows) == 1 and row["kind"] == "brain"
+              and row["when"] == "fight_start" and row["state"] == "started"
+              and row["model"] == "encounter_ppo_pbt_actor" and row["pid"] == 9,
+              str(row))
+        check("the command that was run travels with the row, so a wrong interpreter is "
+              "auditable after the fact", "combat_ai_server.py" in str(row["cmd"]),
+              str(row.get("cmd")))
+        check("the row drops nothing the reader needs and carries no session id of its "
+              "own making", row["session"] == shim.session and row["mode"] == "auto",
+              str(row))
+        at(1100.0, lambda: Autopilot._ensure_brain(shim))
+        check("a brain that answered is never restarted in the same run",
+              len(probes) == 1 and shim._brain_attempts == 1, str(probes))
+        shim = _Shim()
+        shim._brain = {"state": "no_interpreter"}
+        at(99999.0, lambda: Autopilot._ensure_brain(shim))
+        check("a structural failure is as final as a success: missing jax is an install, "
+              "not a retry", len(probes) == 1, str(probes))
+        shim = _Shim()
+        shim._brain = {"state": "port_held"}
+        shim._brain_try_at = 100.0
+        at(120.0, lambda: Autopilot._ensure_brain(shim))
+        check("a retryable failure waits for the cadence instead of probing every step",
+              len(probes) == 1, str(probes))
+        at(500.0, lambda: Autopilot._ensure_brain(shim))
+        check("past the cadence the same run asks again, because a freed port is fixable",
+              len(probes) == 2 and shim._brain_attempts == 1, str(probes))
+        shim = _Shim()
+        shim.dry_run = True
+        at(1000.0, lambda: Autopilot._ensure_brain(shim))
+        check("a dry run is recorded as a dry run, never as a brain being available",
+              shim._brain["state"] == "dry_run" and "model" not in shim._brain,
+              str(shim._brain))
+        shim = _Shim()
+        at(5000.0, lambda: Autopilot._ensure_brain(shim))
+        report = shim.summary("gate")
+        check("the run's own summary carries the brain state, so a fight count can be "
+              "read against which policy was actually available",
+              report["brain"]["state"] == "started"
+              and report["brain"]["model"] == "encounter_ppo_pbt_actor",
+              str(report.get("brain")))
+        check("a run that never probed reports no brain rather than an empty success",
+              _Shim().summary("gate")["brain"] == {key: None for key in
+                                                   ("state", "model", "mode",
+                                                    "reason", "when")},
+              str(_Shim().summary("gate")["brain"]))
+    finally:
+        _am.ensure_brain = real_ensure
+
+    run_src = inspect.getsource(Autopilot._run)
+    fight_src = inspect.getsource(Autopilot._wait_out_fight)
+    check("the brain is started before the first step, not during a fight",
+          "self._ensure_brain()" in run_src, "no startup call")
+    check("a fight that begins with the brain down gets one more probe",
+          'self._ensure_brain("fight_start")' in fight_src, "no fight-start call")
+
+
 def run() -> Tuple[int, List[str]]:
     test_verdict_vocabulary()
     test_verifier_rules()
@@ -1628,6 +1988,8 @@ def run() -> Tuple[int, List[str]]:
     test_reads_are_not_actions()
     test_dialog_labels()
     test_dialog_repeat_guard()
+    test_dialog_label_reader()
+    test_brain_autostart()
     test_report_instrument()
     test_settle_waits_for_promised_effect()
     test_intervention_instrument()

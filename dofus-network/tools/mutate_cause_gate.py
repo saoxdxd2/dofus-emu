@@ -19,6 +19,7 @@ AUTO = ROOT / "agent" / "autopilot.py"
 BRIDGE = ROOT / "agent" / "bridge.py"
 PLAN = ROOT / "agent" / "planner.py"
 REPORT = ROOT / "tools" / "recovery_report.py"
+BRAIN = ROOT / "combat" / "brain_service.py"
 
 SNIPPET = ("import agent.regression as r\n"
            "r.test_failure_causes()\n"
@@ -27,6 +28,7 @@ SNIPPET = ("import agent.regression as r\n"
            "r.test_reads_are_not_actions()\n"
            "r.test_dialog_labels()\n"
            "r.test_dialog_repeat_guard()\n"
+           "r.test_brain_autostart()\n"
            "r.test_report_instrument()\n"
            "r.test_settle_waits_for_promised_effect()\n"
            "print('FAILURES=%d' % len(r._FAILURES))\n"
@@ -168,7 +170,55 @@ MUTATIONS = [
      "        if not isinstance(db, dict) or not db.get(\"open\"):\n            return\n",
      ""),
     ("the pairing is never recorded", AUTO,
-     "                self._record_dialog(call, before, after)\n", ""),
+     "                self._record_dialog(call, before, after, result)\n", ""),
+    # ---- G21: the dispatch half of the dialog label
+    # Anchored on three lines: `data = getattr(result, "data", None)` alone appears five
+    # times in this file, and the first draft of this mutation silently hit a helper two
+    # thousand lines above the dialog row instead.
+    ("the client's dispatch result is ignored", AUTO,
+     '        data = getattr(result, "data", None)\n'
+     '        data = data if isinstance(data, dict) else {}\n'
+     "        self._dialogs += 1",
+     "        data = {}\n        self._dialogs += 1"),
+    ("the outcome does not say which read produced it", AUTO,
+     '            "after_source": getattr(self, "_obs_source", "unknown"),\n', ""),
+    ("every closed dialog is credited to us", AUTO,
+     '            ended_by = "asked" if asked == "close" else "after_reply"',
+     '            ended_by = "asked"'),
+    ("a refused send reports itself as sent", AUTO,
+     '            "dispatch_ok": bool(getattr(result, "ok", True)),',
+     '            "dispatch_ok": True,'),
+    ("the objective type is dropped from the row", AUTO,
+     '            "objective_type": kn.get("type_id", tracker.get("type_id")),',
+     '            "objective_type": None,'),
+    ("the after-page is faked from the before-page", AUTO,
+     '            "page_after": str(da.get("message") or "")[:120] if da.get("open") else None,',
+     '            "page_after": str(db.get("message") or "")[:120] if da.get("open") else None,'),
+    # ---- G22: the spent-page guard
+    ("a repeat is never refused (the 87-ask loop returns)", PLAN,
+     "DIALOG_ASK_LIMIT = 2", "DIALOG_ASK_LIMIT = 99"),
+    ("the spent-page guard declines but still falls through to asking", PLAN,
+     '                                             "reason": "reply already left this page unchanged"}\n'
+     "                return None",
+     '                                             "reason": "reply already left this page unchanged"}\n'
+     "                pass"),
+    ("the spent-page memo forgets which objective it was spent on", PLAN,
+     "\n                   decision.get(\"objective_id\"))",
+     "\n                   None)"),
+    ("the spent-page memo forgets the page", PLAN,
+     '            ask = (dialog.get("npc_id"), dialog.get("message"), reply["index"],',
+     '            ask = (dialog.get("npc_id"), reply["index"], reply["index"],'),
+    ("a fork restarts a spent loop", PLAN,
+     "        twin._dialog_exhausted = set(self._dialog_exhausted)",
+     "        twin._dialog_exhausted = set()"),
+    # ---- G21/G22 as read by the report
+    ("the report cannot say who ended the dialog", REPORT,
+     '            if r.get("ended_by"):', "            if False:"),
+    ("the report hides the re-ask NOTE", REPORT,
+     "        worst = [(n, k) for k, n in dlg_repeat.most_common(3) if n > 1]",
+     "        worst = []"),
+    ("a refused send is invisible in the report", REPORT,
+     '            if not r.get("dispatch_ok", True):', "            if False:"),
 ]
 
 

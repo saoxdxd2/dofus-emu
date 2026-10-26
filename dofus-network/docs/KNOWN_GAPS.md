@@ -810,7 +810,7 @@ the training corpus, so `state.snapshot` will be rare among labelled actions at 
 That is intended — waiting is not an action with a reward — but it does change the action prior,
 and a policy that stops trying to wait would be a regression to notice, not to assume.
 
-**Verified:** 34 gate checks (0 failed inside the current 206-check gate) driving the real loop end to end with a stub
+**Verified:** 34 gate checks (0 failed inside the current 218-check gate) driving the real loop end to end with a stub
 runtime: two directives produce exactly two step rows and exactly `2 × 40` wait rows, with two
 verifier labels and two controller calls over 82 policy passes — so a wait provably produces no
 verdict and no reward — plus the fall-out truth table, the pacing and `--interval` precedence, the
@@ -855,7 +855,7 @@ an action under the wrong prompt.
 policy: nothing is added to the action set, and no goal can inherit work it did not choose.
 
 **Verified:** the G18 section asserts each goal escalates for itself and that the two step rows
-belong to `work the 0 goal` and `work the 1 goal` respectively; 0 failed in the current 206-check gate.
+belong to `work the 0 goal` and `work the 1 goal` respectively; 0 failed in the current 218-check gate.
 **Not verified:** that a live multi-goal run never carries a forced call over — reachable in a
 baseline replay, not in an offline gate. A mutation is prepared in
 `tools/mutate_cause_gate.py` (removing the three reset lines) and is pending the same quiet-window
@@ -905,11 +905,12 @@ first labelled set, and the honest next step is a scorer trained on `(page, repl
 features) -> outcome` that subsumes the tie-break, plus a stall rule that does not re-ask a reply
 whose page did not move (a general rule about dialog structure, not about any quest).
 
-**Verified:** 19 gate checks (206 total, 0 failed) — the four outcome cases, features stored with
+**Verified:** 19 gate checks (218 total, 0 failed) — the four outcome cases, features stored with
 the pair, no row for a non-dialog step, no row with no dialog open, the call site on the step path
 where both states exist, and the report reading every row kind the loop writes (including a
 pre-instrument log saying *predates*, not *zero*). 5 more mutations cover it in
-`tools/mutate_cause_gate.py` (**42 total; 33 run and caught, 9 pending** a quiet-tree re-run).
+`tools/mutate_cause_gate.py` (**56 mutations in the driver; all 56 run and caught, 0 missed,
+0 anchor-skipped, on the quiet tree 2026-10-26, and the restored tree re-runs 218/0**).
 **Not verified:** that any live reply now advances a conversation — the 90/110 stall figure is a
 measurement of the *old* corpus, and the first run with dialog rows is what will say whether it is
 a client-path problem, a ranking problem, or a quest that needs an item rather than a reply.
@@ -958,11 +959,14 @@ that went on the wire), `via` (which object answered), `dispatch_ok`, `error`, `
 after-state although we asked for a reply and not a close — the server ended it. Rows written
 before this still parse: the report defaults the missing fields instead of dropping the row.
 
-**Verified:** 12 gate checks (206 total, 0 failed) — id/handler recorded, no-dispatch-data row
+**Verified:** 12 gate checks (218 total, 0 failed) — id/handler recorded, no-dispatch-data row
 still written, a refused send kept as `dispatch_ok: false` with its reason, `objective_type`
 travelling with the row, `page_after` empty-but-open vs closed, `ended_by` for both closers, and
 the report printing the "dialog ended by" census, the type ids, the refused-send count and a
-`NOTE re-asked N x` line naming the page.
+`NOTE re-asked N x` line naming the page. Eight mutations cover these fields and their report
+lines (dispatch ignored, close misattributed, refused send reported as sent, objective type
+dropped, after-page faked from the before-page, `after_source` not recorded, census hidden,
+refused send invisible) — **all eight caught** in the 56-mutation run.
 
 ---
 
@@ -994,9 +998,82 @@ live run says whether that is enough. A legitimately revisit-able page (same obj
 changed elsewhere) is refused after two unchanged asks. And `_uiReplyHandler` vs `_sendReply` is
 still open (G3 note above), so the bubble stays lit after a synthetic answer.
 
-**Verified:** 10 gate checks (206 total, 0 failed) driving the real `_dialog_call`: first ask,
+**Verified:** 10 gate checks (218 total, 0 failed) driving the real `_dialog_call`: first ask,
 one retry, the third ask turned into a close, the refusal after that, the `exhausted` status,
 a different objective re-asking, a page that moved re-asking, and the fork inheriting the memory.
+Six mutations cover it (limit raised so the loop returns, refusal falling through to asking, memo
+forgetting the objective, memo forgetting the page, fork restarting, re-ask NOTE silenced) —
+**all six caught**.
+
+---
+
+## G23. The recorded corpus cannot label a dialog choice at all — measured, not assumed *(2026-10-26)*
+
+`tools/dialog_labels.py` reconstructs `(page, reply sent) -> outcome` from the old trajectory
+logs, so the dialog scorer would not have to wait for a live run. It does not work out that way,
+and the reason is worth more than the dataset:
+
+```
+dialog pairs reconstructed from 16 log file(s): 260
+  by action:  {'replied': 112, 'asked': 148}
+  by outcome: {'closed': 100, 'same page': 148, 'advanced': 12}
+  by objective type: {'QuestObjectiveFreeForm': 258, 'GoToNpc': 1, 'FightMonster': 1}
+  pages offering >1 reply: 149 of 260
+  of those, the answer moved the page: 0
+  choice pairs measured against a fresh read: 0, of which advanced: 0
+  pairs where the OBJECTIVE moved afterwards: 1  (... with a real choice: 0)
+  148 x  Class-Changing Sorcerer  reply=close  "Hello, Aiai. I'm a travelling sorcerer…"
+   88 x  Ayin Spyr               reply=0      "Don't tell me you need help putting on a helmet?"
+```
+
+Three things follow.
+
+1. **Criterion (4) for dialogs is blocked on collection, not on modelling.** Of 260 dispatches in
+   the entire recorded history of the loop, none is a labelled example of a *choice* that worked.
+   A ranker fitted on this set would learn to pick the reply the old heuristic already picked,
+   which is imitation wearing a loss function.
+2. **The negatives are not sound either.** All 149 multi-reply pairs were paired with an
+   observation whose `observation_source` is `carried` (5,158 of 5,510 step rows in the corpus are
+   carried; 344 are `call`), so `same page` there may mean "the answer produced a new page and we
+   never re-read it". The tool reports `after_source` per pair and the census splits on it instead
+   of hiding it.
+3. **The wire was checked as the second source, and it agrees.** `wire_outcomes()` reads the
+   `PLAY_LOG` streams (13 files) and labels each `send NpcDialogReplyMessage{replyId}` by what the
+   server sent back — `QuestObjectiveValidatedMessage` / `QuestStepValidatedMessage` /
+   `QuestStepInfoMessage` / `MapNpcsQuestStatusUpdateMessage` count as credited,
+   `LeaveDialogMessage` as ended:
+
+   ```
+   wire labels: 144 distinct replyId(s) across 13 play log(s)
+     outcome per replyId: {'dialog ended': 106, 'quest progress': 33, 'no response recorded': 5}
+     pairs joined to a wire label by replyId: 112 of 260
+     pairs the server credited with quest progress: 0
+   ```
+
+   (Checked separately over the written dataset: the 112 joined rows split `111 dialog ended / 1
+   no response`, and the 148 unjoined rows are the close asks, which carry no reply id at all.)
+   So the corpus *does* contain 33 reply ids the server credited with quest progress — and **not
+   one of them is a reply the agent sent**, and none of them appears in any dialog page recorded in
+   the trajectory logs either (0 pages anchor a credited id). The two halves were captured by
+   different sessions, so page text and server credit never meet in one record.
+
+**What that means for the plan, stated precisely.** This is a *capture* gap with a known closing
+move, not a modelling gap: G21 already writes `page`, every reply text and the chosen `reply_id`
+into one row, and the loop runs inside the client that writes `PLAY_LOG`, so on the next live
+session the same replyId is joinable within one session — `tools/dialog_labels.py` then produces
+(page, alternatives, credited reply) triples directly, which is the ranking supervision. Until that
+run exists the honest output of this tool is the census above and the empty positive set; the
+dataset it writes is a starting corpus of negatives, not a trainable ranker's data.
+
+Also visible here: **258 of 260 dialog dispatches were made against a `QuestObjectiveFreeForm`
+objective** and the two largest repeat blocks are a close-loop (148 × asking the sorcerer to
+close, the null-deref path fixed in finding 4 of `BASELINE.md`) and the equip instruction
+(88 ×). Neither is a ranking failure, and G22 stops both from running again.
+
+**Status:** the reader is offline and deterministic (2.9 s over the whole corpus); the verdict is a
+measurement over the recorded corpus, not a prediction about a live session. Nothing here is live
+proof — it says what data exists, and it says the next live run is the first that can produce a
+usable positive label.
 
 ---
 
@@ -1025,10 +1102,13 @@ a different objective re-asking, a page that moved re-asking, and the fork inher
    of them scored `advanced`. A wait now costs time instead of a step, bounded at 40 passes.
    This is the number that makes criterion (2) readable at all: read `steps`, `waits` and the
    productive rate together, not `steps` alone.
-8. **G8** test gate — 206 checks, delegating JS + Go + bundle `--check`; green, and the
-   new sections are mutation-tested (`tools/mutate_cause_gate.py`: 33 of 42 mutations run
-   and caught, 9 more written and awaiting a quiet-window re-run while the tree is not being
-   edited or built). G21 and G22 have no mutation coverage yet.
+8. **G8** test gate — 218 checks, delegating JS + Go + bundle `--check`; green, and every new
+   section is mutation-tested: `tools/mutate_cause_gate.py` holds **56 mutations and all 56 were
+   run and caught** on the quiet tree 2026-10-26 (0 missed, 0 anchor-skipped, and the restored tree
+   re-ran 218/0). Two driver bugs surfaced while doing it and are fixed: its snippet did not run the
+   repeat-guard section (so a G22 mutation could not have been caught at all), and one anchor was a
+   single line that appears five times in `autopilot.py`, which mutated an unrelated helper and
+   reported a MISS that was not a real gap — anchors in this driver must be unique by context.
 9. **G20/G21** dialog outcomes — the ranker's primary signal fired on 0 of 1,547 recorded dialogs
    and 90 of 110 recorded replies left the page unchanged; the pairing plus the dispatch fields are
    now logged, so the first live talk attempt produces the labels a scorer needs. Training on them

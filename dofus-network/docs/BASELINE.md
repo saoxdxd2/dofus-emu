@@ -109,11 +109,20 @@ failed by tool  : quest.advance 504, fight.join 48, nav.goto 25, state.snapshot 
 cd dofus-network
 python -m tools.session_report trajectories/default.jsonl "$LOCALAPPDATA/DofusFarm/autopilot.jsonl"
 python tools/recovery_report.py trajectories/default.jsonl "$LOCALAPPDATA/DofusFarm/autopilot.jsonl"
+python tools/dialog_labels.py            # census + writes data/dialog_labels.jsonl
 ```
 
 `tools/recovery_report.py` is new with this baseline: `session_report` gives throughput
 and objective deltas, and this gives the verdict/decision/cause/disconnect breakdown that
 "recovery success" is actually measured by. Both are read-only over the logs.
+
+`tools/dialog_labels.py` (added with G23) reconstructs `(page, reply sent) -> outcome` from the
+trajectory logs and joins each reply id to the `PLAY_LOG` wire stream, so a dispatch can be
+labelled by what the server sent back (`QuestObjectiveValidatedMessage`,
+`QuestStepValidatedMessage`, `QuestStepInfoMessage`, `MapNpcsQuestStatusUpdateMessage` = credited;
+`LeaveDialogMessage` = ended) rather than by an observation that may predate the answer. Run it
+again after the next live session: the census is the measurement of whether dialog data now
+exists, and it prints its own verdict when it does not.
 
 ## What is NOT baselined yet
 
@@ -162,5 +171,21 @@ and objective deltas, and this gives the verdict/decision/cause/disconnect break
   story, and expect `advanced` to stay rare until G2 gives the loop an equip verb.
 - **Fights won** — `fight.join` failed 48× and the fight-outcome log is the calibration
   source; per G7 no live fight has been proven end to end.
-- **Farm cycles per hour** — `farm.start` failed only 3×, but no session shows a
-  completed cycle count, so there is no rate to improve on yet.
+- **Farm cycles per hour** — measured now instead of asserted. Of 9,164 rows that carry a
+  `farm_session`, **8,797 show `fights: 0`** (the session object exists and is idle), 164 rows have
+  a non-zero `fights`, and the maximum every counter ever reached in the entire corpus is:
+
+  ```
+  {"fights": 2, "wins": 0, "losses": 2, "kills": 0, "xp": 0,
+   "drop_count": 0, "drops": {}, "kamas": 2, "minutes": 0}
+  ```
+
+  So the farm never completed a cycle and never recorded a kill; the only fights it entered, it
+  **lost** (max `losses` 2, `wins` 0 in all 9,164 rows). Across the corpus the character's kamas go
+  418 → 0 (peak 1,773), i.e. **net -418** — what a run that pays repair bills and never farms looks
+  like. The number to beat next session is not a rate; it is a non-zero `kills`, then a `wins: 1`.
+  `farm.start` succeeded 78 of 78 times with identical args
+  (`{monster: 698229, kill_count: 100, auto_sell: false}`), so the verb is accepted and repeats of
+  it are the same accepted-but-inert shape as G17. This sits behind **G7 (no live fight has been
+  proven end to end)**, not behind the farm tool — and G7 is now *negatively* observed rather than
+  merely unmeasured.

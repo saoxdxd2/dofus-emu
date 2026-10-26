@@ -66,6 +66,7 @@ from agent.schema import TOOL_SCHEMA, validate_call
 from agent.recorder import _redact
 from agent.jsonio import dumps_bytes as _fast_dumps
 from combat.fight_estimate import FightAdvisor, FightOutcomeLog
+from combat.brain_service import ensure_brain
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOG = REPO_ROOT / "trajectories" / "autopilot.jsonl"
@@ -277,9 +278,22 @@ class Autopilot:
         # Optional training data. Off leaves the solver unaffected; it only
         # stops writing the board snapshot rows used by a learned ranker.
         fight_boards: bool = True,
+        # "auto" makes the loop start the combat brain if nothing is serving it;
+        # "off" leaves fights to the page's own heuristic fallback.
+        brain: str = "auto",
     ) -> None:
         self.runtime = runtime
         self.fight_boards = fight_boards
+        self.brain_mode = brain if brain in ("auto", "off") else "auto"
+        # What the combat brain probe last said, so the summary can answer "was the
+        # learned policy available for this run?" instead of implying it was.
+        self._brain: Dict[str, Any] = {}
+        self._brain_attempts = 0
+        self._brain_try_at = 0.0
+        # Floor between probes. A brain that cannot start for a structural reason
+        # (no interpreter imports its dependencies) will not be fixed by asking
+        # again in five seconds, and the probe itself costs subprocess spawns.
+        self.brain_retry_s = 300.0
         self.goals = list(goals)
         self.log_path = Path(log_path)
         self.stop_file = Path(stop_file)
@@ -1030,6 +1044,10 @@ class Autopilot:
             self._fight_wait_report = now
             print("[autopilot] in a fight; waiting out the turns instead of "
                   "sending world actions")
+            # One more chance for a brain that was not up at startup (crashed, or was
+            # never started because nothing asked). Bounded by brain_retry_s and by the
+            # final-state rule, so a brain that cannot exist costs one probe.
+            self._ensure_brain("fight_start")
         if (not self.dry_run and not observation.get("auto_fight")
                 and now - self._fight_arm_at >= 5.0):
             self._fight_arm_at = now
@@ -1178,6 +1196,10 @@ class Autopilot:
             self._warn_if_no_bridge()
             if not self._require_world():
                 return self.summary("stopped while waiting for the world")
+            # Before the first fight, not during it: the page's fallback plays the
+            # turns while the brain warms up, so starting it up front is what makes
+            # "the learned policy decided this" true for the whole session.
+            self._ensure_brain()
 
         for goal in self.goals:
             failures = 0
@@ -1787,6 +1809,56 @@ class Autopilot:
               " would look like it finished.")
         raise SystemExit(3)
 
+    # Probe results that will not improve by asking again.
+    BRAIN_FINAL_STATES = ("reused", "started", "no_interpreter")
+
+    def _ensure_brain(self, reason: str = "startup") -> None:
+        """Make the trained combat brain reachable, and record whether it was.
+
+        The page asks ``127.0.0.1:8891/v1/combat/decide`` for every fight turn and, when
+        nothing answers, marks the brain down and plays the turn with a hardcoded
+        heuristic. Measured over the recorded corpus: 388 in-fight observations, every
+        one of them heuristic, and one warm-up row for the learned policy. So a run
+        cannot say "the learned policy fought for me" unless something started the
+        server -- and cannot say it afterwards either, which is what this row is for.
+
+        A brain that dies mid-run is a component failure like any other: the page keeps
+        playing with its fallback, and this gets one bounded retry per fight start
+        rather than none or infinitely many.
+
+        ``preflight`` is the real-session switch: a run constructed without it is the
+        regression gate's synthetic loop, which must not leave a detached server process
+        behind on the developer's machine.
+        """
+        if self.brain_mode == "off" or not self.preflight:
+            return
+        if self._brain.get("state") in self.BRAIN_FINAL_STATES:
+            return
+        now = time.time()
+        if now - self._brain_try_at < self.brain_retry_s:
+            return
+        self._brain_try_at = now
+        self._brain_attempts += 1
+        state, detail = ensure_brain(dry_run=self.dry_run)
+        row: Dict[str, Any] = {"kind": "brain", "session": self.session,
+                               "when": reason, "mode": self.brain_mode,
+                               "state": state, "attempt": self._brain_attempts}
+        for key in ("model", "pid", "cmd", "reason", "waited_s"):
+            if detail.get(key) is not None:
+                row[key] = detail[key]
+        self._brain = row
+        self._append_log_line(_fast_dumps(row))
+        if state == "started":
+            print(f"[autopilot] combat brain started (pid {row.get('pid')}): "
+                  f"{row.get('model')}")
+        elif state == "reused":
+            print(f"[autopilot] combat brain already answering: {row.get('model')}")
+        elif state == "dry_run":
+            print("[autopilot] dry run: the combat brain was left untouched")
+        else:
+            print(f"[autopilot] no combat brain ({state}: {str(row.get('reason'))[:90]})"
+                  " -- fights are played by the page's hardcoded fallback")
+
     def _require_world(self, fresh: bool = False) -> bool:
         """Wait until the character is in the game world, then start.
 
@@ -2158,6 +2230,11 @@ class Autopilot:
             "outcome": outcome,
             "ended_by": ended_by,
             "page_after": str(da.get("message") or "")[:120] if da.get("open") else None,
+            # Which read the outcome was measured against. The corpus reconstruction
+            # (G23) found every multi-reply pair in the old logs labelled from an
+            # observation read *before* the answer, which makes `same page` mean
+            # nothing; a label is only as good as the state it was compared against.
+            "after_source": getattr(self, "_obs_source", "unknown"),
             "at": time.time(),
         }) + b"\n")
 
@@ -2253,6 +2330,11 @@ class Autopilot:
             "waits": self._waits,
             "dialogs": self._dialogs,
             "dialog_stalls": self._dialog_stalls,
+            # Which combat policy was reachable for this run. A fight count without
+            # this cannot say whether the learned policy or the page's fallback
+            # decided the turns -- which is the difference the whole combat goal rests on.
+            "brain": {key: self._brain.get(key)
+                      for key in ("state", "model", "mode", "reason", "when")},
             "controller": self.controller.stats(),
             "open_listings": self._listing_total,
             "log": str(self.log_path),
@@ -2459,6 +2541,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-fight-boards", dest="fight_boards",
                         action="store_false", default=True,
                         help="do not record fight board snapshots for training")
+    parser.add_argument("--brain", choices=("auto", "off"), default="auto",
+                        help="auto: start the combat brain (127.0.0.1:8891) if nothing "
+                             "serves it, so fights use the learned policy; "
+                             "off: leave the page's heuristic fallback in charge")
     return parser
 
 
@@ -2494,6 +2580,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         dry_run=args.dry_run,
         explore=args.explore,
         fight_boards=args.fight_boards,
+        brain=args.brain,
     )
     try:
         summary = pilot.run()
