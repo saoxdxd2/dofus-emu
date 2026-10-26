@@ -88,7 +88,6 @@ UTILITY_EFFECT_KINDS = {
     1041: "pushed",
     1042: "pulled",
 }
-UTILITY_EFFECT_KINDS_BY_NAME = frozenset(UTILITY_EFFECT_KINDS.values())
 # Effects the one-turn planner can price with real board state. Teleport is a
 # cast origin, push/pull displace the target, AP/MP changes alter the economy;
 # the remaining utility ids stay reported as unmodelled.
@@ -272,6 +271,11 @@ class CellMap:
     @classmethod
     def from_board(cls, payload: Dict[str, Any]) -> "CellMap":
         raw = payload.get("cells") or []
+        # The page sends 560 integers; copying them straight into the tuple
+        # avoids 560 int() calls per decision. Anything else keeps the old
+        # coercion (non-numeric entries become 0).
+        if all(type(v) is int for v in raw):
+            return cls(tuple(raw))
         return cls(tuple(int(v) if isinstance(v, (int, float)) else 0 for v in raw))
 
     def valid(self, cell: int) -> bool:
@@ -445,15 +449,6 @@ class LiveSpell:
     @cached_property
     def heal_effects(self) -> Tuple[LiveEffect, ...]:
         return tuple(e for e in self.effects if e.kind == "heal")
-
-    @cached_property
-    def utility_effects(self) -> Tuple[LiveEffect, ...]:
-        return tuple(e for e in self.effects
-                     if e.kind in UTILITY_EFFECT_KINDS_BY_NAME)
-
-    @cached_property
-    def has_utility(self) -> bool:
-        return bool(self.utility_effects)
 
     @cached_property
     def mechanic_effects(self) -> Tuple[LiveEffect, ...]:
@@ -636,6 +631,8 @@ class Board:
     fight_id: Optional[int] = None
     current_fighter_id: Optional[int] = None
     last_actions: Tuple[Dict[str, Any], ...] = ()
+    _character_stats_cache: Optional[CharacterStats] = field(
+        default=None, init=False, repr=False, compare=False)
 
     @classmethod
     def from_fight_state(cls, payload: Dict[str, Any]) -> "Board":
@@ -743,13 +740,16 @@ class Board:
         return [f for f in self.fighters if f.alive and f.team == "player"]
 
     def character_stats(self) -> CharacterStats:
+        cached = self._character_stats_cache
+        if cached is not None:
+            return cached
         stats = self.my_stats or {}
         me = self.me
 
         def value(key: str) -> int:
             return _int(stats.get(key), 0)
 
-        return CharacterStats(
+        result = CharacterStats(
             name=me.name if me else "Player",
             level=me.level if me else 1,
             action_points=self.my_ap,
@@ -769,6 +769,8 @@ class Board:
             damage_critical=value("damage_critical"),
             heals=value("heals"),
         )
+        self._character_stats_cache = result
+        return result
 
 
 def _int(value: Any, default: Optional[int] = None) -> Optional[int]:
@@ -1012,6 +1014,7 @@ class BattleSolver:
         estimate_cache: Dict[Tuple[int, int, str], Any] = {}
         slide_cache: Dict[Tuple[int, int, int], Tuple[Optional[int], int]] = {}
         character = board.character_stats()
+        targets = [f for f in board.fighters if f.alive]
         melee = any(spell.has_damage and spell.max_range <= 1
                     for spell in board.spells)
 
@@ -1019,7 +1022,8 @@ class BattleSolver:
             if cell in template_cache:
                 return template_cache[cell]
             out = self._templates(board, cell, character, occupied, los_cache,
-                                  estimate_cache, slide_cache, melee)
+                                  estimate_cache, slide_cache, melee,
+                                  me=me, targets=targets)
             template_cache[cell] = out
             return out
 
@@ -1348,14 +1352,19 @@ class BattleSolver:
                    estimate_cache: Optional[Dict[Tuple[int, int, str], Any]] = None,
                    slide_cache: Optional[Dict[Tuple[int, int, int],
                                                   Tuple[Optional[int], int]]] = None,
-                   melee: bool = False
+                   melee: bool = False,
+                   me: Optional[Fighter] = None,
+                   targets: Optional[List[Fighter]] = None
                    ) -> List[_CastTemplate]:
-        me = board.me
+        me = me if me is not None else board.me
         assert me is not None
+        targets = targets if targets is not None else [
+            f for f in board.fighters if f.alive]
         out: List[_CastTemplate] = []
-        targets = [f for f in board.fighters if f.alive]
-        if not board.cells.walkable(cell):
+        cells = board.cells
+        if not cells.walkable(cell):
             return out
+        distances = [cells.distance(cell, target.cell) for target in targets]
         my_id = board.my_id
         for spell in board.spells:
             if spell.ap_cost <= 0 or spell.ap_cost > board.my_ap:
@@ -1397,22 +1406,21 @@ class BattleSolver:
             # A ring costs ~30 us; a Manhattan pre-check costs a few
             # comparisons and rejects the common case where every target is
             # outside the spell's reach from this cell.
-            if not any(board.cells.distance(cell, target.cell) <= spell.max_range
-                       for target in targets):
+            if not any(distance <= spell.max_range for distance in distances):
                 continue
-            in_range = board.cells.range_cells(
+            in_range = cells.range_cells(
                 cell, spell.min_range, spell.max_range,
                 spell.cast_in_line, spell.cast_in_diagonal)
             if not in_range:
                 continue
-            for target in targets:
+            for target, distance_to_target in zip(targets, distances):
                 if target.cell not in in_range:
                     continue
                 if spell.requires_los:
                     pair = (cell, target.cell)
                     visible = los_cache.get(pair) if los_cache is not None else None
                     if visible is None:
-                        visible = board.cells.has_los(cell, target.cell, occupied)
+                        visible = cells.has_los(cell, target.cell, occupied)
                         if los_cache is not None:
                             los_cache[pair] = visible
                     if not visible:
@@ -1478,11 +1486,11 @@ class BattleSolver:
                         blocked = frozenset(
                             f.cell for f in board.fighters
                             if f.alive and f.id not in (me.id, target.id))
-                        before = board.cells.distance(cell, target.cell)
-                        destination = board.cells.slide(
+                        before = distance_to_target
+                        destination = cells.slide(
                             cell, target.cell, push_roll or pull_roll,
                             blocked, toward=bool(pull_roll))
-                        after = board.cells.distance(cell, destination)
+                        after = cells.distance(cell, destination)
                         move_target = destination if destination != target.cell else None
                         moved = max(0, (after - before) if push_roll
                                     else (before - after))
@@ -1509,7 +1517,6 @@ class BattleSolver:
                     ap_loss=target_ap_loss, mp_loss=target_mp_loss,
                     utility=utility, move_target=move_target, moved=moved,
                 ))
-        out.sort(key=lambda t: -(max(t.damage, t.healing) + t.utility))
         return out
 
     @staticmethod

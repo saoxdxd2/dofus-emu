@@ -59,8 +59,17 @@ def _contains_secret(value: Any) -> bool:
         item = stack.pop()
         if isinstance(item, dict):
             for key, child in item.items():
-                if isinstance(key, str) and _is_secret_key(key):
-                    return True
+                if isinstance(key, str):
+                    # Exact lowercase names are the common case; skip the
+                    # cache/function call for them. Numeric keys are item ids
+                    # and can never equal a redaction name. Only mixed-case or
+                    # padded keys need the normalising fallback.
+                    if key in REDACT_KEYS:
+                        return True
+                    if not key.isdigit() and (
+                            not key.islower() or key.strip() != key):
+                        if _is_secret_key(key):
+                            return True
                 if isinstance(child, (dict, list)):
                     stack.append(child)
                 elif (isinstance(child, str) and "://" in child

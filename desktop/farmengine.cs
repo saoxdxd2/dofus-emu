@@ -118,6 +118,9 @@ namespace DofusFarm.Engine {
         private static readonly object _wsSendLock = new object();
 
         private static readonly Regex RxQemuPort = new Regex(@"-port\s+(\d+)", RegexOptions.Compiled);
+        private static readonly Regex RxDisguiseToken = new Regex(
+            "__DEVICE_(?:UUID|SERIAL|MODEL|MANUFACTURER|UA|GL_VENDOR|GL_RENDERER|MAX_TEXTURE_SIZE|APP_VERSION|VERSION_CODE|BUILD_VERSION)__",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
         private static readonly Regex RxTrailingDigits = new Regex(@"(\d+)$", RegexOptions.Compiled);
         private static readonly Regex RxCustomName = new Regex(@"""CustomName""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
         private static readonly Regex RxSerial = new Regex(@"""Serial""\s*:\s*""([^""]+)""", RegexOptions.Compiled);
@@ -293,48 +296,56 @@ namespace DofusFarm.Engine {
         internal static string InterpolateDisguise(string rawJs, string uuid, string serial, DeviceProfile p, string defaultUa = "", string appVersion = null, string versionCode = null, string buildVersion = null) {
             if (string.IsNullOrEmpty(rawJs)) return "";
             string av = appVersion, vc = versionCode, bv = buildVersion;
-            try {
-                string overridePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client-version.ini");
-                if (File.Exists(overridePath)) {
-                    foreach (string raw in File.ReadAllLines(overridePath)) {
-                        string line = raw.Trim();
-                        if (line.Length == 0 || line.StartsWith("#") || line.StartsWith(";")) continue;
-                        int eq = line.IndexOf('=');
-                        if (eq <= 0) continue;
-                        string key = line.Substring(0, eq).Trim().ToLowerInvariant();
-                        string val = line.Substring(eq + 1).Trim();
-                        if (key == "app" && string.IsNullOrEmpty(av)) av = val;
-                        else if (key == "code" && string.IsNullOrEmpty(vc)) vc = val;
-                        else if (key == "build" && string.IsNullOrEmpty(bv)) bv = val;
-                    }
-                }
-            } catch { }
             if (string.IsNullOrEmpty(av) || string.IsNullOrEmpty(vc) || string.IsNullOrEmpty(bv)) {
                 try {
-                    DofusVersionInfo resolved = DynamicVersionResolver.ResolveVersion(null, false, null);
-                    if (resolved != null) {
-                        if (string.IsNullOrEmpty(av)) av = resolved.AppVersion;
-                        if (string.IsNullOrEmpty(vc)) vc = resolved.VersionCode;
-                        if (string.IsNullOrEmpty(bv)) bv = resolved.BuildVersion;
+                    string overridePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client-version.ini");
+                    if (File.Exists(overridePath)) {
+                        foreach (string raw in File.ReadAllLines(overridePath)) {
+                            string line = raw.Trim();
+                            if (line.Length == 0 || line.StartsWith("#") || line.StartsWith(";")) continue;
+                            int eq = line.IndexOf('=');
+                            if (eq <= 0) continue;
+                            string key = line.Substring(0, eq).Trim().ToLowerInvariant();
+                            string val = line.Substring(eq + 1).Trim();
+                            if (key == "app" && string.IsNullOrEmpty(av)) av = val;
+                            else if (key == "code" && string.IsNullOrEmpty(vc)) vc = val;
+                            else if (key == "build" && string.IsNullOrEmpty(bv)) bv = val;
+                        }
                     }
                 } catch { }
+                if (string.IsNullOrEmpty(av) || string.IsNullOrEmpty(vc) || string.IsNullOrEmpty(bv)) {
+                    try {
+                        DofusVersionInfo resolved = DynamicVersionResolver.ResolveVersion(null, false, null);
+                        if (resolved != null) {
+                            if (string.IsNullOrEmpty(av)) av = resolved.AppVersion;
+                            if (string.IsNullOrEmpty(vc)) vc = resolved.VersionCode;
+                            if (string.IsNullOrEmpty(bv)) bv = resolved.BuildVersion;
+                        }
+                    } catch { }
+                }
             }
             av = av ?? "";
             vc = vc ?? "";
             bv = bv ?? "";
-            return new StringBuilder(rawJs, rawJs.Length + 256)
-                .Replace("__DEVICE_UUID__", uuid ?? "ca8ea76b0fe32f85")
-                .Replace("__DEVICE_SERIAL__", serial ?? "R58M45F41EFD")
-                .Replace("__DEVICE_MODEL__", (p != null && !string.IsNullOrEmpty(p.Model)) ? p.Model : "SM-A515F")
-                .Replace("__DEVICE_MANUFACTURER__", (p != null && !string.IsNullOrEmpty(p.Manufacturer)) ? p.Manufacturer : "samsung")
-                .Replace("__DEVICE_UA__", (p != null && !string.IsNullOrEmpty(p.UserAgent)) ? p.UserAgent : defaultUa)
-                .Replace("__DEVICE_GL_VENDOR__", (p != null && !string.IsNullOrEmpty(p.GlVendor)) ? p.GlVendor : "ARM")
-                .Replace("__DEVICE_GL_RENDERER__", (p != null && !string.IsNullOrEmpty(p.GlRenderer)) ? p.GlRenderer : "Mali-G72 MP3")
-                .Replace("__DEVICE_MAX_TEXTURE_SIZE__", ((p != null && p.MaxTextureSize > 0) ? p.MaxTextureSize : 8192).ToString())
-                .Replace("__DEVICE_APP_VERSION__", av)
-                .Replace("__DEVICE_VERSION_CODE__", vc)
-                .Replace("__DEVICE_BUILD_VERSION__", bv)
-                .ToString();
+            // One scan over the 364 KB script instead of eleven full-string
+            // replacements (21 ms per window before this).
+            var values = new Dictionary<string, string>(StringComparer.Ordinal) {
+                { "__DEVICE_UUID__", uuid ?? "ca8ea76b0fe32f85" },
+                { "__DEVICE_SERIAL__", serial ?? "R58M45F41EFD" },
+                { "__DEVICE_MODEL__", (p != null && !string.IsNullOrEmpty(p.Model)) ? p.Model : "SM-A515F" },
+                { "__DEVICE_MANUFACTURER__", (p != null && !string.IsNullOrEmpty(p.Manufacturer)) ? p.Manufacturer : "samsung" },
+                { "__DEVICE_UA__", (p != null && !string.IsNullOrEmpty(p.UserAgent)) ? p.UserAgent : defaultUa },
+                { "__DEVICE_GL_VENDOR__", (p != null && !string.IsNullOrEmpty(p.GlVendor)) ? p.GlVendor : "ARM" },
+                { "__DEVICE_GL_RENDERER__", (p != null && !string.IsNullOrEmpty(p.GlRenderer)) ? p.GlRenderer : "Mali-G72 MP3" },
+                { "__DEVICE_MAX_TEXTURE_SIZE__", ((p != null && p.MaxTextureSize > 0) ? p.MaxTextureSize : 8192).ToString() },
+                { "__DEVICE_APP_VERSION__", av },
+                { "__DEVICE_VERSION_CODE__", vc },
+                { "__DEVICE_BUILD_VERSION__", bv },
+            };
+            return RxDisguiseToken.Replace(rawJs, delegate(Match m) {
+                string value;
+                return values.TryGetValue(m.Value, out value) ? value : m.Value;
+            });
         }
 
         private void Log(string message) {
@@ -571,8 +582,14 @@ namespace DofusFarm.Engine {
         public string AdbShell(string serial, string shellCommand) { return Adb(serial, "shell " + shellCommand); }
 
         public HashSet<string> GetLiveSerials() {
+            bool ignored;
+            return GetLiveSerials(out ignored);
+        }
+
+        private HashSet<string> GetLiveSerials(out bool anyEmulator) {
             var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (!HasRunningProcess("qemu-system-x86_64", "emulator")) return live;
+            anyEmulator = HasRunningProcess("qemu-system-x86_64", "emulator");
+            if (!anyEmulator) return live;
             using (var sr = new StringReader(Adb("", "devices") ?? "")) {
                 for (string line; (line = sr.ReadLine()) != null;) {
                     string[] p = line.Trim().Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
@@ -1457,28 +1474,79 @@ namespace DofusFarm.Engine {
         private const int LiveScanCacheMs = 12000;
         private readonly object _liveCacheLock = new object();
         private HashSet<string> _liveSerialsCache;
+        private bool _liveSerialsHadQemu;
         private DateTime _liveSerialsCacheUtc = DateTime.MinValue;
+
+        private HashSet<string> LiveSerialsFor(bool allowCachedLive, out bool anyEmulator) {
+            if (allowCachedLive) {
+                lock (_liveCacheLock) {
+                    if (_liveSerialsCache != null
+                        && (DateTime.UtcNow - _liveSerialsCacheUtc).TotalMilliseconds < LiveScanCacheMs) {
+                        anyEmulator = _liveSerialsHadQemu;
+                        return new HashSet<string>(_liveSerialsCache, StringComparer.OrdinalIgnoreCase);
+                    }
+                }
+            }
+            HashSet<string> live = GetLiveSerials(out anyEmulator);
+            lock (_liveCacheLock) {
+                _liveSerialsCache = new HashSet<string>(live, StringComparer.OrdinalIgnoreCase);
+                _liveSerialsHadQemu = anyEmulator;
+                _liveSerialsCacheUtc = DateTime.UtcNow;
+            }
+            return live;
+        }
+
+        // RAM/cores, identity and the warm flag only change on explicit edits
+        // or a boot. The periodic grid used to reopen and re-parse every
+        // config.ini/identity.json each tick; cache the facts on the same
+        // window as the live scan. Forced refreshes (start/stop/edit) read
+        // them fresh and refresh the cache.
+        private sealed class InstanceFacts {
+            public int RamMb, Cores;
+            public string CustomName, Proxy, PhoneModelId, PhoneModelName;
+            public bool Warm;
+            public DateTime At;
+        }
+
+        private readonly object _factsLock = new object();
+        private readonly Dictionary<string, InstanceFacts> _factsCache =
+            new Dictionary<string, InstanceFacts>(StringComparer.OrdinalIgnoreCase);
+
+        private InstanceFacts FactsFor(string dir, string name, int idx, bool allowCachedLive) {
+            if (allowCachedLive) {
+                lock (_factsLock) {
+                    InstanceFacts cached;
+                    if (_factsCache.TryGetValue(dir, out cached)
+                        && (DateTime.UtcNow - cached.At).TotalMilliseconds < LiveScanCacheMs)
+                        return cached;
+                }
+            }
+            int ram = 0, cores = 0;
+            ReadConfigRamCores(Path.Combine(dir, "config.ini"), ref ram, ref cores);
+            string customName = "Instance #" + idx, sNo = null, aId = null, mac = null, proxy = null, model = "";
+            ReadIdentity(dir, ref customName, ref sNo, ref aId, ref mac, ref proxy, ref model);
+            DeviceProfile prof = string.IsNullOrEmpty(model)
+                ? DeviceCatalog.GetDefaultProfileForIndex(idx) : DeviceCatalog.GetProfile(model);
+            var facts = new InstanceFacts {
+                RamMb = ram, Cores = cores, CustomName = customName, Proxy = proxy,
+                PhoneModelId = string.IsNullOrEmpty(model) ? prof.Id : model,
+                PhoneModelName = prof.DisplayName, Warm = IsInstanceWarmReady(name),
+                At = DateTime.UtcNow,
+            };
+            lock (_factsLock) {
+                if (_factsCache.Count > 256) _factsCache.Clear();
+                _factsCache[dir] = facts;
+            }
+            return facts;
+        }
 
         public List<InstanceModel> GetInstances(bool allowCachedLive = false) {
             var list = new List<InstanceModel>();
             if (!Directory.Exists(AvdHome)) return list;
-            HashSet<string> live = null;
-            if (allowCachedLive) {
-                lock (_liveCacheLock) {
-                    if (_liveSerialsCache != null
-                        && (DateTime.UtcNow - _liveSerialsCacheUtc).TotalMilliseconds < LiveScanCacheMs)
-                        live = new HashSet<string>(_liveSerialsCache, StringComparer.OrdinalIgnoreCase);
-                }
-            }
-            if (live == null) {
-                live = GetLiveSerials();
-                lock (_liveCacheLock) {
-                    _liveSerialsCache = new HashSet<string>(live, StringComparer.OrdinalIgnoreCase);
-                    _liveSerialsCacheUtc = DateTime.UtcNow;
-                }
-            }
-            var portToPid = new Dictionary<int, int>();
-            if (HasRunningProcess("qemu-system-x86_64") || live.Count > 0) {
+            bool anyEmulator;
+            HashSet<string> live = LiveSerialsFor(allowCachedLive, out anyEmulator);
+            Dictionary<int, int> portToPid = null;
+            if (anyEmulator || live.Count > 0) {
                 Dictionary<int, int> scan = null;
                 double scanTtl = allowCachedLive ? LiveScanCacheMs : 2000;
                 lock (_qemuScanLock) {
@@ -1494,8 +1562,8 @@ namespace DofusFarm.Engine {
                     scan = fresh;
                     lock (_qemuScanLock) { _qemuScanCache = fresh; _qemuScanCacheUtc = DateTime.UtcNow; }
                 }
+                portToPid = scan;
                 foreach (var kv in scan) {
-                    portToPid[kv.Key] = kv.Value;
                     live.Add("emulator-" + kv.Key);
                     lock (_pidCacheLock) _cachedPortToPid[kv.Key] = kv.Value;
                     PriorityGovernor.RegisterInstancePid(kv.Value, Math.Max(0, (kv.Key - 5554) / 2), 1);
@@ -1504,35 +1572,32 @@ namespace DofusFarm.Engine {
                 lock (_pidCacheLock) _cachedPortToPid.Clear();
                 lock (_qemuScanLock) { _qemuScanCache = null; }
             }
+            int poolCount = GetProxyPoolCount();
             foreach (string d in Directory.GetDirectories(AvdHome, "dofus-*.avd").OrderBy(x => x, StringComparer.Ordinal)) {
                 string name = Path.GetFileNameWithoutExtension(d);
                 if (name.Equals("dofus-template", StringComparison.OrdinalIgnoreCase)) continue;
                 // 0 means "size it at launch"; inventing 1024 MB / 1 core made
                 // the dashboard show an allocation no instance actually had.
-                int idx = ParseSlotIdx(name), port = 5554 + 2 * (idx - 1), ram = 0, cores = 0, pid = 0;
+                int idx = ParseSlotIdx(name), port = 5554 + 2 * (idx - 1), pid = 0;
                 string serial = "emulator-" + port;
-                ReadConfigRamCores(Path.Combine(d, "config.ini"), ref ram, ref cores);
+                InstanceFacts facts = FactsFor(d, name, idx, allowCachedLive);
                 bool isRunning = live.Contains(serial);
-                if (isRunning) { portToPid.TryGetValue(port, out pid); if (pid > 0) PriorityGovernor.RegisterInstancePid(pid, idx - 1, cores); }
-                string customName = "Instance #" + idx, sNo = null, aId = null, mac = null, rawProxy = null, phoneModelId = "";
-                ReadIdentity(d, ref customName, ref sNo, ref aId, ref mac, ref rawProxy, ref phoneModelId);
-                int poolCount = GetProxyPoolCount();
+                if (isRunning) { if (portToPid != null) portToPid.TryGetValue(port, out pid); if (pid > 0) PriorityGovernor.RegisterInstancePid(pid, idx - 1, facts.Cores); }
                 string proxyDisplay;
-                if (HasManualProxy(rawProxy)) {
-                    proxyDisplay = rawProxy.StartsWith("[") ? rawProxy : ("[🌐] " + rawProxy);
+                if (HasManualProxy(facts.Proxy)) {
+                    proxyDisplay = facts.Proxy.StartsWith("[") ? facts.Proxy : ("[🌐] " + facts.Proxy);
                 } else {
                     if (poolCount > 0)
                         proxyDisplay = string.Format("[🎲 Auto-Random] ({0} in pool)", poolCount);
                     else
                         proxyDisplay = "[⚡] Accelerator (Direct / proxies.txt empty)";
                 }
-                DeviceProfile prof = string.IsNullOrEmpty(phoneModelId) ? DeviceCatalog.GetDefaultProfileForIndex(idx) : DeviceCatalog.GetProfile(phoneModelId);
-                int shownRam = ram, shownCores = cores;
                 list.Add(new InstanceModel {
-                    Name = name, CustomName = customName, DisplayName = customName, Port = port, RamMb = shownRam, Cores = shownCores,
+                    Name = name, CustomName = facts.CustomName, DisplayName = facts.CustomName,
+                    Port = port, RamMb = facts.RamMb, Cores = facts.Cores,
                     IsRunning = isRunning, Pid = pid, Proxy = proxyDisplay,
-                    PhoneModelId = string.IsNullOrEmpty(phoneModelId) ? prof.Id : phoneModelId,
-                    PhoneModelName = prof.DisplayName, IsWarmReady = IsInstanceWarmReady(name)
+                    PhoneModelId = facts.PhoneModelId, PhoneModelName = facts.PhoneModelName,
+                    IsWarmReady = facts.Warm
                 });
             }
             return list;

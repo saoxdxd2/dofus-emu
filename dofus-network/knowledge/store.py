@@ -22,6 +22,7 @@ import json
 import re
 import sqlite3
 import unicodedata
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,29 @@ _KIND_ALIASES = {
     "quest": "quest",
     "achievement": "achievement",
 }
+
+# Accentless input is common on a normal keyboard ("ble" for "Blé"). Generate
+# the bounded exact spellings before falling back to the full normalized scan.
+_ACCENTS = {
+    "a": "àáâäãå", "c": "ç", "e": "éèêë", "i": "íìîï",
+    "n": "ñ", "o": "óòôöõ", "u": "úùûü", "y": "ýÿ",
+}
+
+
+def _accent_variants(text: str, limit: int = 16) -> list[str]:
+    base = text.strip().lower()
+    if not any(_ACCENTS.get(ch) for ch in base):
+        return []
+    combos = [""]
+    for ch in base:
+        opts = [ch] + list(_ACCENTS.get(ch, ""))
+        combos = [prefix + opt for prefix in combos for opt in opts]
+        if len(combos) > limit:
+            return []
+    variants = set(combos)
+    variants.update(value[:1].upper() + value[1:] for value in list(variants))
+    variants.update(value.title() for value in list(variants) if " " in value)
+    return sorted(variants)[:limit]
 
 
 def _loads(value: str | None) -> Any:
@@ -123,6 +147,7 @@ class CanonicalStore:
                 return value
         return None
 
+    @lru_cache(maxsize=512)
     def find_entity(
         self, kind: str, text: str, lang: str = "fr", limit: int = 5
     ) -> list[dict[str, Any]]:
@@ -136,6 +161,54 @@ class CanonicalStore:
         needle = _fold(text)
         if not needle:
             return []
+        raw = str(text).strip()
+        if raw:
+            def exact_result(rows: list[Any]) -> list[dict[str, Any]]:
+                matched = []
+                for row in rows:
+                    name = ""
+                    for column in _NAME_COLUMN.values():
+                        value = row[column]
+                        if value and _fold(value) == needle:
+                            name = value
+                            break
+                    if name:
+                        matched.append((int(row["entity_id"]), name))
+                matched.sort(key=lambda item: item[0])
+                return [{"kind": kind, "id": entity_id, "name": name}
+                        for entity_id, name in matched[: max(1, int(limit))]]
+
+            # Exact names are the common target case ("Bouftou", "Blé") and
+            # SQL can answer them without converting/folding every row. Prefix,
+            # accent-folded and contains matches still use the full scan below,
+            # so ranking semantics are unchanged.
+            exact = self._con.execute(
+                "SELECT entity_id, name_fr, name_en, name_es, name_de, name_pt "
+                "FROM entities WHERE kind = ? AND ("
+                "name_fr = ? COLLATE NOCASE OR name_en = ? COLLATE NOCASE OR "
+                "name_es = ? COLLATE NOCASE OR name_de = ? COLLATE NOCASE OR "
+                "name_pt = ? COLLATE NOCASE)",
+                (kind, raw, raw, raw, raw, raw),
+            ).fetchall()
+            if exact:
+                result = exact_result(exact)
+                if result:
+                    return result
+            variants = _accent_variants(raw, limit=16)
+            if variants:
+                placeholders = ",".join("?" * len(variants))
+                sql = (
+                    "SELECT entity_id, name_fr, name_en, name_es, name_de, name_pt "
+                    "FROM entities WHERE kind = ? AND (" + " OR ".join(
+                        "name_%s IN (%s)" % (lang, placeholders)
+                        for lang in LANGUAGES) + ")"
+                )
+                params = (kind,) + tuple(variants) * len(LANGUAGES)
+                accented = self._con.execute(sql, params).fetchall()
+                if accented:
+                    result = exact_result(accented)
+                    if result:
+                        return result
         rows = self._con.execute(
             "SELECT entity_id, name_fr, name_en, name_es, name_de, name_pt "
             "FROM entities WHERE kind = ?", (kind,)

@@ -19,6 +19,12 @@ namespace DofusFarm.Engine
         private readonly ConcurrentDictionary<string, ClientInstanceState> _states = new ConcurrentDictionary<string, ClientInstanceState>(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, string> _latestDiagnostics = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private string _installedVersion = null;
+        // The disguise script is 364 KB and identical for every window; the
+        // file mtime invalidates the cache if it is replaced while running.
+        private static readonly object _scriptLock = new object();
+        private static string _scriptPathCached;
+        private static DateTime _scriptStamp;
+        private static string _scriptTextCache;
 
         public string Name { get { return "Standalone Microsoft Edge WebView2"; } }
         public BackendType Type { get { return BackendType.WebView2Standalone; } }
@@ -129,7 +135,19 @@ namespace DofusFarm.Engine
                 {
                     try
                     {
-                        string raw = File.ReadAllText(scriptPath, Encoding.UTF8);
+                        string raw;
+                        lock (_scriptLock)
+                        {
+                            DateTime stamp = File.GetLastWriteTimeUtc(scriptPath);
+                            if (_scriptTextCache == null || _scriptStamp != stamp
+                                || !string.Equals(_scriptPathCached, scriptPath, StringComparison.Ordinal))
+                            {
+                                _scriptTextCache = File.ReadAllText(scriptPath, Encoding.UTF8);
+                                _scriptPathCached = scriptPath;
+                                _scriptStamp = stamp;
+                            }
+                            raw = _scriptTextCache;
+                        }
                         string serial = options.DeviceSerial ?? ((options.Profile != null ? options.Profile.SerialPrefix : "R58M") + "45F41EFD");
                         string uuid = options.DeviceUuid ?? "ca8ea76b0fe32f85";
                         options.DisguiseScript = FarmEngine.InterpolateDisguise(

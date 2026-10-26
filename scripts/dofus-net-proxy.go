@@ -1383,25 +1383,16 @@ func (p *ProxyServer) dialDirect(ctx context.Context, dest string) (net.Conn, er
 	return (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", target)
 }
 
-// mapVirtualHost sends the page's own hostname to the real login server. Every dial
-// path shares it so a route picked here is the same route doDial would have used.
-func mapVirtualHost(dest string) string {
-	host, port, err := net.SplitHostPort(dest)
-	if err != nil {
-		return dest
-	}
-	if h := strings.ToLower(host); h == "dofus.local" || h == "dofus.localhost" {
-		mapped := net.JoinHostPort(loginHost, port)
-		virtualHostRewriteOnce.Do(func() {
-			log.Printf("[ROUTE] %s -> %s (the client resolved its socket against the page origin)", dest, mapped)
-		})
-		return mapped
-	}
-	return dest
-}
-
 func (p *ProxyServer) doDial(ctx context.Context, dest string) (net.Conn, error) {
-	dest = mapVirtualHost(dest)
+	if host, port, err := net.SplitHostPort(dest); err == nil {
+		if h := strings.ToLower(host); h == "dofus.local" || h == "dofus.localhost" {
+			mapped := net.JoinHostPort(loginHost, port)
+			virtualHostRewriteOnce.Do(func() {
+				log.Printf("[ROUTE] %s -> %s (the client resolved its socket against the page origin)", dest, mapped)
+			})
+			dest = mapped
+		}
+	}
 	if p.exitURL != nil {
 		p.exitMu.Lock()
 		blocked := time.Now().Before(p.exitBlockedUntil)
@@ -1576,25 +1567,26 @@ func halfCloseOrClose(c net.Conn) {
 	}
 }
 
-// pipeTunnel moves both directions. firstServer is the answer the first-byte proof
-// already read: it is handed to the client before the upstream is read again, and the
-// client's own opening bytes are never replayed because the proof wrote them once.
-func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, tunnel *gameTunnel, firstServer []byte) {
+// tunnelPrelude carries the bytes the first-byte proof moved before full piping began.
+// They are written to their destinations first so no byte of the stream is lost.
+type tunnelPrelude struct {
+	toServer []byte
+	toClient []byte
+}
+
+func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, tunnel *gameTunnel, pre *tunnelPrelude) {
 	tuneTCPConn(clientConn)
 	tuneTCPConn(destConn)
-	if len(firstServer) > 0 {
-		if _, err := clientConn.Write(firstServer); err != nil {
-			_ = destConn.Close()
-			_ = clientConn.Close()
-			return
-		}
-	}
 	var sentBytes, recvBytes int64
 	done := make(chan struct{}, 2)
-	copyDir := func(dst, src net.Conn, counter *int64, buffered *bufio.ReadWriter) {
+	copyDir := func(dst, src net.Conn, counter *int64, lead []byte, buffered *bufio.ReadWriter) {
 		out := io.Writer(dst)
 		if tunnel != nil {
 			out = activityWriter{w: dst, touch: tunnel.touch}
+		}
+		if len(lead) > 0 {
+			n, _ := out.Write(lead)
+			atomic.AddInt64(counter, int64(n))
 		}
 		if buffered != nil && buffered.Reader.Buffered() > 0 {
 			n, _ := io.CopyN(out, buffered, int64(buffered.Reader.Buffered()))
@@ -1607,8 +1599,12 @@ func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWrite
 		halfCloseOrClose(dst)
 		done <- struct{}{}
 	}
-	go copyDir(destConn, clientConn, &sentBytes, clientBuf)
-	go copyDir(clientConn, destConn, &recvBytes, nil)
+	var toServer, toClient []byte
+	if pre != nil {
+		toServer, toClient = pre.toServer, pre.toClient
+	}
+	go copyDir(destConn, clientConn, &sentBytes, toServer, clientBuf)
+	go copyDir(clientConn, destConn, &recvBytes, toClient, nil)
 	<-done
 	drainTimer := time.NewTimer(4 * time.Second)
 	select {
@@ -1712,23 +1708,16 @@ func proveRoute(destConn net.Conn, payload []byte) ([]byte, bool) {
 // the "dofus.local says server busy" alert followed by a login screen that never
 // progresses. Until the first upstream byte nothing has been delivered to the server, so
 // changing the hop cannot split a session; after it, the pin is never touched.
-func (p *ProxyServer) proveGameUpstream(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, routed *url.URL, dest string, tunnel *gameTunnel) (net.Conn, *url.URL, []byte) {
+func (p *ProxyServer) proveGameUpstream(clientConn net.Conn, clientBuf *bufio.ReadWriter, destConn net.Conn, routed *url.URL, dest string) (net.Conn, *url.URL, *tunnelPrelude) {
 	first := readClientPrelude(clientConn, clientBuf)
+	pre := &tunnelPrelude{toServer: first}
 	if len(first) == 0 {
 		// The client has not spoken yet; there is nothing to prove and nothing to replay.
 		return destConn, routed, nil
 	}
-	// Touch as soon as the far side answers, not after the caller gets control back:
-	// a concurrent tunnel's re-pin reads liveGameSessions, and a proven session must
-	// already be visible to it.
-	proven := func() {
-		if tunnel != nil {
-			tunnel.touch()
-		}
-	}
 	if answer, ok := proveRoute(destConn, first); ok {
-		proven()
-		return destConn, routed, answer
+		pre.toClient = answer
+		return destConn, routed, pre
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 9*time.Second)
@@ -1739,23 +1728,23 @@ func (p *ProxyServer) proveGameUpstream(clientConn net.Conn, clientBuf *bufio.Re
 			// A proven game tunnel exists, so the exit is carrying the session. Moving it
 			// to rescue this one would risk the session that is working.
 			log.Printf("[UPSTREAM] %s has not answered the game handshake yet, but another game tunnel is live; keeping the pin", routed.Redacted())
-			return destConn, routed, nil
+			return destConn, routed, pre
 		}
 		if err != nil {
 			log.Printf("[UPSTREAM] %s swallowed the game handshake and no other hop could be dialled (%v); leaving the tunnel on the current hop", routed.Redacted(), err)
-			return destConn, routed, nil
+			return destConn, routed, pre
 		}
 		_ = destConn.Close()
 		log.Printf("[UPSTREAM] %s swallowed the game handshake for %s; moving to %s before any byte was delivered", routed.Redacted(), dest, winner.Redacted())
 		destConn, routed = next, winner
 		if answer, ok := proveRoute(destConn, first); ok {
-			proven()
-			return destConn, routed, answer
+			pre.toClient = answer
+			return destConn, routed, pre
 		}
 		p.markPinDead(routed)
 	}
 	log.Printf("[UPSTREAM] no egress carried a first byte for %s; the tunnel stays on %s and the request may fail", dest, routed.Redacted())
-	return destConn, routed, nil
+	return destConn, routed, pre
 }
 
 func (p *ProxyServer) dialTunnel(host, defPort string) (net.Conn, error) {
@@ -1766,17 +1755,7 @@ func (p *ProxyServer) dialTunnel(host, defPort string) (net.Conn, error) {
 
 func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	dest := ensureHostPort(r.Host, "443")
-	game := isGameDestination(dest)
-	var destConn net.Conn
-	var routed *url.URL
-	var err error
-	if game && p.chainEgressIsFailoverable() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		destConn, routed, err = p.dialChainRoute(ctx, mapVirtualHost(dest))
-		cancel()
-	} else {
-		destConn, err = p.dialTunnel(r.Host, "443")
-	}
+	destConn, err := p.dialTunnel(r.Host, "443")
 	if err != nil {
 		http.Error(w, "Connection Failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -1802,16 +1781,12 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[TUNNEL] CONNECT -> %s (%s)", dest, p.model)
 	}
 	var tunnel *gameTunnel
-	if game {
+	if isGameDestination(dest) {
 		var release func()
 		tunnel, release = p.registerGameTunnel()
 		defer release()
 	}
-	var firstServer []byte
-	if game && routed != nil {
-		destConn, _, firstServer = p.proveGameUpstream(clientConn, clientBuf, destConn, routed, mapVirtualHost(dest), tunnel)
-	}
-	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel, firstServer)
+	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel, nil)
 }
 
 func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {

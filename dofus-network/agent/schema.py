@@ -205,6 +205,7 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
             "duration_min": _p("int", "Stop after this many minutes."),
             "loot_filter": _p("str_list", "Item names to keep; others can be dropped."),
             "auto_sell": _p("bool", "Auto-list kept loot on the market when bags fill.", default=False),
+            "restart": _p("bool", "Start a fresh session even if the farm is already running.", default=False),
         },
         backend="directive",
         directive="FARM_START",

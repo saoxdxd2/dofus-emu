@@ -3531,6 +3531,15 @@ namespace DofusFarm.Engine
     internal static class PlayLog
     {
         private static readonly object _gate = new object();
+        private static readonly Dictionary<string, string> _safeNames =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+        private sealed class Sink
+        {
+            public StreamWriter Writer;
+            public long Bytes;
+        }
+        private static readonly Dictionary<string, Sink> _sinks =
+            new Dictionary<string, Sink>(StringComparer.OrdinalIgnoreCase);
         private static string _dir;
         private const long MaxBytes = 64L * 1024 * 1024;
 
@@ -3556,45 +3565,110 @@ namespace DofusFarm.Engine
             }
         }
 
+        // One resident writer instead of regex + FileInfo + open/write/close on
+        // every action. Rows are still flushed each append, so a killed process
+        // keeps everything it recorded, and the in-memory byte counter replaces
+        // the per-append stat(). UTF8 without BOM: a BOM at the head of a .jsonl
+        // file breaks every naive line parser.
         public static void Append(string instanceId, string json)
         {
             try
             {
-                string safe = Regex.Replace(string.IsNullOrEmpty(instanceId) ? "default" : instanceId,
-                                            "[^A-Za-z0-9_.-]", "_");
+                string safe = SafeName(instanceId);
                 string path = Path.Combine(Directory_, "play_" + safe + ".jsonl");
                 lock (_gate)
                 {
-                    try
+                    Sink sink = SinkForLocked(path);
+                    int bytes = Encoding.UTF8.GetByteCount(json) + Environment.NewLine.Length;
+                    if (sink.Bytes + bytes >= MaxBytes)
                     {
-                        FileInfo info = new FileInfo(path);
-                        if (info.Exists && info.Length >= MaxBytes)
-                        {
-                            string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
-                            string rotated = Path.Combine(
-                                Directory_, "play_" + safe + "." + stamp + ".jsonl");
-                            int suffix = 0;
-                            while (File.Exists(rotated))
-                            {
-                                suffix++;
-                                rotated = Path.Combine(
-                                    Directory_, "play_" + safe + "." + stamp
-                                    + "-" + suffix + ".jsonl");
-                            }
-                            File.Move(path, rotated);
-                        }
+                        CloseSinkLocked(sink);
+                        _sinks.Remove(path);
+                        RotateLocked(path, safe);
+                        sink = SinkForLocked(path);
                     }
-                    catch { }
-                    // UTF8 without BOM: a BOM at the head of a .jsonl file breaks
-                    // every naive line parser, and this file exists to be parsed.
-                    File.AppendAllText(path, json + Environment.NewLine,
-                                       new UTF8Encoding(false));
+                    sink.Writer.Write(json);
+                    sink.Writer.Write(Environment.NewLine);
+                    sink.Writer.Flush();
+                    sink.Bytes += bytes;
                 }
             }
             catch
             {
                 // Recording must never take the game down.
+                lock (_gate)
+                {
+                    foreach (Sink sink in _sinks.Values) CloseSinkLocked(sink);
+                    _sinks.Clear();
+                }
             }
+        }
+
+        private static string SafeName(string instanceId)
+        {
+            string key = string.IsNullOrEmpty(instanceId) ? "default" : instanceId;
+            lock (_gate)
+            {
+                string cached;
+                if (_safeNames.TryGetValue(key, out cached)) return cached;
+            }
+            var name = new StringBuilder(key.Length);
+            foreach (char c in key)
+                name.Append((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                            || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-'
+                            ? c : '_');
+            string safe = name.ToString();
+            lock (_gate)
+            {
+                if (_safeNames.Count > 256) _safeNames.Clear();
+                _safeNames[key] = safe;
+            }
+            return safe;
+        }
+
+        private static Sink SinkForLocked(string path)
+        {
+            Sink sink;
+            if (_sinks.TryGetValue(path, out sink)) return sink;
+            if (_sinks.Count >= 64)
+            {
+                foreach (Sink old in _sinks.Values) CloseSinkLocked(old);
+                _sinks.Clear();
+            }
+            sink = new Sink {
+                Writer = new StreamWriter(
+                    new FileStream(path, FileMode.Append, FileAccess.Write,
+                                  FileShare.ReadWrite | FileShare.Delete),
+                    new UTF8Encoding(false)) { AutoFlush = false },
+            };
+            try { sink.Bytes = new FileInfo(path).Length; } catch { sink.Bytes = 0; }
+            _sinks[path] = sink;
+            return sink;
+        }
+
+        private static void CloseSinkLocked(Sink sink)
+        {
+            try { sink.Writer.Flush(); sink.Writer.Dispose(); } catch { }
+        }
+
+        private static void RotateLocked(string path, string safe)
+        {
+            try
+            {
+                if (!File.Exists(path)) return;
+                string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+                string rotated = Path.Combine(
+                    Directory_, "play_" + safe + "." + stamp + ".jsonl");
+                int suffix = 0;
+                while (File.Exists(rotated))
+                {
+                    suffix++;
+                    rotated = Path.Combine(
+                        Directory_, "play_" + safe + "." + stamp + "-" + suffix + ".jsonl");
+                }
+                File.Move(path, rotated);
+            }
+            catch { }
         }
     }
 }

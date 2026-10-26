@@ -99,6 +99,12 @@ FIGHT_TOOLS = {"fight.join", "farm.start"}
 # fresh: it means nobody recorded when the snapshot was taken.
 OBS_FRESH_MS = 4000.0
 
+# While a farm order is running, no fight/kill/kamas movement for this long
+# means the bot is idle (no group on this map, or waiting for a respawn). Resume
+# planning so the targeted farm can join the next matching group or explore;
+# the farm.start no-op guard caps a truly dead loop at three attempts.
+FARM_IDLE_S = 20.0
+
 
 def _game_error(result: Any) -> Optional[str]:
     """The game's own rejection, inside a transport-successful response.
@@ -222,7 +228,6 @@ class Autopilot:
         self._forced_call: Optional[ToolCall] = None
         self._hinted = False
         self._pending: Optional[Decision] = None
-        self._drift_streak = 0
         self.replan_requested = 0
         self.deadline = time.time() + minutes * 60.0 if minutes > 0 else 0.0
         self.interval = interval
@@ -248,7 +253,9 @@ class Autopilot:
         self.knowledge = load_default_store()
         # Agent 3's read-only answers: one shared estimator behind both the guard
         # and the `fight.estimate` tool, so a step and its refusal cannot disagree.
-        self.fights = FightAdvisor()
+        # Reuse the canonical connection (and its bounded name cache) instead of
+        # opening a second handle to the same 42 MiB read-only database.
+        self.fights = FightAdvisor(store=self.knowledge)
         self.fight_log = FightOutcomeLog()
         self._character_at = 0.0     # last accepted sheet
         self._character_try = 0.0    # last attempt, successful or not
@@ -260,6 +267,16 @@ class Autopilot:
         self._fight_arm_at = 0.0
         self._fight_wait_since: Optional[float] = None
         self._fight_wait_report = 0.0
+        # A farm order is a standing state, not a per-step action. Re-issuing
+        # farm.start reset the page's session (kills/kamas back to zero) and the
+        # controller's snapshot recovery in between kept the loop busy without
+        # progress. While the FarmBot is enabled the loop holds and watches.
+        self._farm_wait = False
+        self._farm_wait_since: Optional[float] = None
+        self._farm_wait_report = 0.0
+        self._farm_progress = None
+        self._farm_progress_at = 0.0
+        self._farm_objective = None
         # Board snapshots are the raw material for cell-level combat training:
         # the in-page bot plays, but the board and the eventual outcome are
         # still a labelled example for a plan ranker.
@@ -279,7 +296,14 @@ class Autopilot:
         executor = getattr(runtime, "executor", None)
         if executor is not None and getattr(executor, "fights", None) is None:
             executor.fights = self.fights
+        if executor is not None and self.knowledge is not None:
+            executor.canonical_store = self.knowledge
         self._last_obs: Optional[Dict[str, Any]] = None
+        # The last object that already carries both knowledge and fight
+        # annotations. The carried post-action snapshot was enriched again at
+        # the top of the next step; returning the prepared object avoids that
+        # duplicate pass while preserving the same observation contract.
+        self._prepared_obs: Optional[Dict[str, Any]] = None
         # Provenance of `_last_obs`, recorded with the step it justified. A
         # snapshot the loop reused must not be written down as if it arrived
         # with the call: that is the difference between a training pair and a
@@ -287,6 +311,10 @@ class Autopilot:
         self._obs_age_ms: Optional[float] = None
         self._obs_source: str = "call"
         self._recent: List[str] = []
+        # Consecutive no-op outcomes per action tool. Read-only recoveries do
+        # not reset it: farm.start -> state.snapshot -> farm.start used to run
+        # forever because every snapshot cleared the exact-repeat streak.
+        self._action_noops: Dict[str, int] = {}
         # Guard refusals are decisions, not crashes. A refused call is reported to
         # the policy and the controller, and the loop takes another step; only the
         # same refusal three times in a row is a dead end for the goal.
@@ -438,6 +466,14 @@ class Autopilot:
         self._record_settled(best, after)
         return best
 
+    def _record_observation(self, observation: Any) -> None:
+        writer = getattr(getattr(self, "runtime", None), "observe", None)
+        if callable(writer) and isinstance(observation, dict) and observation:
+            try:
+                writer(observation, source="live")
+            except Exception:  # noqa: BLE001 - a log failure must not fail a step
+                pass
+
     def _record_settled(self, best: Any, after: Any) -> None:
         # Record only a state produced by a poll. If no poll happened, `after`
         # came either from observe() (already recorded) or from the directive's
@@ -465,8 +501,11 @@ class Autopilot:
         current, age_ms, source = self.runtime.current_observation()
         if (isinstance(current, dict) and current and age_ms is not None
                 and age_ms <= max_age_ms):
-            current = self._annotate_fights(
-                enrich_observation(current, self.knowledge))
+            if current is self._prepared_obs:
+                self._last_obs = current
+                self._obs_age_ms, self._obs_source = age_ms, source
+                return current
+            current = self._prepare_obs(current)
             self._last_obs = current
             self._obs_age_ms, self._obs_source = age_ms, source
             return current
@@ -489,7 +528,7 @@ class Autopilot:
             if result.ok and isinstance(getattr(result, "data", None), dict):
                 snap = result.data.get("snapshot") or result.data
         if isinstance(snap, dict) and snap:
-            snap = self._annotate_fights(enrich_observation(snap, self.knowledge))
+            snap = self._prepare_obs(snap)
             self._last_obs = snap
             self._obs_age_ms, self._obs_source = 0.0, "call"
             if record:
@@ -505,13 +544,18 @@ class Autopilot:
             # No independent read path (a test double, or a bridge that just
             # failed): use the runtime's copy, but say it is stale so the
             # recorder never presents it as a fresh pairing.
-            current = self._annotate_fights(
-                enrich_observation(current, self.knowledge))
+            current = self._prepare_obs(current)
             self._last_obs = current
             self._obs_age_ms, self._obs_source = age_ms, "stale"
             return current
         self._obs_source = "stale"
         return self._last_obs
+
+    def _prepare_obs(self, observation: Dict[str, Any]) -> Dict[str, Any]:
+        prepared = self._annotate_fights(
+            enrich_observation(observation, self.knowledge))
+        self._prepared_obs = prepared
+        return prepared
 
     # -- the fight advisor ---------------------------------------------------
 
@@ -561,10 +605,11 @@ class Autopilot:
         """
         if not isinstance(obs, dict) or not obs or obs.get("in_fight"):
             return obs
-        if not self.fights.groups(obs):
+        groups = self.fights.groups(obs)
+        if not groups:
             return obs
         self._refresh_character()
-        return self.fights.annotate(obs)
+        return self.fights.annotate(obs, groups=groups)
 
     # -- guards --------------------------------------------------------------
 
@@ -768,6 +813,76 @@ class Autopilot:
             self._record_fight_board(goal)
         time.sleep(1.0)
 
+    @staticmethod
+    def _farm_counters(observation: Dict[str, Any]) -> Optional[tuple]:
+        """(fights, kills, xp, kamas, drops) from the page session, if present."""
+        session = observation.get("farm_session") if isinstance(observation, dict) else None
+        if not isinstance(session, dict):
+            return None
+        return (session.get("fights"), session.get("kills"), session.get("xp"),
+                session.get("kamas"), session.get("drop_count"))
+
+    def _wait_out_farm(self, observation: Dict[str, Any],
+                       goal: Optional[str] = None) -> None:
+        """Hold the goal while the page's FarmBot is playing.
+
+        The bot is a standing order: re-issuing farm.start is unnecessary and
+        (before the page-side guard) reset its counters every cycle. Stay here
+        while auto_fight is on, report progress, and resume planning when the
+        farm stops, advances a quest objective, or stops producing for two
+        minutes so the scheduler can try another route.
+        """
+        if self._forced_call is not None:
+            self._forced_call = None
+        # The farm order is a standing state, not a repair; do not credit the
+        # controller's strategy with an unrelated step after the wait.
+        self._pending = None
+        now = time.time()
+        if not observation.get("auto_fight"):
+            if self._farm_wait:
+                print("[autopilot] the farm stopped; resuming planning")
+                self._record_observation(observation)
+            self._farm_wait = False
+            self._farm_wait_since = None
+            return
+        if self._farm_wait_since is None:
+            self._farm_wait_since = now
+            self._farm_wait_report = now
+            self._farm_progress = self._farm_counters(observation)
+            self._farm_progress_at = now
+            self._farm_objective = observation.get("objectives_completed")
+            print("[autopilot] farm is running; holding the goal and watching progress")
+        counters = self._farm_counters(observation)
+        if counters is not None and counters != self._farm_progress:
+            self._farm_progress = counters
+            self._farm_progress_at = now
+        progress = observation.get("objectives_completed")
+        if (isinstance(progress, (int, float))
+                and isinstance(self._farm_objective, (int, float))
+                and progress > self._farm_objective):
+            print("[autopilot] farm advanced the objective; resuming planning")
+            self._record_observation(observation)
+            self._farm_wait = False
+            self._farm_wait_since = None
+            return
+        if now - self._farm_progress_at >= FARM_IDLE_S:
+            print(f"[autopilot] the farm produced no kills/xp/kamas for "
+                  f"{FARM_IDLE_S:.0f}s; resuming planning")
+            self._record_observation(observation)
+            self._farm_wait = False
+            self._farm_wait_since = None
+            return
+        if now - self._farm_wait_report >= 30.0:
+            self._farm_wait_report = now
+            session = observation.get("farm_session") or {}
+            print(f"[autopilot] farm wait {now - self._farm_wait_since:.0f}s; "
+                  f"kills={session.get('kills')} kamas={session.get('kamas')} "
+                  f"xp={session.get('xp')}")
+        # The in-page bot plays the fights; the agent only watches for a stop,
+        # an objective change or a stalled session. A 5 s poll cuts the idle
+        # full-state snapshots by 60% without delaying any action it owns.
+        time.sleep(5.0)
+
     # -- labelling -----------------------------------------------------------
 
     def _verdict(self, result, before: Optional[Dict[str, Any]],
@@ -819,6 +934,9 @@ class Autopilot:
 
         for goal in self.goals:
             failures = 0
+            self._farm_wait = False
+            self._farm_wait_since = None
+            self._action_noops.clear()
             # Why this run ended. "goals exhausted" used to be reported even when the
             # session had died, which reads as success and hides the one thing worth
             # knowing.
@@ -840,7 +958,9 @@ class Autopilot:
                     print(f"[autopilot] stopping: {reason}")
                     return self.summary(reason)
 
-                before = self.observe()
+                # Idle farm polls are adopted, not recorded: an hours-long farm
+                # would otherwise write a trajectory row every few seconds.
+                before = self.observe(record=not self._farm_wait)
                 if isinstance(before, dict) and before.get("in_fight"):
                     # The page is playing a turn-based fight. Planning a quest
                     # step here was the live failure: `quest.advance` ran for
@@ -857,6 +977,10 @@ class Autopilot:
                     # with this fresh observation instead of waiting for the
                     # next action, which may never come if the run stops here.
                     self._track_fight(None, before)
+                if self._farm_wait:
+                    self._wait_out_farm(before, goal)
+                    taken -= 1
+                    continue
                 if self._forced_call is not None:
                     call = self._forced_call
                     self._forced_call = None
@@ -982,7 +1106,7 @@ class Autopilot:
                 data = getattr(result, "data", None)
                 snap = data.get("snapshot") if isinstance(data, dict) else None
                 if isinstance(snap, dict) and snap:
-                    snap = enrich_observation(snap, self.knowledge)
+                    snap = self._prepare_obs(snap)
                     adopt = getattr(self.runtime, "note_observation", None)
                     if callable(adopt):
                         adopt(snap)
@@ -1006,6 +1130,19 @@ class Autopilot:
                 # retries an action that is already in flight.
                 if step_ok and call.tool in SETTLE_TOOLS:
                     after = self._settle(before, after)
+
+                # A successful farm order is a standing state. In Auto mode hold
+                # the goal instead of asking the scheduler again; an Order-mode
+                # farm keeps its bounded step budget so it still finishes.
+                if step_ok and call.tool == "farm.start" and self.max_steps <= 0:
+                    self._farm_wait = True
+                    self._farm_wait_since = time.time()
+                    self._farm_wait_report = self._farm_wait_since
+                    self._farm_progress = self._farm_counters(
+                        after if isinstance(after, dict) else {})
+                    self._farm_progress_at = self._farm_wait_since
+                    self._farm_objective = ((after or {}).get("objectives_completed")
+                                            if isinstance(after, dict) else None)
 
                 # A closed connection is not a failed step.
                 #
@@ -1165,6 +1302,7 @@ class Autopilot:
 
                 if (after or {}).get("in_fight"):
                     self._recent.clear()
+                    self._action_noops.clear()
                     self._stall_since = self._index
                     time.sleep(1.0)
                     continue
@@ -1193,19 +1331,41 @@ class Autopilot:
                                   f"retiring quest {qid} and taking another")
                         self._stall_since = self._index
                         self._recent.clear()
+                        self._action_noops.clear()
 
                 # No-progress detection. A rule policy will happily pick the same
                 # tool for the same goal forever; without this the loop burns the
                 # whole budget repeating one scan. Three identical calls with no
                 # world change means the goal is not reachable this way.
                 key = f"{call.tool}|{json.dumps(call.args, sort_keys=True, ensure_ascii=False)}"
+                # A standing farm order is the one action whose no-op is hidden
+                # by its own recovery snapshot: farm.start -> state.snapshot ->
+                # farm.start cleared the exact-repeat streak forever. Count only
+                # farm.start across recoveries; movement tools must keep using
+                # the normal streak because their late progress lands in the
+                # snapshot rather than the call.
+                track_standing = call.tool == "farm.start"
                 if verdict == "advanced":
                     self._recent.clear()
+                    if track_standing:
+                        self._action_noops.clear()
                 else:
+                    if track_standing:
+                        self._action_noops[call.tool] = (
+                            self._action_noops.get(call.tool, 0) + 1)
                     self._recent.append(key)
                     del self._recent[:-32]
-                    if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
-                        print(f"[autopilot] no progress: {call.tool} repeated 3x with no change")
+                    repeated = (len(self._recent) >= 3
+                                and len(set(self._recent[-3:])) == 1)
+                    streak = (self._action_noops.get(call.tool, 0)
+                              if track_standing else 0)
+                    if repeated or streak >= 3:
+                        if streak >= 3 and not repeated:
+                            print(f"[autopilot] no progress: {call.tool} no-op 3x "
+                                  "(read-only recoveries ignored)")
+                        else:
+                            print(f"[autopilot] no progress: {call.tool} repeated 3x "
+                                  "with no change")
                         if tutorial_active:
                             # The plan is waiting on the scripted step (a dialog
                             # reply list that has not arrived, an NPC animation).
@@ -1214,6 +1374,7 @@ class Autopilot:
                             print("[autopilot] the tutorial is holding this step open;"
                                   " waiting instead of retiring the quest")
                             self._recent.clear()
+                            self._action_noops.clear()
                             self._stall_since = self._index
                             time.sleep(1.0)
                             continue
@@ -1226,6 +1387,7 @@ class Autopilot:
                             if qid is not None:
                                 print(f"[autopilot] retiring quest {qid}; taking another")
                                 self._recent.clear()
+                                self._action_noops.clear()
                                 continue
                         print(f"[autopilot] abandoning {goal!r}")
                         break

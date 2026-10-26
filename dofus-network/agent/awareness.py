@@ -14,8 +14,22 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
+try:
+    import orjson as _orjson
+except ImportError:  # pragma: no cover - orjson ships with the runtime
+    _orjson = None
+
 
 def _digest(value: Any) -> str:
+    # The scene key is compared for equality only; its concrete hex value is
+    # opaque. orjson's sorted compact encoding is the same canonical fact in
+    # far less CPU than stdlib json, which matters on maps with many groups.
+    if _orjson is not None:
+        try:
+            encoded = _orjson.dumps(value, option=_orjson.OPT_SORT_KEYS)
+            return hashlib.sha1(encoded).hexdigest()
+        except (TypeError, ValueError):
+            pass
     encoded = json.dumps(value, sort_keys=True, ensure_ascii=False,
                          default=str).encode("utf-8")
     return hashlib.sha1(encoded).hexdigest()
@@ -114,6 +128,33 @@ def _scene_components(obs: Dict[str, Any]) -> Dict[str, Any]:
         key = _objective_key(item)
         ready_key.append((key.get("id"), key.get("quest_id"), key.get("status")))
     ready_key.sort()
+    # Sort by direct primitive tuples, not by JSON text. The list order only
+    # has to be deterministic so the digest does not change when the client
+    # reorders the same groups/NPCs/exits; serialising each item just to obtain
+    # a sort key was repeated work on every decision.
+    def group_order(item: Any) -> Any:
+        if not isinstance(item, dict):
+            return ("", repr(item))
+        members = item.get("members") or []
+        return (
+            str(item.get("group_id")), str(item.get("cell")),
+            tuple(str(value) for value in item.get("monster_ids") or []),
+            tuple((str(member[0]), str(member[1])) for member in members
+                  if isinstance(member, (list, tuple)) and len(member) >= 2),
+        )
+
+    def npc_order(item: Any) -> Any:
+        if not isinstance(item, dict):
+            return ("", repr(item))
+        return (str(item.get("npc_id")), str(item.get("actor_id")),
+                str(item.get("cell")))
+
+    def exit_order(item: Any) -> Any:
+        if not isinstance(item, dict):
+            return ("", repr(item))
+        return (str(item.get("direction")), str(item.get("map_id")),
+                bool(item.get("blocked")))
+
     return {
         "map_id": _map_id(obs),
         "in_fight": bool(obs.get("in_fight")),
@@ -123,15 +164,9 @@ def _scene_components(obs: Dict[str, Any]) -> Dict[str, Any]:
         "ready": ready_key,
         "active": active_key,
         "tutorial": tutorial_key,
-        "groups": sorted((group_key(group) for group in groups),
-                         key=lambda item: json.dumps(item, sort_keys=True,
-                                                     default=str)),
-        "npcs": sorted((npc_key(npc) for npc in npcs),
-                       key=lambda item: json.dumps(item, sort_keys=True,
-                                                   default=str)),
-        "exits": sorted((exit_key(exit_) for exit_ in exits),
-                        key=lambda item: json.dumps(item, sort_keys=True,
-                                                    default=str)),
+        "groups": sorted((group_key(group) for group in groups), key=group_order),
+        "npcs": sorted((npc_key(npc) for npc in npcs), key=npc_order),
+        "exits": sorted((exit_key(exit_) for exit_ in exits), key=exit_order),
     }
 
 

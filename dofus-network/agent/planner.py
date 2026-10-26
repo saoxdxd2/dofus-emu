@@ -22,6 +22,7 @@ does not need to know which one it is talking to.
 from __future__ import annotations
 
 import random
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -29,10 +30,46 @@ from agent.observe import flatten
 from agent.jsonio import loads as fast_loads
 from agent.dialog_policy import rank_dialog
 from agent.awareness import quest_key, scene_key
-from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E402
+from agent.features import (CRAFT_TYPES, DELIVER_TYPES,  # noqa: E402
                             KILL_TYPES, MAP_TYPES, ObsTracker, TALK_TYPES,
                             _params, direction_hint, known_map,
                             required_map, travel_hops)
+
+# Prompt routing. The panel pins the planner, so it must decide from the goal
+# text whether the user asked for quests, a farm session, or full auto; the old
+# planner always ran quests and a quest kill objective could start a farm loop.
+_RE_GOAL_QUEST = re.compile(
+    r"\b(qu[eê]te?s?|quests?|objecti(?:f|ve)s?|missions?)\b", re.IGNORECASE)
+_RE_GOAL_FARM = re.compile(
+    r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|kamas?|mobs?|monsters?|"
+    r"monstres?|resources?|ressources?|r[eé]colte[rz]?|gather|harvest|minar|"
+    r"collecte[rz]?)\b", re.IGNORECASE)
+_AUTO_GOALS = frozenset({"auto", "full auto", "fullauto", "autopilot",
+                         "autonome", "automatic", ""})
+_FARM_TARGET_STRIP = re.compile(
+    r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|mobs?|monsters?|monstres?|"
+    r"resources?|ressources?|r[eé]colte[rz]?|gather|harvest|minar|collecte[rz]?|"
+    r"kamas?|xp|exp|level|levels|please|the|a|an|some|des|du|de|le|la|les|un|"
+    r"une|for|of|in|on|to|my|character|personnage|all|more)\b", re.IGNORECASE)
+
+
+def _farm_target(goal: str) -> Optional[str]:
+    """The named monster/resource in a farm prompt, if one is named."""
+    text = _FARM_TARGET_STRIP.sub(" ", goal or "")
+    text = re.sub(r"[^A-Za-zÀ-ſ' -]", " ", text)
+    words = [word for word in text.split() if len(word) >= 2]
+    return " ".join(words[:3]) or None
+
+
+def _goal_mode(goal: str) -> str:
+    text = (goal or "").strip()
+    if text.lower() in _AUTO_GOALS:
+        return "auto"
+    if _RE_GOAL_QUEST.search(text):
+        return "quest"
+    if _RE_GOAL_FARM.search(text):
+        return "farm"
+    return "order"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
@@ -140,12 +177,12 @@ class QuestPlanner:
                  store: Any = None, curriculum: str = "greedy",
                  seed: int = 0, focus: Optional[int] = None,
                  ordering: str = "step") -> None:
-        self.quests: Dict[int, Dict[str, Any]] = {}
-        path = CACHE / "quests_full.json"
-        if path.exists():
-            for q in fast_loads(path.read_bytes()):
-                if q.get("steps"):
-                    self.quests[int(q["id"])] = q
+        # Loaded on first quest access. Farm/order goals never plan a quest,
+        # so paying ~19 MiB and a JSON parse before the first directive was
+        # pure waste; the property keeps the public table contract for tools
+        # and tests that do need it.
+        self._quests: Dict[int, Dict[str, Any]] = {}
+        self._quests_loaded = False
         self.level_hint = level_hint
         self.max_quest_level = max_quest_level
         self.current_quest: Optional[int] = None
@@ -172,6 +209,12 @@ class QuestPlanner:
         # The observation the last decision was made from, so a retirement asked
         # for by the loop (`skip`) can record the situation it happened in.
         self._last_obs: Optional[Dict[str, Any]] = None
+        # A targeted farm order that the page refused because the mob is not on
+        # this map. The next farm plan walks an exit instead of asking again.
+        self._farm_target_missing = False
+        # Plain orders (sell, inventory, travel) are already parsed by the rule
+        # policy; the planner only owns quests/farm/auto. Built lazily.
+        self._rule_policy: Any = None
         # What the last plan was made against. A claim/retry/start attempt from
         # another map, quest step, dialogue or group set is not evidence about
         # this one; the awareness layer resets those transients on change.
@@ -243,6 +286,42 @@ class QuestPlanner:
         # walk back through the exit it just used. Without this, a target on an
         # unindexed map produces a two-map loop instead of a search.
         self._prev_map: Optional[int] = None
+
+    @property
+    def quests(self) -> Dict[int, Dict[str, Any]]:
+        self._ensure_quests()
+        return self._quests
+
+    @quests.setter
+    def quests(self, value: Dict[int, Dict[str, Any]]) -> None:
+        self._quests = value
+        self._quests_loaded = True
+
+    def _ensure_quests(self) -> None:
+        if self._quests_loaded:
+            return
+        self._quests_loaded = True
+        path = CACHE / "quests_full.json"
+        if not path.exists():
+            return
+        for q in fast_loads(path.read_bytes()):
+            if not q.get("steps"):
+                continue
+            # Keep only what planning reads: id/level gate, the step list,
+            # and the objectives. Names, descriptions, categories, event
+            # flags and start metadata are for display/training tooling,
+            # not for a live decision. Trim in place; the JSON file is
+            # untouched for offline tools.
+            for step in q["steps"]:
+                step["objectives"] = step.get("objectives") or []
+                for key in ("id", "name", "description", "optimal_level"):
+                    step.pop(key, None)
+            for key in ("name", "category_id", "level_max", "is_dungeon",
+                        "is_event", "is_party", "start_criterion",
+                        "start_position"):
+                q.pop(key, None)
+            q["level_min"] = q.get("level_min") or 1
+            self._quests[int(q["id"])] = q
 
     # -- curriculum --------------------------------------------------------
 
@@ -775,39 +854,32 @@ class QuestPlanner:
         if t in KILL_TYPES:
             monster = p.get("parameter0")
             calls = list(travel)
-            if t in FIGHT_TYPES:
-                visible = self._visible_target(obs, monster)
-                if visible is False:
-                    npc_calls = self._npc_talk_calls(quest, obj, obs, t)
-                    if npc_calls:
-                        return calls + npc_calls
-                    if obj.get("map_id"):
-                        # The objective names the map it must happen on. Groups
-                        # respawn there; walking away would only require walking
-                        # back, so wait for the spawn instead.
-                        return calls + [{
-                            "tool": "state.snapshot", "args": {},
-                            "why": ("objective %d: waiting for a group on map %s"
-                                    % (t, obj.get("map_id")))}]
-                    # `fight.join` can only attack a group the map reports. The
-                    # live tutorial had an empty map and a fight objective, and
-                    # the planner sent the join anyway; the guard refused it and
-                    # the run ended. The objective names the monster, so the
-                    # honest move is to go and find it.
-                    explore = self._explore_call(obj, obs, avoid=self._prev_map)
-                    if explore is not None:
-                        return calls + [explore]
+            visible = self._visible_target(obs, monster)
+            if visible is False:
+                npc_calls = self._npc_talk_calls(quest, obj, obs, t)
+                if npc_calls:
+                    return calls + npc_calls
+                if obj.get("map_id"):
+                    # The objective names the map it must happen on. Groups
+                    # respawn there; walking away would only require walking
+                    # back, so wait for the spawn instead.
                     return calls + [{
                         "tool": "state.snapshot", "args": {},
-                        "why": ("objective %d: target %s is not on this map and "
-                                "there is no exit to search" % (t, monster))}]
-                calls.append({"tool": "fight.join",
-                              "args": {"monster": monster} if monster else {},
-                              "why": "objective %d: fight" % t})
-                return calls
-            calls.append({"tool": "farm.start",
+                        "why": ("objective %d: waiting for a group on map %s"
+                                % (t, obj.get("map_id")))}]
+                # `fight.join` can only attack a group the map reports. The
+                # objective names the monster, so go and find it; the farm loop
+                # is a standing order, not a quest action.
+                explore = self._explore_call(obj, obs, avoid=self._prev_map)
+                if explore is not None:
+                    return calls + [explore]
+                return calls + [{
+                    "tool": "state.snapshot", "args": {},
+                    "why": ("objective %d: target %s is not on this map and "
+                            "there is no exit to search" % (t, monster))}]
+            calls.append({"tool": "fight.join",
                           "args": {"monster": monster} if monster else {},
-                          "why": "objective %d: kill" % t})
+                          "why": "objective %d: fight" % t})
             return calls
 
         if t in DELIVER_TYPES:
@@ -1030,6 +1102,11 @@ class QuestPlanner:
         """The caller reports what happened. Without this the policy cannot learn
         from its own failures, and any history feature would be a guess."""
         self.tracker.record(tool, ok, note, obs)
+        if tool == "farm.start":
+            if ok:
+                self._farm_target_missing = False
+            elif "not on this map" in str(note or "").lower():
+                self._farm_target_missing = True
         pending, self._pending_claim = self._pending_claim, None
         started, self._pending_start = self._pending_start, None
 
@@ -1112,6 +1189,14 @@ class QuestPlanner:
         twin._pending_start = None
         twin._server_counted_types = set(self._server_counted_types)
         twin._prev_map = self._prev_map
+        twin._farm_target_missing = self._farm_target_missing
+        twin._npc_tries = dict(self._npc_tries)
+        # The twin is about to observe its own world for the first time. Inheriting
+        # the parent's scene key would make its first observation look unchanged,
+        # so the transient claim/retry state (which belongs to the parent's scene)
+        # would survive into the fork.
+        twin._scene_key = None
+        twin._quest_key = None
         twin._plannable_cache = self._plannable_cache   # pure function of the KB
         twin.store = self.store
         twin.curriculum = self.curriculum
@@ -1254,6 +1339,25 @@ class QuestPlanner:
         dialog = self._dialog_call(obs, goal)
         if dialog is not None:
             return dialog
+        mode = _goal_mode(goal)
+        if mode == "order":
+            # The planner is the pinned policy, so simple orders must still reach
+            # the rule parser instead of being hijacked into the quest curriculum.
+            if self._rule_policy is None:
+                from agent.runtime import RulePolicy
+                self._rule_policy = RulePolicy()
+            return self._rule_policy.choose(goal, obs, tools)
+        if mode == "farm":
+            target = _farm_target(goal)
+            if target and self._farm_target_missing:
+                self._farm_target_missing = False
+                explore = self._explore_call({}, obs, avoid=self._prev_map)
+                if explore is not None:
+                    return ToolCall(explore["tool"],
+                                    dict(explore.get("args") or {}), goal)
+                return ToolCall("state.snapshot", {}, goal)
+            return ToolCall("farm.start", {"monster": target} if target else {}, goal)
+        self._ensure_quests()
         level = int(obs.get("level") or self.level_hint)
         active = obs.get("quests_active") or {}
         self._seen_done |= {int(q) for q in (obs.get("quests_done") or [])}
@@ -1471,6 +1575,10 @@ class QuestPlanner:
             if call is not None:
                 return call
             self._skipped.add(qid)
+        if mode == "auto":
+            # Full Auto: quests first (above); when the curriculum has nothing
+            # plannable, a standing farm order keeps the session productive.
+            return ToolCall("farm.start", {}, goal)
         return None
 
     def skip(self, quest_id: Any) -> None:

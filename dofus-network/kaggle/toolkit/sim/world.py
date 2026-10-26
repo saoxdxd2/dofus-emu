@@ -671,7 +671,14 @@ class World:
     def _tool_fight_join(self, args: Dict[str, Any]) -> Tuple[bool, str]:
         found = None
         if args.get("monster") is not None:
-            found = self._target_in_active("monster", args["monster"], FIGHT_TYPES)
+            # Joining a group is how the live client fights an open-world monster
+            # too, not only a quest that says "in a fight". Restricting this to
+            # FIGHT_TYPES made every type-0 kill uncompletable for fight.join, so
+            # the corpus had to label the standing farm order as the winner; the
+            # live quest planner refuses that order. The simulator has to accept
+            # the same action the client accepts or its labels describe a
+            # different game.
+            found = self._target_in_active("monster", args["monster"], KILL_TYPES)
         if found is None:
             for quest in self._active_quests():
                 for step_idx, obj_idx, obj in self._open_objectives(quest):

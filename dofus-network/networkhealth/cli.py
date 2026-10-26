@@ -200,11 +200,6 @@ def cmd_baselines(args: argparse.Namespace) -> Path:
     y = payload["y"]
     block = y.reshape(y.shape[0], len(HORIZONS), TARGET_BLOCK)
     results: dict[str, Any] = {}
-    for name, extractor in (
-        ("persistence", lambda i: block[i, :, 0] if False else None),
-    ):
-        del name, extractor
-
     valid_idx = split.valid_idx
     if not valid_idx:
         raise SystemExit("Empty validation split; cannot compute baselines.")

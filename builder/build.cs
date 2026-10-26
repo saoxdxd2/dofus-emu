@@ -299,6 +299,42 @@ namespace DofusBuild
             catch { }
         }
 
+        // Training corpora are inputs to offline tools, not to inference. They
+        // stay in the repo (and in the cleanup archive) but shipping every SFT
+        // shard in setup.exe added ~160 MB of payload the installed app never
+        // opens. The runtime still ships data/cache, data/knowledge, data/maps,
+        // all models used by the agent, and every agent/ai serving module.
+        static bool SkipTrainingPayload(string path)
+        {
+            string p = path.Replace('\\', '/');
+            return p.IndexOf("/data/core_sft", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/tool_sft", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/tool_candidate", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/kaggle/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/_tune", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/models/archive", StringComparison.OrdinalIgnoreCase) >= 0
+                // Recorded sessions are training inputs, not runtime state. The
+                // recorder creates dofus-network/trajectories on first write
+                // (agent/recorder.py mkdir parents), so a fresh install starts
+                // empty instead of shipping other sessions' logs.
+                || p.IndexOf("/trajectories/", StringComparison.OrdinalIgnoreCase) >= 0
+                // Live encoder inference uses encoder_int8.onnx + tokenizer +
+                // policy.json (autopilot's --policy encoder path). The FP32 graph
+                // and the PyTorch checkpoint are training/export artifacts and
+                // together are ~192 MB; shipping them doubled the payload for a
+                // path the app never opens. The repo keeps both.
+                || p.EndsWith("/models/encoder30_v15/model.pt", StringComparison.OrdinalIgnoreCase)
+                || p.EndsWith("/models/encoder30_v15/encoder.onnx", StringComparison.OrdinalIgnoreCase)
+                // Per-map cell/layer dumps are inputs to the offline duel and
+                // benchmarks. The live agent reads only _index.json for routing
+                // and the client supplies the live board; keep the default duel
+                // map so installed offline commands still resolve.
+                || (p.IndexOf("/data/maps/", StringComparison.OrdinalIgnoreCase) >= 0
+                    && p.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                    && !p.EndsWith("/data/maps/_index.json", StringComparison.OrdinalIgnoreCase)
+                    && !p.EndsWith("/data/maps/100139008.json", StringComparison.OrdinalIgnoreCase));
+        }
+
         static bool BuildStandaloneSetup(string outSetup, string setupIco, string desktopDir, bool includeLegacyEmulator = false)
         {
             string tempDir = Path.GetTempPath();
@@ -365,6 +401,15 @@ namespace DofusBuild
                     Directory.CreateDirectory(stageWarp);
                     foreach (string wf in Directory.GetFiles(repoWarp))
                     {
+                        // The host uses wireproxy for the local tunnel and keeps
+                        // wgcf for regenerating its config. warp-plus is a separate
+                        // VPN client that no Windows code path starts; it was 20 MB
+                        // of dead payload. It remains in the repo.
+                        if (string.Equals(Path.GetFileName(wf), "warp-plus.exe",
+                                          StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(Path.GetFileName(wf), "wgcf.exe",
+                                             StringComparison.OrdinalIgnoreCase))
+                            continue;
                         File.Copy(wf, Path.Combine(stageWarp, Path.GetFileName(wf)), true);
                     }
                 }
@@ -441,7 +486,8 @@ namespace DofusBuild
                         if (dir.IndexOf("__pycache__", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             dir.IndexOf(".git", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             dir.IndexOf(".pytest_cache", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            dir.IndexOf("networkhealth_artifacts", StringComparison.OrdinalIgnoreCase) >= 0)
+                            dir.IndexOf("networkhealth_artifacts", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            SkipTrainingPayload(dir))
                             continue;
                         Directory.CreateDirectory(dir.Replace(repoNetwork, stageNetwork));
                     }
@@ -449,7 +495,8 @@ namespace DofusBuild
                     {
                         if (file.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase) ||
                             file.IndexOf("__pycache__", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            file.IndexOf("networkhealth_artifacts", StringComparison.OrdinalIgnoreCase) >= 0)
+                            file.IndexOf("networkhealth_artifacts", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            SkipTrainingPayload(file))
                             continue;
                         string destFile = file.Replace(repoNetwork, stageNetwork);
                         string parent = Path.GetDirectoryName(destFile);
@@ -491,7 +538,7 @@ namespace DofusBuild
                 File.WriteAllText(installPyBat, "@echo off\r\ncd /d \"%~dp0\"\r\necho ====================================================\r\necho   DOFUS FARM AI SENTINEL PYTHON DEPENDENCY SETUP   \r\necho ====================================================\r\nset \"PY_EXE=\"\r\nif exist runtimes\\python\\python.exe set \"PY_EXE=runtimes\\python\\python.exe\"\r\nif not defined PY_EXE if exist python\\python.exe set \"PY_EXE=python\\python.exe\"\r\nif not defined PY_EXE where python >nul 2>nul && set \"PY_EXE=python\"\r\nif not defined PY_EXE (\r\n  echo Python not found! Please download and install Python 3.11+:\r\n  echo https://www.python.org/downloads/\r\n  pause\r\n  exit /b 1\r\n)\r\necho Using Python runtime: %PY_EXE%\r\necho Installing required AI packages (torch, transformers, thx01)...\r\n\"%PY_EXE%\" -m pip install -r requirements.txt --no-warn-script-location\r\necho.\r\necho [SUCCESS] All Python AI libraries installed!\r\npause\r\n");
 
                 if (File.Exists(payloadZip)) File.Delete(payloadZip);
-                ZipFile.CreateFromDirectory(stageDir, payloadZip, CompressionLevel.Fastest, false);
+                ZipFile.CreateFromDirectory(stageDir, payloadZip, CompressionLevel.Optimal, false);
 
                 // Embed DofusPayload.zip
                 StringBuilder resourceArgs = new StringBuilder();

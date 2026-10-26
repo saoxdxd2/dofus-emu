@@ -404,12 +404,16 @@ class _KnowledgeIndex:
         self.cache_dir = cache_dir
         self._lock = threading.Lock()
         self._entries: Dict[
-            str, List[Tuple[int, str, List[str], Dict[str, Any], str]]] = {}
+            str, List[Tuple[int, Tuple[str, ...], List[str], Dict[str, Any], str]]] = {}
+        # Full searchable text is built on the first query that needs it.
+        # Name-prefix hits never look at descriptions, and normalizing the item
+        # descriptions is ~850 ms of the cold index build.
+        self._haystacks: Dict[str, List[str]] = {}
         self._search_cache: "OrderedDict[Tuple[str, str, int], List[Dict[str, Any]]]" = OrderedDict()
 
     def entries(
         self, kind: str
-    ) -> List[Tuple[int, str, List[str], Dict[str, Any], str]]:
+    ) -> List[Tuple[int, Tuple[str, ...], List[str], Dict[str, Any], str]]:
         with self._lock:
             cached = self._entries.get(kind)
             if cached is not None:
@@ -424,7 +428,7 @@ class _KnowledgeIndex:
                 except (ValueError, OSError) as exc:
                     logger.warning(f"Unreadable cache file {path}: {exc}")
             entries: List[
-                Tuple[int, str, List[str], Dict[str, Any], str]] = []
+                Tuple[int, Tuple[str, ...], List[str], Dict[str, Any], str]] = []
             for record in records:
                 if not isinstance(record, dict):
                     continue
@@ -432,15 +436,35 @@ class _KnowledgeIndex:
                 # Descriptions stay searchable in the haystack but do not get
                 # the exact/prefix *name* bonus; keeping a second normalized
                 # copy of them in names_norm duplicated 86% of the item index
-                # text for a bonus a description should not receive.
-                descriptions = [_normalize(d) for d in _description_strings(record) if d]
+                # text for a bonus a description should not receive. Their
+                # normalization is deferred to the first full-text query.
+                descriptions = tuple(d for d in _description_strings(record) if d)
                 names_hay = " ".join(names_norm)
-                haystack = " ".join(names_norm + descriptions)
                 stored = _index_record(kind, record)
-                entries.append((int(record.get("id") or 0), haystack,
+                entries.append((int(record.get("id") or 0), descriptions,
                                 names_norm, stored, names_hay))
             self._entries[kind] = entries
             return entries
+
+    def _haystacks_for(
+        self, kind: str,
+        entries: List[Tuple[int, Tuple[str, ...], List[str], Dict[str, Any], str]],
+    ) -> List[str]:
+        """Normalized names+descriptions, built once on the first full scan."""
+        with self._lock:
+            cached = self._haystacks.get(kind)
+            if cached is not None:
+                return cached
+            built: List[str] = []
+            stripped: List[Tuple[int, Tuple[str, ...], List[str],
+                                  Dict[str, Any], str]] = []
+            for record_id, descriptions, names_norm, stored, names_hay in entries:
+                built.append(" ".join(names_norm + [_normalize(d) for d in descriptions])
+                             if descriptions else names_hay)
+                stripped.append((record_id, (), names_norm, stored, names_hay))
+            self._haystacks[kind] = built
+            self._entries[kind] = stripped
+            return built
 
     def search(
         self,
@@ -476,7 +500,7 @@ class _KnowledgeIndex:
         if tokens:
             bonus: List[Tuple[float, int, str, Dict[str, Any]]] = []
             for k in kinds:
-                for record_id, _haystack, names_norm, record, names_hay \
+                for record_id, _descriptions, names_norm, record, names_hay \
                         in self.entries(k):
                     if query_norm not in names_hay:
                         continue
@@ -495,8 +519,10 @@ class _KnowledgeIndex:
         results: List[Tuple[float, int, str, Dict[str, Any]]] = []
         append = results.append
         for k in kinds:
-            for record_id, haystack, names_norm, record, _names_hay \
-                    in self.entries(k):
+            entries = self.entries(k)
+            haystacks = self._haystacks_for(k, entries)
+            for (record_id, _descriptions, names_norm, record, _names_hay), haystack \
+                    in zip(entries, haystacks):
                 if query_norm not in haystack:
                     if single_token or not tokens:
                         continue
@@ -645,6 +671,10 @@ class ToolExecutor:
         self._zaaps_cache: Optional[List[Dict[str, Any]]] = None
         self._geo_index: Optional[Dict[str, Any]] = None
         self._maps = _MapGraph()
+        # The autopilot already has the canonical SQLite store open. Prefer it
+        # for name -> id lookups so a named farm target does not build the 51 MiB
+        # JSON entity index; the index remains the fallback.
+        self.canonical_store: Any = None
         self._fight_value_cache: Optional[Tuple[Any, Any, Path]] = None
 
     # -- HTTP helpers --------------------------------------------------------
@@ -1134,6 +1164,11 @@ class ToolExecutor:
                 return self._nav_goto(args, source)
             return ToolResult(tool=tool, ok=False, error=f"no sentinel handler for {tool}", source=source)
         if spec.backend == "directive":
+            if tool in ("farm.start", "fight.join"):
+                resolved, error = self._resolve_targets(tool, dict(args))
+                if error is not None:
+                    return ToolResult(tool=tool, ok=False, error=error, source=source)
+                args = resolved
             result = self._directive(spec.directive or tool.upper(), tool, args, source, instance)
             if tool == "fight.state":
                 self._attach_observation(result)
@@ -1161,6 +1196,69 @@ class ToolExecutor:
                                     str(args.get("reason", "")))
         return ToolResult(tool="knowledge.forget", ok=True, source=source,
                           data={"removed": removed})
+
+    def _resolve_entity_id(self, text: str, kind: str) -> Optional[int]:
+        """First knowledge id for a name; the client needs numeric ids."""
+        if self.canonical_store is not None:
+            try:
+                hits = self.canonical_store.find_entity(kind, text, limit=1)
+                if hits:
+                    return int(hits[0]["id"])
+            except Exception:  # noqa: BLE001 - fall back to the lazy index
+                pass
+        try:
+            hits = self.knowledge.search(text, kind, 1)
+        except Exception:  # noqa: BLE001 - an index problem is a resolution miss
+            return None
+        if not hits:
+            return None
+        try:
+            return int(hits[0].get("id"))
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_targets(self, tool: str, args: Dict[str, Any]
+                         ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Turn id_or_name arguments into ids before they reach the page.
+
+        The client parses farm.start.monster with parseInt; a name used to become
+        NaN and silently enable the generic farm loop instead of the named mob.
+        An unresolvable target is an error, never a licence to farm anything.
+        """
+        if tool == "farm.start":
+            for key, kind in (("monster", "monster"), ("resource", "item")):
+                raw = args.get(key)
+                if raw is None or isinstance(raw, (int, float)):
+                    continue
+                text = str(raw).strip()
+                if not text:
+                    continue
+                if text.lstrip("-").isdigit():
+                    args[key] = int(text)
+                    continue
+                rid = self._resolve_entity_id(text, kind)
+                if rid is None and kind == "monster":
+                    # "farm blé" names a resource; retry as an item and switch.
+                    rid = self._resolve_entity_id(text, "item")
+                    if rid is not None:
+                        args.pop("monster", None)
+                        args["resource"] = rid
+                        continue
+                if rid is None:
+                    return None, f"unknown {kind}: {text}"
+                args[key] = rid
+        elif tool == "fight.join":
+            raw = args.get("monster")
+            if isinstance(raw, str) and raw.strip():
+                text = raw.strip()
+                if text.lstrip("-").isdigit():
+                    args["monster"] = int(text)
+                else:
+                    rid = self._resolve_entity_id(text, "monster")
+                    if rid is None:
+                        return None, f"unknown monster: {text}"
+                    args["monster"] = rid
+        return args, None
 
     def _knowledge_search(self, args: Dict[str, Any], source: str) -> ToolResult:
         hits = self.knowledge.search(

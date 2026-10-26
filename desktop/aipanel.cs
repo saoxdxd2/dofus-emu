@@ -620,7 +620,11 @@ namespace DofusFarm.UI
             string goals = _settings.Goals.Trim();
             if (goals.Length == 0)
             {
-                Append("[ai] no goals: type one per line first");
+                // Full Auto: no prompt. The planner follows the active quest
+                // curriculum and falls back to a standing farm order only when
+                // no quest can be planned.
+                Append("[ai] no goals: starting full auto (planner: quests first, then farm)");
+                Launch("auto", _settings.Steps, 0, 0, "auto", "planner");
                 return;
             }
             // steps 0 = unlimited; the loop stops on its own only when the goals
@@ -638,7 +642,8 @@ namespace DofusFarm.UI
             Launch(order, 4, 0, 0, "order");
         }
 
-        private void Launch(string goalsText, int steps, double interval, double minutes, string mode)
+        private void Launch(string goalsText, int steps, double interval, double minutes, string mode,
+                            string policyOverride = null)
         {
             string python = ResolvePython();
             if (python == null)
@@ -689,7 +694,7 @@ namespace DofusFarm.UI
             sb.Append("--goals-file \"").Append(goalsFile).Append("\"");
             sb.Append(" --steps ").Append(steps.ToString());
             sb.Append(" --interval ").Append(interval.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            sb.Append(" --policy ").Append(_settings.Policy);
+            sb.Append(" --policy ").Append(policyOverride ?? _settings.Policy);
             sb.Append(" --stop-file \"").Append(stopFile).Append("\"");
             sb.Append(" --log \"").Append(logFile).Append("\"");
             if (minutes > 0) sb.Append(" --minutes ").Append(minutes.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -737,7 +742,7 @@ namespace DofusFarm.UI
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
                 lock (_procLock) { _proc = p; }
-                Append("[ai] " + mode + " started (pid " + p.Id.ToString() + ", " + steps.ToString() + " steps, policy " + _settings.Policy + ")");
+                Append("[ai] " + mode + " started (pid " + p.Id.ToString() + ", " + steps.ToString() + " steps, policy " + (policyOverride ?? _settings.Policy) + ")");
                 if (_log != null) _log("[AI] " + mode + " loop started");
                 SetRunningUi(true);
             }

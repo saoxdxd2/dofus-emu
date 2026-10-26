@@ -17,6 +17,7 @@ namespace DofusFarm.Engine
         // 0 = no periodic refresh (manual/event refreshes still happen).
         public int RefreshMs = 4000;
         public bool Watchdog = true;
+        public bool Governor = true;
         public bool Telemetry = true;
         public bool FightBoards = true;
 
@@ -63,6 +64,7 @@ namespace DofusFarm.Engine
                             settings.RefreshMs = ClampRefresh(ms);
                     }
                     else if (Same(key, "watchdog")) settings.Watchdog = ParseBool(value, settings.Watchdog);
+                    else if (Same(key, "governor")) settings.Governor = ParseBool(value, settings.Governor);
                     else if (Same(key, "telemetry")) settings.Telemetry = ParseBool(value, settings.Telemetry);
                     else if (Same(key, "fight_boards")) settings.FightBoards = ParseBool(value, settings.FightBoards);
                 }
@@ -80,6 +82,7 @@ namespace DofusFarm.Engine
                 var text = new StringBuilder();
                 text.AppendLine("refresh_ms=" + ClampRefresh(RefreshMs).ToString(CultureInfo.InvariantCulture));
                 text.AppendLine("watchdog=" + (Watchdog ? "1" : "0"));
+                text.AppendLine("governor=" + (Governor ? "1" : "0"));
                 text.AppendLine("telemetry=" + (Telemetry ? "1" : "0"));
                 text.AppendLine("fight_boards=" + (FightBoards ? "1" : "0"));
                 File.WriteAllText(path, text.ToString(), Encoding.UTF8);

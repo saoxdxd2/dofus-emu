@@ -19,8 +19,22 @@ namespace DofusFarm.Engine
         // opens and closes a process handle, so only reapply when the
         // foreground/background role actually changes.
         private readonly Dictionary<int, bool> _throttleState = new Dictionary<int, bool>();
+        // Role last applied per PID. Reading Process.PriorityClass opens a
+        // handle, and the tick runs every 1.5 s; only re-read on a role change
+        // or during the periodic reassert (in case something changed it).
+        private readonly Dictionary<int, bool> _priorityState = new Dictionary<int, bool>();
+        private DateTime _priorityReassertUtc = DateTime.MinValue;
         private int _runningState = 0;
         public volatile bool Enabled = true;
+        // Process ancestry changes only when a child is spawned. Snapshotting the
+        // whole process table every 1.5 s tick costs ~5.4 ms on this host; a short
+        // cache keeps the parent map across 2-3 ticks. A new child may wait one
+        // extra priority tick, which is harmless for a performance role.
+        private readonly object _parentsLock = new object();
+        private Dictionary<int, List<int>> _parentsCache;
+        private DateTime _parentsCacheUtc = DateTime.MinValue;
+        private BackendType? _parentsCacheBackend;
+        private const double ParentCacheSeconds = 4.0;
 
         // Precompiled once: GetInstanceSlot parses emulator command lines, and
         // re-parsing the pattern from source on every new PID was pure waste.
@@ -37,6 +51,7 @@ namespace DofusFarm.Engine
         public void Start()
         {
             Enabled = true;
+            lock (_parentsLock) { _parentsCache = null; _parentsCacheUtc = DateTime.MinValue; }
             if (_timer == null)
             {
                 _timer = new Timer(Tick, null, 2000, 1500);
@@ -58,6 +73,41 @@ namespace DofusFarm.Engine
                 _slotCoresCache.Clear();
             }
             lock (_throttleState) { _throttleState.Clear(); }
+            lock (_parentsLock) { _parentsCache = null; _parentsCacheUtc = DateTime.MinValue; }
+        }
+
+        private Dictionary<int, List<int>> CachedParents(BackendType? backend)
+        {
+            lock (_parentsLock)
+            {
+                DateTime now = DateTime.UtcNow;
+                if (_parentsCache != null
+                    && _parentsCacheBackend == backend
+                    && (now - _parentsCacheUtc).TotalSeconds < ParentCacheSeconds)
+                    return _parentsCache;
+                Dictionary<int, List<int>> fresh = null;
+                try { fresh = Win32.SnapshotParentMap(); } catch { }
+                if (fresh != null)
+                {
+                    _parentsCache = fresh;
+                    _parentsCacheUtc = now;
+                    _parentsCacheBackend = backend;
+                }
+                return fresh;
+            }
+        }
+
+        private static void PrunePids(Dictionary<int, bool> state, HashSet<int> live)
+        {
+            List<int> stale = null;
+            foreach (int pid in state.Keys)
+            {
+                if (live.Contains(pid)) continue;
+                if (stale == null) stale = new List<int>();
+                stale.Add(pid);
+            }
+            if (stale != null)
+                for (int i = 0; i < stale.Count; i++) state.Remove(stale[i]);
         }
 
         private void Log(string message)
@@ -288,13 +338,29 @@ namespace DofusFarm.Engine
                 uint fgPid = 0;
                 if (hFg != IntPtr.Zero) Win32.GetWindowThreadProcessId(hFg, out fgPid);
 
-                // Both governors may need process ancestry; snapshot the process
-                // table once per tick instead of once per query.
-                Dictionary<int, List<int>> parents = null;
-                try { parents = Win32.SnapshotParentMap(); } catch { }
-
-                GovernWebView2Processes(hFg, fgPid, parents);
-                GovernQemuProcesses(hFg, fgPid, parents);
+                // One backend owns the session: the other process family cannot
+                // exist. Skipping its walk saves a full process-table scan every
+                // tick; its role caches are cleared so a stale PID is never kept.
+                BackendType? backend = Backend != null ? (BackendType?)Backend.Type : null;
+                Dictionary<int, List<int>> parents = CachedParents(backend);
+                if (backend == BackendType.AndroidEmulator)
+                {
+                    lock (_throttleState) { _throttleState.Clear(); }
+                    lock (_priorityState) { _priorityState.Clear(); }
+                }
+                else
+                {
+                    GovernWebView2Processes(hFg, fgPid, parents);
+                }
+                if (backend == BackendType.WebView2Standalone)
+                {
+                    lock (_pinnedPids) { _pinnedPids.Clear(); }
+                    lock (_slotCache) { _slotCache.Clear(); }
+                }
+                else
+                {
+                    GovernQemuProcesses(hFg, fgPid, parents);
+                }
             }
             catch { }
             finally
@@ -316,6 +382,7 @@ namespace DofusFarm.Engine
                     // recycled PID is never mistaken for a process we already
                     // throttled.
                     lock (_throttleState) { _throttleState.Clear(); }
+                    lock (_priorityState) { _priorityState.Clear(); }
                     return;
                 }
 
@@ -365,6 +432,13 @@ namespace DofusFarm.Engine
                     _lastForegroundWvPid = 0;
                 }
 
+                bool reassert = (DateTime.UtcNow - _priorityReassertUtc).TotalSeconds >= 20;
+                if (reassert)
+                {
+                    lock (_priorityState) { _priorityState.Clear(); }
+                    _priorityReassertUtc = DateTime.UtcNow;
+                }
+
                 HashSet<int> live = new HashSet<int>(wvProcs.Length);
                 for (int i = 0; i < wvProcs.Length; i++)
                 {
@@ -373,15 +447,16 @@ namespace DofusFarm.Engine
                     try
                     {
                         bool isForeground = activeTree != null && activeTree.Contains(p.Id);
-                        if (isForeground)
+                        bool applied;
+                        bool known;
+                        lock (_priorityState) known = _priorityState.TryGetValue(p.Id, out applied);
+                        if (!known || applied != isForeground)
                         {
-                            if (p.PriorityClass != ProcessPriorityClass.AboveNormal)
-                                p.PriorityClass = ProcessPriorityClass.AboveNormal;
-                        }
-                        else
-                        {
-                            if (p.PriorityClass != ProcessPriorityClass.BelowNormal)
-                                p.PriorityClass = ProcessPriorityClass.BelowNormal;
+                            ProcessPriorityClass want = isForeground
+                                ? ProcessPriorityClass.AboveNormal
+                                : ProcessPriorityClass.BelowNormal;
+                            if (p.PriorityClass != want) p.PriorityClass = want;
+                            lock (_priorityState) _priorityState[p.Id] = isForeground;
                         }
                         bool throttled = !isForeground;
                         lock (_throttleState)
@@ -398,18 +473,8 @@ namespace DofusFarm.Engine
                     }
                     catch { }
                 }
-                lock (_throttleState)
-                {
-                    List<int> stale = null;
-                    foreach (int pid in _throttleState.Keys)
-                    {
-                        if (live.Contains(pid)) continue;
-                        if (stale == null) stale = new List<int>();
-                        stale.Add(pid);
-                    }
-                    if (stale != null)
-                        for (int i = 0; i < stale.Count; i++) _throttleState.Remove(stale[i]);
-                }
+                lock (_throttleState) { PrunePids(_throttleState, live); }
+                lock (_priorityState) { PrunePids(_priorityState, live); }
             }
             catch { }
             finally

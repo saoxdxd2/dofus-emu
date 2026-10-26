@@ -4481,24 +4481,13 @@
                 var started = false;
                 var s = null;
                 var harvest = null;
-                try {
-                    if (window.__FarmBot) {
-                        window.__FarmBot.resetSession();
-                        window.__FarmBot.setEnabled(true);
-                        started = !!window.__FarmBot.enabled;
-                        s = window.__FarmBot.sessionSummary();
-                    }
-                } catch(e){}
-                // Harvesting is `InteractiveUseRequestMessage {elemId,
-                // skillInstanceUid}` -- captured 2026-10-22 while gathering. If the
-                // agent asked for a resource, take the nearest interactive element
-                // on this map; walking to it is still the client's job.
-                // A quest says "kill monster 182", and the bot fights whatever is on
-                // the map. If a group here contains that monster, attack it — the
-                // client's own walk-then-attack sequence. If no group matches (or the
-                // group shape is not what we expect), fall through to the bot, which is
-                // the previous behaviour and costs nothing.
+                // A named mob is a focus order. Find a group containing it
+                // before enabling anything: with no match on this map, enabling
+                // the generic bot would farm unrelated groups, which is exactly
+                // what "farm bouftou" must not do. The caller can travel/explore
+                // and ask again.
                 var wanted = args && args.monster ? parseInt(args.monster, 10) : null;
+                var targetGroupId = null;
                 if (wanted) {
                     var amG = window.actorManager
                         || (window.isoEngine && window.isoEngine.actorManager) || null;
@@ -4519,18 +4508,43 @@
                         }
                         if (targetGroup) break;
                     }
-                    if (targetGroup) {
-                        // The actor is constructed with `actorId`; `contextualId` and
-                        // `id` do not exist on it, and an undefined group id is a
-                        // request the server cannot answer.
-                        var tgid = targetGroup.actorId != null ? targetGroup.actorId
-                            : (targetGroup.contextualId != null ? targetGroup.contextualId
-                            : targetGroup.id);
-                        return _agentHandlers['fight.join']({ group_id: tgid });
+                    if (!targetGroup) {
+                        return _agentResult(false, {
+                            auto_fight: !!(window.__FarmBot && window.__FarmBot.enabled),
+                            requested: args || null,
+                            note: 'target monster ' + wanted + ' is not on this map'
+                        }, 'target monster ' + wanted + ' is not on this map');
                     }
+                    // The actor is constructed with `actorId`; `contextualId` and
+                    // `id` do not exist on it, and an undefined group id is a
+                    // request the server cannot answer.
+                    targetGroupId = targetGroup.actorId != null ? targetGroup.actorId
+                        : (targetGroup.contextualId != null ? targetGroup.contextualId
+                        : targetGroup.id);
                 }
-
-                if (started && args && (args.resource || args.monster)) {
+                try {
+                    if (window.__FarmBot) {
+                        // Idempotent: a scheduler that re-issues farm.start must
+                        // not wipe kills/kamas every cycle. A fresh session is
+                        // explicit (restart) or implicit when the bot was off.
+                        var restart = !!(args && args.restart);
+                        if (!window.__FarmBot.enabled || restart) {
+                            window.__FarmBot.resetSession();
+                        }
+                        window.__FarmBot.setEnabled(true);
+                        started = !!window.__FarmBot.enabled;
+                        s = window.__FarmBot.sessionSummary();
+                    }
+                } catch(e){}
+                if (targetGroupId != null) {
+                    // Start the focused fight; fight.join also arms the bot.
+                    return _agentHandlers['fight.join']({ group_id: targetGroupId });
+                }
+                // Harvesting is `InteractiveUseRequestMessage {elemId,
+                // skillInstanceUid}` -- captured 2026-10-22 while gathering. If the
+                // agent asked for a resource, take the nearest interactive element
+                // on this map; walking to it is still the client's job.
+                if (started && args && args.resource) {
                     var list = _interactives();
                     var target = null;
                     for (var i = 0; i < list.length; i++) {
@@ -4749,8 +4763,27 @@
                     return out;
                 };
 
+                // Spell level data is static: the same spell at the same level has the
+                // same cost, ranges and effects for every fighter and every turn. A
+                // five-fighter fight was re-parsing every effect of every spell on each
+                // `fight.state` call. Cache the finished fact object by spell id and
+                // level; the object is output-only and never mutated by the caller.
+                // A level-up changes `spell.level`, so it gets a new key; the cap only
+                // exists so a long session cannot grow this without bound.
+                var spellFactsCache = window.__agentSpellFactsCache;
+                if (!spellFactsCache) {
+                    spellFactsCache = window.__agentSpellFactsCache = { facts: {}, n: 0 };
+                }
                 var fighterSpellFacts = function(spell, spellId) {
                     if (!spell) return { id: num(spellId) };
+                    var spellNum = num(spellId) !== null ? num(spellId) : num(spell.id);
+                    var spellLevel = num(spell.level);
+                    var key = (spellNum !== null && spellLevel !== null)
+                        ? spellNum + ':' + spellLevel : null;
+                    if (key !== null
+                        && Object.prototype.hasOwnProperty.call(spellFactsCache.facts, key)) {
+                        return spellFactsCache.facts[key];
+                    }
                     var level = spell.spellLevel || null;
                     var ap = num(level && level.apCost);
                     if (ap === null) ap = num(spell.apCost);
@@ -4760,10 +4793,10 @@
                     if (!name) {
                         try { name = text(spell.getName && spell.getName()); } catch (e) {}
                     }
-                    return {
-                        id: num(spellId) !== null ? num(spellId) : num(spell.id),
+                    var facts = {
+                        id: spellNum,
                         name: name,
-                        level: num(spell.level),
+                        level: spellLevel,
                         ap_cost: ap,
                         min_range: num(level && level.minRange),
                         range: num(level && level.range),
@@ -4777,6 +4810,15 @@
                         effects: effects(level && level.effects),
                         critical_effects: effects(level && level.criticalEffect)
                     };
+                    if (key !== null) {
+                        if (spellFactsCache.n >= 2048) {
+                            spellFactsCache.facts = {};
+                            spellFactsCache.n = 0;
+                        }
+                        spellFactsCache.facts[key] = facts;
+                        spellFactsCache.n += 1;
+                    }
+                    return facts;
                 };
                 var chars = pd.characters || {};
                 var base = pd.characterBaseInformations || {};
@@ -4814,9 +4856,21 @@
                         && window.isoEngine.mapRenderer.map;
                     var mapCells = map && map.cells;
                     if (mapCells && mapCells.length) {
-                        for (var ci = 0; ci < mapCells.length; ci++) {
-                            state.cells.push(num(mapCells[ci] && mapCells[ci].l));
+                        // Cell flags are static for a map. Converting 560 cells
+                        // through num() on every fight decision was repeat work;
+                        // cache by the renderer map object and hand out a copy
+                        // (the caller owns and may mutate state.cells).
+                        var cellsCache = window.__agentCellsCache;
+                        if (!cellsCache || cellsCache.map !== map
+                            || cellsCache.len !== mapCells.length) {
+                            var flags = [];
+                            for (var ci = 0; ci < mapCells.length; ci++) {
+                                flags.push(num(mapCells[ci] && mapCells[ci].l));
+                            }
+                            cellsCache = window.__agentCellsCache = {
+                                map: map, len: mapCells.length, flags: flags };
                         }
+                        state.cells = cellsCache.flags.slice();
                     }
                 } catch (e) {}
                 try {

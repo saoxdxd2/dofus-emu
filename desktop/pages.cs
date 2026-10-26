@@ -168,6 +168,7 @@ namespace DofusFarm.UI
         private readonly Label _runtimeState;
         private readonly ComboBox _refresh;
         private readonly CheckBox _chkWatchdog;
+        private readonly CheckBox _chkGovernor;
         private readonly CheckBox _chkTelemetry;
         private readonly CheckBox _chkFightBoards;
         private bool _suppressRuntime;
@@ -218,7 +219,7 @@ namespace DofusFarm.UI
 
             // ---- Runtime --------------------------------------------------
             Controls.Add(UiKit.Heading("Runtime", 0, y));
-            Controls.Add(UiKit.Note("Dashboard refresh, self-healing and data collection. Saved to runtime.ini and applied immediately; window telemetry applies to windows opened afterwards.", 0, y + 26));
+            Controls.Add(UiKit.Note("Dashboard refresh, self-healing and data collection. Saved to runtime.ini; grid, watchdog and governor apply immediately, telemetry to windows opened later, fight boards to the next AI run.", 0, y + 26));
             y += 54;
 
             Controls.Add(UiKit.Field("Grid refresh", 0, y + 4));
@@ -226,6 +227,8 @@ namespace DofusFarm.UI
                 RefreshIndex(RuntimeSettings.Current.RefreshMs), 134, y, 120);
             _refresh.SelectedIndexChanged += delegate { ApplyRuntime(); };
             Controls.Add(_refresh);
+            Controls.Add(UiKit.Button("Refresh now", 264, y - 2, 100, Color.FromArgb(51, 65, 85),
+                delegate { ApplyRuntime(); }));
             y += 34;
 
             _chkWatchdog = UiKit.Check("Auto-heal stalled instances (watchdog restarts after the boot grace)", 0, y,
@@ -233,21 +236,28 @@ namespace DofusFarm.UI
             _chkWatchdog.CheckedChanged += delegate { ApplyRuntime(); };
             Controls.Add(_chkWatchdog);
 
-            _chkTelemetry = UiKit.Check("Show live memory telemetry on each client window", 0, y + 26,
+            _chkGovernor = UiKit.Check("Keep game windows prioritized (CPU/GPU governor)", 0, y + 26,
+                RuntimeSettings.Current.Governor);
+            _chkGovernor.CheckedChanged += delegate { ApplyRuntime(); };
+            Controls.Add(_chkGovernor);
+
+            _chkTelemetry = UiKit.Check("Show live memory telemetry on each client window", 0, y + 52,
                 RuntimeSettings.Current.Telemetry);
             _chkTelemetry.CheckedChanged += delegate { ApplyRuntime(); };
             Controls.Add(_chkTelemetry);
 
-            _chkFightBoards = UiKit.Check("Record fight boards for training (one snapshot per stable turn)", 0, y + 52,
+            _chkFightBoards = UiKit.Check("Record fight boards for training (one snapshot per stable turn)", 0, y + 78,
                 RuntimeSettings.Current.FightBoards);
             _chkFightBoards.CheckedChanged += delegate { ApplyRuntime(); };
             Controls.Add(_chkFightBoards);
 
-            _runtimeState = UiKit.Note("", 0, y + 82);
+            _runtimeState = UiKit.Note("", 0, y + 108);
             Controls.Add(_runtimeState);
-            Controls.Add(UiKit.Button("Reset runtime defaults", 0, y + 108, 150,
+            Controls.Add(UiKit.Button("Reset runtime defaults", 0, y + 134, 150,
                 Color.FromArgb(127, 29, 29), delegate { ResetRuntime(); }));
-            y += 148;
+            Controls.Add(UiKit.Button("Open runtime.ini", 158, y + 134, 130, Color.FromArgb(51, 65, 85),
+                delegate { RuntimeSettings.Current.Save(); OpenPath(RuntimeSettings.PathFor()); }));
+            y += 174;
 
             // ---- Network --------------------------------------------------
             Controls.Add(UiKit.Heading("Network", 0, y));
@@ -721,10 +731,12 @@ namespace DofusFarm.UI
                 RuntimeSettings current = RuntimeSettings.Current;
                 current.RefreshMs = loaded.RefreshMs;
                 current.Watchdog = loaded.Watchdog;
+                current.Governor = loaded.Governor;
                 current.Telemetry = loaded.Telemetry;
                 current.FightBoards = loaded.FightBoards;
                 _refresh.SelectedIndex = RefreshIndex(current.RefreshMs);
                 _chkWatchdog.Checked = current.Watchdog;
+                _chkGovernor.Checked = current.Governor;
                 _chkTelemetry.Checked = current.Telemetry;
                 _chkFightBoards.Checked = current.FightBoards;
                 UpdateRuntimeNote();
@@ -738,14 +750,15 @@ namespace DofusFarm.UI
             RuntimeSettings settings = RuntimeSettings.Current;
             settings.RefreshMs = SelectedRefreshMs();
             settings.Watchdog = _chkWatchdog.Checked;
+            settings.Governor = _chkGovernor.Checked;
             settings.Telemetry = _chkTelemetry.Checked;
             settings.FightBoards = _chkFightBoards.Checked;
             settings.Save();
             UpdateRuntimeNote();
             if (_log != null)
                 _log("[SETTINGS] runtime: refresh=" + (settings.RefreshMs > 0 ? settings.RefreshMs + "ms" : "manual") +
-                     ", watchdog=" + OnOff(settings.Watchdog) + ", telemetry=" + OnOff(settings.Telemetry) +
-                     ", fight-boards=" + OnOff(settings.FightBoards));
+                     ", watchdog=" + OnOff(settings.Watchdog) + ", governor=" + OnOff(settings.Governor) +
+                     ", telemetry=" + OnOff(settings.Telemetry) + ", fight-boards=" + OnOff(settings.FightBoards));
             if (_onApplyRuntime != null) _onApplyRuntime();
         }
 
@@ -756,6 +769,7 @@ namespace DofusFarm.UI
             {
                 _refresh.SelectedIndex = RefreshIndex(4000);
                 _chkWatchdog.Checked = true;
+                _chkGovernor.Checked = true;
                 _chkTelemetry.Checked = true;
                 _chkFightBoards.Checked = true;
             }
@@ -769,8 +783,8 @@ namespace DofusFarm.UI
         {
             RuntimeSettings s = RuntimeSettings.Current;
             _runtimeState.Text = "Saved to " + RuntimeSettings.PathFor() + "  |  watchdog " +
-                                 OnOff(s.Watchdog) + ", telemetry " + OnOff(s.Telemetry) +
-                                 ", fight boards " + OnOff(s.FightBoards);
+                                 OnOff(s.Watchdog) + ", governor " + OnOff(s.Governor) +
+                                 ", telemetry " + OnOff(s.Telemetry) + ", fight boards " + OnOff(s.FightBoards);
         }
 
         private static bool PortOpen(string host, int port, int timeoutMs)

@@ -1596,6 +1596,8 @@ namespace DofusFarm.UI
 
             _governor.Start();
 
+            _governor.Enabled = RuntimeSettings.Current.Governor;
+
 
 
             // Initialize backends
@@ -1850,6 +1852,8 @@ namespace DofusFarm.UI
             }
 
             if (_watchdog != null) _watchdog.Enabled = settings.Watchdog;
+
+            if (_governor != null) _governor.Enabled = settings.Governor;
 
             RefreshGrid(true);
 

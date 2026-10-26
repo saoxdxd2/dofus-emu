@@ -40,19 +40,23 @@ def _distance(board: Board, first: int, second: int) -> float:
     return float(max(1, board.cells.distance(first, second)))
 
 
+# Damage depends on the target's stats, not its cell; these stand-ins are
+# immutable and shared across every decision instead of being rebuilt per row.
+_DUMMY_FOE = Fighter(
+    id=-1, name="dummy", cell=0, team="enemy", hp=10_000_000, max_hp=10_000_000,
+    ap=0, mp=0, shield=0, level=1, alive=True, by_me=False,
+)
+_DUMMY_ALLY = Fighter(
+    id=-2, name="dummy-ally", cell=0, team="player", hp=1, max_hp=10_000_000,
+    ap=0, mp=0, shield=0, level=1, alive=True, by_me=False,
+)
+
+
 def _player_spell_rows(board: Board, character, plan: TurnPlan
                        ) -> List[Dict[str, Any]]:
     """The live spells as the abstract table, with stats folded into damage."""
-    dummy_foe = Fighter(
-        id=-1, name="dummy", cell=board.me.cell if board.me else board.my_cell,
-        team="enemy", hp=10_000_000, max_hp=10_000_000, ap=0, mp=0,
-        shield=0, level=1, alive=True, by_me=False,
-    )
-    dummy_ally = Fighter(
-        id=-2, name="dummy-ally", cell=dummy_foe.cell, team="player",
-        hp=1, max_hp=10_000_000, ap=0, mp=0, shield=0, level=1,
-        alive=True, by_me=False,
-    )
+    dummy_foe = _DUMMY_FOE
+    dummy_ally = _DUMMY_ALLY
     rows: List[Dict[str, Any]] = []
     for spell in board.spells:
         damage = 0.0

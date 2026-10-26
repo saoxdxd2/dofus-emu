@@ -1180,18 +1180,22 @@ class FightAdvisor:
             tutorial=bool(((observation or {}).get("tutorial") or {}).get("active")),
         )
 
-    def annotate(self, observation: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def annotate(self, observation: Optional[Dict[str, Any]],
+                 groups: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Attach a compact estimate for every group on the map.
 
         The planner reads this on every observation; the actor is never given it.
         Cached by map and group composition, because the character sheet and the
         group levels do not change between two snapshots of the same fight.
+        `groups` lets a caller that already parsed the snapshot pass its list
+        instead of taking the same snapshot apart twice.
         """
         if not isinstance(observation, dict):
             return observation  # type: ignore[return-value]
         if not self.ready() or observation.get("in_fight"):
             return observation
-        groups = self.groups(observation)
+        if groups is None:
+            groups = self.groups(observation)
         if not groups:
             return observation
         map_id = observation.get("map_id")

@@ -115,7 +115,7 @@ def _check_caps(spec: Dict[str, Any]) -> None:
 
 
 def _pick_spells(rows: List[Dict[str, Any]], element: str,
-                 po: int, slots: int = 4) -> List[Dict[str, Any]]:
+                 slots: int = 4) -> List[Dict[str, Any]]:
     element_index = {"neutral": 0, "earth": 1, "fire": 2,
                      "water": 3, "air": 4}.get(element, 0)
     damage = [row for row in rows if not row["ally"] and row["damage"] > 0]
@@ -145,7 +145,7 @@ def build_duelist(key: str, cell: int, ident: int,
     if not rows:
         return None
     spells = []
-    for slot, row in enumerate(_pick_spells(rows, spec["element"], spec["po"])):
+    for slot, row in enumerate(_pick_spells(rows, spec["element"])):
         spells.append(_live_spell(
             slot, float(row["ap"]), float(row["rmin"]),
             float(row["rmax"]) + spec["po"], float(row["damage"]),
