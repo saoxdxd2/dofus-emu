@@ -27,6 +27,10 @@ autopilot view  : 7 sessions,  40.6 min wall, 4287 steps, 3770 ok, 517 failed, o
                     recoveries: recover 523, replan 407, retry 21
 combined span   : 8 sessions, 172.5 min total, longest single session 125.1 min
 verdicts        : advanced 3063, noop 707, failed 493, blocked 24
+productive view : of 1,277 steps that could change the world, 58 moved it (4.5%)
+                    quest.advance 32/972 (3.3%)   nav.goto 26/222 (11.7%)
+                    farm.start 0/59              fight.join 0/24
+                    (3,005 of the 3,063 `advanced` verdicts are state.snapshot reads)
 decision causes : none 3063, unknown 455, plan_wrong 381, incomplete 361, unavailable 26
 disconnects seen: INACTIVITY 5106, (in_world:false with no reason) 142
 failed by tool  : quest.advance 504, fight.join 48, nav.goto 25, state.snapshot 15, farm.start 3
@@ -38,6 +42,20 @@ failed by tool  : quest.advance 504, fight.join 48, nav.goto 25, state.snapshot 
    both views and ~4,300 steps. This is the goal's headline failure and it is measured,
    not inferred — it is the live confirmation of G3: the run navigates, talks, fails and
    repairs, but never completes an objective.
+   **The sharper form of the same number, added after G16:** the run's own verdict
+   histogram (`advanced 3063`) is not progress. 3,005 of those are `state.snapshot` reads,
+   which the verifier correctly scores as success because a lookup that returns data did
+   what was asked. Excluding reads and listings, **58 of 1,277 world-changing steps moved
+   anything at all — 4.5%** (`quest.advance` 3.3%, `nav.goto` 11.7%, `farm.start` and
+   `fight.join` both 0%). **The mechanism behind that number is G17: 480 of those steps were
+   accepted claims scored `noop` because the settle loop gave up at ~0.8 s while the walk-and-talk
+   the client had queued landed 1.2 s later.** Criterion (2) is measured by that line, not by the 71%
+   `advanced` share, and `recovery_report.py` now prints it under
+   *productive-action success* so no future read repeats the mistake.
+   **And the reason those 3,005 reads were there at all is G18:** every wait in this loop — the
+   planner's dialog grace and spawn wait, the thinking layer's "wait for the NPC / a map change",
+   the controller's recovery hint — returns `state.snapshot` as its action, so the run was not
+   *taking* those steps, it was *waiting*, 82% of its recorded time between two looks.
 2. **The AFK kick is the dominant disconnect, empirically.** `INACTIVITY` appears in
    5,106 observation rows — by far the most common reason recorded for the client leaving
    the world. That is G1's mechanism observed in live data, which is the strongest
@@ -66,6 +84,21 @@ failed by tool  : quest.advance 504, fight.join 48, nav.goto 25, state.snapshot 
    layer keeps sessions alive but is spending a fifth of all activity on it, and 455
    repairs were classified `unknown` — the cause taxonomy is not yet covering what it is
    actually reacting to.
+   **Root-caused after this snapshot, and it was two bugs, not one.** (a) The decision row
+   logged the *transport* result (`result.ok`, `result.error`) instead of the game-level
+   outcome the controller was handed (`step_ok`, `step_error`), so 455 rows read "succeeded
+   with no error" while the bridge had in fact reported a refusal — an offline analysis of
+   *why* a repair failed was reading a field that is always null. (b) `cause_of()` matched
+   none of the seven phrasings these refusals actually use, so `wrong_target`,
+   `stale_state` and `invalid_assumption` had **zero** live rows while `unknown` held 455 —
+   the strategy table cannot rank a recovery for a bucket it never fills. Replaying all
+   4,286 live decisions through the fixed classifier moves `unknown` 517 → 0 (313
+   `invalid_assumption`, 149 `stale_state`, 28 `wrong_target`, 27 `unavailable`) with the
+   routing of rule refusals deliberately left as `continue`, the measured action. See
+   KNOWN_GAPS G14; the cause line above is what the *old* code produced and will not
+   reproduce after this fix.
+   Caveat for re-readers of *this* log file: `kind:"decision"` rows written before the fix
+   carry transport `ok`/`error`. The paired `kind:"step"` rows carry the real game error.
 6. **Longest session 125 min.** Multi-hour survival is *not* established: that span is a
    session id's first-to-last row, and a multi-hour *productive* unattended run is still
    the thing to be measured after the fixes.
@@ -92,6 +125,27 @@ and objective deltas, and this gives the verdict/decision/cause/disconnect break
   above correctly shows `0 events in 0 rows`: the instrument did not exist during these
   sessions, so **zero is "not measured" here, not "no human touched it"**. The next
   baseline is the first that can answer criterion (5)'s zero-interventions claim.
+- **Recovery success** — criterion (5) asks whether the run gets itself back, and this
+  baseline had no number for it: recoveries were only printed lines. Each `_recover_world`
+  now writes `{"kind":"recovery", trigger, reason, recovered, waited_s}` and the summary
+  carries `recoveries / recoveries_ok / recovery_wait_s`; `recovery_report.py` prints them
+  per trigger. This run shows `no rows`, which means *unmeasured*, not *never needed*.
+- **Repair labels** — see finding 5: `unknown` covered a third of all failures and the
+  decision row hid the game's error. Fixed 2026-10-26, so the next baseline is the first one
+  whose cause histogram means anything, and the one above is not comparable to it.
+- **Idle waits** — the baseline has no wait rows because a wait used to be a directive:
+  **3,010 of its 4,287 steps are `state.snapshot`**, all `source: rule`, 3,005 of them
+  `advanced`, and 3,005 of 4,286 decisions are `continue` pointing at another read. They come
+  in 671 runs with a p99 length of 6 passes — except two runs of 149 and 1,581 passes, which
+  hold 57% of them; the long one is 1,576 *successful* reads in 586 s on a goal that had no
+  action left. Summing the gap between consecutive reads, **82% of the loop's recorded
+  step-time is time between two looks** (39.0 of 47.3 minutes). Fixed 2026-10-26 (G18): a wait
+  now writes `{"kind":"wait", goal, reason, consecutive, in_dialog}` and costs no step row, no
+  verdict, no reward and no budget; `summary()` carries `waits`, and `recovery_report.py`
+  prints passes, runs, the longest run, the reason histogram and a NOTE when a wait reached the
+  40-pass bound. This run shows `no rows`, which means *predates the instrument*. Expect the
+  next baseline's `steps` to fall to roughly a third of this for the same wall time — the
+  comparable numbers there are `waits`, the productive rate and the recovery rows, not `steps`.
 - **Fights won** — `fight.join` failed 48× and the fight-outcome log is the calibration
   source; per G7 no live fight has been proven end to end.
 - **Farm cycles per hour** — `farm.start` failed only 3×, but no session shows a

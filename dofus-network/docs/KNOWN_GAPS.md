@@ -417,7 +417,7 @@ Verified offline:
 - a half-applied group is refused: opening the `#13` `try{` without its `#14` closer is
   classified `STALE / half-applied group "applyTheme" - would emit unbalanced braces`,
   which is what keeps a partial write from corrupting the bundle;
-- delegated into `agent.regression` (82 checks, 0 failed), which prints the live
+- delegated into `agent.regression` (104 checks, 0 failed), which prints the live
   applied/not-applied state instead of pretending.
 
 **Durability — the real hole, found by running the release build.** `compile.bat` is
@@ -495,16 +495,354 @@ hundreds. If it still repeats, the re-issue is coming from a path this did not c
 
 ---
 
+## G14. 455 repairs were labelled `unknown` — the repair table was being trained on a blank
+
+The baseline's fifth finding said the cause taxonomy "is not yet covering what it is
+reacting to". Reading it further turned up a second, worse thing: the first inference I
+made from it was wrong, and the log caused the error.
+
+**What the log appeared to say.** All 455 `cause=unknown` decision rows carry `error: null`
+and `ok: true` — successful steps with nothing to go on. That reading is an artifact.
+
+**What the code actually does.** `_emit_decision` recorded `result.ok` / `result.error` —
+the *transport* result — while the controller was handed `step_ok` / `step_error`, the
+*game* outcome (`step_ok = result.ok and game_error is None`). The bridge reports success
+for a call the game refused, so every refusal landed in the log as a successful step with no
+error text. Pairing each decision row with the `kind:"step"` row that provoked it recovers
+the real distribution: all 455 are game-level failures with plain, readable error text —
+281 claim refusals, 148 dialog-close TypeErrors, 25 malformed `nav.goto`, 23 fight-blocked
+refusals, 27 "no client instance", 3 farm target off-map.
+
+**Two defects, both fixed:**
+1. **The row recorded the wrong outcome.** `_emit_decision` now takes the `ok`/`error` the
+   controller was given and both call sites pass the game-level values; the
+   "policy returned no call" branch, which previously returned a decision the log never saw,
+   emits one too. Without this, *any* offline answer to "did that repair work?" reads a field
+   that is structurally always null — including the training set for the (cause, strategy)
+   table, which is criterion (4)'s data.
+2. **`cause_of()` matched none of the phrasings in use.** It had two text families
+   (`not_mapped`/`no call`, `unknown`/`not found`/`too far`) and three observation branches
+   that all require `ok and b and a`. Measured consequence: `wrong_target`, `stale_state` and
+   `invalid_assumption` had **zero** rows in 4,286 live decisions while `unknown` held 455 —
+   buckets that imply different responses were never filled, so the Wilson-scored table could
+   not rank a recovery for any of them. Added generic phrasing families (a claim the game
+   refuses → `invalid_assumption`; the target is not here → `wrong_target`; the client threw
+   mid-call → `stale_state`; no client at all → `unavailable`, now a declared cause), plus a
+   fall-through that reads the surviving observation when there is no baseline to diff.
+   `unknown` now means what it should: nothing was measured **and** nothing was reported.
+
+**One deliberate non-change.** Relabelling a rule refusal as `invalid_assumption` would have
+flipped its action from `continue` to `replan`, and `continue` is the measured-correct answer
+for a refusal (the planner's fallback is the way forward; replanning on a quests prompt can
+bounce the run to a farm and cost prompt fidelity). So `_decide` now treats a refusal as an
+invalid assumption *in the label only*, and the action is untouched. `error_class` also stops
+mis-ranking our own `refused: ` prefix as a socket hiccup — 23 live fight-blocked refusals were
+being retried as if the wire had failed, which costs a step each time and sits on the G7 path.
+
+**Verified:** 22 gate checks (121 total with G15, 0 failed) over the seven verbatim live texts, plus
+`s/14070/99/` to pin that the classification is phrasing and not quest ids, and a **6-mutation
+test** (`tools/mutate_cause_gate.py`) — every mutation is caught, and the section is green
+again after restore. Replaying the whole live baseline through the fixed classifier moves
+`unknown` 517 → 0. **Not verified:** that a live run now *recovers better*. This makes the
+repair data legible and removes a wasted retry per rule refusal; whether that measurably
+raises recovery success is #26, and the cause histogram of the next run is the evidence to
+look at.
+
+---
+
+## G15. With no client window at all, the loop ground 27 doomed directives
+
+The baseline records one session where **27 consecutive `state.snapshot` steps** all failed
+with `client directive failed: no client instance is running (start one in DofusFarm
+first)`, and every one of them got the same reply from the controller: `replan`. Twenty-six
+replans in a row, then one `plan_wrong` — the scheduler dead-looping against an environment
+that does not exist, which is the exact failure criterion (3) forbids.
+
+**Why the existing recovery did not fire.** `_recover_world` is triggered by `fell_out`,
+which is defined as *watching* the world disappear between two snapshots
+(`before.in_world is not False and after.in_world is False`). With no page there is no new
+snapshot at all: the bridge answers the host's own "no client instance" message and the
+observation stays whatever the dead page last said. So the kick detector — the one built for
+"the session ended" — cannot see the case where the whole window is gone. And because
+`error_class` said `structural`, the controller's answer was a replan, which produces
+another directive, which fails the same way: the loop's own retry ladder was the engine of
+the grind.
+
+**Fix: treat a missing window as a wait, the same way a missing world is a wait.** The step
+branch now checks `client_absent(step_error)` — the host's three phrasings
+(`ABSENT_CLIENT_MARKERS`) — *before* the settle poll runs, and calls the existing
+`_recover_world(reason, trigger="client_absent")`. That reuses the machinery already
+documented for logins: no deadline, ends on the stop file, and ends honestly if the bridge
+itself stopped answering (`_bridge_alive`), so a killed host does not park a run forever.
+The recovery is now **measured**, not printed: `_recover_world` writes a
+`{"kind":"recovery", trigger, reason, recovered, waited_s}` row and the summary carries
+`recoveries / recoveries_ok / recovery_wait_s`, which is what criterion (5)'s "recovery
+success" needs — previously there was no number for it anywhere.
+
+**A second bug the fix would have created, caught while testing it.** Waiting on
+`_require_world` alone is wrong here: with no page the *carried* snapshot still says the
+character is standing on a map, so the world check passes on the first pass, the loop
+re-dispatches into the same failure, and 27 slow steps become a hot loop. So the presence
+read comes first: `agent/bridge.client_count()` reads the host's `GET /agent/health`
+(`instances`, no game packet on the wire), and `_wait_for_window` holds until it is
+non-zero — ending on a window, on the stop file, or on a host that stopped answering. A
+failed probe is `None` (unknown), never `0`, because `0` means "keep waiting" and would
+park a run whose host is gone.
+
+**Verified:** 17 gate checks (121 total, 0 failed) — functional, not source-only: the stub
+whose world comes back and the one that does not (row, counters, cleared per-step state),
+the presence wait against counts of 1 / 0 / None (a zero must keep waiting, with sleeps
+intercepted rather than slept), the health parser against a real payload, a proxy HTML body
+and an exception, and a **15-mutation test** where every mutation is caught
+(`tools/mutate_cause_gate.py`), including the two that no first-draft check noticed. **Not verified:** that a live run now waits instead of
+grinding. That is #26, and the specific expectation is that a session which loses its window
+shows one `recovery` row with `trigger: client_absent` and *not* a run of 27 identical
+failures. The wait duration itself is only knowable on a real run.
+
+---
+
+## G16. The recovery table was certifying itself — 348 successes in 348 tries
+
+Started as "learn the repair choice from the now-clean cause labels" and turned into a
+correction of the reward itself. Two signals in the baseline were fictions:
+
+**1. `advanced` is mostly reads.** Of 3,063 `advanced` verdicts, **3,005 are
+`state.snapshot`**. The verifier's rule is right on its own terms — a lookup that returns
+data succeeded, and scoring reads as `noop` once made every query look like a failure — but
+any progress or success metric that counts all `advanced` rows is counting looking, not
+doing. The honest number: **58 of 1,277 steps that could change the world moved it (4.5%)**
+(`quest.advance` 32/972, `nav.goto` 26/222, `farm.start` 0/59, `fight.join` 0/24). This is
+now printed by `recovery_report.py` under *productive-action success* and recorded in
+BASELINE.md, because the old headline (`advanced 3063`) made a stalled run look 71%
+successful.
+
+**2. A repair was credited with its own probe.** Every `recover` hint this project issues is
+`state.snapshot`, and `observe_outcome` scored the repair with the *next* verdict — which is
+that snapshot's. So the bandit's reward was `read succeeded`, for every cause: measured over
+the live log, `incomplete:recover` was 348/348 and `stale_state:recover` 145/145, while the
+same decisions credited against the next real action score **28/348 and 0/145**. A policy
+trained on the first number learns "always recover", which is a tautology, not a recovery
+strategy — and it would have looked like a 100% recovery success rate in exactly the metric
+criterion (5) asks for.
+
+**Fix:** the credit is deferred. `Autopilot._credit_pending(call, verdict)` ignores read-only
+steps, ages the held decision out after `PENDING_CREDIT_STEPS` (12) reads so a farm wait
+cannot hold a credit forever, and scores the repair against the first step that could have
+moved the world. The verifier and its read-only rule are untouched — the bug was in what the
+loop fed back, not in how a read is judged.
+
+**Verified:** 6 functional gate checks (127 total, 0 failed) that drive the real method
+against a stub loop — a read leaves the table empty and the decision held, 13 reads drop it,
+the first action credits `incomplete:recover` once, a failed action credits a failure — plus
+**18 mutations** in `tools/mutate_cause_gate.py`, all caught (re-allowing read credit fails
+two checks; never aging out fails one; never delivering the credit reddens the section).
+**Not verified:** any of the corrected rates live. What this changes is what the next run's
+data *means*: from here, `strategies` scores answer "did the run get productive again",
+which is the question criterion (4) retrains against and criterion (5) reports.
+
+---
+
+## G17. 480 accepted quest claims were called no-ops because the loop stopped watching too early
+
+This was task #30 — the largest block on `objectives +0` after the labels were cleaned — and
+it turned out to be an observation-timing bug, not a quest problem.
+
+**What the log says.** 480 of 972 `quest.advance` steps are `noop`: the bridge reached the
+page, the client accepted the packet (`ok: true` on all 480), and the loop recorded no change.
+Measuring the steps that follow them: **the noop rows returned in a median 0.80 s** (p90 3.39),
+while **the effect they had queued became visible 1.2 s later (median, p90 3.9 s)**. 131 of the
+lagged cases appear within 3 s. The trajectory payloads name the mechanism directly — 251 rows
+carry `data.via: "talked"` with `in_dialog: false` in the snapshot returned *with* that
+directive, and the very next observation says `in_dialog: true`; another 56 say
+`"walking to npc then talking"` with `npc_cell - my_cell` of 28 median (max 491: a walk across
+maps). The client answers these actions before the walk-and-talk callback has run.
+
+**Why the wait did not cover it.** `_settle` exists precisely for this, with a 6 s window for
+`quest.advance`/`nav.goto`. But its early exit was:
+
+        elif changed_keys(before, best) and now - last_change >= quiet_s: return best
+
+`changed_keys(before, best)` compares against the **start of the step**, so any unrelated tick
+(AP, HP, a cell drift, an xp number) leaves that branch permanently eligible, and `quiet_s` is
+0.55 s at the default `--think`. A walk that had not started yet looks exactly like a quiet
+world, so the loop returned at ~0.8 s, called the claim a no-op, and then issued the next
+directive into a character that was still walking — the very interruption the docstring warns
+about.
+
+**Fix: for a tool whose promise can be checked, only the promise ends the wait.** The quiet
+shortcut now applies only when the tool has no completion predicate
+(`promised = tool in SETTLE_TOOLS`); `quest.advance` waits for the dialog, the objective change
+or the map change, `nav.goto` for the target cell or map, `fight.join`/`farm.start` for the
+fight or the auto-fight state. The 6 s / 4 s windows are the existing safety caps, unchanged.
+Side finding, recorded so nobody re-adds a timeout here: for a promise-less tool the quiet
+branch is **unreachable**, because `_action_complete`'s generic rule *is* `changed_keys` — such
+a tool returns on the first check without polling at all, which the gate now asserts.
+
+**Cost, stated rather than hidden.** 85 of the lagged rows never showed an effect within 13
+steps, so those claims now consume their full window — roughly +5 s each, ~40 min over a
+172-min baseline. Deliberate: a mislabelled no-op does not just sit still, it sends the
+controller into the repair ladder (523 recovers and 407 replans in that baseline) and the
+policy then re-decides against a world it has already disturbed. The metric that decides
+whether the trade was right is productive-action success, not step count.
+
+**Verified:** 4 gate checks (131 total, 0 failed) driving the real `_settle` against an injected
+clock and a scripted poll sequence — a dialog that opens on the third poll is the state the step
+is judged on; a promise-less tool with a visible change returns with zero polls; a promise that
+never lands stays bounded by the window — and they are among the **21 mutations** in
+`tools/mutate_cause_gate.py` (treating every tool as promise-less, restoring the old quiet
+condition, and cutting the window below the measured latency are each caught).
+**Not verified:** that live `noop` rows collapse and the productive rate rises above 4.5% —
+that is #26 and it is the number to read there.
+
+---
+
+## G18. 70% of the baseline's "steps" were the loop looking at the world, and 3,005 of them were scored as success
+
+This was task #31 — the largest single distortion left after G16 stopped a read certifying a
+*repair*, because it is about a read being an *action*.
+
+**What the log says.** Of 4,287 steps in the autopilot baseline, **3,010 were `state.snapshot`**
+— 70%, all of them `source: rule`, **3,005 with verdict `advanced`** and 5 failed. The decisions
+around them confirm the shape rather than contradict it: 3,005 of 4,286 decision rows are
+`continue` on tool `state.snapshot`, and **2,335 reads were preceded by a `continue` whose own
+tool was a read** — a chain of looking, approving the looking, and looking again. Summing the
+gap between consecutive reads inside each session: **39.0 of the 47.3 recorded step-minutes
+(82%) are time between two reads.**
+
+`state.snapshot` is what every wait in this codebase returns: the planner's dialog grace, the
+tutorial gate and the spawn wait, `thinking.py`'s "wait for the NPC or a state change" / "wait
+for a map change" / "wait for the target to spawn", the controller's recovery hint, and the
+quests-prompt gate that turns a refused `farm.start` into a read. None of them wants a directive;
+they want the next pass to look again. Dispatching it as a step did three things at once: it made
+the run's success rate mostly counting looking (criterion 2's headline number), it wrote a full
+observation row and a step row per poll into the training corpus (criterion 4 — a policy trained
+on that learns that looking is the most reliable thing it can do), and it put ~2.7 round trips a
+second on a client that had nothing to be asked for (the median gap between steps is 0.374 s, of
+which the round trip is 18.2 ms: the pace is ours, not the game's).
+
+**Where the time actually was.** The reads are not one long stall. They come in **671 runs,
+median length 1, p90 5, p99 6** — a legitimate wait is short, because it stands between an action
+and the state that action promised. Two runs break that shape: 149 passes (56 s) and **1,581
+passes (586 s)**, together 57% of all the wait traffic. The long one is the reason this is not
+just a tidy-up: 1,576 of its 1,581 reads *succeeded*, so nothing in the loop could call it a
+failure — the planner simply had no action left for `do all the quests`, and the run spent ten
+minutes looking at a world it was not changing while reporting `advanced` on every pass.
+
+**Fix: a wait costs time, not a step.** The loop now takes `state.snapshot` before the guard and
+hands it to `_hold_wait`, which writes a `kind: "wait"` row (goal, reason, how many passes in a
+row, whether a dialog was open), sleeps the cadence the dispatched wait had (`WAIT_POLL_S = 0.35`,
+chosen so sleep + one read reproduces the measured 0.374 s median, because the planner's own wait
+gates count *passes* and a different cadence silently changes how long a scripted pause lasts),
+re-reads the state without recording it, and continues. No step row, no verdict, no reward, no
+controller call, and nothing charged to the goal's directive budget.
+
+**The bound, because a wait can be as invisible as a step was.** Past
+`MAX_CONSECUTIVE_WAITS = 40` passes (~15 s at that cadence, and 6× above the p99 legitimate wait)
+the read is dispatched again, so a goal with nothing left in it goes back through the streak,
+refusal and stall machinery that already knows how to retire it. That is the same behaviour the
+baseline had, at 1/40th the rate: the 1,581-pass run becomes ~39 dispatched reads instead of
+1,581, and the G15 dead-client case is now detected on its *first* doomed read rather than
+its twenty-seventh. A wait that spans a rescue gets a fresh budget; a wait whose re-read finds the
+character out of the world goes to the recovery path with its own trigger (`wait_fell_out`), which
+is the check the post-step fall-out used to be the only owner of. The fall-out test itself is now
+one function (`fell_out_of_world`) shared by both sites — a second copy drifting away from the
+first is how a kick stops being detected.
+
+**The bound does something else, which is the part that matters for criterion (2).** Reaching
+40 passes is the strongest signal the loop has that this goal has no action left in it, so on the
+way to the overflow read the loop asks `ThinkingLayer.propose` — the component that searches the
+current board for an interaction nobody has tried in this scene — and dispatches what it finds.
+The first version took *any* answer, and the layer's own fallback candidate is
+`state.snapshot` ("refresh the observation"): accepting it reset the streak and doubled the spin,
+which the gate caught as `waits 120` for two directives. So only a non-read counts
+(`ESCALATE_TRIES = 3` candidates are skipped at most), the proposal still goes through
+`self.guard`, and a call the schema does not know costs a refusal row and ends the goal — the
+escalation cannot become the new loop, and it cannot smuggle past a safety rule.
+
+**Cost, stated.** The loop still *asks* the policy every pass, so the CPU cost of an idle spin is
+unchanged; what changed is the traffic, the log and the reward. A stronger fix is an explicit
+`wait` intent from the planner instead of overloading a read with it — that is a vocabulary change
+and it is not done here. Two consequences to watch on the next run: (a) `steps` in every summary
+drops to roughly a third and the apparent success rate moves with it — the number to read is
+productive-action success, which G16 established at 4.5%; (b) the idle-poll observation rows leave
+the training corpus, so `state.snapshot` will be rare among labelled actions at the next retrain.
+That is intended — waiting is not an action with a reward — but it does change the action prior,
+and a policy that stops trying to wait would be a regression to notice, not to assume.
+
+**Verified:** 34 gate checks (165 total, 0 failed) driving the real loop end to end with a stub
+runtime: two directives produce exactly two step rows and exactly `2 × 40` wait rows, with two
+verifier labels and two controller calls over 82 policy passes — so a wait provably produces no
+verdict and no reward — plus the fall-out truth table, the pacing and `--interval` precedence, the
+dry-run no-sleep, a directed wait carrying the thinking layer's own sentence as its reason, the
+rescue path both succeeding and giving up, and the escalation in both directions (an untried action
+is dispatched under the goal that waited, a read is refused as an answer, a schema-unknown proposal
+is refused by the guard, and each goal escalates for itself).
+`tools/mutate_cause_gate.py` carries **37 mutations**: the 33 already run were each caught, none
+missed; the 4 new ones (never escalating, not recording the escalation, accepting a read as an
+escalation, and removing the per-goal reset) are **written but not yet run**, because that driver
+rewrites `agent/*.py` in the working tree for seconds at a time and someone was editing the same
+tree. Re-run it when nothing else is touching the checkout.
+**Not verified:** any of it against a client. The numbers above are the *old* behaviour measured on
+the baseline; what the new code does live is #26, and the honest expectation there is a `steps`
+count near 1,300 for the same wall time, a `waits` figure in the hundreds per session, and a
+productive-action rate that stops being padded by reads. One thing it deliberately does *not*
+change is G1: the keep-alive is a page-side 20 s timer gated on `enabled || aiRunning`
+(`scripts/mobile-disguise.js:1524`), not a by-product of dispatching, so trading 2,335 directives
+for 2,335 local pauses cannot starve it — `INACTIVITY` should be unchanged, and if it rises, that
+claim is what to re-examine first.
+
+---
+
+## G19. A repair queued for one goal was dispatched under the next goal's label
+
+Found by accident while testing G18's escalation, which is the kind of bug you only see when you
+make the loop do something new: a two-goal run escalated `farm.stop` on goal 0, dispatched it,
+got `noop`, and the controller forced the same call again as a retry — then goal 0 ended on its
+budget and **goal 1 began by printing `agent2 directs: farm.stop` and executing it.** Two step
+rows, two `farm.stop` calls, one of them aimed at a goal that never asked for it.
+
+**Why:** `_run`'s per-goal preamble resets the goal's own state (`failures`, the farm wait, the
+no-op queue) but never `_forced_call` / `_forced_reason`, which the controller writes as a
+*pending directive*. Any goal boundary crossed while one is pending carries it over — and in Auto
+mode, where the loop walks a queue of goals, boundaries are crossed constantly. The step row is
+logged under the new goal, so the trajectory attributes an action to a goal that did not produce
+it; anything trained on that pairing learns the wrong causality, and a prompt-fidelity audit reads
+an action under the wrong prompt.
+
+**Fix: the pending directive belongs to the goal that queued it.** The preamble now clears
+`_forced_call`, `_forced_reason` and `_consecutive_waits` when a goal starts. This is plumbing, not
+policy: nothing is added to the action set, and no goal can inherit work it did not choose.
+
+**Verified:** the G18 section asserts each goal escalates for itself and that the two step rows
+belong to `work the 0 goal` and `work the 1 goal` respectively; 165 checks, 0 failed.
+**Not verified:** that a live multi-goal run never carries a forced call over — reachable in a
+baseline replay, not in an offline gate. A mutation is prepared in
+`tools/mutate_cause_gate.py` (removing the three reset lines) and is pending the same quiet-window
+run as the G18 mutations.
+
+---
+
 ## Priority, if these were ordered by what blocks a real run
 
 1. **G1** keep-alive — it is why healthy runs still die. Implemented; the live logs show
    `INACTIVITY` in 5,106 observation rows, which is the mechanism confirmed, not the fix.
-2. **G13** the 287-refusal claim loop — the measured dead-loop against criterion 3. Fixed
-   behind a mutation-tested gate; needs one live run to show the refusal stops at one.
+2. **G13** the 287-refusal claim loop and **G15** the 27-step no-window grind — both
+   measured dead-loops against criterion 3, both fixed behind the mutation-tested gate; one
+   live run shows whether either still repeats.
 3. **G12** map-transition resilience — **closed in the pipeline 2026-10-26** (rules in
    patch-engine + patch-rules, bundle rebuilt, selftest IDENTICAL, js-error-finder 23/0);
    watching a real stall self-heal is still owed.
 4. **G3** dialog reasoning — it is why the talk objective never completes (`objectives +0`
    in every baseline session), and its dialog-close null-deref is now fixed.
-5. **G8** test gate — 82 checks, delegating JS + Go + bundle `--check`; green.
-6. **G2** equip, **G5** forecaster, **G7** fight proof, then G4/G6/G9/G10.
+5. **G14** repair-label taxonomy — the 455 `unknown` rows are now classified and the
+   decision row records the game outcome; the data criterion (4) trains on exists. Needs the
+   next run's histogram to show it helps.
+6. **G18** the read-as-action step mix — 3,010 of 4,287 baseline steps were looking, 3,005
+   of them scored `advanced`. A wait now costs time instead of a step, bounded at 40 passes.
+   This is the number that makes criterion (2) readable at all: read `steps`, `waits` and the
+   productive rate together, not `steps` alone.
+7. **G8** test gate — 165 checks, delegating JS + Go + bundle `--check`; green, and the
+   five new sections are mutation-tested (`tools/mutate_cause_gate.py`: 33 of 37 mutations run
+   and caught, 4 more written and awaiting a quiet-window re-run while the tree is not being
+   edited or built).
+8. **G2** equip, **G5** forecaster, **G7** fight proof, then G4/G6/G9/G10.

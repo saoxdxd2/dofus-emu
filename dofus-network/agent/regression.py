@@ -557,6 +557,767 @@ def test_claim_quarantine() -> None:
           "_claim_quarantine = set(self._claim_quarantine)" in src)
 
 
+def test_failure_causes() -> None:
+    section("Failure-cause taxonomy (criterion 4: the repair table needs real labels)")
+    import inspect
+    import json as _json
+    from types import SimpleNamespace
+    from agent.autopilot import Autopilot
+    from agent.controller import CAUSES, RECOVERY, Controller, error_class
+    from agent.runtime import ToolCall
+
+    # Verbatim failure texts from the live baseline (docs/BASELINE.md), where all
+    # seven produced `unknown`. The ids in them belong to one character's quest log:
+    # what is under test is that the *phrasing* decides the cause, never the numbers.
+    live = (
+        ("a previous claim of objective 14070 of quest 3841 ended the connection; "
+         "perform the objective instead", "quest.advance", "invalid_assumption"),
+        ("nav.goto needs one of: cell, npc_id, direction, or a map_id different from 145490435",
+         "nav.goto", "invalid_assumption"),
+        ("the dialog offers no replies; it may need to be closed instead",
+         "npc.talk", "invalid_assumption"),
+        ("dialog close failed: TypeError: Cannot read properties of null (reading 'id')",
+         "npc.talk", "stale_state"),
+        ("client directive failed: no client instance is running (start one in DofusFarm first)",
+         "quest.advance", "unavailable"),
+        ("refused: fight blocked - no monster group on the current map",
+         "fight.join", "wrong_target"),
+        ("target monster 715354 is not on this map", "farm.start", "wrong_target"),
+    )
+    for text, tool, want in live:
+        got = Controller.cause_of("failed", tool, False, text, {"map_id": 1}, {"map_id": 1})
+        check("live failure classifies: %s" % tool, got == want, "%s != %s | %s"
+              % (got, want, text[:58]))
+
+    swapped = Controller.cause_of(
+        "failed", "quest.advance", False,
+        "a previous claim of objective 99 of quest 7 ended the connection; "
+        "perform the objective instead", {}, {})
+    check("the cause is phrasing, not quest or objective ids",
+          swapped == "invalid_assumption", swapped)
+
+    check("unknown stays reachable when nothing was measured",
+          Controller.cause_of("failed", "x", False, None, None, None) == "unknown")
+    # The hole that hid the second half of the baseline: a step with an observation
+    # but no baseline used to be "unknown" while the after-state said plenty.
+    check("a step with no baseline is judged from the observation it left",
+          Controller.cause_of("noop", "quest.advance", True, None, None,
+                              {"map_id": 1024, "in_dialog": True}) == "stale_state")
+    check("every cause the classifier emits is declared",
+          not ({Controller.cause_of("failed", "t", False, text, {}, {})
+                for text, _, _ in live} - set(CAUSES)))
+    check("an absent environment has no recovery call",
+          "unavailable" in CAUSES and RECOVERY["unavailable"] is None)
+
+    check("our own refusal prefix is a rule refusal",
+          error_class("refused: fight blocked - no monster group on the current map")
+          == "refused")
+    check("a socket refusal is still transport",
+          error_class("ConnectionRefusedError: connection refused") == "transport"
+          and error_class("the target machine actively refused it") == "transport",
+          "the prefix marker must not swallow the wire")
+
+    def decide(error, tool="quest.advance", verdict="failed",
+               before=None, after=None) -> Any:
+        c = Controller(state_dir=Path(tempfile.gettempdir()), session="")
+        return c.on_step(verdict, tool, False, error, before, after)
+
+    d = decide(live[0][0])
+    check("a rule refusal keeps the measured continue but carries the real cause",
+          (d.action, d.cause) == ("continue", "invalid_assumption"),
+          "%s/%s" % (d.action, d.cause))
+    d = decide(live[1][0], tool="nav.goto")
+    check("a call with no destination in it replans instead of re-observing",
+          d.action == "replan", "%s/%s" % (d.action, d.cause))
+    d = decide(live[4][0])
+    check("an absent client replans as unavailable",
+          (d.action, d.cause) == ("replan", "unavailable"),
+          "%s/%s" % (d.action, d.cause))
+
+    exploring = Controller(state_dir=Path(tempfile.gettempdir()), session="",
+                           explore=1.0)
+    de = exploring.on_step("failed", "nav.goto", False, live[1][0], {}, None)
+    check("exploration never labels a recovery it cannot issue",
+          not (de.action == "recover" and de.next_call is None),
+          "%s/%s/%r" % (de.action, de.cause, de.next_call))
+
+    class _Sink:
+        _emit_decision = Autopilot._emit_decision
+
+        def __init__(self) -> None:
+            self.session = "gate"
+            self.rows: List[Dict[str, Any]] = []
+
+        def _append_log_line(self, blob: bytes) -> None:
+            self.rows.append(_json.loads(blob.decode("utf-8")))
+
+    sink = _Sink()
+    call = ToolCall("quest.advance", {}, "goal")
+    # The bridge reports success for a call the game refused: that is exactly the
+    # case the row must not flatten into ok=True with a null error.
+    sink._emit_decision(decide(live[0][0]), call, SimpleNamespace(ok=True, error=None),
+                        {"map_id": 1}, ok=False, error=live[0][0])
+    row = sink.rows[-1]
+    check("the decision row records the outcome the controller was given",
+          row["ok"] is False and "ended the connection" in str(row["error"]),
+          "%r / %r" % (row["ok"], str(row["error"])[:50]))
+    sink._emit_decision(decide(live[0][0]), call, SimpleNamespace(ok=True, error=None),
+                        {"map_id": 1})
+    check("with no outcome passed, the row still falls back to the result",
+          sink.rows[-1]["ok"] is True)
+
+    src = inspect.getsource(Autopilot)
+    check("both decision sites pass the game-level outcome",
+          "ok=step_ok, error=step_error" in src and "ok=False, error=refusal" in src)
+    check("the goal the policy cannot express is logged as a decision",
+          src.count("self._emit_decision(") == 3
+          and src.count('"policy returned no call"') == 3,
+          "one emit per decision path: %d" % src.count("self._emit_decision("))
+
+
+def test_absent_client_recovery() -> None:
+    section("Absent-client recovery (criterion 3: no window is a wait, not 27 failures)")
+    import inspect
+    import json as _json
+    from agent.autopilot import ABSENT_CLIENT_MARKERS, Autopilot, client_absent
+    from agent import autopilot as _autopilot_module
+
+    src_of_recover = inspect.getsource(Autopilot._recover_world)
+
+    check("the host's three 'no client' phrasings all read as absent",
+          client_absent("no client instance is running (start one in DofusFarm first)")
+          and client_absent("instance 'dofus-05' is not an active client window")
+          and client_absent("instance 'x' is not an active client window "
+                            "(no client window is open - launch an instance)"),
+          str(ABSENT_CLIENT_MARKERS))
+    check("an in-game refusal is not a missing client",
+          not client_absent("refused: fight blocked - no monster group on the current map")
+          and not client_absent(None) and not client_absent(""))
+
+    class _Session:
+        _recover_world = Autopilot._recover_world
+        _wait_for_window = Autopilot._wait_for_window
+
+        def __init__(self, comes_back: bool) -> None:
+            self.session = "gate"
+            self.dry_run = False
+            self.rows: List[Dict[str, Any]] = []
+            self._prepared_obs = {"map_id": 1}
+            self._recoveries = 0
+            self._recoveries_ok = 0
+            self._recovery_wait_s = 0.0
+            self._recent = ["x"]
+            self._action_noops = {"a": 1}
+            self._stall_since = 99
+            self._index = 7
+            self._farm_wait = True
+            self._farm_wait_since = 1.0
+            self._farm_wait_report = 1.0
+            self._fight_wait_since = 1.0
+            self._fight_wait_report = 1.0
+            self._fight_arm_at = 1.0
+            self._forced_call = object()
+            self._comes_back = comes_back
+
+        def _append_log_line(self, blob: bytes) -> None:
+            self.rows.append(_json.loads(blob.decode("utf-8")))
+
+        def _should_stop(self) -> Optional[str]:
+            return None
+
+        def _bridge_alive(self) -> bool:
+            return True
+
+        def _require_world(self, fresh: bool = False) -> bool:
+            return self._comes_back
+
+    import agent.bridge as _bridge
+    original_count = _bridge.client_count
+    _bridge.client_count = lambda *a, **k: 1
+    try:
+        back = _Session(True)
+        ok = back._recover_world("no client instance is running", trigger="client_absent")
+    finally:
+        _bridge.client_count = original_count
+    row = back.rows[-1]
+    check("a rescued session reports the wait as a recovery row",
+          ok and row["kind"] == "recovery" and row["trigger"] == "client_absent"
+          and row["recovered"] is True and row["waited_s"] >= 0.0, str(row))
+    check("the rescue is counted, and the stale per-step state is dropped",
+          (back._recoveries, back._recoveries_ok) == (1, 1)
+          and back._forced_call is None and back._action_noops == {}
+          and back._farm_wait is False and back._stall_since == back._index,
+          "%r %r" % (back._recoveries, back._forced_call))
+
+    gone = _Session(False)
+    _bridge.client_count = lambda *a, **k: 1
+    try:
+        failed = gone._recover_world("no client instance is running",
+                                     trigger="client_absent")
+    finally:
+        _bridge.client_count = original_count
+    frow = gone.rows[-1]
+    check("a session that never comes back is reported as a failure, not a success",
+          failed is False and frow["recovered"] is False
+          and (gone._recoveries, gone._recoveries_ok) == (1, 0)
+          and gone._recovery_wait_s == 0.0, "%r %r" % (frow, gone._recoveries_ok))
+
+    # The presence gate on its own. This is what stops the wait from resolving on the
+    # *carried* snapshot: with no page, that still claims the character is on a map,
+    # so a world-only wait would exit instantly and re-dispatch into the same failure.
+    wait = _Session(True)
+    _bridge.client_count = lambda *a, **k: 2
+    try:
+        found = wait._wait_for_window()
+    finally:
+        _bridge.client_count = original_count
+    check("an open window ends the presence wait", found is True)
+
+    _bridge.client_count = lambda *a, **k: None
+    wait._bridge_alive = lambda: False
+    try:
+        dead_host = wait._wait_for_window()
+    finally:
+        _bridge.client_count = original_count
+    check("a host that stopped answering ends the run instead of parking it",
+          dead_host is False)
+
+    _bridge.client_count = lambda *a, **k: 0
+    wait._should_stop = lambda: "stop file"
+    try:
+        stopped = wait._wait_for_window()
+    finally:
+        _bridge.client_count = original_count
+    check("the stop file ends the presence wait", stopped is False)
+
+    # Zero windows is not a window: the wait has to keep waiting. Without this the
+    # loop could read "no client" as "client present", resolve on the carried
+    # snapshot, and re-dispatch the directive that just failed -- an instant cycle.
+    sleeps: List[float] = []
+    real_sleep = _autopilot_module.time.sleep
+    _autopilot_module.time.sleep = lambda seconds: sleeps.append(seconds)
+    polls = []
+
+    def _none_yet(*a, **k):
+        polls.append(1)
+        return 0 if len(polls) < 4 else None
+
+    _bridge.client_count = _none_yet
+    waiting = _Session(True)
+    waiting._bridge_alive = lambda: True
+    try:
+        # count 0 three times, then the host stops answering -> the honest end.
+        waiting._should_stop = lambda: None if len(polls) < 4 else "bridge gone"
+        never = waiting._wait_for_window()
+    finally:
+        _bridge.client_count = original_count
+        _autopilot_module.time.sleep = real_sleep
+    check("an empty window count keeps the run waiting instead of resuming",
+          never is False and len(polls) >= 3 and len(sleeps) >= 2,
+          "%d polls, %s" % (len(polls), sleeps))
+
+    check("the world wait is only asked after a window exists",
+          "_wait_for_window() if trigger == \"client_absent\"" in src_of_recover)
+
+    # The presence read itself. A failure must be `None` (unknown), never 0: the loop
+    # treats 0 as "no window yet, keep waiting" and None as "ask whether the host is
+    # even there", so a broken parse reported as 0 would park a live run forever.
+    from agent import bridge as _bridge_mod
+
+    def _probe(body: bytes, explode: bool = False) -> Any:
+        class _Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return body
+
+        class _Opener:
+            def open(self, *a, **k):
+                if explode:
+                    raise OSError("no answer")
+                return _Resp()
+
+        saved = _bridge_mod.local_opener
+        _bridge_mod.local_opener = lambda: _Opener()
+        try:
+            return _bridge_mod.client_count()
+        finally:
+            _bridge_mod.local_opener = saved
+
+    check("the host's instance count is read from /agent/health",
+          _probe(b'{"status":"ok","service":"dofus-agent-bridge","port":8893,'
+                 b'"instances":3,"time":1}') == 3)
+    check("a malformed health body is unknown, not zero windows",
+          _probe(b'<html>proxy intercepted this</html>') is None
+          and _probe(b'{"instances":null}') is None)
+    check("a bridge that does not answer is unknown, not zero windows",
+          _probe(b"", explode=True) is None)
+
+    src = inspect.getsource(Autopilot)
+    anchor = 'if not step_ok and client_absent(step_error):'
+    settle = 'after = self._settle(before, after, call=call)'
+    check("a dead window is waited on before any settle poll can run",
+          anchor in src and settle in src and src.index(anchor) < src.index(settle)
+          and "_recover_world(" in src[src.index(anchor):src.index(settle)]
+          and 'trigger="client_absent"' in src[src.index(anchor):src.index(settle)],
+          "the branch must be live, ordered first, and call the wait")
+    check("the loop passes its own trigger, not the default",
+          src.count('trigger="client_absent"') == 1
+          and 'trigger == "client_absent"' in src,
+          "%d call site(s)" % src.count('trigger="client_absent"'))
+    check("a dead window ends the run with its own reason",
+          'the client window is gone' in src
+          and 'open an instance in DofusFarm' in src)
+    check("the summary carries the recovery numbers",
+          all(key in inspect.getsource(Autopilot.summary)
+              for key in ("recoveries", "recoveries_ok", "recovery_wait_s")))
+
+
+def test_repair_credit() -> None:
+    section("Repair credit (criterion 4: a read cannot certify a recovery)")
+    import inspect
+    from agent.autopilot import Autopilot, PENDING_CREDIT_STEPS
+    from agent.controller import Controller, Decision
+    from agent.runtime import ToolCall
+
+    def held() -> Any:
+        loop = type("_Loop", (), {})()
+        loop.controller = Controller(state_dir=Path(tempfile.gettempdir()), session="")
+        loop._pending = Decision("recover", "incomplete", "held for test",
+                                 {"tool": "state.snapshot", "args": {}}, "recover")
+        loop._pending_age = 0
+        loop._credit_pending = Autopilot._credit_pending.__get__(loop)
+        return loop
+
+    read = ToolCall("state.snapshot", {}, "goal")
+    action = ToolCall("quest.advance", {"quest_id": 1}, "goal")
+
+    loop = held()
+    loop._credit_pending(read, "advanced")
+    check("a successful read does not certify the repair it was following",
+          not loop.controller.stats()["strategies"] and loop._pending is not None
+          and loop._pending_age == 1,
+          str(loop.controller.stats()["strategies"]))
+
+    loop = held()
+    for _ in range(PENDING_CREDIT_STEPS + 1):
+        loop._credit_pending(read, "advanced")
+    check("a repair no action answers is dropped, not guessed at",
+          loop._pending is None and not loop.controller.stats()["strategies"],
+          "%r %r" % (loop._pending, loop.controller.stats()["strategies"]))
+
+    loop = held()
+    loop._credit_pending(read, "advanced")
+    loop._credit_pending(action, "advanced")
+    stats = loop.controller.stats()["strategies"]
+    check("the credit lands on the first step that could move the world",
+          list(stats) == ["incomplete:recover"]
+          and stats["incomplete:recover"]["n"] == 1
+          and stats["incomplete:recover"]["ok"] == 1, str(stats))
+
+    loop = held()
+    loop._credit_pending(action, "failed")
+    stats = loop.controller.stats()["strategies"]
+    check("and a failing action is credited as a failure",
+          stats["incomplete:recover"] == {"n": 1, "ok": 0, "score": 0.0}, str(stats))
+
+    loop = held()
+    loop._pending = None
+    loop._credit_pending(action, "advanced")
+    check("nothing is credited when no decision is held",
+          not loop.controller.stats()["strategies"])
+
+    src = inspect.getsource(Autopilot)
+    check("the loop credits through the read-aware gate only",
+          src.count("self._credit_pending(call, v)") == 1
+          and "self.controller.observe_outcome(self._pending, verdict)"
+          in inspect.getsource(Autopilot._credit_pending)
+          and src.count("controller.observe_outcome") == 1,
+          "%d direct credits" % src.count("controller.observe_outcome"))
+
+
+def test_settle_waits_for_promised_effect() -> None:
+    section("Settle window (criterion 2: an effect that lands late is not a no-op)")
+    import inspect
+    from agent import autopilot as ap
+    from agent.autopilot import Autopilot, SETTLE_TOOLS
+    from agent.runtime import ToolCall
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.t = 1000.0
+
+        def monotonic(self) -> float:
+            return self.t
+
+        def sleep(self, seconds: float) -> None:
+            self.t += seconds
+
+        def time(self) -> float:
+            return self.t
+
+    class _Pilot:
+        _settle = Autopilot._settle
+        _world_key = Autopilot._world_key
+        _action_complete = Autopilot._action_complete
+        _record_settled = Autopilot._record_settled
+
+        def __init__(self, states: List[Dict[str, Any]]) -> None:
+            self.settle_s = 3.0
+            self.think_s = 0.25
+            self.states = list(states)
+            self.polls = 0
+            self.runtime = type("_R", (), {"observe": lambda *a, **k: None})()
+
+        def observe(self, max_age_ms: Any = None, record: bool = True) -> Any:
+            self.polls += 1
+            return self.states.pop(0) if self.states else None
+
+    def settle(tool: str, before: Dict[str, Any], after: Dict[str, Any],
+               polls: List[Dict[str, Any]]) -> Any:
+        pilot = _Pilot(polls)
+        clock = _Clock()
+        real = ap.time
+        ap.time = clock
+        try:
+            best = pilot._settle(before, after, call=ToolCall(tool, {}, "goal"))
+        finally:
+            ap.time = real
+        return pilot, best, clock.t - 1000.0
+
+    base = {"cell": 1, "map_id": 7, "in_dialog": False}
+    walked = {"cell": 2, "map_id": 7, "in_dialog": False}
+    opened = {"cell": 2, "map_id": 7, "in_dialog": True}
+
+    pilot, best, waited = settle("quest.advance", base, walked, [walked, walked, opened])
+    check("a claim whose dialog opens one round trip later is judged on the dialog",
+          bool((best or {}).get("in_dialog")) and pilot.polls >= 3,
+          "%d polls -> %s" % (pilot.polls, best))
+
+    pilot, best, waited = settle("inv.sort", {"cell": 1, "map_id": 7},
+                                 {"cell": 9, "map_id": 7},
+                                 [{"cell": 9, "map_id": 7}] * 8)
+    check("a tool with no promise of its own is judged on the change it made, unpollled",
+          pilot.polls == 0 and waited < 0.1 and (best or {}).get("cell") == 9,
+          "%d polls, %.2f s" % (pilot.polls, waited))
+
+    pilot, best, waited = settle("quest.advance", base, walked,
+                                 [walked] * 40)
+    check("the wait stays bounded by the tool's own window",
+          waited <= 7.5 and pilot.polls < 40, "%.2f s after %d polls" % (waited, pilot.polls))
+
+    src = inspect.getsource(Autopilot._settle)
+    check("the quiet shortcut is the one reserved for promise-less tools",
+          "not promised" in src and "promised = tool in SETTLE_TOOLS" in src)
+
+
+def test_reads_are_not_actions() -> None:
+    section("Idle waits (criterion 2: a read is a wait, not a step)")
+    import inspect
+    from agent.autopilot import (Autopilot, ESCALATE_TRIES, MAX_CONSECUTIVE_WAITS,
+                                 ToolCall, WAIT_POLL_S, fell_out_of_world)
+    from agent import autopilot as _am
+
+    check("a session that stayed in the world is not a fall-out",
+          fell_out_of_world({"in_world": True}, {"in_world": True}) is None
+          and fell_out_of_world(None, {"in_world": False}) is None
+          and fell_out_of_world({"in_world": True}, {"map_id": 10340}) is None)
+    check("a world that vanished without saying why is still a fall-out",
+          fell_out_of_world({"in_world": True}, {"in_world": False}) == "")
+    check("the client's own reason travels to the caller",
+          fell_out_of_world({"in_world": True},
+                            {"in_world": False,
+                             "last_disconnect": {"reason": "INACTIVITY"}}) == "INACTIVITY")
+    check("a map transition that briefly reports no map does not end the run",
+          fell_out_of_world({"in_world": False}, {"in_world": False}) is None)
+    check("a malformed disconnect field cannot crash the test",
+          fell_out_of_world({"in_world": True},
+                            {"in_world": False, "last_disconnect": "INACTIVITY"}) == "")
+
+    # Drive the real loop with a policy that only ever wants a look. This is the
+    # baseline's dominant shape: 3,010 of its 4,287 steps were `state.snapshot`,
+    # 3,005 of them scored `advanced`, and two runs of them held 57% of the total.
+    class _Policy:
+        def __init__(self, tool: str = "state.snapshot") -> None:
+            self.tool = tool
+            self.calls = 0
+
+        def choose(self, goal, obs, tools):     # noqa: ARG002 - shape, not behaviour
+            self.calls += 1
+            return ToolCall(self.tool, {}, goal)
+
+    class _Result:
+        def __init__(self, data: Dict[str, Any]) -> None:
+            self.ok = True
+            self.error = None
+            self.data = data
+
+    class _Executor:
+        def __init__(self, obs: Dict[str, Any]) -> None:
+            self.obs = obs
+            self.calls: List[str] = []
+
+        def execute(self, tool, args, **kw):      # noqa: ARG002 - the shape is enough
+            self.calls.append(tool)
+            return _Result({"response": {"result": {"ok": True}},
+                            "snapshot": dict(self.obs)})
+
+    class _Runtime:
+        def __init__(self, obs: Dict[str, Any]) -> None:
+            self.policy = _Policy()
+            self.instance = "dofus-00"
+            self.obs = obs
+            self.executor = _Executor(obs)
+
+        def current_observation(self):
+            return dict(self.obs), 5.0, "cache"
+
+        def observe(self, obs, source="live"):    # noqa: ARG002 - no trajectory writer
+            return None
+
+        def note_observation(self, obs):
+            return None
+
+    dirs: List[Path] = []
+
+    def drive(directives: int, obs: Optional[Dict[str, Any]] = None,
+              tool: str = "state.snapshot", escalate=None):
+        tmp = Path(tempfile.mkdtemp())
+        dirs.append(tmp)
+        rt = _Runtime(dict(obs if obs is not None
+                           else {"in_world": True, "map_id": 10340, "cell": 300}))
+        rt.policy.tool = tool
+        ap = Autopilot(runtime=rt,
+                       goals=["work the %d goal" % i for i in range(directives)],
+                       log_path=tmp / "autopilot.jsonl", stop_file=tmp / "STOP",
+                       max_steps=directives, dry_run=False, preflight=False,
+                       minutes=0, interval=0.0, steps_per_goal=1)
+        # The gate must not write a strategy table into the live state directory.
+        ap.controller.state_dir = tmp
+        if escalate is not None:
+            ap.thinking.propose = escalate
+        labels: List[Any] = []
+        real_label = ap.verifier.label
+        ap.verifier.label = lambda **kw: (
+            labels.append(kw.get("tool")), real_label(**kw))[1]
+        consulted: List[Any] = []
+        real_on_step = ap.controller.on_step
+        ap.controller.on_step = lambda *a, **k: (
+            consulted.append(1), real_on_step(*a, **k))[1]
+        # A live-shaped run, minus the seconds: the loop's own pacing is asserted
+        # separately, and 120 wait passes must not cost the gate 40 seconds.
+        real_sleep = _am.time.sleep
+        _am.time.sleep = lambda seconds: None
+        try:
+            summary = ap._run()
+        finally:
+            _am.time.sleep = real_sleep
+        rows = [json.loads(line) for line in
+                (tmp / "autopilot.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()]
+        return ap, summary, rows, labels, consulted, rt
+
+    try:
+        ap, summary, rows, labels, consulted, rt = drive(2)
+        waits = [r for r in rows if r.get("kind") == "wait"]
+        # A step row is the one row type with no `kind` of its own; decision rows
+        # carry the tool too and must not be read as steps.
+        step_rows = [r for r in rows if "kind" not in r]
+        check("two directives cost two step rows and nothing else",
+              summary["steps"] == 2 and len(step_rows) == 2,
+              "%r step rows %d" % (summary["steps"], len(step_rows)))
+        check("the looking between them is a wait, not a step",
+              summary["waits"] == 2 * MAX_CONSECUTIVE_WAITS
+              and len(waits) == 2 * MAX_CONSECUTIVE_WAITS,
+              "waits %r / rows %d" % (summary.get("waits"), len(waits)))
+        check("a wait produces no verdict and no reward",
+              len(labels) == 2 and len(consulted) == 2,
+              "%d labels, %d controller calls over %d passes"
+              % (len(labels), len(consulted), rt.policy.calls))
+        check("the spin is bounded: past the limit the read is dispatched again",
+              all(s.get("tool") == "state.snapshot" for s in step_rows)
+              and rt.executor.calls == ["state.snapshot"] * 2
+              and rt.policy.calls == 2 * (MAX_CONSECUTIVE_WAITS + 1),
+              "%d passes, %d dispatches" % (rt.policy.calls, len(rt.executor.calls)))
+        check("a wait row carries the goal, the session and a count",
+              (waits[0] if waits else {}).get("goal") == "work the 0 goal"
+              and (waits[0] if waits else {}).get("session") == ap.session
+              and (waits[0] if waits else {}).get("consecutive") == 1
+              and "at" in (waits[0] if waits else {}), str(waits[:1]))
+        check("an idle wait still says so in its own words",
+              (waits[0] if waits else {}).get("reason") == "the policy had no action to take",
+              str(waits[:1]))
+        check("a step ends the streak and drops a reason that no longer applies",
+              ap._consecutive_waits == 0 and ap._forced_reason == "" and ap._waits > 0,
+              "%d %r" % (ap._consecutive_waits, ap._forced_reason))
+        from agent.autopilot import Step
+        ap._consecutive_waits = MAX_CONSECUTIVE_WAITS - 1
+        ap._forced_reason = "a reason written for a call already made"
+        ap._emit(Step(index=0, goal="g", tool="inv.sort", args={}, ok=True,
+                      error=None, latency_ms=1.0, verdict="advanced"))
+        check("the reset is in the step recorder itself, not only in the loop",
+              ap._consecutive_waits == 0 and ap._forced_reason == "",
+              "%d %r" % (ap._consecutive_waits, ap._forced_reason))
+
+        # The reason is the thinking layer's own sentence, when it has one.
+        ap._forced_reason = "wait for the NPC to finish talking"
+        held = ap._hold_wait("do all the quests", {"in_dialog": True, "in_world": True})
+        last = json.loads((dirs[-1] / "autopilot.jsonl").read_text(
+            encoding="utf-8").splitlines()[-1])
+        check("a directed wait is recorded with the reason that directed it",
+              held is True and last["kind"] == "wait"
+              and last["reason"] == "wait for the NPC to finish talking"
+              and last["in_dialog"] is True, str(last))
+        check("and the reason is spent, not stamped on every later wait",
+              ap._forced_reason == "", repr(ap._forced_reason))
+
+        # Pacing: the same cadence the loop had when the wait was a directive.
+        sleeps: List[float] = []
+        real_sleep = _am.time.sleep
+        _am.time.sleep = lambda seconds: sleeps.append(seconds)
+        try:
+            ap.dry_run = False
+            ap.interval = 0.0
+            ap._hold_wait("do all the quests", {"in_world": True})
+            paced = list(sleeps)
+            sleeps.clear()
+            ap.interval = 2.0
+            ap._hold_wait("do all the quests", {"in_world": True})
+            paced_by_interval = list(sleeps)
+            sleeps.clear()
+            ap.dry_run = True
+            ap.interval = 0.0
+            ap._hold_wait("do all the quests", {"in_world": True})
+            dry = list(sleeps)
+        finally:
+            ap.dry_run = False
+            _am.time.sleep = real_sleep
+        check("a wait holds the loop's measured cadence, no faster",
+              paced == [WAIT_POLL_S], str(paced))
+        check("a slower --interval still wins", paced_by_interval == [2.0],
+              str(paced_by_interval))
+        check("a dry run has no world to wait for and does not sleep", dry == [], str(dry))
+
+        # A kick that lands during a wait must be a recovery, not more waiting: no
+        # step is dispatched here, so the post-step check would never have run.
+        recovered: List[Any] = []
+        real_recover = ap._recover_world
+
+        def _spy(reason: Optional[str] = None, trigger: str = "fell_out") -> bool:
+            recovered.append((reason, trigger))
+            return not fail_next
+
+        fail_next = False
+        ap._recover_world = _spy
+        try:
+            rt.obs = {"in_world": False, "last_disconnect": {"reason": "INACTIVITY"}}
+            out = ap._hold_wait("do all the quests", {"in_world": True, "map_id": 1})
+            rescued = list(recovered)
+            # The count measured a wait inside a session that has ended, so a
+            # rescued world must start with a full budget of its own.
+            ap._consecutive_waits = MAX_CONSECUTIVE_WAITS
+            rt.obs = {"in_world": False, "last_disconnect": {"reason": "KICKED"}}
+            ap._hold_wait("do all the quests", {"in_world": True, "map_id": 1})
+            streak = ap._consecutive_waits
+            fail_next = True
+            rt.obs = {"in_world": False}
+            given_up = ap._hold_wait("do all the quests", {"in_world": True, "map_id": 1})
+        finally:
+            ap._recover_world = real_recover
+        check("a fall-out noticed during a wait hands over to the recovery path",
+              out is True and rescued == [("INACTIVITY", "wait_fell_out")],
+              "%r %r" % (out, rescued))
+        check("and the wait budget restarts against the rescued world",
+              streak == 0, "streak %d" % streak)
+        check("a world that does not come back ends the run, it does not keep waiting",
+              given_up is False)
+        check("a silent fall-out still reaches the recovery path",
+              (recovered[-1] if recovered else None) == (None, "wait_fell_out"),
+              str(recovered[-1:]))
+
+        # A wait that reaches the bound is evidence the goal has nothing left, so the
+        # loop asks the thinking layer for an untried interaction. Two failure modes
+        # matter: taking a read as the answer (which resets the streak and doubles the
+        # spin -- the first version of this did exactly that), and escalating forever.
+        from agent.thinking import Thought
+        seen: List[int] = []
+
+        def _only_reads(goal, observation, steps, decision):
+            seen.append(1)
+            return Thought("state.snapshot", {}, "refresh the observation")
+
+        _, summary2, rows2, _, _, rt2 = drive(1, escalate=_only_reads)
+        check("a read is never accepted as an escalation",
+              not any(r.get("escalated") for r in rows2 if r.get("kind") == "wait")
+              and summary2["waits"] == MAX_CONSECUTIVE_WAITS,
+              "waits %r asks %d" % (summary2.get("waits"), len(seen)))
+        check("and the search is bounded, not re-asked every pass",
+              len(seen) == ESCALATE_TRIES and rt2.executor.calls == ["state.snapshot"],
+              "%d asks, dispatched %r" % (len(seen), rt2.executor.calls))
+
+        asks: List[int] = []
+
+        def _escalate(goal, observation, steps, decision):
+            asks.append(1)
+            # First the read, then a real action -- the filter must skip the read.
+            return Thought("farm.stop", {}, "stop the standing order") \
+                if len(asks) > 1 else Thought("state.snapshot", {}, "refresh")
+
+        ap3, summary3, rows3, _, _, rt3 = drive(2, escalate=_escalate)
+        marked = [r for r in rows3 if r.get("kind") == "wait" and r.get("escalated")]
+        check("an untried action is taken at the bound and named in the row",
+              len(marked) == 2 and all(m["escalated"] == "farm.stop" for m in marked)
+              and all(m["consecutive"] == MAX_CONSECUTIVE_WAITS for m in marked),
+              str(marked))
+        check("the escalated call is dispatched on the next pass",
+              rt3.executor.calls == ["farm.stop", "farm.stop"], str(rt3.executor.calls))
+        check("one escalation cannot chain into the next: the budget restarts",
+              summary3["waits"] == 2 * MAX_CONSECUTIVE_WAITS
+              and ap3._consecutive_waits == 0 and len(asks) <= 2 * ESCALATE_TRIES,
+              "waits %r asks %d" % (summary3.get("waits"), len(asks)))
+        check("and each goal escalates for itself: a repair queued by one is not "
+              "dispatched under the next",
+              all(m["goal"] == "work the %d goal" % i for i, m in enumerate(marked))
+              and [s.get("goal") for s in rows3 if "kind" not in s]
+              == ["work the 0 goal", "work the 1 goal"],
+              str([(s.get("goal"), s.get("tool")) for s in rows3 if "kind" not in s]))
+
+        # An escalation is a proposal, not a pass: it still goes through the guard, and
+        # a call the schema does not know costs a refusal row -- it must not become a
+        # new kind of spin.
+        def _bogus(goal, observation, steps, decision):
+            return Thought("inv.sort", {"sort": "bag"}, "the layer is guessing")
+
+        _, summary4, rows4, _, _, rt4 = drive(1, escalate=_bogus)
+        blocked = [r for r in rows4 if "kind" not in r and r.get("verdict") == "blocked"]
+        check("an escalated call the schema rejects is refused, not dispatched",
+              rt4.executor.calls == [] and len(blocked) == 1
+              and blocked[0]["tool"] == "inv.sort"
+              and "schema rejected" in str(blocked[0].get("error")),
+              "%r %r" % (rt4.executor.calls, [b.get("error") for b in blocked][:1]))
+        check("and the refusal ends the goal rather than looping the wait",
+              summary4["steps"] == 1 and summary4["waits"] == MAX_CONSECUTIVE_WAITS,
+              "%r %r" % (summary4.get("steps"), summary4.get("waits")))
+
+        src_run = inspect.getsource(Autopilot._run)
+        src_wait = inspect.getsource(Autopilot._hold_wait)
+        check("the wait is taken before the guard, so a read cannot be refused or streaked",
+              src_run.index("self._hold_wait(goal, before)")
+              < src_run.index("refusal = self.guard(call)"))
+        check("the bound decides in the loop; the wait itself cannot retire a goal",
+              "self._consecutive_waits < MAX_CONSECUTIVE_WAITS" in src_run
+              and "ended_because" not in src_wait
+              and "_retire_named_quest" not in src_wait)
+        check("a wait has no way to produce a step row, a verdict, or a reward",
+              "Step(" not in src_wait and "self._emit(" not in src_wait
+              and "on_step" not in src_wait)
+        check("the limit is above every legitimate wait in the baseline",
+              MAX_CONSECUTIVE_WAITS > 6 and WAIT_POLL_S > 0.05,
+              "limit %d, poll %.2f" % (MAX_CONSECUTIVE_WAITS, WAIT_POLL_S))
+    finally:
+        for d in dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def run() -> Tuple[int, List[str]]:
     test_verdict_vocabulary()
     test_verifier_rules()
@@ -569,6 +1330,11 @@ def run() -> Tuple[int, List[str]]:
     test_named_mob_focus()
     test_thinking_layer()
     test_claim_quarantine()
+    test_failure_causes()
+    test_absent_client_recovery()
+    test_repair_credit()
+    test_reads_are_not_actions()
+    test_settle_waits_for_promised_effect()
     test_intervention_instrument()
     test_js_page_suites()
     test_bundle_resilience()

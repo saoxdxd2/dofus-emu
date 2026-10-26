@@ -107,6 +107,82 @@ OBS_FRESH_MS = 4000.0
 # the farm.start no-op guard caps a truly dead loop at three attempts.
 FARM_IDLE_S = 20.0
 
+# How many read-only steps a repair decision may wait for before its outcome is
+# considered unknowable. A recovery's own snapshot is one of them; twelve is roughly
+# one farm-poll generation, after which crediting the decision would be guessing.
+PENDING_CREDIT_STEPS = 12
+
+# There is no client *window* at all — the host has none open, so the bridge
+# answers without ever reaching a page. The words are the host's own
+# (desktop/agentbridge.cs).
+#
+# This is not a failed step and not the same as `fell_out`: with no page there is
+# no new snapshot, so the in_world transition that detects a kick never appears.
+# A live run put 27 consecutive `state.snapshot` failures into exactly this state,
+# each one answered with a replan that could only produce another doomed call.
+ABSENT_CLIENT_MARKERS = (
+    "no client instance", "not an active client", "no client window is open",
+)
+
+
+def client_absent(error: Any) -> bool:
+    text = str(error or "").lower()
+    return any(marker in text for marker in ABSENT_CLIENT_MARKERS)
+
+
+# A wait's own clock. The live log paces the loop at a 0.374 s median gap between
+# consecutive steps, of which the round trip is only 18.2 ms -- so the gap is the
+# loop's pacing, and 0.35 s reproduces it. Keeping the cadence matters more than the
+# exact number: the planner's wait gates count *passes*, so a different cadence
+# silently changes how long a scripted tutorial pause lasts.
+WAIT_POLL_S = 0.35
+
+# How many wait passes in a row are still a wait rather than a stall.
+#
+# Measured on the baseline's 3,010 read-steps: they come in 671 runs with a median
+# length of 1 and a p99 of 6 -- a legitimate wait is short, because it is standing
+# between an action and the state the action promised. Two runs broke the shape: one
+# of 149 passes (56 s) and one of 1,581 (586 s), which together are 57% of all the
+# wait traffic. The long one is the case this bound exists for: 1,576 of its 1,581
+# reads *succeeded*, so nothing in the loop could call it a failure -- the planner
+# simply had no action for the goal and the run spent ten minutes looking, five reads
+# per second, while reporting `advanced` every time.
+#
+# Past the bound a read is dispatched as one real step per 40 passes, which hands the
+# spin back to the streak, refusal and stall machinery that already knows how to
+# retire a goal. Same wall-clock cost, one step row per ~15 s instead of per 0.374 s.
+MAX_CONSECUTIVE_WAITS = 40
+
+
+# How many candidates the wait escalation is allowed to skip while looking for one
+# that is an action. Measured, not guessed: the thinking layer's fallback candidate is
+# `state.snapshot` ("refresh the observation"), which is the very thing the wait exists
+# to stop dispatching -- taking it would reset the streak and double the spin instead of
+# breaking it. Three tries finds any real alternative and then gives up.
+ESCALATE_TRIES = 3
+
+
+def fell_out_of_world(before: Any, after: Any) -> Optional[str]:
+    """The reason the client left the world between two states, or None.
+
+    Returns the client's own reason string, or `""` when the world simply vanished,
+    or None when it is still there. Two ways to know the session is gone: we watched
+    the world disappear, or the client told us why it left. Either alone is enough; a
+    bare `in_world: false` in a state that was already out of the world is not,
+    because a map transition can briefly report no map and that must not end the run.
+    Both the post-step check and the wait check need this decision, and a second copy
+    drifting away from the first is how a kick stops being detected.
+    """
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return None
+    if after.get("in_world") is not False:
+        return None
+    why = after.get("last_disconnect") or {}
+    reason = why.get("reason") if isinstance(why, dict) else None
+    if before.get("in_world") is not False or reason:
+        return str(reason or "")
+    return None
+
 
 def _game_error(result: Any) -> Optional[str]:
     """The game's own rejection, inside a transport-successful response.
@@ -236,6 +312,7 @@ class Autopilot:
         self._forced_call: Optional[ToolCall] = None
         self._hinted = False
         self._pending: Optional[Decision] = None
+        self._pending_age = 0
         self.replan_requested = 0
         self.deadline = time.time() + minutes * 60.0 if minutes > 0 else 0.0
         self.interval = interval
@@ -255,6 +332,15 @@ class Autopilot:
         # Manual interventions, as counted by the client's trusted-input instrument.
         self._intervention_seen = 0
         self._intervention_total = 0
+        # Recovery accounting: criterion 5 asks whether the run gets itself back,
+        # so a rescue is a measured event, not a print line.
+        self._recoveries = 0
+        self._recoveries_ok = 0
+        self._recovery_wait_s = 0.0
+        # Waits that were never dispatched as steps: see WAIT_POLL_S.
+        self._waits = 0
+        self._consecutive_waits = 0
+        self._forced_reason = ""
         self._first_step_at = 0.0
         self._last_step_at = 0.0
         # A long run can list hundreds of items; keep the recent ledger for
@@ -368,6 +454,10 @@ class Autopilot:
         if not self._first_step_at:
             self._first_step_at = step.at
         self._last_step_at = step.at
+        # A step is the end of a wait: the streak that bounds the idle passes restarts,
+        # and a reason written for a directive no longer labels anything.
+        self._consecutive_waits = 0
+        self._forced_reason = ""
         self._step_total += 1
         self._verdict_counts[step.verdict] = (
             self._verdict_counts.get(step.verdict, 0) + 1)
@@ -527,6 +617,9 @@ class Autopilot:
             if before is None:
                 return after
         tool = str(getattr(call, "tool", "") or "")
+        # `_action_complete` knows what these four tools promised; for every other
+        # tool "some key changed" is the best available definition of done.
+        promised = tool in SETTLE_TOOLS
         window = self.settle_s
         if tool in ("nav.goto", "quest.advance"):
             window = max(window, 6.0)
@@ -547,8 +640,18 @@ class Autopilot:
                 if key != last_key:
                     last_key = key
                     last_change = time.monotonic()
-                elif (changed_keys(before, best)
+                elif (not promised
+                      and changed_keys(before, best)
                       and time.monotonic() - last_change >= quiet_s):
+                    # A quiet world is not a finished action. `changed_keys(before,
+                    # best)` compares against the *start*, so any unrelated tick --
+                    # AP, HP, a cell drift -- keeps this branch eligible, and a
+                    # predicate tool used to exit here after ~0.8 s. Measured on the
+                    # live log: `quest.advance` rows judged noop returned in 0.80 s
+                    # (median) while the dialog they queued opened 1.2 s later, so
+                    # 480 accepted claims were scored as doing nothing and the loop
+                    # moved on -- and then interrupted its own walk. For a tool whose
+                    # promise we can check, only the promise ends the wait.
                     self._record_settled(best, after)
                     return best
             remaining = deadline - time.monotonic()
@@ -977,6 +1080,7 @@ class Autopilot:
         # The farm order is a standing state, not a repair; do not credit the
         # controller's strategy with an unrelated step after the wait.
         self._pending = None
+        self._pending_age = 0
         now = time.time()
         if not observation.get("auto_fight"):
             if self._farm_wait:
@@ -1074,6 +1178,13 @@ class Autopilot:
 
         for goal in self.goals:
             failures = 0
+            # A directive the previous goal's repair queued must not be executed under
+            # this goal's label. Observed live-shaped: a `noop` on one goal made the
+            # controller force the same call again, the goal ended on its one directive,
+            # and the next goal began by dispatching the previous goal's action.
+            self._forced_call = None
+            self._forced_reason = ""
+            self._consecutive_waits = 0
             self._farm_wait = False
             self._farm_wait_since = None
             self._action_noops.clear()
@@ -1141,6 +1252,8 @@ class Autopilot:
                     # invariant every source must respect: a quests prompt never
                     # starts a farm session for a non-delivery objective.
                     print("[autopilot] refusing farm.start under a quest goal")
+                    self._forced_reason = ("a farm.start was refused because this "
+                                           "prompt is a quest goal")
                     call = ToolCall("state.snapshot", {}, goal)
                 if call is None:
                     self._emit(Step(index=self._index, goal=goal, tool="-", args={},
@@ -1171,6 +1284,30 @@ class Autopilot:
                               "'sell all', 'scan hdv for <item>', 'join fight', 'stop'. "
                               "Anything else needs the encoder policy (--policy encoder).")
                     break
+
+                # A read is not an action. `state.snapshot` is what the planner and
+                # the thinking layer return when the thing they want has not happened
+                # yet ("wait for the NPC", "wait for a map change", "wait for the
+                # target to spawn", the scripted tutorial gate) and what every
+                # controller recovery hint points at. Dispatching it as a step made
+                # the wait look like work in three places at once: 3,010 of the
+                # baseline's 4,287 steps were these reads, 3,005 of them scored
+                # `advanced`, so the run's own success rate was mostly counting
+                # looking -- and a policy trained on that corpus learns that looking
+                # is the most reliable thing it can do. The loop already takes a
+                # snapshot at the top of every iteration, so the directive carried no
+                # information the next pass would not have anyway.
+                #
+                # Past MAX_CONSECUTIVE_WAITS the read is dispatched again, so a goal
+                # with no action left in it stays a failure the loop can see rather
+                # than turning into an unfalsifiable wait.
+                if (call is not None and call.tool == "state.snapshot"
+                        and self._consecutive_waits < MAX_CONSECUTIVE_WAITS):
+                    if not self._hold_wait(goal, before):
+                        ended_because = "stopped while waiting"
+                        break
+                    taken -= 1  # waiting is not one of the goal's directives
+                    continue
 
                 refusal = self.guard(call)
                 if refusal:
@@ -1286,6 +1423,20 @@ class Autopilot:
                 step_error = (game_error if game_error is not None
                               else (None if result.ok else str(result.error)))
 
+                # No client window is not a failed step: it is the absence of an
+                # environment. Wait for one to exist (the host opens a client, the
+                # operator relaunches) rather than replanning into another doomed
+                # directive — the settle poll and the retry ladder below would each
+                # spend a round trip on a page that is not there. Checked before the
+                # settle so a dead client cannot trigger a poll storm.
+                if not step_ok and client_absent(step_error):
+                    if not self._recover_world(str(step_error)[:80],
+                                               trigger="client_absent"):
+                        ended_because = ("the client window is gone and did not come "
+                                         "back (open an instance in DofusFarm)")
+                        break
+                    continue
+
                 # A walk is not finished when the call returns. Give the tools that move
                 # the character, open a dialog or start a fight a moment to land before
                 # judging them — otherwise every one of them scores `noop` and the loop
@@ -1320,17 +1471,9 @@ class Autopilot:
                 # connectionManager object exists, which it does at the login screen too.
                 # Falling out of the world mid-run is: we were on a map, and now we are not.
                 if isinstance(after, dict) and isinstance(before, dict):
-                    why = after.get("last_disconnect") or {}
-                    reason = why.get("reason") if isinstance(why, dict) else None
-                    # Two ways to know the session is gone: we watched the world
-                    # disappear between two steps, or the client told us why it left.
-                    # Either alone is enough; a bare `in_world: false` is not, because a
-                    # map transition can briefly report no map and that must not end the
-                    # run.
-                    fell_out = after.get("in_world") is False and (
-                        before.get("in_world") is not False or bool(reason))
-                    if fell_out:
-                        if not self._recover_world(reason):
+                    reason = fell_out_of_world(before, after)
+                    if reason is not None:
+                        if not self._recover_world(reason or None):
                             ended_because = ("the client left the world"
                                              + (f" ({reason})" if reason else ""))
                             break
@@ -1428,9 +1571,7 @@ class Autopilot:
                 # for a new one. Without the credit step the strategy table never
                 # learns which recovery works, and the controller degrades into a
                 # counter that happens to have opinions.
-                if self._pending is not None:
-                    self.controller.observe_outcome(self._pending, v)
-                    self._pending = None
+                self._credit_pending(call, v)
 
                 decision = self.controller.on_step(v, call.tool, step_ok, step_error,
                                                    before, after)
@@ -1715,7 +1856,51 @@ class Autopilot:
         except Exception:  # noqa: BLE001 - a probe must not end a run
             return True
 
-    def _recover_world(self, reason: Optional[str] = None) -> bool:
+    def _wait_for_window(self) -> bool:
+        """Wait until the host has a client window again.
+
+        `_require_world` decides from a snapshot, and with no page there is no new
+        snapshot — the runtime's carried one still says the character is standing on a
+        map, so asking it "are we in the world?" answers yes and the wait would exit
+        instantly, straight back into the same doomed directive. That is a hot loop, not
+        a recovery. The host's own count is the only honest signal here, and it costs no
+        game packet.
+
+        Like the login wait there is no deadline: the operator opens a window when they
+        can. It ends on a window, on the stop file, or on a host that stopped answering.
+        """
+        if self.dry_run:
+            return True
+        from agent.bridge import client_count
+
+        started = time.time()
+        last_report = started
+        announced = False
+        while True:
+            if self._should_stop():
+                return False
+            count = client_count()
+            if count is None and not self._bridge_alive():
+                print("[autopilot] the host stopped answering; ending the run")
+                return False
+            if count:
+                if announced:
+                    print("[autopilot] %d client window(s) open again after %.1f s"
+                          % (count, time.time() - started))
+                return True
+            now = time.time()
+            if not announced:
+                print("[autopilot] no client window is open; waiting for one "
+                      "(open an instance in DofusFarm)")
+                announced = True
+            elif now - last_report >= 30.0:
+                print("[autopilot] still waiting for a client window (%.0f s)"
+                      % (now - started))
+                last_report = now
+            time.sleep(1.0)
+
+    def _recover_world(self, reason: Optional[str] = None,
+                       trigger: str = "fell_out") -> bool:
         """Wait for a kicked/reloaded client instead of ending the run.
 
         A kick, relogin or connection reset returns the page to the login screen;
@@ -1723,14 +1908,39 @@ class Autopilot:
         used before the first step is correct here too, and after the world
         returns the queue of no-ops and a stale farm/fight wait must be cleared
         so the next decision starts from the new session.
+
+        The wait is measured and logged, because "recovery success" is a baseline
+        number rather than an assumption: how many times the session had to be
+        rescued, how long each rescue took, and whether it came back at all.
         """
-        print("[autopilot] the client left the world mid-run"
-              + (f" (reason: {reason})" if reason else "")
-              + "; waiting for it to come back")
+        lead = ("the client window is gone" if trigger == "client_absent"
+                else "the client left the world mid-run")
+        print("[autopilot] %s%s; waiting for it to come back"
+              % (lead, f" (reason: {reason})" if reason else ""))
+        started = time.time()
         self._prepared_obs = None
-        if not self._require_world(fresh=True):
+        # With no window the snapshot cannot answer anything, so the presence check
+        # comes first; for a kick or a reload the page exists and answers, and only
+        # the world is missing.
+        present = self._wait_for_window() if trigger == "client_absent" else True
+        recovered = present and self._require_world(fresh=True)
+        waited = round(time.time() - started, 1)
+        self._recoveries += 1
+        if recovered:
+            self._recoveries_ok += 1
+            self._recovery_wait_s += waited
+        self._append_log_line(_fast_dumps({
+            "kind": "recovery",
+            "session": self.session,
+            "trigger": trigger,
+            "reason": (str(reason or "")[:120] or None),
+            "recovered": bool(recovered),
+            "waited_s": waited,
+            "at": time.time(),
+        }) + b"\n")
+        if not recovered:
             return False
-        print("[autopilot] the world is back; resuming")
+        print("[autopilot] the world is back after %.1f s; resuming" % waited)
         self._recent.clear()
         self._action_noops.clear()
         self._stall_since = self._index
@@ -1776,6 +1986,111 @@ class Autopilot:
         skipper(qid)
         return qid
 
+    def _hold_wait(self, goal: str, before: Any) -> bool:
+        """Spend time, not a step, on a wait the policy asked for.
+
+        Returns True to keep the run going. The wait is still visible -- a `kind:
+        "wait"` row with the reason and how many passes it has taken -- and it keeps
+        the two things a dispatched wait had: the same cadence (so the planner's own
+        wait counters, which are calibrated in passes, still mean the same wall-clock
+        amount) and the same kick detection (a wait at the login screen is a recovery,
+        not a spin).
+
+        What it no longer does is produce a step row, a verdict, or a reward: those
+        were what turned 3,010 lookups into apparent success.
+        """
+        self._waits += 1
+        self._consecutive_waits += 1
+        reason = self._forced_reason or "the policy had no action to take"
+        self._forced_reason = ""
+        thought = None
+        if self._consecutive_waits == MAX_CONSECUTIVE_WAITS:
+            # Reaching the bound is the strongest signal the loop has that this goal has
+            # no action left in it -- the shape of the baseline's 1,581-pass run. Before
+            # spending a doomed round trip on that, ask the layer that searches the
+            # current board for an interaction nobody has tried in this scene. Only a
+            # real action counts as an answer: a read back would reset the streak and
+            # double the spin. When it has nothing left this falls through to the plain
+            # overflow read, so the escalation cannot become its own loop.
+            idle = READ_ONLY_TOOLS | LISTING_TOOLS
+            for _ in range(ESCALATE_TRIES):
+                candidate = self.thinking.propose(goal, before, self.steps[-8:], None)
+                if candidate is None:
+                    break
+                if candidate.tool not in idle and candidate.tool != "-":
+                    thought = candidate
+                    break
+        self._append_log_line(_fast_dumps({
+            "kind": "wait",
+            "session": self.session,
+            "goal": goal,
+            "reason": reason,
+            "consecutive": self._consecutive_waits,
+            "escalated": thought.tool if thought is not None else None,
+            "in_dialog": bool((before or {}).get("in_dialog"))
+            if isinstance(before, dict) else None,
+            "at": time.time(),
+        }) + b"\n")
+        if self._consecutive_waits == 1 or self._consecutive_waits % 30 == 0:
+            print("[autopilot] wait x%d: %s" % (self._consecutive_waits, reason))
+        if thought is not None:
+            self._consecutive_waits = 0
+            self._forced_call = ToolCall(tool=thought.tool, args=dict(thought.args),
+                                         goal=goal)
+            self._forced_reason = thought.why
+            print("[autopilot] the wait had no action left; trying %s %s (%s)"
+                  % (thought.tool, thought.args, thought.why))
+        if not self.dry_run:
+            # A dry run has no world to wait for, and ten fast passes must not turn
+            # into seconds of sleeping on the way to a `--steps 8` smoke test.
+            time.sleep(max(WAIT_POLL_S, self.interval))
+            self._last_step_at = time.time()
+        # A wait can outlive the session it was waiting inside. Without this the loop
+        # would keep asking the policy for an action on a page that is back at the
+        # login screen, and the scheduler would never see the kick it is supposed to
+        # recover from: no step is dispatched here, so the post-step check never runs.
+        # A wait that keeps reading a dead bridge is covered by the bound instead --
+        # the next dispatched step takes the transport path and its own recovery.
+        fresh = self.observe(record=False)
+        left = fell_out_of_world(before, fresh)
+        if left is not None:
+            recovered = self._recover_world(left or None, trigger="wait_fell_out")
+            if recovered:
+                # The count measured a wait inside a session that has ended; the new
+                # world gets its own budget.
+                self._consecutive_waits = 0
+            return recovered
+        return True
+
+    def _credit_pending(self, call: Any, verdict: Any) -> None:
+        """Score the held repair decision -- but only against a step that could
+        have moved the world.
+
+        Every recovery hint this project issues is `state.snapshot`, and the verifier
+        rightly scores a successful read as `advanced`: a lookup that returns data did
+        what was asked. Feeding *that* back as the reward for the repair measures the
+        probe instead of the repair. On the live baseline it produced 348 successes in
+        348 attempts for `incomplete:recover` and 145 of 145 for `stale_state:recover`,
+        while the same decisions credited against the next real action scored 28 of 348
+        and 0 of 145. A table trained on the first number learns "always recover", which
+        is not a recovery policy, it is a tautology.
+
+        So a read leaves the decision pending; the credit lands on the first step that
+        could have changed something, and a decision nothing answers within
+        `PENDING_CREDIT_STEPS` reads is dropped rather than guessed at.
+        """
+        if self._pending is None:
+            return
+        if str(getattr(call, "tool", "") or "") in READ_ONLY_TOOLS:
+            self._pending_age += 1
+            if self._pending_age > PENDING_CREDIT_STEPS:
+                self._pending = None
+                self._pending_age = 0
+            return
+        self.controller.observe_outcome(self._pending, verdict)
+        self._pending = None
+        self._pending_age = 0
+
     def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
         """Turn agent 2's decision into what the actor does on the next step.
 
@@ -1786,11 +2101,13 @@ class Autopilot:
         if decision.action == "retry":
             if call is not None:
                 self._forced_call = call
+                self._forced_reason = decision.reason
             return "retry"
         if decision.action == "recover" and decision.next_call:
             self._forced_call = ToolCall(tool=decision.next_call["tool"],
                                          args=dict(decision.next_call.get("args") or {}),
                                          goal=goal)
+            self._forced_reason = decision.reason
             return "recover"
         if decision.action == "replan":
             self.replan_requested += 1
@@ -1800,6 +2117,10 @@ class Autopilot:
             if thought is not None:
                 self._forced_call = ToolCall(
                     tool=thought.tool, args=dict(thought.args), goal=goal)
+                # A thought that says "wait for the NPC" and a read that says nothing
+                # are the same step to the loop but different waits to a reader. The
+                # reason is the thought's own words, kept for the wait row.
+                self._forced_reason = thought.why or decision.reason
                 print(f"[autopilot] THINK ({decision.cause}): {thought.why} "
                       f"-> {thought.tool} {thought.args}")
                 return "think"
@@ -1825,6 +2146,12 @@ class Autopilot:
             "label_sources": dict(self._source_counts),
             "replan_requested": self.replan_requested,
             "manual_interventions": self._intervention_total,
+            "recoveries": self._recoveries,
+            "recoveries_ok": self._recoveries_ok,
+            "recovery_wait_s": round(self._recovery_wait_s, 1),
+            # Waits are reported, not counted as work. Before this, 3,010 of them were
+            # the majority of "steps" and nearly all of the run's apparent success.
+            "waits": self._waits,
             "controller": self.controller.stats(),
             "open_listings": self._listing_total,
             "log": str(self.log_path),

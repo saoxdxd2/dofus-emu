@@ -17,6 +17,7 @@ import os
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Optional
 
 DEFAULT_PORT = 8893
 
@@ -92,3 +93,25 @@ def reachable(host: str = "127.0.0.1", timeout: float = 1.5) -> bool:
         return True     # it answered, even if with 404 — somebody is home
     except Exception:   # noqa: BLE001 - timeout, refused, reset all mean "not there"
         return False
+
+
+def client_count(host: str = "127.0.0.1", timeout: float = 2.0) -> Optional[int]:
+    """How many client windows the host has open, or None if it did not answer.
+
+    `GET /agent/health` is the only read that costs no game packet: the bridge counts
+    `GetActiveInstanceIds()` itself. A directive is not an alternative — with no window
+    the bridge answers "no client instance is running" without reaching a page, which is
+    how a live run spent 27 steps learning that the host had none open.
+    """
+    import json
+    import urllib.error
+    url = "http://%s:%d/agent/health" % (host, bridge_port())
+    try:
+        with local_opener().open(url, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8", "replace"))
+    except Exception:   # noqa: BLE001 - any failure means "unknown", never "zero"
+        return None
+    if not isinstance(payload, dict) or payload.get("status") != "ok":
+        return None
+    count = payload.get("instances")
+    return count if isinstance(count, int) and count >= 0 else None
