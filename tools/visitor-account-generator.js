@@ -6,11 +6,11 @@
  * so instances can log in directly without going through the webview popup.
  */
 
-const https = require('https');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
+const { postForm } = require('./https-post');
 
 function base64Url(buf) {
     return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -32,42 +32,16 @@ class VisitorAccountManager {
      * Request a guest provisioning token from Haapi/Auth endpoint.
      */
     requestGuestToken() {
-        return new Promise((resolve, reject) => {
-            const postData = 'client_id=18';
-            const options = {
-                hostname: 'auth.ankama.com',
-                port: 443,
-                path: '/token/create-guest',
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Content-Length': Buffer.byteLength(postData),
-                    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
-                    'Origin': 'https://www.dofus-touch.com',
-                    'Referer': 'https://www.dofus-touch.com/'
-                }
-            };
-
-            const req = https.request(options, (res) => {
-                let data = '';
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    if (res.statusCode === 200) {
-                        try {
-                            const json = JSON.parse(data);
-                            resolve(json.token);
-                        } catch (e) {
-                            reject(new Error('Failed to parse guest token: ' + data));
-                        }
-                    } else {
-                        reject(new Error(`create-guest returned HTTP ${res.statusCode}: ${data}`));
-                    }
-                });
-            });
-
-            req.on('error', reject);
-            req.write(postData);
-            req.end();
+        return postForm({
+            hostname: 'auth.ankama.com',
+            path: '/token/create-guest',
+            headers: {
+                'Origin': 'https://www.dofus-touch.com',
+                'Referer': 'https://www.dofus-touch.com/'
+            }
+        }, 'client_id=18', json => json.token, {
+            http: 'create-guest returned HTTP ',
+            parse: 'Failed to parse guest token: '
         });
     }
 
@@ -75,40 +49,13 @@ class VisitorAccountManager {
      * Exchange authorization code for permanent guest credentials.
      */
     exchangeCode(code, verifier, redirectUri) {
-        return new Promise((resolve, reject) => {
-            const postData = `grant_type=authorization_code&client_id=18&code=${encodeURIComponent(code)}&code_verifier=${encodeURIComponent(verifier)}&redirect_uri=${encodeURIComponent(redirectUri)}`;
-            const options = {
-                hostname: 'auth.ankama.com',
-                port: 443,
-                path: '/token',
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Content-Length': Buffer.byteLength(postData),
-                    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36'
-                }
-            };
-
-            const req = https.request(options, (res) => {
-                let data = '';
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    if (res.statusCode === 200) {
-                        try {
-                            const json = JSON.parse(data);
-                            resolve(json);
-                        } catch (e) {
-                            reject(new Error('Failed to parse exchange JSON: ' + data));
-                        }
-                    } else {
-                        reject(new Error(`Token exchange failed with HTTP ${res.statusCode}: ${data}`));
-                    }
-                });
-            });
-
-            req.on('error', reject);
-            req.write(postData);
-            req.end();
+        const postData = `grant_type=authorization_code&client_id=18&code=${encodeURIComponent(code)}&code_verifier=${encodeURIComponent(verifier)}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+        return postForm({
+            hostname: 'auth.ankama.com',
+            path: '/token'
+        }, postData, json => json, {
+            http: 'Token exchange failed with HTTP ',
+            parse: 'Failed to parse exchange JSON: '
         });
     }
 

@@ -13,10 +13,9 @@
 // Only entries that pass are safe for proxies.txt - everything else causes
 // the in-game "Server busy" fatal reload.
 
-const net = require('net');
-const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
+const { requestThrough } = require('./proxy_tunnel');
 
 const TARGET_HOST = 'dt-proxy-production-login.ankama-games.com';
 const TARGET_PORT = 443;
@@ -27,6 +26,7 @@ const OUTPUT = process.argv[3] || 'proxies_ok.txt';
 const PATHS = (process.argv[4] || '/build/primus.js,/config.json').split(',').map(s => s.trim()).filter(Boolean);
 const TIMEOUT_MS = parseInt(process.argv[5] || '8000', 10);
 const CONCURRENCY = 50;
+const TUNNEL = { timeoutMs: TIMEOUT_MS, targetHost: TARGET_HOST, targetPort: TARGET_PORT, userAgent: UA };
 
 function parseEntry(line) {
   let s = line.trim();
@@ -45,81 +45,6 @@ function parseEntry(line) {
   return { raw: line.trim(), scheme, host, port, userinfo };
 }
 
-// Opens one tunnel through the proxy, then TLS + GET of one path.
-function requestThrough(entry, reqPath, cb) {
-  const sock = net.connect({ host: entry.host, port: entry.port });
-  let done = false;
-  const fail = (reason) => { if (done) return; done = true; try { sock.destroy(); } catch (e) {} cb(reason); };
-  const timer = setTimeout(() => fail('timeout'), TIMEOUT_MS);
-
-  const tlsFetch = () => {
-    const t = tls.connect({ socket: sock, servername: TARGET_HOST, rejectUnauthorized: false }, () => {
-      t.write('GET ' + reqPath + ' HTTP/1.1\r\nHost: ' + TARGET_HOST +
-        '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\nConnection: close\r\n\r\n');
-    });
-    let buf = '';
-    t.on('data', (d) => { buf += d.toString('latin1'); if (buf.length > 8192) t.destroy(); });
-    t.on('error', (e) => { clearTimeout(timer); fail('tls:' + (e.code || e.message)); });
-    t.on('close', () => {
-      clearTimeout(timer);
-      const m = buf.match(/^HTTP\/1\.[01] (\d+)/);
-      if (!m) return fail('no-http-response');
-      if (m[1] !== '200') return fail('http ' + m[1]);
-      done = true;
-      cb(null);
-    });
-  };
-
-  if (entry.scheme.startsWith('socks')) {
-    let stage = 0;
-    const wantAuth = !!entry.userinfo;
-    sock.on('connect', () => sock.write(wantAuth ? Buffer.from([0x05, 0x02, 0x00, 0x02]) : Buffer.from([0x05, 0x01, 0x00])));
-    sock.on('error', (e) => fail(e.code || e.message));
-    sock.on('data', (d) => {
-      try {
-        if (stage === 0) {
-          if (d.length < 2 || d[0] !== 0x05) return fail('socks bad-ver');
-          if (d[1] === 0x00) { stage = 1; }
-          else if (d[1] === 0x02 && wantAuth) {
-            const parts = entry.userinfo.split(':');
-            const u = Buffer.from(parts[0] || '', 'utf8'), p = Buffer.from(parts[1] || '', 'utf8');
-            sock.write(Buffer.concat([Buffer.from([0x01, u.length]), u, Buffer.from([p.length]), p]));
-            stage = 2; return;
-          } else return fail('socks method ' + d[1]);
-        } else if (stage === 2) {
-          if (!(d.length >= 2 && d[1] === 0x00)) return fail('socks auth-fail');
-          stage = 1;
-        }
-        if (stage === 1) {
-          if (d.length >= 2 && d[1] === 0x00 && d[0] === 0x05) { sock.removeAllListeners('data'); return tlsFetch(); }
-          const hostBuf = Buffer.from(TARGET_HOST, 'ascii');
-          sock.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]), hostBuf,
-            Buffer.from([(TARGET_PORT >> 8) & 0xff, TARGET_PORT & 0xff])]));
-          stage = 3;
-        } else if (stage === 3) {
-          if (d.length >= 2 && d[1] === 0x00) { sock.removeAllListeners('data'); tlsFetch(); }
-          else fail('socks connect-reply ' + (d[1] || '?'));
-        }
-      } catch (e) { fail('socks err ' + e.message); }
-    });
-    return;
-  }
-
-  // HTTP proxy: CONNECT
-  let auth = '';
-  if (entry.userinfo) auth = 'Proxy-Authorization: Basic ' + Buffer.from(entry.userinfo, 'utf8').toString('base64') + '\r\n';
-  sock.on('connect', () => sock.write('CONNECT ' + TARGET_HOST + ':' + TARGET_PORT + ' HTTP/1.1\r\nHost: ' + TARGET_HOST + ':' + TARGET_PORT + '\r\n' + auth + '\r\n'));
-  sock.on('error', (e) => fail(e.code || e.message));
-  let buf = '';
-  sock.on('data', (d) => {
-    buf += d.toString('latin1');
-    if (buf.indexOf('\r\n\r\n') === -1) { if (buf.length > 4096) fail('http big-reply'); return; }
-    const m = buf.match(/^HTTP\/1\.[01] (\d+)/);
-    if (m && m[1] === '200') { sock.removeAllListeners('data'); tlsFetch(); }
-    else fail('http connect ' + (m ? m[1] : 'bad-reply'));
-  });
-}
-
 // Tests all PATHS via separate tunnels; passes only when every path is 200.
 function checkEntry(entry, cb) {
   const perPath = [];
@@ -132,7 +57,7 @@ function checkEntry(entry, cb) {
       return;
     }
     const p = PATHS[i++];
-    requestThrough(entry, p, (err) => { perPath.push({ path: p, err: err || null }); next(); });
+    requestThrough(entry, p, TUNNEL, (err) => { perPath.push({ path: p, err: err || null }); next(); });
   };
   next();
 }

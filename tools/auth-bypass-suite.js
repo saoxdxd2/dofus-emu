@@ -7,7 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
+const { postForm } = require('./https-post');
 
 class AuthBypassSuite {
     constructor(baseDir) {
@@ -66,41 +66,14 @@ class AuthBypassSuite {
      * without ever loading the CloudFront webauth popup.
      */
     requestHaapiApiKey(login, password, proxyUrl) {
-        return new Promise((resolve, reject) => {
-            const postData = `login=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}&long_life_token=0`;
-            const options = {
-                hostname: 'haapi.ankama.com',
-                port: 443,
-                path: '/json/Ankama/v5/Account/CreateApiKey',
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Content-Length': Buffer.byteLength(postData),
-                    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
-                    'apiKey': '18'
-                }
-            };
-
-            const req = https.request(options, (res) => {
-                let data = '';
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    if (res.statusCode === 200) {
-                        try {
-                            const json = JSON.parse(data);
-                            resolve(json);
-                        } catch (e) {
-                            reject(new Error('Invalid JSON from Haapi: ' + data));
-                        }
-                    } else {
-                        reject(new Error(`Haapi responded with HTTP ${res.statusCode}: ${data}`));
-                    }
-                });
-            });
-
-            req.on('error', reject);
-            req.write(postData);
-            req.end();
+        const postData = `login=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}&long_life_token=0`;
+        return postForm({
+            hostname: 'haapi.ankama.com',
+            path: '/json/Ankama/v5/Account/CreateApiKey',
+            headers: { 'apiKey': '18' }
+        }, postData, json => json, {
+            http: 'Haapi responded with HTTP ',
+            parse: 'Invalid JSON from Haapi: '
         });
     }
 }

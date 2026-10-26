@@ -1830,12 +1830,14 @@ namespace DofusStandaloneSetup
                 string wireproxy = Path.Combine(targetDir, @"bin\warp\wireproxy.exe");
                 string wireConf = Path.Combine(targetDir, @"bin\warp\wireproxy.conf");
                 string pool = Path.Combine(targetDir, @"scripts\proxy_pool.js");
+                string tunnel = Path.Combine(targetDir, @"scripts\proxy_tunnel.js");
                 string startNet = Path.Combine(targetDir, "start-network.bat");
 
                 var missing = new List<string>();
                 if (!File.Exists(wireproxy)) missing.Add(@"bin\warp\wireproxy.exe");
                 if (!File.Exists(wireConf)) missing.Add(@"bin\warp\wireproxy.conf");
                 if (!File.Exists(pool)) missing.Add(@"scripts\proxy_pool.js");
+                if (!File.Exists(tunnel)) missing.Add(@"scripts\proxy_tunnel.js");
                 if (!File.Exists(startNet)) missing.Add("start-network.bat");
 
                 if (missing.Count == 0)
