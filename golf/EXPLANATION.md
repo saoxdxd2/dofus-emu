@@ -87,8 +87,8 @@ normalization is kept at the same point in the pipeline.
 fewer attribute walks, and earlier rejection of malformed payloads before any bridge work.
 This is the path every agent step crosses, so constant-factor cuts multiply by step count.
 
-Gate: AST. The agent's fuzz report was lost in the rollback, so a differential re-run is
-queued before this row is upgraded from "recovered" to "fully proven".
+Gate: AST + three differential fuzz suites, 68,039 cases, 0 mismatches. The only expected
+difference is `REPO_ROOT`/`DEFAULT_CACHE_DIR` resolving from the `golf/` staging location.
 
 ### `dofus-network/networkhealth/sentinel.py`
 
@@ -151,21 +151,25 @@ Gate: AST + prior fuzz evidence; replacement rejected.
 ### `dofus-network/ai/encoder_policy.py`
 
 **Summary.** Multi-task encoder policy: one forward pass produces tool logits plus argument
-heads (presence/bool/span/enum). The committed artifact is the prior golf pass. The agent
-rewrite was rejected because it made the forward pass slower.
+heads (presence/bool/span/enum). The committed artifact is a merge: the prior golf base plus
+the one decode win from the agent rewrite.
 
-**Arcane mechanics.** The retained version reuses the token embedding (`emb`) for the
-lexical head and computes `pooled @ field_weights.t()` once for both presence and bool
-heads. The rejected rewrite called `tok_emb` a second time and duplicated the projection
-matmul, buying 80 bytes with extra FLOPs — exactly the failure mode the tie-break clause now
-forbids. Weight-tied token embedding and the anchor-scale path are untouched.
+**Arcane mechanics.** The forward pass reuses the token embedding (`emb`) for the lexical
+head and computes `pooled @ field_weights.t()` once for both presence and bool heads. From
+the rewrite it keeps `_best_span`'s monotone pruning: `torch.topk` returns descending scores,
+so once `start_value + end_values[0]` cannot beat the incumbent, the outer loop breaks; the
+inner loop breaks as soon as the running end score cannot improve. The `.tolist()` calls for
+indices and values are hoisted once instead of per loop. The duplicate `tok_emb` and
+duplicate projection from the rewrite were removed before commit.
 
-**Performance edge.** One embedding lookup and one projection instead of two each, on every
-forward pass. In a training/inference loop that is strictly better than a byte-level win.
-The file remains AST-gated; a tensor-equivalence run needs the model stack and is queued with
-the next PyTorch-capable pass.
+**Performance edge.** One embedding lookup and one projection instead of two each, plus a
+span search that stops early on sorted logits instead of scanning all `k²` pairs. The merged
+artifact is 41,022 bytes (238 over the prior base) and 989 lines; the extra bytes buy a
+shorter decode inner loop. `_best_span` matched the original on 30,000 random logit cases,
+and the agent's end-to-end stage checks (forward, decode, loss, save/load, anchors, CLI) were
+bit-exact on 236 real rows.
 
-Gate: AST; replacement rejected.
+Gate: AST + 30k `_best_span` differential fuzz + agent end-to-end checks.
 
 ### `dofus-network/agent/planner.py` (rebuilding)
 
@@ -188,7 +192,7 @@ larger real-world win than the byte count.
 
 Gate: pending AST + differential fuzz on current source.
 
-### `dofus-network/combat/fight_estimate.py` (rebuilding)
+### `dofus-network/combat/fight_estimate.py`
 
 **Summary.** Estimates fight outcome from stats, resistances, AP/turn costs, and spell
 damage. The golfed pass keeps numeric results bit-exact, including float rounding and clamp
@@ -205,5 +209,6 @@ order.
 dict walks and dataclass `__dict__` traffic is the main win. Bit-exactness is the constraint
 that rules out most "clever" algebraic rewrites.
 
-Gate: pending AST + differential fuzz against the original (helpers, calibrator, report,
-CLI paths).
+Gate: AST + differential fuzz on helpers, calibrator, report/predict/from_dict/load, advisor
+paths, outcome-log JSONL, and CLI stdout/exit codes; 0 diffs. The only expected difference is
+`REPO_ROOT`-derived path constants resolving from the `golf/` staging location.

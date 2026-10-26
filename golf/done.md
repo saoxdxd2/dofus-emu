@@ -22,16 +22,16 @@ reports. `Δ` is against the working-tree source at pass time.
 | state | file | source → golf | Δ | lines | gate |
 |---|---|---:|---:|---:|---|
 | done | `dofus-network/advisor/spells.py` | 37,738 → 31,495 | **-16.5%** | 1007 → 858 | AST + prior fuzz; replacement pass rejected |
-| done | `dofus-network/ai/encoder_policy.py` | 50,268 → 40,784 | **-18.9%** | 1179 → 980 | AST; replacement pass rejected |
+| done | `dofus-network/ai/encoder_policy.py` | 50,268 → 41,022 | **-18.4%** | 1179 → 989 | AST + 30k span fuzz + agent end-to-end checks |
 | done | `dofus-network/combat/battle_solver.py` | 68,673 → 47,113 | **-31.4%** | 1590 → 1039 | AST + 3 fuzz suites, 0 fails |
 | done | `dofus-network/networkhealth/sentinel.py` | 35,528 → 23,183 | **-34.7%** | 822 → 316 | AST + 9,000 differential cases |
-| done | `dofus-network/agent/executor.py` | 66,572 → 43,464 | **-34.7%** | 1524 → 1065 | AST; recovered artifact, fuzz re-run queued |
+| done | `dofus-network/agent/executor.py` | 66,572 → 43,464 | **-34.7%** | 1524 → 1065 | AST + 68,039 differential cases, 0 mismatches |
 | done | `scripts/dofus-net-proxy.go` | 109,295 → 80,998 | **-25.9%** | 3410 → 3235 | `gofmt` + `go test ./...` green (0.09 s) + ~5.8M diff cases |
+| done | `dofus-network/combat/fight_estimate.py` | 62,428 → 40,971 | **-34.4%** | 1531 → 737 | AST + differential fuzz (helpers/calibrator/CLI), 0 diffs |
 | in flight | `dofus-network/agent/planner.py` | 84,190 → ~33,000 | ~-61% | 1707 → ~763 | re-running on current source incl. dialog exhaustion |
-| in flight | `dofus-network/combat/fight_estimate.py` | 62,428 → ~40,971 | ~-34% | 1531 → ~737 | re-running after rollback |
 
-**Committed total (6 files):** 368,074 → 267,037 bytes, **-101,037 (-27.4%)**; 9,532 → 7,493
-lines, **-2,039 (-21.4%)**. Including the two in-flight expectations: **-173,669 bytes
+**Committed total (7 files):** 430,502 → 308,246 bytes, **-122,256 (-28.4%)**; 11,063 → 8,239
+lines, **-2,824 (-25.5%)**. Including the planner expectation: **-173,446 bytes
 (-33.7%)** over 8 files.
 
 ## Rejected passes (reverted, not retained)
@@ -39,10 +39,10 @@ lines, **-2,039 (-21.4%)**. Including the two in-flight expectations: **-173,669
 The rollback deleted the staging copies, so these are recorded by diff rather than kept as
 files:
 
-- **`encoder_policy` agent rewrite** — 40,784 → 40,864 bytes (+80) while calling `tok_emb`
-  twice and computing the `pooled @ field_weights.t()` projection twice instead of reusing
-  `emb`/`projection`. Cleaner lines, more FLOPs. Reverted to the prior artifact. This is why
-  `BRIEF.md` now has a performance tie-break clause.
+- **`encoder_policy` agent rewrite** — its 41,102-byte form doubled `tok_emb` and the
+  `pooled @ field_weights.t()` projection. The span-pruning win was kept and the forward
+  pass restored to one embedding + one projection, yielding 41,022 bytes (238 over the
+  prior base) with a faster decode path. This is why `BRIEF.md` has the tie-break clause.
 - **`spells` agent rewrite** — 31,495 → 31,481 bytes (-14) by deleting the hot-path alias
   `_CALC = DofusDamageCalculator.calculate_spell_damage`, trading a per-spell attribute walk
   for 64 bytes. Not worth it; reverted.
@@ -50,7 +50,7 @@ files:
 ## Verification commands actually run
 
 ```powershell
-# Python syntax (all six committed artifacts)
+# Python syntax (all seven committed artifacts)
 Get-ChildItem golf -Recurse -File -Include *.py | ForEach-Object {
   python -c "import ast,sys;ast.parse(open(sys.argv[1],encoding='utf-8').read())" $_.FullName
 }
