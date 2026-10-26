@@ -252,6 +252,9 @@ class Autopilot:
         self._step_total = 0
         self._verdict_counts: Dict[str, int] = {}
         self._source_counts: Dict[str, int] = {}
+        # Manual interventions, as counted by the client's trusted-input instrument.
+        self._intervention_seen = 0
+        self._intervention_total = 0
         self._first_step_at = 0.0
         self._last_step_at = 0.0
         # A long run can list hundreds of items; keep the recent ledger for
@@ -376,7 +379,8 @@ class Autopilot:
         self._append_log_line(_fast_dumps(step.as_dict()) + b"\n")
 
     def _emit_decision(self, decision: Decision, call: ToolCall, result: Any,
-                       obs: Optional[Dict[str, Any]]) -> None:
+                       obs: Optional[Dict[str, Any]], ok: Optional[bool] = None,
+                       error: Any = None) -> None:
         """Log the repair decision next to the step that provoked it.
 
         A decision is not recoverable from the steps: a retry and a continue both end
@@ -385,7 +389,17 @@ class Autopilot:
         inferred rather than observed. One extra line per decision removes the guess
         and makes the log a bandit dataset (state, action, reward) instead of a
         transcript.
+
+        `ok`/`error` must be the values the controller was given, not the transport
+        result: the bridge reports success for a call the game refused, so recording
+        `result.ok` made 455 rule refusals read as successful steps with no error text
+        -- and every offline analysis of "why did that repair fail" was then looking at
+        a field that was always null.
         """
+        if ok is None:
+            ok = bool(getattr(result, "ok", False))
+        if error is None:
+            error = getattr(result, "error", None)
         self._append_log_line(_fast_dumps({
                     "kind": "decision",
                     "session": self.session,
@@ -395,8 +409,8 @@ class Autopilot:
                     "explored": bool(decision.explored),
                     "confidence": decision.confidence,
                     "tool": call.tool,
-                    "ok": bool(getattr(result, "ok", False)),
-                    "error": getattr(result, "error", None),
+                    "ok": bool(ok),
+                    "error": error,
                     "obs": obs if isinstance(obs, dict) else {},
                     "at": time.time(),
                 }) + b"\n")
@@ -829,6 +843,50 @@ class Autopilot:
             "board": board,
         })
 
+    def _record_interventions(self, observation: Optional[Dict[str, Any]]) -> int:
+        """Log trusted human input that arrived while the loop was running.
+
+        The goal counts "zero manual interventions", and until the client could
+        tell a real input event from the agent's own, nothing on disk could answer
+        it: a steered run and an unattended run wrote identical rows. The page
+        distinguishes them because everything the agent clicks is synthesised with
+        `dispatchEvent` (`isTrusted: false`), so only genuine human input is
+        counted in `user_input.during_run`.
+
+        Counters are monotonic per client session, so the delta against the last
+        value seen is the number of new interventions since this step. A page
+        reload resets them, which is why the seen-watermark is taken downwards too
+        instead of only ever rising: without that, one reload would re-report the
+        same clicks as new interventions and inflate the number the goal is
+        measured by.
+        """
+        if not isinstance(observation, dict):
+            return 0
+        ui = observation.get("user_input")
+        if not isinstance(ui, dict):
+            return 0
+        try:
+            seen = int(ui.get("during_run") or 0)
+        except (TypeError, ValueError):
+            return 0
+        if seen < self._intervention_seen:
+            self._intervention_seen = seen          # the page reloaded; re-baseline
+            return 0
+        delta = seen - self._intervention_seen
+        if delta <= 0:
+            return 0
+        self._intervention_seen = seen
+        self._intervention_total += delta
+        self._append_log_line(_fast_dumps({
+            "kind": "intervention",
+            "session": self.session,
+            "events": delta,
+            "by_type": ui.get("by_type") or {},
+            "client_last_ts": ui.get("last_ts"),
+            "at": time.time(),
+        }) + b"\n")
+        return delta
+
     def _record_fight_outcome(self, outcome: Optional[Dict[str, Any]],
                               observation: Optional[Dict[str, Any]]) -> None:
         if not isinstance(outcome, dict):
@@ -1097,6 +1155,12 @@ class Autopilot:
                         Verdict("blocked", 0.9, None, False, "rule"),
                         "-", False, "policy returned no call", before, None)
                     self.controller.save()
+                    # And on the record: this branch used to return a decision the
+                    # log never saw, so the one failure class the whole run turns on
+                    # was invisible to any offline read of the repair data.
+                    self._emit_decision(decision, ToolCall("-", {}, goal), None,
+                                        before or {}, ok=False,
+                                        error="policy returned no call")
                     if decision.action in ("replan", "abort"):
                         self._apply_decision(decision, goal, None)
                     print(f"[autopilot] no action for goal {goal!r}; moving on")
@@ -1130,7 +1194,8 @@ class Autopilot:
                         Verdict("blocked", 0.9, None, False, "guard"),
                         call.tool, False, refusal, before, None)
                     self.controller.save()
-                    self._emit_decision(decision, call, None, before)
+                    self._emit_decision(decision, call, None, before,
+                                        ok=False, error=refusal)
                     if decision.action == "replan":
                         self._apply_decision(decision, goal, call)
                     # A guard refusal is deterministic: no recovery call can turn
@@ -1272,6 +1337,7 @@ class Autopilot:
                         continue
 
                 fight_estimate, fight_outcome = self._track_fight(before, after)
+                self._record_interventions(after)
 
                 v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
                 verdict = v.verdict
@@ -1370,7 +1436,8 @@ class Autopilot:
                                                    before, after)
                 self._pending = decision
                 self.controller.save()
-                self._emit_decision(decision, call, result, after)
+                self._emit_decision(decision, call, result, after,
+                                    ok=step_ok, error=step_error)
 
                 outcome = self._apply_decision(decision, goal, call)
                 if outcome == "abort":
@@ -1757,6 +1824,7 @@ class Autopilot:
             "verdicts": dict(self._verdict_counts),
             "label_sources": dict(self._source_counts),
             "replan_requested": self.replan_requested,
+            "manual_interventions": self._intervention_total,
             "controller": self.controller.stats(),
             "open_listings": self._listing_total,
             "log": str(self.log_path),

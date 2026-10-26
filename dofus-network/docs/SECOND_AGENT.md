@@ -6,11 +6,12 @@ contradicts what the step assumed.
 
 > **Status note (2026-10-26).** The `agent/smoke_verifier` gate referenced
 > throughout this doc was **removed 2026-10-25** along with the rest of the test
-> suite; the only surviving in-repo check is `advisor/selftest.py`
-> (`KNOWN_GAPS.md` G8). The design (verifier as second agent, step rows as
-> supervised examples) still describes intent; the runnable commands do not. The
-> learned verifier head is also **orphaned** in the shipped loop
-> (`--verifier-model` defaults to `None` — `KNOWN_GAPS.md` G6).
+> suite; the loop/verifier contract checks were rebuilt as `python -m
+> agent.regression` (`KNOWN_GAPS.md` G8). The design (verifier as second agent, step
+> rows as supervised examples) still describes intent; the old runnable commands do
+> not. The learned verifier head is **wired by the GUI launcher** (not orphaned),
+> but its action-label accuracy is unmeasured and it never labels read-only queries
+> — `KNOWN_GAPS.md` G6.
 
 It is no longer a design. `agent/verifier.py` exists, the loop uses it, and it
 runs **without a model** — rules today, model when there is one, human labels on

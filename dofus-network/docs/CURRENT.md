@@ -112,9 +112,13 @@ re-observe, not a fixed sleep.
 |---|---|---|---|
 | `models/tool_policy.onnx` + `.json` | 42 features → **21** tool logits, 49,365 params, val accuracy **0.8599** | yes, only under `--policy planner` | `planner_nn.py` argmax over 21 |
 | `models/encoder30_v15/` | 24,874,131-param **text** encoder; `encoder_int8.onnx` 25.4 MB shipped | yes, under `--policy encoder` | `ai/encoder_serve.py` |
-| `models/verifier_head.onnx` | 33-feature / 4-class | **no — orphaned** | `--verifier-model` default `None` |
+| `models/verifier_head.onnx` (+ `.json/.pt/_int8`) | 33-feature / 4-class | **CLI default `None`, but the GUI auto-passes it** (`aipanel.cs:705-708`) → loaded in a normal launch | `--verifier-model`; read-only tools never use it (`verifier.py:416`) |
 | `combat/encounter_selfplay.pkl` | PPO/PBT actor for live fights | yes, inside `combat_ai_server` | `live_policy.py` default |
 | `networkhealth_artifacts/model.pt` | RTT/loss forecaster weights | **absent** → Sentinel has no model and falls back to relay telemetry | load refused; see `KNOWN_GAPS.md` |
+
+The verifier head is *wired by the shipped launcher* (not orphaned), but its
+action-label accuracy is **unmeasured**, so it is only trusted for non-read-only
+tools and abstains below 0.5 confidence — see `KNOWN_GAPS.md` G6.
 
 There is **no vision/image encoder anywhere**. `encoder30_v15` is text-only; the
 "vision inspector" in the Sentinel is regex over text, not an image model. See

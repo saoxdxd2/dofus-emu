@@ -261,6 +261,14 @@ class QuestPlanner:
         # because the guard refuses some validations; retiring on the first action
         # would turn every such refusal into a lost quest.
         self._claim_failures: Dict[Tuple[int, int], int] = {}
+        # Claims that cost a connection. `ended the connection` is the client
+        # stating that this exact packet got the session dropped, which is a fact
+        # about the packet, not about the scene — so unlike the counters above it
+        # is deliberately NOT cleared when the scene changes or when an objective
+        # stops being ready. A live run re-sent one such claim 287 times at a 3.7 s
+        # median, because the scene reset wiped the failure bound between attempts
+        # and the tutorial path bypasses it (KNOWN_GAPS, criterion 3).
+        self._claim_quarantine: set = set()
         self._claim_actions: Dict[Tuple[int, int], int] = {}
         self._claim_map: Dict[Tuple[int, int], Any] = {}
         # A scripted fight can be started by a map NPC even when no monster group
@@ -1159,6 +1167,12 @@ class QuestPlanner:
                            or "completed by the server" in note
                            or "ended the connection" in note
                            or "perform the objective instead" in note):
+                if "ended the connection" in note:
+                    # The strongest signal available: this packet ended the
+                    # session. Quarantine the exact key, because the type-id
+                    # learning below needs the objective to resolve in the
+                    # knowledge base and an unknown tutorial objective does not.
+                    self._claim_quarantine.add(key)
                 # The client told us this type is completed by playing, not by
                 # claiming. A claim that ended the connection is the strongest
                 # version of the same fact; retrying it in a tutorial produced 15
@@ -1231,6 +1245,7 @@ class QuestPlanner:
         twin._start_waits = set(self._start_waits)
         twin._pending_start = None
         twin._server_counted_types = set(self._server_counted_types)
+        twin._claim_quarantine = set(self._claim_quarantine)
         twin._prev_map = self._prev_map
         twin._farm_target_missing = self._farm_target_missing
         twin._dialog_waits = 0
@@ -1503,11 +1518,13 @@ class QuestPlanner:
                 type_id = int(obj.get("type_id"))
             except (TypeError, ValueError):
                 type_id = None
-            if type_id in self._server_counted_types:
+            if type_id in self._server_counted_types or key in self._claim_quarantine:
                 # `quest.advance` cannot validate this type: the client answers
                 # `objective_server_counted` and sends nothing. Go straight to
                 # the action the objective names instead of spending a step on
-                # a message that cannot work.
+                # a message that cannot work. A quarantined claim takes the same
+                # route — the objective is still performed, only the packet that
+                # cost a connection is withdrawn, so a tutorial is not abandoned.
                 attempts = max(attempts, 1)
             if attempts == 0:
                 self._claim_attempts[key] = 1

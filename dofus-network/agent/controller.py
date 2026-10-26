@@ -44,10 +44,11 @@ from typing import Any, Dict, List, Optional, Tuple
 CAUSES = (
     "none",              # the step worked
     "wrong_target",      # the entity/id the call used does not exist or is not here
-    "stale_state",       # the observation contradicts itself or is old
+    "stale_state",       # the observation cannot say what the action did
     "incomplete",        # it moved, but not as far as it should have
     "invalid_assumption",# the tool cannot express this goal at all (not_mapped)
     "plan_wrong",        # several different actions fail for several reasons
+    "unavailable",       # the environment cannot serve this call (no client, no tool)
     "unknown",
 )
 
@@ -59,6 +60,7 @@ RECOVERY = {
     "incomplete": {"tool": "state.snapshot", "args": {}},
     "invalid_assumption": None,      # no recovery: the plan must change
     "plan_wrong": None,
+    "unavailable": None,             # and no recovery here either: nothing to call
     "unknown": {"tool": "state.snapshot", "args": {}},
 }
 
@@ -124,7 +126,13 @@ TRANSPORT_MARKERS = (
 # a server-counted objective refuses every validation, and a quest the client
 # cannot see refuses every claim. A live session replayed one of these forever
 # because the text matched no marker and the taxonomy called it "unknown".
+#
+# The `refused: ` prefix is this project's own — the guard and the fight estimator
+# mark every rule rejection with it. It has to be checked here rather than left to
+# the transport marker below, or "refused: fight blocked - no monster group on the
+# current map" reads as a socket hiccup and the loop retries a refusal for a step.
 REFUSAL_MARKERS = (
+    "refused: ",
     "completed by the server",
     "perform the action instead of claiming",
     "ended the connection; perform the objective instead",
@@ -261,24 +269,62 @@ class Controller:
     @staticmethod
     def cause_of(verdict: Any, tool: str, ok: bool, error: Optional[str],
                  before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]]) -> str:
-        """Why did it fail? Four buckets that need four different responses."""
+        """Why did it fail? Buckets exist because they need different responses.
+
+        `unknown` is a last resort, not a default: an error text we recognise or an
+        observation that survived the step both say more than "unknown" does, and
+        every row labelled `unknown` is a row the strategy table cannot learn from.
+        """
         name = getattr(verdict, "verdict", verdict)
         if name in ("advanced",):
             return "none"
 
         err = str(error or "").lower()
-        # "policy returned no call" is the most common failure in practice: the
-        # goal exists but the policy cannot express it. That is an invalid
-        # assumption about the plan, not an unknown error.
+        # Every text below is phrasing this codebase emits itself (guard, bridge,
+        # estimator), never a quest, monster or map id: a taxonomy keyed on game
+        # content would be per-quest hard-coding wearing a generalist costume.
+        #
+        # Measured on the live baseline (docs/BASELINE.md): 455 of 1,222 failing
+        # decisions were `unknown`, and `wrong_target`, `stale_state` and
+        # `invalid_assumption` had *zero* rows. The buckets that imply different
+        # answers were never filled, so the strategy table trained on one
+        # undifferentiated label and could not rank a recovery for any of them.
         if ("not_mapped" in err or "unknown tool" in err
-                or "no call" in err or "no action" in err):
+                or "no call" in err or "no action" in err
+                # A claim the game refuses to take: the objective has to be done
+                # by the action underneath it, so this tool cannot express the goal.
+                or "perform the objective instead" in err
+                # The plan built a call with no destination in it.
+                or "needs one of" in err
+                or "schema rejected" in err
+                or "offers no replies" in err):
             return "invalid_assumption"
+        # The thing the call pointed at is not where we are standing.
+        if any(w in err for w in ("not on this map", "on the current map",
+                                  "no visible group contains",
+                                  "no dialog reply matches")):
+            return "wrong_target"
+        # The client threw *while executing* the directive. Nothing we hold says
+        # whether the action landed, so the read is what broke -- not the target,
+        # not the plan. Re-observe before deciding anything.
+        if ("cannot read properties" in err or "typeerror" in err
+                or "is not a function" in err or "referenceerror" in err):
+            return "stale_state"
         if any(w in err for w in ("unknown", "not found", "no such", "invalid id",
                                   "out of range", "too far", "cannot reach")):
             return "wrong_target"
 
         b = before if isinstance(before, dict) else {}
         a = after if isinstance(after, dict) else {}
+
+        # The environment cannot serve this call -- no client window, no handler for
+        # the tool. That is not a reading problem and not a target problem, and it
+        # must not fall through to "re-read the world": a snapshot of an absent
+        # client is just a second call that cannot work. `_decide` already routes a
+        # structural failure to a replan; this keeps the *label* honest, because the
+        # 27 live rows of it used to sit inside `unknown`.
+        if error_class(error) == "structural":
+            return "unavailable"
 
         # No observation at all after a successful call: nothing was measured.
         if ok and not a:
@@ -289,6 +335,12 @@ class Controller:
         # Kamas/HP moved but the thing we asked for did not: partial execution.
         if ok and b and a:
             return "incomplete"
+        # No baseline to diff against, but the after-state is real. The step cannot
+        # be attributed to the action either way, which is a measurement failure --
+        # and the response to that is the same as for any unmeasured step: re-read
+        # the world so the next pairing is two snapshots instead of one.
+        if a:
+            return "stale_state"
         return "unknown"
 
     # -- decision ---------------------------------------------------------
@@ -314,6 +366,11 @@ class Controller:
         if self._rng.random() >= self.explore:
             return decision
         alternatives = [a for a in ("retry", "recover", "replan") if a != decision.action]
+        # A cause with no recovery hint cannot be explored as a recovery: the row
+        # would say `recover` while the loop executed a plain continue, which is
+        # exactly the kind of label the strategy table would then train on.
+        if RECOVERY.get(decision.cause) is None:
+            alternatives = [a for a in alternatives if a != "recover"]
         alt = self._rng.choice(alternatives)
         hint = RECOVERY.get(decision.cause) if alt == "recover" else None
         return Decision(alt, decision.cause,
@@ -367,7 +424,7 @@ class Controller:
         self._failures[tool] = self._failures.get(tool, 0) + 1
         consecutive = self._failures[tool]
 
-        if cause == "invalid_assumption":
+        if cause == "invalid_assumption" and error_class(error) != "refused":
             self._bump("replan", cause, False)
             self.replans += 1
             return Decision("replan", cause,
@@ -391,6 +448,10 @@ class Controller:
             # A rule refusal is not a network hiccup. Re-issuing the call cannot
             # succeed, and each replay costs a step in a session the server is
             # already throttling; the planner's fallback is the way forward.
+            # This is also true when the cause reads `invalid_assumption` (272 live
+            # refusals took exactly this path): the label describes the failure, the
+            # action stays the measured one, because `replan` here would throw away a
+            # goal the planner can still serve with a different call.
             self._bump("continue", cause, False)
             return Decision("continue", cause,
                             "%s was refused by the game's rules; replaying it cannot succeed"

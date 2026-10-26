@@ -86,7 +86,7 @@ for exactly that: disconnect, stop the service, flush DNS, probe.
 | item | value |
 |---|---|
 | module | `agent/verifier.py` — verdict + residual + drift, one call |
-| sources | human (`verdicts_human.jsonl`) > model (ONNX hook, inert) > rule (always) |
+| sources | human (`verdicts_human.jsonl`) > model (GUI auto-loads `verifier_head.onnx`, but never for read-only tools; accuracy is circular — `KNOWN_GAPS.md` G6) > rule (always) |
 | loop | `autopilot._verdict` returns the full `Verdict`; `Step` carries `session` + `source` |
 | drift | 3 explainable contradictions; two in a row prints `REPLAN` |
 | test | `advisor/selftest.py` (the old `smoke_verifier` gate was removed 2026-10-25 — see `KNOWN_GAPS.md` G8) |

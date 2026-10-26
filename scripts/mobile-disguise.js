@@ -24,6 +24,27 @@
     }
     window.__DofusFarmAgentLoaded = true;
 
+    // Server-visible keep-alive. The client tracks activity in
+    // `connectionManager.recordActivity()` (sets `hasSeenActivity` + clears an
+    // already-shown inactive warning); the client's own `_pingServer` timer then
+    // sends `BasicPingMessage {quiet:true}`, which is the exact "sign of life" a
+    // human produces. A run that never records activity falls through
+    // `_enterInactiveMode()` -> `dofus.disconnect("INACTIVITY")`, so an automated
+    // session that was busy *reading* `state.snapshot` (no packet on the wire) got
+    // logged out for being idle. This flips the client's OWN flag only -- no
+    // invented packet, nothing new on the wire beyond the game's own ping, no
+    // change to the egress/session pin.
+    window.__agentMarkActivity = function () {
+        try {
+            var cm = window.dofus && window.dofus.connectionManager;
+            if (cm && typeof cm.recordActivity === 'function') {
+                cm.recordActivity();
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    };
+
     // The login page fetches config.json exactly once, and its XHR treats every non-200
     // -- including status 0 from a socket that died -- as fatal: it shows "Server busy"
     // and reloads the whole app. The relay now moves the session egress before the first
@@ -1490,6 +1511,62 @@
                 var self = this;
                 console.log('[FarmBot] Bound to connection manager.');
 
+                // Keep-alive heartbeat. During an automated run the loop can be busy
+                // *reading* state without any packet on the wire; the client then starts
+                // its inactivity countdown and finally calls
+                // dofus.disconnect("INACTIVITY"). While the bot is driving -- auto-fight
+                // on, or the AI loop alive (the host pushes aiRunning via __aiState) --
+                // record activity on the client's own schedule every 20 s. Its _pingServer
+                // timer turns that into one BasicPingMessage, exactly a live player's
+                // cadence. Gated so a human who turns everything OFF still gets the normal
+                // AFK logout. Single timer; cleared on disconnect below.
+                self._cm = cm;
+                if (!self._keepAliveTimer) {
+                    self._keepAliveTimer = setInterval(function () {
+                        if (!self.enabled && !self.aiRunning) return;
+                        window.__agentMarkActivity();
+                    }, 20000);
+                }
+
+                // Manual-intervention instrument.
+                //
+                // The goal is measured partly as "zero manual interventions", and
+                // until now nothing in the log could answer that: a run that a human
+                // quietly steered and a run that ran alone looked identical on disk.
+                // The client does distinguish them, though. Everything the agent
+                // itself clicks is synthesised with `new MouseEvent(...)` +
+                // `dispatchEvent(...)`, which the browser marks `isTrusted: false`;
+                // a real finger on a real mouse arrives trusted. So counting trusted
+                // input events while the loop is running counts human takeovers.
+                //
+                // Capture + passive, no preventDefault, no stopPropagation: it
+                // observes and never interferes with the game's own handling, and it
+                // never counts the agent's own input, so it cannot inflate activity or
+                // keep a session alive that a human is no longer driving.
+                if (!self._userInputInstalled && typeof document !== 'undefined') {
+                    self._userInputInstalled = true;
+                    var ui = { trusted: 0, during_run: 0, by_type: {}, last_ts: 0 };
+                    window.__agentUserInput = function () {
+                        var copy = {};
+                        for (var k in ui.by_type) {
+                            if (Object.prototype.hasOwnProperty.call(ui.by_type, k)) copy[k] = ui.by_type[k];
+                        }
+                        return { trusted: ui.trusted, during_run: ui.during_run, by_type: copy, last_ts: ui.last_ts };
+                    };
+                    var noteUserInput = function (ev) {
+                        try {
+                            if (!ev || ev.isTrusted !== true) return;
+                            ui.trusted++;
+                            ui.by_type[String(ev.type)] = (ui.by_type[String(ev.type)] || 0) + 1;
+                            ui.last_ts = Date.now();
+                            if (self.aiRunning) ui.during_run++;
+                        } catch (e) { /* an instrument must never break a click */ }
+                    };
+                    ['pointerdown', 'mousedown', 'keydown', 'wheel', 'touchstart'].forEach(function (t) {
+                        try { document.addEventListener(t, noteUserInput, { capture: true, passive: true }); } catch (e) { }
+                    });
+                }
+
                 // Record why the game connection ends.
                 //
                 // The client already knows: `dofus.disconnect(reason)` logs
@@ -1527,6 +1604,14 @@
                                         });
                                     }
                                 } catch (e) {}
+                            } catch (e) {}
+                            // The connection is going away: stop pinging it. A crashed or
+                            // closed loop must not keep the heartbeat alive across a reload.
+                            try {
+                                if (self._keepAliveTimer) {
+                                    clearInterval(self._keepAliveTimer);
+                                    self._keepAliveTimer = null;
+                                }
                             } catch (e) {}
                             return orig.apply(this, arguments);
                         };
@@ -2077,6 +2162,7 @@
                 try {
                     if (window.dofus && window.dofus.connectionManager) {
                         window.dofus.connectionManager.sendMessage(messageType, payload);
+                        window.__agentMarkActivity();
                         this.lastSendError = null;
                         return true;
                     }
@@ -2140,6 +2226,9 @@
                 var cm = window.dofus && window.dofus.connectionManager;
                 if (!cm) return { ok: false, error: 'connectionManager unavailable' };
                 cm.sendMessage(name, args);
+                // A directive is real activity; tell the client so it does not enter
+                // inactive mode in the middle of a run.
+                window.__agentMarkActivity();
                 return { ok: true };
             } catch (e) {
                 return { ok: false, error: String(e) };
@@ -2622,6 +2711,14 @@
                 // rejected transition look identical in the position fields; this
                 // says which one happened, and at which cell.
                 snap.last_nav = window.__agentLastNav || null;
+                // Trusted input seen by the page. `during_run` is the count of human
+                // input events that arrived while the loop was running -- the manual
+                // intervention the goal is measured against. Agent clicks are
+                // synthesised and never land here.
+                try {
+                    snap.user_input = (typeof window.__agentUserInput === 'function')
+                        ? window.__agentUserInput() : null;
+                } catch (e) { snap.user_input = null; }
                 // The map's exits, NPCs and interactive elements: the details a
                 // policy needs to choose a specific spot, not just a map id.
                 try {
@@ -5838,6 +5935,7 @@
                     if (window.dofus && window.dofus.connectionManager) {
                         window.dofus.connectionManager.sendMessage('ChatClientMultiMessage',
                             { channel: 0, content: text, parameters: [] });
+                        window.__agentMarkActivity();
                         return _agentResult(true, { via: 'connectionManager', channel: 'say', verified: false });
                     }
                     return _agentResult(false, null, 'no chat transport available');
@@ -5858,27 +5956,42 @@
                         // Some NPC dialogs are one-way text with an empty reply
                         // list. There is no index to send; the client's own close
                         // path is the handler's LeaveDialogRequestMessage.
-                        var closed = false;
-                        try {
-                            var closeHandler = window.gui && window.gui.npcDialogHandler;
-                            if (closeHandler && typeof closeHandler._closeDialog === 'function') {
-                                closeHandler._closeDialog();
-                                closed = true;
-                            } else if (window.dofus && typeof window.dofus.sendMessage === 'function') {
-                                window.dofus.sendMessage('LeaveDialogRequestMessage', null);
-                                closed = true;
-                            }
-                            var closeUi = window.gui && window.gui.npcDialogUi;
-                            if (closeUi && typeof closeUi.leaveDialog === 'function') {
-                                closeUi.leaveDialog();
-                                closed = true;
-                            }
-                        } catch (closeErr) {
-                            return _agentResult(false, null,
-                                'dialog close failed: ' + closeErr);
+                        //
+                        // It used to send that message with a `null` payload, and
+                        // the live log called it: 148 failures read
+                        // "dialog close failed: TypeError: Cannot read properties
+                        // of null (reading 'id')". A guessed wire format is also
+                        // the riskiest thing to do inside a dialog, since a
+                        // malformed dialog packet is how a session gets ended.
+                        // So: use the client's own two close paths, each in its
+                        // own try (one throwing must not lose the other), and
+                        // judge the result by whether the dialog actually
+                        // closed - not by which call survived.
+                        var beforeClose = _agentDialogState();
+                        var attempts = [];
+                        var closeUi = window.gui && window.gui.npcDialogUi;
+                        var closeHandler = window.gui && window.gui.npcDialogHandler;
+                        if (closeUi && typeof closeUi.leaveDialog === 'function') {
+                            try { closeUi.leaveDialog(); attempts.push('npcDialogUi.leaveDialog:ok'); }
+                            catch (uiErr) { attempts.push('npcDialogUi.leaveDialog:' + uiErr); }
                         }
-                        return _agentResult(closed, { stage: 'dialog_closed' },
-                            closed ? null : 'no dialog close path available');
+                        if (closeHandler && typeof closeHandler._closeDialog === 'function') {
+                            try { closeHandler._closeDialog(); attempts.push('npcDialogHandler._closeDialog:ok'); }
+                            catch (hErr) { attempts.push('npcDialogHandler._closeDialog:' + hErr); }
+                        }
+                        var afterClose = _agentDialogState();
+                        if (beforeClose && beforeClose.open === false) {
+                            return _agentResult(true, { stage: 'dialog_closed', note: 'no dialog was open' },
+                                null);
+                        }
+                        if (afterClose && afterClose.open === false) {
+                            // Closed, whatever one of the paths threw on the way.
+                            return _agentResult(true, { stage: 'dialog_closed', attempts: attempts }, null);
+                        }
+                        return _agentResult(false, { attempts: attempts },
+                            attempts.length
+                                ? 'dialog still open after: ' + attempts.join(' | ').slice(0, 200)
+                                : 'no dialog close path available');
                     }
                     var want = (args && args.reply !== undefined) ? parseInt(args.reply, 10) : 0;
                     if (isNaN(want)) want = 0;

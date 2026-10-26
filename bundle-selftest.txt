@@ -1,7 +1,11 @@
-rules: 13
-matched: 0, 1, 2, 3, 6, 7, 8, 9, 10, 11
-skipped: 4: end marker missing
-skipped: 5: needle missing
-skipped: 51: needle missing
-patched 5362157 chars, live 5362157 chars
+rules: 23
+matched: 0, 1, 2, 3, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+skipped: 6: needle missing
+skipped: 7: needle missing
+skipped: 8: needle missing
+skipped: 9: needle missing
+skipped: 10: needle missing
+skipped: 11: needle missing
+skipped: 12: needle missing
+patched 5365150 chars, live 5365150 chars
 RESULT: IDENTICAL

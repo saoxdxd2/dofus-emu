@@ -528,8 +528,11 @@ release gate.
 > encoder above. `--policy planner` loads a *different, much smaller* head:
 > `models/tool_policy.onnx` (42 features → 21 tool logits, 49,365 params, val
 > accuracy **0.8599**), where the ONNX does the `argmax` but the planner still owns
-> argument filling and safety gates. `models/verifier_head.onnx` is **orphaned**
-> (`--verifier-model` defaults to `None`) — see `dofus-network/docs/CURRENT.md` §5
+> argument filling and safety gates. `models/verifier_head.onnx` is **not** loaded
+> by a hand-typed CLI (`--verifier-model` defaults to `None`), but the **GUI
+> auto-passes it** (`aipanel.cs:705-708`), so a normal launch *does* load it — and
+> its action-label accuracy is unmeasured (read-only queries are never model-labelled).
+> See `dofus-network/docs/CURRENT.md` §5
 > and `KNOWN_GAPS.md` G6. "Tool policy" and "encoder" are not one model.
 
 ### 9.2 The planner (tier 2)
@@ -726,15 +729,15 @@ before: [quest.advance]
 after : [nav.goto, quest.advance]      # after remembering where NPC 6404 is
 ```
 
-| **model** | `--verifier-model` points at an artifact | `.json` = shipped 33-feature baseline, `.onnx` = neural head |
-| **rule** | always | the baseline the model has to beat |
+| **model** | `--verifier-model` points at an artifact | the head is `verifier_head.onnx` (+ a `verifier_head.json` report); the GUI passes it automatically (`aipanel.cs:705-708`) |
+| **rule** | always | the baseline the model has to beat — and the fallback for read-only tools, which the model is never allowed to label |
 
-The model is optional by design. `models/verifier_baseline.json` is a pure-Python
-multinomial over 33 features (no numpy, no torch) trained by
-`ai/train_verifier_baseline.py` on labels from `ai/build_verifier_sft.py`. Its
-shipped validation score is 1.0, which proves the wiring and nothing else: those
-labels were produced by the rules from the same features, so the model is
-learning the rule function. A real number needs live or human labels.
+The loop loads a model only when the GUI passes `--verifier-model` and `onnxruntime`
+is present; otherwise it labels with rules. The shipped head is `verifier_head.onnx`
+(its `verifier_head.json` reports the training metrics). Its shipped validation score
+is 1.0, which proves the wiring and nothing else: those labels were produced by the
+rules from the same features, so the model is learning the rule function, not the
+game. A real number needs live or human labels — see `KNOWN_GAPS.md` G6.
 
 Each label is `verdict` (advanced / noop / failed / blocked) + `residual_s` +
 `drift` + `source`. Drift is three explainable contradictions: kamas dropped
@@ -762,6 +765,7 @@ The loop has to run and fail first, and the labels fall out of it — every
 rule/model/human disagreement is a training sample.
 
 ```bash
+python -m agent.regression                         # 82 checks, offline (loop + verifier + tools + dialog + prompt/mob + recovery; delegates node JS + bundle resilience --check + go relay suites)
 python -m advisor selftest                         # 122 checks, offline (knowledge repo only)
 python -m agent.verifier --stats
 python -m agent.verifier --label 98106503 4 failed "the listing never appeared"
@@ -769,9 +773,9 @@ python run_autopilot.py --goals-file goals.txt --steps 0
 ```
 
 > The old `python -m agent.smoke_verifier` gate (the loop/verifier contract checks)
-> was removed 2026-10-25; `advisor selftest` covers the item/set/spell repository,
-> **not** the agent loop wiring. See `dofus-network/docs/KNOWN_GAPS.md` G8.
-```
+> was removed 2026-10-25. It is partly rebuilt as `agent.regression`; `advisor
+> selftest` covers the item/set/spell repository. Neither replaces a live session.
+> See `dofus-network/docs/KNOWN_GAPS.md` G8.
 
 ---
 
@@ -785,7 +789,7 @@ python run_autopilot.py --goals-file goals.txt --steps 0
 | `<install>/dofus-network/trajectories/play_<instance>.jsonl` | every human action in the client | per session, rotates at 64 MB |
 | `asset_cache/` | every static asset + `.meta` + `proxy.log` | ~9,700 files |
 | `dofus-network/data/cache/*.json` | DofusDB extract (items, monsters, quests) | 40.5 MB |
-| `dofus-network/models/` | checkpoints, ONNX exports, `verifier_baseline.json` | 4 KB – 95 MB |
+| `dofus-network/models/` | checkpoints, ONNX exports, `verifier_head.{onnx,json,pt}` | 4 KB – 95 MB |
 | `dofus-network/data/verifier_sft/` | built verifier corpus (train/val + stats) | a few hundred KB |
 
 The recorder logs **everything a human does** — including how a new account is
@@ -936,14 +940,19 @@ go test dofus-net-proxy.go dofus_net_proxy_bench_test.go dofus_net_proxy_equiv_t
 
 ```bat
 cd dofus-network
+python -m agent.regression
 python -m advisor selftest
 ```
 
 > The previous three-command gate — `agent.smoke_verifier`, `agent.selftest`,
 > `networkhealth.selftest` — no longer exists; all three were removed 2026-10-25.
-> `advisor selftest` (122 checks) is the only surviving Python gate and it covers
-> the knowledge repository, not the loop/verifier contract (verdicts, residual
-> arithmetic, drift rules, loop wiring). Restoring that coverage is tracked as
+> `agent.regression` (82 checks) rebuilds the loop/verifier contract (verdicts,
+> nested-alias changes, the claim-proof, tool-vocabulary equality, the `hdv.buy`
+> ban, dialog question tie-break, prompt/named-mob fidelity, the verifier-model
+> guard, and the recovery layer's no-repeat/terminate invariant) and delegates the JS
+> page suites to `node` **and the Go relay tests to `go`**; `advisor selftest` (122 checks)
+> covers the knowledge repository. Neither covers the C#
+> `--bundle-selftest`, the combat/data suites, or a live session — see
 > `dofus-network/docs/KNOWN_GAPS.md` G8.
 
 ---
@@ -956,7 +965,10 @@ python -m advisor selftest
 * **The pool is public proxies.** They are slow, shared, and die often. `Scan
   proxies.txt` prunes them; nothing here makes a free proxy reliable.
 * **`hdv.buy` is disabled.** Deliberate, see §1.
-* **No verifier model yet.** The rules are the baseline; the ONNX hook is inert.
+* **The verifier head is not a learned improvement yet.** The GUI auto-loads
+  `verifier_head.onnx`, but its 1.0 accuracy is circular (rule labels on rule
+  features), so it clones the rules rather than adding signal; read-only tools are
+  never model-labelled regardless. See `KNOWN_GAPS.md` G6.
 * **Drift prints `REPLAN`; it does not yet call the scheduler.** One line of
   wiring, needs a live plan to mean anything.
 * **Two models in one process measured at 95.3 MB** (`ai/measure_rss.py`), so the

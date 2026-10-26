@@ -186,6 +186,11 @@ def summarise(path: Path, gap_s: float = 180.0) -> Dict[str, Any]:
     summaries = [_summarise_session(session) for session in sessions]
     decisions = [r for r in rows if _is_decision(r)]
     decision_actions = Counter(str(r.get("action")) for r in decisions)
+    # Rows the client's trusted-input instrument wrote: a human touched the game
+    # while the loop was running. "Zero manual interventions" is only measurable
+    # if this is counted, so it is reported even when it is zero.
+    interventions = [r for r in rows if r.get("kind") == "intervention"]
+    manual_interventions = sum(int(r.get("events") or 0) for r in interventions)
     total_minutes = sum(s["minutes"] or 0.0 for s in summaries)
     return {
         "file": str(path),
@@ -197,6 +202,8 @@ def summarise(path: Path, gap_s: float = 180.0) -> Dict[str, Any]:
         "objectives_completed": sum(s["objectives_completed"] or 0
                                     for s in summaries),
         "maps": sum(s["maps"] for s in summaries),
+        "manual_interventions": manual_interventions,
+        "intervention_rows": len(interventions),
         "recoveries": {k: v for k, v in decision_actions.items()
                        if k in RECOVERY_ACTIONS},
         "per_session": summaries,
@@ -222,8 +229,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("  sessions %d, wall %.1f min, steps %d, ok %d, failed %d"
               % (report["sessions"], report["wall_minutes"], report["steps"],
                  report["ok"], report["failed"]))
-        print("  objectives +%d, maps %d, recoveries %s"
+        print("  objectives +%d, maps %d, manual interventions %d, recoveries %s"
               % (report["objectives_completed"], report["maps"],
+                 report.get("manual_interventions", 0),
                  report["recoveries"] or "{}"))
         for row in report["per_session"]:
             print("    %s  %5s min  steps %4d  ok %4d  fail %3d  obj %s  maps %s  lvl %s"

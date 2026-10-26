@@ -1,4 +1,13 @@
-"""Rank the client's dialog replies against the active French quest context."""
+"""Rank the client's dialog replies against the active quest context.
+
+Primary signal is quest-objective token overlap (proven). The NPC's own question
+is consulted only to break a tie that the objective overlap could not resolve —
+see ``rank_dialog``. This is deliberately a *heuristic* for now: the loop has
+never completed a talk objective, so there are no (question -> correct reply)
+labels to train a ranker on. When such labels exist (criterion 4, "replace
+hardcoded where data supports it") this tie-break is what a learned scorer
+should subsume, not merely tune.
+"""
 
 from __future__ import annotations
 
@@ -34,6 +43,13 @@ def _quest_context(obs: Dict[str, Any]) -> str:
             if isinstance(entry, dict) and str(entry.get("id")) == str(objective_id):
                 parts.append(entry.get("text"))
     return " ".join(str(part) for part in parts if isinstance(part, str) and part)
+
+
+def _question_tokens(dialog: Dict[str, Any]) -> set:
+    """Tokens of the NPC's own prompt. The client field has been named
+    ``message``/``text``/``question`` across builds, so read whichever exists."""
+    raw = dialog.get("message") or dialog.get("text") or dialog.get("question")
+    return _tokens(raw)
 
 
 def _quest_id(obs: Dict[str, Any], knowledge: Dict[str, Any]) -> Optional[int]:
@@ -94,15 +110,26 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return {**decision, "status": "choose", "reason": "only reply", "reply": candidates[0]}
 
     context = _tokens(_quest_context(obs))
+    question = _question_tokens(dialog)
     scored = []
     for reply in candidates:
         tokens = _tokens(reply["text"])
-        score = len(tokens & context) / len(tokens) if tokens else 0.0
-        scored.append({**reply, "score": score})
-    scored.sort(key=lambda reply: -reply["score"])
+        overlap = len(tokens & context) / len(tokens) if tokens else 0.0
+        qrel = len(tokens & question) / len(tokens) if tokens else 0.0
+        scored.append({**reply, "score": overlap, "question": qrel})
+    # Primary: objective overlap. Question relevance only reorders inside a tie,
+    # so a case the objective already decided is decided exactly as before.
+    scored.sort(key=lambda reply: (-reply["score"], -reply["question"]))
     decision["scores"] = [{"index": reply["index"], "text": reply["text"],
-                           "score": reply["score"]} for reply in scored]
+                           "score": reply["score"], "question": reply["question"]}
+                          for reply in scored]
     if scored[0]["score"] == scored[1]["score"]:
+        tied = [reply for reply in scored if reply["score"] == scored[0]["score"]]
+        best_q = max(reply["question"] for reply in tied)
+        winners = [reply for reply in tied if reply["question"] == best_q]
+        if len(winners) == 1 and best_q > 0.0:
+            return {**decision, "status": "choose", "reason": "question tie-break",
+                    "reply": winners[0]}
         return {**decision, "status": "abstain", "reason": "top replies tie"}
     return {**decision, "status": "choose", "reason": "objective token overlap",
             "reply": scored[0]}

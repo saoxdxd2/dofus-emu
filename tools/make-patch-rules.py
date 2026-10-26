@@ -74,22 +74,12 @@ def main() -> None:
         "end": ":void this._movePlayerOnMap(m)}},c.prototype._tapFightWithSpell",
         "replacement": literal(src, "newTapRole"),
     })
-    rules.append({
-        "id": 4, "kind": "boundary",
-        "start": "s.prototype.launchMapTransition=function(e){",
-        "end": "finally{C=null;w=null;i._isMapLoading=!1;}})}}]);",
-        "replacement": literal(src, "newLaunchBlock"),
-        "maxLen": 60000,
-    })
-
-    # 5: the fast safety timer, written inline in the JS as two s.replace calls
-    m = re.search(r"s\.replace\('(this\._guardTimer=setTimeout[^']*)',\s*'([^']*)'\)", src)
-    if not m:
-        raise SystemExit("patch 5 not found")
-    rules.append({"id": 5, "kind": "replace", "old": m.group(1), "new": m.group(2)})
-    m2 = re.search(r"s\.replace\('(emit\(.ready.\);[^']*)',\s*'([^']*)'\)", src)
-    if m2:
-        rules.append({"id": 51, "kind": "replace", "old": m2.group(1), "new": m2.group(2)})
+    # 4 and 5/51 used to be extracted here. Rule 4 was a boundary patch whose `end`
+    # marker contains `finally{` - its own output - so it could never match a raw
+    # bundle, and 5/51 pointed at a `_guardTimer` string that exists in no bundle
+    # copy. All three applied nothing, reported "[SKIP]", and the build called it a
+    # day; the protections they name are what tools/patch-engine.js section 20-31
+    # now installs for real (KNOWN_GAPS G11/G12).
 
     # 6-11: variable pairs
     for rid, old_var, new_var in [
@@ -106,6 +96,13 @@ def main() -> None:
     # 12: updateScreen must re-read the viewport so the game follows the window
     old, new = replace_pair(src, "viewportOld", "viewportNew")
     rules.append({"id": 12, "kind": "replace", "old": old, "new": new})
+
+    # 20-31: map-transition resilience (KNOWN_GAPS G12). Same strings, one source:
+    # patch-engine.js installs them at build time and ClientBundle.cs installs them
+    # after an auto-update, so neither route can ship a client without a watchdog.
+    for rid in range(20, 32):
+        old, new = replace_pair(src, "resil%dOld" % rid, "resil%dNew" % rid)
+        rules.append({"id": rid, "kind": "replace", "old": old, "new": new})
 
     payload = {
         "version": 4,
