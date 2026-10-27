@@ -24,6 +24,12 @@
     }
     window.__DofusFarmAgentLoaded = true;
 
+    // One page build string for every reader and both fallbacks. Bump it whenever the
+    // injected page changes: a client that was not fully restarted keeps the previous
+    // script, and a recorded observation is how that becomes visible instead of looking
+    // like a fix that does not work.
+    var AGENT_BUILD = '2026-10-27a';
+
     // Server-visible keep-alive. The client tracks activity in
     // `connectionManager.recordActivity()` (sets `hasSeenActivity` + clears an
     // already-shown inactive warning); the client's own `_pingServer` timer then
@@ -2246,7 +2252,7 @@
         // was not fully restarted keeps the previous script, and the first
         // symptom is a fix that appears not to work; this makes that visible
         // in every recorded observation.
-        window.__agentBuild = '2026-10-25d';
+        window.__agentBuild = AGENT_BUILD;
         var _agentResult = function(ok, data, error) {
             return JSON.stringify({ ok: !!ok, data: data || null, error: error || null, at: Date.now() });
         };
@@ -2877,13 +2883,109 @@
                     } catch (e) {}
                     return out;
                 };
+                // G29: the downloaded quest cache is another game's (its ids stop at
+                // 2,546; live ids start at 3,841), so nothing in it describes the quests
+                // this character holds. The client does: every active quest carries its
+                // own dbQuest (stepIds, nameId), dbSteps (objectiveIds, nameId,
+                // descriptionId) and dbObjectives (typeId/_type, parameters, mapId,
+                // stepId, text). Publish that graph as a bounded read so the knowledge
+                // layer can use observed rows instead of the foreign cache. Nothing here
+                // sends; an empty catalog is a fact about this build, not an error.
+                var _agentQuestCatalog = function (q, qid, prog, budget) {
+                    var MAX_STEPS = 40, MAX_OBJECTIVES = 40, MAX_UNLISTED = 20;
+                    // A per-quest cap alone lets 12 quests put 19,200 objectives in one
+                    // snapshot. The caller passes one budget shared by every active quest,
+                    // so the whole catalogue stays small enough to log and send per step.
+                    if (!budget) {
+                        budget = {steps: MAX_STEPS, objectives: MAX_OBJECTIVES,
+                                  truncated: false};
+                    }
+                    var out = { id: Number(qid), steps: [], truncated: false };
+                    try {
+                        var dq = q.dbQuest || {};
+                        if (dq.nameId != null) out.name = dq.nameId;
+                        var sids = Array.isArray(dq.stepIds) ? dq.stepIds : [];
+                        var stepCap = Math.min(MAX_STEPS,
+                            Math.max(0, Math.floor(budget.steps)));
+                        var shownSteps = Math.min(sids.length, stepCap);
+                        if (sids.length > shownSteps) {
+                            out.truncated = true;
+                            budget.truncated = true;
+                        }
+                        out.step_ids = sids.slice(0, shownSteps).map(Number);
+                        if (prog) {
+                            out.step_index = prog.index;
+                            out.step_id = prog.step_id;
+                        }
+                        var dsteps = q.dbSteps || {};
+                        var dbs = q.dbObjectives || {};
+                        var seen = {};
+                        for (var si = 0; si < shownSteps; si++) {
+                            budget.steps -= 1;
+                            var sid = Number(sids[si]);
+                            var ds = dsteps[sids[si]] || {};
+                            var oids = Array.isArray(ds.objectiveIds) ? ds.objectiveIds : [];
+                            var step = { id: sid, objectives: [] };
+                            if (ds.nameId != null) step.name = ds.nameId;
+                            if (ds.descriptionId != null) step.description = ds.descriptionId;
+                            var objCap = Math.min(MAX_OBJECTIVES,
+                                Math.max(0, Math.floor(budget.objectives)));
+                            for (var oi = 0; oi < oids.length && step.objectives.length < objCap; oi++) {
+                                var oid = Number(oids[oi]);
+                                if (isNaN(oid) || seen[oid]) continue;
+                                seen[oid] = true;
+                                budget.objectives -= 1;
+                                step.objectives.push(_objEntry({ id: oid },
+                                    _objMeta({ objectiveId: oid },
+                                             dbs[oids[oi]] || dbs[oid] || null,
+                                             _rawObjectiveDb(oid))));
+                            }
+                            if (step.objectives.length < oids.length) {
+                                out.truncated = true;
+                                budget.truncated = true;
+                            }
+                            out.steps.push(step);
+                        }
+                        // The objective table is filled asynchronously and can hold rows
+                        // the step graph does not list yet; keep them, or the capture
+                        // loses exactly the rows it was built to observe.
+                        var rest = [];
+                        var restCap = Math.min(MAX_UNLISTED,
+                            Math.max(0, Math.floor(budget.objectives)));
+                        for (var key in dbs) {
+                            if (rest.length >= restCap) break;
+                            if (!Object.prototype.hasOwnProperty.call(dbs, key)) continue;
+                            var kid = Number(key);
+                            if (isNaN(kid) || seen[kid]) continue;
+                            seen[kid] = true;
+                            budget.objectives -= 1;
+                            rest.push(_objEntry({ id: kid },
+                                _objMeta({ objectiveId: kid }, dbs[key],
+                                         _rawObjectiveDb(kid))));
+                        }
+                        if (rest.length) {
+                            out.steps.push({ id: null, unlisted: true,
+                                              objectives: rest });
+                            if (rest.length >= restCap) {
+                                out.truncated = true;
+                                budget.truncated = true;
+                            }
+                        }
+                    } catch (e) { out.error = String(e); }
+                    return out;
+                };
                 var qs = { active: {}, steps: {}, current: null, ready: [],
-                    step_objectives: [], completed: 0, finished: 0 };
+                    step_objectives: [], completed: 0, finished: 0, catalog: [],
+                    catalog_status: {quests: 0, steps: 0, objectives: 0, truncated: false} };
                 try {
                     var sq = pd && pd.quests && pd.quests.standardQuests;
                     if (sq && typeof sq.getListOfActiveQuestsId === 'function') {
                         var qids = sq.getListOfActiveQuestsId() || [];
                         var perQuest = {};
+                        // One budget for the whole catalogue: 12 quests x 40 steps x 40
+                        // objectives would otherwise be 19,200 rows in every snapshot.
+                        var catalogBudget = {steps: 60, objectives: 80,
+                                             truncated: false};
                         for (var qi = 0; qi < qids.length; qi++) {
                             var qid = qids[qi];
                             var q = sq.getActiveQuestById(qid);
@@ -2910,6 +3012,28 @@
                                           objective_id: o.objectiveId, status: st }, meta);
                                 }
                             }
+                            // G29 capture, bounded: the graph of the quests this
+                            // character actually holds, read from the client's own
+                            // tables, sharing one budget across quests.
+                            if (qs.catalog.length < 12) {
+                                if (catalogBudget.steps <= 0
+                                        && catalogBudget.objectives <= 0) {
+                                    qs.catalog_status.truncated = true;
+                                } else {
+                                    var cat = _agentQuestCatalog(q, qid, prog,
+                                                                 catalogBudget);
+                                    qs.catalog.push(cat);
+                                    qs.catalog_status.quests += 1;
+                                    for (var ci = 0; ci < cat.steps.length; ci++) {
+                                        qs.catalog_status.steps += 1;
+                                        qs.catalog_status.objectives +=
+                                            (cat.steps[ci].objectives || []).length;
+                                    }
+                                    if (cat.truncated || catalogBudget.truncated) {
+                                        qs.catalog_status.truncated = true;
+                                    }
+                                }
+                            }
                         }
                         if (qs.current) qs.step_objectives = perQuest[qs.current.quest_id] || [];
                         // Quests the character has actually finished. This is the one
@@ -2928,6 +3052,12 @@
                 snap.ready_objectives = qs.ready;
                 snap.step_objectives = qs.step_objectives;
                 snap.objectives_completed = qs.completed;
+                // The client's own quest graph (G29 capture). `quest_catalog_status` is
+                // the census a live run reads first: quests > 0 with objectives > 0 is
+                // the proof the tables are populated, and 0 says the capture found
+                // nothing rather than silently reading an empty table.
+                snap.quests_catalog = qs.catalog;
+                snap.quest_catalog_status = qs.catalog_status;
                 // XP is what makes a farm measurable: it is the only quantity the
                 // client reports on every kill, and a fight that yields 0 xp is a
                 // fight that was lost or abandoned. Read several candidate keys
@@ -3814,6 +3944,21 @@
                 return 'gui.npcDialogHandler';
             }
             return null;
+        };
+        // Whether this client knows the quest at all (active or finished). A start-shaped
+        // `quest.advance {quest_id}` inside a dialog is refused only for a quest the client
+        // has never accepted, because that shape was the start request's (G33); a known
+        // quest keeps the reply-0 behaviour the tutorial relies on.
+        var _agentQuestKnown = function (questId) {
+            var q = window.gui && window.gui.playerData && window.gui.playerData.quests
+                && window.gui.playerData.quests.standardQuests;
+            if (!q) return false;
+            try {
+                return !!((typeof q.isActiveQuestById === 'function'
+                            && q.isActiveQuestById(questId))
+                    || (typeof q.isFinishedQuestById === 'function'
+                            && q.isFinishedQuestById(questId)));
+            } catch (e) { return false; }
         };
         var _agentDialogState = function () {
             var info = _agentDialogInfo();
@@ -5964,7 +6109,7 @@
                     try { window.location.reload(); } catch (e) {}
                 }, 250);
                 return _agentResult(true, { reloading: true,
-                    build: window.__agentBuild || '2026-10-25d',
+                    build: window.__agentBuild || AGENT_BUILD,
                     note: 'a reload keeps the already-injected script; a full app '
                         + 'restart is required to pick up a rebuilt one' });
             },
@@ -6207,7 +6352,7 @@
                 return _agentEffectDbReport(args);
             },
             'debug.version': function() {
-                return _agentResult(true, { build: window.__agentBuild || '2026-10-25d' });
+                return _agentResult(true, { build: window.__agentBuild || AGENT_BUILD });
             },
             'debug.probe': function() {
                 var out = {};
@@ -6289,6 +6434,77 @@
                 // (index) sends NpcDialogReplyMessage{replyId: replyIds[index]}.
                 var pd0 = (window.gui && window.gui.playerData) || null;
                 if (pd0 && pd0.isInDialog) {
+                    // G33: the quest an NPC offers is a LINK in its own text (G32), and
+                    // QuestStartRequestMessage is what this client sends when that link is
+                    // clicked. This branch runs BEFORE the reply path because the reply
+                    // path always sends something: with no `reply` it answered index 0,
+                    // so a call that meant "accept the offered quest" was silently
+                    // answering the NPC instead. The offer is the guard: only the id this
+                    // dialog is offering right now can reach the wire, so a stale or
+                    // invented id is refused (G31's rule) and the read half stays honest.
+                    if (args && args.accept === true) {
+                        var acceptState = _agentDialogState();
+                        var offeredId = (acceptState && acceptState.start_quest != null)
+                            ? Number(acceptState.start_quest) : null;
+                        var acceptId = Number(args.quest_id || args.questId || 0) || null;
+                        if (acceptId == null) {
+                            return _agentResult(false,
+                                { stage: 'accept_no_quest_id', offered: offeredId },
+                                'accept needs the quest id the dialog is offering');
+                        }
+                        if (offeredId == null || offeredId !== acceptId) {
+                            window.__agentLastTalk = { at: Date.now(),
+                                stage: 'quest_not_offered', quest_id: acceptId,
+                                offered: offeredId };
+                            return _agentResult(false,
+                                { stage: 'quest_not_offered', quest_id: acceptId,
+                                  offered: offeredId },
+                                'this dialog is not offering quest ' + acceptId
+                                + (offeredId == null ? ' (it offers none)'
+                                                     : ' (it offers ' + offeredId + ')'));
+                        }
+                        // The same 5 s in-flight window the outside-dialog start uses:
+                        // a second accept before the server answers is the 287-refusal
+                        // loop's shape, and this request can be re-derived every step.
+                        var acceptStarts = window.__agentQuestStarts
+                            || (window.__agentQuestStarts = {});
+                        var acceptPending = acceptStarts[acceptId] || null;
+                        if (acceptPending
+                                && Date.now() - Number(acceptPending.at || 0) < 5000) {
+                            return _agentResult(true,
+                                { stage: 'quest_start_pending', quest_id: acceptId,
+                                  via: 'QuestStartRequestMessage', pending: true,
+                                  accepted_offer: true }, null);
+                        }
+                        var acceptSend = _cmSend('QuestStartRequestMessage',
+                            { questId: acceptId });
+                        if (acceptSend.ok) acceptStarts[acceptId] = { at: Date.now() };
+                        // Close the way a click on the client's own link does. Each
+                        // path keeps its own try: one throwing must not lose the other
+                        // (the close branch learned that with 148 null-deref failures).
+                        var acceptUi = window.gui && window.gui.npcDialogUi;
+                        var acceptHandler = window.gui && window.gui.npcDialogHandler;
+                        if (acceptUi && typeof acceptUi.leaveDialog === 'function') {
+                            try { acceptUi.leaveDialog(); } catch (acceptUiErr) {}
+                        }
+                        if (acceptHandler && typeof acceptHandler._closeDialog === 'function') {
+                            try { acceptHandler._closeDialog(); } catch (acceptHErr) {}
+                        }
+                        var acceptClosed = false;
+                        try {
+                            var acceptAfter = _agentDialogState();
+                            acceptClosed = !!(acceptAfter && acceptAfter.open === false);
+                        } catch (acceptStateErr) {}
+                        window.__agentLastTalk = { at: Date.now(),
+                            stage: acceptSend.ok ? 'quest_accept_sent' : 'quest_accept_failed',
+                            quest_id: acceptId, via: 'QuestStartRequestMessage',
+                            accepted_offer: true, closed: acceptClosed,
+                            error: acceptSend.ok ? null : String(acceptSend.error || '') };
+                        return _agentResult(acceptSend.ok,
+                            { quest_id: acceptId, via: 'QuestStartRequestMessage',
+                              accepted_offer: true, closed: acceptClosed },
+                            acceptSend.ok ? null : acceptSend.error);
+                    }
                     if (args && args.close) {
                         // Some NPC dialogs are one-way text with an empty reply
                         // list. There is no index to send; the client's own close
@@ -6329,6 +6545,29 @@
                             attempts.length
                                 ? 'dialog still open after: ' + attempts.join(' | ').slice(0, 200)
                                 : 'no dialog close path available');
+                    }
+                    // G33: a start-shaped call (a quest id and nothing else) meant
+                    // "start this quest" outside a dialog and "answer reply 0" inside
+                    // one, which is why 0 start-shaped rows in the corpus were ever sent
+                    // inside a dialog -- the shape could not reach the start branch. For
+                    // a quest this client has never accepted, refuse it: the honest form
+                    // is accept=true, which the offer guard above checks. A known quest
+                    // keeps the reply-0 behaviour the tutorial relies on.
+                    var bareStartId = (args && (args.quest_id || args.questId)) || null;
+                    if (bareStartId && args.reply === undefined
+                            && args.reply_text == null
+                            && args.npc_id == null && args.npcId == null
+                            && args.objective_id == null && args.objectiveId == null
+                            && !_agentQuestKnown(bareStartId)) {
+                        var bareOffer = _agentDialogState();
+                        window.__agentLastTalk = { at: Date.now(),
+                            stage: 'dialog_start_not_accept', quest_id: bareStartId,
+                            offered: bareOffer ? bareOffer.start_quest : null };
+                        return _agentResult(false,
+                            { stage: 'dialog_start_not_accept', quest_id: bareStartId,
+                              offered: bareOffer ? bareOffer.start_quest : null },
+                            'a dialog is open: pass accept=true for the quest it offers, '
+                            + 'or reply/reply_text/close');
                     }
                     var want = (args && args.reply !== undefined) ? parseInt(args.reply, 10) : 0;
                     if (isNaN(want)) want = 0;

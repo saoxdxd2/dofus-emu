@@ -48,10 +48,10 @@
   {
    "id": "nav.goto",
    "verb": "nav",
-   "description": "Travel to a target position. Exactly one of: [x,y] coordinates, a zaap name, an NPC, or a map id.",
-   "backend": "sentinel",
-   "directive": null,
-   "returns": "navigation path with steps; the client bridge then walks it",
+   "description": "Travel to a target. Give one of: [x,y] coordinates, a zaap name, an NPC, a map id, a cell, or a direction. `direction` leaves by that edge; `cell` walks to that specific spot on the current map.",
+   "backend": "directive",
+   "directive": "NAV_GOTO",
+   "returns": "transition ack; for an adjacent map the client walks to the border cell first, and a non-adjacent target is refused with the current map's exits",
    "params": {
     "x": {
      "type": "int",
@@ -73,10 +73,31 @@
      "doc": "NPC name to travel to.",
      "required": false
     },
+    "npc_id": {
+     "type": "int",
+     "doc": "NPC id on the current map, as listed in snapshot.map.npcs.",
+     "required": false
+    },
     "map_id": {
      "type": "int",
      "doc": "Raw map id.",
      "required": false
+    },
+    "cell": {
+     "type": "int",
+     "doc": "Walk to this cell on the current map (a specific spot).",
+     "required": false
+    },
+    "direction": {
+     "type": "str",
+     "doc": "Leave by this edge of the current map.",
+     "required": false,
+     "enum": [
+      "left",
+      "right",
+      "top",
+      "bottom"
+     ]
     },
     "lang": {
      "type": "str",
@@ -168,10 +189,35 @@
      "doc": "Quest id from quest.list.",
      "required": true
     },
-    "step_id": {
+    "npc_id": {
      "type": "int",
-     "doc": "Optional step id; defaults to the current step.",
-     "required": false
+     "required": false,
+     "doc": "Talk to this NPC, by the template id the objective carries."
+    },
+    "objective_id": {
+     "type": "int",
+     "required": false,
+     "doc": "Validate this objective. Use it to claim one the game already accepts (objectiveStatus 2)."
+    },
+    "reply": {
+     "type": "int",
+     "required": false,
+     "doc": "Which dialog reply to choose, by index. Defaults to 0, which is what an unanswered NPC dialog needs."
+    },
+    "reply_text": {
+     "type": "str",
+     "required": false,
+     "doc": "Which dialog reply to choose, by the exact French text reported in dialog.replies. With reply, both must agree."
+    },
+    "close": {
+     "type": "bool",
+     "required": false,
+     "doc": "Close an open dialog whose reply list is empty."
+    },
+    "accept": {
+     "type": "bool",
+     "required": false,
+     "doc": "Accept the quest this dialog is offering. The page sends QuestStartRequestMessage only when the dialog's own start_quest link matches quest_id, then closes."
     }
    }
   },
@@ -184,13 +230,13 @@
    "returns": "farm session id and live counters",
    "params": {
     "monster": {
-     "type": "str",
-     "doc": "Monster (family) name to farm, any language.",
+     "type": "id_or_name",
+     "doc": "Monster id from the objective, or a name from the corpus. The client needs an id; the harness resolves a name.",
      "required": false
     },
     "resource": {
-     "type": "str",
-     "doc": "Resource to harvest instead (herbs, ore, wood...).",
+     "type": "id_or_name",
+     "doc": "Resource id from the objective, or a name. The client harvests the nearest interactive element; the id selects it when the client can.",
      "required": false
     },
     "zone": {
@@ -239,15 +285,20 @@
   {
    "id": "fight.join",
    "verb": "fight",
-   "description": "Join a fight: the current one, a nearby group, or a named target.",
+   "description": "Join a fight: a monster group containing the named monster, an explicit group, or the nearest group.",
    "backend": "directive",
    "directive": "AUTO_JOIN_COMBAT",
    "returns": "fight state",
    "params": {
-    "target": {
-     "type": "str",
-     "doc": "Optional monster/player name; default current group.",
-     "required": false
+    "monster": {
+     "type": "int",
+     "required": false,
+     "doc": "Monster id from the objective. The group containing it is chosen; the client knows which group that is."
+    },
+    "group_id": {
+     "type": "int",
+     "required": false,
+     "doc": "Explicit monster-group id, when the caller already has one."
     }
    }
   },
@@ -342,8 +393,33 @@
    "params": {
     "item": {
      "type": "str",
-     "doc": "Item name, any language.",
-     "required": true
+     "required": false,
+     "doc": "Item name to look up."
+    },
+    "category": {
+     "type": "int",
+     "required": false,
+     "doc": "Market category id, when browsing rather than searching."
+    },
+    "type": {
+     "type": "int",
+     "required": false,
+     "doc": "Item type id filter."
+    },
+    "item_type": {
+     "type": "int",
+     "required": false,
+     "doc": "Alias of type."
+    },
+    "id": {
+     "type": "int",
+     "required": false,
+     "doc": "Item id filter."
+    },
+    "gid": {
+     "type": "int",
+     "required": false,
+     "doc": "Item group id filter."
     }
    }
   },
@@ -503,6 +579,79 @@
      "doc": "Why it is wrong (kept in the log).",
      "required": false,
      "default": ""
+    }
+   }
+  },
+  {
+   "id": "fight.state",
+   "verb": "fight",
+   "description": "Read the live combat board: turn owner, fighters, cells, HP/AP/MP, team membership, and the controlled character's spell descriptors. The result also carries a versioned observation and a contract naming any fact the client did not expose.",
+   "backend": "directive",
+   "directive": "FIGHT_STATE",
+   "returns": "turn, fighter and spell facts from the live client, plus observation/contract",
+   "params": {}
+  },
+  {
+   "id": "fight.plan",
+   "verb": "fight",
+   "description": "Read the live board and compute this turn's legal move-and-cast plan: exact cell geometry, line of sight, AP/MP, cooldowns, resistances, damage and healing. top_k > 1 also returns alternative plans (including pass) for a ranker. Read-only; it never casts or moves anything. Every answer carries the live observation and its contract.",
+   "backend": "local",
+   "directive": null,
+   "returns": "actions with cells/targets/AP/MP/damage, plus the normalized live observation, its contract, and the ranker decision",
+   "params": {
+    "beam_width": {
+     "type": "int",
+     "doc": "How many partial turns to keep while searching.",
+     "required": false,
+     "default": 16
+    },
+    "max_actions": {
+     "type": "int",
+     "doc": "Maximum casts to consider in the plan.",
+     "required": false,
+     "default": 4
+    },
+    "top_k": {
+     "type": "int",
+     "doc": "Also return this many candidate plans; 1 = best only.",
+     "required": false,
+     "default": 1
+    },
+    "rank_with_value": {
+     "type": "bool",
+     "doc": "Compatibility alias for ranker=value: rank candidates with the learned encounter value head.",
+     "required": false,
+     "default": false
+    },
+    "ranker": {
+     "type": "str",
+     "doc": "Which plan ranker to use. 'solver' keeps the solver order; 'value' ranks candidates with the learned value head and refuses when the live observation lacks self stats or enemy spell facts.",
+     "required": false,
+     "enum": [
+      "solver",
+      "value"
+     ],
+     "default": "solver"
+    }
+   }
+  },
+  {
+   "id": "fight.estimate",
+   "verb": "fight",
+   "description": "Estimate whether the controlled character can win a monster group visible on this map: turns to kill, incoming damage, expected HP loss, and a calibrated win probability. Read-only; it never joins or casts.",
+   "backend": "local",
+   "directive": null,
+   "returns": "p_win (null until calibrated), raw_score, expected_hp_loss and turns, confidence, missing inputs, allowed and blocked_reason",
+   "params": {
+    "group_id": {
+     "type": "int",
+     "doc": "Monster group id from map.groups.",
+     "required": false
+    },
+    "monster": {
+     "type": "id_or_name",
+     "doc": "Monster id or name. When several visible groups contain it, the least favourable one is estimated.",
+     "required": false
     }
    }
   }

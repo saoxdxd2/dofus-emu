@@ -25,6 +25,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agent.jsonio import loads as fast_loads
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = REPO_ROOT / "data" / "capabilities.json"
 
@@ -60,6 +62,65 @@ CRAFT_TYPES = {17}
 # cannot be told from another tool is not a decision, it is noise in the label space.
 FIGHT_TYPES = {6}
 OPEN_KILL_TYPES = KILL_TYPES - FIGHT_TYPES
+
+# What each objective type's parameters *are*, copied from the client's own
+# objective-parameter table (`desktop/client/www/build/script.js`), keyed by the class
+# name the page reports as `type`. The table is what the quest UI walks to turn a
+# parameter into something a player can see, so it is the only authority on whether
+# `parameter0` names a creature, a place, an item or nothing at all:
+#
+#   Monsters + $monster  -> a creature the map can show a group for
+#   Npcs / Items / ...   -> that table's id
+#   GetText              -> a number the client only formats into the objective text
+#
+# `agent/regression.py` re-reads the bundle and fails if this copy and the client's
+# disagree, so the table cannot rot in silence.
+#
+# Why it exists: `KILL_TYPES` reads 0 as "monster" because the type->meaning map above
+# was decoded from objective *text*, and the live corpus says otherwise — 18,654
+# entries of `QuestObjectiveFreeForm` (type 0) carry a six-digit `parameter0`
+# (715354, 713802, 719010, 698229) that matches no monster, item, npc or quest in any
+# cache, while every real `QuestObjectiveFightMonster` (type 6) carries a four-digit
+# one (4194, 4192). Handing the wrapper's number to `fight.join` is where the recorded
+# "target monster 715354 is not on this map" refusals come from.
+OBJECTIVE_PARAMETERS: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    "QuestObjectiveBringItemToNpc": (("table", "Npcs"), ("table", "Items")),
+    "QuestObjectiveBringSoulToNpc": (("table", "Npcs"), ("table", "Monsters")),
+    "QuestObjectiveCraftXItem": (("table", "Items"),),
+    "QuestObjectiveDiscoverMap": (("getText", "GetText"),),
+    "QuestObjectiveDiscoverSubArea": (("table", "SubAreas"),),
+    "QuestObjectiveDuelSpecificPlayer": (("getText", "GetText"),),
+    "QuestObjectiveFightMonster": (("table", "Monsters"),),
+    "QuestObjectiveFightMonstersOnMap": (("table", "Monsters"),),
+    "QuestObjectiveFreeForm": (("getText", "GetText"),),
+    "QuestObjectiveGoToNpc": (("table", "Npcs"),),
+    "QuestObjectiveMultiFightMonster": (("table", "Monsters"),),
+    "QuestObjectiveValidChallenge": (("table", "Monsters"),),
+    "QuestObjectiveWinMonsterInDungeon": (("table", "Monsters"),),
+    "QuestObjectiveWinMonsterInDungeonValidChallenge": (("table", "Monsters"),
+                                                        ("table", "Challenge")),
+    "QuestObjectiveWinMonsterInDungeonXTimes": (("table", "Monsters"),),
+    "QuestObjectiveWinPvpAgainstBreed": (("table", "Breeds"),),
+    "QuestObjective": (("getText", "GetText"),),
+}
+
+MONSTER_PARAMETER_TYPES = frozenset(
+    name for name, params in OBJECTIVE_PARAMETERS.items()
+    if any(pid == "Monsters" for _kind, pid in params))
+
+
+def declares_monster_target(obj: Dict[str, Any]) -> Optional[bool]:
+    """Whether the client says this objective's parameter is a creature.
+
+    `None` means the observation carried no class name, and the caller must keep the
+    `type_id` route it has always used rather than silently lose the ability to plan a
+    fight. An objective whose class the client declares as text-only is not a hunt, and
+    no amount of re-reading `groups_seen` will make one.
+    """
+    name = obj.get("type") if isinstance(obj, dict) else None
+    if isinstance(name, str) and name in OBJECTIVE_PARAMETERS:
+        return name in MONSTER_PARAMETER_TYPES
+    return None
 
 # The error taxonomy, reusing the controller's classifier so a new marker cannot be
 # added in one place and forgotten in the other.
@@ -126,8 +187,7 @@ def map_index() -> Tuple[Dict[int, int], Dict[int, int]]:
         area_of: Dict[int, int] = {}
         path = REPO_ROOT / "data" / "cache" / "subareas_full.json"
         if path.exists():
-            with path.open("r", encoding="utf-8") as fh:
-                for sub in json.load(fh):
+            for sub in fast_loads(path.read_bytes()):
                     try:
                         sid = int(sub["id"])
                     except (KeyError, TypeError, ValueError):

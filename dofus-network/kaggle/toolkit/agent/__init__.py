@@ -25,20 +25,48 @@ Stdlib only on purpose: this must run under the bundled ``runtimes/python``
 interpreter with no torch, no network access, and while the game is live.
 """
 
-from agent.schema import TOOL_SCHEMA, ToolSpec, tool_names, validate_call
-from agent.recorder import TrajectoryRecorder
-from agent.executor import ToolExecutor, ToolResult
-from agent.runtime import AgentRuntime, RulePolicy, ToolCall
+# ruff: noqa: F401 - the TYPE_CHECKING block documents lazy exports
 
-__all__ = [
-    "TOOL_SCHEMA",
-    "ToolSpec",
-    "tool_names",
-    "validate_call",
-    "TrajectoryRecorder",
-    "ToolExecutor",
-    "ToolResult",
-    "AgentRuntime",
-    "RulePolicy",
-    "ToolCall",
-]
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from _lazy_exports import lazy_export
+
+_EXPORTS = {
+    "TOOL_SCHEMA": "agent.schema",
+    "ToolSpec": "agent.schema",
+    "tool_names": "agent.schema",
+    "validate_call": "agent.schema",
+    "TrajectoryRecorder": "agent.recorder",
+    "ToolExecutor": "agent.executor",
+    "ToolResult": "agent.executor",
+    "AgentRuntime": "agent.runtime",
+    "RulePolicy": "agent.runtime",
+    "ToolCall": "agent.runtime",
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    """Import public names on first use.
+
+    ``agent.jsonio`` and ``agent.recorder`` are used by the combat server and
+    lightweight tools; importing the whole executor/runtime/urllib stack just
+    because the package was touched adds startup time and resident memory to
+    processes that never execute a world action.
+    """
+    return lazy_export(globals(), _EXPORTS, __name__, name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_EXPORTS))
+
+
+if TYPE_CHECKING:  # pragma: no cover - type checkers only
+    from agent.executor import ToolExecutor, ToolResult
+    from agent.recorder import TrajectoryRecorder
+    from agent.runtime import AgentRuntime, RulePolicy, ToolCall
+    from agent.schema import TOOL_SCHEMA, ToolSpec, tool_names, validate_call
+

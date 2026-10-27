@@ -213,6 +213,11 @@
      "type": "bool",
      "required": false,
      "doc": "Close an open dialog whose reply list is empty."
+    },
+    "accept": {
+     "type": "bool",
+     "required": false,
+     "doc": "Accept the quest this dialog is offering. The page sends QuestStartRequestMessage only when the dialog's own start_quest link matches quest_id, then closes."
     }
    }
   },

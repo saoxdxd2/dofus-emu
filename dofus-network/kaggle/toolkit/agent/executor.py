@@ -17,16 +17,20 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import unicodedata
 import urllib.error
 import urllib.request
 import uuid
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agent.bridge import directive_url as bridge_directive_url, opener_for
+from agent.jsonio import dumps_bytes, loads
 from agent.recorder import TrajectoryRecorder
 from agent.knowledge_store import KnowledgeStore
 from agent.schema import TOOLS_BY_NAME, validate_call
@@ -52,15 +56,44 @@ _ANY_KIND_ORDER = ("monster", "quest", "item", "npc", "spell", "dungeon", "achie
 _NAME_KEYS_FLAT = ("name_fr", "name_en", "name_es", "name_de")
 
 
+def _accent_table() -> Dict[int, str]:
+    """Precomposed Latin characters -> their unaccented form.
+
+    ``_normalize`` is called hundreds of thousands of times while indexing the
+    item cache. ``NFKD`` plus a Python generator over every character was the
+    entire cold-start cost; a C-level ``str.translate`` table handles the Latin
+    range with identical results.
+    """
+    table: Dict[int, str] = {}
+    for code in range(0x00C0, 0x0250):
+        char = chr(code)
+        decomposed = unicodedata.normalize("NFKD", char)
+        stripped = "".join(ch for ch in decomposed
+                           if not unicodedata.combining(ch))
+        if stripped != char:
+            table[code] = stripped
+    return table
+
+
+_ACCENT_TABLE = _accent_table()
+
+
 def _normalize(text: Any) -> str:
     if not isinstance(text, str):
         return ""
-    nfkd = unicodedata.normalize("NFKD", text.lower())
+    lowered = text.lower()
+    if lowered.isascii():
+        return lowered
+    translated = lowered.translate(_ACCENT_TABLE)
+    if translated.isascii():
+        return translated
+    # Non-Latin scripts still go through the exact NFKD path.
+    nfkd = unicodedata.normalize("NFKD", translated)
     return "".join(ch for ch in nfkd if not unicodedata.combining(ch))
 
 
-def _localized_strings(record: Dict[str, Any]) -> List[str]:
-    """All human-readable strings of a record (localised names + description)."""
+def _name_strings(record: Dict[str, Any]) -> List[str]:
+    """Localised names only. Descriptions are matched but are not names."""
     out: List[str] = []
     name = record.get("name")
     if isinstance(name, dict):
@@ -71,12 +104,55 @@ def _localized_strings(record: Dict[str, Any]) -> List[str]:
         value = record.get(key)
         if isinstance(value, str):
             out.append(value)
+    return out
+
+
+def _description_strings(record: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
     description = record.get("description")
     if isinstance(description, dict):
         out.extend(str(v) for v in description.values() if isinstance(v, str))
     elif isinstance(description, str):
         out.append(description)
     return out
+
+
+def _localized_strings(record: Dict[str, Any]) -> List[str]:
+    """All human-readable strings of a record (localised names + description)."""
+    return _name_strings(record) + _description_strings(record)
+
+
+_INDEX_FIELDS = {
+    "item": ("id", "name", "level", "type_id", "price", "is_saleable"),
+    "spell": ("id", "name_fr", "name_en", "name_es", "type_id"),
+    "npc": ("id", "name", "actions"),
+    "achievement": ("id", "name", "description", "points", "level"),
+    "dungeon": ("id", "name", "level_min", "entrance_map_id",
+                "boss_monster_ids"),
+    "monster": ("id", "name", "name_fr", "name_en", "name_es", "name_de",
+                "is_boss"),
+}
+
+
+def _index_record(kind: str, record: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only fields a search result can expose; quests stay whole.
+
+    ``entries`` is a process-long cache. Retaining every raw item/monster row
+    after its normalized names are built was measurable resident memory for no
+    consumer.
+    """
+    fields = _INDEX_FIELDS.get(kind)
+    if fields is None:
+        return record
+    stored = {key: record.get(key) for key in fields}
+    if kind == "monster":
+        stored["is_boss"] = bool(record.get("is_boss", False))
+        grades = record.get("grades") or []
+        stored["grades"] = [
+            {"level": grade.get("level"), "life_points": grade.get("life_points")}
+            for grade in grades if isinstance(grade, dict)
+        ]
+    return stored
 
 
 @dataclass
@@ -101,15 +177,243 @@ class ToolResult:
         }
 
 
+# Order is the tie-break when a BFS step has several equal-length routes.
+_MAP_DIRECTIONS: Tuple[Tuple[str, str], ...] = (
+    ("top", "topNeighbourId"),
+    ("right", "rightNeighbourId"),
+    ("bottom", "bottomNeighbourId"),
+    ("left", "leftNeighbourId"),
+)
+
+
+class _MapGraph:
+    """Routing graph over the exported maps (`data/maps/_index.json`).
+
+    The client can only do the last step: walk to a border and cross it. It knows
+    the exits of the map it is standing on and nothing else, so any route longer
+    than one map has to be planned on this side, where the export is available.
+    """
+
+    def __init__(self, path: Optional[Path] = None) -> None:
+        self.path = Path(path) if path else REPO_ROOT / "data" / "maps" / "_index.json"
+        self._lock = threading.RLock()
+        self._edges: Optional[Dict[int, Dict[str, int]]] = None
+        self._reverse_edges: Optional[Dict[int, List[Tuple[int, str]]]] = None
+        # A journey asks for the same target map on every step while the
+        # character crosses one map at a time. The BFS tree rooted at the target
+        # answers every hop in O(1); four recent targets are enough.
+        self._trees: "OrderedDict[int, Dict[int, Tuple[str, int, int]]]" = OrderedDict()
+        self._tree_limit = 4
+
+    def edges(self) -> Dict[int, Dict[str, int]]:
+        with self._lock:
+            if self._edges is not None:
+                return self._edges
+            edges: Dict[int, Dict[str, int]] = {}
+            try:
+                payload = loads(self.path.read_bytes())
+            except (OSError, ValueError) as exc:
+                logger.warning("map index unavailable (%s): %s", self.path, exc)
+                payload = {}
+            items = payload.items() if isinstance(payload, dict) else ()
+            for key, record in items:
+                if not isinstance(record, dict):
+                    continue
+                try:
+                    map_id = int(record.get("id", key))
+                except (TypeError, ValueError):
+                    continue
+                neighbours = record.get("neighbours") or {}
+                exits: Dict[str, int] = {}
+                for direction, field_name in _MAP_DIRECTIONS:
+                    try:
+                        neighbour_id = int(neighbours.get(field_name))
+                    except (TypeError, ValueError):
+                        continue
+                    if neighbour_id > 0:
+                        exits[direction] = neighbour_id
+                if exits:
+                    edges[map_id] = exits
+            self._edges = edges
+            return edges
+
+    def reverse_edges(self) -> Dict[int, List[Tuple[int, str]]]:
+        """Neighbour -> (previous map, direction) for reverse BFS trees."""
+        with self._lock:
+            cached = self._reverse_edges
+            if cached is not None:
+                return cached
+        reverse: Dict[int, List[Tuple[int, str]]] = {}
+        for node, exits in self.edges().items():
+            for direction, neighbour in exits.items():
+                reverse.setdefault(neighbour, []).append((node, direction))
+        with self._lock:
+            self._reverse_edges = reverse
+        return reverse
+
+    def _tree(self, target: int) -> Dict[int, Tuple[str, int, int]]:
+        """BFS tree rooted at ``target``: node -> (direction, next map, hops).
+
+        Built on the reversed graph so the direction stored on each node is the
+        one the character should take from that node. Cached per target: a
+        multi-map journey reuses the same destination for many steps.
+        """
+        with self._lock:
+            cached = self._trees.get(target)
+            if cached is not None:
+                self._trees.move_to_end(target)
+                return cached
+        tree: Dict[int, Tuple[str, int, int]] = {target: ("", target, 0)}
+        queue: deque = deque([target])
+        while queue:
+            node = queue.popleft()
+            distance = tree[node][2] + 1
+            for previous, direction in self.reverse_edges().get(node, ()):
+                if previous in tree:
+                    continue
+                tree[previous] = (direction, node, distance)
+                queue.append(previous)
+        with self._lock:
+            self._trees[target] = tree
+            while len(self._trees) > self._tree_limit:
+                self._trees.popitem(last=False)
+        return tree
+
+    def _hop_bfs(self, here: int, target: int,
+                 blocked_first: set) -> Optional[Tuple[str, int, int]]:
+        """Forward BFS for the rare gated-first-step case.
+
+        The cached tree gives the shortest path without constraints, but that
+        path may start through a direction the tutorial blocks. Its distance is
+        also unsafe to reuse for an alternative neighbour: the tree path from
+        that neighbour can run back through `here`, which the forward search
+        must not do. This bounded BFS keeps the old, correct behaviour.
+        """
+        edges = self.edges()
+        parent: Dict[int, Tuple[Optional[int], Optional[str]]] = {here: (None, None)}
+        queue: deque = deque([here])
+        while queue:
+            node = queue.popleft()
+            if node == target:
+                break
+            for direction, neighbour in edges.get(node, {}).items():
+                if node == here and direction in blocked_first:
+                    continue
+                if neighbour in parent:
+                    continue
+                parent[neighbour] = (node, direction)
+                queue.append(neighbour)
+        if target not in parent:
+            return None
+        path: List[str] = []
+        node = target
+        while parent[node][0] is not None:
+            previous, direction = parent[node]
+            path.append(direction)
+            node = previous
+        path.reverse()
+        if not path:
+            return None
+        return path[0], edges[here][path[0]], len(path)
+
+    def hop(self, here: Optional[int], target: Optional[int],
+            blocked_first: Optional[set] = None) -> Optional[Tuple[str, int, int]]:
+        """First step from `here` towards `target`: (direction, next map, hops left).
+
+        `blocked_first` names directions the tutorial forbids on the current map.
+        They are skipped for the first step only: the gate belongs to the scenario
+        step, not to the other maps on the route.
+        """
+        if here is None or target is None or here == target:
+            return None
+        tree = self._tree(target)
+        entry = tree.get(here)
+        if entry is None:
+            return None
+        direction, next_map, hops = entry
+        blocked_first = blocked_first or set()
+        if direction in blocked_first:
+            return self._hop_bfs(here, target, blocked_first)
+        return direction, next_map, hops
+
+
+def _obs_map_id(observation: Optional[Dict[str, Any]]) -> Optional[int]:
+    """The current map id from any snapshot shape the bridge has used."""
+    if not isinstance(observation, dict):
+        return None
+    map_block = observation.get("map")
+    candidates = [
+        observation.get("map_id"),
+        observation.get("position", {}).get("map_id")
+        if isinstance(observation.get("position"), dict) else None,
+        map_block.get("map_id") if isinstance(map_block, dict) else None,
+    ]
+    for value in candidates:
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _obs_map_exits(observation: Optional[Dict[str, Any]]) -> Dict[int, str]:
+    """neighbour map id -> direction, straight from the client's own exit list.
+
+    Exits the tutorial marks `blocked` are left out: the client refuses those
+    crossings, so routing through one walks the character to a border it cannot
+    cross.
+    """
+    if not isinstance(observation, dict):
+        return {}
+    map_block = observation.get("map")
+    if not isinstance(map_block, dict):
+        return {}
+    exits: Dict[int, str] = {}
+    for entry in map_block.get("exits") or []:
+        if not isinstance(entry, dict) or entry.get("blocked"):
+            continue
+        try:
+            neighbour = int(entry.get("map_id"))
+        except (TypeError, ValueError):
+            continue
+        direction = entry.get("direction")
+        if direction:
+            exits[neighbour] = str(direction)
+    return exits
+
+
+def _obs_blocked_directions(observation: Optional[Dict[str, Any]]) -> set:
+    """Directions the tutorial currently disables on the observed map."""
+    if not isinstance(observation, dict):
+        return set()
+    map_block = observation.get("map")
+    if not isinstance(map_block, dict):
+        return set()
+    blocked = set()
+    for entry in map_block.get("exits") or []:
+        if isinstance(entry, dict) and entry.get("blocked") and entry.get("direction"):
+            blocked.add(str(entry["direction"]))
+    return blocked
+
+
 class _KnowledgeIndex:
     """Lazy, thread-safe index over the DofusDB cache files."""
 
     def __init__(self, cache_dir: Path) -> None:
         self.cache_dir = cache_dir
         self._lock = threading.Lock()
-        self._entries: Dict[str, List[Tuple[int, str, List[str], Dict[str, Any]]]] = {}
+        self._entries: Dict[
+            str, List[Tuple[int, Tuple[str, ...], List[str], Dict[str, Any], str]]] = {}
+        # Full searchable text is built on the first query that needs it.
+        # Name-prefix hits never look at descriptions, and normalizing the item
+        # descriptions is ~850 ms of the cold index build.
+        self._haystacks: Dict[str, List[str]] = {}
+        self._search_cache: "OrderedDict[Tuple[str, str, int], List[Dict[str, Any]]]" = OrderedDict()
 
-    def entries(self, kind: str) -> List[Tuple[int, str, List[str], Dict[str, Any]]]:
+    def entries(
+        self, kind: str
+    ) -> List[Tuple[int, Tuple[str, ...], List[str], Dict[str, Any], str]]:
         with self._lock:
             cached = self._entries.get(kind)
             if cached is not None:
@@ -118,21 +422,49 @@ class _KnowledgeIndex:
             records: List[Dict[str, Any]] = []
             if path.exists():
                 try:
-                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    payload = loads(path.read_bytes())
                     if isinstance(payload, list):
                         records = payload
-                except (json.JSONDecodeError, OSError) as exc:
+                except (ValueError, OSError) as exc:
                     logger.warning(f"Unreadable cache file {path}: {exc}")
-            entries: List[Tuple[int, str, List[str], Dict[str, Any]]] = []
+            entries: List[
+                Tuple[int, Tuple[str, ...], List[str], Dict[str, Any], str]] = []
             for record in records:
                 if not isinstance(record, dict):
                     continue
-                names = _localized_strings(record)
-                names_norm = [_normalize(n) for n in names if n]
-                haystack = " ".join(names_norm)
-                entries.append((int(record.get("id") or 0), haystack, names_norm, record))
+                names_norm = [_normalize(n) for n in _name_strings(record) if n]
+                # Descriptions stay searchable in the haystack but do not get
+                # the exact/prefix *name* bonus; keeping a second normalized
+                # copy of them in names_norm duplicated 86% of the item index
+                # text for a bonus a description should not receive. Their
+                # normalization is deferred to the first full-text query.
+                descriptions = tuple(d for d in _description_strings(record) if d)
+                names_hay = " ".join(names_norm)
+                stored = _index_record(kind, record)
+                entries.append((int(record.get("id") or 0), descriptions,
+                                names_norm, stored, names_hay))
             self._entries[kind] = entries
             return entries
+
+    def _haystacks_for(
+        self, kind: str,
+        entries: List[Tuple[int, Tuple[str, ...], List[str], Dict[str, Any], str]],
+    ) -> List[str]:
+        """Normalized names+descriptions, built once on the first full scan."""
+        with self._lock:
+            cached = self._haystacks.get(kind)
+            if cached is not None:
+                return cached
+            built: List[str] = []
+            stripped: List[Tuple[int, Tuple[str, ...], List[str],
+                                  Dict[str, Any], str]] = []
+            for record_id, descriptions, names_norm, stored, names_hay in entries:
+                built.append(" ".join(names_norm + [_normalize(d) for d in descriptions])
+                             if descriptions else names_hay)
+                stripped.append((record_id, (), names_norm, stored, names_hay))
+            self._haystacks[kind] = built
+            self._entries[kind] = stripped
+            return built
 
     def search(
         self,
@@ -143,32 +475,93 @@ class _KnowledgeIndex:
         query_norm = _normalize(query).strip()
         if not query_norm:
             return []
+        max_results = max(1, int(limit))
+        cache_key = (kind, query_norm, max_results)
+        with self._lock:
+            cached = self._search_cache.get(cache_key)
+            if cached is not None:
+                self._search_cache.move_to_end(cache_key)
+                return list(cached)
         tokens = [t for t in query_norm.split() if len(t) >= 2]
         kinds = _ANY_KIND_ORDER if kind == "any" else (kind,)
+        # A single token equal to the whole query cannot score when the query
+        # is absent from the haystack: every other term is a substring of the
+        # query. The haystack check is one C call; the old names-list scan ran
+        # first on every entry, including the overwhelming majority that do
+        # not match at all.
+        single_token = len(tokens) == 1 and tokens[0] == query_norm
+        token_count = len(tokens)
+
+        # A name-prefix match always outranks anything that only matches a
+        # description, an internal name substring, or individual tokens. When
+        # at least `limit` names start with the query, the top results are
+        # fully determined by the small name haystacks; the 16 MB description
+        # haystack does not need to be scanned.
+        if tokens:
+            bonus: List[Tuple[float, int, str, Dict[str, Any]]] = []
+            for k in kinds:
+                for record_id, _descriptions, names_norm, record, names_hay \
+                        in self.entries(k):
+                    if query_norm not in names_hay:
+                        continue
+                    if any(name.startswith(query_norm) for name in names_norm):
+                        score = 6.0 if query_norm in names_norm else 4.0
+                        score += 2.0 + 1.5 + 0.5 * token_count
+                        bonus.append((score, record_id, k, record))
+            if len(bonus) >= max_results:
+                bonus.sort(key=lambda item: (-item[0], item[1]))
+                out = [
+                    {"kind": k, "score": round(score, 2), **_compact(k, record)}
+                    for score, _record_id, k, record in bonus[:max_results]
+                ]
+                return self._cache_results(cache_key, out)
 
         results: List[Tuple[float, int, str, Dict[str, Any]]] = []
+        append = results.append
         for k in kinds:
-            for record_id, haystack, names_norm, record in self.entries(k):
-                score = 0.0
-                if names_norm:
-                    if query_norm in names_norm:
-                        score += 6.0
-                    elif any(name.startswith(query_norm) for name in names_norm):
-                        score += 4.0
-                if query_norm and query_norm in haystack:
-                    score += 2.0
-                token_hits = sum(1 for t in tokens if t in haystack)
-                if tokens and token_hits == len(tokens):
-                    score += 1.5
-                score += 0.5 * token_hits
-                if score > 0:
-                    results.append((score, record_id, k, record))
+            entries = self.entries(k)
+            haystacks = self._haystacks_for(k, entries)
+            for (record_id, _descriptions, names_norm, record, _names_hay), haystack \
+                    in zip(entries, haystacks):
+                if query_norm not in haystack:
+                    if single_token or not tokens:
+                        continue
+                    token_hits = 0
+                    for token in tokens:
+                        if token in haystack:
+                            token_hits += 1
+                    if not token_hits:
+                        continue
+                    score = 1.5 if token_hits == token_count else 0.0
+                    score += 0.5 * token_hits
+                    append((score, record_id, k, record))
+                    continue
+                # A prefix hit settles the name score; the exact-equality
+                # scan only runs for the few entries that start with it.
+                if any(name.startswith(query_norm) for name in names_norm):
+                    score = 6.0 if query_norm in names_norm else 4.0
+                else:
+                    score = 0.0
+                score += 2.0
+                if tokens:
+                    # The full query is present, so every token is too.
+                    score += 1.5 + 0.5 * token_count
+                append((score, record_id, k, record))
 
         results.sort(key=lambda item: (-item[0], item[1]))
-        return [
+        out = [
             {"kind": k, "score": round(score, 2), **_compact(k, record)}
-            for score, _record_id, k, record in results[: max(1, int(limit))]
+            for score, _record_id, k, record in results[:max_results]
         ]
+        return self._cache_results(cache_key, out)
+
+    def _cache_results(self, cache_key: Tuple[str, str, int],
+                       out: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        with self._lock:
+            self._search_cache[cache_key] = out
+            while len(self._search_cache) > 128:
+                self._search_cache.popitem(last=False)
+        return list(out)
 
 
 def _compact(kind: str, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -257,22 +650,32 @@ class ToolExecutor:
     def __init__(
         self,
         sentinel_url: str = "http://127.0.0.1:8890",
-        directive_url: str = "http://127.0.0.1:8893/directive",
+        directive_url: Optional[str] = None,
         cache_dir: Path = DEFAULT_CACHE_DIR,
         timeout: float = 6.0,
         knowledge_store: Optional[Path] = None,
         recorder: Optional[TrajectoryRecorder] = None,
+        fight_advisor=None,
     ) -> None:
         self.sentinel_url = sentinel_url.rstrip("/")
-        self.directive_url = directive_url
+        self.directive_url = directive_url or bridge_directive_url()
         self.timeout = float(timeout)
         self.recorder = recorder
         self.knowledge = _KnowledgeIndex(Path(cache_dir))
         # Discovered facts live here, not in the model and not in the cache. The
         # path is injectable so a test never writes to the user's real store.
         self.store = KnowledgeStore(knowledge_store)
+        # The fight estimator is shared with the autopilot so the guard and the
+        # tool answer from the same character sheet and the same cached estimates.
+        self.fights = fight_advisor
         self._zaaps_cache: Optional[List[Dict[str, Any]]] = None
         self._geo_index: Optional[Dict[str, Any]] = None
+        self._maps = _MapGraph()
+        # The autopilot already has the canonical SQLite store open. Prefer it
+        # for name -> id lookups so a named farm target does not build the 51 MiB
+        # JSON entity index; the index remains the fallback.
+        self.canonical_store: Any = None
+        self._fight_value_cache: Optional[Tuple[Any, Any, Path]] = None
 
     # -- HTTP helpers --------------------------------------------------------
 
@@ -285,16 +688,21 @@ class ToolExecutor:
         data = None
         headers = {"Accept": "application/json"}
         if body is not None:
-            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            data = dumps_bytes(body)
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8", errors="replace")
+            # Loopback must not go through HTTP_PROXY. With a VPN or a local proxy
+            # client running, HTTP_PROXY is set machine-wide, and urlopen() sent every
+            # directive to the bridge *through that proxy* — an extra hop, a second
+            # failure point, and a 502 whenever the proxy could not reach a port that
+            # only listens on this machine.
+            with opener_for(url).open(request, timeout=self.timeout) as response:
+                raw = response.read()
                 try:
-                    return True, json.loads(raw)
-                except json.JSONDecodeError:
-                    return True, {"raw": raw[:4000]}
+                    return True, loads(raw)
+                except ValueError:
+                    return True, {"raw": raw.decode("utf-8", errors="replace")[:4000]}
         except urllib.error.HTTPError as exc:
             return False, f"HTTP {exc.code} from {url}: {exc.read()[:400].decode('utf-8', errors='replace')}"
         except urllib.error.URLError as exc:
@@ -326,7 +734,15 @@ class ToolExecutor:
             return result
 
         try:
-            result = self._dispatch(tool, validated, source=source, instance=instance)
+            routed, route = self._route_nav(validated, observation) if (
+                tool == "nav.goto" and isinstance(validated, dict)) else (validated, None)
+            if route and route.get("already_here"):
+                result = ToolResult(tool=tool, ok=True, source=source, data=route)
+            else:
+                result = self._dispatch(tool, routed, source=source, instance=instance,
+                                        observation=observation)
+                if route and isinstance(result.data, dict):
+                    result.data["route"] = route
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller and the log
             result = ToolResult(
                 tool=tool, ok=False, error=f"{type(exc).__name__}: {exc}", source=source)
@@ -344,7 +760,286 @@ class ToolExecutor:
                      observation_age_ms, observation_source)
         return result
 
+    def snapshot(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Read the current game state without recording it as a step.
+
+        Observation polling is not a decision. Recording it would put a
+        ``state.snapshot`` row in the corpus for every re-read the loop makes
+        while waiting for a walk to land, and a policy trained on those learns
+        to spend turns looking instead of acting.
+        """
+        try:
+            result = self._dispatch("state.snapshot", {}, source="live", instance=instance)
+        except Exception:  # noqa: BLE001 - a probe must never kill the loop
+            return None
+        if not result.ok or not isinstance(result.data, dict):
+            return None
+        snap = result.data.get("snapshot")
+        if isinstance(snap, dict) and snap:
+            return snap
+        response = result.data.get("response")
+        inner = response.get("result") if isinstance(response, dict) else None
+        if isinstance(inner, dict):
+            data = inner.get("data")
+            if isinstance(data, dict) and data:
+                return data
+        return None
+
+    def fight_state(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Read the live combat board without recording it as a step.
+
+        Same contract as ``snapshot``: a read is not a decision. This exists so combat
+        code has one place that knows the bridge wraps the client payload as
+        ``response["result"]["data"]`` instead of every caller rediscovering it.
+        """
+        try:
+            result = self._dispatch("fight.state", {}, source="live", instance=instance)
+        except Exception:  # noqa: BLE001 - a probe must never kill the loop
+            return None
+        if not result.ok or not isinstance(result.data, dict):
+            return None
+        response = result.data.get("response")
+        inner = response.get("result") if isinstance(response, dict) else None
+        data = inner.get("data") if isinstance(inner, dict) else None
+        return data if isinstance(data, dict) and data else None
+
+    def _attach_observation(self, result: ToolResult) -> None:
+        """Attach the normalized observation and contract to a fight.state read.
+
+        This is the live half of the training/live contract: the model gets the
+        facts the client actually sent (level, HP, spells, enemy spells) plus a
+        contract naming what is missing, so it cannot fill a low-level character
+        with a remembered level-200 build. A read failure is reported, not
+        raised: the raw fight state is still useful evidence.
+        """
+        if not result.ok or not isinstance(result.data, dict):
+            return
+        response = result.data.get("response")
+        inner = response.get("result") if isinstance(response, dict) else None
+        data = inner.get("data") if isinstance(inner, dict) else None
+        if not isinstance(data, dict):
+            return
+        observation = None
+        try:
+            from combat.battle_solver import Board
+            from combat.observation import build_observation, validate_observation
+
+            board = Board.from_fight_state(data)
+            observation = build_observation(board, source="live")
+            contract = validate_observation(observation)
+        except Exception as exc:  # noqa: BLE001 - a read probe must not kill the loop
+            contract = {
+                "version": 1, "ok": False, "actionable": False,
+                "value_ready": False,
+                "errors": [f"observation_failed:{type(exc).__name__}: {exc}"],
+                "warnings": [],
+            }
+        if observation is not None:
+            data["observation"] = observation
+        data["contract"] = contract
+        result.data["observation"] = observation
+        result.data["contract"] = contract
+
+    def _fight_value(self):
+        """Load the learned encounter value head once, or report why not.
+
+        The path is overridable so an experiment can point the live agent at a
+        candidate checkpoint without touching the installed default.
+        """
+        if self._fight_value_cache is not None:
+            return self._fight_value_cache
+        from combat.encounter.checkpoint import load_params_config
+
+        configured = os.environ.get("DOFUS_FIGHT_VALUE")
+        path = Path(configured) if configured else REPO_ROOT / "models" / "encounter_selfplay.pkl"
+        if not path.exists():
+            self._fight_value_cache = (None, None, path)
+            return self._fight_value_cache
+        try:
+            params, cfg = load_params_config(path)
+            self._fight_value_cache = (params, cfg, path)
+        except Exception as exc:  # noqa: BLE001 - a bad checkpoint must not kill the fight loop
+            logger.warning("fight value checkpoint unavailable (%s): %s", path, exc)
+            self._fight_value_cache = (None, None, path)
+        return self._fight_value_cache
+
+    def fight_advisor(self):
+        """The shared estimator, created on first use.
+
+        Loading the class spellbook and the canonical DB costs seconds, so it is
+        deferred until something actually asks about a monster.
+        """
+        if self.fights is None:
+            from combat.fight_estimate import FightAdvisor
+
+            self.fights = FightAdvisor()
+        return self.fights
+
+    def character_report(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Read the live character sheet (stats, spells, gear) without acting.
+
+        Same contract as ``snapshot``: a read is not a decision, so this never
+        records a step. The payload is exactly what the advisor's rules consume.
+        """
+        try:
+            result = self._directive(
+                "CHARACTER_REPORT", "debug.character",
+                {"spell_grades": True, "spell_effects": False},
+                "live", instance)
+        except Exception:  # noqa: BLE001 - a probe must never kill the loop
+            return None
+        data = self._client_payload(result)
+        if not data or not isinstance(data.get("character"), dict):
+            return None
+        return data
+
+    def fight_estimate(self, args: Dict[str, Any], source: str = "local",
+                       observation: Optional[Dict[str, Any]] = None,
+                       instance: Optional[str] = None) -> ToolResult:
+        """Estimate one monster group. Read-only: it never joins or casts.
+
+        A blocked estimate is still a successful read: ``ok`` says the tool
+        answered, ``allowed`` and ``blocked_reason`` say whether the fight may
+        start. Only a call that could not be answered at all is ``ok=False``.
+        """
+        advisor = self.fight_advisor()
+        if advisor.character is None:
+            report = self.character_report(instance)
+            if report is not None:
+                advisor.use_character_report(report)
+        if not isinstance(observation, dict) or not observation:
+            observation = self.snapshot(instance)
+        estimate = advisor.estimate(
+            observation,
+            group_id=args.get("group_id"),
+            monster=args.get("monster"),
+        )
+        unavailable = estimate.get("status") == "unavailable"
+        return ToolResult(
+            tool="fight.estimate",
+            ok=not unavailable,
+            source=source,
+            data=estimate,
+            error=str(estimate.get("blocked_reason")) if unavailable else None,
+        )
+
+    def fight_plan(self, args: Dict[str, Any], source: str = "local") -> ToolResult:
+        """Plan one combat turn from the live board. Read-only: it never acts.
+
+        The solver is imported here rather than at module import so the agent can
+        start without the combat/data stack loaded. Every answer carries the
+        normalized live observation and its contract. The learned ranker is
+        opt-in and refuses to run when the observation is missing the stats or
+        enemy spell facts it would otherwise have to guess.
+        """
+        from combat.battle_solver import BattleSolver, Board
+        from combat.observation import build_observation, validate_observation
+
+        payload = self.fight_state()
+        if not payload:
+            return ToolResult(
+                tool="fight.plan", ok=False, source=source,
+                error="no live fight board: the client is not in a fight",
+            )
+        ranker = str(args.get("ranker") or "solver")
+        rank_with_value = bool(args.get("rank_with_value", False))
+        if rank_with_value and ranker == "solver":
+            ranker = "value"
+        if ranker == "value":
+            rank_with_value = True
+
+        observation = None
+        contract = None
+        try:
+            board = Board.from_fight_state(payload)
+            observation = build_observation(board, source="live")
+            contract = validate_observation(observation)
+            solver = BattleSolver(
+                beam_width=int(args.get("beam_width", 16) or 16),
+                max_actions=int(args.get("max_actions", 4) or 4),
+            )
+            top_k = int(args.get("top_k", 1) or 1)
+            checkpoint = None
+            refused = None
+            if rank_with_value:
+                top_k = max(top_k, 5)
+                plans = solver.plan_candidates(board, top_k)
+                checkpoint = None
+                params = cfg = None
+                if not contract["value_ready"]:
+                    refused = "observation_not_value_ready"
+                else:
+                    params, cfg, path = self._fight_value()
+                    checkpoint = str(path)
+                    if params is None:
+                        refused = "checkpoint_missing"
+                if refused is not None:
+                    data = {
+                        "plans": [plan.as_dict() for plan in plans],
+                        "value_ranked": False,
+                        "value_checkpoint": checkpoint,
+                        "value_refused": refused,
+                    }
+                else:
+                    from combat.plan_value import rank_plans
+
+                    ranked = rank_plans(params, board, plans, cfg)
+                    data = {
+                        "plans": [
+                            {"rank_score": round(score, 4), **plan.as_dict()}
+                            for score, plan in ranked
+                        ],
+                        "value_ranked": True,
+                        "value_checkpoint": checkpoint,
+                    }
+            elif top_k > 1:
+                plans = solver.plan_candidates(board, top_k)
+                data = {"plans": [plan.as_dict() for plan in plans]}
+            else:
+                data = solver.plan_turn(board).as_dict()
+            data["observation_version"] = observation["schema_version"]
+            data["observation"] = observation
+            data["contract"] = contract
+            data["ranker"] = {
+                "requested": ranker,
+                "used": bool(data.get("value_ranked")),
+                "scope": "encounter_v3_synthetic",
+                "live_calibrated": False,
+                "checkpoint": checkpoint,
+                "refused": refused,
+            }
+        except Exception as exc:  # noqa: BLE001 - a bad board must not kill the loop
+            return ToolResult(
+                tool="fight.plan", ok=False, error=str(exc), source=source,
+                data={"observation": observation, "contract": contract}
+                if observation is not None else None,
+            )
+        return ToolResult(tool="fight.plan", ok=True, data=data, source=source)
+
     # -- internals -----------------------------------------------------------
+
+    @staticmethod
+    def _client_payload(result: ToolResult) -> Optional[Dict[str, Any]]:
+        """The game payload inside a directive envelope.
+
+        The bridge wraps answers as ``response.result.data`` and reports the
+        *game's* rejection in ``response.result.ok``, which is a different flag
+        from the transport one on ``ToolResult.ok``. Read both or a refused
+        directive looks like an empty success.
+        """
+        if not result.ok or not isinstance(result.data, dict):
+            return None
+        response = result.data.get("response")
+        if not isinstance(response, dict):
+            return None
+        inner = response.get("result")
+        if isinstance(inner, dict):
+            if inner.get("ok") is False:
+                return None
+            data = inner.get("data")
+            return data if isinstance(data, dict) else None
+        data = response.get("data")
+        return data if isinstance(data, dict) else None
 
     def _record(
         self,
@@ -372,8 +1067,68 @@ class ToolExecutor:
             source=result.source,
         )
 
+    def _route_nav(
+        self,
+        args: Dict[str, Any],
+        observation: Optional[Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Turn a destination map into the single step the client can take.
+
+        The client walks to a border and crosses it; it cannot walk a route. So
+        `nav.goto {"map_id": far_away}` is split here: the destination stays the
+        caller's intent, while the copy handed to the client carries the next hop
+        and its direction. When the map is adjacent (as the snapshot itself says),
+        only the direction is added.
+        """
+        target_raw = args.get("map_id")
+        if target_raw is None or args.get("direction"):
+            return args, None
+        try:
+            target = int(target_raw)
+        except (TypeError, ValueError):
+            return args, None
+        here = _obs_map_id(observation)
+        if here is None:
+            return args, None
+        if target == here:
+            # A bare map target on the map we already stand on is a no-op. A cell,
+            # NPC or coordinate alongside it still means "do that here", so the
+            # client keeps the call.
+            if args.get("cell") is None and args.get("npc_id") is None \
+                    and args.get("npc") is None and args.get("x") is None:
+                return args, {"already_here": True, "map_id": here}
+            return args, None
+
+        direction = _obs_map_exits(observation).get(target)
+        if direction:
+            routed = dict(args)
+            routed["direction"] = direction
+            return routed, {"requested_map_id": target, "from_map_id": here,
+                            "direction": direction, "next_map_id": target,
+                            "hops_remaining": 1, "source": "observation"}
+
+        step = self._maps.hop(here, target, blocked_first=_obs_blocked_directions(observation))
+        if step is None:
+            # Not adjacent and not in the exported graph: send the call anyway so
+            # the client's own error names the exits it does have, which is better
+            # evidence in the log than a silent substitution. A tutorial gate can
+            # also make every route's first step unusable; the client then refuses
+            # this call naming the restriction, which is the evidence we need.
+            return args, {"requested_map_id": target, "from_map_id": here,
+                          "routable": False,
+                          "tutorial_blocked": sorted(
+                              _obs_blocked_directions(observation)) or None}
+        direction, next_map, hops = step
+        routed = dict(args)
+        routed["map_id"] = next_map
+        routed["direction"] = direction
+        return routed, {"requested_map_id": target, "from_map_id": here,
+                        "direction": direction, "next_map_id": next_map,
+                        "hops_remaining": hops, "source": "map_index"}
+
     def _dispatch(self, tool: str, args: Dict[str, Any], source: str,
-                  instance: Optional[str] = None) -> ToolResult:
+                  instance: Optional[str] = None,
+                  observation: Optional[Dict[str, Any]] = None) -> ToolResult:
         spec = TOOLS_BY_NAME[tool]
         if spec.backend == "local":
             if tool == "knowledge.search":
@@ -384,13 +1139,25 @@ class ToolExecutor:
                 return self._knowledge_remember(args, source)
             if tool == "knowledge.forget":
                 return self._knowledge_forget(args, source)
+            if tool == "fight.plan":
+                return self.fight_plan(args, source)
+            if tool == "fight.estimate":
+                return self.fight_estimate(args, source, observation, instance)
             return ToolResult(tool=tool, ok=False, error=f"no local handler for {tool}", source=source)
         if spec.backend == "sentinel":
             if tool == "nav.goto":
                 return self._nav_goto(args, source)
             return ToolResult(tool=tool, ok=False, error=f"no sentinel handler for {tool}", source=source)
         if spec.backend == "directive":
-            return self._directive(spec.directive or tool.upper(), tool, args, source, instance)
+            if tool in ("farm.start", "fight.join"):
+                resolved, error = self._resolve_targets(tool, dict(args))
+                if error is not None:
+                    return ToolResult(tool=tool, ok=False, error=error, source=source)
+                args = resolved
+            result = self._directive(spec.directive or tool.upper(), tool, args, source, instance)
+            if tool == "fight.state":
+                self._attach_observation(result)
+            return result
         return ToolResult(tool=tool, ok=False, error=f"unknown backend '{spec.backend}'", source=source)
 
     # -- local handlers ------------------------------------------------------
@@ -415,6 +1182,69 @@ class ToolExecutor:
         return ToolResult(tool="knowledge.forget", ok=True, source=source,
                           data={"removed": removed})
 
+    def _resolve_entity_id(self, text: str, kind: str) -> Optional[int]:
+        """First knowledge id for a name; the client needs numeric ids."""
+        if self.canonical_store is not None:
+            try:
+                hits = self.canonical_store.find_entity(kind, text, limit=1)
+                if hits:
+                    return int(hits[0]["id"])
+            except Exception:  # noqa: BLE001 - fall back to the lazy index
+                pass
+        try:
+            hits = self.knowledge.search(text, kind, 1)
+        except Exception:  # noqa: BLE001 - an index problem is a resolution miss
+            return None
+        if not hits:
+            return None
+        try:
+            return int(hits[0].get("id"))
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_targets(self, tool: str, args: Dict[str, Any]
+                         ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Turn id_or_name arguments into ids before they reach the page.
+
+        The client parses farm.start.monster with parseInt; a name used to become
+        NaN and silently enable the generic farm loop instead of the named mob.
+        An unresolvable target is an error, never a licence to farm anything.
+        """
+        if tool == "farm.start":
+            for key, kind in (("monster", "monster"), ("resource", "item")):
+                raw = args.get(key)
+                if raw is None or isinstance(raw, (int, float)):
+                    continue
+                text = str(raw).strip()
+                if not text:
+                    continue
+                if text.lstrip("-").isdigit():
+                    args[key] = int(text)
+                    continue
+                rid = self._resolve_entity_id(text, kind)
+                if rid is None and kind == "monster":
+                    # "farm blé" names a resource; retry as an item and switch.
+                    rid = self._resolve_entity_id(text, "item")
+                    if rid is not None:
+                        args.pop("monster", None)
+                        args["resource"] = rid
+                        continue
+                if rid is None:
+                    return None, f"unknown {kind}: {text}"
+                args[key] = rid
+        elif tool == "fight.join":
+            raw = args.get("monster")
+            if isinstance(raw, str) and raw.strip():
+                text = raw.strip()
+                if text.lstrip("-").isdigit():
+                    args["monster"] = int(text)
+                else:
+                    rid = self._resolve_entity_id(text, "monster")
+                    if rid is None:
+                        return None, f"unknown monster: {text}"
+                    args["monster"] = rid
+        return args, None
+
     def _knowledge_search(self, args: Dict[str, Any], source: str) -> ToolResult:
         hits = self.knowledge.search(
             str(args.get("query", "")),
@@ -437,8 +1267,8 @@ class ToolExecutor:
         if not path.exists():
             return []
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            payload = loads(path.read_bytes())
+        except (ValueError, OSError):
             return []
         if not isinstance(payload, list):
             return []
@@ -545,7 +1375,7 @@ class ToolExecutor:
                 map_to_sub = self._geography_index()["map_to_sub"]
 
         matched: List[Dict[str, Any]] = []
-        for _record_id, haystack, _names, record in entries:
+        for _record_id, haystack, _names, record, _names_hay in entries:
             if dungeon_only and not record.get("is_dungeon"):
                 continue
             quest_level = int(record.get("level_min") or 0)

@@ -1,0 +1,23 @@
+{"confidence": 1.0, "intent": "auto", "lang": "fr", "origin": "seed-3", "slots": {}, "source": "seed", "text": "mode automatique"}
+{"confidence": 1.0, "intent": "chat", "lang": "fr", "origin": "fr-14", "slots": {"channel": "team", "message": "bonjour"}, "source": "gold", "text": "dis bonjour dans le chat d'équipe"}
+{"confidence": 1.0, "intent": "chat", "lang": "fr", "origin": "fr-14~aug", "slots": {"channel": "team", "message": "bien joué"}, "source": "gold", "text": "dis bien joué dans le chat d'équipe"}
+{"confidence": 1.0, "intent": "chat", "lang": "fr", "origin": "fr-14~aug", "slots": {"channel": "team", "message": "salut"}, "source": "gold", "text": "dis salut dans le chat d'équipe"}
+{"confidence": 1.0, "intent": "chat", "lang": "fr", "origin": "fr-14~aug", "slots": {"channel": "team", "message": "bravo"}, "source": "gold", "text": "dis bravo dans le chat d'équipe"}
+{"confidence": 1.0, "intent": "farm", "lang": "es", "origin": "seed-7", "slots": {"action": "start"}, "source": "seed", "text": "farmear"}
+{"confidence": 1.0, "intent": "fight", "lang": "fr", "origin": "fr-10", "slots": {"action": "join"}, "source": "gold", "text": "rejoins le combat"}
+{"confidence": 1.0, "intent": "follow", "lang": "fr", "origin": "fr-02", "slots": {}, "source": "gold", "text": "suis-moi"}
+{"confidence": 1.0, "intent": "inventory", "lang": "fr", "origin": "fr-16", "slots": {"action": "list"}, "source": "gold", "text": "montre mon inventaire"}
+{"confidence": 1.0, "intent": "knowledge", "lang": "fr", "origin": "fr-08", "slots": {"query": "Bouftou"}, "source": "gold", "text": "cherche Bouftou"}
+{"confidence": 1.0, "intent": "knowledge", "lang": "fr", "origin": "fr-08~aug", "slots": {"query": "Dragoeuf"}, "source": "gold", "text": "cherche Dragoeuf"}
+{"confidence": 1.0, "intent": "knowledge", "lang": "fr", "origin": "fr-08~aug", "slots": {"query": "Tofu"}, "source": "gold", "text": "cherche Tofu"}
+{"confidence": 1.0, "intent": "market", "lang": "fr", "origin": "fr-12", "slots": {"action": "scan", "item": "Laine de Bouftou"}, "source": "gold", "text": "scan le prix de la Laine de Bouftou"}
+{"confidence": 1.0, "intent": "market", "lang": "fr", "origin": "fr-12~aug", "slots": {"action": "scan", "item": "Minerai de Cuivre"}, "source": "gold", "text": "scan le prix de la Minerai de Cuivre"}
+{"confidence": 1.0, "intent": "market", "lang": "fr", "origin": "fr-12~aug", "slots": {"action": "scan", "item": "Cuir de Sanglier"}, "source": "gold", "text": "scan le prix de la Cuir de Sanglier"}
+{"confidence": 1.0, "intent": "market", "lang": "fr", "origin": "fr-12~aug", "slots": {"action": "scan", "item": "Plume de Tofu"}, "source": "gold", "text": "scan le prix de la Plume de Tofu"}
+{"confidence": 1.0, "intent": "quest", "lang": "fr", "origin": "seed-5", "slots": {"action": "run"}, "source": "seed", "text": "fais les quêtes"}
+{"confidence": 1.0, "intent": "state", "lang": "fr", "origin": "fr-15", "slots": {}, "source": "gold", "text": "où suis-je ?"}
+{"confidence": 1.0, "intent": "stop", "lang": "fr", "origin": "fr-01", "slots": {"action": "all"}, "source": "gold", "text": "arrête tout"}
+{"confidence": 1.0, "intent": "travel", "lang": "fr", "origin": "fr-05", "slots": {"zaap": "Astrub"}, "source": "gold", "text": "zaap Astrub"}
+{"confidence": 1.0, "intent": "travel", "lang": "fr", "origin": "fr-05~aug", "slots": {"zaap": "Pandala"}, "source": "gold", "text": "zaap Pandala"}
+{"confidence": 1.0, "intent": "travel", "lang": "fr", "origin": "fr-05~aug", "slots": {"zaap": "Frigost"}, "source": "gold", "text": "zaap Frigost"}
+{"confidence": 1.0, "intent": "unknown", "lang": "es", "origin": "commander-9", "slots": {}, "source": "commander", "text": "estas ahi ? responde rapido"}

@@ -103,6 +103,12 @@ class KnowledgeStore:
             pass
 
     def _maybe_compact(self) -> None:
+        """Bound the append-only log without needing an operator.
+
+        Confirming a fact appends a line per confirmation; left alone, a long
+        session turns a small fact set into a large file. Compaction is cheap,
+        keeps every live fact, and drops only facts past their TTL.
+        """
         self._writes += 1
         if self._writes % COMPACT_EVERY:
             return

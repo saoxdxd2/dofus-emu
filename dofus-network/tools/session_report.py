@@ -24,6 +24,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+try:
+    from tools.quest_advance_shapes import _page_answer, shape as quest_shape
+except Exception:      # run as a script: tools/ is sys.path[0], not the repo root
+    from quest_advance_shapes import _page_answer, shape as quest_shape
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TRAJECTORY = REPO_ROOT / "trajectories" / "default.jsonl"
 DEFAULT_AUTOPILOT = Path(os.environ.get("LOCALAPPDATA", "")) / "DofusFarm" / "autopilot.jsonl"
@@ -68,6 +73,184 @@ def _obs(row: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(candidate, dict):
             return candidate
     return {}
+
+
+def _observations(rows: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, Any]]:
+    """One observation per row, in the order the row carries it."""
+    for row in rows:
+        for key in ("observation", "obs_before", "obs_after", "obs", "snapshot"):
+            node = row.get(key)
+            if isinstance(node, dict):
+                yield node
+                break
+
+
+def witnesses(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """The live readouts for the instruments added on 2026-10-27, in one place.
+
+    Each of G9 (identity), G29 (observed quest graph), G32/G33 (the offer and the
+    accept) writes a different row, and a run that predates one of them must say so
+    instead of printing a zero that reads like success. `verdicts` is the sentence
+    the next baseline quotes. The page build is counted first: a client that was not
+    restarted keeps the previous script, and no absence verdict means anything until
+    the build says the new page is loaded.
+    """
+    knowledge: Counter = Counter()
+    observed_from: Counter = Counter()
+    builds: Counter = Counter()
+    catalog = {"rows": 0, "quests": 0, "steps": 0, "objectives": 0,
+               "status_rows": 0, "truncated": 0, "dialog_offers": 0}
+    identity: Counter = Counter()
+    identity_names: List[str] = []
+    accept = {"rows": 0, "ok": 0, "start_rows": 0, "start_in_dialog": 0}
+    shadow = {"status": None, "rows": 0, "usable": 0, "agree_intent": 0,
+              "agree_command": 0, "would_override": 0, "examples": []}
+    page: Counter = Counter()
+    rows = list(rows)
+
+    for row in rows:
+        if row.get("kind") == "command_shadow_status":
+            shadow["status"] = {key: row.get(key) for key in
+                                ("available", "error", "model", "mode")}
+        elif row.get("kind") == "command_shadow":
+            shadow["rows"] += 1
+            shadow["usable"] += bool(row.get("usable"))
+            shadow["agree_intent"] += bool(row.get("agree_intent"))
+            shadow["agree_command"] += bool(row.get("agree_command"))
+            if row.get("would_override"):
+                shadow["would_override"] += 1
+                if len(shadow["examples"]) < 3:
+                    shadow["examples"].append(str(row.get("text"))[:60])
+        if row.get("kind") != "identity":
+            continue
+        event = str(row.get("event") or "unknown")
+        identity[event] += 1
+        name = row.get("name")
+        seen = row.get("seen")
+        if not name and isinstance(seen, dict):
+            name = seen.get("name")
+        if name and len(identity_names) < 8 and str(name) not in identity_names:
+            identity_names.append(str(name))
+
+    for obs in _observations(rows):
+        build = obs.get("agent_build")
+        builds[str(build) if build else "missing"] += 1
+        kn = obs.get("knowledge")
+        status = kn.get("status") if isinstance(kn, dict) else None
+        knowledge[str(status or "missing")] += 1
+        if status == "observed" and isinstance(kn, dict):
+            observed_from[str(kn.get("observed_from") or "unknown")] += 1
+        cat = obs.get("quests_catalog")
+        if isinstance(cat, list):
+            catalog["rows"] += 1
+            for quest in cat:
+                if not isinstance(quest, dict):
+                    continue
+                catalog["quests"] += 1
+                if quest.get("truncated"):
+                    catalog["truncated"] += 1
+                for step in quest.get("steps") or []:
+                    if not isinstance(step, dict):
+                        continue
+                    catalog["steps"] += 1
+                    catalog["objectives"] += sum(
+                        1 for obj in (step.get("objectives") or [])
+                        if isinstance(obj, dict))
+        state = obs.get("quest_catalog_status")
+        if isinstance(state, dict):
+            catalog["status_rows"] += 1
+            if state.get("truncated"):
+                catalog["truncated"] += 1
+        dialog = obs.get("dialog")
+        if isinstance(dialog, dict) and dialog.get("start_quest") is not None:
+            catalog["dialog_offers"] += 1
+
+    for row in rows:
+        if row.get("tool") != "quest.advance":
+            continue
+        args = row.get("args") if isinstance(row.get("args"), dict) else {}
+        if args.get("accept") is True:
+            accept["rows"] += 1
+            if row.get("ok") is not False:
+                accept["ok"] += 1
+        else:
+            shp = quest_shape(args)
+            if shp == "start":
+                accept["start_rows"] += 1
+                obs = _obs(row)
+                dialog = obs.get("dialog")
+                if obs.get("in_dialog") is True or (
+                        isinstance(dialog, dict) and dialog.get("open")):
+                    accept["start_in_dialog"] += 1
+        page[str(_page_answer(row)[1])[:60]] += 1
+
+    verdicts: List[str] = []
+    if not builds:
+        verdicts.append("page build: no observation carried agent_build")
+    else:
+        verdicts.append("page build: %s" % ", ".join(
+            "%s=%d" % (name, count) for name, count in builds.most_common(4)))
+    if not knowledge:
+        verdicts.append("knowledge: no observation carried a knowledge block")
+    else:
+        verdicts.append(
+            "knowledge: %d observed (catalog %d, file %d); %d not in store, "
+            "%d collision"
+            % (knowledge.get("observed", 0), observed_from.get("catalog", 0),
+               observed_from.get("file", 0),
+               knowledge.get("objective_not_in_store", 0),
+               knowledge.get("objective_id_collision", 0)))
+    if catalog["rows"] == 0:
+        verdicts.append("quests_catalog: none in these rows -- the page build "
+                        "predates G29")
+    else:
+        verdicts.append(
+            "quests_catalog: %d row(s), %d quest(s), %d objective(s)%s"
+            % (catalog["rows"], catalog["quests"], catalog["objectives"],
+               " (truncated)" if catalog["truncated"] else ""))
+    if identity.get("bound", 0) == 0 and identity.get("drift", 0) == 0:
+        verdicts.append("identity: no bound/drift rows -- the run predates the guard "
+                        "or never bound")
+    else:
+        verdicts.append(
+            "identity: bound %d, drift %d%s"
+            % (identity.get("bound", 0), identity.get("drift", 0),
+               (" (" + ", ".join(identity_names) + ")") if identity_names else ""))
+    if accept["rows"] == 0 and catalog["dialog_offers"] == 0:
+        verdicts.append("accept: no explicit accept rows and no dialog carried "
+                        "start_quest")
+    else:
+        verdicts.append(
+            "accept: %d row(s) (ok %d), %d dialog offer(s) seen, %d start-shaped "
+            "inside a dialog; page %s"
+            % (accept["rows"], accept["ok"], catalog["dialog_offers"],
+               accept["start_in_dialog"], dict(page.most_common(4))))
+    status = shadow["status"]
+    if status is None and shadow["rows"] == 0:
+        verdicts.append("command_shadow: no status/row -- run did not request "
+                        "--command-shadow")
+    elif status is not None and not status.get("available"):
+        verdicts.append("command_shadow: unavailable (%s)"
+                        % (status.get("error") or "unknown"))
+    else:
+        verdicts.append(
+            "command_shadow: %d row(s), usable %d, agree I/C %d/%d, would override %d%s"
+            % (shadow["rows"], shadow["usable"], shadow["agree_intent"],
+               shadow["agree_command"], shadow["would_override"],
+               (" (" + "; ".join(shadow["examples"]) + ")")
+               if shadow["examples"] else ""))
+    return {
+        "knowledge": dict(knowledge),
+        "observed_from": dict(observed_from),
+        "builds": dict(builds),
+        "catalog": catalog,
+        "identity": dict(identity),
+        "identity_names": identity_names,
+        "accept": accept,
+        "command_shadow": shadow,
+        "page": dict(page.most_common(8)),
+        "verdicts": verdicts,
+    }
 
 
 def _pct(values: List[float], pct: float) -> Optional[float]:
@@ -251,6 +434,7 @@ def summarise(path: Path, gap_s: float = 180.0) -> Dict[str, Any]:
         "intervention_rows": len(interventions),
         "recoveries": {k: v for k, v in decision_actions.items()
                        if k in RECOVERY_ACTIONS},
+        "witnesses": witnesses(rows),
         "per_session": summaries,
     }
 
@@ -280,6 +464,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                  report["maps"],
                  report.get("manual_interventions", 0),
                  report["recoveries"] or "{}"))
+        for line in (report.get("witnesses") or {}).get("verdicts") or []:
+            print("  " + line)
         if (report["objectives_completed"] == 0 and report["ready_steps"]
                 and report["objectives_measured"]):
             # The two readings that a total cannot tell apart: nothing was ever ready,

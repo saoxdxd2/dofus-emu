@@ -129,6 +129,59 @@ re-observe, not a fixed sleep.
 * **encoder** — the 30M language encoder via `ai/encoder_serve.py`; `--model-dir`
   defaults to `models/encoder30_v15`.
 
+Training roadmap: `docs/TRAINING_PLAN.md` — one shared ≤30M total / ≤10M active brain trained on the harness first,
+then hardcoded decisions replaced component by component (Kaggle GPU).
+
+**Measured learned-vs-rule face-off (2026-10-27).** `python tools/policy_faceoff.py --seeds 30
+--steps 300` (noise + travel cost): the learned tool policy **wins 21, ties 9, loses 0**, mean
+**66.10 vs 64.87 quests (+1.23, ~1.9 %)**. At 600 steps over 20 seeds it wins 17, ties 3, loses 0
+(+1.90 quests). The gain is real but small and **simulation-only**: the harness seeds the planner's
+client-confirmed set with the curriculum because the symbolic observation does not report startable
+quests, while the live G31 guard is stricter. The shipped default therefore remains `rule` until a
+live benchmark justifies switching; the learned planner is a distillation of the same teacher, so it
+cannot exceed it by much.
+
+**Command parser (offline, 2026-10-27).** `ai/train_command_encoder.py` trains 0.29M heads on
+the frozen 24.9M domain trunk over `data/commands` (1,619/20/23; 13 intents; eval texts and
+full-phrase near-copies excluded from train and gated). On the 26 held-out base phrasings the
+learned parser reaches **84.6% exact commands vs the rule's 53.8%** (intent 96.2% vs 69.2%);
+per-row, including entity-swapped copies, test **intent 100% vs 56.5%**, exact **65.2% vs
+34.8%**. It is **not acting**: `parse_command` still defaults to the rule. A read-only shadow is
+shipped (`--command-shadow auto`): it logs one `command_shadow` row per goal with both
+parses and whether the model would override; fail-open when torch/the artifact is absent.
+`tools/command_shadow_report.py` runs the same comparison over recorded logs: 7 real goals /
+5,721 uses, 2 override goals (4,300 uses); the dominant "do all the quests" is rule
+`quest/list` and model `quest/run` at 0.96. `tools/session_report.py` prints a
+`command_shadow` witness (rows, agreement, overrides), so the live readout says whether the
+shadow ran. `tools/command_replay.py` pairs goals with their executed steps: 71 groups / 5,721 steps.
+The objective counter is flat, but **46/71 groups advanced by the page verdict** (25 stalled);
+of the 10 groups the model would override, **9 advanced and 9 executed `quest.advance`**.
+The model would change the planner's goal mode on **0/7** real goals (6/7 agree; the only
+high-confidence overrides are quest list->run inside the same mode). `intent_tool` now maps
+the parse to a registered tool; **9/10 override groups executed the model's tool**
+(`quest.advance`) versus 11/61 non-override groups executing the rule's `quest.list`.
+The shadow artifact is now a **routed per-instance adapter** (`router.json`, similarity 0.95):
+the base answers everything away from the 16 recorded user goals, the fine-tuned heads answer
+the exemplars. All 7 real goals map to the expected tool; the rule now also routes `can you play the game ?`
+to Full Auto (7/7 mode agreement, 5 quest action overrides / 5,717 uses). Base 43/43, adapter
+16/16 and a 10-prompt canary are row-for-row identical. Rollback: remove `router.json` (falls back to the
+action adapter in `heads.pt`) or restore `heads_base.pt`. The adapter guard now includes the
+action canary (`canary_accepts`), so future per-instance updates cannot change
+list/advance/stop/sell/travel/follow. The
+25 stalled groups are **24 short failures + 1 fight-start, no read loops** (advanced groups
+are long and two-thirds reads), so the parser is not the stall fix; the next live session
+must diagnose the short terminations. The command shadow is deployable: `command_encoder_int8.onnx` (25.8 MB, one graph with both
+head sets) + `command_onnx.json` + tokenizer, loaded by `agent/command_onnx.py`; the FP32
+graph/torch heads are excluded from the installer. INT8 parity is 0/59 effective rows and the
+torch-free wrapper matches torch on 0/76 texts. `live_ready` reports the ONNX shadow + router
+ready; the release build is green (setup 100.1 MB). The client bridge is the only blocker, so
+no live session has used the hook yet. `tools/live_evidence.py`
+turns that into one command: preflight, bounded autopilot with `--command-shadow auto`, then a
+combined session/shadow/replay report plus the autopilot summary (`--report-only` re-renders an existing log). The packaged
+copy was extracted from setup.exe and its report path verified end-to-end; a relative-log bug
+was found and fixed (`resolve_log`). Remaining base failures are `all` for stop, a held-out
+knowledge entity, and the French `d'équipe` channel span. See `docs/TRAINING_PLAN.md`.
+
 ---
 
 ## 5. Model inventory (what is actually loaded)
@@ -137,13 +190,13 @@ re-observe, not a fixed sleep.
 |---|---|---|---|
 | `models/tool_policy.onnx` + `.json` | 42 features → **21** tool logits, 49,365 params, val accuracy **0.8599** | yes, only under `--policy planner` | `planner_nn.py` argmax over 21 |
 | `models/encoder30_v15/` | 24,874,131-param **text** encoder; `encoder_int8.onnx` 25.4 MB shipped | yes, under `--policy encoder` | `ai/encoder_serve.py` |
-| `models/verifier_head.onnx` (+ `.json/.pt/_int8`) | 33-feature / 4-class | **CLI default `None`, but the GUI auto-passes it** (`aipanel.cs:705-708`) → loaded in a normal launch | `--verifier-model`; read-only tools never use it (`verifier.py:416`) |
+| `models/verifier_head.onnx` (+ `.json/.pt/_int8`) | 33-feature / 4-class | **gated off** (`aipanel.cs`): auto-loads only with `verifier_head.validation.json` carrying live/human labels, `n >= 60`, above-baseline; no such contract exists, so a normal launch runs rules-only | `--verifier-model` still overrides explicitly; read-only tools never use it (`verifier.py:416`) |
 | `combat/encounter_selfplay.pkl` | PPO/PBT actor for live fights | yes, inside `combat_ai_server` | `live_policy.py` default |
 | `networkhealth_artifacts/model.pt` | RTT/loss forecaster weights | **absent** → Sentinel has no model and falls back to relay telemetry | load refused; see `KNOWN_GAPS.md` |
 
-The verifier head is *wired by the shipped launcher* (not orphaned), but its
-action-label accuracy is **unmeasured**, so it is only trusted for non-read-only
-tools and abstains below 0.5 confidence — see `KNOWN_GAPS.md` G6.
+The verifier head is *wired but gated*: its 1.0 validation accuracy is circular (rule labels on
+rule features), so the GUI auto-loads it only with a live/human validation contract (G6); without
+one the loop labels with rules, and an explicit `--verifier-model` still overrides for an experiment.
 
 There is **no vision/image encoder anywhere**. `encoder30_v15` is text-only; the
 "vision inspector" in the Sentinel is regex over text, not an image model. See

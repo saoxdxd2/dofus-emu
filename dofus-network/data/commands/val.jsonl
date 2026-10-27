@@ -1,0 +1,20 @@
+{"confidence": 1.0, "intent": "auto", "lang": "fr", "origin": "seed-2", "slots": {}, "source": "seed", "text": "automatique"}
+{"confidence": 1.0, "intent": "chat", "lang": "es", "origin": "es-14", "slots": {"channel": "team", "message": "hola"}, "source": "gold", "text": "di hola en el chat de equipo"}
+{"confidence": 1.0, "intent": "chat", "lang": "es", "origin": "es-14~aug", "slots": {"channel": "team", "message": "bravo"}, "source": "gold", "text": "di bravo en el chat de equipo"}
+{"confidence": 1.0, "intent": "chat", "lang": "es", "origin": "es-14~aug", "slots": {"channel": "team", "message": "salut"}, "source": "gold", "text": "di salut en el chat de equipo"}
+{"confidence": 1.0, "intent": "farm", "lang": "en", "origin": "seed-6", "slots": {"action": "start"}, "source": "seed", "text": "farm"}
+{"confidence": 1.0, "intent": "fight", "lang": "fr", "origin": "fr-03", "slots": {"action": "pass"}, "source": "gold", "text": "passe le tour"}
+{"confidence": 1.0, "intent": "follow", "lang": "es", "origin": "es-02", "slots": {}, "source": "gold", "text": "sígueme"}
+{"confidence": 1.0, "intent": "inventory", "lang": "fr", "origin": "fr-11", "slots": {"action": "sell", "all": true}, "source": "gold", "text": "vends tout mon inventaire"}
+{"confidence": 1.0, "intent": "knowledge", "lang": "es", "origin": "es-08", "slots": {"query": "Bouftou"}, "source": "gold", "text": "busca Bouftou"}
+{"confidence": 1.0, "intent": "knowledge", "lang": "es", "origin": "es-08~aug", "slots": {"query": "Tofu"}, "source": "gold", "text": "busca Tofu"}
+{"confidence": 1.0, "intent": "knowledge", "lang": "es", "origin": "es-08~aug", "slots": {"query": "Dragoeuf"}, "source": "gold", "text": "busca Dragoeuf"}
+{"confidence": 1.0, "intent": "knowledge", "lang": "es", "origin": "es-08~aug", "slots": {"query": "Sanglier"}, "source": "gold", "text": "busca Sanglier"}
+{"confidence": 1.0, "intent": "market", "lang": "es", "origin": "es-12", "slots": {"action": "scan", "item": "Lana de Bouftou"}, "source": "gold", "text": "escanea el precio de la Lana de Bouftou"}
+{"confidence": 1.0, "intent": "market", "lang": "es", "origin": "es-12~aug", "slots": {"action": "scan", "item": "Minerai de Cuivre"}, "source": "gold", "text": "escanea el precio de la Minerai de Cuivre"}
+{"confidence": 1.0, "intent": "market", "lang": "es", "origin": "es-12~aug", "slots": {"action": "scan", "item": "Plume de Tofu"}, "source": "gold", "text": "escanea el precio de la Plume de Tofu"}
+{"confidence": 1.0, "intent": "quest", "lang": "en", "origin": "seed-4", "slots": {"action": "run"}, "source": "seed", "text": "do the quests"}
+{"confidence": 1.0, "intent": "state", "lang": "es", "origin": "es-15", "slots": {}, "source": "gold", "text": "¿dónde estoy?"}
+{"confidence": 1.0, "intent": "stop", "lang": "es", "origin": "es-01", "slots": {"action": "all"}, "source": "gold", "text": "para todo"}
+{"confidence": 1.0, "intent": "travel", "lang": "fr", "origin": "fr-04", "slots": {"x": -3, "y": 12}, "source": "gold", "text": "va en [-3, 12]"}
+{"confidence": 1.0, "intent": "unknown", "lang": "es", "origin": "commander-8", "slots": {}, "source": "commander", "text": "eres un bot o que ?"}

@@ -65,6 +65,8 @@ from agent.controller import Controller, Decision
 from agent.verifier import READ_ONLY_TOOLS, Verdict, Verifier, changed_keys
 from agent.schema import TOOL_SCHEMA, validate_call
 from agent.recorder import _redact
+from agent.command_shadow import (DEFAULT_MODEL as COMMAND_SHADOW_MODEL,
+                                  load_command_model, shadow_row)
 from agent.jsonio import dumps_bytes as _fast_dumps
 from combat.fight_estimate import FightAdvisor, FightOutcomeLog
 from combat.brain_service import ensure_brain
@@ -282,6 +284,10 @@ class Autopilot:
         # "auto" makes the loop start the combat brain if nothing is serving it;
         # "off" leaves fights to the page's own heuristic fallback.
         brain: str = "auto",
+        # Read-only command-parser shadow. "auto" logs the learned proposal next to
+        # the rule for each goal; the rule still chooses. "off" removes the probe.
+        command_shadow: str = "off",
+        command_shadow_model: Path = COMMAND_SHADOW_MODEL,
     ) -> None:
         self.runtime = runtime
         self.fight_boards = fight_boards
@@ -296,6 +302,12 @@ class Autopilot:
         # again in five seconds, and the probe itself costs subprocess spawns.
         self.brain_retry_s = 300.0
         self.goals = list(goals)
+        self.command_shadow = command_shadow if command_shadow in ("auto", "off") else "off"
+        self.command_shadow_model = Path(command_shadow_model)
+        self._command_model: Any = None
+        self._command_shadow_loaded = False
+        self._command_shadow_status: Dict[str, Any] = {}
+        self._command_shadow_rows = 0
         self.log_path = Path(log_path)
         self.stop_file = Path(stop_file)
         self.max_steps = max_steps
@@ -425,6 +437,11 @@ class Autopilot:
         # snapshot paired with an action taken much later.
         self._obs_age_ms: Optional[float] = None
         self._obs_source: str = "call"
+        # G9: one run, one character. The bridge addresses an instance by slot, not by
+        # account, so a slot that reloaded into a different login looks exactly like a
+        # kick unless the character itself is compared.
+        self._identity: Optional[Dict[str, Any]] = None
+        self._identity_drift: Optional[Dict[str, Any]] = None
         self._recent: List[str] = []
         # Consecutive no-op outcomes per action tool. Read-only recoveries do
         # not reset it: farm.start -> state.snapshot -> farm.start used to run
@@ -467,6 +484,46 @@ class Autopilot:
             self._log_size += len(blob)
         except OSError:
             pass  # a full disk must not stop the bot from stopping cleanly
+
+    def _ensure_command_shadow(self) -> Any:
+        """Load the command model once, fail-open. Logs one status row per session."""
+        if self.command_shadow == "off" or self._command_shadow_loaded:
+            return self._command_model
+        self._command_shadow_loaded = True
+        model, error = load_command_model(self.command_shadow_model)
+        self._command_model = model
+        self._command_shadow_status = {"available": model is not None,
+                                       "error": error,
+                                       "model": str(self.command_shadow_model)}
+        self._append_log_line(_fast_dumps({
+            "kind": "command_shadow_status",
+            "session": self.session,
+            "mode": self.command_shadow,
+            "model": str(self.command_shadow_model),
+            "available": model is not None,
+            "error": error,
+            "at": time.time(),
+        }) + b"\n")
+        if model is None:
+            print(f"[autopilot] command shadow unavailable: {error}")
+        return model
+
+    def _log_command_shadow(self, goal: str) -> None:
+        """Record the model's proposal next to the rule. Never changes the goal path."""
+        if self.command_shadow == "off":
+            return
+        model = self._ensure_command_shadow()
+        if model is None:
+            return
+        try:
+            row = shadow_row(goal, model)
+        except Exception as exc:      # noqa: BLE001 - the shadow must fail open
+            row = {"kind": "command_shadow", "text": goal, "model": None,
+                   "available": False, "would_override": False,
+                   "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+        row.update({"session": self.session, "at": time.time()})
+        self._append_log_line(_fast_dumps(row) + b"\n")
+        self._command_shadow_rows += 1
 
     def _emit(self, step: Step) -> None:
         if not self._first_step_at:
@@ -530,6 +587,13 @@ class Autopilot:
         run looks like it did nothing -- which is exactly what a leftover file from
         the previous session produces.
         """
+        drift = getattr(self, "_identity_drift", None)
+        if drift is not None:
+            bound = drift.get("bound") or {}
+            seen = drift.get("seen") or {}
+            return ("the slot logged into a different character (%s -> %s)"
+                    % (bound.get("name") or bound.get("id"),
+                       seen.get("name") or seen.get("id")))
         # Only three things end a run: the goals are done, the user stops it, or
         # an explicit budget was set. There is deliberately no default timeout --
         # a session that quits on a clock leaves the character mid-task.
@@ -540,6 +604,61 @@ class Autopilot:
         if self.stop_file.exists():
             return f"stop file present ({self.stop_file.name})"
         return None
+
+    def _check_identity(self, obs: Any) -> bool:
+        """Bind the run to one character and fail closed when the slot changes.
+
+        `snap.character` carries the client's own `{id, name}`. Unknown (character
+        select, an older page, a null field) is not a change; only two comparable
+        identities that disagree are. The id is authoritative when both sides have
+        one -- a rename is the same account -- and the name is the fallback for a
+        build that does not expose the id.
+        """
+        char = obs.get("character") if isinstance(obs, dict) else None
+        if not isinstance(char, dict):
+            return getattr(self, "_identity_drift", None) is None
+        # At character selection the client can still hold the last character's base
+        # informations; binding to that would turn a legitimate login into a drift on
+        # the first real snapshot. Identity is only known in the world.
+        in_world = obs.get("in_world")
+        if in_world is not True:
+            position = obs.get("position") if isinstance(obs.get("position"), dict) else {}
+            if in_world is False or position.get("map_id") in (None, 0):
+                return getattr(self, "_identity_drift", None) is None
+        cid = char.get("id")
+        name = char.get("name")
+        if cid is None and not name:
+            return getattr(self, "_identity_drift", None) is None
+        seen = {"id": str(cid) if cid is not None else None,
+                "name": str(name) if name not in (None, "") else None}
+        if self._identity is None:
+            self._identity = seen
+            self._append_log_line(_fast_dumps({
+                "kind": "identity", "session": self.session, "event": "bound",
+                "character_id": seen["id"], "name": seen["name"],
+                "at": time.time(),
+            }) + b"\n")
+            return True
+        bound = self._identity
+        if bound.get("id") is not None and seen.get("id") is not None:
+            same = bound["id"] == seen["id"]
+        elif bound.get("name") and seen.get("name"):
+            same = bound["name"] == seen["name"]
+        else:
+            same = True          # nothing comparable on both sides
+        if same:
+            # Fill in a field the first snapshot lacked; never rewrite one.
+            if seen.get("id") is not None and bound.get("id") is None:
+                bound["id"] = seen["id"]
+            if seen.get("name") and not bound.get("name"):
+                bound["name"] = seen["name"]
+            return True
+        self._identity_drift = {"bound": dict(bound), "seen": dict(seen)}
+        self._append_log_line(_fast_dumps({
+            "kind": "identity", "session": self.session, "event": "drift",
+            "bound": dict(bound), "seen": dict(seen), "at": time.time(),
+        }) + b"\n")
+        return False
 
     # -- observation ---------------------------------------------------------
 
@@ -1196,7 +1315,8 @@ class Autopilot:
         if self.preflight:
             self._warn_if_no_bridge()
             if not self._require_world():
-                return self.summary("stopped while waiting for the world")
+                return self.summary(self._should_stop()
+                                    or "stopped while waiting for the world")
             # Before the first fight, not during it: the page's fallback plays the
             # turns while the brain warms up, so starting it up front is what makes
             # "the learned policy decided this" true for the whole session.
@@ -1214,6 +1334,9 @@ class Autopilot:
             self._farm_wait = False
             self._farm_wait_since = None
             self._action_noops.clear()
+            # Shadow only: the model's parse is written beside the rule, and the
+            # rule below still owns every decision.
+            self._log_command_shadow(goal)
             # Why this run ended. "goals exhausted" used to be reported even when the
             # session had died, which reads as success and hides the one thing worth
             # knowing.
@@ -1245,6 +1368,9 @@ class Autopilot:
                 # Idle farm polls are adopted, not recorded: an hours-long farm
                 # would otherwise write a trajectory row every few seconds.
                 before = self.observe(record=not self._farm_wait)
+                if not self._check_identity(before):
+                    print("[autopilot] stopping: " + str(self._should_stop()))
+                    return self.summary(self._should_stop() or "identity drift")
                 if isinstance(before, dict) and before.get("in_fight"):
                     # The page is playing a turn-based fight. Planning a quest
                     # step here was the live failure: `quest.advance` ran for
@@ -1458,8 +1584,9 @@ class Autopilot:
                 if not step_ok and client_absent(step_error):
                     if not self._recover_world(str(step_error)[:80],
                                                trigger="client_absent"):
-                        ended_because = ("the client window is gone and did not come "
-                                         "back (open an instance in DofusFarm)")
+                        ended_because = (self._should_stop()
+                                         or ("the client window is gone and did not come "
+                                             "back (open an instance in DofusFarm)"))
                         break
                     continue
 
@@ -1500,8 +1627,9 @@ class Autopilot:
                     reason = fell_out_of_world(before, after)
                     if reason is not None:
                         if not self._recover_world(reason or None):
-                            ended_because = ("the client left the world"
-                                             + (f" ({reason})" if reason else ""))
+                            ended_because = (self._should_stop()
+                                             or ("the client left the world"
+                                                 + (f" ({reason})" if reason else "")))
                             break
                         continue
 
@@ -1896,6 +2024,9 @@ class Autopilot:
             # A recovery wait must not trust the snapshot from before the kick:
             # it can still say in_world=true for a session that is already gone.
             obs = self.observe(max_age_ms=-1.0 if fresh else OBS_FRESH_MS)
+            if not self._check_identity(obs):
+                print("[autopilot] stopping: " + str(self._should_stop()))
+                return False
             pos = obs.get("position") if isinstance(obs, dict) else None
             map_id = pos.get("map_id") if isinstance(pos, dict) else None
             if isinstance(obs, dict) and obs and obs.get("in_world") is not False \
@@ -2015,7 +2146,7 @@ class Autopilot:
             self._recoveries_ok += 1
             self._recovery_wait_s += waited
         self._append_log_line(_fast_dumps({
-            "kind": "recovery_disabled",
+            "kind": "recovery",
             "session": self.session,
             "trigger": trigger,
             "reason": (str(reason or "")[:120] or None),
@@ -2158,8 +2289,9 @@ class Autopilot:
         -- replace the heuristic where data supports it -- has no data to support it. The
         pairing exists for one step and then is thrown away; this writes it down.
 
-        Only dialog actions produce a row (a reply index or an explicit close), so the
-        cost is one row per talk attempt -- 110 in an entire baseline session-set.
+        Only dialog actions produce a row (a reply index, an explicit close, or an
+        accepted offer), so the cost is one row per talk attempt -- 110 in an entire
+        baseline session-set.
 
         The dispatch fields matter more than they look. The recorded corpus replays one
         page 87 times against a single reply whose server id is 41457, and the wire log
@@ -2174,7 +2306,8 @@ class Autopilot:
         if not isinstance(args, dict):
             return
         chose = args.get("reply")
-        if chose is None and not args.get("close"):
+        accepted = args.get("accept") is True
+        if chose is None and not args.get("close") and not accepted:
             return
         if not isinstance(before, dict) or not isinstance(after, dict):
             return
@@ -2191,13 +2324,14 @@ class Autopilot:
             outcome = "same page"
         else:
             outcome = "advanced"
-        asked = "close" if chose is None else int(chose)
+        asked = "accept" if accepted else ("close" if chose is None else int(chose))
         # A dialog that is gone after a reply we did not ask to close was ended by the
         # game, not by us. Without this split, `closed` flatters the agent: it looks like
         # a completed exchange, and the loop re-opens the same page believing it moved.
         ended_by = None
         if outcome == "closed":
-            ended_by = "asked" if asked == "close" else "after_reply"
+            ended_by = ("accept" if accepted
+                        else ("asked" if asked == "close" else "after_reply"))
         data = getattr(result, "data", None)
         data = data if isinstance(data, dict) else {}
         self._dialogs += 1
@@ -2230,6 +2364,7 @@ class Autopilot:
             "reply_text": str(args.get("reply_text") or "")[:80],
             "reply_id": data.get("reply_id"),
             "via": data.get("via"),
+            "accepted_offer": bool(data.get("accepted_offer")),
             "dispatch_ok": bool(getattr(result, "ok", True)),
             "error": None if getattr(result, "error", None) is None
                      else str(result.error)[:120],
@@ -2348,6 +2483,12 @@ class Autopilot:
             # decided the turns -- which is the difference the whole combat goal rests on.
             "brain": {key: self._brain.get(key)
                       for key in ("state", "model", "mode", "reason", "when")},
+            "command_shadow": {
+                "mode": getattr(self, "command_shadow", "off"),
+                "available": bool(getattr(self, "_command_model", None)),
+                "rows": int(getattr(self, "_command_shadow_rows", 0)),
+                "error": (getattr(self, "_command_shadow_status", {}) or {}).get("error"),
+            },
             # G7: which kind of group refusal the page gave, counted. A run that travelled
             # because the named mob is on another map and a run whose client could not read the
             # members of the groups under its nose are different failures with different fixes,
@@ -2577,6 +2718,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="auto: start the combat brain (127.0.0.1:8891) if nothing "
                              "serves it, so fights use the learned policy; "
                              "off: leave the page's heuristic fallback in charge")
+    parser.add_argument("--command-shadow", choices=("auto", "off"), default="off",
+                        help="auto: log the learned parser's proposal next to the rule "
+                             "for each goal (read-only; the rule still acts); off: none")
+    parser.add_argument("--command-shadow-model", type=Path,
+                        default=COMMAND_SHADOW_MODEL,
+                        help="command encoder heads for the shadow")
     return parser
 
 
@@ -2613,6 +2760,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         explore=args.explore,
         fight_boards=args.fight_boards,
         brain=args.brain,
+        command_shadow=args.command_shadow,
+        command_shadow_model=args.command_shadow_model,
     )
     try:
         summary = pilot.run()

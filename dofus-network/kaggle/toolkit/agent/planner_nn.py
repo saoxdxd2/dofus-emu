@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.features import required_map
+from agent.features import DELIVER_TYPES, FIGHT_TYPES, required_map
 from agent.planner import TALK_TYPES, QuestPlanner, _params, args_for_tool
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -37,6 +37,11 @@ class NNPlanner(QuestPlanner):
         self.input_name = "features"
         self.expected_features = 0
         self._warned = False
+        self._model_loaded = False
+        self.model_path = Path(model_path or DEFAULT_MODEL)
+        # Loading onnxruntime and creating the session is ~100 ms and not
+        # needed for farm/order goals that never ask the head for a tool.
+        self.note = "tool policy not loaded (lazy)"
         # A prior on how much a tool costs when it is the wrong call. The network
         # outputs a distribution over tools; the *decision* is not the argmax of that
         # distribution unless every mistake costs the same, and they do not: a spurious
@@ -44,29 +49,36 @@ class NNPlanner(QuestPlanner):
         # spurious farm.start burns one. Subtracting the cost before the argmax is the
         # decision-theoretic choice, and it is measurable.
         self.tool_penalty = dict(tool_penalty or {})
-        self.note = "no model (deterministic planner)"
-        path = Path(model_path or DEFAULT_MODEL)
-        if path.exists():
-            try:
-                import onnxruntime as ort
-                self.session = ort.InferenceSession(str(path),
-                                                    providers=["CPUExecutionProvider"])
-                self.input_name = self.session.get_inputs()[0].name
-                self.expected_features = int(self.session.get_inputs()[0].shape[1])
-                meta = path.with_suffix(".json")
-                if meta.exists():
-                    payload = json.loads(meta.read_text(encoding="utf-8"))
-                    self.tools = payload.get("tools") or []
-                    self.expected_features = int(payload.get("features")
-                                                 or self.expected_features)
-                self.note = "tool policy %s (%d tools)" % (path.name, len(self.tools))
-            except Exception as exc:  # noqa: BLE001
-                self.note = "model unusable (%s); deterministic fallback" % exc
+
+    def _ensure_model(self) -> None:
+        if self._model_loaded:
+            return
+        self._model_loaded = True
+        path = self.model_path
+        if not path.exists():
+            self.note = "no model (deterministic planner)"
+            return
+        try:
+            import onnxruntime as ort
+            self.session = ort.InferenceSession(str(path),
+                                                providers=["CPUExecutionProvider"])
+            self.input_name = self.session.get_inputs()[0].name
+            self.expected_features = int(self.session.get_inputs()[0].shape[1])
+            meta = path.with_suffix(".json")
+            if meta.exists():
+                payload = json.loads(meta.read_text(encoding="utf-8"))
+                self.tools = payload.get("tools") or []
+                self.expected_features = int(payload.get("features")
+                                             or self.expected_features)
+            self.note = "tool policy %s (%d tools)" % (path.name, len(self.tools))
+        except Exception as exc:  # noqa: BLE001
+            self.note = "model unusable (%s); deterministic fallback" % exc
 
     # -- learned choice ----------------------------------------------------
 
     def _choose_tool(self, quest: Dict[str, Any], step_idx: int,
                      obj: Dict[str, Any], obs: Dict[str, Any]) -> Optional[str]:
+        self._ensure_model()
         if self.session is None or not self.tools:
             return None
         try:
@@ -105,6 +117,38 @@ class NNPlanner(QuestPlanner):
         tool = self._choose_tool(quest, step_idx, obj, obs)
         if tool is None:
             return super().plan_objective(quest, step_idx, obj, obs)
+        try:
+            obj_type = int(obj.get("type_id"))
+        except (TypeError, ValueError):
+            obj_type = None
+        # Safety net, not a decision rule: farm.start is a standing order, and
+        # starting one inside a quest changes what the session is doing. The
+        # corpus now excludes it on kill objectives, so the installed head only
+        # chooses it to gather a delivery item; the gate stays so an older or
+        # regenerated head cannot silently turn a quest into a farm session.
+        if tool == "farm.start" and obj_type not in DELIVER_TYPES:
+            return super().plan_objective(quest, step_idx, obj, obs)
+        if obj_type in FIGHT_TYPES:
+            monster = _params(obj).get("parameter0")
+            if self._visible_target(obs, monster) is False and self._map_npcs(obs):
+                # A scripted fight with no roaming group is started by a map NPC
+                # dialogue. The learned head cannot see the group list in its
+                # features, so it kept exploring an empty edge; the deterministic
+                # layer owns this interaction.
+                return super().plan_objective(quest, step_idx, obj, obs)
+        if tool == "quest.advance" and obj_type in self._server_counted_types:
+            # The head was trained on labels that predate "the server completes
+            # this type"; claiming one always fails. The constraint is not
+            # learnable from the state, so the deterministic layer owns it.
+            return super().plan_objective(quest, step_idx, obj, obs)
+        if tool == "fight.join":
+            # The corpus states carry no map block, so the head can learn that an
+            # objective is a fight but not whether the target stands on this map.
+            # The live tutorial proved the cost: join, refuse, forever. Let the
+            # deterministic planner search or wait when no group is visible.
+            monster = _params(obj).get("parameter0")
+            if self._visible_target(obs, monster) is False:
+                return super().plan_objective(quest, step_idx, obj, obs)
         if tool == "nav.goto":
             # The learned head chooses *whether* to travel; the planner still owns
             # *how*. Bypassing this sent `nav.goto {map_id: 698953}` nine times to a
@@ -137,6 +181,11 @@ class NNPlanner(QuestPlanner):
             return [{"tool": call["tool"], "args": dict(call["args"]),
                      "why": "learned choice: " + call["why"]}]
         args = self._args_for(tool, quest, obj, obs)
-        if tool == "quest.advance" and not args:
+        if not args and tool in ("quest.advance", "fight.join", "farm.start"):
+            # These three are meaningless without the thing they act on, and the client
+            # only says so after a round trip. `args_for_tool` returns empty when the
+            # objective's own class declares no such parameter, and an invented target is
+            # worse than no call: the loop hunts a creature that cannot exist and reads
+            # the refusal as a map problem.
             return []
         return [{"tool": tool, "args": args, "why": "learned choice"}]

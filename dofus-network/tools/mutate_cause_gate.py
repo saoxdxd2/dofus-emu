@@ -37,14 +37,48 @@ FEATURES = ROOT / "agent" / "features.py"
 NNPLAN = ROOT / "agent" / "planner_nn.py"
 KCTX = ROOT / "agent" / "knowledge_context.py"
 SHAPES = ROOT / "tools" / "quest_advance_shapes.py"
+SCHEMA = ROOT / "agent" / "schema.py"
+CAPS = ROOT / "data" / "capabilities.json"
+INGEST = ROOT / "tools" / "ingest_observed_quests.py"
+CSPANEL = ROOT.parent / "desktop" / "aipanel.cs"
+TDS = ROOT / "agent" / "tool_dataset.py"
+ENGINE = ROOT.parent / "tools" / "patch-engine.js"
+KTOOL = ROOT / "tools" / "sync_kaggle_toolkit.py"
+READY = ROOT / "tools" / "live_ready.py"
+SIMRUN = ROOT / "sim" / "run.py"
+CMD = ROOT / "agent" / "commands.py"
+CDATA = ROOT / "tools" / "build_command_dataset.py"
+SHADOW = ROOT / "agent" / "command_shadow.py"
+SHADOW_REPORT = ROOT / "tools" / "command_shadow_report.py"
+REPLAY = ROOT / "tools" / "command_replay.py"
+LIVE = ROOT / "tools" / "live_evidence.py"
+ONNX = ROOT / "agent" / "command_onnx.py"
 
 SNIPPET = ("import agent.regression as r\n"
            "r.test_failure_causes()\n"
            "r.test_absent_client_recovery()\n"
+           "r.test_identity_binding()\n"
+           "r.test_live_witnesses()\n"
+           "r.test_verifier_head_gate()\n"
+           "r.test_observation_text()\n"
+           "r.test_kaggle_toolkit_sync()\n"
+           "r.test_quest_chain_replay()\n"
+           "r.test_live_ready()\n"
+           "r.test_sim_planner_runs()\n"
+           "r.test_command_parser()\n"
+           "r.test_command_dataset()\n"
+           "r.test_command_shadow()\n"
+           "r.test_command_shadow_report()\n"
+           "r.test_command_replay()\n"
+           "r.test_live_evidence()\n"
+           "r.test_command_onnx_decode()\n"
            "r.test_repair_credit()\n"
            "r.test_reads_are_not_actions()\n"
            "r.test_dialog_labels()\n"
            "r.test_dialog_repeat_guard()\n"
+           "r.test_quest_accept_planner()\n"
+           "r.test_observed_quest_catalog()\n"
+           "r.test_observed_quest_ingest()\n"
            "r.test_brain_autostart()\n"
            "r.test_brain_readiness()\n"
            "r.test_js_page_suites()\n"
@@ -825,6 +859,398 @@ MUTATIONS = [
     ("shape: a transport error is dropped from the row", SHAPES,
      '    if row.get("error"):\n        return ok, "error: "',
      '    if False:\n        return ok, "error: "'),
+    # ---- G33: accepting an offered quest before the reply path
+    ("accept: the branch is skipped and a reply is sent instead", PAGE,
+     "if (args && args.accept === true) {",
+     "if (false && args && args.accept === true) {"),
+    ("accept: the offer guard accepts an id nobody offered", PAGE,
+     "if (offeredId == null || offeredId !== acceptId) {",
+     "if (offeredId == null && acceptId === -1) {"),
+    ("accept: the wrong packet is sent", PAGE,
+     "var acceptSend = _cmSend('QuestStartRequestMessage',",
+     "var acceptSend = _cmSend('NpcDialogReplyMessage',"),
+    ("accept: the repeat guard is disarmed", PAGE,
+     "&& Date.now() - Number(acceptPending.at || 0) < 5000) {",
+     "&& Date.now() - Number(acceptPending.at || 0) < -1) {"),
+    ("accept: the dialog is not closed after the send", PAGE,
+     "if (acceptUi && typeof acceptUi.leaveDialog === 'function') {",
+     "if (false && acceptUi && typeof acceptUi.leaveDialog === 'function') {"),
+    ("accept: a bare start is answered as reply 0 again", PAGE,
+     "&& !_agentQuestKnown(bareStartId)) {",
+     "&& false) {"),
+    ("accept: the planner never uses an offered quest", PLAN,
+     "if offered == self.current_quest or offered == wanted:",
+     "if False:"),
+    ("accept: the tutorial sends a bare start inside a dialog", PLAN,
+     'return ToolCall("quest.advance", {"quest_id": qid, "reply": 0}, goal)',
+     'return ToolCall("quest.advance", {"quest_id": qid}, goal)'),
+    ("accept: the tool contract forgets the argument", SCHEMA,
+     '"accept": _p("bool", "Accept the quest this dialog is offering. The page "',
+     '"_unused": _p("bool", "Accept the quest this dialog is offering. The page "'),
+    ("accept: the runtime registry forgets the argument", CAPS,
+     '"accept": {\n     "type": "bool",\n     "required": false,',
+     '"_unused": {\n     "type": "bool",\n     "required": false,'),
+    # ---- G29: the live quest catalogue and the observed row that outranks the cache
+    ("catalog: the step graph stops listing objectives", PAGE,
+     "var oids = Array.isArray(ds.objectiveIds) ? ds.objectiveIds : [];",
+     "var oids = [];"),
+    ("catalog: step names are dropped", PAGE,
+     "if (ds.nameId != null) step.name = ds.nameId;",
+     "if (false) step.name = ds.nameId;"),
+    ("catalog: truncation is not reported", PAGE,
+     "if (sids.length > MAX_STEPS) out.truncated = true;",
+     "if (false) out.truncated = true;"),
+    ("catalog: async-only rows are dropped", PAGE,
+     "if (rest.length) out.steps.push({ id: null, unlisted: true,",
+     "if (false) out.steps.push({ id: null, unlisted: true,"),
+    ("catalog: the snapshot never builds the catalogue", PAGE,
+     "if (qs.catalog.length < 12) {",
+     "if (false) {"),
+    ("catalog: the catalogue is published empty", PAGE,
+     "snap.quests_catalog = qs.catalog;",
+     "snap.quests_catalog = [];"),
+    ("catalog: the foreign store wins over the client row", KCTX,
+     "    observed = _observed_objective(obs, objective_id, tracker_quest_id, language)",
+     "    observed = None"),
+    ("catalog: a row for another quest is accepted", KCTX,
+     '                if int(quest.get("id")) != int(tracker_quest_id):',
+     "                if False:"),
+    ("catalog: the planner stops reading the catalogue", PLAN,
+     '        for entry in catalog_objectives(obs, quest_id):\n'
+     '            if str(entry.get("id")) == str(oid):',
+     '        for entry in []:\n'
+     '            if str(entry.get("id")) == str(oid):'),
+    ("catalog: the planner reads every quest's rows", PLAN,
+     '            if int(quest.get("id")) != int(quest_id):\n'
+     '                continue',
+     '            if False:\n'
+     '                continue'),
+    # ---- G29: persisting observed rows and resolving from the artefact
+    ("ingest: a thinner later row overwrites the richer one", INGEST,
+     "    if new_rich < old_rich:\n        return old",
+     "    if False:\n        return old"),
+    ("ingest: the dedup key stops naming the objective", INGEST,
+     '                        key = (flat["quest_id"], flat["objective_id"])',
+     '                        key = (flat["quest_id"], flat["objective_id"], len(rows))'),
+    ("ingest: a broken line aborts the scan", INGEST,
+     "                try:\n"
+     "                    row = json.loads(line)\n"
+     "                except ValueError:\n"
+     "                    continue",
+     "                try:\n"
+     "                    row = json.loads(line)\n"
+     "                except ValueError:\n"
+     "                    raise"),
+    ("ingest: a different-quest hit counts as agreement", INGEST,
+     '        same_quest = _coerce_int(resolved.get("quest_id")) == qid',
+     "        same_quest = True"),
+    ("ingest: an empty capture is reported as data", INGEST,
+     '    if not stats["rows"]:',
+     "    if False:"),
+    ("ingest: the runtime ignores the persisted file", KCTX,
+     "    index = load_observed_index(observed_path)",
+     "    index = {}"),
+    ("ingest: an id two quests claim resolves anyway", KCTX,
+     '        if len({row.get("quest_id") for row in candidates}) == 1:',
+     "        if True:"),
+    ("ingest: a rewrite is invisible until restart", KCTX,
+     "    return _persisted_index(str(target), stat.st_mtime_ns, stat.st_size)",
+     "    return _persisted_index(str(target), 0, 0)"),
+    ("ingest: the persisted block claims to be the catalogue", KCTX,
+     '    return _block_from_row(hit, language, "file")',
+     '    return _block_from_row(hit, language, "catalog")'),
+    ("ingest: the CLI forgets the repo root on sys.path", INGEST,
+     "                if str(ROOT) not in sys.path:\n"
+     "                    sys.path.insert(0, str(ROOT))",
+     "                pass"),
+    # ---- G32/G33: a quest/auto run takes the next quest an NPC offers
+    ("offer: a new quest is never accepted", PLAN,
+     "            if offered == current or offered == wanted or takes_new:",
+     "            if offered == current or offered == wanted:"),
+    ("offer: an order or farm prompt acquires a quest", PLAN,
+     '            takes_new = (_goal_mode(goal) in ("quest", "auto")',
+     "            takes_new = (True"),
+    ("offer: a named focus is ignored", PLAN,
+     "                         and (focus is None or focus == offered))",
+     "                         and True)"),
+    ("offer: a named prompt takes an unrelated offer", PLAN,
+     "and (not named or offered in named)",
+     "and True"),
+    ("offer: an already-active quest is accepted again", PLAN,
+     "            if offered in active_ids:\n                takes_new = False",
+     "            if False:\n                takes_new = False"),
+    ("offer: the accepted quest is not remembered as client-confirmed", PLAN,
+     "                self._client_quests.add(offered)",
+     "                pass"),
+    ("offer: the accepted quest is not recorded as pending", PLAN,
+     "                self.current_quest = offered\n"
+     "                self.current_objective = None\n"
+     "                self._pending_start = offered\n"
+     "                # The offer is client-reported",
+     "                self.current_quest = offered\n"
+     "                self.current_objective = None\n"
+     "                # The offer is client-reported"),
+    # ---- G9: bind the run to one character; a slot is not an account
+    ("identity: the run never binds a character", AUTO,
+     "            self._identity = seen",
+     "            self._identity = None"),
+    ("identity: a different id is accepted as the same character", AUTO,
+     '            same = bound["id"] == seen["id"]',
+     "            same = True"),
+    ("identity: an unknown snapshot counts as drift", AUTO,
+     "        if cid is None and not name:\n"
+     '            return getattr(self, "_identity_drift", None) is None',
+     "        if cid is None and not name:\n"
+     "            return False"),
+    ("identity: a character-select snapshot binds the run", AUTO,
+     "        if in_world is not True:",
+     "        if False:"),
+    ("identity: drift is logged but does not stop the run", AUTO,
+     "        drift = getattr(self, \"_identity_drift\", None)\n"
+     "        if drift is not None:",
+     "        drift = getattr(self, \"_identity_drift\", None)\n"
+     "        if False:"),
+    ("identity: the drift is not recorded", AUTO,
+     '        self._identity_drift = {"bound": dict(bound), "seen": dict(seen)}',
+     "        self._identity_drift = None"),
+    ("identity: the main loop stops checking", AUTO,
+     "                if not self._check_identity(before):",
+     "                if False:"),
+    ("identity: the world wait stops checking", AUTO,
+     "            if not self._check_identity(obs):",
+     "            if False:"),
+    # ---- the one-command live readout for G9/G29/G32/G33
+    ("witness: the knowledge census drops observed rows", SREPORT,
+     '        if status == "observed" and isinstance(kn, dict):',
+     "        if False:"),
+    ("witness: the catalogue is never counted", SREPORT,
+     '            catalog["rows"] += 1',
+     '            catalog["rows"] += 0'),
+    ("witness: an explicit accept is counted as a start", SREPORT,
+     '        if args.get("accept") is True:',
+     "        if False:"),
+    ("witness: a start inside a dialog is not counted", SREPORT,
+     '                if obs.get("in_dialog") is True or (\n'
+     '                        isinstance(dialog, dict) and dialog.get("open")):\n'
+     '                    accept["start_in_dialog"] += 1',
+     "                if False:\n"
+     '                    accept["start_in_dialog"] += 1'),
+    ("witness: identity rows are not counted", SREPORT,
+     "        identity[event] += 1",
+     "        identity[event] += 0"),
+    ("witness: no catalogue is reported as data", SREPORT,
+     '    if catalog["rows"] == 0:',
+     "    if False:"),
+    ("witness: the printed report drops the verdicts", SREPORT,
+     '        for line in (report.get("witnesses") or {}).get("verdicts") or []:\n'
+     '            print("  " + line)',
+     "        for line in []:\n"
+     '            print("  " + line)'),
+    # ---- G29 catalogue: one budget for the whole graph
+    ("catalog: the snapshot loop passes the shared budget into the builder", PAGE,
+     "                var cat = _agentQuestCatalog(q, qid, prog,\n"
+     "                                                                 catalogBudget);",
+     "                var cat = _agentQuestCatalog(q, qid, prog);"),
+    ("catalog: the shared step budget is ignored", PAGE,
+     "                        var stepCap = Math.min(MAX_STEPS,\n"
+     "                            Math.max(0, Math.floor(budget.steps)));",
+     "                        var stepCap = MAX_STEPS;"),
+    ("catalog: the shared objective budget is ignored", PAGE,
+     "                            var objCap = Math.min(MAX_OBJECTIVES,\n"
+     "                                Math.max(0, Math.floor(budget.objectives)));",
+     "                            var objCap = MAX_OBJECTIVES;"),
+    ("catalog: a step budget truncation is not reported", PAGE,
+     "                        if (sids.length > shownSteps) {\n"
+     "                            out.truncated = true;\n"
+     "                            budget.truncated = true;\n"
+     "                        }",
+     "                        if (sids.length > shownSteps) {\n"
+     "                            out.truncated = true;\n"
+     "                            budget.truncated = false;\n"
+     "                        }"),
+    # ---- the page build stamp a live run reads first
+    ("build: the stamp stays on the old generation", PAGE,
+     "    var AGENT_BUILD = '2026-10-27a';",
+     "    var AGENT_BUILD = '2026-10-25d';"),
+    ("build: the marker is set from a stale literal", PAGE,
+     "        window.__agentBuild = AGENT_BUILD;",
+     "        window.__agentBuild = '2026-10-25d';"),
+    ("build: a debug fallback bypasses the constant", PAGE,
+     "                    build: window.__agentBuild || AGENT_BUILD,",
+     "                    build: '2026-10-25d',"),
+    ("build: the report stops counting the page build", SREPORT,
+     '        builds[str(build) if build else "missing"] += 1',
+     '        builds[str(build) if build else "missing"] += 0'),
+    # ---- G6: the GUI may not auto-load a circular verifier head
+    ("head: the GUI loads any file that exists", CSPANEL,
+     "if (File.Exists(contractPath))",
+     "if (true)"),
+    ("head: the label provenance is not checked", CSPANEL,
+     "if (validated && enough && above)",
+     "if (true)"),
+    ("head: the sample size is ignored", CSPANEL,
+     "int.Parse(n.Groups[1].Value) >= 60",
+     "true"),
+    ("head: the rules are not the default", CSPANEL,
+     "string verifier = null;",
+     "string verifier = head;"),
+    # ---- G29: the quest graph stays out of the training/prompt text
+    ("obs: the raw quest graph is dumped into the text", TDS,
+     '    rendered.add("quests_catalog")',
+     '    pass'),
+    ("obs: the quest graph census is dropped", TDS,
+     '        lines.append(f"quest graph: {quests} active quest(s), {objectives} objective(s)")',
+     "        pass"),
+    ("obs: the graph census counts no quests", TDS,
+     "        quests = len(graph)",
+     "        quests = 0"),
+    # ---- G12: the installed map-transition watchdog, executed offline
+    ("watchdog: the stalled map is not unlocked", ENGINE,
+     'window.foreground.unlock("loadMap");',
+     'window.foreground.unlock("zzz");'),
+    ("watchdog: the loading flag stays set", ENGINE,
+     "_selfTr._isMapLoading=!1;",
+     "_selfTr._isMapLoading=!0;"),
+    ("watchdog: the delay is no longer 3.5 s", ENGINE,
+     "},3500);this._loadingProgress",
+     "},99999);this._loadingProgress"),
+    ("watchdog: a healthy map is reset too", ENGINE,
+     "if(_selfTr._isMapLoading||_selfTr._mapSceneTransitionGraphic||(window.foreground&&window.foreground.locked)){",
+     "if(true){"),
+    ("watchdog: a completed transition does not cancel it", ENGINE,
+     "if(this._transitionWatchdog){clearTimeout(this._transitionWatchdog);this._transitionWatchdog=null;}",
+     "if(false){clearTimeout(this._transitionWatchdog);this._transitionWatchdog=null;}"),
+    # ---- G7: the fallback that plays live fight turns, executed offline
+    ("fight: a spell is offered without a range check", PAGE,
+     "if (this._spellReaches(ctx, candidates[s].spell, enemies[e].cell)) {",
+     "if (true) {"),
+    ("fight: the lowest-HP target is not chosen", PAGE,
+     "var enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });",
+     "var enemies = ctx.enemies.slice().sort(function(a, b) { return b.hp - a.hp; });"),
+    ("fight: an unaffordable spell is still offered", PAGE,
+     "if (ctx.ap_source !== 'assumed' && cost > ctx.ap) continue;",
+     "if (false) continue;"),
+    ("fight: no move is planned when nothing reaches", PAGE,
+     "if (ctx.mp > 0 && enemies.length) return this._planFightMove(ctx, enemies);",
+     "if (false) return this._planFightMove(ctx, enemies);"),
+    ("fight: a non-damage spell is cast as an attack", PAGE,
+     "if (!this._damageSpell(spell)) continue;",
+     "if (false) continue;"),
+    ("fight: a move is not required to get closer", PAGE,
+     "if (dist >= bestDist) continue;",
+     "if (false) continue;"),
+    # ---- G10: the Kaggle toolkit copy/pin matrix
+    ("kaggle: a toolkit-only module is planned as a copy", KTOOL,
+     '            status = "sync" if source.is_file() else "pinned"',
+     '            status = "sync" if source.is_file() else "sync"'),
+    ("kaggle: the trimmed map index is no longer pinned", KTOOL,
+     'PINNED = (\n    "dataset-metadata.json",\n    "data/maps/_index.json",\n)',
+     'PINNED = (\n    "dataset-metadata.json",\n)'),
+    ("kaggle: drift is never reported", KTOOL,
+     '    return [item for item in entries if item["drift"] or item["missing"]]',
+     "    return []"),
+    ("kaggle: the manifest is not written", KTOOL,
+     "    MANIFEST.write_text(json.dumps(payload, indent=2, sort_keys=True) + \"\\n\",\n"
+     "                        encoding=\"utf-8\")",
+     "    pass"),
+    ("kaggle: the manifest records the pre-copy drift", KTOOL,
+     "    fresh = plan(root, toolkit)",
+     "    fresh = entries"),
+    # ---- G29+G33: the chain itself
+    ("chain: a live quest is planned without its observation", PLAN,
+     'obj = self._observed_current(quest_id, obs)\n                if obj is not None:',
+     "obj = None\n                if obj is not None:"),
+    ("chain: a live objective is not planned at all", PLAN,
+     'calls = self.plan_objective({"id": quest_id}, 0, obj, obs)\n        if not calls:\n            return None',
+     "calls = []\n        if not calls:\n            return None"),
+    # ---- the live preflight
+    ("ready: a stale client page passes", READY,
+     '        out.append(_entry("FAIL", "page build",\n'
+     '                          "last client recorded %s but the repo is %s; restart the app "\n'
+     '                          "fully (a reload keeps the old page)" % (last, current)))',
+     '        out.append(_entry("PASS", "page build", "ignored"))'),
+    ("ready: a leftover stop file passes", READY,
+     "    if stop.exists():\n"
+     '        out.append(_entry("FAIL", "stop file",',
+     "    if False:\n"
+     '        out.append(_entry("FAIL", "stop file",'),
+    ("ready: an old installer is not flagged", READY,
+     "    elif page_time and setup_time < page_time:",
+     "    elif False:"),
+    ("ready: the exit code ignores failures", READY,
+     '    return 1 if any(item["level"] == "FAIL" for item in results) else 0',
+     "    return 0"),
+    ("sim: the client never offers the curriculum", SIMRUN,
+     "        policy._client_quests |= set(policy._curriculum(args.level))",
+     "        pass"),
+    # ---- the user-command parser and its dataset
+    ("goal: asking the bot to play is not Full Auto", PLAN,
+     'if _RE_GOAL_AUTO_PLAY.search(text):',
+     'if False:  # _RE_GOAL_AUTO_PLAY.search(text):'),
+    ("command: the model is never consulted", CMD,
+     "    if model is not None:",
+     "    if False:"),
+    ("command: the model's confidence is ignored", CMD,
+     'if prediction is not None and prediction["confidence"] >= threshold:',
+     "if prediction is not None:"),
+    ("witness: the command shadow is dropped", SREPORT,
+     'shadow["rows"] += 1',
+     'shadow["rows"] = 0'),
+    ("command report: goal frequencies are lost", SHADOW_REPORT,
+     'goals[goal] += 1',
+     'goals[goal] = 1'),
+    ("live evidence: the autopilot summary is dropped", LIVE,
+     'if isinstance(value, dict):',
+     'if False:'),
+    ("live evidence: a relative log stays relative", LIVE,
+     'return Path(path).expanduser().resolve()',
+     'return Path(path)'),
+    ("live evidence: overrides are dropped from the summary", LIVE,
+     '"would_override": sum(1 for row in shadow if row.get("would_override")),',
+     '"would_override": 0,'),
+    ("command onnx: the price default is dropped", ONNX,
+     'if "price" in slots:',
+     'if False:  # "price" in slots:'),
+    ("command replay: a page advancement is dropped", REPLAY,
+     'advanced = int(verdicts.get("advanced", 0))',
+     'advanced = 0'),
+    ("command replay: the objective delta is reversed", REPLAY,
+     'else objectives_after - objectives_before),',
+     'else objectives_before - objectives_after),'),
+    ("command adapter: the canary can change", SHADOW,
+     'return all(after.get(text) == value for text, value in before.items())',
+     'return True'),
+    ("command adapter: an equal base score is rejected", SHADOW,
+     'return (int(after.get("intent", 0)) >= int(before.get("intent", 0))',
+     'return (int(after.get("intent", 0)) > int(before.get("intent", 0))'),
+    ("command shadow: a confident disagreement is not flagged", SHADOW,
+     'row["would_override"] = confidence >= threshold and not agree',
+     'row["would_override"] = False'),
+    ("command shadow: a mode change is not flagged", SHADOW,
+     'row["would_change_mode"] = (usable is not None and confidence >= threshold\n'
+     '                                and not row["mode_agree"])',
+     'row["would_change_mode"] = False'),
+    ("command: the action-to-tool bridge is lost", CMD,
+     'return chosen or INTENT_TOOL.get(str(intent or ""))',
+     'return INTENT_TOOL.get(str(intent or ""))'),
+    ("command: intent-illegal model slots survive", CMD,
+     'allowed = INTENT_SLOTS.get(intent)',
+     'allowed = None'),
+    ("command: tool defaults leak into user intent", CMD,
+     'if key == "price_rule" and value == "median_minus_1":\n            continue',
+     "if False:\n            continue"),
+    ("command data: a held-out entity leaks into train", CDATA,
+     'augmented = _augment(command["text"], command["slots"], TRAIN_POOLS, rng)',
+     'augmented = _augment(command["text"], command["slots"], EVAL_POOLS, rng)'),
+    ("command data: an eval phrasing stays in train", CDATA,
+     'if _norm(command["text"]) in eval_texts:\n            skipped += 1\n            continue',
+     'if False:\n            skipped += 1\n            continue'),
+    ("command data: a near-copy stays in train", CDATA,
+     'if contains_eval(command["text"]):\n            near_copies += 1\n            continue',
+     'if False:\n            near_copies += 1\n            continue'),
+    ("command data: every phrasing lands in train", CDATA,
+     'if len(rows) >= 3:\n            train_rows, val_row, test_row = rows[:-2], rows[-2], rows[-1]',
+     'if len(rows) >= 3:\n            train_rows, val_row, test_row = rows, None, None'),
 ]
 
 

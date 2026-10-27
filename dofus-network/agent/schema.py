@@ -179,6 +179,9 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
             "reply_text": _p("str", "Which dialog reply to choose, by the exact French text "
                                     "reported in dialog.replies. With reply, both must agree."),
             "close": _p("bool", "Close an open dialog whose reply list is empty."),
+            "accept": _p("bool", "Accept the quest this dialog is offering. The page "
+                                  "sends QuestStartRequestMessage only when the dialog's "
+                                  "own start_quest link matches quest_id, then closes."),
         },
         backend="directive",
         directive="QUEST_ADVANCE",

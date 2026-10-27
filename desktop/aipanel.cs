@@ -704,7 +704,32 @@ namespace DofusFarm.UI
                 string models = Path.Combine(_baseDir, "dofus-network", "models");
                 string head = Path.Combine(models, "verifier_head.onnx");
                 string baseline = Path.Combine(models, "verifier_baseline.json");
-                string verifier = File.Exists(head) ? head : (File.Exists(baseline) ? baseline : null);
+                string contractPath = Path.Combine(models, "verifier_head.validation.json");
+                // G6: a head is not trustworthy because the file exists. The shipped
+                // head's 1.0 validation accuracy is circular (rule labels on the rule's
+                // own features), so it can override a correct rule on an action without
+                // adding signal. Only a contract measured on live or human labels, on
+                // enough examples and above the rule baseline, unlocks the auto-load.
+                // Without it the loop labels with rules; a CLI --verifier-model still
+                // overrides this choice for an experiment.
+                string verifier = null;
+                try
+                {
+                    if (File.Exists(contractPath))
+                    {
+                        string contract = File.ReadAllText(contractPath);
+                        bool validated = Regex.IsMatch(contract,
+                            "\"labels\"\\s*:\\s*\"(live|human)\"");
+                        Match n = Regex.Match(contract, "\"n\"\\s*:\\s*(\\d+)");
+                        bool enough = n.Success && int.Parse(n.Groups[1].Value) >= 60;
+                        bool above = Regex.IsMatch(contract,
+                            "\"above_baseline\"\\s*:\\s*true");
+                        if (validated && enough && above)
+                            verifier = File.Exists(head) ? head
+                                     : (File.Exists(baseline) ? baseline : null);
+                    }
+                }
+                catch { }
                 if (verifier != null) sb.Append(" --verifier-model \"").Append(verifier).Append("\"");
             }
             catch { }

@@ -63,7 +63,6 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             _perturb(world, rng)
 
         obs = world.observe()
-        quest = world.active_quest() or None
         current = world.current_objective()
 
         call = planner.choose("do all the quests", obs, None)

@@ -120,11 +120,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.policy == "nn":
         from agent.planner_nn import NNPlanner
         policy = NNPlanner(level_hint=args.level, ordering=args.ordering)
+        policy._ensure_model()
         print("# %s" % policy.note)
     elif args.policy == "random":
         policy = RandomPolicy(args.seed)
     else:
         policy = RulePolicy()
+
+    if args.policy in ("planner", "nn"):
+        # The symbolic world *is* the client here, and it offers these quests. The
+        # live G31 guard refuses any id the client never reported; without this seed
+        # every sim run ends at step 0, which reads as a broken planner.
+        policy._client_quests |= set(policy._curriculum(args.level))
 
     score = run(policy, args.level, args.steps, args.seed, args.verbose, args.noise,
                 args.travel_cost, args.ordering)

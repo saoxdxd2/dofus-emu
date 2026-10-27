@@ -47,6 +47,12 @@ _RE_GOAL_FARM = re.compile(
     r"collecte[rz]?)\b", re.IGNORECASE)
 _AUTO_GOALS = frozenset({"auto", "full auto", "fullauto", "autopilot",
                          "autonome", "automatic", ""})
+# A user asking the bot to play is a Full Auto request, not an order with no
+# call. Checked after quest/farm so "can you play the quests?" stays a quest.
+_RE_GOAL_AUTO_PLAY = re.compile(
+    r"(?:^|[ 	])(?:(?:can|could|would|will) you play|play (?:the )?game|"
+    r"play for me|take over|do everything|you play|run the game)",
+    re.IGNORECASE)
 _FARM_TARGET_STRIP = re.compile(
     r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|mobs?|monsters?|monstres?|"
     r"resources?|ressources?|r[eé]colte[rz]?|gather|harvest|minar|collecte[rz]?|"
@@ -70,6 +76,8 @@ def _goal_mode(goal: str) -> str:
         return "quest"
     if _RE_GOAL_FARM.search(text):
         return "farm"
+    if _RE_GOAL_AUTO_PLAY.search(text):
+        return "auto"
     return "order"
 
 
@@ -292,6 +300,51 @@ def names_target(call: Dict[str, Any]) -> bool:
     if tool in ("fight.join", "farm.start"):
         return bool(args)
     return True
+
+
+def catalog_objectives(obs: Dict[str, Any], quest_id: Any) -> List[Dict[str, Any]]:
+    """Objective rows the page captured for one active quest (G29).
+
+    The client's own graph is the only source that describes a live quest: the
+    downloaded cache stops at id 2,546 and the live ids start at 3,841. This is a
+    read of `quests_catalog`; it invents nothing and returns [] when the page did
+    not capture the quest.
+    """
+    catalog = obs.get("quests_catalog") if isinstance(obs, dict) else None
+    if not isinstance(catalog, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for quest in catalog:
+        if not isinstance(quest, dict):
+            continue
+        try:
+            if int(quest.get("id")) != int(quest_id):
+                continue
+        except (TypeError, ValueError):
+            continue
+        for step in quest.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            for obj in step.get("objectives") or []:
+                if isinstance(obj, dict):
+                    out.append(obj)
+    return out
+
+
+def dialog_offer(dialog: Any) -> Optional[int]:
+    """The quest this dialog is offering, as the page read it from the client's link.
+
+    G32 publishes `dialog.start_quest` from the client's own `startquest,<id>`
+    payload; an offer is a link, not a reply. The planner may only ask to accept
+    an id this function returns (G31's rule: never a curriculum or KB id).
+    """
+    if not isinstance(dialog, dict):
+        return None
+    try:
+        offered = int(dialog.get("start_quest"))
+    except (TypeError, ValueError):
+        return None
+    return offered if offered > 0 else None
 
 
 # How many times one answer may be asked on one page for one objective before the
@@ -790,11 +843,59 @@ class QuestPlanner:
 
         decision = rank_dialog(obs)
         self.last_dialog_decision = decision
+        dialog = obs.get("dialog") if isinstance(obs.get("dialog"), dict) else {}
+        # An offer carries the client's own id (G32). Accepting the link is the action,
+        # not answering a reply (G33); the page refuses any id it is not offering, so a
+        # stale current_quest cannot put an invented id on the wire. A quest the run is
+        # already doing (or the ranker's quest) always wins; otherwise a quest/auto run
+        # takes a new offer from an NPC, which is how the next quest in a chain starts.
+        # An order/farm prompt must not acquire quests (fidelity), a named focus must
+        # match, and an offer for an already-active quest is stale -- the ranker answers.
+        offered = dialog_offer(dialog)
+        if offered is not None:
+            wanted = None
+            if isinstance(decision, dict):
+                try:
+                    wanted = int(decision.get("quest_id"))
+                except (TypeError, ValueError):
+                    wanted = None
+            try:
+                current = int(self.current_quest) if self.current_quest is not None else None
+            except (TypeError, ValueError):
+                current = None
+            try:
+                focus = int(self.focus) if self.focus is not None else None
+            except (TypeError, ValueError):
+                focus = None
+            active_ids = set()
+            raw_active = obs.get("quests_active")
+            if isinstance(raw_active, dict):
+                for key in raw_active:
+                    try:
+                        active_ids.add(int(key))
+                    except (TypeError, ValueError):
+                        continue
+            # A quest id in the prompt is a named target; an unrelated offer is not
+            # taken (fidelity). Live quest ids are four digits in this game.
+            named = {int(m) for m in re.findall(r"\b(\d{4,6})\b", goal or "")}
+            takes_new = (_goal_mode(goal) in ("quest", "auto")
+                         and (not named or offered in named)
+                         and (focus is None or focus == offered))
+            if offered in active_ids:
+                takes_new = False
+            if offered == current or offered == wanted or takes_new:
+                self.current_quest = offered
+                self.current_objective = None
+                self._pending_start = offered
+                # The offer is client-reported, so G31's rule is satisfied; remembering it
+                # lets a start the server did not honour be retried outside the dialog.
+                self._client_quests.add(offered)
+                return ToolCall("quest.advance",
+                                {"quest_id": offered, "accept": True}, goal)
         if decision is None:
             self._dialog_waits = 0
             self._dialog_key = None
             return None
-        dialog = obs.get("dialog") if isinstance(obs.get("dialog"), dict) else {}
         key = (dialog.get("npc_id"), dialog.get("message"))
         if key != self._dialog_key:
             self._dialog_waits = 0
@@ -917,7 +1018,15 @@ class QuestPlanner:
                 return None
             self.current_quest = qid
             self.current_objective = None
-            return ToolCall("quest.advance", {"quest_id": qid}, goal)
+            dialog = obs.get("dialog") if isinstance(obs.get("dialog"), dict) else {}
+            if dialog_offer(dialog) == qid:
+                # The offer is the client's own id (G32): accept the link instead
+                # of answering a reply, which is what this call used to do (G33).
+                self._pending_start = qid
+                return ToolCall("quest.advance", {"quest_id": qid, "accept": True}, goal)
+            # An explicit reply keeps the "click next" behaviour; a bare quest id
+            # is now reserved for a start request, which the page refuses here.
+            return ToolCall("quest.advance", {"quest_id": qid, "reply": 0}, goal)
 
         npc = tutorial.get("unblocked_npc_id")
         if npc is not None:
@@ -1311,6 +1420,13 @@ class QuestPlanner:
                 return self._objective_from_observation(entry)
         for entry in obs.get("ready_objectives") or []:
             if isinstance(entry, dict) and str(entry.get("objective_id")) == str(oid):
+                return self._objective_from_observation(entry)
+        # The page's own active-quest graph (G29). `step_objectives` only covers the
+        # quest whose current objective the tracker names, so an active quest with a
+        # thin per-quest table had no row to plan from even though the client held
+        # one. The catalogue is that row, keyed by the quest the character is on.
+        for entry in catalog_objectives(obs, quest_id):
+            if str(entry.get("id")) == str(oid):
                 return self._objective_from_observation(entry)
         return None
 
@@ -1892,6 +2008,16 @@ class QuestPlanner:
                 self.current_quest = qid
                 self.current_objective = None   # accepting has no objective yet
                 self._pending_start = qid
+                if obs.get("in_dialog"):
+                    dialog = obs.get("dialog") if isinstance(obs.get("dialog"), dict) else {}
+                    if dialog_offer(dialog) == qid:
+                        return ToolCall("quest.advance",
+                                        {"quest_id": qid, "accept": True}, goal)
+                    # A dialog is open and it is not offering this quest; a start
+                    # request inside one is refused by the page (G33), so close the
+                    # conversation first and send the request on the next step.
+                    return ToolCall("quest.advance",
+                                    {"quest_id": qid, "close": True}, goal)
                 return ToolCall("quest.advance", {"quest_id": qid}, goal)
             call = self._plan_quest(qid, int(active[str(qid)] if str(qid) in active else active[qid]), obs, goal)
             if call is not None:

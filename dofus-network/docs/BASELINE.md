@@ -105,6 +105,20 @@ failed by tool  : quest.advance 504, fight.join 48, nav.goto 25, state.snapshot 
 
 ## Re-measure
 
+**Before a live run**, from `dofus-network/`:
+
+```bash
+python tools/live_ready.py --log trajectories/default.jsonl   # or the current autopilot log
+```
+
+`FAIL page build` means the last client recorded an older `agent_build` than the repo (currently
+`2026-10-27a`): restart the app fully, because a reload keeps the old injected page. `FAIL stop file`
+means a leftover `AUTOPILOT_STOP` would end the run on its first step. `WARN installer` means
+`setup.exe` is older than the page (rebuild); `WARN client`/`WARN brain` mean the app or the combat
+brain is not up yet (the page fallback fights). The tool exits 1 on a FAIL and writes nothing.
+
+Then:
+
 ```bash
 cd dofus-network
 python -m tools.session_report trajectories/default.jsonl "$LOCALAPPDATA/DofusFarm/autopilot.jsonl"
@@ -114,11 +128,20 @@ python tools/brain_readiness.py          # does a live board satisfy the combat 
 python tools/group_scan.py               # why was `map.groups` empty on every recorded map?
 python tools/brain_readiness.py          # does the page's own fight.state satisfy the contract?
 python tools/policy_over_record_boards.py  # what the trained actor would have done with them
+python tools/ingest_observed_quests.py --coverage  # persist the client's quest graph, measure coverage
 ```
 
 `tools/recovery_report.py` is new with this baseline: `session_report` gives throughput
 and objective deltas, and this gives the verdict/decision/cause/disconnect breakdown that
 "recovery success" is actually measured by. Both are read-only over the logs.
+
+`tools/ingest_observed_quests.py` (added with G29) reads the `quests_catalog` rows a new page build
+writes, persists one row per objective to `data/knowledge/observed_quests.jsonl`, and prints
+`new / agrees / collision` against the store. Until a live session produces rows its verdict says
+"predate the capture"; once it does not, `quest_catalog_status.quests > 0` in the same log is the
+producer-side witness. The runtime loads the file through a stat-keyed cache, so a loop that started
+before the page reload still resolves observed objectives — and an objective id two quests claim is
+refused unless the tracker names the quest.
 
 `tools/dialog_labels.py` (added with G23) reconstructs `(page, reply sent) -> outcome` from the
 trajectory logs and joins each reply id to the `PLAY_LOG` wire stream, so a dispatch can be
@@ -198,6 +221,27 @@ corpus contains them, the fixed loop must not:
 Neither line needs a new tool: both are read out of the `quest.advance` rows and the `knowledge` block
 the loop already writes.
 
+**A dialog that offers a quest is now accepted by the loop itself (G33).** Read the dialog rows: an
+accept writes `asked: "accept"`, `accepted_offer: true` and, when the dialog closed,
+`ended_by: "accept"`; the step's args are `{quest_id, accept: true}`. A reply-0 row on a page whose
+dialog carried a `startquest` link is the old behaviour and says the offer was not taken. A page
+refusal names the mismatch: `quest_not_offered` or `dialog_start_not_accept` with the `offered` id.
+The planner takes a new offer only in `quest`/`auto` prompts, only when the quest is not already
+active, and — when the prompt names a quest id — only that quest; an order or farm prompt acquiring a
+quest would be a fidelity defect, not progress.
+
+**One readout now prints all four 2026-10-27 witnesses.** `session_report` ends each file with
+`page build:` first, then `knowledge:` (observed vs not-in-store vs collision, and whether observed
+rows came from the catalogue or the ingest file), `quests_catalog:` (rows/quests/objectives, or "the
+page build predates G29"), `identity:` (bound/drift rows and the names) and `accept:` (explicit
+accepts vs start-shaped calls inside a dialog, plus the page answer). The page now stamps
+`2026-10-27a`; **the next run must show that build** — `2026-10-25d` means the client kept the
+previously injected script and needs a full app restart, not a reload. Against the recorded corpus
+it prints `page build: 2026-10-25d=4782`, `0 observed; 2,704 not in store`, `quests_catalog: none`,
+`identity: no bound/drift rows` and `accept: no explicit accept rows and no dialog carried
+start_quest` — those are *predates* verdicts, not zeros about the game. A live run that still prints
+them has a page-build or wiring problem, not a quiet world.
+
 ## What is NOT baselined yet
 
 - **Manual interventions** — this baseline could not measure them, because nothing in
@@ -213,6 +257,9 @@ the loop already writes.
   now writes `{"kind":"recovery", trigger, reason, recovered, waited_s}` and the summary
   carries `recoveries / recoveries_ok / recovery_wait_s`; `recovery_report.py` prints them
   per trigger. This run shows `no rows`, which means *unmeasured*, not *never needed*.
+  A `kind:"identity"` row is written when the run binds to a character and when the slot
+  shows a different one; the latter ends the session with "the slot logged into a different
+  character (A -> B)", which is how a wrong-account relogin is told apart from a stale read.
 - **Repair labels** — see finding 5: `unknown` covered a third of all failures and the
   decision row hid the game's error. Fixed 2026-10-26, so the next baseline is the first one
   whose cause histogram means anything, and the one above is not comparable to it.

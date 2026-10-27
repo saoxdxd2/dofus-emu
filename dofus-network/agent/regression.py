@@ -876,7 +876,12 @@ def test_js_page_suites() -> None:
                    "tools/test_inventory_equip.js",
                    "tools/test_fight_budget.js",
                    "tools/test_quest_progress.js",
-                   "tools/test_dialog_links.js"):
+                   "tools/test_dialog_links.js",
+                   "tools/test_quest_accept.js",
+                   "tools/test_quest_catalog.js",
+                   "tools/test_page_build.js",
+                   "tools/test_transition_watchdog.js",
+                   "tools/test_fight_planner.js"):
         path = ROOT / script
         if not path.exists():
             check("%s exists" % script, False, "missing")
@@ -1345,6 +1350,1128 @@ def test_absent_client_recovery() -> None:
     check("the summary carries the recovery numbers",
           all(key in inspect.getsource(Autopilot.summary)
               for key in ("recoveries", "recoveries_ok", "recovery_wait_s")))
+
+
+def test_identity_binding() -> None:
+    section("Identity (G9: a slot is not an account)")
+    import inspect
+    import json as _json
+    from agent.autopilot import Autopilot
+
+    class Shim:
+        session = "s"
+        max_steps = 0
+        deadline = 0.0
+        _index = 0
+
+        def __init__(self):
+            self._identity = None
+            self._identity_drift = None
+            self.rows = []
+            self.stop_file = Path("this-stop-file-does-not-exist")
+
+        def _append_log_line(self, line):
+            self.rows.append(line)
+
+    def bind(shim):
+        return Autopilot._check_identity.__get__(shim, Shim)
+
+    def events(shim):
+        return [_json.loads(line.decode("utf-8")).get("event") for line in shim.rows]
+
+    def world(character, **over):
+        base = {"in_world": True, "position": {"map_id": 100},
+                "character": character}
+        base.update(over)
+        return base
+
+    shim = Shim()
+    who = bind(shim)
+    check("the first real character binds the run",
+          who(world({"id": 1, "name": "Aiai"})) is True
+          and shim._identity == {"id": "1", "name": "Aiai"}, shim._identity)
+    check("the binding is logged with the character, not just the slot",
+          events(shim) == ["bound"] and b"Aiai" in shim.rows[0], shim.rows[:1])
+    check("the same character is not a change",
+          who(world({"id": 1, "name": "Aiai"})) is True
+          and shim._identity_drift is None)
+    check("a level-up is not an identity change",
+          who(world({"id": 1, "name": "Aiai", "level": 4})) is True)
+    check("a rename on the same id is the same account",
+          who(world({"id": 1, "name": "Aiai II"})) is True
+          and shim._identity_drift is None)
+    check("character select and older pages are unknown, not a change",
+          who(world({"id": None, "name": None})) is True
+          and who({}) is True)
+
+    pre = Shim()
+    pw = bind(pre)
+    pw({"in_world": False, "position": {"map_id": 0},
+        "character": {"id": 9, "name": "Old"}})
+    check("a character shown at character select is not a binding",
+          pre._identity is None and pre._identity_drift is None, pre._identity)
+    check("the first in-world snapshot then binds the real character",
+          pw(world({"id": 1, "name": "Aiai"})) is True
+          and pre._identity == {"id": "1", "name": "Aiai"}, pre._identity)
+    check("and a different in-world character is drift, not a stale-select false positive",
+          pw(world({"id": 2, "name": "Other"})) is False
+          and pre._identity_drift is not None, pre._identity_drift)
+
+    drift = Shim()
+    dw = bind(drift)
+    dw(world({"id": 1, "name": "Aiai"}))
+    check("a different character on the same slot fails closed",
+          dw(world({"id": 2, "name": "Other"})) is False
+          and drift._identity_drift is not None, drift._identity_drift)
+    check("the drift is logged with both identities",
+          events(drift) == ["bound", "drift"] and b"Other" in drift.rows[-1],
+          drift.rows[-1:])
+    check("and it becomes a stop reason instead of a silent log line",
+          "different character" in str(Autopilot._should_stop(drift)),
+          Autopilot._should_stop(drift))
+
+    name_only = Shim()
+    nw = bind(name_only)
+    nw(world({"name": "Aiai"}))
+    check("a build that exposes only the name still binds and compares",
+          nw(world({"name": "Aiai"})) is True
+          and nw(world({"name": "Other"})) is False)
+    id_only = Shim()
+    iw = bind(id_only)
+    iw(world({"id": 7}))
+    check("a build that exposes only the id still binds and compares",
+          iw(world({"id": 7})) is True
+          and iw(world({"id": 8})) is False)
+    late = Shim()
+    lw = bind(late)
+    lw(world({"name": "Aiai"}))
+    check("an id that arrives after the name is the same character and is kept",
+          lw(world({"id": 1, "name": "Aiai"})) is True
+          and late._identity == {"id": "1", "name": "Aiai"}, late._identity)
+
+    run_src = inspect.getsource(Autopilot._run)
+    world_src = inspect.getsource(Autopilot._require_world)
+    check("the main loop checks identity on every observation",
+          "_check_identity(before)" in run_src, "the loop does not check")
+    check("and the world wait checks it before treating a map as the same run",
+          "_check_identity(obs)" in world_src, "the wait does not check")
+    check("recovery failures prefer the identity stop reason over a generic one",
+          run_src.count("self._should_stop()") >= 3,
+          "a drift during recovery would be reported as a client failure")
+
+
+def test_live_witnesses() -> None:
+    section("Live witnesses (G9/G29/G32/G33 in one readout)")
+    import contextlib
+    import importlib.util
+    import io
+    import json as _json
+    import tempfile
+
+    script = REPO_ROOT / "tools" / "session_report.py"
+    check("the report tool exists", script.exists(), str(script))
+    if not script.exists():
+        return
+    spec = importlib.util.spec_from_file_location("session_report", str(script))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    obs_new = {
+        "agent_build": "2026-10-27a",
+        "character": {"id": 1, "name": "Aiai"},
+        "knowledge": {"status": "observed", "observed_from": "catalog",
+                      "objective": {"text": "Parler à Ayin Spyr"}},
+        "quests_catalog": [{"id": 3841, "name": "Q", "steps": [
+            {"id": 1, "objectives": [{"id": 14070}, {"id": 14071}]}]}],
+        "quest_catalog_status": {"quests": 1, "steps": 1, "objectives": 2,
+                                 "truncated": False},
+        "dialog": {"open": True, "start_quest": 4266},
+        "in_dialog": True,
+    }
+    rows = [
+        {"kind": "identity", "session": "s", "event": "bound",
+         "character_id": "1", "name": "Aiai", "at": 1},
+        {"kind": "identity", "session": "s", "event": "drift",
+         "bound": {"id": "1", "name": "Aiai"},
+         "seen": {"id": "2", "name": "Other"}, "at": 2},
+        {"kind": "step", "session": "s", "index": 0, "tool": "quest.advance",
+         "ok": True, "args": {"quest_id": 4266, "accept": True},
+         "result": {"response": {"result": {"data": {
+             "accepted_offer": True, "stage": "quest_accept_sent"}}}},
+         "observation": obs_new, "at": 10},
+        {"kind": "step", "session": "s", "index": 1, "tool": "quest.advance",
+         "ok": True, "args": {"quest_id": 777},
+         "result": {"response": {"result": {"data": {
+             "stage": "dialog_start_not_accept"}}}},
+         "observation": {"in_dialog": True, "dialog": {"open": True}}, "at": 11},
+        {"kind": "step", "session": "s", "index": 2, "tool": "quest.advance",
+         "ok": False, "args": {"quest_id": 7, "npc_id": 1},
+         "observation": {"agent_build": "2026-10-25d",
+                         "knowledge": {"status": "objective_not_in_store"}},
+         "at": 12},
+    ]
+    got = module.witnesses(rows)
+    check("the page build is counted per observation, including the stale one",
+          got["builds"].get("2026-10-27a") == 1
+          and got["builds"].get("2026-10-25d") == 1, got["builds"])
+    check("and the verdict names the builds, so a stale page is visible",
+          "page build:" in " | ".join(got["verdicts"])
+          and "2026-10-25d" in " | ".join(got["verdicts"]), got["verdicts"])
+    check("the observed knowledge and the store miss are counted separately",
+          got["knowledge"].get("observed") == 1
+          and got["knowledge"].get("objective_not_in_store") == 1, got["knowledge"])
+    check("the observed row says where it came from",
+          got["observed_from"].get("catalog") == 1, got["observed_from"])
+    check("the catalogue census counts the graph, not just the rows",
+          got["catalog"]["rows"] == 1 and got["catalog"]["quests"] == 1
+          and got["catalog"]["steps"] == 1 and got["catalog"]["objectives"] == 2
+          and got["catalog"]["dialog_offers"] == 1, got["catalog"])
+    check("identity bound and drift rows are both counted, with names",
+          got["identity"].get("bound") == 1 and got["identity"].get("drift") == 1
+          and got["identity_names"] == ["Aiai", "Other"], got["identity"])
+    check("an explicit accept and a start-shaped call are different census keys",
+          got["accept"]["rows"] == 1 and got["accept"]["ok"] == 1
+          and got["accept"]["start_rows"] == 1
+          and got["accept"]["start_in_dialog"] == 1, got["accept"])
+    check("the page answer is recorded with the accept row",
+          got["page"].get("quest_accept_sent") == 1,
+          got["page"])
+    verdicts = " | ".join(got["verdicts"])
+    check("the verdict says observed rows came from the catalogue",
+          "1 observed (catalog 1, file 0)" in verdicts, verdicts)
+    check("the verdict counts the catalogue graph",
+          "quests_catalog: 1 row(s), 1 quest(s), 2 objective(s)" in verdicts,
+          verdicts)
+    check("the verdict names the bound and drifted characters",
+          "identity: bound 1, drift 1 (Aiai, Other)" in verdicts, verdicts)
+    check("the verdict separates accepts from start-shaped dialog calls",
+          "accept: 1 row(s) (ok 1)" in verdicts
+          and "1 start-shaped inside a dialog" in verdicts, verdicts)
+
+    tmp = Path(tempfile.mkdtemp(prefix="witnesses-"))
+    log = tmp / "log.jsonl"
+    log.write_text("\n".join(_json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    report = module.summarise(log)
+    check("the report carries the witnesses in its JSON",
+          (report.get("witnesses") or {}).get("catalog", {}).get("quests") == 1,
+          report.get("witnesses"))
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        module.main([str(log)])
+    text = buffer.getvalue()
+    check("and the printed report shows every verdict",
+          all(line in text for line in got["verdicts"]), text[-400:])
+
+    empty = module.witnesses([{"kind": "step", "observation": {}}])
+    empty_text = " | ".join(empty["verdicts"])
+    check("an older log says 'none' instead of printing zeros as data",
+          "none in these rows" in empty_text
+          and "no bound/drift rows" in empty_text
+          and "no explicit accept rows" in empty_text, empty_text)
+
+    shadow_rows = [
+        {"kind": "command_shadow_status", "session": "s", "available": True,
+         "error": None, "model": "m", "mode": "auto"},
+        {"kind": "command_shadow", "text": "do all the quests", "usable": True,
+         "agree_intent": True, "agree_command": False, "would_override": True,
+         "rule": {"intent": "quest", "slots": {"action": "list"}},
+         "model": {"intent": "quest", "slots": {"action": "run"},
+                   "confidence": 0.95}},
+        {"kind": "command_shadow", "text": "plz do all the quests", "usable": True,
+         "agree_intent": True, "agree_command": True, "would_override": False,
+         "rule": {"intent": "quest", "slots": {"action": "list"}},
+         "model": {"intent": "quest", "slots": {"action": "list"},
+                   "confidence": 0.9}},
+    ]
+    shadow_w = module.witnesses(shadow_rows)
+    examples = shadow_w["command_shadow"].get("examples") or [""]
+    check("the witness counts the command shadow and its overrides",
+          shadow_w["command_shadow"]["rows"] == 2
+          and shadow_w["command_shadow"]["would_override"] == 1
+          and "do all the quests" in examples[0], shadow_w["command_shadow"])
+    check("the witness says the shadow was requested and available",
+          any("command_shadow:" in verdict and "would override 1" in verdict
+              for verdict in shadow_w["verdicts"]), shadow_w["verdicts"])
+
+
+def test_verifier_head_gate() -> None:
+    section("Verifier head (G6: no auto-load without a live/human contract)")
+    panel = ROOT / "desktop" / "aipanel.cs"
+    check("the GUI panel source exists", panel.exists(), str(panel))
+    if not panel.exists():
+        return
+    src = panel.read_text(encoding="utf-8", errors="replace")
+    check("the auto-load requires a validation contract, not file existence",
+          "verifier_head.validation.json" in src
+          and "File.Exists(contractPath)" in src, "no contract gate")
+    check("only live or human labels qualify",
+          "labels" in src and "live|human" in src, "label provenance unchecked")
+    check("a minimum sample and a baseline comparison are required",
+          ">= 60" in src and "above_baseline" in src, "sample/baseline unchecked")
+    check("the decision is all three conditions",
+          "validated && enough && above" in src, "an incomplete condition")
+    check("the rules remain the default when no contract passes",
+          "string verifier = null;" in src, "the model is not optional")
+    gate_at = src.find("File.Exists(contractPath)")
+    append_at = src.find("if (verifier != null) sb.Append")
+    check("the model is passed only after the gate",
+          gate_at >= 0 and append_at > gate_at, "append is not behind the gate")
+
+
+def test_observation_text() -> None:
+    section("Observation text (G29: the quest graph is a census, not a dump)")
+    from agent.tool_dataset import _observation_text
+
+    catalog = [{
+        "id": 3841, "name": "Q", "steps": [
+            {"id": 2001, "objectives": [{"id": 14070 + i} for i in range(100)]}
+        ]}]
+    obs = {
+        "agent_build": "2026-10-27a",
+        "character": {"id": 1, "name": "Aiai", "level": 3},
+        "position": {"map_id": 100, "cell": 5},
+        "in_world": True,
+        "in_dialog": False,
+        "knowledge": {"status": "observed", "observed_from": "catalog",
+                      "objective": {"text": "Parler à Ayin Spyr"}},
+        "quests_active": {"3841": 0},
+        "quests_catalog": catalog,
+        "quest_catalog_status": {"quests": 1, "steps": 1, "objectives": 100,
+                                 "truncated": False},
+    }
+    text = _observation_text(obs, 1200) or ""
+    check("the quest graph is rendered as a census",
+          "quest graph: 1 active quest(s), 100 objective(s)" in text, text)
+    check("the raw graph is not dumped into the observation text",
+          "quests_catalog" not in text and "14070" not in text, text)
+    check("the census does not hide the knowledge or the build",
+          "observed" in text and "2026-10-27a" in text, text)
+    check("the text respects the character budget", len(text) <= 1200, len(text))
+    check("an observation without a graph is unchanged",
+          _observation_text({"position": {"map_id": 7}}, 200) is not None)
+
+
+def test_kaggle_toolkit_sync() -> None:
+    section("Kaggle toolkit (G10: an explicit copy/pin matrix)")
+    import importlib.util
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "sync_kaggle_toolkit.py"
+    check("the sync tool exists", tool.exists(), str(tool))
+    if not tool.exists():
+        return
+    spec = importlib.util.spec_from_file_location("sync_kaggle_toolkit", tool)
+    sync = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync)
+
+    tmp = Path(tempfile.mkdtemp(prefix="kaggle-sync-"))
+    root = tmp / "dofus-network"
+    toolkit = root / "kaggle" / "toolkit"
+
+    def put(path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    put(root / "agent" / "a.py", "new A")
+    put(toolkit / "agent" / "a.py", "old A")
+    put(toolkit / "agent" / "legacy.py", "legacy")
+    put(root / "agent" / "b.py", "source only")
+    put(root / "sim" / "s.py", "same")
+    put(toolkit / "sim" / "s.py", "same")
+    put(root / "data" / "capabilities.json", '{"new":1}')
+    put(toolkit / "data" / "capabilities.json", '{"old":1}')
+    put(root / "data" / "maps" / "_index.json", "big")
+    put(toolkit / "data" / "maps" / "_index.json", "trimmed")
+    put(toolkit / "dataset-metadata.json", "{}")
+    put(toolkit / "ai" / "__pycache__" / "x.pyc", "junk")
+
+    entries = sync.plan(root, toolkit)
+    by = {item["path"]: item for item in entries}
+    check("a stale agent copy is planned for sync",
+          by["agent/a.py"]["status"] == "sync" and by["agent/a.py"]["drift"])
+    check("a matching file is not drift", by["sim/s.py"]["drift"] is False)
+    check("a toolkit-only module is pinned, not deleted",
+          by.get("agent/legacy.py", {}).get("status") == "pinned")
+    check("the trimmed map index and Kaggle metadata are pinned",
+          by.get("data/maps/_index.json", {}).get("status") == "pinned"
+          and by.get("dataset-metadata.json", {}).get("status") == "pinned")
+    check("bytecode is ignored",
+          not any("__pycache__" in path or path.endswith(".pyc") for path in by))
+    check("a source-only file is not added to the toolkit", "agent/b.py" not in by)
+    check("drift finds exactly the stale copies",
+          {item["path"] for item in sync.drift(entries)}
+          == {"agent/a.py", "data/capabilities.json"},
+          [item["path"] for item in sync.drift(entries)])
+
+    sync.TOOLKIT = toolkit
+    sync.MANIFEST = toolkit / "TOOLKIT_MANIFEST.json"
+    copied = -1
+    try:
+        copied = sync.write(entries, root, toolkit)
+    except Exception:      # noqa: BLE001 - the checks below report the broken plan
+        copied = -1
+    check("write copies only the sync files", copied == 3
+          and (toolkit / "agent" / "a.py").read_text(encoding="utf-8") == "new A",
+          copied)
+    check("write never overwrites the pinned files",
+          (toolkit / "data" / "maps" / "_index.json").read_text(encoding="utf-8")
+          == "trimmed"
+          and (toolkit / "agent" / "legacy.py").read_text(encoding="utf-8")
+          == "legacy")
+    check("write records a manifest with statuses",
+          sync.MANIFEST.is_file()
+          and "pinned" in sync.MANIFEST.read_text(encoding="utf-8"))
+    manifest = {}
+    if sync.MANIFEST.is_file():
+        try:
+            manifest = json.loads(sync.MANIFEST.read_text(encoding="utf-8"))
+        except Exception:      # noqa: BLE001 - a broken manifest is a failed check
+            manifest = {}
+    check("the manifest records the post-write state, not the pre-copy drift",
+          bool(manifest)
+          and not any(item["drift"] or item["missing"]
+                      for item in manifest.get("files", [])),
+          [item["path"] for item in manifest.get("files", []) if item["drift"]])
+    check("after write the plan has no drift",
+          sync.drift(sync.plan(root, toolkit)) == [])
+
+
+def test_quest_chain_replay() -> None:
+    section("Quest chain replay (G29+G33: offer -> accept -> plan -> next offer)")
+    from agent.planner import QuestPlanner
+
+    def planner():
+        p = QuestPlanner()
+        p.quests = {}
+        p._quests_loaded = True
+        p._order = None
+        p.level_hint = -1
+        return p
+
+    def offer_dialog(quest_id):
+        return {"open": True, "npc_id": 3888, "name_id": "Ayin Spyr",
+                "message": "Take this job?", "text_ready": True, "ids_ready": True,
+                "ids_present": True, "reply_count": 0, "replies": [],
+                "start_quest": quest_id}
+
+    def base():
+        return {"level": 10, "map_id": 100, "cell": 0, "connected": True,
+                "in_world": True, "in_fight": False, "in_dialog": False,
+                "tutorial": None, "quests_active": {}, "quests_done": [],
+                "current_objective": None, "ready_objectives": [],
+                "step_objectives": [], "exits": [],
+                "npcs": [{"npc_id": 3888, "cell": 2}], "groups": [],
+                "inventory": {}, "kamas": 0}
+
+    p = planner()
+    obs = base()
+    obs.update({"in_dialog": True, "dialog": offer_dialog(4266)})
+    call = p.choose("do all the quests", obs)
+    check("the NPC offer is accepted as the first step of the chain",
+          call is not None and call.tool == "quest.advance"
+          and call.args.get("accept") is True and call.args.get("quest_id") == 4266,
+          None if call is None else str((call.tool, call.args)))
+    check("and the accepted quest is client-confirmed for later starts",
+          4266 in p._client_quests, sorted(p._client_quests))
+
+    # The page accepted it: the quest is active, the tracker names its objective, and
+    # the catalogue carries the graph (the cache has no live quest).
+    catalog = [{
+        "id": 4266, "name": "Q", "step_index": 0, "step_id": 1,
+        "steps": [{"id": 1, "objectives": [{
+            "id": 14070, "type_id": 1, "type": "QuestObjectiveGoToNpc",
+            "params": {"parameter0": 3888}, "map_id": 100, "step_id": 1,
+            "text": "Parler à Ayin Spyr"}]}],
+    }]
+    obs = base()
+    obs.update({
+        "quests_active": {"4266": 0},
+        "current_objective": {"quest_id": 4266, "objective_id": 14070,
+                              "type_id": 1, "params": {"parameter0": 3888}},
+        "step_objectives": [{"id": 14070, "type_id": 1,
+                             "type": "QuestObjectiveGoToNpc",
+                             "params": {"parameter0": 3888}, "map_id": 100}],
+        "quests_catalog": catalog,
+        "quest_catalog_status": {"quests": 1, "steps": 1, "objectives": 1,
+                                 "truncated": False},
+    })
+    call = p.choose("do all the quests", obs)
+    check("a live quest the cache does not know is planned from the observation",
+          call is not None and call.tool == "quest.advance"
+          and call.args.get("npc_id") == 3888
+          and call.args.get("objective_id") is None,
+          None if call is None else str((call.tool, call.args)))
+    check("and it is not retired", 4266 not in p._skipped, sorted(p._skipped))
+
+    # The next NPC page offers the next quest in the chain; a quest run takes it.
+    obs = base()
+    obs.update({"in_dialog": True, "dialog": offer_dialog(4267),
+                "quests_active": {"4266": 0},
+                "current_objective": {"quest_id": 4266, "objective_id": 14070,
+                                      "type_id": 1}})
+    call = p.choose("do all the quests", obs)
+    check("the next quest in the chain is accepted",
+          call is not None and call.args.get("accept") is True
+          and call.args.get("quest_id") == 4267,
+          None if call is None else str((call.tool, call.args)))
+
+    farm = planner()
+    call = farm.choose("farm the piglets", obs)
+    check("a farm prompt does not take the chain",
+          call is None or call.args.get("accept") is None,
+          None if call is None else str((call.tool, call.args)))
+
+    named = planner()
+    call = named.choose("do quest 4266", obs)
+    check("a prompt naming a different quest does not take the chain",
+          call is None or call.args.get("accept") is None,
+          None if call is None else str((call.tool, call.args)))
+
+
+def test_live_ready() -> None:
+    section("Live preflight (stale page, stop file, client, brain)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "live_ready.py"
+    check("the preflight tool exists", tool.exists(), str(tool))
+    if not tool.exists():
+        return
+    spec = importlib.util.spec_from_file_location("live_ready", tool)
+    ready = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ready)
+
+    tmp = Path(tempfile.mkdtemp(prefix="live-ready-"))
+    page = tmp / "mobile-disguise.js"
+    page.write_text("var AGENT_BUILD = '2026-10-27a';\n", encoding="utf-8")
+    setup = tmp / "setup.exe"
+    setup.write_bytes(b"x")
+    store = tmp / "store.sqlite"
+    store.write_bytes(b"x")
+    observed = tmp / "observed.jsonl"
+    observed.write_text("{}\n", encoding="utf-8")
+    stop = tmp / "AUTOPILOT_STOP"
+
+    def log_with(build):
+        path = tmp / ("log-" + build + ".jsonl")
+        rows = [{"observation": {"agent_build": "2026-10-01a"}},
+                {"observation": {"agent_build": build}}]
+        path.write_text("\n".join(_json.dumps(row) for row in rows) + "\n",
+                        encoding="utf-8")
+        return path
+
+    def run(log, bridge=True, clients=2, brain=True):
+        return ready.checks(log=log, stop=stop, page=page, setup=setup,
+                            store=store, observed=observed,
+                            command_model=tmp / "command-shadow.pt",
+                            bridge=lambda: bridge, clients=lambda: clients,
+                            brain=lambda: brain)
+
+    def level(results, name):
+        for item in results:
+            if item["name"] == name:
+                return item["level"]
+        return None
+
+    same = run(log_with("2026-10-27a"))
+    check("a matching page/build host has no failure",
+          ready.exit_code(same) == 0 and level(same, "page build") == "PASS", same)
+    stale = run(log_with("2026-10-25d"))
+    check("a stale client build fails closed",
+          ready.exit_code(stale) == 1 and level(stale, "page build") == "FAIL", stale)
+    stop.write_text("stop", encoding="utf-8")
+    stopped = run(log_with("2026-10-27a"))
+    check("a leftover stop file fails closed",
+          ready.exit_code(stopped) == 1 and level(stopped, "stop file") == "FAIL",
+          stopped)
+    stop.unlink()
+    no_log = run(tmp / "missing.jsonl")
+    check("no recorded client build is information, not a failure",
+          ready.exit_code(no_log) == 0 and level(no_log, "page build") == "INFO",
+          no_log)
+
+    import os
+    now = 1_700_000_000
+    os.utime(page, (now, now))
+    os.utime(setup, (now - 100, now - 100))
+    old_setup = run(log_with("2026-10-27a"))
+    check("an installer older than the page is a warning",
+          ready.exit_code(old_setup) == 0 and level(old_setup, "installer") == "WARN",
+          old_setup)
+    os.utime(setup, (now + 100, now + 100))
+
+    down = run(log_with("2026-10-27a"), bridge=False, clients=0, brain=False)
+    check("a missing client and brain are warnings, not failures",
+          ready.exit_code(down) == 0 and level(down, "client") == "WARN"
+          and level(down, "brain") == "WARN", down)
+    check("the command shadow is reported without failing the preflight",
+          level(same, "command shadow") in ("INFO", "PASS")
+          and ready.exit_code(same) == 0, same)
+    check("the page build is parsed from the one constant",
+          ready.page_build(page) == "2026-10-27a", ready.page_build(page))
+    check("the last recorded build is the last, not the first",
+          ready.last_log_build(log_with("2026-10-27a")) == "2026-10-27a",
+          ready.last_log_build(log_with("2026-10-27a")))
+    check("the repo page carries the 2026-10-27a build",
+          ready.page_build(REPO_ROOT.parent / "scripts" / "mobile-disguise.js")
+          == "2026-10-27a")
+
+
+def test_sim_planner_runs() -> None:
+    section("Simulator harness (a symbolic client that offers the curriculum)")
+    import contextlib
+    import inspect
+    import io
+    import json as _json
+    from sim import run as sim_run
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = sim_run.main(["--policy", "planner", "--steps", "30", "--seed", "1"])
+    text = buffer.getvalue()
+    at = text.find("{")
+    payload = _json.loads(text[at:]) if at >= 0 else {}
+    check("the rule planner completes steps in the simulator",
+          code == 0 and payload.get("steps", 0) > 0, text[-200:])
+    check("and completes quests instead of stopping at step 0",
+          payload.get("quests", 0) > 0, payload)
+    check("the simulator seeds the client's offered quests for the planner",
+          "_client_quests |= set(policy._curriculum" in
+          inspect.getsource(sim_run.main), "the G31 guard would end every run at 0")
+
+
+def test_command_parser() -> None:
+    section("Command parser (prompt -> intent + slots, rules first)")
+    import importlib.util
+    import json as _json
+
+    gold_path = REPO_ROOT / "data" / "core_sft_v4" / "gold.jsonl"
+    check("the human command gold set exists", gold_path.is_file(), str(gold_path))
+    from agent.commands import (INTENTS, SLOT_KEYS, from_tool, parse_command,
+                                rule_parse)
+
+    check("the intent vocabulary is closed",
+          set(INTENTS) == {"stop", "follow", "travel", "quest", "farm", "fight",
+                           "inventory", "market", "chat", "knowledge", "state",
+                           "auto", "unknown"},
+          sorted(INTENTS))
+    nav = from_tool("nav.goto", {"x": 12, "y": 8}, "go to [12, 8]")
+    check("nav.goto maps to travel with coordinates",
+          nav["intent"] == "travel" and nav["slots"] == {"x": 12, "y": 8}, nav)
+    sell = from_tool("inv.sell", {"item": "Bouftou Wool", "all": True,
+                                  "price_rule": "median_minus_1"},
+                     "sell the Bouftou Wool")
+    check("tool defaults are not mistaken for user intent",
+          sell["intent"] == "inventory"
+          and sell["slots"] == {"action": "sell", "item": "Bouftou Wool"}, sell)
+
+    rule = rule_parse("stop everything now")
+    check("a stop prompt maps to stop/all",
+          rule["intent"] == "stop" and rule["slots"].get("action") == "all", rule)
+    rule = rule_parse("follow me")
+    check("a follow prompt has no empty name slot",
+          rule["intent"] == "follow" and "name" not in rule["slots"], rule)
+    rule = rule_parse("auto")
+    check("auto is a command, not unknown", rule["intent"] == "auto", rule)
+    rule = rule_parse("hello are you a bot?")
+    check("social chat is unknown, not an action",
+          rule["intent"] == "unknown" and rule["confidence"] == 0.0, rule)
+
+    rows = []
+    for line in gold_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(_json.loads(line))
+    hits = 0
+    for row in rows:
+        want = from_tool(row.get("tool", ""), row.get("args"), row.get("goal", ""),
+                         lang=row.get("lang"))
+        got = rule_parse(row.get("goal", ""))
+        hits += got["intent"] == want["intent"]
+    check("the rule baseline stays above the measured floor on the gold set",
+          rows and hits / len(rows) >= 0.55,
+          "%d/%d intents" % (hits, len(rows)))
+
+    class Model:
+        def __init__(self, intent, confidence):
+            self.intent = intent
+            self.confidence = confidence
+
+        def predict(self, text):
+            return {"intent": self.intent, "confidence": self.confidence,
+                    "slots": {"item": "Bouftou Wool"}}
+
+    sure = parse_command("stop everything now", model=Model("travel", 0.99))
+    check("a confident model answers before the rules",
+          sure["source"] == "model" and sure["intent"] == "travel", sure)
+    check("model slots the intent cannot carry are dropped",
+          sure["slots"] == {}, sure["slots"])
+
+    class Sloppy:
+        def predict(self, text):
+            return {"intent": "inventory", "confidence": 0.99,
+                    "slots": {"action": "sell", "item": "Bouftou Wool",
+                              "message": "5"}}
+
+    masked = parse_command("vends 5 bouftou wool", model=Sloppy())
+    check("the legality mask keeps the legal slots and drops the rest",
+          masked["source"] == "model"
+          and masked["slots"] == {"action": "sell", "item": "Bouftou Wool"},
+          masked)
+    unsure = parse_command("stop everything now", model=Model("travel", 0.10))
+    check("an unsure model falls back to the rules",
+          unsure["source"] == "rule" and unsure["intent"] == "stop", unsure)
+    invalid = parse_command("stop everything now", model=Model("fly", 0.99))
+    check("an invalid intent is not accepted", invalid["intent"] == "stop", invalid)
+    check("all slot keys are declared", set(sell["slots"]) <= set(SLOT_KEYS),
+          sorted(sell["slots"]))
+    from agent.commands import ACTION_TOOL, INTENT_TOOL, intent_tool
+    from agent.planner import _goal_mode
+    from agent.schema import TOOLS as _TOOLS
+
+    modes = {text: _goal_mode(text) for text in (
+        "can you play the game ?", "play for me", "take over",
+        "do everything", "can you play the quests ?", "fight mobs",
+        "list my quests", "zaap Astrub")}
+    check("asking the bot to play routes to Full Auto, without stealing quests",
+          modes == {"can you play the game ?": "auto", "play for me": "auto",
+                    "take over": "auto", "do everything": "auto",
+                    "can you play the quests ?": "quest", "fight mobs": "farm",
+                    "list my quests": "quest", "zaap Astrub": "order"}, modes)
+
+    bridges = {name: intent_tool(intent, action) for name, intent, action in (
+        ("quest_list", "quest", "list"), ("quest_run", "quest", "run"),
+        ("quest_advance", "quest", "advance"), ("farm_stop", "farm", "stop"),
+        ("market_list", "market", "list"), ("fight_pass", "fight", "pass"),
+        ("stop", "stop", "all"), ("inventory_sell", "inventory", "sell"),
+        ("auto", "auto", None), ("unknown", "unknown", None))}
+    check("a parsed action selects the canonical tool",
+          bridges == {"quest_list": "quest.list", "quest_run": "quest.advance",
+                      "quest_advance": "quest.advance", "farm_stop": "farm.stop",
+                      "market_list": "hdv.list", "fight_pass": "fight.pass",
+                      "stop": "safe.stop", "inventory_sell": "inv.sell",
+                      "auto": None, "unknown": None}, bridges)
+    names = {tool.name for tool in _TOOLS}
+    mapped = set(INTENT_TOOL.values()) | {tool for row in ACTION_TOOL.values()
+                                          for tool in row.values()}
+    check("every intent/tool bridge names a registered tool",
+          mapped <= names and len(names) >= 21, sorted(mapped - names))
+
+
+def test_command_dataset() -> None:
+    section("Command dataset (held-out phrasings and entities)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "build_command_dataset.py"
+    check("the dataset builder exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("build_command_dataset", tool)
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    from agent.commands import INTENTS, SLOT_KEYS
+
+    out = Path(tempfile.mkdtemp(prefix="commands-"))
+    manifest = builder.build(out, variants=4)
+    check("all three splits are written",
+          all((out / (name + ".jsonl")).is_file()
+              for name in ("train", "val", "test")), str(out))
+    rows = {}
+    for name in ("train", "val", "test"):
+        rows[name] = [_json.loads(line)
+                      for line in (out / (name + ".jsonl")).read_text(
+                          encoding="utf-8").splitlines() if line.strip()]
+    check("the train split is non-trivial", len(rows["train"]) >= 50,
+          len(rows["train"]))
+    check("val and test are not empty",
+          len(rows["val"]) > 0 and len(rows["test"]) > 0,
+          str((len(rows["val"]), len(rows["test"]))))
+    check("no held-out entity leaks into the train slot labels",
+          manifest["eval_entity_leaks_in_train"] == [],
+          manifest["eval_entity_leaks_in_train"])
+    origins = {name: {row.get("origin") for row in split}
+               for name, split in rows.items()}
+    check("a phrasing belongs to exactly one split",
+          not (origins["train"] & origins["val"])
+          and not (origins["train"] & origins["test"])
+          and not (origins["val"] & origins["test"]),
+          {name: len(values) for name, values in origins.items()})
+    bad_intent = [row for split in rows.values() for row in split
+                  if row.get("intent") not in INTENTS]
+    bad_slots = [row for split in rows.values() for row in split
+                 if not set(row.get("slots") or {}) <= set(SLOT_KEYS)]
+    check("every row has a valid intent and slot keys",
+          not bad_intent and not bad_slots,
+          (bad_intent[:1], bad_slots[:1]))
+    check("the held-out splits exercise unseen entities",
+          any(value in builder.EVAL_POOLS.get(key, [])
+              for split in (rows["val"], rows["test"])
+              for row in split for key, value in (row.get("slots") or {}).items()),
+          "no eval-pool slot in val/test")
+    check("the train split covers the main intents",
+          {"quest", "farm", "fight", "stop", "market", "inventory", "auto"}
+          <= {row["intent"] for row in rows["train"]},
+          sorted({row["intent"] for row in rows["train"]}))
+    check("the train split carries the quest-run action",
+          any((row.get("slots") or {}).get("action") == "run"
+              for row in rows["train"]),
+          "no train row labels action=run")
+    check("core phrasings stay in train",
+          any(row.get("source") == "core" for row in rows["train"])
+          and not any(row.get("source") == "core"
+                      for split in (rows["val"], rows["test"]) for row in split),
+          "core rows leaked into eval")
+    norm = lambda text: " ".join(str(text or "").lower().split())
+    train_texts = {norm(row.get("text")) for row in rows["train"]}
+    eval_texts = {norm(row.get("text"))
+                  for split in (rows["val"], rows["test"]) for row in split}
+    check("no eval phrasing appears in train",
+          not (train_texts & eval_texts),
+          sorted(train_texts & eval_texts)[:3])
+    check("the builder removes repeated gold phrasings from train",
+          manifest["train_rows_skipped_for_eval_text"] > 0,
+          manifest["train_rows_skipped_for_eval_text"])
+    eval_token_sets = [set(text.split()) for text in eval_texts
+                       if len(text.split()) >= 2]
+    near = [row["text"] for row in rows["train"]
+            if any(tokens <= set(norm(row["text"]).split())
+                   for tokens in eval_token_sets)]
+    check("no train row contains a full eval phrasing",
+          not near, near[:2])
+    check("the builder removes near-copy phrasings from train",
+          manifest["train_near_copies_removed"] > 0,
+          manifest["train_near_copies_removed"])
+    check("one text carries one label",
+          manifest["train_text_conflicts"] == [],
+          manifest["train_text_conflicts"][:2])
+
+
+def test_command_shadow() -> None:
+    section("Command shadow (the model proposes, the rule acts)")
+    from agent.autopilot import Autopilot
+    from agent.command_shadow import load_command_model, shadow_row
+
+    class Model:
+        def __init__(self, intent, slots, confidence):
+            self.payload = {"intent": intent, "slots": slots,
+                            "confidence": confidence}
+
+        def predict(self, text):
+            return dict(self.payload)
+
+    same = shadow_row("stop everything now", Model("stop", {"action": "all"}, 0.9))
+    check("an agreeing proposal is not an override",
+          same["agree_command"] is True and same["would_override"] is False, same)
+    other = shadow_row("stop everything now", Model("travel", {"x": 1, "y": 2}, 0.9))
+    check("a confident disagreement is marked as an override",
+          other["agree_intent"] is False and other["would_override"] is True, other)
+    low = shadow_row("stop everything now", Model("travel", {"x": 1, "y": 2}, 0.1))
+    check("a low-confidence disagreement is not an override",
+          low["would_override"] is False, low)
+    unknown = shadow_row("stop everything now", Model("unknown", {}, 0.9))
+    check("an unknown intent is unusable, so it cannot override",
+          unknown["usable"] is False and unknown["would_override"] is False, unknown)
+    same_mode = shadow_row("do all the quests", Model("quest", {"action": "run"}, 0.9))
+    check("an action override can leave the planner's goal mode alone",
+          same_mode["rule_mode"] == "quest" and same_mode["model_mode"] == "quest"
+          and same_mode["mode_agree"] is True
+          and same_mode["would_override"] is True
+          and same_mode["would_change_mode"] is False, same_mode)
+    mode_change = shadow_row("fight mobs on the curent map",
+                             Model("travel", {}, 0.9))
+    check("a different intent that changes routing is flagged separately",
+          mode_change["rule_mode"] == "farm" and mode_change["model_mode"] == "order"
+          and mode_change["would_change_mode"] is True, mode_change)
+    low_mode = shadow_row("fight mobs on the curent map",
+                          Model("travel", {}, 0.1))
+    check("a low-confidence mode change is not an override",
+          low_mode["would_change_mode"] is False, low_mode)
+    sloppy = shadow_row("vends tout",
+                        Model("inventory", {"action": "sell", "all": True,
+                                            "message": "5"}, 0.9))
+    check("the shadow uses the same intent-slot legality mask",
+          sloppy["usable"] is True and sloppy["agree_command"] is True, sloppy)
+    from agent.command_shadow import adapter_accepts
+    from agent.command_shadow import canary_accepts
+    check("an adapter may not change an action-critical canary",
+          canary_accepts({"list my quests": ("quest", "list")},
+                         {"list my quests": ("quest", "list")}) is True
+          and canary_accepts({"list my quests": ("quest", "list")},
+                              {"list my quests": ("quest", "run")}) is False,
+          "canary guard")
+    check("an adapter is accepted only when it loses no held-out base row",
+          adapter_accepts({"intent": 20, "exact": 18},
+                          {"intent": 20, "exact": 18}) is True
+          and adapter_accepts({"intent": 20, "exact": 18},
+                              {"intent": 21, "exact": 19}) is True
+          and adapter_accepts({"intent": 20, "exact": 18},
+                              {"intent": 19, "exact": 18}) is False
+          and adapter_accepts({"intent": 20, "exact": 18},
+                              {"intent": 20, "exact": 17}) is False,
+          "adapter guard")
+    check("the shadow carries the tool the parsed action maps to",
+          same_mode["expected_tool"] == "quest.advance"
+          and other["expected_tool"] == "nav.goto"
+          and unknown["expected_tool"] is None
+          and sloppy["expected_tool"] == "inv.sell",
+          {name: row["expected_tool"] for name, row in
+           (("same", same_mode), ("other", other), ("unknown", unknown),
+            ("sloppy", sloppy))})
+
+    class Broken:
+        def predict(self, text):
+            raise RuntimeError("no model")
+
+    broken = shadow_row("stop", Broken())
+    check("a broken model is recorded, not raised",
+          broken["available"] is False and "no model" in str(broken.get("error")),
+          broken)
+    missing = load_command_model(Path("definitely-missing-command-model.pt"))
+    check("a missing artifact is an error string, not an import failure",
+          missing[0] is None and "artifact_missing" in str(missing[1]), missing)
+
+    class Shim:
+        pass
+
+    shim = Shim()
+    shim.session = "s"
+    shim.command_shadow = "auto"
+    shim.command_shadow_model = Path("model.pt")
+    shim._command_model = Model("stop", {"action": "all"}, 0.9)
+    shim._command_shadow_loaded = True
+    shim._command_shadow_rows = 0
+    shim._append_log_line = lambda blob: shim.lines.append(blob)
+    shim.lines = []
+    shim._ensure_command_shadow = lambda: shim._command_model
+    Autopilot._log_command_shadow(shim, "stop everything now")
+    check("the autopilot logs one shadow row and changes nothing",
+          len(shim.lines) == 1 and b'"command_shadow"' in shim.lines[0]
+          and shim._command_shadow_rows == 1, shim.lines)
+
+
+def test_command_shadow_report() -> None:
+    section("Command shadow report (a real prompt log -> rule vs model)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "command_shadow_report.py"
+    check("the command shadow report tool exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("command_shadow_report", tool)
+    report_tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(report_tool)
+
+    log = Path(tempfile.mkdtemp(prefix="shadow-report-")) / "autopilot.jsonl"
+    log.write_text("\n".join([
+        _json.dumps({"kind": "decision", "goal": "do all the quests"}),
+        _json.dumps({"kind": "decision", "goal": "  do all the quests  "}),
+        _json.dumps({"kind": "step", "goal": "plz do all the quests"}),
+        _json.dumps({"kind": "step", "goal": None}),
+        "{not json",
+    ]) + "\n", encoding="utf-8")
+    goals = report_tool.extract_goals([log])
+    check("goals are counted and whitespace-collapsed",
+          dict(goals) == {"do all the quests": 2, "plz do all the quests": 1},
+          dict(goals))
+
+    class Model:
+        def predict(self, text):
+            return {"intent": "quest", "confidence": 0.9,
+                    "slots": {"action": "run"}}
+
+    report = report_tool.build_report(goals, Model())
+    check("the report sees both goals and all uses",
+          report["distinct_goals"] == 2 and report["total_uses"] == 3, report["summary"])
+    check("a confident run over the rule's list is reported as an override",
+          report["summary"]["override_goals"] == 2
+          and report["summary"]["override_uses"] == 3, report["summary"])
+    check("the most frequent goal is listed first",
+          report["goals"][0]["text"] == "do all the quests"
+          and report["goals"][0]["uses"] == 2, report["goals"][:1])
+    blank = report_tool.build_report(goals, None)
+    check("without a model the report still carries the rule side",
+          blank["model_available"] is False
+          and blank["summary"]["override_goals"] == 0
+          and all(row["rule"]["intent"] for row in blank["goals"]), blank["summary"])
+
+
+def test_command_replay() -> None:
+    section("Command replay (a goal's executed plan and outcome)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "command_replay.py"
+    check("the command replay tool exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("command_replay", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    log = Path(tempfile.mkdtemp(prefix="command-replay-")) / "autopilot.jsonl"
+    rows = [
+        {"goal": "do all the quests", "tool": "state.snapshot", "at": 0,
+         "obs_before": {}, "obs_after": {}, "ok": False, "verdict": "noop"},
+        {"goal": "do all the quests", "tool": "quest.advance", "at": 1,
+         "obs_before": {"objectives_completed": 0, "xp": 100},
+         "obs_after": {"objectives_completed": 1, "xp": 150},
+         "ok": True, "verdict": "advanced"},
+        {"goal": "do all the quests", "tool": "nav.goto", "at": 2,
+         "obs_before": {"objectives_completed": 1},
+         "obs_after": {"objectives_completed": 1},
+         "ok": False, "verdict": "failed"},
+        {"goal": "fight mobs on the curent map", "tool": "farm.start", "at": 3,
+         "obs_before": {}, "obs_after": {}, "ok": False, "verdict": "noop"},
+        {"kind": "decision", "goal": None, "tool": "quest.advance", "at": 4},
+    ]
+    log.write_text("".join(_json.dumps(row) + chr(10) for row in rows)
+                   + "{bad" + chr(10), encoding="utf-8")
+    groups = module.group_steps(log, module._read(log))
+    check("executed steps are grouped by goal",
+          len(groups) == 2 and [len(group["steps"]) for group in groups] == [3, 1],
+          [(group["goal"], len(group["steps"])) for group in groups])
+
+    class Model:
+        def predict(self, text):
+            return {"intent": "quest", "confidence": 0.9,
+                    "slots": {"action": "run"}}
+
+    replay = module.build_replay(groups, Model())
+    first = next(row for row in replay if row["goal"] == "do all the quests")
+    check("the outcome skips empty observations instead of losing the counter",
+          first["outcome"]["objectives_before"] == 0
+          and first["outcome"]["objectives_after"] == 1
+          and first["outcome"]["objectives_delta"] == 1
+          and first["outcome"]["xp_delta"] == 50, first["outcome"])
+    check("the executed plan is labelled as the rule's, not the model's",
+          first["executed_by"] == "rule" and first["steps"] == 3
+          and set(first["executed"]["tools"]) ==
+          {"state.snapshot", "quest.advance", "nav.goto"}, first["executed"])
+    check("a page advancement is an outcome even when objectives stay flat",
+          first["executed"]["advanced"] == 1
+          and first["outcome"]["goal_outcome"] == "advanced", first["outcome"])
+    check("an action override can leave the mode alone",
+          first["would_override"] is True and first["mode_agree"] is True
+          and first["would_change_mode"] is False, first)
+    check("the replay maps the model's action onto a tool",
+          first["expected_tool"] == "quest.advance"
+          and first["expected_tool_executed"] is True, first)
+    second = next(row for row in replay
+                  if row["goal"] == "fight mobs on the curent map")
+    check("a group with no objective field stays null, not a fake zero",
+          second["outcome"]["objectives_delta"] is None, second["outcome"])
+    check("a group with no advancement is stalled",
+          second["outcome"]["goal_outcome"] == "stalled", second["outcome"])
+    check("a short failed group is a short failure, not a read loop",
+          second["outcome"]["stall_cause"] == "short_fail", second["outcome"])
+    check("the stall classifier separates fight-start and read-loop stalls",
+          module.classify_stall(4, {"fight.join": 3, "state.snapshot": 1}, {},
+                                "stalled") == "fight_join"
+          and module.classify_stall(10, {"state.snapshot": 8, "quest.list": 2}, {},
+                                    "stalled") == "read_loop"
+          and module.classify_stall(4, {"fight.join": 3}, {}, "advanced") is None,
+          "classifier")
+    check("a routing change is flagged on the replay row",
+          second["mode_agree"] is False and second["would_change_mode"] is True,
+          second)
+    check("an expected tool the group never executed is false",
+          second["expected_tool"] == "quest.advance"
+          and second["expected_tool_executed"] is False, second)
+    summary = module.summarize(replay)
+    check("the replay summary counts progress, overrides and mode changes",
+          summary["groups"] == 2 and summary["steps"] == 4
+          and summary["groups_with_objective_progress"] == 1
+          and summary["groups_advanced"] == 1
+          and summary["groups_stalled"] == 1
+          and summary["override_groups"] == 2
+          and summary["override_groups_advanced"] == 1
+          and summary["override_groups_executed_advance"] == 1
+          and summary["expected_tool_groups"] == 2
+          and summary["expected_tool_executed_groups"] == 1
+          and summary["override_groups_expected_executed"] == 1
+          and summary["stall_causes"] == {"short_fail": 1}
+          and summary["would_change_mode_groups"] == 1, summary)
+
+
+def test_live_evidence() -> None:
+    section("Live evidence (preflight -> bounded shadow run -> combined report)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "live_evidence.py"
+    check("the live evidence runner exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("live_evidence", tool)
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+
+    log = Path(tempfile.mkdtemp(prefix="live-evidence-")) / "autopilot.jsonl"
+    rows = [
+        {"kind": "command_shadow_status", "available": True, "error": None},
+        {"kind": "command_shadow", "text": "do all the quests", "usable": True,
+         "agree_intent": True, "agree_command": False, "would_override": True,
+         "would_change_mode": False},
+        {"kind": "command_shadow", "text": "fight mobs", "usable": True,
+         "agree_intent": True, "agree_command": True, "would_override": False,
+         "would_change_mode": False},
+        {"kind": "step", "tool": "quest.advance", "ok": True},
+    ]
+    log.write_text("".join(_json.dumps(row) + chr(10) for row in rows),
+                   encoding="utf-8")
+    summary = runner.shadow_rows_summary(runner.read_rows(log))
+    check("the runner counts shadow rows, agreements and overrides",
+          summary["rows"] == 2 and summary["agree_command"] == 1
+          and summary["would_override"] == 1
+          and summary["override_examples"] == ["do all the quests"], summary)
+
+    ready = [{"level": "PASS", "name": "client", "detail": "1 window"},
+             {"level": "INFO", "name": "observed quests", "detail": "none"}]
+    warn = [{"level": "WARN", "name": "client", "detail": "bridge down"}]
+    failed = [{"level": "FAIL", "name": "stop file", "detail": "present"}]
+    parsed = runner.parse_autopilot_summary(
+        "noise" + chr(10) + '{"steps": 3, "command_shadow": {"rows": 2}}'
+        + chr(10))
+    check("the runner captures the autopilot summary, not only its exit code",
+          parsed == {"steps": 3, "command_shadow": {"rows": 2}}
+          and runner.parse_autopilot_summary("noise only") is None, parsed)
+    check("the runner resolves a relative log before entering the packaged cwd",
+          runner.resolve_log(Path("a.jsonl")).is_absolute()
+          and runner.resolve_log(Path("a.jsonl")) == Path("a.jsonl").resolve(),
+          runner.resolve_log(Path("a.jsonl")))
+    check("the runner refuses without a client and on a preflight failure",
+          runner.client_ready(ready) is True
+          and runner.client_ready(warn) is False
+          and runner.client_ready(failed) is False
+          and runner.client_ready([]) is False, (ready, warn, failed))
+
+
+def test_command_onnx_decode() -> None:
+    section("Command ONNX decode (torch-free inference path)")
+    from agent.command_onnx import decode_slots
+
+    tags = ["O", "B-item", "I-item", "B-quantity", "B-channel", "B-all",
+            "B-x", "B-price"]
+    text = "vends 5 bouftou wool"
+    offsets = [(0, 5), (6, 7), (8, 15), (16, 20)]
+    slots = decode_slots(text, offsets, [0, 3, 1, 2], tags, "sell", 0)
+    check("the ONNX decode copies a multi-token item and a quantity",
+          slots == {"item": "bouftou wool", "quantity": 5, "action": "sell"},
+          slots)
+    signed = decode_slots("x -3", [(0, 1), (3, 4)], [0, 6], tags, "none", 0)
+    check("the ONNX decode keeps a sign the tagger left outside the span",
+          signed.get("x") == -3, signed)
+    extra = decode_slots("vends tout à 500", [(0, 5), (6, 10), (13, 16)],
+                         [0, 5, 7], tags, "sell", 0)
+    check("the ONNX decode handles all/price with the price default",
+          extra.get("all") is True and extra.get("price") == 500
+          and extra.get("price_rule") == "fixed", extra)
 
 
 def test_repair_credit() -> None:
@@ -2106,6 +3233,435 @@ def test_dialog_repeat_guard() -> None:
     src = inspect.getsource(QuestPlanner.fork)
     check("and the inheritance is real code, not a side effect of a shared default",
           "_dialog_exhausted = set(self._dialog_exhausted)" in src, src[:120])
+
+
+def test_quest_accept_planner() -> None:
+    section("Quest accept (G33: an offer is a link; the reply path used to swallow the start)")
+    from agent.planner import QuestPlanner, dialog_offer
+
+    quest = {"id": 777, "level_min": 1, "steps": [
+        {"objectives": [{"id": 9001, "type_id": 12, "params": {"parameter0": 301}}]}]}
+
+    def planner():
+        p = QuestPlanner()
+        p.quests = {777: quest}
+        p._quests_loaded = True
+        p._order = None
+        p.level_hint = -1
+        return p
+
+    tracker = {"quest_id": "777", "objective_id": 9001, "type_id": 12,
+               "params": {"parameter0": 301}}
+
+    def offer_dialog(start_quest=None, replies=1):
+        dialog = {"open": True, "npc_id": 3888, "name_id": "Ayin Spyr",
+                  "message": "Take this job?", "text_ready": True,
+                  "ids_ready": bool(replies), "ids_present": True,
+                  "reply_count": replies, "replies": []}
+        if replies:
+            dialog["replies"] = [{"index": 0, "text": "Yes, please.", "reply_id": 41457}]
+        if start_quest is not None:
+            dialog["start_quest"] = start_quest
+        return dialog
+
+    def obs(dialog=None, **over):
+        base = {"level": 10, "map_id": 100, "cell": 0, "connected": True,
+                "in_world": True, "in_fight": False, "in_dialog": bool(over.pop(
+                    "in_dialog", dialog is not None)),
+                "tutorial": None, "quests_active": {}, "quests_done": [],
+                "current_objective": dict(tracker), "ready_objectives": [],
+                "step_objectives": [], "exits": [], "npcs": [], "groups": [],
+                "inventory": {}, "kamas": 0,
+                "knowledge": {"quest_id": 777, "objective_id": 9001, "type_id": 12}}
+        if dialog is not None:
+            base["dialog"] = dialog
+        base.update(over)
+        return base
+
+    check("the offer is the page's start_quest field, never a reply or a bare string",
+          dialog_offer({"start_quest": 777}) == 777
+          and dialog_offer({"start_quest": "777"}) == 777
+          and dialog_offer({"start_quest": "0"}) is None
+          and dialog_offer({}) is None and dialog_offer(None) is None)
+
+    p = planner()
+    first = p.choose("do all the quests", obs(offer_dialog(777)))
+    check("a dialog offering the quest this plan is on is accepted, before any reply",
+          first is not None and first.tool == "quest.advance"
+          and first.args.get("accept") is True and first.args.get("reply") is None,
+          None if first is None else str((first.tool, first.args)))
+    check("and the accept carries the client's own id",
+          first is not None and first.args.get("quest_id") == 777,
+          None if first is None else str(first.args))
+    check("the start is remembered as pending, so a wait is not read as a failure",
+          p._pending_start == 777, str(p._pending_start))
+
+    # The fallback: in_dialog is set but the dialog block is not readable, so the
+    # ranker has no decision and the start branch runs. It must close, not send a
+    # bare start the page refuses, and not answer a reply nobody asked for.
+    r = planner()
+    fallback = r.choose("do all the quests", obs(None, in_dialog=True))
+    check("a start requested while an unreadable dialog is open closes first",
+          fallback is not None and fallback.args.get("close") is True
+          and fallback.args.get("accept") is None,
+          None if fallback is None else str((fallback.tool, fallback.args)))
+
+    t = planner()
+    t_obs = obs(offer_dialog(None))
+    t_obs["tutorial"] = {"active": True, "quest_id": 777}
+    call = t._tutorial_call(t_obs, "quest 777")
+    check("a tutorial dialog without an offer answers reply 0 explicitly, not bare",
+          call is not None and call.args.get("reply") == 0
+          and call.args.get("accept") is None, call)
+
+    t2 = planner()
+    t2_obs = obs(offer_dialog(777))
+    t2_obs["tutorial"] = {"active": True, "quest_id": 777}
+    call = t2._tutorial_call(t2_obs, "quest 777")
+    check("and one that offers the tutorial quest accepts the link",
+          call is not None and call.args.get("accept") is True, call)
+
+    # A quest an NPC offers is how the next quest in a chain starts. A quest/auto run
+    # takes it; an order or farm prompt must not acquire quests, a named focus must
+    # match, and an already-active quest's offer is stale.
+    n = planner()
+    new_offer = n.choose("do all the quests", obs(offer_dialog(4266)))
+    check("a quest run accepts a new quest the dialog offers",
+          new_offer is not None and new_offer.args.get("accept") is True
+          and new_offer.args.get("quest_id") == 4266,
+          None if new_offer is None else str((new_offer.tool, new_offer.args)))
+    check("and remembers it as pending and client-confirmed",
+          n._pending_start == 4266 and 4266 in n._client_quests,
+          str((n._pending_start, sorted(n._client_quests))))
+    auto = planner()
+    auto_offer = auto.choose("auto", obs(offer_dialog(4266)))
+    check("Full Auto accepts it too",
+          auto_offer is not None and auto_offer.args.get("accept") is True,
+          None if auto_offer is None else str(auto_offer.args))
+    farm = planner()
+    farm_offer = farm.choose("farm the piglets", obs(offer_dialog(4266)))
+    check("a farm prompt does not acquire a quest",
+          farm_offer is not None and farm_offer.args.get("accept") is None,
+          None if farm_offer is None else str(farm_offer.args))
+    order = planner()
+    order_offer = order.choose("vends Cadeau de Compensation", obs(offer_dialog(4266)))
+    check("an order prompt does not acquire a quest",
+          order_offer is not None and order_offer.args.get("accept") is None,
+          None if order_offer is None else str(order_offer.args))
+    active = planner()
+    active_offer = active.choose("do all the quests",
+                                 obs(offer_dialog(4266), quests_active={"4266": 0}))
+    check("an offer for an already-active quest is left to the ranker",
+          active_offer is not None and active_offer.args.get("accept") is None,
+          None if active_offer is None else str(active_offer.args))
+    focused = planner()
+    focused.focus = 3841
+    focused_offer = focused.choose("do all the quests", obs(offer_dialog(4266)))
+    check("a named focus refuses a different offer",
+          focused_offer is not None and focused_offer.args.get("accept") is None,
+          None if focused_offer is None else str(focused_offer.args))
+    named = planner()
+    named.focus = 4266
+    named_offer = named.choose("do all the quests", obs(offer_dialog(4266)))
+    check("and accepts the quest it names",
+          named_offer is not None and named_offer.args.get("accept") is True,
+          None if named_offer is None else str(named_offer.args))
+    prompt = planner()
+    prompt_offer = prompt.choose("do quest 3841", obs(offer_dialog(4266)))
+    check("a prompt naming a quest does not take an unrelated offer",
+          prompt_offer is not None and prompt_offer.args.get("accept") is None,
+          None if prompt_offer is None else str(prompt_offer.args))
+    target = planner()
+    target_offer = target.choose("do quest 4266", obs(offer_dialog(4266)))
+    check("but it takes the quest it names",
+          target_offer is not None and target_offer.args.get("accept") is True,
+          None if target_offer is None else str(target_offer.args))
+
+    # The runtime contract is data/capabilities.json when it loads, so a param
+    # declared only in schema.py would be rejected before the page ever sees the
+    # call -- the exact trap that killed every npc_id call once.
+    from agent.schema import CAPABILITY_SOURCE, validate_call
+    ok, coerced = validate_call("quest.advance", {"quest_id": 3841, "accept": True})
+    check("the runtime contract (%s) accepts the accept argument" % CAPABILITY_SOURCE,
+          ok is True, coerced)
+    check("and keeps it a bool", ok and coerced.get("accept") is True, str(coerced))
+
+
+def test_observed_quest_catalog() -> None:
+    section("Observed quest catalogue (G29: the client's graph before the foreign cache)")
+    from agent.knowledge_context import enrich_observation
+    from agent.planner import QuestPlanner, catalog_objectives
+
+    catalog = [{
+        "id": 3841, "name": "La quête du pêcheur", "step_index": 1, "step_id": 2002,
+        "steps": [
+            {"id": 2001, "name": "Étape 1", "description": "Parle au pêcheur.",
+             "objectives": [{"id": 14070, "type_id": 1, "type": "QuestObjectiveGoToNpc",
+                             "params": {"parameter0": 3888}, "map_id": 123,
+                             "step_id": 2001, "text": "Parler à Ayin Spyr"}]},
+            {"id": 2002, "name": "Étape 2", "description": "Équipe-toi.",
+             "objectives": [{"id": 14071, "type_id": 0, "type": "QuestObjectiveFreeForm",
+                             "text": "S'équiper"}]},
+        ],
+    }]
+
+    def obs(**over):
+        base = {
+            "current_objective": {"quest_id": 3841, "objective_id": 14070,
+                                  "type_id": 12},
+            "quests_catalog": catalog,
+        }
+        base.update(over)
+        return base
+
+    class FakeStore:
+        def __init__(self, resolved):
+            self._resolved = resolved
+
+        def resolve_objective(self, objective_id, language):
+            return self._resolved
+
+        def quest(self, quest_id):
+            return None
+
+    collided = {"quest_id": 999, "type_id": 4, "text": "another game's objective",
+                "params": {"parameter0": 5243}, "source": "dofusdb"}
+    block = enrich_observation(obs(), FakeStore(collided))
+    kn = block.get("knowledge") or {}
+    objective = kn.get("objective") or {}
+    check("the client's own row wins over a colliding store row",
+          kn.get("status") == "observed" and objective.get("source") == "observed", kn)
+    check("the observed block carries the text, type and params the ranker needs",
+          objective.get("text") == "Parler à Ayin Spyr"
+          and objective.get("type") == "QuestObjectiveGoToNpc"
+          and (objective.get("params") or {}).get("parameter0") == 3888, kn)
+    check("and the quest/step names, so dialog text has context",
+          kn.get("quest_name") == "La quête du pêcheur"
+          and kn.get("step_name") == "Étape 1"
+          and kn.get("step_description") == "Parle au pêcheur.", kn)
+
+    missing = enrich_observation(obs(quests_catalog=[]), FakeStore(None))
+    check("without a catalogue the store still answers, and says why on a miss",
+          (missing.get("knowledge") or {}).get("status") == "objective_not_in_store",
+          missing.get("knowledge"))
+
+    wrong = enrich_observation(obs(quests_catalog=[dict(catalog[0], id=999)]),
+                               FakeStore(None))
+    check("a row captured for another quest is not used for this one",
+          (wrong.get("knowledge") or {}).get("status") == "objective_not_in_store",
+          wrong.get("knowledge"))
+
+    broken = enrich_observation(obs(quests_catalog=[
+        {"id": 3841, "steps": [{"objectives": [None, {"id": 14070}]}]}]), FakeStore(None))
+    check("a malformed catalogue row still yields the observed row",
+          (broken.get("knowledge") or {}).get("status") == "observed",
+          broken.get("knowledge"))
+
+    p = QuestPlanner()
+    current = p._observed_current(3841, obs())
+    check("the planner can plan an active quest whose step_objectives is empty",
+          isinstance(current, dict) and str(current.get("id")) == "14070"
+          and current.get("type") == "QuestObjectiveGoToNpc", current)
+    check("and only rows belonging to that quest are read",
+          [str(o.get("id")) for o in catalog_objectives(obs(), 3841)]
+          == ["14070", "14071"]
+          and catalog_objectives(obs(), 999) == [],
+          catalog_objectives(obs(), 3841))
+
+
+def test_observed_quest_ingest() -> None:
+    section("Observed quest ingest (G29: persist the graph, measure coverage)")
+    import importlib.util
+    import json as _json
+    import tempfile
+    from agent.knowledge_context import enrich_observation, load_observed_index
+
+    tool = REPO_ROOT / "tools" / "ingest_observed_quests.py"
+    check("the ingest tool exists", tool.exists(), str(tool))
+    if not tool.exists():
+        return
+    spec = importlib.util.spec_from_file_location("ingest_observed_quests", tool)
+    ingest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ingest)
+
+    thin = [{
+        "id": 3841, "name": "La quête du pêcheur", "steps": [
+            {"id": 2001, "name": "Étape 1", "objectives": [{"id": 14070}]},
+        ],
+    }]
+    rich = [{
+        "id": 3841, "name": "La quête du pêcheur", "steps": [
+            {"id": 2001, "name": "Étape 1", "description": "Parle au pêcheur.",
+             "objectives": [{"id": 14070, "type_id": 1,
+                             "type": "QuestObjectiveGoToNpc", "map_id": 123,
+                             "params": {"parameter0": 3888},
+                             "text": "Parler à Ayin Spyr"}]},
+            {"id": 2002, "name": "Étape 2", "description": "Équipe-toi.",
+             "objectives": [{"id": 14071, "type_id": 0,
+                             "type": "QuestObjectiveFreeForm", "text": "S'équiper"}]},
+        ],
+    }]
+    logs = [
+        {"at": 100, "session": "s1",
+         "observation": {"quests_catalog": thin}},
+        {"at": 200, "session": "s1",
+         "obs_before": {"quests_catalog": rich}},
+        {"at": 300, "session": "s1",
+         "observation": {"quests_catalog": "not a list"}},
+    ]
+
+    tmp = Path(tempfile.mkdtemp(prefix="observed-ingest-"))
+    log = tmp / "one.jsonl"
+    # The bad line carries the prefilter needle so it actually reaches the parser; a line
+    # without it is filtered before json.loads and would make a skip mutation invisible.
+    log.write_text("\n".join([_json.dumps(row) for row in logs]
+                             + ['{"quests_catalog": broken']) + "\n", encoding="utf-8")
+    collected = True
+    try:
+        rows, catalogs, seen = ingest.collect([log])
+    except Exception:      # noqa: BLE001 - the check below reports the abort
+        collected = False
+        rows, catalogs, seen = {}, 0, 0
+    check("two catalogue lines flatten into one row per objective, deduplicated",
+          len(rows) == 2 and catalogs == 2 and seen == 3,
+          str((len(rows), catalogs, seen)))
+    check("a malformed log line is skipped instead of aborting the scan",
+          collected is True, "the scan raised on a broken line")
+    q70 = rows.get((3841, 14070)) or {}
+    q71 = rows.get((3841, 14071)) or {}
+    check("a later richer capture replaces the earlier bare id",
+          q70.get("text") == "Parler à Ayin Spyr"
+          and q70.get("type") == "QuestObjectiveGoToNpc", q70)
+    check("the quest and step names travel with the objective",
+          q70.get("quest_name") == "La quête du pêcheur"
+          and q70.get("step_name") == "Étape 1"
+          and q70.get("step_description") == "Parle au pêcheur.", q70)
+    check("the session and log provenance are recorded",
+          q70.get("session") == "s1" and q70.get("log") == "one.jsonl"
+          and q70.get("observed_at") == 200.0, q70)
+
+    thinner = dict(q70, type_id=None, type=None, text=None,
+                   map_id=None, step_id=None, params={}, observed_at=999)
+    check("a later but thinner capture never erases the richer row",
+          ingest.merge(q70, thinner).get("text") == "Parler à Ayin Spyr",
+          ingest.merge(q70, thinner))
+    newer = dict(q70, text="Parler à Ayin (v2)", observed_at=999)
+    check("between equally rich rows the newer one wins",
+          ingest.merge(q70, newer).get("text") == "Parler à Ayin (v2)")
+
+    out = tmp / "observed_quests.jsonl"
+    ingest.write_rows(out, rows)
+    check("the file round-trips every row and is sorted by quest/step/objective",
+          ingest.read_rows(out).keys() == rows.keys(), sorted(ingest.read_rows(out)))
+
+    first = tmp / "first.jsonl"
+    first.write_text(_json.dumps({"at": 10, "observation": {"quests_catalog": [
+        {"id": 999, "steps": [{"id": 1, "objectives": [{"id": 5, "type_id": 1}]}]}]}}
+    ) + "\n", encoding="utf-8")
+    second = tmp / "second.jsonl"
+    second.write_text("\n".join([_json.dumps(row) for row in logs]
+                                + ['{"quests_catalog": broken']) + "\n",
+                      encoding="utf-8")
+    merged: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    if collected:
+        try:
+            ingest.main([str(first), "--out", str(out)])
+            ingest.main([str(second), "--out", str(out)])
+        except Exception:      # noqa: BLE001 - the checks below report the abort
+            pass
+        merged = ingest.read_rows(out)
+    check("a second run merges with the file instead of replacing it",
+          set(merged) == {(999, 5), (3841, 14070), (3841, 14071)}, sorted(merged))
+    check("and the second run still keeps the richer captured fields",
+          merged.get((3841, 14070), {}).get("text") == "Parler à Ayin Spyr",
+          merged.get((3841, 14070)))
+
+    # The CLI is the real entry point: `python tools/x.py` does not put the repo root
+    # on sys.path, so the store import needs the explicit insert. Run it, do not pin it.
+    import subprocess
+    import sys as _sys
+    proc = subprocess.run([_sys.executable, str(tool), str(first), "--out", str(out),
+                           "--coverage", "--no-write"],
+                          cwd=str(REPO_ROOT), capture_output=True, text=True)
+    output = (proc.stdout or "") + (proc.stderr or "")
+    check("the CLI opens the store from a tools/ script",
+          proc.returncode == 0 and "store unavailable" not in output,
+          output.strip()[-200:])
+
+    class FakeStore:
+        def __init__(self, rows_by_objective):
+            self._rows = rows_by_objective
+
+        def resolve_objective(self, objective_id, language):
+            return self._rows.get(objective_id)
+
+        def close(self):
+            pass
+
+    # A mutation that breaks the row keys must fail a check, not crash the section.
+    keys_ok = all(isinstance(key, tuple) and len(key) == 2 for key in rows)
+    if keys_ok:
+        stats = ingest.coverage(rows, FakeStore({
+            14070: {"quest_id": 3841, "type_id": 1},
+            14071: {"quest_id": 777, "type_id": 0},
+        }))
+        new_stats = ingest.coverage(rows, FakeStore({}))
+    else:
+        stats = {"rows": 0, "quests": 0, "objectives": 0, "types": {},
+                 "new": -1, "agrees": -1, "collision": -1}
+        new_stats = {"new": -1}
+    check("coverage separates new, agreeing and colliding objective ids",
+          stats["new"] == 0 and stats["agrees"] == 1 and stats["collision"] == 1,
+          stats)
+    check("an id the store does not have is counted as new",
+          new_stats["new"] == 2, new_stats)
+    text = ingest.verdict(stats, 2)
+    check("the verdict names a collision as the foreign-id case",
+          "collision" in text and "G30" in text, text)
+    empty = ingest.verdict(ingest.coverage({}, None), 0)
+    check("no rows is a verdict about the corpus, not a silent zero",
+          "predate the capture" in empty, empty)
+
+    index = load_observed_index(out)
+    check("the runtime index is keyed by (quest, objective)",
+          set(index) == {(999, 5), (3841, 14070), (3841, 14071)}, sorted(index))
+    obs = {"current_objective": {"quest_id": 3841, "objective_id": 14070,
+                                 "type_id": 12}}
+    kn = (enrich_observation(obs, FakeStore({}), observed_path=out).get("knowledge") or {})
+    check("an observation without a catalogue resolves from the persisted file",
+          kn.get("status") == "observed" and kn.get("observed_from") == "file"
+          and (kn.get("objective") or {}).get("text") == "Parler à Ayin Spyr", kn)
+    obs_free = {"current_objective": {"objective_id": 14071}}
+    free = (enrich_observation(obs_free, FakeStore({}), observed_path=out)
+            .get("knowledge") or {})
+    check("an id with no tracker quest resolves when exactly one quest claims it",
+          free.get("status") == "observed", free)
+
+    base = dict(q71) if q71 else {"type_id": 0, "type": "QuestObjectiveFreeForm",
+                                  "text": "S'équiper"}
+    ambiguous = dict(rows)
+    ambiguous[(777, 14071)] = dict(base, quest_id=777, objective_id=14071,
+                                   observed_at=10)
+    amb_path = tmp / "ambiguous.jsonl"
+    ingest.write_rows(amb_path, ambiguous)
+    amb = (enrich_observation(obs_free, FakeStore({}), observed_path=amb_path)
+           .get("knowledge") or {})
+    check("and refuses an id two quests claim when the tracker names none",
+          amb.get("status") == "objective_not_in_store", amb)
+
+    extended = dict(ambiguous)
+    extended[(777, 14072)] = dict(base, quest_id=777, objective_id=14072,
+                                  observed_at=10)
+    ext_path = tmp / "extended.jsonl"
+    ingest.write_rows(ext_path, extended)
+    before_write = load_observed_index(ext_path)
+    extended[(777, 14073)] = dict(base, quest_id=777, objective_id=14073,
+                                  observed_at=10)
+    ingest.write_rows(ext_path, extended)
+    after_write = load_observed_index(ext_path)
+    check("a rewritten file is visible without a restart (the stat is the cache key)",
+          (777, 14072) in before_write and (777, 14073) not in before_write
+          and (777, 14073) in after_write, sorted(after_write))
 
 
 def test_dialog_label_reader() -> None:
@@ -3441,10 +4997,28 @@ def run() -> Tuple[int, List[str]]:
     test_claim_quarantine()
     test_failure_causes()
     test_absent_client_recovery()
+    test_identity_binding()
+    test_live_witnesses()
+    test_verifier_head_gate()
+    test_observation_text()
+    test_kaggle_toolkit_sync()
+    test_quest_chain_replay()
+    test_live_ready()
+    test_sim_planner_runs()
+    test_command_parser()
+    test_command_dataset()
+    test_command_shadow()
+    test_command_shadow_report()
+    test_command_replay()
+    test_live_evidence()
+    test_command_onnx_decode()
     test_repair_credit()
     test_reads_are_not_actions()
     test_dialog_labels()
     test_dialog_repeat_guard()
+    test_quest_accept_planner()
+    test_observed_quest_catalog()
+    test_observed_quest_ingest()
     test_dialog_label_reader()
     test_brain_autostart()
     test_brain_readiness()

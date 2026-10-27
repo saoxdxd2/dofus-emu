@@ -308,6 +308,34 @@ def _observation_text(observation: Any, limit: int = 1200) -> Optional[str]:
         lines.append(f"auto_fight: {bool(observation.get('auto_fight'))}")
         rendered.add("auto_fight")
 
+    # The quest graph is a wide document (G29): JSON-dumping it into the "other"
+    # line would spend the whole 320-character budget on the catalogue and hide
+    # knowledge, quests_active and the build stamp behind it. A compact census is
+    # what a policy needs; the raw graph stays in the observation for the readers.
+    graph = observation.get("quests_catalog")
+    census = observation.get("quest_catalog_status")
+    quests = objectives = 0
+    if isinstance(graph, list):
+        quests = len(graph)
+        for quest in graph:
+            if not isinstance(quest, dict):
+                continue
+            for step in quest.get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                objectives += sum(1 for obj in (step.get("objectives") or [])
+                                  if isinstance(obj, dict))
+    elif isinstance(census, dict):
+        try:
+            quests = int(census.get("quests") or 0)
+            objectives = int(census.get("objectives") or 0)
+        except (TypeError, ValueError):
+            quests = objectives = 0
+    if quests or objectives:
+        lines.append(f"quest graph: {quests} active quest(s), {objectives} objective(s)")
+    rendered.add("quests_catalog")
+    rendered.add("quest_catalog_status")
+
     rest = {key: value for key, value in observation.items() if key not in rendered}
     if rest:
         lines.append("other: " + _obs_brief(rest, 320))

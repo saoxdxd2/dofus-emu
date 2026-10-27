@@ -49,7 +49,20 @@ VERDICTS = ("advanced", "noop", "failed", "blocked")
 
 # Observation keys that mean "the world moved". Kept in one place so the rule,
 # the dataset builder and the model features cannot drift apart.
-STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size")
+# What counts as a change in the world.
+#
+# `ready_objectives` is the important addition. Claiming an objective
+# (`quest.advance {objective_id}`) changes no cell, no map and no HP — it moves an entry
+# off the ready list, and that is the only observable proof it worked. Without it here,
+# the most valuable action the agent can take scored `noop` every time:
+#
+#   1 quest.advance  ok  noop  -> {'quest_id': 4278, 'objective_id': 13986}
+#
+# and the controller then replanned, retired the quest, and gave up on a goal it had just
+# made progress on. `objectives_completed` covers the step-level version of the same thing.
+STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
+              "in_dialog", "in_fight", "ready_objectives", "objectives_completed",
+              "quests_active", "quests_finished", "quest_steps")
 
 # Tools that only read. A query cannot "change the world", so scoring it as
 # `noop` was wrong: it made every successful lookup look like a failure, and the
@@ -57,10 +70,11 @@ STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size")
 # data IS success.
 READ_ONLY_TOOLS = frozenset({
     "knowledge.search", "quest.list", "inv.list", "hdv.scan", "state.snapshot",
+    "fight.state", "fight.plan",
 })
 
 # Tools that are *supposed* to change the map / the cell. Used by drift only.
-MOVE_TOOLS = ("farm.step", "farm.start", "nav.walk", "nav.goto", "travel.zaap")
+MOVE_TOOLS = ("farm.step", "farm.start", "nav.goto", "travel.zaap")
 
 
 # Fixed tool order for the feature vector. Must match data/capabilities.json;
@@ -150,10 +164,37 @@ class Verdict:
         return asdict(self)
 
 
+# The observation is nested (position.map_id, hp.life, inventory.items) while these
+# rules were written against a flat snapshot. Comparing the flat names against a nested
+# dict returns None on both sides for every key, so `_changed` reported "nothing
+# changed" for every action — including a real map change — and every step was scored
+# `noop`. That is the single reason the loop could never see itself working.
+NESTED_ALIASES = {
+    "map_id": ("position", "map_id"),
+    "mapId": ("position", "map_id"),
+    "cell": ("position", "cell"),
+    "hp": ("hp", "life"),
+    "inventory_size": ("inventory", "items"),
+}
+
+
 def _get(obs: Optional[Dict[str, Any]], key: str) -> Any:
+    """Read a flat state key, following the nested snapshot shape when present."""
     if not isinstance(obs, dict):
         return None
-    return obs.get(key)
+    if key in obs:
+        return obs.get(key)
+    path = NESTED_ALIASES.get(key)
+    if path is None:
+        return None
+    cur: Any = obs
+    for part in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    if isinstance(cur, list):
+        return len(cur)
+    return cur
 
 
 def _changed(before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]]) -> list[str]:
@@ -165,6 +206,17 @@ def _changed(before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]]) 
         if b != a:
             out.append(k)
     return out
+
+
+def changed_keys(before: Optional[Dict[str, Any]],
+                 after: Optional[Dict[str, Any]]) -> list[str]:
+    """Which state keys moved between two observations.
+
+    Public name for the check the loop needs when it has to decide whether an action
+    has landed yet: a directive that starts a walk returns ok immediately, and the
+    world changes a moment later. Judging that in the same instant scores it `noop`.
+    """
+    return _changed(before, after)
 
 
 def _int(value: Any, fallback: int = 0) -> int:

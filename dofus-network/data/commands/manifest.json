@@ -1,0 +1,153 @@
+{
+  "core_phrasings": 185,
+  "counts": {
+    "test": 23,
+    "train": 1619,
+    "val": 20
+  },
+  "eval_entity_leaks_in_train": [],
+  "eval_texts_in_train": [],
+  "generated_from": [
+    "gold.jsonl",
+    "dofus_decision_dataset.json"
+  ],
+  "held_out_entities": {
+    "area": [
+      "Pandala",
+      "Otoma\u00ef",
+      "Frigost"
+    ],
+    "channel": [
+      "general",
+      "trade"
+    ],
+    "item": [
+      "Plume de Tofu",
+      "Cuir de Sanglier",
+      "Minerai de Cuivre"
+    ],
+    "message": [
+      "salut",
+      "bravo",
+      "bien jou\u00e9"
+    ],
+    "mob": [
+      "tofus",
+      "sangliers",
+      "dragoeufs"
+    ],
+    "price": [
+      1700,
+      900,
+      330
+    ],
+    "quantity": [
+      7,
+      20,
+      3
+    ],
+    "query": [
+      "Tofu",
+      "Sanglier",
+      "Dragoeuf"
+    ],
+    "quest_id": [
+      5001,
+      5002,
+      5003
+    ],
+    "zaap": [
+      "Pandala",
+      "Frigost"
+    ]
+  },
+  "intents": {
+    "test": {
+      "auto": 1,
+      "chat": 4,
+      "farm": 1,
+      "fight": 1,
+      "follow": 1,
+      "inventory": 1,
+      "knowledge": 3,
+      "market": 4,
+      "quest": 1,
+      "state": 1,
+      "stop": 1,
+      "travel": 3,
+      "unknown": 1
+    },
+    "train": {
+      "auto": 74,
+      "chat": 165,
+      "farm": 175,
+      "fight": 147,
+      "follow": 80,
+      "inventory": 139,
+      "knowledge": 167,
+      "market": 120,
+      "quest": 217,
+      "state": 63,
+      "stop": 97,
+      "travel": 124,
+      "unknown": 51
+    },
+    "val": {
+      "auto": 1,
+      "chat": 3,
+      "farm": 1,
+      "fight": 1,
+      "follow": 1,
+      "inventory": 1,
+      "knowledge": 4,
+      "market": 3,
+      "quest": 1,
+      "state": 1,
+      "stop": 1,
+      "travel": 1,
+      "unknown": 1
+    }
+  },
+  "languages": {
+    "test": {
+      "es": 2,
+      "fr": 21
+    },
+    "train": {
+      "de": 246,
+      "en": 546,
+      "es": 360,
+      "fr": 467
+    },
+    "val": {
+      "en": 2,
+      "es": 14,
+      "fr": 4
+    }
+  },
+  "schema": "command-intent-slots-v1",
+  "seed": 7,
+  "sources": {
+    "test": {
+      "commander": 1,
+      "gold": 19,
+      "seed": 3
+    },
+    "train": {
+      "commander": 157,
+      "core": 1108,
+      "gold": 342,
+      "seed": 12
+    },
+    "val": {
+      "commander": 1,
+      "gold": 16,
+      "seed": 3
+    }
+  },
+  "split": "per-intent stratified: one val, one test phrasing; core phrasings are train-only; eval texts are excluded from train",
+  "train_near_copies_removed": 11,
+  "train_rows_skipped_for_eval_text": 3,
+  "train_text_conflicts": [],
+  "variants": 8
+}

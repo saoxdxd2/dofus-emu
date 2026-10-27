@@ -207,7 +207,7 @@ construction.
 
 ---
 
-## G6. Verifier head is wired by the GUI, not orphaned — and unmeasured
+## G6. Verifier head is wired by the GUI, not orphaned — and unmeasured *(GUI auto-load gated 2026-10-27, offline-verified; a validated head is still absent)*
 
 **Correction (2026-10-26).** An earlier read of this gap said `verifier_head.onnx`
 was "orphaned / never loaded" because `--verifier-model` defaults to `None`. That is
@@ -235,16 +235,26 @@ cannot beat them). The head also predates the read-only relabeling. So per
 "replace hardcoded *wherever data supports it*," the reported accuracy does **not**
 support trusting the head over the rule for actions — it adds no measured signal.
 
-**Decision + falsifier.** Keep the rule as authority for actions. The GUI
-(`aipanel.cs:705-708`) should pass `--verifier-model` only for an artifact carrying a
-validation contract measured on **live or human labels**, not because the file
-exists, and not on self-referential rule labels. Falsifier that flips this: a head
-trained and validated on held-out *real* step labels above the rule baseline — then
-wiring it by default is correct, and this gap closes.
+**Decision + falsifier.** Keep the rule as authority for actions. **Shipped 2026-10-27:** the GUI
+now auto-loads a verifier only when `dofus-network/models/verifier_head.validation.json` exists and
+carries `"labels": "live"` or `"human"`, `"n" >= 60`, and `"above_baseline": true`; otherwise the
+loop labels with rules (`string verifier = null`). The neural head is preferred, the linear baseline
+is the fallback, and an explicit CLI `--verifier-model` still overrides the choice for an experiment.
+No contract exists today, so the GUI now runs rules-only — the honest state while the only artifact's
+1.0 is rule-cloned. Falsifier that flips this: a contract from a head trained and validated on
+held-out *real* step labels above the rule baseline — then the contract unlocks the auto-load and
+this gap closes.
+
+**Evidence (offline).** `test_verifier_head_gate` (7 checks) pins the contract file, live/human
+labels, the 60-example floor, the above-baseline flag, the all-three condition, the rules default,
+and the append behind the gate; four `head:` mutations caught. The release build compiled the
+changed C# (`DofusFarm.exe` 540,672 bytes, `setup.exe` 79.0 MB) and the post-build gate is
+**550 checks / 0 failed**. **Not verified:** no live/human-labelled head exists yet, so the head
+stays off by design.
 
 ---
 
-## G7. Live combat is unverified against the real server
+## G7. Live combat is unverified against the real server *(fallback behavior offline-tested 2026-10-27; live fight still owed)*
 
 `CURRENT.md` §6 describes the solver→ranker→live pipeline, but **no fight has been
 proven against the client**. Evidence: `agent/executor.py` records
@@ -335,6 +345,16 @@ halves of G7 about a run. Gate **323 / 0 failed**, driver at **132 mutations**, 
 mutations CAUGHT (12 of them). Still zero live rows for any of it: the counts come from a client
 that has not run the fixed page yet.
 
+**The fallback that has played every live fight turn is now behaviorally tested (2026-10-27).** The
+learned brain has never decided a live turn (G24/G25), so `_planFightAction` is the policy the server
+actually saw; only its AP budget was tested before. `tools/test_fight_planner.js` extracts the real
+target/range/move code and runs it against bundle-shaped spells and enemies: it targets the lowest-HP
+enemy even when farther, excludes a spell whose min range misses a closer enemy, filters unaffordable
+spells, never offers a spell the client refuses, ignores buffs/heals as attacks, moves toward the
+nearest enemy with the client pathfinder when nothing reaches, and passes with no MP. 10 checks and
+six `fight:` mutations caught. This closes the "only AP is tested" hole; the live fight — and a win —
+is still G7's proof.
+
 ---
 
 ## G8. The test gate is gone — partially restored 2026-10-26
@@ -369,7 +389,7 @@ is also stale — that folder no longer holds them.
 
 ---
 
-## G9. Identity is keyed by slot, not by account
+## G9. Identity is keyed by slot, not by account *(fail-closed binding shipped 2026-10-27, offline-verified; live relogin proof owed)*
 
 The bridge/instance layer addresses an instance by its **slot → port** mapping
 (`bridge_port.txt`, relay port `8880+slot`). Nothing binds a run to the *account*
@@ -378,17 +398,52 @@ is answered by which slot, and a slot that reloaded into a different login is
 indistinguishable to the harness. Relevant to the "different exit IP looks like a
 hijacked session" class of disconnect.
 
+**What shipped.** `snap.character` already carries the client's own `{id, name, level, breed}`.
+`Autopilot._check_identity` binds the run to the first real character and compares every later
+snapshot: the id wins when both sides have one (a rename is the same account), the name is the
+fallback for a build without ids, and an unknown snapshot (character select, an older page, a null
+field) is not a change. **Binding happens only in the world**: the client can still hold the last
+character's base informations at character selection, and binding to that would turn a legitimate
+login into a false drift on the first real snapshot. A different character on the same slot sets the
+drift, writes
+`{"kind":"identity","event":"drift","bound":…,"seen":…}`, and becomes the run's stop reason;
+`_require_world` and the main loop both check, so a relogin into another login ends the session
+instead of playing it, and a drift during recovery is reported as identity, not as "client gone".
+Level-ups and renames are explicitly not drift.
+
+**Evidence (offline).** `test_identity_binding` (18 checks): bind/log, same id/name, level-up,
+rename-on-id, unknown snapshots, id-only and name-only builds, late id fill, the drift row and the
+stop reason, a character-select snapshot that must not bind, plus source pins for the loop and the
+world wait. Eight `identity:` mutations caught;
+gate **558 checks / 0 failed**; `node tools/js-error-finder.js` 23/0.
+
+**Not verified (live).** No recorded relogin has been replayed with a different character on the same
+slot; the proof is one live relogin (or a window relaunch into another account) producing a drift row
+and a stopped session. Multi-instance step attribution still uses the slot for logs — the guard makes
+a wrong-account continuation impossible, it does not make the slot an account id.
+
 ---
 
-## G10. `kaggle/toolkit/` drifts with no generator
+## G10. `kaggle/toolkit/` drifts with no generator *(generator shipped 2026-10-27; dataset re-upload owed)*
 
 `dofus-network/kaggle/toolkit/` is a hand-assembled copy of `agent/` + `sim/` that
 backs the published Kaggle dataset (`tajdinenizar/thx-02-sim-toolkit`) a live kernel
-runs. It has **already drifted** (its `autopilot.py` and `planner.py` differ from the
-harness) and there is no export script in the repo to regenerate it. It is not a fork
-to delete — deleting it breaks the dataset a kernel depends on — but it is a fourth
-copy of the harness that will keep diverging. Fix: an export script, or accept the
-drift explicitly.
+runs. It had **already drifted** (18 files, including `autopilot.py`, `planner.py`, `features.py`,
+`schema.py` and `data/capabilities.json`) and there was no export script in the repo to regenerate
+it. It is not a fork to delete — deleting it breaks the dataset a kernel depends on.
+
+**Shipped 2026-10-27.** `tools/sync_kaggle_toolkit.py` makes the copy/pin matrix explicit and
+regenerates the toolkit. Code under `agent/`, `sim/` and `ai/` is copied when the harness has the
+file; `data/capabilities.json` and the quest/subarea caches are copied; **pinned** files are never
+deleted or overwritten: `agent/episodes.py`, `agent/selftest.py`, `agent/smoke_verifier.py`,
+`agent/synthetic_tools.py` (removed from the harness), `data/maps/_index.json` (the toolkit ships a
+trimmed map index) and `dataset-metadata.json` (Kaggle metadata). `--check` reports drift and exits
+1; `--write` copies atomically and records `TOOLKIT_MANIFEST.json` (path, source, sha256, status,
+generated_at) **after** the copy, so the manifest cannot claim the files still drift. The real run
+synced **25 files, pinned 6, 0 drift**; the toolkit's `features.py` is now the 42-feature contract,
+`schema.py`/`capabilities.json` carry `accept`, and the planner/autopilot match the harness.
+**What remains:** re-upload the dataset/kernel on Kaggle if it should consume this snapshot (the
+local copy is current; the published one is not).
 
 ---
 
@@ -461,7 +516,7 @@ keep it as a separate pre-flight over `tools/`.
 
 ---
 
-## G12. The live client has no map-transition resilience at all — a stalled map load locks the screen forever
+## G12. The live client had no map-transition resilience — a stalled map load locked the screen forever *(pipeline closed 2026-10-26; rule executed offline 2026-10-27; live stall still owed)*
 
 **RESOLVED IN THE PIPELINE 2026-10-26, live behaviour still unproven.** The 12 rules are
 now installed by `patch-engine.js` at build time and carried into `patch-rules.txt` for
@@ -567,6 +622,17 @@ rules run first, and `live+resilience` is byte-identical to
 `.bak + shipped-rules + resilience` (+2,924 bytes, parses under `node --check`). That
 equality is precisely what keeps `--bundle-selftest`'s `patched == live` contract intact
 once the rules are added to `patch-engine.js` and regenerated into the txt.
+
+**The watchdog rule is now executed offline (2026-10-27), not just grepped.** `tools/test_transition_watchdog.js`
+extracts `resil22New`/`resil23New` from `tools/patch-engine.js`, asserts the served bundle carries
+both **verbatim**, and runs the real rule with fake timers and a mocked IsoEngine: it arms at
+3500 ms; a stalled launch (loading flag set, `foreground.locked` true) releases `loadMap` and
+`quickReconnection`, removes the black-screen graphic, refreshes the scene, hides the loading
+progress, resets `_isMapLoading`/`_waitingForMessage`, and warns once; a healthy map is not touched;
+a relaunch clears the previous timer; and a completed transition's fade-out cancels the watchdog.
+That is the *behaviour* of the shipped rule, not a presence check — 15 checks and five `watchdog:`
+mutations caught. What is still owed is the live half: watch a real stalled transition self-heal in
+3.5 s (and `--bundle-selftest` stay IDENTICAL with the rule set).
 
 **Still open — needs a session, deliberately not done blind.** Run
 `node tools/apply-map-resilience.js` and then prove on a real client that (a) a map
@@ -1660,7 +1726,7 @@ whose page build contains this helper.
 
 ---
 
-## G29. The quest knowledge cache cannot describe any live quest: its ids stop at 2,546, the live ids start at 3,841 *(measured 2026-10-26, open)*
+## G29. The quest knowledge cache cannot describe any live quest: its ids stop at 2,546, the live ids start at 3,841 *(capture read + observed knowledge shipped 2026-10-27, offline-verified; live population owed)*
 
 **What is measured.** `data/cache/quests_full.json` holds 1,976 quest records whose distinct ids
 span **18 … 2,546**, with **0** records above 2,546. Across 18,594 ready-objective reads the live
@@ -1699,17 +1765,67 @@ the running client reports, objective by objective, as the observed-knowledge st
 `npc_map`; or find the Touch encyclopedia source and re-sync against it. Neither is a per-quest
 answer, and neither is chosen for you by this document.
 
-**Next step, and it is a capture rather than a download.** The client carries the Touch quest graph
-locally: its database manifest (the name list in `script.js` that `e.exports.load` walks) contains
-`Quests`, `QuestSteps`, `QuestObjectives`, `QuestObjectiveTypes`, `QuestStepRewards` and
-`QuestCategory`, and the page already reaches one of them — `_rawObjectiveDb` reads
-`window.gui.databases.QuestObjectives[id]`, which is where the 99.4 % of objective entries that carry
-a class name get it (`_type`). So the KB half does not need a third-party encyclopedia and must not be
-filled by inventing a `type_id`→class enum: publish what the client already resolves (the objective
-rows it holds, id → `_type` + declared parameters, and `QuestObjectiveTypes` as the client uses it),
-ingest them as the store's `source: "observed"` rows, and let coverage be measured instead of
-assumed. Until that capture runs, the four `type_id`↔class pairs the live corpus happens to name
-(0/1/4/6) are all this project may claim.
+**The capture is shipped (2026-10-27), and it is a read rather than a download.** The client carries
+the Touch quest graph locally: its database manifest contains `Quests`, `QuestSteps`,
+`QuestObjectives`, `QuestObjectiveTypes`, `QuestStepRewards` and `QuestCategory`, and each active
+quest object carries its own `dbQuest` (`stepIds`, `nameId`), `dbSteps` (`objectiveIds`, `nameId`,
+`descriptionId`) and `dbObjectives` (`typeId`/`_type`, `parameters`, `mapId`, `stepId`, `text`). The
+page now publishes that graph:
+
+- `snap.quests_catalog` — up to 12 active quests, each with its id, display name, `step_ids` in the
+  client's own order, the live `step_index`/`step_id`, up to 40 steps (name, description,
+  `objective_ids`) and up to 40 objectives per step (type id + class name, declared parameters, map,
+  step, text, completion). Objectives the client holds but no step lists yet — the table is filled
+  asynchronously — are kept in an `unlisted` step, up to 20. **One budget is shared by the whole
+  catalogue (60 steps / 80 objectives across all active quests):** a per-quest cap alone allows
+  12 × 40 × 40 = 19,200 objective rows in every snapshot, which would bloat the log and the bridge
+  payload. Every bound is reported in
+  `snap.quest_catalog_status` (`quests`, `steps`, `objectives`, `truncated`), which is the census a
+  live run reads first: 0 means the capture found nothing, not that the client has nothing.
+- `agent/knowledge_context.py` prefers a matching observed row over the store. Matching is by the
+  tracker's quest id **and** objective id, so a shared id cannot resolve to a different quest; the
+  block is `status: "observed"`, `objective.source: "observed"`, and carries the client's text, type
+  id/class, params, map, step and the quest/step names. The store path is unchanged when the
+  catalogue has no row.
+- `agent/planner.py` reads the catalogue in `_observed_current`, so an active quest whose
+  `step_objectives` is empty is still plannable from the client's own graph; `catalog_objectives`
+  returns rows for the named quest only.
+
+This also removes a false lead: the old fallback read `window.gui.databases.QuestObjectives`, which
+the bundle never assigns — the manifest name is not a page handle. The capture reads each quest's
+own `dbObjectives` instead (the table the page already prefers). The training/prompt renderer
+(`agent/tool_dataset._observation_text`) shows a `quest graph: N quest(s), M objective(s)` census and
+excludes the raw graph, so the new field cannot crowd `knowledge`, `quests_active` or the build stamp
+out of the 1,200-character text used by the encoder/LLM policies.
+
+**Evidence (offline).** `tools/test_quest_catalog.js` 26 checks: bundle membership for `dbQuest`,
+`dbSteps`, `dbObjectives`, `objectiveIds`, `descriptionId`, `stepIds`; step order from `stepIds`;
+type/params/map/step/text on the rows; the async-only rows; every bound; a throwing quest yields an
+`error` row instead of an exception; the snapshot build block is executed and counted; the block
+sends nothing. `test_observed_quest_catalog` in `agent/regression.py` pins the precedence (observed
+beats a colliding store row), the names, the no-catalogue fallback, the wrong-quest refusal, a
+malformed catalogue, and the planner fallback. `test_observed_quest_ingest` pins the flatten/merge
+rules, malformed-line tolerance, coverage counts, the persisted lookup, ambiguity and cache
+invalidation. Gate **502 checks / 0 failed**; the ten `catalog:` mutations and the ten `ingest:`
+mutations were each run as a batch, **10/10 caught**, restored tree re-ran 502/0;
+`node tools/js-error-finder.js` 23/0.
+
+**Not verified (live).** No recorded row carries `quests_catalog` yet — the read is newer than the
+corpus — so whether a real active quest's `dbSteps`/`dbObjectives` are populated, and with which
+text, is the first thing the next snapshot answers; `quest_catalog_status` is the witness.
+
+**The ingest is shipped as a separate artifact (2026-10-27).** `tools/ingest_observed_quests.py`
+scans recorded logs for `quests_catalog`, flattens one row per objective (quest/step names, type
+id/class, params, map, step, text, completion, session/log/time), merges without letting a thinner
+later capture erase a richer row, writes `data/knowledge/observed_quests.jsonl` atomically, and
+prints a coverage verdict against the store (`new` / `agrees` / `collision`). The download store is
+untouched: observed rows are a separate, licence-clean artifact. `agent/knowledge_context.py` loads
+that file through an mtime/size-cached index when a snapshot does not carry the catalogue itself, so
+a loop started before the page reload still resolves; an objective id claimed by two quests is
+refused unless the tracker names the quest. **Still owed:** one live session to populate the file
+(the coverage tool prints "predate the capture" until then), and a decision on merging observed rows
+into the SQLite store for training/curriculum — the runtime path and the JSONL do not require that
+merge.
 
 **And the download route is closed by the source's own licence, not by convenience.** Checked
 2026-10-26: `https://api.dofusdb.fr/` (the base URL `data/sync_full_database.py` uses) now serves its
@@ -1905,13 +2021,16 @@ source pins; 9 `links:` mutations cover it.
 
 **Not verified, and deliberately so.** No recorded row carries `links` or `start_quest` yet — 0 of
 9,036 — because the read is newer than the corpus. Whether the Touch server actually puts a
-`startquest,<id>` link in the dialogs this character reaches is the first thing the next live snapshot
-has to answer, and until it does, the accept *verb* must not be wired: a page-level guard can refuse a
-request when no offer is present, but it cannot invent the offer's shape.
+`startquest,<id>` link in the dialogs this character reaches is still the first thing the next live
+snapshot has to answer. The accept half is now wired *behind that read* (G33): it sends
+`QuestStartRequestMessage` only when the dialog's own parsed `start_quest` equals the id asked for,
+and refuses with `quest_not_offered` otherwise, so with no offer the branch is inert and no shape is
+invented. A quest/auto run now takes the offer (G33), so the read has a live consumer the moment a
+dialog carries one.
 
 ---
 
-## G33. `quest.advance` cannot accept a quest while a dialog is open — the accept branch is behind it *(measured 2026-10-26, open)*
+## G33. `quest.advance` cannot accept a quest while a dialog is open — the accept branch is behind it *(fixed 2026-10-27, offline-verified; live proof owed)*
 
 **What is measured.** Reading `scripts/mobile-disguise.js` against the corpus: the handler's first
 statement is `if (pd0 && pd0.isInDialog) { … }`, and inside it only two argument shapes are handled —
@@ -1940,6 +2059,52 @@ the id asked for — so a stale or invented id cannot reach the wire), or call t
 reuses the packet and guards that are already gated; the second is more faithful to the client but
 reaches into a private prototype. Both keep G31's rule: **the planner may only ask for an id the client
 offered**, never a curriculum or KB id.
+
+**What shipped (2026-10-27), the first shape with the offer as its guard.** The page's `quest.advance`
+now handles `accept: true` *before* `close` and the reply path. `_agentDialogState().start_quest` — the
+client's own `startquest,<id>` payload (G32) — must equal `quest_id`; anything else returns
+`quest_not_offered` with both ids and sends nothing. On a match it sends
+`QuestStartRequestMessage{questId}`, arms the same 5 s in-flight window the outside-dialog start uses,
+closes through the two verified close paths (each in its own try) and reports `closed` from dialog
+state, not from the calls. A start-shaped call inside a dialog for a quest the client has never
+accepted is refused (`dialog_start_not_accept`) instead of being answered as reply 0; a known quest
+keeps reply 0, which is what the tutorial relies on.
+
+The planner takes the offer when it is the quest the plan is on, and — added 2026-10-27 — when the
+run is doing quests at all: `_dialog_call` accepts `dialog.start_quest` when it equals
+`current_quest` or the ranker's quest, or when the goal mode is `quest`/`auto`, the offered quest is
+not already active, a quest id named in the prompt (when there is one) matches, and no different
+`focus` is set. It records the id as pending and
+client-confirmed, so a quest the server did not honour can be retried outside the dialog. An order
+or farm prompt does **not** acquire quests (fidelity), a named focus must match, and an offer for an
+already-active quest is left to the ranker. The tutorial accepts when the offer equals its step quest
+and otherwise sends an explicit `reply: 0`; the start branch accepts a matching offer or closes
+first when a dialog offers something else. Nothing there emits a bare start inside a dialog any
+more. `schema.py` declares `accept`, so the validator no longer
+rejects the call before the page sees it, and `autopilot._dialog_outcome` now logs
+`asked: "accept"` / `ended_by: "accept"` / `accepted_offer`, which is the first live label this path
+can produce.
+
+**Evidence (offline).** `tools/test_quest_accept.js` (27 checks: order before the reply path, packet
+name and id, both close paths, state-judged close, wrong-id refusal, no-offer refusal, the 5 s
+in-flight window, send failure, the start-shaped refusal and the schema pin).
+`agent/regression.py` adds `test_quest_accept_planner` (offer read, accept shape, the new-offer rule
+for quest/auto prompts, refusal for farm/order/focus/already-active offers, pending and
+client-confirmed bookkeeping, close-first fallback, both tutorial shapes, and `validate_call` under
+the runtime `data/capabilities.json` registry — the contract that actually gates a live call) and
+`test_quest_chain_replay` (7 checks: an NPC offer is accepted, the accepted quest is
+client-confirmed, the now-active live quest is planned from the observation rather than retired, the
+next offer in the chain is accepted, and farm/named-different prompts leave it alone). Gate
+**472 checks / 0 failed** when this batch first landed (the gate has since grown to 580/0 with the
+G29 batches and the new-offer rule); the ten G33 `accept:` mutations and the seven `offer:`
+mutations in `tools/mutate_cause_gate.py` each ran as a batch, **10/10** and **7/7 caught**,
+restored tree re-ran the gate. `node tools/js-error-finder.js` stays 23/0 on the edited page.
+
+**Not verified (live).** No live snapshot has carried `links`/`start_quest` yet (0 of 9,036), so this
+branch has never fired against the server; the first real offer is the proof. Also owed: whether the
+server itself closes the dialog after `QuestStartRequestMessage` (the page reports `closed` either
+way), and whether an explicit `reply: 0` on a known tutorial dialog behaves exactly like the old
+default (offline it is the same packet).
 
 ---
 
@@ -1979,11 +2144,26 @@ offered**, never a curriculum or KB id.
    of them scored `advanced`. A wait now costs time instead of a step, bounded at 40 passes.
    This is the number that makes criterion (2) readable at all: read `steps`, `waits` and the
    productive rate together, not `steps` alone.
-9. **G8** test gate — **431 checks**, delegating JS + Go + bundle `--check` and a whole-file
-   `node --check` of the injected patch; green, and every new
-   section is mutation-tested: `tools/mutate_cause_gate.py` now holds **194 mutations**, all run
-   and all caught on 2026-10-26 (the last full sweep on a quiet tree: 194/194, 0 missed,
-   0 anchor-skipped, restored tree re-ran 431/0; the batch that added G30 and G31 was 39/39 first). The
+9. **G8** test gate — **672 checks** (2026-10-27), delegating JS + Go + bundle `--check` and a
+   whole-file `node --check` of the injected patch; green, and every new
+   section is mutation-tested: `tools/mutate_cause_gate.py` holds **329 mutations**. The count
+   recorded here said 431 checks / 194 mutations and was stale: the tree measured 461/0 with 217
+   entries before the accept batch. On 2026-10-27 the ten G33 `accept:` (10/10 caught), fourteen
+   `catalog:` (10/10 then 4/4), ten `ingest:` (10/10), seven `offer:` (7/7), eight `identity:`
+   (8/8), seven `witness:` (7/7), four `build:` (4/4), four `head:` (4/4), three `obs:` (3/3),
+   five `watchdog:` (5/5), six `fight:` (6/6), five `kaggle:` (5/5), two `chain:` (2/2), four new
+   `ready:` preflight mutations (4/4; the label batch also re-ran seven older ready-scan ones),
+   one `sim:` (1/1) and five `command:` (5/5) were each run as a batch, 0 missed and 0
+   anchor-skipped. After the command-dataset expansion, the intent-slot legality mask, the read-only
+   command shadow, the prompt-shadow report, the goal-mode comparison, the action-to-tool
+   bridge, the replay extractor (including its page-verdict outcome) and the session witness
+   the gate re-ran 670/0 and the command batch (now nineteen: 19/19 caught, including
+   eval-text, near-copy, intent-illegal-slot, shadow-override, mode-change, action-bridge,
+   adapter-guard, replay-delta, dropped-advancement and dropped-witness leaks; the separate
+   goal-routing, live-evidence, canary and ONNX-decode mutations are 1/1 each) re-ran green. The release build was re-run twice after the
+   page and GUI changes: `compile.bat` exit 0, 11 patches active, `DofusFarm.exe` 540,672 bytes,
+   `setup.exe` 104,955,904 bytes (100.1 MB), and the post-build gate and `js-error-finder` (23/0)
+   were green. A full 329 sweep is owed on the next quiet tree. The
    driver
    also takes `MUT_ONLY="a label,b another"` so a new batch can be proven without re-running
    history — which matters because it writes broken code into the working tree and this repo has
@@ -2007,6 +2187,12 @@ offered**, never a curriculum or KB id.
     quest-start rows named a quest the client never reported, 297 of them one Dofus 2 quest, with the
     3-attempt bound re-armed by every scene change (G31). G26, G27, G28, G30 and G31 are fixed and
     gated offline; G29 is data coverage that is not half-done in the tree, its download route is now
-    closed by the source's licence, and it is what stands between this batch and a retrained label
-    set. None of the six is live proof — see each section's *Not verified*.
-12. **G5** forecaster, **G7** fight proof, then G4/G6/G9/G10.
+    closed by the source's licence; its client-side capture read, observed-knowledge path and
+    persistent ingest shipped on 2026-10-27 (offline-verified; live population owed), and the
+    store/training merge is what stands between this batch and a retrained label set. **G33** (the
+    accept verb was unreachable while a dialog was open) is fixed offline behind the page's offer
+    guard, and a quest/auto run now takes a newly offered quest — 17 new mutations, gate 511/0 — and
+    the first live offer is its proof. None of these is live proof — see each section's *Not
+    verified*.
+12. **G5** forecaster, **G7** fight proof, then G4/G6/G10. G9 is closed offline (identity binding +
+    drift), with only its live relogin proof owed.

@@ -328,6 +328,23 @@ namespace DofusBuild
                 // path the app never opens. The repo keeps both.
                 || p.EndsWith("/models/encoder30_v15/model.pt", StringComparison.OrdinalIgnoreCase)
                 || p.EndsWith("/models/encoder30_v15/encoder.onnx", StringComparison.OrdinalIgnoreCase)
+                // The command shadow ships one INT8 ONNX graph. Its FP32 graph,
+                // torch heads, torch router and training reports are export
+                // artifacts; the INT8 graph, config and tokenizer are the runtime.
+                || p.EndsWith("/models/command_encoder30/command_encoder.onnx", StringComparison.OrdinalIgnoreCase)
+                || (p.IndexOf("/models/command_encoder30/", StringComparison.OrdinalIgnoreCase) >= 0
+                    && (p.EndsWith(".pt", StringComparison.OrdinalIgnoreCase)
+                        || p.EndsWith("/router.json", StringComparison.OrdinalIgnoreCase)
+                        || p.EndsWith("/adapter_report.json", StringComparison.OrdinalIgnoreCase)
+                        || p.EndsWith("/router_report.json", StringComparison.OrdinalIgnoreCase)
+                        || p.EndsWith("/metrics.json", StringComparison.OrdinalIgnoreCase)
+                        || p.EndsWith("/metrics_eval.json", StringComparison.OrdinalIgnoreCase)
+                        || p.EndsWith("/metrics_plz_rejected.json", StringComparison.OrdinalIgnoreCase)))
+                || p.IndexOf("/data/commands/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.IndexOf("/data/command_adapters/", StringComparison.OrdinalIgnoreCase) >= 0
+                || p.EndsWith("/data/command_replay.jsonl", StringComparison.OrdinalIgnoreCase)
+                // The 0.25M word-level BiGRU is a negative baseline, not runtime.
+                || p.IndexOf("/models/command_encoder/", StringComparison.OrdinalIgnoreCase) >= 0
                 // Per-map cell/layer dumps are inputs to the offline duel and
                 // benchmarks. The live agent reads only _index.json for routing
                 // and the client supplies the live board; keep the default duel

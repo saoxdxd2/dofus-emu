@@ -1,0 +1,16 @@
+{"text": "do all the quests", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-00"}
+{"text": "plz do all the quests", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-01"}
+{"text": "pls do all the quests", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-02"}
+{"text": "please do all the quests", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-03"}
+{"text": "do all quests", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-04"}
+{"text": "do quests ?", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-05"}
+{"text": "plz do some quests", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-06"}
+{"text": "plz do the curent quests", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-07"}
+{"text": "do the curent quests", "lang": "en", "intent": "quest", "slots": {"action": "run"}, "source": "adapter", "confidence": 1.0, "origin": "user-08"}
+{"text": "fight mobs on the curent map", "lang": "en", "intent": "farm", "slots": {"action": "start"}, "source": "adapter", "confidence": 1.0, "origin": "user-09"}
+{"text": "fight mobs here", "lang": "en", "intent": "farm", "slots": {"action": "start"}, "source": "adapter", "confidence": 1.0, "origin": "user-10"}
+{"text": "can you play the game ?", "lang": "en", "intent": "auto", "slots": {}, "source": "adapter", "confidence": 1.0, "origin": "user-11"}
+{"text": "can you play for me ?", "lang": "en", "intent": "auto", "slots": {}, "source": "adapter", "confidence": 1.0, "origin": "user-12"}
+{"text": "play the game for me", "lang": "en", "intent": "auto", "slots": {}, "source": "adapter", "confidence": 1.0, "origin": "user-13"}
+{"text": "take over the game", "lang": "en", "intent": "auto", "slots": {}, "source": "adapter", "confidence": 1.0, "origin": "user-14"}
+{"text": "run the game for me", "lang": "en", "intent": "auto", "slots": {}, "source": "adapter", "confidence": 1.0, "origin": "user-15"}

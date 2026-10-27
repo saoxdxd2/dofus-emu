@@ -39,7 +39,6 @@ class RandomPolicy:
 
         tool = self.rng.choice(self.TOOLS)
         args: Dict[str, Any] = {}
-        obs = observation or {}
         if tool == "nav.goto":
             args = {"map_id": self.rng.choice([1, 2, 3, 4, 5]) * 1000}
         elif tool == "quest.advance":

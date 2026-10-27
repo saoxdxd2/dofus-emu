@@ -12,14 +12,21 @@ what the client provided.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from knowledge.store import CanonicalStore
 
 DEFAULT_STORE = (
     Path(__file__).resolve().parents[1] / "data" / "knowledge" / "dofus_knowledge.sqlite"
+)
+# Rows the client itself reported, persisted by `tools/ingest_observed_quests.py` (G29).
+# This file is licence-clean (it comes from the running software) and is never mixed into
+# the downloaded store. Missing is normal until a live run has produced a catalogue.
+OBSERVED_FILE = (
+    Path(__file__).resolve().parents[1] / "data" / "knowledge" / "observed_quests.jsonl"
 )
 
 
@@ -41,6 +48,157 @@ def _current_objective(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             if isinstance(entry, dict) and entry.get("objective_id") is not None:
                 return entry
     return None
+
+
+def _block_from_row(row: Dict[str, Any], language: str, origin: str) -> Dict[str, Any]:
+    """One observed row in the shape the observation contract publishes.
+
+    `origin` says where the row came from: the catalogue in this snapshot, or the
+    persisted ingest file. Both are the client's own data; the distinction is for
+    diagnosis, not for precedence.
+    """
+    return {
+        "status": "observed",
+        "language": language,
+        "objective_id": int(row.get("objective_id")),
+        "quest_id": row.get("quest_id"),
+        "observed_from": origin,
+        "objective": {
+            "text": row.get("text"),
+            "type_id": row.get("type_id"),
+            "type": row.get("type"),
+            "map_id": row.get("map_id"),
+            "params": row.get("params"),
+            "step_id": row.get("step_id"),
+            "cur_completion": row.get("cur_completion"),
+            "max_completion": row.get("max_completion"),
+            "source": "observed",
+        },
+        "quest_name": row.get("quest_name"),
+        "step_name": row.get("step_name"),
+        "step_description": row.get("step_description"),
+    }
+
+
+def _catalog_row(quest: Dict[str, Any], step: Dict[str, Any],
+                 obj: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "quest_id": quest.get("id"),
+        "quest_name": quest.get("name"),
+        "step_id": obj.get("step_id", step.get("id")),
+        "step_name": step.get("name"),
+        "step_description": step.get("description"),
+        "objective_id": obj.get("id"),
+        "type_id": obj.get("type_id"),
+        "type": obj.get("type"),
+        "map_id": obj.get("map_id"),
+        "params": obj.get("params"),
+        "text": obj.get("text"),
+        "cur_completion": obj.get("cur_completion"),
+        "max_completion": obj.get("max_completion"),
+    }
+
+
+@lru_cache(maxsize=4)
+def _persisted_index(path: str, mtime_ns: int, size: int
+                     ) -> Dict[Tuple[int, int], Dict[str, Any]]:
+    """(quest, objective) -> row, cached until the file changes.
+
+    The stat tuple is the cache key, so an ingest is visible to the next observation
+    without restarting the loop. A duplicate key keeps the last line: the ingest is the
+    only writer and it already merges by richness.
+    """
+    rows: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    key = (int(row.get("quest_id")), int(row.get("objective_id")))
+                except (TypeError, ValueError):
+                    continue
+                rows[key] = row
+    except OSError:
+        return {}
+    return rows
+
+
+def load_observed_index(path: Optional[Path] = None
+                        ) -> Dict[Tuple[int, int], Dict[str, Any]]:
+    target = Path(path) if path is not None else OBSERVED_FILE
+    try:
+        stat = target.stat()
+    except OSError:
+        return {}
+    return _persisted_index(str(target), stat.st_mtime_ns, stat.st_size)
+
+
+def _observed_objective(obs: Dict[str, Any], objective_id: int,
+                        tracker_quest_id: Any, language: str,
+                        observed_path: Optional[Path] = None
+                        ) -> Optional[Dict[str, Any]]:
+    """The client's own row for this objective, when it was captured (G29).
+
+    The catalogue is the live graph the running client holds for the character's
+    active quests (`dbQuest`/`dbSteps`/`dbObjectives`), so it outranks any
+    downloaded cache: it cannot describe another game or another quest. Matching
+    on the tracker's quest id when there is one keeps a shared objective id from
+    resolving to a different quest the character also holds. When this snapshot
+    does not carry the catalogue, the persisted ingest file is consulted; an
+    objective id alone is used only when exactly one quest claims it.
+    """
+    catalog = obs.get("quests_catalog")
+    if isinstance(catalog, list):
+        for quest in catalog:
+            if not isinstance(quest, dict):
+                continue
+            if tracker_quest_id is not None:
+                try:
+                    if int(quest.get("id")) != int(tracker_quest_id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            for step in quest.get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                for obj in step.get("objectives") or []:
+                    if not isinstance(obj, dict):
+                        continue
+                    try:
+                        if int(obj.get("id")) != int(objective_id):
+                            continue
+                    except (TypeError, ValueError):
+                        continue
+                    return _block_from_row(_catalog_row(quest, step, obj),
+                                           language, "catalog")
+    index = load_observed_index(observed_path)
+    if not index:
+        return None
+    try:
+        oid = int(objective_id)
+    except (TypeError, ValueError):
+        return None
+    hit = None
+    if tracker_quest_id is not None:
+        try:
+            hit = index.get((int(tracker_quest_id), oid))
+        except (TypeError, ValueError):
+            hit = None
+    else:
+        candidates = [row for (_, row_oid), row in index.items() if row_oid == oid]
+        if len({row.get("quest_id") for row in candidates}) == 1:
+            hit = candidates[0]
+    if hit is None:
+        return None
+    return _block_from_row(hit, language, "file")
 
 
 @lru_cache(maxsize=2048)
@@ -119,6 +277,7 @@ def _knowledge_block(store: CanonicalStore, objective_id: int, language: str,
 def enrich_observation(
     obs: Optional[Dict[str, Any]], store: Optional[CanonicalStore],
     language: str = "fr",
+    observed_path: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
     """Return a shallow copy of `obs` with `knowledge` added.
 
@@ -150,6 +309,11 @@ def enrich_observation(
             tracker_quest_id = int(tracker_quest_id)
         except (TypeError, ValueError):
             tracker_quest_id = None
+    observed = _observed_objective(obs, objective_id, tracker_quest_id, language,
+                                   observed_path)
+    if observed is not None:
+        out["knowledge"] = observed
+        return out
     block = _knowledge_block(store, objective_id, language, tracker_quest_id)
     # Shallow copy: the cached block must not be mutated by a caller.
     out["knowledge"] = dict(block)
