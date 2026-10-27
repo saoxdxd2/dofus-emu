@@ -830,7 +830,15 @@ def _player_facts(character, spells: Dict[int, Any]) -> PlayerFacts:
             grades[spell.id] = grade
     if unscored:
         notes.append("unpriced spells: " + ", ".join(str(x) for x in unscored))
-    rotation = greedy_rotation(candidates, character.ap_budget)
+    # Utility and healing spells are priced above damage on value (Roulette
+    # alone scored 205 on the level-1 sheet), and greedy_rotation then spent
+    # every AP without casting a damaging spell. That made the estimator read a
+    # usable character as "no damaging spell" and block the tutorial fight.
+    # Damage capability and healing capability are separate questions.
+    rotation = greedy_rotation([c for c in candidates if c.damage > 0],
+                               character.ap_budget)
+    heal_rotation = greedy_rotation([c for c in candidates if c.heal > 0],
+                                    character.ap_budget)
 
     dpt_by_element: Dict[str, float] = {}
     damage_lines = 0
@@ -854,7 +862,7 @@ def _player_facts(character, spells: Dict[int, Any]) -> PlayerFacts:
         ap=int(character.ap_budget),
         dpt_by_element=dpt_by_element,
         damage_lines=damage_lines,
-        heal_per_turn=float(rotation.heal) / _HEAL_WEIGHT,
+        heal_per_turn=float(heal_rotation.heal) / _HEAL_WEIGHT,
         resist_percent=resist_percent,
         missing=missing,
         notes=notes,

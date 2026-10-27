@@ -155,6 +155,22 @@ def _index_record(kind: str, record: Dict[str, Any]) -> Dict[str, Any]:
     return stored
 
 
+def payload_of(result: Any) -> Dict[str, Any]:
+    """The client's own payload, out of the two wrappers the bridge puts around it.
+
+    A live directive comes back as `{"response": {"result": {"data": {...}}}}`. A
+    caller that reaches for one field with `result.data.get("via")` gets None and no
+    error -- which is exactly how a talk receipt went unread for a whole session.
+    """
+    data = getattr(result, "data", None)
+    if not isinstance(data, dict):
+        return {}
+    inner = data.get("response")
+    inner = inner.get("result") if isinstance(inner, dict) else None
+    inner = inner.get("data") if isinstance(inner, dict) else None
+    return inner if isinstance(inner, dict) else {}
+
+
 @dataclass
 class ToolResult:
     tool: str

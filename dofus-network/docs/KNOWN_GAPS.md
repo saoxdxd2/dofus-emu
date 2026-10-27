@@ -11,41 +11,83 @@ labelled *unverified*.
 
 ---
 
-## G1. Server-visible keep-alive → vanilla AFK disconnects *(implemented 2026-10-26, live-unverified)*
+## G1. The AFK disconnect is the client's own timer, and the keep-alive never reached it *(fixed 2026-10-27, measured live)*
 
-**Symptom.** A run ends with the game's own popup — *"Prolonged inactivity will
-lead to automatic disconnection… Show some sign of life (move, send a chat
-message…)"* — immediately followed by `AI_DISCONNECT reason=INACTIVITY`. This has
-looked like a ban ("got kicked for inactivity") and is not one.
+**Symptom.** A run ends with the game's popup — *"Prolonged inactivity will lead to
+automatic disconnection… Show some sign of life (move, send a chat message…)"* —
+followed by `AI_DISCONNECT reason=INACTIVITY`. This has looked like a ban. It is not
+one, and it is not the server either.
 
-**Cause.** The server's AFK timer counts *wire traffic the server can see*. The
-loop's observation step is `state.snapshot`, which is a **pure local read**
-(`_agentResult(true, _agentSnapshot())` in `scripts/mobile-disguise.js`) — it sends
-no packet. A `noop` or `blocked` action likewise changes nothing on the wire. So a
-loop that is *busy reading and deciding* is *silent to the server*, and the timer
-fires. The only anti-AFK traffic in the client is `GameFightTurnFinishMessage
-{isAfk:false}` in `mobile-disguise.js`, and that is **fight-scoped** — it never
-fires in the overworld.
+**Cause, read off the served bundle rather than inferred.** The whole countdown lives
+in one module-private singleton (module 64 in this build), whose `_checkActivity` runs
+every `d=12e4` (2 min):
 
-**This is not bot inspection.** There is no detection mechanism being tripped; it
-is the ordinary inactivity timeout any idle player hits. When the loop also crashed
-(`[AI] loop finished (exit -1)`) just before such a disconnect, the crash left the
-client genuinely idle and the AFK timer finished the job.
+```
+e = Date.now() - this.lastActivityTime + 1e3
+e < c(3e5 = 5 min)  -> nothing
+otherwise           -> _enterInactiveMode()      // the warning popup
+already inactive and e >= l(6e5 = 10 min)
+                    -> dofus.disconnect("INACTIVITY")
+```
 
-**Fix — implemented 2026-10-26, pending live proof.** The mechanism was found in
-the bundle: the client tracks activity in `connectionManager.recordActivity()`
-(sets `hasSeenActivity` + clears the inactive warning), and its own `_pingServer`
-timer then sends `BasicPingMessage {quiet:true}` — the exact "sign of life" a human
-produces; with no activity it escalates `_enterInactiveMode()` →
-`disconnect("INACTIVITY")`. The adapter now calls that flag three ways
-(`scripts/mobile-disguise.js`): on every directive send (`_cmSend`, `sendPacket`,
-`chat.say`), and via a gated heartbeat in `bindNetworkHooks` that fires every 20 s
-**only while the bot is driving** (`enabled || aiRunning`), cleared on disconnect.
-It invents no packet and does not touch the egress/session pin. Guard:
-`node tools/test_keep_alive.js` (15 checks). **Still *unverified*:** that the real
-server treats `BasicPingMessage` as activity for a long enough stretch to clear the
-countdown, and that a pure read-only wait (the "tutorial is holding this step open"
-branch) is covered — both need one live session, which is the only honest proof.
+So the drop is **client-initiated**, and the only thing that resets it is that
+object's own `recordActivity()` — which the client calls from its tap handler and its
+chat submit. The exempt-server list `p` is empty, and `_pingServer` only *follows*
+activity (`hasSeenActivity`), it never causes it.
+
+**Why the 2026-10-26 "fix" did nothing.** It called
+`window.dofus.connectionManager.recordActivity()`. That method is not on the
+connection manager — module 105 is the connection manager, module 64 is the tracker —
+so the lookup resolved to `undefined`, the helper returned `false`, and every keep-alive
+tick was a silent no-op. Measured on a live client: a depth-3 walk of `window.dofus`
+and `window.gui` (877 objects) found **no** object carrying `recordActivity`, and this
+bundle exposes no module registry (`webpackJsonp`/`__webpack_require__` count 0), so
+there is also no handle to require it by id. The earlier claim that "the server's AFK
+timer counts wire traffic" was wrong in both directions: the server is not the one
+disconnecting, and a ping would not have helped.
+
+**Fix — capture the tracker instead of naming it.** The tracker hands itself to the
+global timer: `window.setInterval(function (e) { e._checkActivity() }, d, this)`. So
+the page wraps `window.setInterval` before the game boots and keeps any argument that
+has the tracker's shape (`recordActivity` + `_checkActivity` + `lastActivityTime`).
+Nothing is invented and nothing is sent by hand: the keep-alive then calls that same
+object's own `recordActivity()`, exactly as the client's tap handler does.
+
+Marks now come from three places, in order of how little they depend on state:
+
+* **every directive the page handles** (`__agentDirective`) — a directive arriving *is*
+  the automation driving this client, so it needs no flag and cannot go stale. This
+  closes the reload hole: `aiRunning` is pushed by the host only when its own answer
+  *changes*, so a page that reloaded mid-run came back with `false`, shut the gated
+  heartbeat, and lost its session ten minutes later;
+* the 20 s gated heartbeat (`enabled || aiRunning`), unchanged, as the backstop for a
+  loop that is waiting rather than acting;
+* the packet send sites (`sendPacket`, `_cmSend`, `chat.say`), unchanged.
+
+The page also asks the host for its state when its directive bus comes up
+(`AI_REQUEST action:'state'`), which the host already answers — so the badge and the
+heartbeat gate self-heal after a reload instead of lying until the next push.
+
+**The instrument, because a prevented kick is silent.** The page counts its marks and
+publishes them in every snapshot as `keep_alive`:
+
+```
+{marks, failed, present, via, last_source, idle_ms, age_ms, inactive}
+```
+
+`age_ms` and `inactive` are read from the tracker itself — what the client currently
+believes, not what we hope. `present:false` is the case that used to be invisible: a
+client where nothing can be marked. `_compact()` carries the record into every step
+row, and `Autopilot.summary()` reports the worst of the run (`marks`, `age_max_ms`,
+`inactive_steps`, `present_steps`/`steps`).
+
+Measured live on 2026-10-27 with page build `2026-10-27l`, four clients on the same
+build, two driven by loops and two left alone: driven clients reached
+`marks 347 / age_ms 1 / inactive false / via setInterval-owner` after 3 minutes, i.e.
+the client's own countdown was pinned at the start. Guards:
+`node tools/test_keep_alive.js` (29 checks, including the capture, the shape rejection
+of a non-tracker, and the bundle thresholds re-read at test time) plus the
+`keep-alive:` / `afk:` mutation batches.
 
 ---
 
@@ -2196,3 +2238,57 @@ default (offline it is the same packet).
     verified*.
 12. **G5** forecaster, **G7** fight proof, then G4/G6/G10. G9 is closed offline (identity binding +
     drift), with only its live relogin proof owed.
+
+---
+
+## G34. An action the server ignores looked like an action worth retrying *(fixed 2026-10-27, measured live)*
+
+**Symptom.** Two characters spent half a session repeating one call: 119 identical
+`quest.advance {npc_id: 3888, quest_id: 3841}` and 120 identical
+`nav.goto {direction: left}`, each `ok: true`, each verdict `noop`, the world never
+moving.
+
+**Cause.** Nothing distinguished "the packet went out and nothing answered it" from
+"the packet has not been tried enough". The loop's only repetition test was three
+identical no-ops, and on a tutorial character the scripted step made the guard reset
+its own counters and wait forever. Two specific dead actions were measured:
+
+* **the talk.** `NpcGenericActionRequestMessage{npcId:-1, npcActionId:3, npcMapId:…}`
+  is field-for-field what the client's own context menu sends
+  (`{npcId: l.contextualId, npcActionId: 3, npcMapId: playerData.position.mapId}`),
+  the NPC stands one cell away (262 vs 263), the page reports `via: talked` — and
+  `playerData.isInDialog` is still false a second later. The server does not answer
+  this talk at all.
+* **the crossing.** `last_nav.stage = change_requested_at_edge` from cell 322, which
+  *is* one of the left exit's own cells `[322,294,350,308,336,280]`, with
+  `tutorial.can_change_map.left: true`. The request leaves, the map never changes.
+
+**Fix.** Each has a receipt, so each is now noticed on the second send instead of the
+hundredth, and the step is then held like any other scripted wait:
+
+* `payload_of(result)` unwraps the bridge's `response.result.data` in one place — the
+  first version of this rule read `result.data["via"]`, got `None`, and silently never
+  fired, which is the same class of bug as the missing `recordActivity` in G1;
+* `_standing_on_exit(args, obs)` answers "the character is already on a cell that
+  leads where it asked" from the client's own exit list, so a declined crossing needs
+  no map database and no guessed coordinates;
+* `_tutorial_hold` + `_holding` bound the patience: one window per action signature
+  (`TUTORIAL_HOLD_S`), released the moment the world signature (map, cell, active
+  objective, dialog) changes, and **expiry restarts the window rather than ending the
+  run** — a loop that exits stops sending directives, the page's keep-alive gate closes
+  with it, and the same client timer logs the character out ten minutes later. The
+  retry rate is therefore one per window, and `hold_cycles` says how many were spent.
+
+**Measured after the fix** (same four clients, five minutes): 45 steps in total across
+the farm, max 4-9 repeats of any one signature, and the log now says why each is
+stopped — `quest.advance opened no dialog 3x; the server is not answering this talk,
+holding the step` and `nav.goto left declined from cell 322 5x; holding the step`.
+
+**What is still open.** *Why* the server declines both. The talk needs the tutorial
+script to accept an agent-initiated `NpcGenericActionRequestMessage` for NPC 3888, and
+the crossing needs the step's own gate; neither is visible from the client. The
+counters (`dead_talks`, `declined_crossings`) are in the run summary so the next live
+session can start from the measurement instead of rediscovering it.
+
+Guards: `test_tutorial_hold` (16 checks, behavioural on `_tutorial_hold`, `_holding`,
+`_standing_on_exit` and `payload_of`) plus the `hold:` and `talk:` mutation batches.

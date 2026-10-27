@@ -282,6 +282,7 @@ class World:
                     "map_id": self._required_map(o),
                     "done": key in self.objectives_done,
                 })
+        offer = self.offer_here()
         return {
             "level": self.level,
             "map_id": self.map_id,
@@ -289,6 +290,12 @@ class World:
             # discovery objective plannable: its text names no destination, so the
             # only actionable move is crossing one of these edges.
             "map": {"map_id": self.map_id, "cell": None, "exits": self.exits()},
+            # What the page publishes when an NPC is offering a quest (G32). `open: false`
+            # is the shape a real snapshot carries when nothing is open, so the harness now
+            # reports the same field a live client does instead of omitting it.
+            "dialog": ({"open": True, "start_quest": offer.id, "npc_id": offer.start_npc,
+                        "replies": [], "reply_count": 0}
+                       if offer is not None else {"open": False}),
             "kamas": self.kamas,
             "inventory": dict(self.inventory),
             "inventory_capacity": self.capacity,
@@ -319,6 +326,28 @@ class World:
 
     def can_start(self, quest: Quest) -> bool:
         return quest.level <= self.level and quest.id not in self.quests_done
+
+    def offer_here(self) -> Optional[Quest]:
+        """The quest an NPC on this map offers, exactly as the client would report it.
+
+        G31 made a quest startable only when the running client reported the id, and the client
+        reports an offer through the dialog link (G32 `dialog.start_quest`). The harness is a
+        client too, so it must publish offers the same way. Without this the planner skipped every
+        curriculum id as "never reported" and `sim/tool_choice.py` generated **zero rows** — a
+        dead data factory that no test caught, because the corpus on disk predates the guard.
+        """
+        if self.map_id is None:
+            return None
+        for quest in sorted(self.quests.values(), key=lambda q: q.id):
+            if (quest.start_map and int(quest.start_map) == int(self.map_id)
+                    and self.can_start(quest) and quest.id not in self.active):
+                return quest
+        return None
+
+    def place_at(self, map_id: int) -> None:
+        """Stand the character on a map. Used to start an episode where an offer exists."""
+        self.map_id = int(map_id)
+        self.visited.add(int(map_id))
 
     def active_quest(self) -> Optional[Quest]:
         for qid in list(self.active):

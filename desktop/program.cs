@@ -134,17 +134,32 @@ namespace DofusFarm
         ///
         ///   DofusFarm.exe --ai-status-selftest [--running]
         /// </summary>
-        private static int AiStatusSelfTest(bool running)
+        private static int AiStatusSelfTest(bool running, string instance, bool askedForInstance)
         {
             var sb = new System.Text.StringBuilder();
             try
             {
-                string line = UI.AiPanel.ReadLastStepLine();
+                string log = UI.AiPanel.StepLogFor(instance);
+                sb.AppendLine("instance: " + (instance == null ? "(farm-wide)" : instance));
+                sb.AppendLine("log     : " + log + (File.Exists(log) ? "" : " (absent)"));
+                string line = UI.AiPanel.ReadLastStepLine(log);
                 sb.AppendLine("last step line: " + (line == null ? "(none)" : line.Substring(0, Math.Min(160, line.Length))));
                 sb.AppendLine("idle form  : " + UI.AiPanel.FormatStatus(false, line));
                 sb.AppendLine("running form: " + UI.AiPanel.FormatStatus(true, line));
                 sb.AppendLine("no log     : " + UI.AiPanel.FormatStatus(false, null));
                 sb.AppendLine("first step : " + UI.AiPanel.FormatStatus(true, null));
+                // A step row was found but the formatter could not name it: that is
+                // the bug the pill showed as "waiting for the first step".
+                bool parsed = line != null && line.IndexOf("\"index\"") >= 0;
+                bool wrongShape = parsed && !UI.AiPanel.FormatStatus(true, line).Contains("step");
+                // Asking about an instance and silently reading the farm-wide log is
+                // the failure this selftest exists to catch, so it must not pass.
+                bool fellBack = askedForInstance && !log.EndsWith(instance + ".jsonl");
+                sb.AppendLine((wrongShape || fellBack)
+                    ? "RESULT: WRONG (" + (wrongShape ? "a step row formatted as no step" : "")
+                      + (wrongShape && fellBack ? ", " : "")
+                      + (fellBack ? "asked for " + instance + " but read the farm-wide log" : "") + ")"
+                    : "RESULT: ok");
                 // Exit 0 even with no log: "no loop has run yet" is a valid state,
                 // not a failure of the formatter.
                 return Finish(sb, 0, "ai-status-selftest.txt");
@@ -172,7 +187,17 @@ namespace DofusFarm
                 string.Equals(args[0], "--ai-status-selftest", StringComparison.OrdinalIgnoreCase))
             {
                 bool running = Array.IndexOf(args, "--running") >= 0;
-                Environment.Exit(AiStatusSelfTest(running));
+                // A free argument names an instance, and with several loops the
+                // farm-wide log is no longer the interesting one: each client now
+                // writes autopilot.<instance>.jsonl. Scan for it -- "--running"
+                // can sit in front of it, and an index here once read args[1] and
+                // reported the farm-wide log for every instance asked about.
+                string instance = null;
+                if (args != null)
+                    for (int i = 1; i < args.Length; i++)
+                        if (!args[i].StartsWith("--")) { instance = args[i]; break; }
+                bool askedForInstance = instance != null;
+                Environment.Exit(AiStatusSelfTest(running, instance, askedForInstance));
                 return;
             }
 

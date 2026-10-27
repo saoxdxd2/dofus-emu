@@ -366,7 +366,8 @@ def _err_slot(note: Optional[str]) -> str:
 
 def objective_features(obj: Dict[str, Any], quest_level: int, step_index: int,
                        state: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> List[float]:
-    """40 numbers. See FEATURE_NAMES for what each one is."""
+    """FEATURE_COUNT numbers, in FEATURE_NAMES order. A corpus written at a different width is a
+    different model, so the count is never quoted as a literal here."""
     ctx = ctx or {}
     p = _params(obj)
     t = objective_type(obj)

@@ -893,12 +893,35 @@ namespace DofusFarm.Engine {
             } catch { return null; }
         }
 
+        /// <summary>
+        /// True when custom mode names our own tunnel port as the upstream. Nothing else ever
+        /// binds that listener: EnsureTunnel refused custom outright, so the relay dialed a dead
+        /// 127.0.0.1:socks_port, failed closed (correctly), and every instance that booted raised
+        /// the page's blocking "dofus.local says: Server busy" alert. Measured 2026-10-27.
+        /// Starting the tunnel here changes no egress identity: the exit stays WARP's.
+        /// </summary>
+        private static bool CustomUpstreamIsOurTunnel(NetworkSettings s) {
+            string up = (s.Upstream ?? "").Trim().ToLowerInvariant();
+            int at = up.IndexOf("://");
+            if (at < 0 || !up.StartsWith("socks5")) return false;
+            string authority = up.Substring(at + 3);
+            int slash = authority.IndexOf('/');
+            if (slash >= 0) authority = authority.Substring(0, slash);
+            int colon = authority.LastIndexOf(':');
+            if (colon <= 0) return false;
+            int port;
+            if (!int.TryParse(authority.Substring(colon + 1), out port)) return false;
+            string host = authority.Substring(0, colon);
+            return port == s.SocksPort && (host == "127.0.0.1" || host == "localhost");
+        }
+
         public static bool EnsureTunnel(Action<string> logger = null) {
             var s = NetworkSettings.For(NetworkSettings.AppBase);
             string mode = NetworkSettings.NormalizeMode(s.Mode);
             if (mode != NetworkSettings.ModeWireproxy &&
                 mode != NetworkSettings.ModeWarp &&
-                mode != NetworkSettings.ModeAuto) return false;
+                mode != NetworkSettings.ModeAuto &&
+                !(mode == NetworkSettings.ModeCustom && CustomUpstreamIsOurTunnel(s))) return false;
             if (IsLocalPortOpen(s.SocksPort, 250)) return true;
             lock (_tunnelLock) {
                 if (IsLocalPortOpen(s.SocksPort, 250)) return true;

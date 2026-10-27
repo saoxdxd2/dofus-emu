@@ -1,0 +1,16 @@
+{
+ "id": "tajdinenizar/dofus-foresight-capacity-sweep",
+ "title": "Dofus foresight capacity sweep",
+ "code_file": "dofus-foresight-capacity.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_internet": false,
+ "dataset_sources": [
+  "tajdinenizar/thx-04-foresight-corpus"
+ ],
+ "competition_sources": [],
+ "kernel_sources": [],
+ "model_sources": []
+}

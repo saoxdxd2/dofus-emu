@@ -37,14 +37,24 @@ namespace DofusFarm.Engine
     public static class ClientBundle
     {
         /// <summary>
-        /// WebClient with a timeout. The stock one has no timeout property, so a
-        /// dead proxy made the manifest fetch block for ~100 s and then log
-        /// "The operation has timed out" -- four times in one session, each one
-        /// holding a background thread and delaying nothing visible.
+        /// WebClient with a timeout and a User-Agent that survives.
+        ///
+        /// The stock WebClient has no timeout, so a dead proxy made the manifest
+        /// fetch block for ~100 s and then log "The operation has timed out".
+        ///
+        /// The Agent property exists because of something measured, not guessed:
+        /// `Headers["User-Agent"]` is applied to the FIRST request and then the
+        /// collection is emptied -- a second request from the same instance carries
+        /// no User-Agent at all (proved by printing the two built requests). The
+        /// login CDN answers 403 (server=awselb/2.0) to a request without the mobile
+        /// UA and 200 to the same URL with it, so one client per update run could
+        /// read the manifest and then never download a single file. Setting the UA
+        /// on every request built here is the only form that cannot be lost.
         /// </summary>
         private sealed class TimedWebClient : WebClient
         {
             public int TimeoutMs = 15000;
+            public string Agent = null;
 
             protected override WebRequest GetWebRequest(Uri address)
             {
@@ -53,7 +63,12 @@ namespace DofusFarm.Engine
                 {
                     request.Timeout = TimeoutMs;
                     var http = request as HttpWebRequest;
-                    if (http != null) { http.ReadWriteTimeout = TimeoutMs; http.KeepAlive = false; }
+                    if (http != null)
+                    {
+                        http.ReadWriteTimeout = TimeoutMs;
+                        http.KeepAlive = false;
+                        if (!string.IsNullOrEmpty(Agent)) http.UserAgent = Agent;
+                    }
                 }
                 return request;
             }
@@ -178,7 +193,16 @@ namespace DofusFarm.Engine
 
         /// <summary>A bundle is usable if the files the page loads are present and
         /// look like code, not like an HTML error page saved under a .js name.</summary>
-        public static bool Validate(string dir, out string why)
+        public static bool Validate(string dir, out string why) { return Validate(dir, true, out why); }
+
+        /// <summary>
+        /// `requirePage` is false for a staging tree: a manifest update carries only
+        /// the build/* files, so index.html is not there -- and demanding it made
+        /// every download end in "staged bundle rejected (index.html missing)", so
+        /// the updater could never adopt anything. The live tree is checked with the
+        /// page after the swap, which is where that requirement belongs.
+        /// </summary>
+        public static bool Validate(string dir, bool requirePage, out string why)
         {
             why = null;
             string script = Path.Combine(dir, @"build\script.js");
@@ -199,7 +223,7 @@ namespace DofusFarm.Engine
             string css = Path.Combine(dir, @"build\styles-native.css");
             if (File.Exists(css) && new FileInfo(css).Length < 200) { why = "styles-native.css is empty"; return false; }
 
-            if (!File.Exists(Path.Combine(dir, "index.html"))) { why = "index.html missing"; return false; }
+            if (requirePage && !File.Exists(Path.Combine(dir, "index.html"))) { why = "index.html missing"; return false; }
             return true;
         }
 
@@ -306,8 +330,21 @@ namespace DofusFarm.Engine
         /// <summary>
         /// Bring the local bundle up to date, patch it, and only then adopt it.
         /// Returns the number of files adopted (0 = nothing changed or refused).
+        ///
+        /// Serialized: "Launch All" starts every instance at once and each one calls
+        /// this from its own pool thread. Four concurrent transactions over the same
+        /// script.js means four staging trees, four copies onto the same live file
+        /// and a page that can load a half-written bundle. The first caller does the
+        /// work; the rest read the stamp file it wrote and return 0.
         /// </summary>
+        private static readonly object _gate = new object();
+
         public static int EnsureUpToDate(int proxyPort, Action<string> log)
+        {
+            lock (_gate) { return UpdateLocked(proxyPort, log); }
+        }
+
+        private static int UpdateLocked(int proxyPort, Action<string> log)
         {
             try
             {
@@ -343,7 +380,7 @@ namespace DofusFarm.Engine
                 using (var wc = new TimedWebClient())
                 {
                     if (proxyPort > 0) wc.Proxy = new WebProxy("http://127.0.0.1:" + proxyPort);
-                    wc.Headers["User-Agent"] = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36";
+                    wc.Agent = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36";
                     wc.Encoding = Encoding.UTF8;
 
                     const string server = "https://dt-proxy-production-login.ankama-games.com";
@@ -420,12 +457,21 @@ namespace DofusFarm.Engine
                             foreach (string s in skipped) log?.Invoke("[UPDATER]   skipped rule " + s);
                         }
 
-                        // Validate the staged tree as a whole, not just the file we
-                        // touched: a missing styles-native.css is a black screen too.
+                        // Validate the staged files, not the installed tree: the
+                        // manifest never ships index.html.
                         string stagedWhy;
-                        if (!Validate(staging, out stagedWhy))
+                        if (!Validate(staging, false, out stagedWhy))
                         {
                             log?.Invoke("[UPDATER] staged bundle rejected (" + stagedWhy + "); keeping the working one");
+                            return 0;
+                        }
+
+                        // A staged script that took none of the core patches is the
+                        // unpatched bundle that used to break login after every update.
+                        // Adopting it is worse than staying on the current bundle.
+                        if (File.Exists(stagedScript) && coreTotal > 0 && coreHit == 0)
+                        {
+                            log?.Invoke("[UPDATER] staged bundle refused: no core patch matched");
                             return 0;
                         }
 
@@ -477,6 +523,12 @@ namespace DofusFarm.Engine
                             else
                                 log?.Invoke(string.Format("[UPDATER] {0} file(s) updated and patched ({1}/{2} core rules)",
                                     adopted, coreHit, coreTotal));
+
+                            // The stamp written at the top of this run describes the bundle
+                            // that is now replaced. Without re-stamping, the page keeps
+                            // asking for the old ?v= and Chromium serves the cached old
+                            // build -- an update that installs and stays invisible.
+                            RewriteCacheBusters(dir, log);
                         }
                         return adopted;
                     }

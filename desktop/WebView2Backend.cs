@@ -259,6 +259,23 @@ namespace DofusFarm.Engine
             {
                 try
                 {
+                    int planned = options.LayoutSlotCount > 0
+                        ? options.LayoutSlotCount
+                        : _activeForms.Count + 1;
+                    var order = _activeForms.Keys.ToList();
+                    if (!order.Contains(id)) order.Add(id);
+                    order.Sort(StringComparer.OrdinalIgnoreCase);
+                    int slot = options.LayoutSlotIndex >= 0
+                        ? Math.Min(options.LayoutSlotIndex, Math.Max(0, planned - 1))
+                        : Math.Max(0, order.IndexOf(id));
+                    Rectangle[] plannedRects = DofusFarm.Native.Win32.ComputeLayout(
+                        Math.Max(1, planned), true);
+                    Rectangle target = plannedRects[Math.Min(slot, plannedRects.Length - 1)];
+                    lock (_autoTileLock)
+                    {
+                        _expectedTileCount = Math.Max(_expectedTileCount, planned);
+                    }
+
                     var form = new WebView2ClientForm(options, msg => OnLog?.Invoke(msg));
                     form.OnDiagnosticReport += (instId, json) =>
                     {
@@ -272,6 +289,7 @@ namespace DofusFarm.Engine
                     };
                     form.OnFormClosedByUser += instId =>
                     {
+                        lock (_autoTileLock) { _expectedTileCount = 0; }
                         // The form can be closed long after a newer form replaced it in
                         // _activeForms (relaunch); only the currently registered form may clear
                         // the slot and flip the state to Stopped.
@@ -285,19 +303,23 @@ namespace DofusFarm.Engine
                     };
 
                     _activeForms[id] = form;
+                    form.StartPosition = FormStartPosition.Manual;
+                    form.Bounds = target;
                     form.Show();
+                    form.Bounds = target;
                     form.StartAsync().ContinueWith(t =>
                     {
                         if (t.IsFaulted)
                         {
                             SetState(id, ClientInstanceState.Faulted);
+                            lock (_autoTileLock) { _expectedTileCount = 0; }
                             OnLog?.Invoke(string.Format("[{0}] Startup error: {1}", id, t.Exception != null ? t.Exception.GetBaseException().Message : "Unknown"));
                         }
                         else
                         {
                             SetState(id, ClientInstanceState.Running);
-                            ScheduleAutoTile(350);
                         }
+                        ScheduleAutoTile(350);
                     });
                 }
                 catch (Exception ex)
@@ -341,6 +363,7 @@ namespace DofusFarm.Engine
             }
 
             SetState(instanceId, ClientInstanceState.Stopped);
+            lock (_autoTileLock) { _expectedTileCount = 0; }
             ScheduleAutoTile(200);
         }
 
@@ -362,6 +385,7 @@ namespace DofusFarm.Engine
 
         private System.Threading.Timer _autoTileDebounceTimer;
         private readonly object _autoTileLock = new object();
+        private int _expectedTileCount;
 
         public void ScheduleAutoTile(int delayMs = 350)
         {
@@ -376,12 +400,23 @@ namespace DofusFarm.Engine
                     }
                     _autoTileDebounceTimer = new System.Threading.Timer(_ =>
                     {
-                        if (Application.OpenForms.Count > 0)
+                        int active;
+                        lock (_autoTileLock)
+                        {
+                            active = _activeForms.Count;
+                            // A Launch All batch creates its forms one at a time. Tiling
+                            // after the first form would resize that page before it boots,
+                            // which is what left instance 1 laid out portrait. Wait until
+                            // the planned batch exists, then tile once.
+                            if (_expectedTileCount > active) return;
+                            _expectedTileCount = 0;
+                        }
+                        if (active > 0 && Application.OpenForms.Count > 0)
                         {
                             var main = Application.OpenForms[0];
                             if (main != null && !main.IsDisposed)
                             {
-                                SafeUiInvoke(main, () => TileWindows(false));
+                                SafeUiInvoke(main, () => TileWindows(true));
                             }
                         }
                     }, null, delayMs, Timeout.Infinite);

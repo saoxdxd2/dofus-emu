@@ -495,21 +495,8 @@ namespace DofusFarm.Native
                     new Rectangle(wa.X + w + gap, wa.Y, wa.Width - w - gap, wa.Height)
                 };
             }
-            if (count == 3)
-            {
-                int w = (wa.Width - gap) / 2;
-                int h = (wa.Height - gap) / 2;
-                int bottomW = w;
-                int bottomX = wa.X + (wa.Width - bottomW) / 2;
-                return new[]
-                {
-                    new Rectangle(wa.X, wa.Y, w, h),
-                    new Rectangle(wa.X + w + gap, wa.Y, wa.Width - w - gap, h),
-                    new Rectangle(bottomX, wa.Y + h + gap, bottomW, wa.Height - h - gap)
-                };
-            }
-
-            // 4x grid or N-quad
+            // Equal cells in a balanced grid. A short final row is centered
+            // instead of stretching or shrinking its windows.
             int cols = (count <= 4) ? 2 : ((count <= 6) ? 3 : 4);
             int rows = (count + cols - 1) / cols;
             int cellW = (wa.Width - gap * (cols - 1)) / cols;
@@ -518,11 +505,15 @@ namespace DofusFarm.Native
             Rectangle[] rects = new Rectangle[count];
             for (int i = 0; i < count; i++)
             {
-                int c = i % cols;
                 int r = i / cols;
-                int x = wa.X + c * (cellW + gap);
+                int rowStart = r * cols;
+                int rowCols = Math.Min(cols, count - rowStart);
+                int c = i - rowStart;
+                int rowWidth = rowCols * cellW + (rowCols - 1) * gap;
+                int rowX = wa.X + (wa.Width - rowWidth) / 2;
+                int x = rowX + c * (cellW + gap);
                 int y = wa.Y + r * (cellH + gap);
-                int w = (c == cols - 1) ? (wa.X + wa.Width - x) : cellW;
+                int w = (c == rowCols - 1) ? (rowX + rowWidth - x) : cellW;
                 int h = (r == rows - 1) ? (wa.Y + wa.Height - y) : cellH;
                 rects[i] = new Rectangle(x, y, w, h);
             }

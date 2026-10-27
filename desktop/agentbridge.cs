@@ -201,86 +201,147 @@ namespace DofusFarm.Engine
                 string target = ExtractJsonString(body, "target_instance");
                 int slot = ExtractJsonInt(body, "target_slot", -1);
 
-                if (string.IsNullOrEmpty(target) && slot >= 1 && _instanceBySlot != null)
-                    target = _instanceBySlot(slot);
-                if (string.IsNullOrEmpty(target))
-                    target = FirstActiveInstance();
-                if (string.IsNullOrEmpty(target))
+                List<string> targets = ResolveTargets(target, slot);
+                if (targets.Count == 0)
                 {
                     WriteResponse(stream, 200, FailureJson(id, "no client instance is running (start one in DofusFarm first)"));
                     return;
                 }
 
-                WebView2ClientForm form = _backend != null ? _backend.GetForm(target) : null;
-                if (form == null || form.IsDisposed)
-                {
-                    // The caller's idea of the instance name can be stale — a slot was
-                    // restarted, or the panel remembers "dofus-05" while the only window
-                    // open is "dofus-01". Refusing outright made that look like the
-                    // client was down. If exactly one window is active, it is
-                    // unambiguous which one was meant.
-                    string fallback = FirstActiveInstance();
-                    WebView2ClientForm alt = (fallback != null && _backend != null)
-                        ? _backend.GetForm(fallback) : null;
-                    if (alt != null && !alt.IsDisposed)
-                    {
-                        Log("[AGENT] '" + target + "' is not active; using '" + fallback + "'");
-                        form = alt;
-                        target = fallback;
-                    }
-                    else
-                    {
-                        WriteResponse(stream, 200, FailureJson(id,
-                            "instance '" + target + "' is not an active client window"
-                            + (string.IsNullOrEmpty(fallback)
-                               ? " (no client window is open - launch an instance in DofusFarm)"
-                               : " (active: " + fallback + ")")));
-                        return;
-                    }
-                }
-
                 string label = string.IsNullOrEmpty(tool) ? directive : tool;
-                // The directive and the post-action snapshot travel in one
-                // renderer call. Two ExecuteScriptAsync calls paid the WebView2
-                // IPC twice per action and left a window in which the world
-                // could change between the action and the state it was paired
-                // with. The page returns the final response envelope itself.
-                string payloadLiteral = string.IsNullOrEmpty(body) ? "{}" : body;
-                string combined = "window.__agentDirectiveWithSnapshot ? window.__agentDirectiveWithSnapshot({payload:"
-                    + payloadLiteral + ",id:" + JsonQuote(id) + ",target:" + JsonQuote(target) + "}) "
-                    + ": JSON.stringify({ok:false,error:'__agentDirectiveWithSnapshot missing'})";
-                bool legacy = false;
-                string raw = RunOnForm(form, combined, 10000);
-                if (raw == null)
+                if (targets.Count == 1)
                 {
-                    WriteResponse(stream, 200, FailureJson(id, "directive '" + label + "' timed out or the client page is not ready"));
-                    Log("[AGENT] " + label + " -> " + target + " TIMEOUT");
+                    WriteResponse(stream, 200, RunOne(id, body, label, targets[0], true));
                     return;
                 }
-                string decoded = DecodeJsResult(raw);
-                if (decoded.IndexOf("\"error\":\"__agentDirectiveWithSnapshot missing\"",
-                        StringComparison.Ordinal) >= 0)
-                {
-                    // A page injected by an older build has no combined call.
-                    legacy = true;
-                    string script = "window.__agentDirective ? window.__agentDirective(" + body + ") "
-                        + ": JSON.stringify({ok:false,error:'__agentDirective missing (mobile-disguise.js not loaded in this page)'})";
-                    raw = RunOnForm(form, script, 8000);
-                    if (raw == null)
-                    {
-                        WriteResponse(stream, 200, FailureJson(id, "directive '" + label + "' timed out or the client page is not ready"));
-                        Log("[AGENT] " + label + " -> " + target + " TIMEOUT");
-                        return;
-                    }
-                    decoded = DecodeJsResult(raw);
-                    string snapshot = CaptureSnapshot(form);
-                    decoded = "{\"ok\":true,\"id\":" + JsonQuote(id) + ",\"target\":" + JsonQuote(target)
-                        + ",\"result\":" + (LooksLikeJson(decoded) ? decoded : JsonQuote(decoded))
-                        + ",\"snapshot\":" + snapshot + "}";
-                }
-                WriteResponse(stream, 200, decoded);
-                Log("[AGENT] " + label + " -> " + target + (legacy ? " ok (legacy two-call path)" : " ok"));
+
+                // Several instances were addressed. Each page answers with its own
+                // envelope and the caller gets them all, in order: one client being
+                // down or slow must not erase the answers of the others, and a
+                // "success" that only reached the first window would be a lie.
+                var answers = new List<string>();
+                foreach (string one in targets) answers.Add(RunOne(id, body, label, one, false));
+                WriteResponse(stream, 200, "{\"ok\":true,\"id\":" + JsonQuote(id)
+                    + ",\"targets\":" + JsonQuote(string.Join(",", targets.ToArray()))
+                    + ",\"results\":[" + string.Join(",", answers.ToArray()) + "]}");
+                Log("[AGENT] " + label + " -> " + string.Join(",", targets.ToArray())
+                    + " (fanned out to " + targets.Count.ToString() + ")");
             }
+        }
+
+        // -- instance routing ---------------------------------------------------
+
+        /// <summary>
+        /// Which client windows a directive is for. `target_instance` may name one id,
+        /// a comma-separated list, or `all` for every window that is actually open;
+        /// `target_slot` stays the 1-based single-slot form; and neither present means
+        /// the first active window, which is what an unaddressed call always meant.
+        /// </summary>
+        private List<string> ResolveTargets(string target, int slot)
+        {
+            var list = new List<string>();
+            if (!string.IsNullOrEmpty(target))
+            {
+                if (target.Trim() == "all")
+                {
+                    if (_backend != null)
+                    {
+                        foreach (string active in _backend.GetActiveInstanceIds())
+                            if (!string.IsNullOrEmpty(active) && !list.Contains(active)) list.Add(active);
+                    }
+                    return list;
+                }
+                foreach (string part in target.Split(','))
+                {
+                    string one = part.Trim();
+                    if (one.Length > 0 && !list.Contains(one)) list.Add(one);
+                }
+                return list;
+            }
+            if (slot >= 1 && _instanceBySlot != null)
+            {
+                string bySlot = null;
+                try { bySlot = _instanceBySlot(slot); } catch { bySlot = null; }
+                if (!string.IsNullOrEmpty(bySlot)) { list.Add(bySlot); return list; }
+            }
+            string first = FirstActiveInstance();
+            if (!string.IsNullOrEmpty(first)) list.Add(first);
+            return list;
+        }
+
+        /// <summary>
+        /// Run one directive on one instance and return the JSON envelope for it.
+        /// `allowFallback` is only true when a single instance was addressed: with
+        /// several named targets, quietly answering for a different window would put
+        /// one character's result under another instance's name.
+        /// </summary>
+        private string RunOne(string id, string body, string label, string target, bool allowFallback)
+        {
+            WebView2ClientForm form = _backend != null ? _backend.GetForm(target) : null;
+            if (form == null || form.IsDisposed)
+            {
+                // The caller's idea of the instance name can be stale — a slot was
+                // restarted, or the panel remembers "dofus-05" while the only window
+                // open is "dofus-01". Refusing outright made that look like the
+                // client was down. If exactly one window is active, it is
+                // unambiguous which one was meant.
+                string fallback = allowFallback ? FirstActiveInstance() : null;
+                WebView2ClientForm alt = (fallback != null && _backend != null)
+                    ? _backend.GetForm(fallback) : null;
+                if (alt != null && !alt.IsDisposed)
+                {
+                    Log("[AGENT] '" + target + "' is not active; using '" + fallback + "'");
+                    form = alt;
+                    target = fallback;
+                }
+                else
+                {
+                    return FailureJson(id,
+                        "instance '" + target + "' is not an active client window"
+                        + (string.IsNullOrEmpty(FirstActiveInstance())
+                           ? " (no client window is open - launch an instance in DofusFarm)"
+                           : " (active: " + FirstActiveInstance() + ")"));
+                }
+            }
+
+            // The directive and the post-action snapshot travel in one renderer
+            // call. Two ExecuteScriptAsync calls paid the WebView2 IPC twice per
+            // action and left a window in which the world could change between the
+            // action and the state it was paired with. The page returns the final
+            // response envelope itself.
+            string payloadLiteral = string.IsNullOrEmpty(body) ? "{}" : body;
+            string combined = "window.__agentDirectiveWithSnapshot ? window.__agentDirectiveWithSnapshot({payload:"
+                + payloadLiteral + ",id:" + JsonQuote(id) + ",target:" + JsonQuote(target) + "}) "
+                + ": JSON.stringify({ok:false,error:'__agentDirectiveWithSnapshot missing'})";
+            bool legacy = false;
+            string raw = RunOnForm(form, combined, 10000);
+            if (raw == null)
+            {
+                Log("[AGENT] " + label + " -> " + target + " TIMEOUT");
+                return FailureJson(id, "directive '" + label + "' timed out or the client page is not ready");
+            }
+            string decoded = DecodeJsResult(raw);
+            if (decoded.IndexOf("\"error\":\"__agentDirectiveWithSnapshot missing\"",
+                    StringComparison.Ordinal) >= 0)
+            {
+                // A page injected by an older build has no combined call.
+                legacy = true;
+                string script = "window.__agentDirective ? window.__agentDirective(" + body + ") "
+                    + ": JSON.stringify({ok:false,error:'__agentDirective missing (mobile-disguise.js not loaded in this page)'})";
+                raw = RunOnForm(form, script, 8000);
+                if (raw == null)
+                {
+                    Log("[AGENT] " + label + " -> " + target + " TIMEOUT");
+                    return FailureJson(id, "directive '" + label + "' timed out or the client page is not ready");
+                }
+                decoded = DecodeJsResult(raw);
+                string snapshot = CaptureSnapshot(form);
+                decoded = "{\"ok\":true,\"id\":" + JsonQuote(id) + ",\"target\":" + JsonQuote(target)
+                    + ",\"result\":" + (LooksLikeJson(decoded) ? decoded : JsonQuote(decoded))
+                    + ",\"snapshot\":" + snapshot + "}";
+            }
+            Log("[AGENT] " + label + " -> " + target + (legacy ? " ok (legacy two-call path)" : " ok"));
+            return decoded;
         }
 
         // -- instance routing ---------------------------------------------------

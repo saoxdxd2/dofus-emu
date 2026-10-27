@@ -212,6 +212,9 @@ namespace DofusFarm.UI
         private Label _aiLive;
         private System.Windows.Forms.Timer _aiLiveTimer;
         private bool _aiPushedRunning;
+        // Per-instance badge state: the id is the client, the bool is whether ITS
+        // loop was running the last time we told it.
+        private readonly Dictionary<string, bool> _aiPushedByInstance = new Dictionary<string, bool>();
 
         private ShortcutsPage _pageShortcuts;
 
@@ -1125,13 +1128,21 @@ namespace DofusFarm.UI
             ShowPage(0);
         }
 
-        /// <summary>Push the AI loop's real state into a page, for the in-game badge.</summary>
+        /// <summary>
+        /// Push the AI loop's real state into ONE page, for the in-game badge.
+        ///
+        /// It used to read the panel's single "a loop is running" flag, so with four
+        /// clients every window showed the same badge and pressing it in one window
+        /// stopped every loop. State is now per instance: a client is "on" only while
+        /// the loop that drives THAT instance is alive, and its line comes from that
+        /// instance's own step log.
+        /// </summary>
         private void PushAiState(string instanceId)
         {
             try
             {
-                bool running = _aiPanel != null && _aiPanel.RunningNow;
-                string status = _aiPanel != null ? _aiPanel.LiveStatusText() : "";
+                bool running = _aiPanel != null && _aiPanel.IsRunningFor(instanceId);
+                string status = _aiPanel != null ? _aiPanel.LiveStatusFor(instanceId) : "";
                 string js = "window.__aiState && window.__aiState("
                     + (running ? "true" : "false") + ", " + JsQuote(status) + ")";
                 if (!string.IsNullOrEmpty(instanceId)) _webViewBackend.ExecuteScriptOnInstance(instanceId, js);
@@ -1181,9 +1192,37 @@ namespace DofusFarm.UI
             try
             {
                 if (_aiPanel == null || _aiLive == null || _aiLive.IsDisposed) return;
+
+                // Per instance, not per farm: each open window is told whether ITS
+                // loop is running, and only when that answer changed.
+                List<string> active = null;
+                try { active = new List<string>(_webViewBackend.GetActiveInstanceIds()); } catch { active = null; }
+                if (active != null)
+                {
+                    foreach (string id in active)
+                    {
+                        if (string.IsNullOrEmpty(id)) continue;
+                        bool mine = _aiPanel.IsRunningFor(id);
+                        bool previous;
+                        bool known = _aiPushedByInstance.TryGetValue(id, out previous);
+                        if (!known || previous != mine)
+                        {
+                            _aiPushedByInstance[id] = mine;
+                            PushAiState(id);
+                        }
+                    }
+                }
+                // A client that just closed keeps a stale entry; forget any id that is
+                // no longer active so a relaunch re-pushes from scratch.
+                if (_aiPushedByInstance.Count > 0 && active != null && active.Count == 0)
+                    _aiPushedByInstance.Clear();
+
                 bool running = _aiPanel.RunningNow;
-                if (running != _aiPushedRunning) { _aiPushedRunning = running; PushAiStateAll(); }
-                string text = _aiPanel.LiveStatusText();
+                bool anyNamed = _aiPanel.RunningInstances().Count > 0;
+                if (running != _aiPushedRunning && !anyNamed) { _aiPushedRunning = running; PushAiStateAll(); }
+                else if (running) _aiPushedRunning = running;
+
+                string text = anyNamed ? AggregateAiStatus() : _aiPanel.LiveStatusText();
                 if (_aiLive.Text != text) _aiLive.Text = text;
                 Color want = running ? Color.FromArgb(74, 222, 128) : Color.FromArgb(148, 163, 184);
                 if (_aiLive.ForeColor != want) _aiLive.ForeColor = want;
@@ -1197,6 +1236,23 @@ namespace DofusFarm.UI
                 }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// The shell pill with several loops: name the instances that are actually
+        /// playing rather than print one client's step count as if it were the farm's.
+        /// </summary>
+        private string AggregateAiStatus()
+        {
+            List<string> ids = _aiPanel.RunningInstances();
+            var parts = new List<string>();
+            foreach (string id in ids)
+            {
+                string status = _aiPanel.LiveStatusFor(id);
+                int dash = status.IndexOf(" - ");
+                parts.Add(id + ": " + (dash > 0 ? status.Substring(dash + 3) : status));
+            }
+            return ids.Count + " running: " + string.Join(" | ", parts.ToArray());
         }
 
         private void ShowPage(int index)
@@ -1518,11 +1574,26 @@ namespace DofusFarm.UI
                 {
                     SafeBeginInvoke(delegate
                     {
-                        Log("[AI] in-game badge requested: " + action + " (" + instId + ")");
+                        // A badge press and a page's startup "what is my state?"
+                        // question arrive on the same channel; the old wording made
+                        // every reload look like a human pressing the pill.
+                        Log("[AI] page request: " + action + " (" + instId + ")");
                         if (string.Equals(action, "start_auto", StringComparison.OrdinalIgnoreCase))
                         {
                             ShowPage(1);
                             _aiPanel.StartAuto(true);
+                        }
+                        else if (string.Equals(action, "start_one", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // The badge in a client window means THIS client. Using
+                            // the panel's shared selection for it made one window's
+                            // button start loops for other instances.
+                            ShowPage(1);
+                            _aiPanel.StartInstance(instId, true);
+                        }
+                        else if (string.Equals(action, "stop_one", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _aiPanel.StopInstance(instId, "in-game badge");
                         }
                         else if (string.Equals(action, "stop_all", StringComparison.OrdinalIgnoreCase))
                         {
@@ -1655,7 +1726,8 @@ namespace DofusFarm.UI
 
 
 
-        private void StartWebView2Instance(InstanceModel inst, int ram, int cores)
+        private void StartWebView2Instance(InstanceModel inst, int ram, int cores,
+            int layoutCount = 0, int layoutIndex = -1)
         {
             var opts = new ClientLaunchOptions
             {
@@ -1664,7 +1736,9 @@ namespace DofusFarm.UI
                 SlotPort = inst.Port,
                 RamMb = inst.RamMb > 0 ? inst.RamMb : ram,
                 Cores = inst.Cores > 0 ? inst.Cores : cores,
-                Proxy = inst.Proxy
+                Proxy = inst.Proxy,
+                LayoutSlotCount = layoutCount,
+                LayoutSlotIndex = layoutIndex
             };
             if (WireWebView2LocalProxy(opts, inst)) _webViewBackend.Start(opts);
         }
@@ -2218,7 +2292,8 @@ namespace DofusFarm.UI
 
                             {
 
-                                StartWebView2Instance(im, defaultRam, defaultCores);
+                                StartWebView2Instance(im, defaultRam, defaultCores,
+                                    existingInsts.Count, existingInsts.IndexOf(im));
 
                                 // Natural human stagger: 2.5s - 3.8s between client connection handshakes
 

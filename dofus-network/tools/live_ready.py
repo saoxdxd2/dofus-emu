@@ -18,11 +18,12 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import socket
 import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -100,13 +101,136 @@ def brain_up(url: str = BRAIN_URL, timeout: float = 1.0) -> bool:
         return False
 
 
+NETWORK_INI = ROOT.parent / "network.ini"
+PROXIES_FILE = ROOT.parent / "proxies.txt"
+# The bundle the client itself cannot do without. When this request fails the page shows its
+# generic "Server busy" alert in a *native* dialog, which freezes the injected agent completely.
+LOGIN_ASSET = "https://dt-proxy-production-login.ankama-games.com/build/primus.js"
+
+
+def network_config(path: Path = NETWORK_INI) -> Dict[str, str]:
+    """`network.ini` as keys — the host's own file, read rather than assumed."""
+    out: Dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip().lower()] = value.strip()
+    return out
+
+
+def _endpoint(url: str) -> Optional[Tuple[str, int]]:
+    """host:port of a `socks5://h:p` / `http://h:p` upstream, or None when it is not one."""
+    import urllib.parse
+    if not url or "://" not in url:
+        return None
+    parsed = urllib.parse.urlparse(url)
+    try:
+        port = int(parsed.port)
+    except (TypeError, ValueError):
+        return None
+    return parsed.hostname, port
+
+
+def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def egress(config: Optional[Dict[str, str]] = None,
+           relay_probe: bool = True,
+           pool_path: Path = PROXIES_FILE) -> Dict[str, str]:
+    """Is there any path from this machine to Ankama that the client will actually use?
+
+    Measured the hard way on 2026-10-27: `mode=custom` with `upstream=socks5://127.0.0.1:40000`
+    while nothing listened on 40000, and `fail_closed=1` (correctly) refusing direct. Every request
+    502'd, six instances each raised a blocking "Server busy" alert, and no preflight said a word,
+    because nothing in the tooling had ever read `network.ini`. A launch into a dead egress is not
+    a test — it is six modal dialogs waiting to be clicked.
+    """
+    cfg = config if config is not None else network_config()
+    mode = (cfg.get("mode") or "auto").lower()
+    if mode == "direct":
+        return _entry("INFO", "egress", "mode=direct: the real IP is what Ankama sees (by choice)")
+
+    upstream = cfg.get("upstream") or ""
+    endpoint = _endpoint(upstream)
+    if endpoint is None and mode in ("wireproxy", "warp"):
+        port = cfg.get("socks_port") or "40000"
+        endpoint = ("127.0.0.1", int(port))
+    if endpoint is None and mode == "custom":
+        # custom with an empty upstream means round-robin proxies.txt
+        pool = [line.strip() for line in pool_path.read_text(encoding="utf-8",
+                                                              errors="replace").splitlines()
+                if line.strip() and not line.startswith("#")] if pool_path.is_file() else []
+        live = [_endpoint(p) for p in pool[:12]]
+        live = [e for e in live if e and _port_open(e[0], e[1], 0.6)]
+        if not live:
+            return _entry("FAIL", "egress",
+                          "mode=custom with no upstream and %d pool entries, none of which "
+                          "accepts a connection; the client would 502 on primus.js and raise "
+                          "its blocking 'Server busy' alert" % len(pool))
+        return _entry("PASS", "egress",
+                      "pool: %d of the first %d entries accept connections" % (len(live),
+                                                                               min(12, len(pool))))
+    if endpoint is None:
+        return _entry("WARN", "egress", "mode=%s but no upstream to probe" % mode)
+
+    host, port = endpoint
+    if not _port_open(host, port, 1.2):
+        return _entry("FAIL", "egress",
+                      "upstream %s:%d is not listening (mode=%s, fail_closed=%s). Nothing can "
+                      "reach Ankama: every asset request 502s and the page answers with a native "
+                      "'Server busy' dialog that blocks the agent. Start the tunnel, or set "
+                      "mode=auto, before launching an instance."
+                      % (host, port, mode, cfg.get("fail_closed", "1")))
+    if relay_probe:
+        base = int(cfg.get("base_port") or 8880)
+        open_relays = [base + slot for slot in range(1, 8)
+                       if _port_open("127.0.0.1", base + slot, 0.3)]
+        if not open_relays:
+            return _entry("PASS", "egress",
+                          "upstream %s:%d accepts connections; no relay port is up yet (a slot "
+                          "starts one on base_port+N)" % (host, port))
+        for relay in open_relays:
+            if _fetch_via(LOGIN_ASSET, "http://127.0.0.1:%d" % relay):
+                return _entry("PASS", "egress",
+                              "login bundle fetched through relay %d (upstream %s:%d)"
+                              % (relay, host, port))
+        return _entry("FAIL", "egress",
+                      "relay %s answers but the login bundle request fails through it; the page "
+                      "will show 'Server busy' (upstream %s:%d is open but not carrying traffic)"
+                      % (open_relays, host, port))
+    return _entry("PASS", "egress", "upstream %s:%d accepts connections" % (host, port))
+
+
+def _fetch_via(url: str, proxy: str, timeout: float = 8.0) -> bool:
+    """One GET through the relay's HTTP proxy — the same path the client uses."""
+    try:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+        with opener.open(url, timeout=timeout) as response:
+            return 200 <= int(getattr(response, "status", 0)) < 300
+    except Exception:      # noqa: BLE001 - an unreachable asset is the finding, not a crash
+        return False
+
+
 def checks(log: Path = DEFAULT_LOG, stop: Path = DEFAULT_STOP,
            page: Path = PAGE, setup: Path = SETUP,
            store: Path = DEFAULT_STORE, observed: Path = OBSERVED_FILE,
            command_model: Path = COMMAND_SHADOW_MODEL,
            bridge: Callable[[], bool] = reachable,
            clients: Callable[[], Optional[int]] = client_count,
-           brain: Callable[[], bool] = brain_up) -> List[Dict[str, str]]:
+           brain: Callable[[], bool] = brain_up,
+           egress_entry: Callable[[], Dict[str, str]] = None) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
 
     if stop.exists():
@@ -138,6 +262,10 @@ def checks(log: Path = DEFAULT_LOG, stop: Path = DEFAULT_STOP,
                           "setup.exe is older than the page; rebuild before installing"))
     else:
         out.append(_entry("PASS", "installer", "setup.exe is not older than the page"))
+
+    # injectable like every other probe here: a unit test must not depend on this machine's
+    # tunnel, and a live run must not depend on a test fixture
+    out.append((egress_entry or egress)())
 
     try:
         up = bool(bridge())

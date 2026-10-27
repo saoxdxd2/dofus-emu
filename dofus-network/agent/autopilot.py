@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence
 
 from agent.runtime import AgentRuntime, RulePolicy, ToolCall
+from agent.executor import payload_of
 from agent.observe import flatten
 from agent.awareness import character_key
 from agent.features import DELIVER_TYPES
@@ -165,6 +166,19 @@ MAX_CONSECUTIVE_WAITS = 40
 # breaking it. Three tries finds any real alternative and then gives up.
 ESCALATE_TRIES = 3
 
+# How long one scripted step is allowed to hold the loop. A tutorial step completes
+# when the game's own script says so, so waiting on it is correct -- what was wrong is
+# that the wait re-dispatched the identical directive: measured live 2026-10-27, 119
+# `quest.advance {npc_id:3888,quest_id:3841}` and 120 `nav.goto {direction:left}`
+# no-ops in single sessions, roughly half of every step the farm took, and the client's
+# world never moved. Three minutes of real patience, then the run says so and stops.
+TUTORIAL_HOLD_S = 180
+
+# How many times a talk may open no dialog before the loop stops treating it as a
+# try-again. One is noise (the client can be mid-animation); two identical sends with
+# no answer is a server that is not responding to this NPC action.
+DEAD_TALK_TRIES = 2
+
 
 def fell_out_of_world(before: Any, after: Any) -> Optional[str]:
     """The reason the client left the world between two states, or None.
@@ -245,6 +259,9 @@ class Step:
     # for calibration: the estimate that authorised it would be lost.
     fight_estimate: Optional[Dict[str, Any]] = None
     fight_outcome: Optional[Dict[str, Any]] = None
+    # The stacked planner's proposal and policy baseline for this call, when one
+    # ran. Without it a live row cannot tell a model decision from an if-chain.
+    ensemble: Optional[Dict[str, Any]] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -327,6 +344,14 @@ class Autopilot:
         self.stall_limit = 8
         self._best_progress = -1
         self._stall_since = 0
+        # A talk whose packet left and whose dialog never arrived, counted. Measured
+        # live 2026-10-27: NpcGenericActionRequestMessage{npcId:-1,npcActionId:3}
+        # matches the client's own menu handler field for field, and the server never
+        # answers it -- so the loop reported `ok`, the verdict said `noop`, and it
+        # re-sent the same doomed talk 108 times in one session.
+        self._dead_talks: Dict[str, int] = {}
+        # Map crossings the server declined while the character stood on the portal.
+        self._dead_navs: Dict[str, int] = {}
         self.controller = Controller(session=self.session, explore=explore,
                                      seed=explore_seed)
         self.controller.set_objective("; ".join(goals))
@@ -371,6 +396,21 @@ class Autopilot:
         # Dialog attempts and whether the conversation moved: see _record_dialog.
         self._dialogs = 0
         self._dialog_stalls = 0
+        # The page's AFK witness, folded in from each step's post-action snapshot.
+        # "This run was never kicked" is not evidence of liveness: the client's own
+        # timer warns at 5 min idle and calls disconnect("INACTIVITY") at 10, and a
+        # keep-alive that silently did nothing (no recordActivity to call, or a page
+        # that reloaded and lost the flag) looks identical from the outside.
+        self._keep_alive = {"steps": 0, "present_steps": 0, "marks": 0,
+                            "failed": 0, "idle_max_ms": 0, "last_source": None,
+                            "age_max_ms": 0, "inactive_steps": 0}
+        # The viewport the client was laid out for versus the one it has now. A
+        # pre-world client keeps the geometry it booted with, so a drifted pair is
+        # the machine-readable form of "this instance looks broken": a squashed
+        # login screen whose buttons are not where the page thinks they are. The
+        # page reloads itself out of that; the counters say how often it had to.
+        self._geometry = {"steps": 0, "drift_steps": 0, "in_world_steps": 0,
+                          "reloads": 0, "boot": None, "now": None}
         self._first_step_at = 0.0
         self._last_step_at = 0.0
         # A long run can list hundreds of items; keep the recent ledger for
@@ -447,6 +487,15 @@ class Autopilot:
         # not reset it: farm.start -> state.snapshot -> farm.start used to run
         # forever because every snapshot cleared the exact-repeat streak.
         self._action_noops: Dict[str, int] = {}
+        # Patience with a scripted step, timed once per action signature. See
+        # _tutorial_hold: a wait must be spent as a wait, and it must end.
+        self._hold_key: Optional[str] = None
+        self._hold_world: Optional[str] = None
+        self._hold_started_at = 0.0
+        # How many full patience windows one stuck step has cost. Reported in the
+        # summary: a session that waited an hour is a different fact from one that
+        # acted an hour, and only this number can tell them apart afterwards.
+        self._hold_cycles = 0
         # Guard refusals are decisions, not crashes. A refused call is reported to
         # the policy and the controller, and the loop takes another step; only the
         # same refusal three times in a row is a dead end for the goal.
@@ -1396,6 +1445,10 @@ class Autopilot:
                     self._forced_call = None
                     print(f"[autopilot] agent2 directs: {call.tool} {call.args}")
                 else:
+                    try:
+                        self.runtime.policy.last_stack = None
+                    except Exception:  # noqa: BLE001 - only the learned planner has one
+                        pass
                     call = self.runtime.policy.choose(goal, before or {}, tools)
                 if call is not None and call.tool == "farm.start" \
                         and not self._farm_allowed(goal, before):
@@ -1407,6 +1460,14 @@ class Autopilot:
                     self._forced_reason = ("a farm.start was refused because this "
                                            "prompt is a quest goal")
                     call = ToolCall("state.snapshot", {}, goal)
+                if call is not None and self._holding(call, before):
+                    # Nothing the step depends on has moved since this exact call
+                    # failed to move it three times, and the step is one the game's
+                    # own script completes. Asking again is the stampede the hold
+                    # exists to stop -- 119 identical no-ops in one live session.
+                    self._hold_wait(goal, before)
+                    taken -= 1
+                    continue
                 if call is None:
                     self._emit(Step(index=self._index, goal=goal, tool="-", args={},
                                     ok=False, error="policy returned no call",
@@ -1510,7 +1571,9 @@ class Autopilot:
                     if _tutorial_active(before):
                         print("[autopilot] the tutorial is holding this step open; "
                               "waiting instead of abandoning the goal")
-                        time.sleep(1.0)
+                        self._tutorial_hold(_call_key(call), before)
+                        self._report_hold(call)
+                        self._hold_wait(goal, before)
                         continue
                     qid = self._retire_named_quest(call, before)
                     if qid is not None:
@@ -1528,7 +1591,7 @@ class Autopilot:
                                     latency_ms=0.0, verdict="noop", note="dry run"))
                     print(f"[autopilot] would call {call.tool} {call.args}")
                     self._index += 1
-                    key = f"{call.tool}|{json.dumps(call.args, sort_keys=True, ensure_ascii=False)}"
+                    key = _call_key(call)
                     self._recent.append(key)
                     del self._recent[:-32]
                     if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
@@ -1686,6 +1749,22 @@ class Autopilot:
                         note = ("listing_unverified: the client did not report where the price "
                                 "came from, so this is not counted as a listing")
 
+                ensemble = None
+                stack_record = getattr(self.runtime.policy, "last_stack", None)
+                if isinstance(stack_record, dict) and stack_record:
+                    ensemble = {
+                        "mode": stack_record.get("mode"),
+                        "active": bool(stack_record.get("active")),
+                        "policy": stack_record.get("policy"),
+                        "stack": stack_record.get("stack"),
+                        "chosen": stack_record.get("chosen"),
+                        "scores": [
+                            {"tool": row.get("tool"),
+                             "score": round(float(row.get("score") or 0.0), 6)}
+                            for row in (stack_record.get("scores") or [])[:5]
+                        ],
+                    }
+
                 step = Step(
                     index=self._index,
                     goal=goal,
@@ -1708,9 +1787,12 @@ class Autopilot:
                     obs_after=_compact(after),
                     fight_estimate=fight_estimate,
                     fight_outcome=fight_outcome,
+                    ensemble=ensemble,
                     note=note,
                 )
                 self._emit(step)
+                self._note_keep_alive(after)
+                self._note_geometry(after)
                 self._index += 1
 
                 mark = "ok" if step_ok else "FAIL"
@@ -1807,7 +1889,7 @@ class Autopilot:
                 # tool for the same goal forever; without this the loop burns the
                 # whole budget repeating one scan. Three identical calls with no
                 # world change means the goal is not reachable this way.
-                key = f"{call.tool}|{json.dumps(call.args, sort_keys=True, ensure_ascii=False)}"
+                key = _call_key(call)
                 # A standing farm order is the one action whose no-op is hidden
                 # by its own recovery snapshot. Count every settle tool by call
                 # signature across interleaved reads; a snapshot that changes
@@ -1815,6 +1897,8 @@ class Autopilot:
                 track_action = call.tool in SETTLE_TOOLS
                 if verdict == "advanced":
                     self._recent.clear()
+                    self._hold_key = None
+                    self._hold_world = None
                     if track_action:
                         self._action_noops.pop(key, None)
                 else:
@@ -1822,6 +1906,41 @@ class Autopilot:
                         self._action_noops[key] = self._action_noops.get(key, 0) + 1
                     self._recent.append(key)
                     del self._recent[:-32]
+                    if (call.tool == "nav.goto" and verdict == "noop"
+                            and _standing_on_exit(call.args, after)):
+                        # The client is on the portal cell and the map did not change:
+                        # the server declined the crossing, and re-asking from the same
+                        # cell cannot produce a different answer.
+                        self._dead_navs[key] = self._dead_navs.get(key, 0) + 1
+                        if self._dead_navs[key] >= DEAD_TALK_TRIES:
+                            print("[autopilot] nav.goto %s declined from cell %s %dx; "
+                                  "holding the step"
+                                  % ((call.args or {}).get("direction"),
+                                     flatten(after or {}).get("cell"),
+                                     self._dead_navs[key]))
+                            self._tutorial_hold(key, before)
+                            self._report_hold(call)
+                            self._hold_wait(goal, before)
+                            continue
+                    if (call.tool == "quest.advance" and verdict == "noop"
+                            and (call.args or {}).get("npc_id") is not None
+                            and (call.args or {}).get("reply") is None
+                            and not (after or {}).get("in_dialog")
+                            and (payload_of(result).get("via")
+                                 in ("talked", "walk_then_talk"))):
+                        # The packet went out and no dialog followed it. Three tries
+                        # is the general no-op allowance; a talk has a stronger
+                        # witness, so it gets one, then the step is held like any
+                        # other scripted wait.
+                        self._dead_talks[key] = self._dead_talks.get(key, 0) + 1
+                        if self._dead_talks[key] >= DEAD_TALK_TRIES:
+                            print("[autopilot] %s opened no dialog %dx; the server is "
+                                  "not answering this talk, holding the step"
+                                  % (call.tool, self._dead_talks[key]))
+                            self._tutorial_hold(key, before)
+                            self._report_hold(call)
+                            self._hold_wait(goal, before)
+                            continue
                     repeated = (len(self._recent) >= 3
                                 and len(set(self._recent[-3:])) == 1)
                     streak = self._action_noops.get(key, 0) if track_action else 0
@@ -1836,13 +1955,19 @@ class Autopilot:
                             # The plan is waiting on the scripted step (a dialog
                             # reply list that has not arrived, an NPC animation).
                             # Retiring the quest or abandoning the goal here turns
-                            # the tutorial's timing into a lost session.
+                            # the tutorial's timing into a lost session -- but this
+                            # used to clear its own counters and re-dispatch the same
+                            # call forever, which is how one session spent half its
+                            # steps on 119 identical no-ops. Wait as a wait, on a
+                            # clock, and stop when the clock says enough.
                             print("[autopilot] the tutorial is holding this step open;"
                                   " waiting instead of retiring the quest")
                             self._recent.clear()
                             self._action_noops.clear()
                             self._stall_since = self._index
-                            time.sleep(1.0)
+                            self._tutorial_hold(key, before)
+                            self._report_hold(call)
+                            self._hold_wait(goal, before)
                             continue
                         if self.max_steps <= 0:
                             # Retire the quest and take another, instead of ending the
@@ -2202,6 +2327,62 @@ class Autopilot:
         skipper(qid)
         return qid
 
+    def _tutorial_hold(self, key: str, obs: Any) -> bool:
+        """True while patience with one scripted step still has time left.
+
+        The clock is per action signature, not per loop: a new call is a new question
+        to the world and gets its own window, and a step that moves resets it. The
+        bound exists because the alternative was a wait that never ended -- the same
+        directive every 0.35 s until the step budget or a human did.
+        """
+        now = time.time()
+        if key != self._hold_key:
+            self._hold_key = key
+            self._hold_world = _world_sig(obs)
+            self._hold_started_at = now
+            return True
+        if (now - self._hold_started_at) < TUTORIAL_HOLD_S:
+            return True
+        # Patience expires into a longer patience, not into an exit. A loop that ends
+        # stops sending directives, the page's keep-alive gate closes with it, and the
+        # same client timer that started this logs the character out ten minutes
+        # later -- so quitting on a stuck step trades a stalled session for a dead
+        # one. Retrying the step once per window keeps the session in world and the
+        # retry rate bounded (was 119 identical directives in one session).
+        self._hold_started_at = now
+        self._hold_world = _world_sig(obs)
+        self._hold_cycles += 1
+        return True
+
+    def _report_hold(self, call: Any) -> None:
+        """Say it once per window, not once per pass.
+
+        The count is the point: `hold_cycles` turns "the run was 40 minutes long" into
+        "the run spent 13 windows waiting on one scripted step", which is the
+        difference between a slow character and a stuck one.
+        """
+        if self._hold_cycles and self._hold_cycles != getattr(self, "_hold_reported", -1):
+            self._hold_reported = self._hold_cycles
+            print("[autopilot] step %s has not moved for %ds; staying in world and "
+                  "retrying once per window (cycle %d)"
+                  % (call.tool, TUTORIAL_HOLD_S, self._hold_cycles))
+
+    def _holding(self, call: Any, obs: Any) -> bool:
+        """True while this exact call is on a patient timeout.
+
+        The hold is per call signature AND per world state: as soon as anything the
+        step depends on moves -- map, cell, the active objective, an open dialog --
+        the same call is a different question and may be asked again at once. Without
+        the world half, a hold would keep waiting through progress it should act on.
+        """
+        if self._hold_key is None or self._hold_key != _call_key(call):
+            return False
+        if self._hold_world != _world_sig(obs):
+            self._hold_key = None
+            self._hold_world = None
+            return False
+        return (time.time() - self._hold_started_at) < TUTORIAL_HOLD_S
+
     def _hold_wait(self, goal: str, before: Any) -> bool:
         """Spend time, not a step, on a wait the policy asked for.
 
@@ -2456,6 +2637,47 @@ class Autopilot:
             return "abort"
         return "continue"
 
+    def _note_keep_alive(self, obs: Optional[Dict[str, Any]]) -> None:
+        """Fold the page's AFK witness into the run's counters."""
+        if not isinstance(obs, dict):
+            return
+        record = _compact(obs).get("keep_alive")
+        if not isinstance(record, dict):
+            return
+        counters = self._keep_alive
+        counters["steps"] += 1
+        if record.get("present"):
+            counters["present_steps"] += 1
+        counters["marks"] = max(counters["marks"], int(record.get("marks") or 0))
+        counters["failed"] = max(counters["failed"], int(record.get("failed") or 0))
+        counters["idle_max_ms"] = max(counters["idle_max_ms"],
+                                      int(record.get("idle_ms") or 0))
+        # The client's own countdown, not ours: how far it had actually run at the
+        # worst moment of the run, and whether it ever reached the warning state.
+        counters["age_max_ms"] = max(counters["age_max_ms"], int(record.get("age_ms") or 0))
+        if record.get("inactive"):
+            counters["inactive_steps"] += 1
+        if record.get("last_source"):
+            counters["last_source"] = record["last_source"]
+
+    def _note_geometry(self, obs: Optional[Dict[str, Any]]) -> None:
+        """Fold the page's viewport witness into the run's counters."""
+        if not isinstance(obs, dict):
+            return
+        record = _compact(obs).get("geometry")
+        if not isinstance(record, dict):
+            return
+        counters = self._geometry
+        counters["steps"] += 1
+        if record.get("in_world"):
+            counters["in_world_steps"] += 1
+        if record.get("drifted"):
+            counters["drift_steps"] += 1
+        counters["reloads"] = max(counters["reloads"],
+                                  int(record.get("reloads_last_2min") or 0))
+        counters["boot"] = record.get("boot")
+        counters["now"] = record.get("now")
+
     def summary(self, reason: str) -> Dict[str, Any]:
         self.controller.save(force=True)
         # The refusal buckets live on the policy. Reached through `getattr` all the way, because
@@ -2473,6 +2695,19 @@ class Autopilot:
             "recoveries": self._recoveries,
             "recoveries_ok": self._recoveries_ok,
             "recovery_wait_s": round(self._recovery_wait_s, 1),
+            # Whether this run was actually alive on the wire. `present_steps` short
+            # of `steps` means the client had no activity flag for us to flip; a big
+            # `idle_max_ms` means the loop let the countdown run between marks.
+            "keep_alive": dict(getattr(self, "_keep_alive", {})),
+            # Whether this client was laid out for the window it actually has.
+            "geometry": dict(getattr(self, "_geometry", {})),
+            # Time spent patient on a scripted step, in windows of TUTORIAL_HOLD_S.
+            "hold_cycles": int(getattr(self, "_hold_cycles", 0)),
+            # Talks whose packet left and whose dialog never arrived, by call. This is
+            # the difference between "the AI is slow" and "the server will not answer
+            # this NPC", and nothing else in the log can say it.
+            "dead_talks": dict(getattr(self, "_dead_talks", {})),
+            "declined_crossings": dict(getattr(self, "_dead_navs", {})),
             # Waits are reported, not counted as work. Before this, 3,010 of them were
             # the majority of "steps" and nearly all of the run's apparent success.
             "waits": self._waits,
@@ -2589,7 +2824,10 @@ def _compact(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     keys = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
             "in_dialog", "in_fight", "objectives_completed")
     out = {k: flat[k] for k in keys if k in flat}
-    for key in ("current_objective", "ready_objectives", "dialog", "knowledge"):
+    for key in ("current_objective", "ready_objectives", "dialog", "knowledge",
+                # The page's AFK witness. A prevented inactivity drop is silent, so a
+                # run that was never kicked is not evidence that it stayed alive.
+                "keep_alive", "geometry"):
         if flat.get(key) is not None:
             out[key] = flat[key]
     # The planner's view of the map's groups. Bounded: a full map can list
@@ -2602,6 +2840,54 @@ def _compact(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         out["tutorial"] = {"active": True, "quest_id": tutorial.get("quest_id"),
                            "step_id": tutorial.get("step_id")}
     return out
+
+
+def _world_sig(obs: Optional[Dict[str, Any]]) -> str:
+    """What a held step is actually waiting on: where we stand and what is asked.
+
+    Deliberately narrow. HP, kamas and XP move on their own and would release the hold
+    every second, which is the stampede again under another name.
+    """
+    flat = flatten(obs or {})
+    objective = flat.get("current_objective") or {}
+    return "%s|%s|%s|%s" % (flat.get("map_id"), flat.get("cell"),
+                            objective.get("objective_id"), bool(flat.get("in_dialog")))
+
+
+def _standing_on_exit(args: Optional[Dict[str, Any]],
+                      obs: Optional[Dict[str, Any]]) -> bool:
+    """True when the character already stands on a cell that leads where it asked.
+
+    Standing on the portal and asking again is not patience -- it is the same request
+    the server already ignored, sent again. The exit list is the client's own, so this
+    needs no map database and no guessed coordinates.
+    """
+    direction = (args or {}).get("direction")
+    if not direction:
+        return False
+    flat = flatten(obs or {})
+    cell = flat.get("cell")
+    if cell is None:
+        return False
+    for exit_to in ((flat.get("map") or {}).get("exits") or []):
+        if not isinstance(exit_to, dict):
+            continue
+        if exit_to.get("direction") == direction and cell in (
+                exit_to.get("cells") or []):
+            return True
+    return False
+
+
+def _call_key(call: Any) -> str:
+    """One identity for "the same call again": the tool plus every argument.
+
+    The repeat, refusal and tutorial-hold guards all need this, and the no-op streak
+    that hid 119 identical directives was only ever compared against a second,
+    separately written spelling of the same idea.
+    """
+    return "%s|%s" % (getattr(call, "tool", "?"),
+                      json.dumps(getattr(call, "args", {}) or {},
+                                 sort_keys=True, ensure_ascii=False))
 
 
 def _cell_of(obs: Optional[Dict[str, Any]]) -> Optional[int]:
@@ -2662,8 +2948,9 @@ def _build_policy(args: argparse.Namespace):
         # The learned planner: same interface, tool choice comes from the student
         # model instead of an if-chain. Falls back to the deterministic planner when
         # no model is present, which is what makes it safe to try.
-        planner = NNPlanner(level_hint=int(args.level_hint), store=None)
-        print(f"[autopilot] policy: {planner.note}")
+        planner = NNPlanner(level_hint=int(args.level_hint), store=None,
+                            stack_mode=args.ensemble)
+        print(f"[autopilot] policy: {planner.note}; {planner.stack_note}")
         return planner
     if args.policy == "encoder":
         from ai.encoder_serve import EncoderToolPolicy  # imported lazily: needs onnxruntime
@@ -2697,6 +2984,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="dwell after a world-changing action before the next decision")
     parser.add_argument("--steps-per-goal", type=int, default=8)
     parser.add_argument("--policy", choices=("rule", "encoder", "planner"), default="rule")
+    parser.add_argument("--ensemble", choices=("off", "shadow", "act"), default="act",
+                        help="planner only: stack the tool policy with foresight; "
+                             "act requires the artifact's held-out gate")
     parser.add_argument("--level-hint", type=int, default=60,
                         help="character level, for the planner's curriculum")
     parser.add_argument("--model-dir", default=str(REPO_ROOT / "models" / "encoder30_v15"))

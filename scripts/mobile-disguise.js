@@ -28,28 +28,250 @@
     // injected page changes: a client that was not fully restarted keeps the previous
     // script, and a recorded observation is how that becomes visible instead of looking
     // like a fix that does not work.
-    var AGENT_BUILD = '2026-10-27a';
+    var AGENT_BUILD = '2026-10-27q';
 
-    // Server-visible keep-alive. The client tracks activity in
-    // `connectionManager.recordActivity()` (sets `hasSeenActivity` + clears an
-    // already-shown inactive warning); the client's own `_pingServer` timer then
-    // sends `BasicPingMessage {quiet:true}`, which is the exact "sign of life" a
-    // human produces. A run that never records activity falls through
-    // `_enterInactiveMode()` -> `dofus.disconnect("INACTIVITY")`, so an automated
-    // session that was busy *reading* `state.snapshot` (no packet on the wire) got
-    // logged out for being idle. This flips the client's OWN flag only -- no
-    // invented packet, nothing new on the wire beyond the game's own ping, no
-    // change to the egress/session pin.
-    window.__agentMarkActivity = function () {
+    // The client's inactivity countdown lives in ONE object -- the tracker whose
+    // `_checkActivity` warns at 5 min idle and then calls
+    // `dofus.disconnect("INACTIVITY")` at 10 (both thresholds read off the served
+    // bundle). Flipping its `lastActivityTime` through its own `recordActivity()` is
+    // the whole keep-alive: no invented packet, nothing new on the wire beyond the
+    // `BasicPingMessage` the client already sends for a live player, no change to the
+    // egress/session pin.
+    //
+    // It is NOT `connectionManager.recordActivity()`. In this build the connection
+    // manager is module 105 and the tracker is module 64, and module 64's singleton is
+    // imported only as a module-local (`d`, `p`, `U`) by the tap, chat and fight
+    // modules -- so that lookup resolved to undefined and every mark silently did
+    // nothing. That is why a run with the bot plainly driving still died of
+    // inactivity. Rather than guess a name, find the object by the shape only it has
+    // and publish where it was found, so a client update that moves it shows up in the
+    // log as `present:false` instead of another silent no-op.
+    // The tracker is module-private and unreachable: a depth-3 walk of `dofus` and
+    // `gui` on a live client found no object carrying `recordActivity`, and this
+    // bundle exposes no module registry to ask for it. It does hand itself to the
+    // global timer, though -- its own `_start` reads
+    //     this.activityInterval = window.setInterval(function (e) { e._checkActivity() }, d, this)
+    // so the third argument IS the object that counts idleness. Wrapping setInterval
+    // once, before the game boots, captures it by observation rather than by guessing
+    // a name; the keep-alive then calls that same object's own `recordActivity()`, the
+    // method the client's tap handler and chat box already call.
+    (function () {
         try {
-            var cm = window.dofus && window.dofus.connectionManager;
-            if (cm && typeof cm.recordActivity === 'function') {
-                cm.recordActivity();
+            var rawSetInterval = window.setInterval;
+            window.setInterval = function () {
+                for (var a = 2; a < arguments.length; a++) {
+                    var cand = arguments[a];
+                    try {
+                        if (cand && typeof cand.recordActivity === 'function'
+                            && typeof cand._checkActivity === 'function'
+                            && cand.lastActivityTime !== undefined) {
+                            window.__agentActivityTimerOwner = cand;
+                        }
+                    } catch (eShape) { /* a getter that throws is not the tracker */ }
+                }
+                return rawSetInterval.apply(window, arguments);
+            };
+        } catch (e) {}
+    })();
+
+    var _activityTracker = null;
+    function _isActivityTracker(o) {
+        return !!o && typeof o.recordActivity === 'function'
+            && typeof o.isActiveSince === 'function';
+    }
+    window.__agentActivityTracker = function () {
+        if (_activityTracker) return _activityTracker;
+        var captured = window.__agentActivityTimerOwner;
+        if (_isActivityTracker(captured)) {
+            _activityTracker = { target: captured, via: 'setInterval-owner' };
+            return _activityTracker;
+        }
+        if (_isActivityTracker(window.dofus && window.dofus.connectionManager)) {
+            _activityTracker = { target: window.dofus.connectionManager, via: 'connectionManager' };
+            return _activityTracker;
+        }
+        var roots = [['dofus', window.dofus], ['gui', window.gui]];
+        for (var r = 0; r < roots.length; r++) {
+            var owner = roots[r][1];
+            if (!owner) continue;
+            for (var k in owner) {
+                var v = null;
+                try { v = owner[k]; } catch (eProp) { continue; }
+                if (_isActivityTracker(v)) {
+                    _activityTracker = { target: v, via: roots[r][0] + '.' + k };
+                    return _activityTracker;
+                }
+            }
+        }
+        return null;
+    };
+
+    window.__agentMarkActivity = function (source) {
+        var rec = window.__agentActivity || (window.__agentActivity =
+            { marks: 0, failed: 0, last_ts: 0, present: false, via: null });
+        try {
+            var found = window.__agentActivityTracker();
+            if (found) {
+                found.target.recordActivity();
+                rec.marks += 1;
+                rec.last_ts = Date.now();
+                rec.last_source = source || 'unknown';
+                rec.via = found.via;
+                rec.present = true;
                 return true;
             }
-        } catch (e) {}
+            rec.present = false;
+            rec.failed += 1;
+        } catch (e) {
+            rec.failed += 1;
+        }
         return false;
     };
+
+    // The client measures the viewport once, at document creation, and never re-fits
+    // its layout afterwards. The host can only re-run the in-world `_resizeUi` path --
+    // on the login screen that call throws and can leave a half-applied boot, so it is
+    // deliberately skipped (WebView2ClientForm.OnNavigationCompleted). Measured live
+    // 2026-10-27: the panel tiled four 1024x640 windows into a 2x2 grid, and the two
+    // that had not reached the world kept their old layout inside a 665x311 window --
+    // a black band under a squashed login screen, and an instance that never got past
+    // "attempt 1/5". Reloading at the settled size fixes the layout *and* re-runs the
+    // guest login that had wedged, which is exactly what the player does by hand. So
+    // do that here, but only while there is no character: a reload in-world would be
+    // a self-inflicted disconnect, and the game re-fits itself once it is running.
+    (function () {
+        var boot = { w: window.innerWidth | 0, h: window.innerHeight | 0 };
+        var timer = null;
+
+        window.__agentGeometryBoot = boot;
+
+        // Anything the page cannot read is treated as "in world": the reload is a
+        // recovery, and a recovery that drops a live session is worse than no recovery.
+        function _inWorld() {
+            try {
+                var ch = window.gui && window.gui.playerData && window.gui.playerData.character;
+                return !!(ch && ch.id != null);
+            } catch (e) { return true; }
+        }
+
+        function _now() { return { w: window.innerWidth | 0, h: window.innerHeight | 0 }; }
+
+        // 8% is not a hairline: the auto-zoom rewrites innerWidth/innerHeight on every
+        // resize, so a threshold that is too tight reloads the page for a rounding
+        // difference, and one that is too loose leaves the band the player can see.
+        function _drifted(v) {
+            if (!boot.w || !boot.h) return false;
+            return Math.abs(v.w - boot.w) / boot.w >= 0.08 || Math.abs(v.h - boot.h) / boot.h >= 0.08;
+        }
+
+        function _budget() {
+            var cut = Date.now() - 120000, kept = [];
+            try {
+                var rows = JSON.parse(sessionStorage.getItem('dfGeomReloads') || '[]');
+                for (var i = 0; i < rows.length; i++) if (rows[i] > cut) kept.push(rows[i]);
+            } catch (e) {}
+            return kept;
+        }
+
+        window.__agentGeometry = function () {
+            var v = _now();
+            return { boot: { w: boot.w, h: boot.h }, now: v, dpr: window.devicePixelRatio || 1,
+                     drifted: _drifted(v), in_world: _inWorld(), pending: !!timer,
+                     reloads_last_2min: _budget().length };
+        };
+
+        // A resize is not the only way the two sizes can diverge. Instance 1 booted
+        // at 1280x1398 and settled at 1392x720 without ever firing a resize event, so
+        // the login screen stayed laid out for a portrait viewport it no longer had.
+        // Recovery therefore also runs on the first observation and once after the
+        // boot animation has had time to settle. All paths share the same budget.
+        function _recover(reason, delay) {
+            try {
+                if (timer) {
+                    if (reason !== 'resize') return false;
+                    clearTimeout(timer);
+                    timer = null;
+                }
+                if (!_drifted(_now()) || _inWorld()) return false;
+                timer = setTimeout(function () {
+                    timer = null;
+                    var v = _now();
+                    if (!_drifted(v) || _inWorld()) return;
+                    var kept = _budget();
+                    if (kept.length >= 2) return;
+                    kept.push(Date.now());
+                    try { sessionStorage.setItem('dfGeomReloads', JSON.stringify(kept)); } catch (e) {}
+                    console.log('[AGENT] viewport changed before the world was reached ('
+                        + boot.w + 'x' + boot.h + ' -> ' + v.w + 'x' + v.h
+                        + '); reloading so the client lays out for the new size [' + reason + ']');
+                    try { if (window.__agentMarkActivity) window.__agentMarkActivity('geometry'); } catch (e) {}
+                    location.reload();
+                }, Math.max(0, delay || 0));
+                return true;
+            } catch (e) { return false; }
+        }
+
+        window.__agentGeometryRecover = function (reason) {
+            return _recover(reason || 'manual', 0);
+        };
+
+        window.addEventListener('resize', function () {
+            // A tile or a drag fires `resize` continuously; one reload per settle.
+            _recover('resize', 1500);
+        }, true);
+        window.addEventListener('pageshow', function () { _recover('pageshow', 0); });
+        window.addEventListener('orientationchange', function () {
+            _recover('orientation', 0);
+        });
+        try {
+            setTimeout(function () { _recover('startup', 0); }, 2500);
+        } catch (e) {}
+    })();
+
+    // The login client's fatal-boot path calls window.alert("Server busy") and then
+    // waits 30 s before reloading. That modal blocks the page thread, so the config
+    // retry cannot run and the window stays black until someone clicks OK. The relay
+    // now fails over off a dead login egress; suppress only that exact dialog so its
+    // own reload can reach the new pin. A real outage still shows the alert after a
+    // small bounded number of retries.
+    (function () {
+        if (window.__dofusFarmBootAlertGuard) return;
+        window.__dofusFarmBootAlertGuard = true;
+        var nativeAlert = window.alert;
+        var maxRetries = 3;
+
+        function recent() {
+            var cut = Date.now() - 120000, kept = [];
+            try {
+                var rows = JSON.parse(sessionStorage.getItem('dfBusyReloads') || '[]');
+                for (var i = 0; i < rows.length; i++) {
+                    if (rows[i] > cut) kept.push(rows[i]);
+                }
+            } catch (e) {}
+            return kept;
+        }
+
+        window.alert = function (message) {
+            var text = String(message == null ? '' : message);
+            if (!/^\s*server busy\s*$/i.test(text)) {
+                return nativeAlert.apply(window, arguments);
+            }
+            var kept = recent();
+            if (kept.length >= maxRetries) {
+                console.error('[AgentGuard] Server busy persisted through ' + kept.length
+                    + ' retries; letting the client show its alert');
+                return nativeAlert.apply(window, arguments);
+            }
+            kept.push(Date.now());
+            try { sessionStorage.setItem('dfBusyReloads', JSON.stringify(kept)); } catch (e) {}
+            console.warn('[AgentGuard] suppressed Server busy fatal-boot alert; reloading after the relay failover');
+            try { window.__agentMarkActivity('boot-retry'); } catch (e) {}
+            setTimeout(function () {
+                try { location.reload(); } catch (e) {}
+            }, 1500);
+            return undefined;
+        };
+    })();
 
     // The login page fetches config.json exactly once, and its XHR treats every non-200
     // -- including status 0 from a socket that died -- as fatal: it shows "Server busy"
@@ -1293,9 +1515,12 @@
                     // type check there matches on "type":"X" — so it fell through
                     // silently. Posting the object makes the message readable by the
                     // host as-is, including on builds that predate the fix.
+                    // The badge belongs to THIS window, so it acts on this instance
+                    // only. It used to send stop_all, which made one client's button
+                    // shut down every loop on the farm.
                     window.chrome.webview.postMessage({
                         type: 'AI_REQUEST',
-                        action: this.aiRunning ? 'stop_all' : 'start_auto'
+                        action: this.aiRunning ? 'stop_one' : 'start_one'
                     });
                 } catch (e) {
                     if (label) label.textContent = 'AI: send failed';
@@ -1530,7 +1755,7 @@
                 if (!self._keepAliveTimer) {
                     self._keepAliveTimer = setInterval(function () {
                         if (!self.enabled && !self.aiRunning) return;
-                        window.__agentMarkActivity();
+                        window.__agentMarkActivity('timer');
                     }, 20000);
                 }
 
@@ -2204,7 +2429,7 @@
                 try {
                     if (window.dofus && window.dofus.connectionManager) {
                         window.dofus.connectionManager.sendMessage(messageType, payload);
-                        window.__agentMarkActivity();
+                        window.__agentMarkActivity('packet');
                         this.lastSendError = null;
                         return true;
                     }
@@ -2270,7 +2495,7 @@
                 cm.sendMessage(name, args);
                 // A directive is real activity; tell the client so it does not enter
                 // inactive mode in the middle of a run.
-                window.__agentMarkActivity();
+                window.__agentMarkActivity('packet');
                 return { ok: true };
             } catch (e) {
                 return { ok: false, error: String(e) };
@@ -2753,6 +2978,42 @@
                 // rejected transition look identical in the position fields; this
                 // says which one happened, and at which cell.
                 snap.last_nav = window.__agentLastNav || null;
+                // Liveness witness. A prevented AFK drop is silent, so "the run was
+                // not kicked" proves nothing on its own; this says the client's own
+                // activity flag was really flipped, how often, what flipped it last,
+                // and how stale that flip is. `present:false` is the case a keep-alive
+                // must never pretend to cover: the client has no recordActivity to call.
+                try {
+                    var ka = window.__agentActivity;
+                    var tr = window.__agentActivityTracker
+                        ? window.__agentActivityTracker() : null;
+                    var trTarget = tr && tr.target;
+                    snap.keep_alive = ka ? {
+                        marks: ka.marks || 0, failed: ka.failed || 0,
+                        present: !!ka.present, via: ka.via || null,
+                        last_source: ka.last_source || null,
+                        idle_ms: ka.last_ts ? (Date.now() - ka.last_ts) : null,
+                        // The client's own side of the same clock: what it currently
+                        // believes about this session. `age_ms` is how far its
+                        // countdown has run (it warns at 300000 and drops at 600000),
+                        // and `inactive` is the flag that, once set, means the next
+                        // check disconnects. Read, never written by us directly.
+                        age_ms: trTarget && trTarget.lastActivityTime
+                            ? (Date.now() - trTarget.lastActivityTime) : null,
+                        inactive: trTarget ? !!trTarget.isInactive : null
+                    } : null;
+                } catch (e) { snap.keep_alive = null; }
+                // What the page was laid out for versus what it has now. A pre-world
+                // client keeps the geometry it booted with, so a drifted pair is the
+                // signature of the squashed login screen the operator sees as "this
+                // instance is broken".
+                try {
+                    if (typeof window.__agentGeometryRecover === 'function') {
+                        window.__agentGeometryRecover('observation');
+                    }
+                    snap.geometry = (typeof window.__agentGeometry === 'function')
+                        ? window.__agentGeometry() : null;
+                } catch (e) { snap.geometry = null; }
                 // Trusted input seen by the page. `during_run` is the count of human
                 // input events that arrived while the loop was running -- the manual
                 // intervention the goal is measured against. Agent clicks are
@@ -4112,6 +4373,7 @@
                     });
                 };
                 var rawMembers = _groupMembers(a);
+                var si = d.staticInfos || a.staticInfos || {};
                 for (var u = 0; u < rawMembers.length; u++) addMember(rawMembers[u]);
                 var ids = [];
                 var total = 0;
@@ -6342,6 +6604,83 @@
                 });
                 return _agentResult(true, out);
             },
+            'debug.activity': function () {
+                // Where the inactivity tracker actually lives, measured rather than
+                // assumed. The keep-alive needs `recordActivity`; guessing a path made
+                // it a silent no-op for weeks, so this walks what the page can reach
+                // and reports every object carrying the AFK methods, with the path it
+                // was found on. Read-only: it never calls anything.
+                var found = [], visited = [];
+                function walk(obj, path, depth) {
+                    if (!obj || depth > 3) return;
+                    if (visited.indexOf(obj) >= 0 || visited.length > 3000) return;
+                    visited.push(obj);
+                    var keys;
+                    try { keys = Object.keys(obj); } catch (e) { return; }
+                    for (var i = 0; i < keys.length && i < 300; i++) {
+                        var k = keys[i], v = null;
+                        try { v = obj[k]; } catch (eRead) { continue; }
+                        if (!v || typeof v !== 'object') continue;
+                        if (typeof v.recordActivity === 'function'
+                            || typeof v.isActiveSince === 'function') {
+                            var has = [];
+                            var probe = ['recordActivity', 'isActiveSince', '_checkActivity',
+                                         'isInactive', 'lastActivityTime', 'isListening'];
+                            for (var h = 0; h < probe.length; h++)
+                                if (v[probe[h]] !== undefined) has.push(probe[h]);
+                            found.push({ path: path + '.' + k, has: has });
+                        }
+                        walk(v, path + '.' + k, depth + 1);
+                    }
+                }
+                walk(window.dofus, 'dofus', 1);
+                walk(window.gui, 'gui', 1);
+                return _agentResult(true, { found: found.slice(0, 16),
+                                            visited: visited.length,
+                                            cm_has_record: !!(window.dofus
+                                                && window.dofus.connectionManager
+                                                && typeof window.dofus.connectionManager
+                                                       .recordActivity === 'function') });
+            },
+            'debug.npc_probe': function (args) {
+                // What this NPC really offers. The client's own context menu builds its
+                // entries from `npcData.actions` and sends the chosen one as
+                // `npcActionId` -- it never hardcodes 3 -- so an unanswered talk is most
+                // likely an action this NPC does not have. Read-only: it lists, it does
+                // not send.
+                var want = Number((args && (args.npc_id || args.npcId)) || 0) || null;
+                var am = window.actorManager || (window.isoEngine && window.isoEngine.actorManager);
+                var actors = (am && am.actors) || null;
+                var out = { wanted: want, npcs: [], actor_keys: null, data_keys: null };
+                if (!actors) {
+                    out.error = 'no actorManager.actors';
+                    return _agentResult(true, out);
+                }
+                for (var k in actors) {
+                    if (!Object.prototype.hasOwnProperty.call(actors, k)) continue;
+                    var a = actors[k] || {};
+                    var d = a.data || {};
+                    var template = d.npcId != null ? d.npcId
+                        : (a.npcId != null ? a.npcId : null);
+                    if (template == null) continue;
+                    var entry = {
+                        npc_id: Number(template),
+                        actor_key: k,
+                        actorId: a.actorId == null ? null : a.actorId,
+                        contextualId: a.contextualId == null ? null : a.contextualId,
+                        cell: a.cellId != null ? a.cellId : (d.cellId != null ? d.cellId : null),
+                        actions: d.actions == null ? null : d.actions,
+                        actions_name: d.actionsName == null ? null : d.actionsName,
+                        name_id: d.nameId == null ? null : d.nameId
+                    };
+                    if (want === null || entry.npc_id === want) out.npcs.push(entry);
+                    if (entry.npc_id === want) {
+                        try { out.actor_keys = Object.keys(a).slice(0, 40); } catch (e1) {}
+                        try { out.data_keys = Object.keys(d).slice(0, 40); } catch (e2) {}
+                    }
+                }
+                return _agentResult(true, out);
+            },
             'debug.character': function(args) {
                 return _agentCharacterReport(args);
             },
@@ -6406,6 +6745,308 @@
                     snap.inventory ? null : 'inventory is not exposed by this client build (probe: playerData.inventory missing)');
             },
             'state.snapshot': function() { return _agentResult(true, _agentSnapshot()); },
+            // Auto-login, without inventing an auth flow. The login screen is Ankama's own
+            // native DOM UI (script.js builds `className:["btnPlay","greenButtonV2"]`), so the
+            // game's buttons are real elements with their own listeners: this presses the one
+            // already on screen, and only ever uses credentials the game itself stored
+            // (localStorage 'dofus.1' -> all#guestAccount). It does not fabricate a token, does
+            // not open an OAuth popup, and returns what it saw either way, so an operator can
+            // read the same evidence the agent acted on. `inspect:true` reports without pressing.
+            'session.login': function(args) {
+                var inspectOnly = !!(args && (args.inspect || args.dry_run));
+                var want = String((args && args.target) || 'play').toLowerCase();
+                var seen = [];
+                var pressable = [];
+                try {
+                    var nodes = document.querySelectorAll('[class]');
+                    for (var i = 0; i < nodes.length; i++) {
+                        var el = nodes[i];
+                        var cls = String(el.className || '');
+                        if (!/btnPlay|guest|connect|login|account|server|play/i.test(cls)) continue;
+                        var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                        var w = r ? Math.round(r.width) : 0, h = r ? Math.round(r.height) : 0;
+                        if (!w || !h) continue;
+                        seen.push({ class: cls.slice(0, 70),
+                                    text: String(el.textContent || '').trim().slice(0, 40),
+                                    box: [w, h] });
+                        if (pressable.length < 6) pressable.push(el);
+                    }
+                } catch (e) {
+                    return _agentResult(false, null, 'session.login scan failed: ' + e);
+                }
+                var ls = null, lsKeys = null, lsMethod = null;
+                try {
+                    ls = window.gui && window.gui.loginScreen;
+                    if (ls) {
+                        lsKeys = Object.keys(ls).slice(0, 40);
+                        lsMethod = lsKeys.filter(function (k) {
+                            return /^(play|connect|login|onPlay|goPlay)/i.test(k)
+                                && typeof ls[k] === 'function';
+                        });
+                    }
+                } catch (e) { lsKeys = 'ERR:' + e; }
+                // The guest button is an object of the game's own UI framework, not just a div:
+                // its registered events are the honest answer to "what does a press mean here".
+                var guestObj = null;
+                try {
+                    ['_playGuestBtn', '_continueGuestBtn'].forEach(function (k) {
+                        var b = ls && ls[k];
+                        if (!b) return;
+                        var ev = null, handlers = null;
+                        try {
+                            ev = b._events && typeof b._events === 'object'
+                                ? Object.keys(b._events) : null;
+                        } catch (e2) { ev = 'ERR:' + e2; }
+                        try {
+                            // What the game actually hooked up to a tap is the only honest answer
+                            // to why a press that reports success changes nothing.
+                            var t = b._events && b._events.tap;
+                            if (t && typeof t.forEach === 'function') {
+                                handlers = t.slice(0, 2).map(function (e3) {
+                                    var fn = e3 && (e3.listener || e3.callback || e3.fn);
+                                    return fn ? String(fn).slice(0, 150) : String(e3).slice(0, 60);
+                                });
+                            } else if (t) {
+                                var fn2 = t.listener || t.callback || t.fn;
+                                handlers = [fn2 ? String(fn2).slice(0, 150) : String(t).slice(0, 60)];
+                            }
+                        } catch (e4) { handlers = 'ERR:' + e4; }
+                        guestObj = guestObj || {};
+                        guestObj[k] = { keys: Object.keys(b).slice(0, 24), events: ev,
+                                        tap_handlers: handlers,
+                                        enabled: typeof b.isEnable === 'function'
+                                            ? (function () { try { return !!b.isEnable(); }
+                                                            catch (e5) { return 'ERR'; } })()
+                                            : null,
+                                        hasEmit: typeof b.emit === 'function',
+                                        hasTrigger: typeof b.trigger === 'function',
+                                        hasFire: typeof b.fire === 'function' };
+                    });
+                } catch (e) { guestObj = 'ERR:' + e; }
+                // Which object in the tree owns the element that is actually on screen? Pressing
+                // a hidden button reports success and changes nothing, so name the visible ones.
+                var tree = [];
+                try {
+                    var walk = function (node, depth) {
+                        if (!node || depth > 4 || tree.length >= 14) return;
+                        try {
+                            var re = node.rootElement;
+                            var cls = re ? String(re.className || '') : '';
+                            var vis = re && re.getBoundingClientRect
+                                ? (re.getBoundingClientRect().width > 0) : false;
+                            var hasTap = false;
+                            try { hasTap = !!(node._events && node._events.tap); } catch (e6) {}
+                            if (cls || hasTap) {
+                                tree.push({ d: depth, name: String(node._name || '').slice(0, 24),
+                                            class: cls.slice(0, 44), visible: vis, tap: hasTap,
+                                            enabled: typeof node.isEnable === 'function'
+                                                ? (function () { try { return !!node.isEnable(); }
+                                                                catch (e7) { return null; } })()
+                                                : null });
+                            }
+                            var kids = node._childrenList || [];
+                            for (var c = 0; c < kids.length; c++) walk(kids[c], depth + 1);
+                        } catch (e8) {}
+                    };
+                    walk(ls, 0);
+                } catch (e9) { tree = 'ERR:' + e9; }
+                // A guest is created through a form, so report what a person would see: the
+                // fields, whether they are already filled, and the server picker.
+                var fields = [];
+                try {
+                    var inputs = document.querySelectorAll('input, select');
+                    for (var f2 = 0; f2 < inputs.length && fields.length < 12; f2++) {
+                        var el2 = inputs[f2];
+                        var r2 = el2.getBoundingClientRect ? el2.getBoundingClientRect() : null;
+                        if (!r2 || !r2.width || !r2.height) continue;
+                        fields.push({ tag: String(el2.tagName || '').toLowerCase(),
+                                      type: String(el2.type || ''), name: String(el2.name || ''),
+                                      ph: String(el2.placeholder || '').slice(0, 40),
+                                      value: String(el2.value || '').slice(0, 24) });
+                    }
+                } catch (e) { fields = 'ERR:' + e; }
+                var guestSteps = null;
+                try {
+                    // Object.keys does not see prototype methods, and `playWithGuest` is one:
+                    // the host's own seeding script calls exactly this to finish a guest login.
+                    guestSteps = ls ? {
+                        playWithGuest: typeof ls.playWithGuest === 'function',
+                        createGuest: typeof ls._createGuest === 'function',
+                        continueGuest: typeof ls._continueGuest === 'function',
+                        continueGuestFollow: typeof ls._continueGuestFollow === 'function'
+                    } : null;
+                } catch (e8b) { guestSteps = 'ERR:' + e8b; }
+                var saved = null;
+                try {
+                    var raw = window.localStorage && window.localStorage.getItem('dofus.1');
+                    var g = raw && JSON.parse(raw)['all#guestAccount'];
+                    saved = !!(g && g.login);
+                } catch (e) { saved = false; }
+                var snap = _agentSnapshot();
+                var out = { at_login: !(snap && snap.in_world), seen: seen.slice(0, 16),
+                            pressable: pressable.length, loginScreen_keys: lsKeys,
+                            loginScreen_methods: lsMethod, guest_buttons: guestObj,
+                            guest_steps: guestSteps,
+                            tree: tree,
+                            fields: fields, guest_saved: saved,
+                            connected: !!(snap && snap.connected),
+                            in_world: !!(snap && snap.in_world) };
+                if (inspectOnly) return _agentResult(true, out);
+                // The framework's own emit, when the object exposes one: a synthetic DOM event is
+                // isTrusted:false and this UI ignores it (measured: pressing .linkGuest produced
+                // no create-guest fetch at all). Emitting the event the button itself registered
+                // runs the game's own handler — still Ankama's code path, not an invented one.
+                var emitErr = null;
+                var emit = function (which) {
+                    var b = ls && ls[which];
+                    if (!b) return null;
+                    var names = null;
+                    try { names = b._events && Object.keys(b._events); } catch (e) { names = null; }
+                    var order = ['tap', 'click', 'pressup'];
+                    var pick = null;
+                    for (var q = 0; q < order.length; q++) {
+                        if (names && names.indexOf(order[q]) >= 0) { pick = order[q]; break; }
+                    }
+                    if (!pick && names && names.length) pick = names[0];
+                    if (!pick) pick = 'tap';
+                    // The handler is written against an event object, so hand it one: a bare
+                    // emit() ran the listener and it did nothing visible (measured: no fetch).
+                    var target = null;
+                    try { target = b.rootElement || (b.get && b.get('rootElement')); } catch (e2) {}
+                    var ev = { type: pick, target: target || b, currentTarget: target || b,
+                               nativeEvent: { isTrusted: true }, relatedTarget: null,
+                               detail: null, bubbles: true, cancelable: true,
+                               preventDefault: function () {}, stopPropagation: function () {},
+                               stopImmediatePropagation: function () {} };
+                    if (typeof b.emit === 'function') {
+                        try { b.emit(pick, ev); return which + '.emit(' + pick + ',event)'; }
+                        catch (e3) { emitErr = which + '.emit: ' + e3; }
+                    }
+                    try {
+                        var reg = b._events && b._events[pick];
+                        var list = (reg && typeof reg.forEach === 'function') ? reg : (reg ? [reg] : []);
+                        var called = 0;
+                        for (var m = 0; m < list.length; m++) {
+                            var fn = list[m] && (list[m].listener || list[m].callback || list[m].fn);
+                            if (typeof fn !== 'function') continue;
+                            fn.call((list[m] && list[m].context) || b, ev);
+                            called++;
+                        }
+                        if (called) return which + '.listeners(' + pick + ')x' + called;
+                    } catch (e4) { emitErr = (emitErr ? emitErr + ' / ' : '') + which
+                        + '.listener: ' + e4; }
+                    return null;
+                };
+                var pressed = null;
+                var fire = function (el) {
+                    var r = el.getBoundingClientRect();
+                    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+                    var o = { bubbles: true, cancelable: true, view: window, clientX: x,
+                              clientY: y, pageX: x, pageY: y };
+                    try {
+                        if (window.TouchEvent && document.createTouch) {
+                            var t = document.createTouch(window, el, Date.now(), x, y, x, y);
+                            el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true,
+                                cancelable: true, touches: [t], targetTouches: [t],
+                                changedTouches: [t] }));
+                            el.dispatchEvent(new TouchEvent('touchend', { bubbles: true,
+                                cancelable: true, touches: [], targetTouches: [],
+                                changedTouches: [t] }));
+                        }
+                    } catch (e) {}
+                    try {
+                        el.dispatchEvent(new PointerEvent('pointerdown', o));
+                        el.dispatchEvent(new PointerEvent('pointerup', o));
+                    } catch (e) {}
+                    try {
+                        el.dispatchEvent(new MouseEvent('mousedown', o));
+                        el.dispatchEvent(new MouseEvent('mouseup', o));
+                        el.dispatchEvent(new MouseEvent('click', o));
+                    } catch (e) {}
+                    if (typeof el.click === 'function') { try { el.click(); } catch (e) {} }
+                };
+                // The game's own order: the button whose class says play, then a guest entry,
+                // then anything else visible — and if the login screen exposes a method, use it.
+                var ranked = pressable.slice().sort(function (a, b) {
+                    var score = function (el) {
+                        var c = String(el.className || '').toLowerCase();
+                        if (c.indexOf('btnplay') >= 0) return 0;
+                        if (want === 'guest' && c.indexOf('guest') >= 0) return 1;
+                        if (c.indexOf('connect') >= 0 || c.indexOf('login') >= 0) return 2;
+                        if (c.indexOf('guest') >= 0) return 3;
+                        return 4;
+                    };
+                    return score(a) - score(b);
+                });
+                if (want === 'guest') {
+                    // Measured on a live client: the tap handlers are
+                    // `function(){t._createGuest(), ...}` (no guest yet) and
+                    // `function(){t._continueGuest(), ...}` (one is stored). Pressing the wrong
+                    // one reports success and changes nothing, so the state picks the method and
+                    // the event is only a fallback. `playWithGuest` is tried first because it is
+                    // the game's own end-to-end guest path (the host's seeding script calls it),
+                    // and it is a prototype method so a key scan cannot see it.
+                    var step = saved ? '_continueGuest' : '_createGuest';
+                    var order = ['playWithGuest', step];
+                    var oi = 0;
+                    for (; oi < order.length && !pressed; oi++) {
+                        var name = order[oi];
+                        if (!ls || typeof ls[name] !== 'function') continue;
+                        try {
+                            ls[name]();
+                            pressed = 'gui.loginScreen.' + name + '()';
+                        } catch (e5) {
+                            emitErr = 'loginScreen.' + name + ': ' + e5;
+                        }
+                    }
+                    if (!pressed && saved && ls && typeof ls._continueGuestFollow === 'function') {
+                        try { ls._continueGuestFollow(); pressed = 'gui.loginScreen._continueGuestFollow()'; }
+                        catch (e5b) { emitErr = 'loginScreen._continueGuestFollow: ' + e5b; }
+                    }
+                    if (!pressed) {
+                        pressed = emit(saved ? '_continueGuestBtn' : '_playGuestBtn');
+                    }
+                }
+                if (!pressed) {
+                    if (ranked.length) {
+                        var pick = want === 'guest'
+                            ? (ranked.filter(function (el) {
+                                    return String(el.className || '').toLowerCase().indexOf('guest') >= 0;
+                                })[0] || ranked[0])
+                            : ranked[0];
+                        fire(pick);
+                        pressed = String(pick.className || '').slice(0, 70);
+                    } else if (ls && lsMethod && lsMethod.length) {
+                        try { ls[lsMethod[0]](); pressed = 'gui.loginScreen.' + lsMethod[0]; }
+                        catch (e) { return _agentResult(false, out, 'loginScreen.'
+                            + lsMethod[0] + ' threw: ' + e); }
+                    }
+                }
+                out.pressed = pressed;
+                out.emit_error = emitErr;
+                // One call must show the transition it caused, or every step of a login flow
+                // costs a round trip: re-read the screen right after pressing.
+                try {
+                    var after = _agentSnapshot();
+                    var afterScreens = [];
+                    var nodes2 = document.querySelectorAll('[class]');
+                    for (var z = 0; z < nodes2.length && afterScreens.length < 8; z++) {
+                        var n2 = nodes2[z], c2 = String(n2.className || '');
+                        if (!/Form|Guest|server|Login|btnPlay|Popup|nickname/i.test(c2)) continue;
+                        var r3 = n2.getBoundingClientRect ? n2.getBoundingClientRect() : null;
+                        if (!r3 || !r3.width || !r3.height) continue;
+                        afterScreens.push(c2.slice(0, 50) + '|'
+                            + String(n2.textContent || '').trim().slice(0, 40));
+                    }
+                    out.after = { in_world: !!(after && after.in_world),
+                                  connected: !!(after && after.connected),
+                                  screens: afterScreens };
+                } catch (e7) { out.after = 'ERR:' + e7; }
+                if (!pressed) return _agentResult(false, out,
+                    'nothing on the login screen could be pressed (no visible button and no '
+                    + 'loginScreen method)');
+                return _agentResult(true, out);
+            },
             'chat.say': function(args) {
                 var text = (args && args.text) || '';
                 if (!text) return _agentResult(false, null, 'chat.say needs non-empty text');
@@ -6417,7 +7058,7 @@
                     if (window.dofus && window.dofus.connectionManager) {
                         window.dofus.connectionManager.sendMessage('ChatClientMultiMessage',
                             { channel: 0, content: text, parameters: [] });
-                        window.__agentMarkActivity();
+                        window.__agentMarkActivity('packet');
                         return _agentResult(true, { via: 'connectionManager', channel: 'say', verified: false });
                     }
                     return _agentResult(false, null, 'no chat transport available');
@@ -7074,6 +7715,14 @@
                     key = _agentDirectiveAliases[String(payload.directive).toUpperCase()] || '';
                 }
                 console.log('[AgentBridge] directive:', key || payload.directive, payload);
+                // A directive arriving IS the automation driving this client, so clear
+                // the client's own inactivity countdown right here. The 20 s keep-alive
+                // timer is gated on `aiRunning`, a flag the host pushes only when its
+                // own view of the answer changes -- and a page reload resets the page's
+                // copy to false while the loop keeps running. The gate then stayed shut
+                // and the vanilla AFK timer reached dofus.disconnect("INACTIVITY") ten
+                // minutes into a live run (measured 2026-10-27).
+                try { window.__agentMarkActivity('directive'); } catch (eAct) {}
                 var handler = _agentHandlers[key];
                 if (!handler) return _agentResult(false, null, 'no client handler for tool "' + key + '"');
                 return handler(payload.args || {});
@@ -7127,6 +7776,15 @@
         } catch (e) {}
 
         console.log('[AgentBridge] directive bus ready');
+        // Ask the host what it actually thinks about THIS instance. Its push is
+        // diffed host-side, so a page that reloads mid-run comes back at its own
+        // default -- badge off, keep-alive gate shut -- while the loop driving it is
+        // still alive. One question on startup makes that state self-healing.
+        try {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ type: 'AI_REQUEST', action: 'state' });
+            }
+        } catch (eAsk) {}
     } catch(e) {}
 
     // 20b. F11 fullscreen bridge: WebView2 never handles F11 itself, so the

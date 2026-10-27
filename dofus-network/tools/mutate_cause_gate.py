@@ -22,15 +22,25 @@ CTRL = ROOT / "agent" / "controller.py"
 AUTO = ROOT / "agent" / "autopilot.py"
 BRIDGE = ROOT / "agent" / "bridge.py"
 PLAN = ROOT / "agent" / "planner.py"
+EXEC = ROOT / "agent" / "executor.py"
 REPORT = ROOT / "tools" / "recovery_report.py"
 SREPORT = ROOT / "tools" / "session_report.py"
 BRAIN = ROOT / "combat" / "brain_service.py"
 READINESS = ROOT / "tools" / "brain_readiness.py"
-REPLAY = ROOT / "tools" / "policy_over_record_boards.py"
+# `BOARDS`, not `REPLAY`: a second REPLAY below points at command_replay.py, and the
+# shadowed name silently repointed these eight anchors at the wrong file, so they were
+# reported as SKIP instead of never running.
+BOARDS = ROOT / "tools" / "policy_over_record_boards.py"
 # The live page and its own suite, one directory up: fight.state is where the board is
 # produced, so a gate that only mutates Python cannot prove it reads that producer.
 PAGE = ROOT.parent / "scripts" / "mobile-disguise.js"
 PAGE_TEST = ROOT.parent / "tools" / "test_fight_state_fields.js"
+# Read the page's own stamp so a bump cannot orphan the mutation that anchors on it. A pinned
+# literal goes to zero matches on the next generation, and the driver reports that as SKIP —
+# which reads like a pass in a wall of CAUGHT lines.
+import re as _re
+_PAGE_STAMP = (_re.search(r"var AGENT_BUILD = '([^']+)';",
+                          PAGE.read_text(encoding="utf-8")) or (None, ""))[1]
 SCAN = ROOT / "tools" / "group_scan.py"
 VERIF = ROOT / "agent" / "verifier.py"
 FEATURES = ROOT / "agent" / "features.py"
@@ -41,6 +51,11 @@ SCHEMA = ROOT / "agent" / "schema.py"
 CAPS = ROOT / "data" / "capabilities.json"
 INGEST = ROOT / "tools" / "ingest_observed_quests.py"
 CSPANEL = ROOT.parent / "desktop" / "aipanel.cs"
+CSBUNDLE = ROOT.parent / "desktop" / "clientbundle.cs"
+CSPA = CSPANEL
+CSB2 = ROOT.parent / "desktop" / "agentbridge.cs"
+CMAINF = ROOT.parent / "desktop" / "mainform.cs"
+CSPROG = ROOT.parent / "desktop" / "program.cs"
 TDS = ROOT / "agent" / "tool_dataset.py"
 ENGINE = ROOT.parent / "tools" / "patch-engine.js"
 KTOOL = ROOT / "tools" / "sync_kaggle_toolkit.py"
@@ -52,7 +67,13 @@ SHADOW = ROOT / "agent" / "command_shadow.py"
 SHADOW_REPORT = ROOT / "tools" / "command_shadow_report.py"
 REPLAY = ROOT / "tools" / "command_replay.py"
 LIVE = ROOT / "tools" / "live_evidence.py"
+READY2 = ROOT / "tools" / "live_ready.py"
+HOSTCTL = ROOT / "tools" / "host_control.py"
+AUTOLIVE = ROOT / "tools" / "auto_live.py"
 ONNX = ROOT / "agent" / "command_onnx.py"
+WORLD = ROOT / "sim" / "world.py"
+TRANS = ROOT / "tools" / "build_live_transitions.py"
+FORE = ROOT / "agent" / "foresight.py"
 
 SNIPPET = ("import agent.regression as r\n"
            "r.test_failure_causes()\n"
@@ -72,6 +93,22 @@ SNIPPET = ("import agent.regression as r\n"
            "r.test_command_replay()\n"
            "r.test_live_evidence()\n"
            "r.test_command_onnx_decode()\n"
+           "r.test_egress_preflight()\n"
+           "r.test_host_launch_guard()\n"
+           "r.test_auto_live_guards()\n"
+           "r.test_auto_live_summarise()\n"
+           # The bundle updater and the multi-instance selection are source
+           # assertions over desktop/*.cs: nothing else in here watches them, and
+           # their only other witness is a launch against the real CDN.
+           "r.test_bundle_resilience()\n"
+           "r.test_bundle_updater()\n"
+           "r.test_multi_instance_targeting()\n"
+           "r.test_per_instance_ai()\n"
+           "r.test_keep_alive_instrument()\n"
+           "r.test_tutorial_hold()\n"
+           "r.test_live_transitions()\n"
+           "r.test_foresight_net()\n"
+           "r.test_counterfactual_factory_alive()\n"
            "r.test_repair_credit()\n"
            "r.test_reads_are_not_actions()\n"
            "r.test_dialog_labels()\n"
@@ -228,8 +265,8 @@ MUTATIONS = [
     ("a stalled reply is reported as progress", AUTO,
      '            outcome = "same page"', '            outcome = "advanced"'),
     ("every step becomes a dialog row", AUTO,
-     "        if chose is None and not args.get(\"close\"):\n            return\n",
-     ""),
+     '        if chose is None and not args.get("close") and not accepted:\n            return',
+     '        if False:\n            return'),
     ("a reply sent with no dialog open is attributed to one", AUTO,
      "        if not isinstance(db, dict) or not db.get(\"open\"):\n            return\n",
      ""),
@@ -247,8 +284,8 @@ MUTATIONS = [
     ("the outcome does not say which read produced it", AUTO,
      '            "after_source": getattr(self, "_obs_source", "unknown"),\n', ""),
     ("every closed dialog is credited to us", AUTO,
-     '            ended_by = "asked" if asked == "close" else "after_reply"',
-     '            ended_by = "asked"'),
+     '                        else ("asked" if asked == "close" else "after_reply"))',
+     '                        else "asked")'),
     ("a refused send reports itself as sent", AUTO,
      '            "dispatch_ok": bool(getattr(result, "ok", True)),',
      '            "dispatch_ok": True,'),
@@ -368,26 +405,26 @@ MUTATIONS = [
     # Its whole job is a labelled hypothesis, so the mutations attack the label and the
     # copy: an experiment that rewrites the log, or forgets to say what it assumed, is
     # the shape that later gets read as a measurement.
-    ("the fill rewrites the recorded board instead of a copy", REPLAY,
+    ("the fill rewrites the recorded board instead of a copy", BOARDS,
      "    out = json.loads(json.dumps(board))", "    out = board"),
-    ("the self max_ap is filled from the movement stat", REPLAY,
+    ("the self max_ap is filled from the movement stat", BOARDS,
      'fighter["max_ap"] = stats.get("action_points")',
      'fighter["max_ap"] = stats.get("movement_points")'),
-    ("an enemy's max hp is never inferred, so nothing becomes actionable", REPLAY,
+    ("an enemy's max hp is never inferred, so nothing becomes actionable", BOARDS,
      '        if fighter.get("max_hp") is None:\n            fighter["max_hp"] = fighter.get("hp")',
      '        if False:\n            fighter["max_hp"] = fighter.get("hp")'),
-    ("a policy that raises disappears from the report", REPLAY,
+    ("a policy that raises disappears from the report", BOARDS,
      '            errors["%s: %s" % (type(exc).__name__, str(exc)[:70])] += 1\n            continue',
      "            continue"),
-    ("the replay asks turns that are not the character's", REPLAY,
+    ("the replay asks turns that are not the character's", BOARDS,
      '        if only_my_turn and not board.get("is_my_turn"):',
      "        if False:"),
-    ("percentiles are read off the unsorted latencies", REPLAY,
+    ("percentiles are read off the unsorted latencies", BOARDS,
      "    latencies.sort()\n", ""),
-    ("an empty corpus is reported as a result", REPLAY,
+    ("an empty corpus is reported as a result", BOARDS,
      '    if not rows:\n        print("VERDICT: nothing recorded',
      '    if False:\n        print("VERDICT: nothing recorded'),
-    ("the fill hypothesis is never printed", REPLAY,
+    ("the fill hypothesis is never printed", BOARDS,
      '    print("fill hypothesis:", ASSUMPTION)\n', ""),
     # ---- G25: the producer itself, in the live page.
     # These are the shapes that made 156 of 156 recorded boards unusable, written back in
@@ -879,8 +916,8 @@ MUTATIONS = [
      "&& !_agentQuestKnown(bareStartId)) {",
      "&& false) {"),
     ("accept: the planner never uses an offered quest", PLAN,
-     "if offered == self.current_quest or offered == wanted:",
-     "if False:"),
+     '            if offered == current or offered == wanted or takes_new:',
+     '            if False:'),
     ("accept: the tutorial sends a bare start inside a dialog", PLAN,
      'return ToolCall("quest.advance", {"quest_id": qid, "reply": 0}, goal)',
      'return ToolCall("quest.advance", {"quest_id": qid}, goal)'),
@@ -898,11 +935,11 @@ MUTATIONS = [
      "if (ds.nameId != null) step.name = ds.nameId;",
      "if (false) step.name = ds.nameId;"),
     ("catalog: truncation is not reported", PAGE,
-     "if (sids.length > MAX_STEPS) out.truncated = true;",
-     "if (false) out.truncated = true;"),
+     '                        if (sids.length > shownSteps) {\n                            out.truncated = true;',
+     '                        if (false) {\n                            out.truncated = true;'),
     ("catalog: async-only rows are dropped", PAGE,
-     "if (rest.length) out.steps.push({ id: null, unlisted: true,",
-     "if (false) out.steps.push({ id: null, unlisted: true,"),
+     '                        if (rest.length) {\n                            out.steps.push({ id: null, unlisted: true,',
+     '                        if (false) {\n                            out.steps.push({ id: null, unlisted: true,'),
     ("catalog: the snapshot never builds the catalogue", PAGE,
      "if (qs.catalog.length < 12) {",
      "if (false) {"),
@@ -910,8 +947,8 @@ MUTATIONS = [
      "snap.quests_catalog = qs.catalog;",
      "snap.quests_catalog = [];"),
     ("catalog: the foreign store wins over the client row", KCTX,
-     "    observed = _observed_objective(obs, objective_id, tracker_quest_id, language)",
-     "    observed = None"),
+     '    observed = _observed_objective(obs, objective_id, tracker_quest_id, language,\n                                   observed_path)',
+     '    observed = _observed_objective({}, objective_id, tracker_quest_id, language,\n                                   observed_path)'),
     ("catalog: a row for another quest is accepted", KCTX,
      '                if int(quest.get("id")) != int(tracker_quest_id):',
      "                if False:"),
@@ -1070,7 +1107,7 @@ MUTATIONS = [
      "                        }"),
     # ---- the page build stamp a live run reads first
     ("build: the stamp stays on the old generation", PAGE,
-     "    var AGENT_BUILD = '2026-10-27a';",
+     "    var AGENT_BUILD = '%s';" % _PAGE_STAMP,
      "    var AGENT_BUILD = '2026-10-25d';"),
     ("build: the marker is set from a stale literal", PAGE,
      "        window.__agentBuild = AGENT_BUILD;",
@@ -1106,8 +1143,8 @@ MUTATIONS = [
      "        quests = 0"),
     # ---- G12: the installed map-transition watchdog, executed offline
     ("watchdog: the stalled map is not unlocked", ENGINE,
-     'window.foreground.unlock("loadMap");',
-     'window.foreground.unlock("zzz");'),
+     'window.foreground.unlock("loadMap");window.foreground.unlock("quickReconnection");',
+     'window.foreground.unlock("zzzLoad");window.foreground.unlock("zzzQuick");'),
     ("watchdog: the loading flag stays set", ENGINE,
      "_selfTr._isMapLoading=!1;",
      "_selfTr._isMapLoading=!0;"),
@@ -1251,6 +1288,295 @@ MUTATIONS = [
     ("command data: every phrasing lands in train", CDATA,
      'if len(rows) >= 3:\n            train_rows, val_row, test_row = rows[:-2], rows[-2], rows[-1]',
      'if len(rows) >= 3:\n            train_rows, val_row, test_row = rows, None, None'),
+    # ---- egress preflight and the host launcher guard
+    ("egress: a dead upstream is only a warning", READY2,
+     '        return _entry("FAIL", "egress",\n                      "upstream %s:%d is not listening',
+     '        return _entry("WARN", "egress",\n                      "upstream %s:%d is not listening'),
+    ("egress: pool entries are never probed", READY2,
+     '        live = [e for e in live if e and _port_open(e[0], e[1], 0.6)]',
+     '        live = []'),
+    ("host: the launcher ignores the preflight", HOSTCTL,
+     '    if not gate.get("ok"):',
+     '    if False:'),
+    ("host: an unsafe target rectangle is accepted", HOSTCTL,
+     '    if window is None:\n        return True',
+     '    if True:\n        return True'),
+    # ---- the unattended live runner
+    ("live: the runner launches into a dead egress anyway", AUTOLIVE,
+     '    return (not blocking or force), blocking',
+     '    return True, blocking'),
+    ("live: the runner trusts a slot it never saw in a world", AUTOLIVE,
+     '        if last.get("in_world"):',
+     '        if True:'),
+    ("live: the stop file is ignored while waiting", AUTOLIVE,
+     '        if stop.exists():\n            return {"ok": False, "reason": "stop file", "last": last}',
+     '        if False:\n            return {"ok": False, "reason": "stop file", "last": last}'),
+    ("live: a torn log line crashes the round accounting", AUTOLIVE,
+     '            if not isinstance(row, dict):\n                continue',
+     '            if False:\n                continue'),
+    # ---- the login screen, which used to need a person
+    ("live: the runner presses the wrong login path", AUTOLIVE,
+     '    data = call(slot, "session.login", {"target": "guest"}, timeout=20.0)',
+     '    data = call(slot, "session.login", {}, timeout=20.0)'),
+    ("live: a connected page at the login screen is only polled", AUTOLIVE,
+     '        if login is not None and last.get("connected") and time.time() - tried_login >= every_s:',
+     '        if False:'),
+    ("host: the UIA read takes any window of the host process", HOSTCTL,
+     "$win = $cands | Where-Object { $_.Current.Name -notmatch 'WebView2|Instance #' -and $_.Current.Name -match 'Farm|Manager' } | Select-Object -First 1",
+     "$win = $cands[0]"),
+    ("host: the running count is read without raising the panel", HOSTCTL,
+     '    if items is None:\n        focus_host()\n        items = elements()',
+     '    if items is None:\n        items = elements()'),
+    ("login: inspect mode presses the button anyway", PAGE,
+     '                if (inspectOnly) return _agentResult(true, out);',
+     '                if (false) return _agentResult(true, out);'),
+    ("login: the guest step is picked by button order, not by what is stored", PAGE,
+     "                    var step = saved ? '_continueGuest' : '_createGuest';",
+     "                    var step = '_continueGuest';"),
+    ("login: a press does not look at the screen it caused", PAGE,
+     '                    out.after = { in_world: !!(after && after.in_world),',
+     '                    out.after = { in_world: null,'),
+    ("login: the tool writes credentials itself", PAGE,
+     "                    var g = raw && JSON.parse(raw)['all#guestAccount'];",
+     "                    var g = raw && JSON.parse(raw)['all#guestAccount'];\n                    if (g && g.login) { try { window.dofus.setCredentials(g.login, g.password); } catch (eX) {} }"),
+    ("login: a press is reported even when nothing was pressed", PAGE,
+     '                if (!pressed) return _agentResult(false, out,',
+     '                if (false) return _agentResult(false, out,'),
+    # ---- foresight, live transitions, and the counterfactual factory
+    ("factory: the harness stops reporting an NPC offer", WORLD,
+     '        if self.map_id is None:\n            return None\n        for quest in sorted(self.quests.values(), key=lambda q: q.id):',
+     '        if True:\n            return None\n        for quest in sorted(self.quests.values(), key=lambda q: q.id):'),
+    ("factory: the offer is published under a key the planner cannot read", WORLD,
+     '            "dialog": ({"open": True, "start_quest": offer.id, "npc_id": offer.start_npc,',
+     '            "dialog_mutant": ({"open": True, "start_quest": offer.id, "npc_id": offer.start_npc,'),
+    ("factory: an objective type gates a quest offer again (the focus/id confusion)", PLAN,
+     '            if focus is not None and focus in OBJECTIVE_TYPES:',
+     '            if False:'),
+    ("transition: an hp tick counts as the world moving", TRANS,
+     '        world = sorted(set(changed) & set(WORLD_KEYS))',
+     '        world = sorted(changed)'),
+    ("transition: progress widened to any change", TRANS,
+     '        progress = sorted(set(changed) & set(PROGRESS_KEYS))',
+     '        progress = sorted(changed)'),
+    ("transition: a read is counted as an action", TRANS,
+     '            "was_read": tool in READ_ONLY_TOOLS,',
+     '            "was_read": False,'),
+    ("transition: silence does not end a segment", TRANS,
+     '        broken = (current is not None and gap_s > 0 and ts and last_ts',
+     '        broken = (False and current is not None and gap_s > 0 and ts and last_ts'),
+    ("transition: the split is by row instead of by segment", TRANS,
+     '            sinks[plan[row["segment"]]].write(',
+     '            sinks[split_of(row["id"])].write('),
+    ("transition: the live state vector is dropped", TRANS,
+     '                if len(candidate) == FEATURE_COUNT:',
+     '                if False:'),
+    ("foresight: a read may outrank an action", FORE,
+     '        out.sort(key=lambda r: (r["read"], -r["gain"], -r["move_prob"]))',
+     '        out.sort(key=lambda r: (-r["gain"], -r["move_prob"]))'),
+    ("foresight: a broken artifact loads anyway", FORE,
+     '        if any(name not in arrays for name in required):',
+     '        if False:'),
+    ("foresight: a stale feature width scores silently", FORE,
+     '        if vec.shape[-1] != self.width:\n            raise ValueError(',
+     '        if False:\n            raise ValueError('),
+    # ---- the bundle updater: the only witness is a launch against the real CDN,
+    # so the source text is what can be pinned here (measured 2026-10-27: a reused
+    # WebClient loses its User-Agent after request one and the origin 403s, which
+    # kept the client on build 1.74.9 while the server ran 1.74.10).
+    ("update: the second request from a client goes without a User-Agent", CSBUNDLE,
+     '                        if (!string.IsNullOrEmpty(Agent)) http.UserAgent = Agent;',
+     '                        // if (!string.IsNullOrEmpty(Agent)) http.UserAgent = Agent;'),
+    ("update: the UA is handed to the shared header bag again", CSBUNDLE,
+     '                    wc.Agent = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36";',
+     '                    wc.Headers["User-Agent"] = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36";'),
+    ("update: a staged bundle is judged on the page it never downloads", CSBUNDLE,
+     '                        if (!Validate(staging, false, out stagedWhy))',
+     '                        if (!Validate(staging, out stagedWhy))'),
+    ("update: an unpatched bundle is adopted anyway", CSBUNDLE,
+     '                        if (File.Exists(stagedScript) && coreTotal > 0 && coreHit == 0)',
+     '                        if (File.Exists(stagedScript) && false)'),
+    ("update: instances race to overwrite the same script.js", CSBUNDLE,
+     '            lock (_gate) { return UpdateLocked(proxyPort, log); }',
+     '            return UpdateLocked(proxyPort, log);'),
+    ("update: the page keeps pointing at the bundle it replaced", CSBUNDLE,
+     '                            RewriteCacheBusters(dir, log);\n                        }\n                        return adopted;',
+     '                        }\n                        return adopted;'),
+    # ---- multi-instance selection (panel choice, loop children, bridge fan-out)
+    ("multi: only one instance can ever be selected", CSPA,
+     "        public List<int> TargetSlots = new List<int>();",
+     "        public int TargetSlotsFixed = 0;"),
+    ("multi: the choice is not persisted", CSPA,
+     '                        case "target_slots":',
+     '                        case "target_slots_disabled":'),
+    ("multi: an empty selection addresses nothing instead of all", CSPA,
+     '            return ids.Count == 0 ? "all" : string.Join(",", ids.ToArray());',
+     '            return ids.Count == 0 ? null : string.Join(",", ids.ToArray());'),
+    ("multi: every loop writes into one shared log", CSPA,
+     '                        : Path.Combine(stateDir, "autopilot." + instance + ".jsonl");',
+     '                        : logFile;'),
+    ("multi: one loop leaving declares the machine idle", CSPA,
+     "            if (!anyLeft)\n            {",
+     "            if (true)\n            {"),
+    ("multi: all means the configured list, not the open windows", CSB2,
+     "                        foreach (string active in _backend.GetActiveInstanceIds())",
+     "                        foreach (string active in new string[0])"),
+    ("multi: a directive can name only one client", CSB2,
+     "                foreach (string part in target.Split(','))",
+     "                foreach (string part in new string[0])"),
+    ("multi: a fan-out mislabels an answer from another window", CSB2,
+     "                string fallback = allowFallback ? FirstActiveInstance() : null;",
+     "                string fallback = FirstActiveInstance();"),
+    # ---- the round manifest's own accounting, falsified by a real live round
+    ("summarise: steps are matched by a kind no row has ever had", AUTOLIVE,
+     '    return row.get("index") is not None and bool(row.get("tool"))',
+     '    return row.get("kind") == "step"'),
+    ("summarise: the executed rows are filtered on the old kind again", AUTOLIVE,
+     '            if not isinstance(row, dict) or not _is_step_row(row):',
+     '            if not isinstance(row, dict) or row.get("kind") != "step":'),
+    ("summarise: a map change is read from a vector the rows do not carry", AUTOLIVE,
+     '    if "map_id" in value:',
+     '    if False:'),
+    # ---- per-instance AI: one client's badge must not describe or drive the farm
+    ("badge: the pill stops every loop again", PAGE,
+     "action: this.aiRunning ? 'stop_one' : 'start_one'",
+     "action: this.aiRunning ? 'stop_all' : 'start_auto'"),
+    ("badge: every window is told the farm-wide answer", CMAINF,
+     "bool running = _aiPanel != null && _aiPanel.IsRunningFor(instanceId);",
+     "bool running = _aiPanel != null && _aiPanel.RunningNow;"),
+    ("badge: one instance's status reads the shared log", CSPA,
+     "string line = ReadLastStepLine(StepLogFor(instanceId));",
+     "string line = ReadLastStepLine();"),
+    ("badge: a child is not attributed to its instance", CSPA,
+     "                        _instanceByProc[p] = instance;",
+     "                        _instanceByProc[p] = null;"),
+    ("badge: the badge diff remembers one flag for all windows", CMAINF,
+     "                            _aiPushedByInstance[id] = mine;",
+     "                            _aiPushedByInstance[\"all\"] = mine;"),
+    ("badge: the host ignores a per-instance request", CMAINF,
+     "                        else if (string.Equals(action, \"start_one\", StringComparison.OrdinalIgnoreCase))",
+     "                        else if (string.Equals(action, \"start_one_disabled\", StringComparison.OrdinalIgnoreCase))"),
+    ("stop: one instance writes the farm-wide stop file", CSPA,
+     "File.WriteAllText(StopFilePath(instanceId), why + \" at \" + DateTime.Now.ToString(\"HH:mm:ss\")); }",
+     "File.WriteAllText(StopFilePath(null), why + \" at \" + DateTime.Now.ToString(\"HH:mm:ss\")); }"),
+    ("stop: every child watches the same stop file again", CSPA,
+     "+ \" --stop-file \\\"\" + childStop + \"\\\"\"",
+     "+ \" --stop-file \\\"\" + stopFile + \"\\\"\""),
+    ("start: a badge start reuses the panel's shared selection", CSPA,
+     "string policyOverride = null, string onlyInstance = null)",
+     "string policyOverride = null)"),
+    # ---- the status reader: the pill said "waiting for the first step" about loops
+    # that had taken 44 steps (measured live 2026-10-27)
+    ("status: the step tail window is 8 KB again", CSPA,
+     "long start = Math.Max(0, len - 65536);",
+     "long start = Math.Max(0, len - 8192);"),
+    ("status: one short Read ends the tail", CSPA,
+     "                    while (got < buf.Length)",
+     "                    while (false)"),
+    ("status: a fragment of a row is served as the last step", CSPA,
+     '                        if (line.IndexOf("\\"index\\"") < 0) continue;',
+     '                        // if (line.IndexOf("\\"index\\"") < 0) continue;'),
+    ("status: the selftest lost its witness for a mis-formatted row", CSPROG,
+     "bool wrongShape = parsed && !UI.AiPanel.FormatStatus(true, line).Contains(\"step\");",
+     "bool wrongShape = false;"),
+    ("status: an instance ask silently reads the farm-wide log", CSPROG,
+     "bool fellBack = askedForInstance && !log.EndsWith(instance + \".jsonl\");",
+     "bool fellBack = false;"),
+    ("status: the instance argument is read from one fixed index again", CSPROG,
+     'if (!args[i].StartsWith("--")) { instance = args[i]; break; }',
+     '{ }'),
+    # ---- the target picker and Start, both measured live on 2026-10-27: the dialog
+    # held "All instances" and "#1" checked together, and Start refused a second
+    # instance because a first one was already running.
+    ("picker: a chosen row no longer clears 'All instances'", CSPA,
+     "                if (box.GetItemChecked(0)) box.SetItemChecked(0, false);",
+     "                if (false) box.SetItemChecked(0, false);"),
+    ("picker: the 'All instances' tick swallows the chosen rows", CSPA,
+     "                if (list.GetItemChecked(i)) next.Add(i);",
+     "                if (list.GetItemChecked(i) && !list.GetItemChecked(0)) next.Add(i);"),
+    ("picker: the farm-wide refusal runs before the selection", CSPA,
+     "            if (picked.Count > 0)",
+     "            if (picked.Count > 99)"),
+    ("picker: Start goes dark again while any loop runs", CSPA,
+     "_btnStart.Enabled = !running || SelectedSlots().Count > 0;",
+     "_btnStart.Enabled = !running;"),
+    ("picker: a new selection leaves the button state stale", CSPA,
+     "            SetRunningUi(RunningNow);",
+     "            // (no button refresh)"),
+    ("picker: a selected instance is reported instead of started", CSPA,
+     "                    StartInstance(id, force);",
+     "                    Append(\"[ai] would start \" + id);"),
+    # ---- the inactivity kick during a live run (measured 2026-10-27): the client's
+    # own timer warns at 5 min idle and calls disconnect("INACTIVITY") at 10, and the
+    # keep-alive gate could be shut by a page reload while the loop was still driving.
+    ("keep-alive: a directive no longer marks the client's activity", PAGE,
+     "                try { window.__agentMarkActivity('directive'); } catch (eAct) {}",
+     "                // try { window.__agentMarkActivity('directive'); } catch (eAct) {}"),
+    ("keep-alive: the marks are no longer published in the observation", PAGE,
+     "                        marks: ka.marks || 0, failed: ka.failed || 0,",
+     "                        marks: 0, failed: 0,"),
+    ("keep-alive: a missing recordActivity is counted as a success", PAGE,
+     "            rec.present = false;\n            rec.failed += 1;",
+     "            rec.present = true;\n            rec.marks += 1;"),
+    ("keep-alive: the tracker is looked for only on connectionManager again", PAGE,
+     "            var found = window.__agentActivityTracker();",
+     "            var found = null;"),
+    # ---- the loop side of the same instrument: the page counts, the run reports.
+    ("afk: the step row stops folding in the witness", AUTO,
+     "                self._note_keep_alive(after)",
+     "                pass  # (no witness folding)"),
+    ("afk: a client with nothing to call is reported as covered", AUTO,
+     '        if record.get("present"):',
+     '        if record.get("marks"):'),
+    ("afk: the counters keep the last reading, not the worst", AUTO,
+     '        counters["marks"] = max(counters["marks"], int(record.get("marks") or 0))',
+     '        counters["marks"] = int(record.get("marks") or 0)'),
+    # ---- the bounded tutorial hold: measured live, 119 and 120 identical no-ops in
+    # two sessions, because the wait cleared its own counters and re-dispatched.
+    ("hold: an expired window is not counted as a cycle", AUTO,
+     "        self._hold_cycles += 1",
+     "        pass  # (uncounted)"),
+    ("hold: an expired window releases the call on every pass", AUTO,
+     "        if (now - self._hold_started_at) < TUTORIAL_HOLD_S:",
+     "        if True:"),
+    ("hold: a new step does not get its own window", AUTO,
+     "        if key != self._hold_key:",
+     "        if False:"),
+    ("hold: the wait is spent dispatching again", AUTO,
+     "                        self._hold_wait(goal, before)",
+     "                        time.sleep(1.0)"),
+    ("talk: a dead talk is counted but nothing is done", AUTO,
+     "                        if self._dead_talks[key] >= DEAD_TALK_TRIES:",
+     "                        if False:"),
+    ("talk: the page's receipt is ignored", AUTO,
+     'in ("talked", "walk_then_talk"))):',
+     'in ("talked",))):'),
+    ("nav: a declined crossing is not recognised", AUTO,
+     "        if exit_to.get(\"direction\") == direction and cell in (",
+     "        if False and exit_to.get(\"direction\") == direction and cell in ("),
+    ("nav: the crossing is re-asked after the bound", AUTO,
+     "                        if self._dead_navs[key] >= DEAD_TALK_TRIES:",
+     "                        if False:"),
+    ("talk: the unwrapper reads the wrapper, not the payload", EXEC,
+     "    inner = data.get(\"response\")",
+     "    inner = data"),
+    ("talk: the counter is reset instead of accumulating", AUTO,
+     "self._dead_talks[key] = self._dead_talks.get(key, 0) + 1",
+     "self._dead_talks[key] = 1"),
+    ("hold: the held call is dispatched anyway", AUTO,
+     "                if call is not None and self._holding(call, before):",
+     "                if False:"),
+    ("hold: a moved world does not release it", AUTO,
+     "        if self._hold_world != _world_sig(obs):",
+     "        if False:"),
+    ("hold: the signature forgets where the character stands", AUTO,
+     '    return "%s|%s|%s|%s" % (flat.get("map_id"), flat.get("cell"),',
+     '    return "%s|%s|%s|%s" % (flat.get("map_id"), 0,'),
+    ("afk: the summary stops reporting the witness", AUTO,
+     '"keep_alive": dict(getattr(self, "_keep_alive", {})),',
+     '"keep_alive": {},'),
+    ("keep-alive: a reloaded page never asks the host for its state", PAGE,
+     "                window.chrome.webview.postMessage({ type: 'AI_REQUEST', action: 'state' });",
+     "                // (no startup state ask)"),
 ]
 
 
@@ -1265,6 +1591,13 @@ def run_sections():
     labels = [ln.strip(" -") for ln in out.splitlines() if ln.strip().startswith("-")]
     return labels, proc.returncode, out
 
+
+if __name__ != "__main__":
+    # This file writes deliberately broken code into the working tree the moment it is
+    # imported, so an accidental `import mutate_cause_gate` (or a spec loader in a
+    # verification script) must stop here rather than run a sweep nobody asked for.
+    raise SystemExit("mutate_cause_gate.py mutates the working tree; run it as a program, "
+                     "do not import it")
 
 bad = []
 # `MUT_ONLY=substring` runs one batch of mutations. The driver writes broken code into

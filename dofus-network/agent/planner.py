@@ -31,7 +31,8 @@ from agent.jsonio import loads as fast_loads
 from agent.dialog_policy import rank_dialog
 from agent.awareness import quest_key, scene_key
 from agent.features import (CRAFT_TYPES, DELIVER_TYPES,  # noqa: E402
-                            KILL_TYPES, MAP_TYPES, ObsTracker, TALK_TYPES,
+                            KILL_TYPES, MAP_TYPES, OBJECTIVE_TYPES,
+                            ObsTracker, TALK_TYPES,
                             _params, declares_monster_target, direction_hint,
                             known_map, required_map, travel_hops)
 from agent.verifier import READ_ONLY_TOOLS  # noqa: E402
@@ -866,6 +867,14 @@ class QuestPlanner:
             try:
                 focus = int(self.focus) if self.focus is not None else None
             except (TypeError, ValueError):
+                focus = None
+            # `focus` carries two different meanings by caller: the harness steers the curriculum
+            # by objective *type* (`_focus_order`/`_by_type`), while a run that was told to pursue
+            # one quest carries a quest *id*. Only the id reading may gate an offer, and the
+            # objective-type enumeration is what decides which one this is — comparing a type
+            # against a quest id refused every offer, which silently took the counterfactual
+            # corpus generator to zero rows.
+            if focus is not None and focus in OBJECTIVE_TYPES:
                 focus = None
             active_ids = set()
             raw_active = obs.get("quests_active")

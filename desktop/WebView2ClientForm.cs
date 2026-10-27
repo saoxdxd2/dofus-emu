@@ -194,14 +194,6 @@ namespace DofusFarm.Engine
         private static readonly ConcurrentQueue<byte[]> CdnCopyBufferPool = new ConcurrentQueue<byte[]>();
 
         private WebView2 _webView;
-        private Panel _toolbarPanel;
-        private Label _lblStatus;
-        private Label _lblMemory;
-        private Button _btnZoom;
-        private Button _btnAutoFight;
-        private Button _btnDevTools;
-        private Button _btnReload;
-        private System.Windows.Forms.Timer _telemetryTimer;
 
         // Every window reports the host process's memory, so reading it once
         // per window every 2 s created N Process objects for the same values.
@@ -234,7 +226,6 @@ namespace DofusFarm.Engine
         }
 
         private bool _autoZoomEnabled = true;
-        private bool _autoFightEnabled = false;
         private bool _isUpdatingZoom = false;
         private double _currentZoomFactor = 1.0;
 
@@ -657,25 +648,6 @@ namespace DofusFarm.Engine
         {
         }
 
-        private Button MakeToolbarButton(string text, Size size, Point location, Color back, Font font)
-        {
-            var button = new Button
-            {
-                Text = text,
-                Size = size,
-                Location = location,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = back,
-                ForeColor = Color.White,
-                Font = font,
-                Cursor = Cursors.Hand
-            };
-            button.FlatAppearance.BorderSize = 0;
-            _toolbarPanel.Controls.Add(button);
-            return button;
-        }
-
         private void InitializeForm()
         {
             Text = string.Format("[WebView2] {0} - Dofus Farm", _displayName);
@@ -691,90 +663,14 @@ namespace DofusFarm.Engine
             }
             catch { }
 
-            // Top control bar
-            _toolbarPanel = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 32,
-                BackColor = Color.FromArgb(30, 41, 59),
-                Padding = new Padding(8, 4, 8, 4)
-            };
-
-            _lblStatus = new Label
-            {
-                Text = "⚡ Initializing WebView2 runtime...",
-                ForeColor = Color.FromArgb(56, 189, 248),
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-                AutoSize = true,
-                Location = new Point(8, 7)
-            };
-            _toolbarPanel.Controls.Add(_lblStatus);
-
-            _lblMemory = new Label
-            {
-                Text = "RAM: -- MB",
-                ForeColor = Color.FromArgb(148, 163, 184),
-                Font = new Font("Segoe UI", 9f, FontStyle.Regular),
-                AutoSize = true,
-                Location = new Point(320, 7)
-            };
-            _toolbarPanel.Controls.Add(_lblMemory);
-
-            _btnAutoFight = new Button
-            {
-                Text = "⚡ THX-01: OFF",
-                Size = new Size(100, 24),
-                Location = new Point(Width - 380, 4),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(51, 65, 85),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
-                Cursor = Cursors.Hand
-            };
-            _btnAutoFight.FlatAppearance.BorderSize = 0;
-            _btnAutoFight.Click += (s, e) => ToggleAutoFight();
-            _toolbarPanel.Controls.Add(_btnAutoFight);
-
-            _btnZoom = MakeToolbarButton("🔍 Auto", new Size(95, 24), new Point(Width - 275, 4),
-                Color.FromArgb(37, 99, 235), new Font("Segoe UI", 8.25f, FontStyle.Bold));
-            _btnZoom.Click += (s, e) => CycleZoomMode();
-
-            _btnDevTools = MakeToolbarButton("🛠️ DevTools", new Size(84, 24), new Point(Width - 175, 4),
-                Color.FromArgb(51, 65, 85), new Font("Segoe UI", 8.25f));
-            _btnDevTools.Click += (s, e) => { if (IsReady && _webView != null && _webView.CoreWebView2 != null) _webView.CoreWebView2.OpenDevToolsWindow(); };
-
-            _btnReload = MakeToolbarButton("🔄 Reload", new Size(76, 24), new Point(Width - 86, 4),
-                Color.FromArgb(37, 99, 235), new Font("Segoe UI", 8.25f, FontStyle.Bold));
-            _btnReload.Click += async (s, e) =>
-            {
-                if (IsReady && _webView != null && _webView.CoreWebView2 != null)
-                {
-                    try { await _webView.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache | CoreWebView2BrowsingDataKinds.CacheStorage); } catch { }
-                    _webView.Reload();
-                }
-            };
-            _toolbarPanel.Controls.Add(_btnReload);
-
-            Controls.Add(_toolbarPanel);
-
-            // WebView2 browser control
+            // The browser is the entire client surface. Instance controls live
+            // in the main farm window and the in-page HUD, not in a second bar.
             _webView = new WebView2
             {
                 Dock = DockStyle.Fill,
                 BackColor = Color.FromArgb(15, 23, 42)
             };
             Controls.Add(_webView);
-            _webView.BringToFront();
-
-            // Telemetry timer (measures memory and CPU). Settings → Runtime can
-            // turn it off for farms that do not show the window statistics.
-            if (RuntimeSettings.Current.Telemetry)
-            {
-                _telemetryTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-                _telemetryTimer.Tick += (s, e) => UpdateMemoryUsage();
-                _telemetryTimer.Start();
-            }
         }
 
         public async Task StartAsync()
@@ -1010,15 +906,30 @@ namespace DofusFarm.Engine
                     "                }} catch(e) {{}}\n" +
                     "                console.log('[Auth] Automatically initiating direct guest socket login (attempt ' + (attempts + 1) + '/5)');\n" +
                     "                setTimeout(function() {{ try {{ window.gui.loginScreen.playWithGuest(); }} catch(e) {{}} }}, 800);\n" +
-                    "                var _watch = setInterval(function() {{\n" +
-                    "                    try {{\n" +
-                    "                        var ch = window.gui && window.gui.playerData && window.gui.playerData.character;\n" +
-                    "                        if (ch && ch.id != null) {{\n" +
-                    "                            clearInterval(_watch);\n" +
-                    "                            console.log('[Auth] Guest login succeeded as ' + ch.name + ' (id ' + ch.id + ')');\n" +
-                    "                        }}\n" +
-                    "                    }} catch(e) {{}}\n" +
-                    "                }}, 1000);\n" +
+                "                var _watchTicks = 0;\n" +
+                "                var _watch = setInterval(function() {{\n" +
+                "                    try {{\n" +
+                "                        var ch = window.gui && window.gui.playerData && window.gui.playerData.character;\n" +
+                "                        if (ch && ch.id != null) {{\n" +
+                "                            clearInterval(_watch);\n" +
+                "                            console.log('[Auth] Guest login succeeded as ' + ch.name + ' (id ' + ch.id + ')');\n" +
+                "                            return;\n" +
+                "                        }}\n" +
+                "                        // The socket login can wedge without ever answering: two\n" +
+                "                        // instances sat at 'attempt 1/5' for an hour and needed a\n" +
+                "                        // manual reload to reach the world. The client retries\n" +
+                "                        // nothing on its own, so a fresh document is the only\n" +
+                "                        // progress available - and it also re-lays-out the login\n" +
+                "                        // screen for the window the instance has now. The 5-attempt\n" +
+                "                        // budget above bounds this, and 60s stays clear of the 20s\n" +
+                "                        // guard that stops an immediate re-fire.\n" +
+                "                        if (++_watchTicks === 60) {{\n" +
+                "                            clearInterval(_watch);\n" +
+                "                            console.log('[Auth] guest login made no progress in 60s; reloading to retry');\n" +
+                "                            location.reload();\n" +
+                "                        }}\n" +
+                "                    }} catch(e) {{}}\n" +
+                "                }}, 1000);\n" +
                     "                setTimeout(function() {{ clearInterval(_watch); }}, 120000);\n" +
                     "            }}\n" +
                     "        }}, 400);\n" +
@@ -1244,12 +1155,9 @@ namespace DofusFarm.Engine
                         _currentZoomFactor = _webView.ZoomFactor;
                         _autoZoomEnabled = false;
                     }
-                    UpdateZoomButtonText();
                 };
 
                 IsReady = true;
-                _lblStatus.Text = string.Format("⚡ WebView2 Engine Active ({0})", _options.Profile != null ? _options.Profile.DisplayName : "Direct");
-                _lblStatus.ForeColor = Color.FromArgb(74, 222, 128);
 
                 if (_autoZoomEnabled)
                 {
@@ -1315,8 +1223,6 @@ namespace DofusFarm.Engine
             catch (Exception ex)
             {
                 IsReady = false;
-                _lblStatus.Text = "❌ Initialization Failed";
-                _lblStatus.ForeColor = Color.FromArgb(248, 113, 113);
                 _logCallback?.Invoke(string.Format("[{0}] WebView2 Initialization Error: {1}", _instanceId, ex.Message));
                 MessageBox.Show(
                     "WebView2 runtime failed to initialize:\n\n" + ex.Message,
@@ -1348,10 +1254,6 @@ namespace DofusFarm.Engine
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            if (_lblMemory != null)
-            {
-                _lblMemory.Visible = (Width >= 620);
-            }
 
             if (IsReady && _webView != null && _webView.CoreWebView2 != null)
             {
@@ -1422,14 +1324,11 @@ namespace DofusFarm.Engine
 
             if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
             {
-                _lblStatus.Text = "❌ Browser Crashed";
-                _lblStatus.ForeColor = Color.FromArgb(248, 113, 113);
+                IsReady = false;
             }
             else if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited ||
                      e.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
             {
-                _lblStatus.Text = "⚠️ Renderer Restarting...";
-                _lblStatus.ForeColor = Color.FromArgb(250, 204, 21);
                 _webView.Reload();
             }
         }
@@ -1492,8 +1391,6 @@ namespace DofusFarm.Engine
                             ?? SafeHeader(e.Response.Headers, "x-amz-cf-id");
                         _logCallback?.Invoke(string.Format("[{0}] [OAUTH-BLOCKED] {1}",
                             _instanceId, CloudFrontBlockAdvice(requestId, uri)));
-                        _lblStatus.Text = "⛔ Login blocked by CloudFront (exit IP)";
-                        _lblStatus.ForeColor = Color.FromArgb(248, 113, 113);
                     }
                 }
             }
@@ -1614,15 +1511,6 @@ namespace DofusFarm.Engine
                         mReason.Success ? mReason.Groups[1].Value : "unknown",
                         mVia.Success ? mVia.Groups[1].Value : "?"));
                 }
-                else if (json.Contains("\"type\":\"FARMBOT_STATE\""))
-                {
-                    Match m = WmEnabledRe.Match(json);
-                    if (m.Success)
-                    {
-                        _autoFightEnabled = bool.Parse(m.Groups[1].Value);
-                        UpdateAutoFightButtonState();
-                    }
-                }
                 else if (json.Contains("\"type\":\"AI_REQUEST\""))
                 {
                     Match mAction = WmActionRe.Match(json);
@@ -1718,7 +1606,6 @@ namespace DofusFarm.Engine
                     _preFullscreenStyle = FormBorderStyle;
                     _preFullscreenWindowState = WindowState;
 
-                    if (_toolbarPanel != null) _toolbarPanel.Visible = false;
                     WindowState = FormWindowState.Normal;
                     FormBorderStyle = FormBorderStyle.None;
                     Bounds = Screen.FromControl(this).Bounds;
@@ -1734,7 +1621,6 @@ namespace DofusFarm.Engine
                         Bounds = _preFullscreenBounds;
                     }
                     WindowState = _preFullscreenWindowState;
-                    if (_toolbarPanel != null) _toolbarPanel.Visible = true;
                     _isFullscreen = false;
                     _logCallback?.Invoke(string.Format("[{0}] [FULLSCREEN] Exited fullscreen", _instanceId));
                 }
@@ -1869,12 +1755,6 @@ namespace DofusFarm.Engine
                     BringToFront();
                 }
 
-                if (_lblStatus != null)
-                {
-                    _lblStatus.Text = string.Format("⚠️ [{0}] {1}: {2}", isMod ? "MOD ALERT" : "WHISPER", sender, text.Length > 40 ? text.Substring(0, 40) + "..." : text);
-                    _lblStatus.ForeColor = isMod ? Color.FromArgb(239, 68, 68) : Color.FromArgb(56, 189, 248);
-                }
-
                 // Dispatch to Discord Webhook if configured
                 string webhookUrl = Environment.GetEnvironmentVariable("DOFUS_MOD_WEBHOOK");
                 if (!string.IsNullOrEmpty(webhookUrl))
@@ -1974,12 +1854,6 @@ namespace DofusFarm.Engine
                                     string directive = mDir.Success ? mDir.Groups[1].Value : "ACTION";
                                     Match mExp = Regex.Match(response, "\"explanation\"\\s*:\\s*\"([^\"]+)\"");
                                     string exp = mExp.Success ? Regex.Unescape(mExp.Groups[1].Value) : queryText;
-
-                                    if (_lblStatus != null && !IsDisposed)
-                                    {
-                                        _lblStatus.Text = string.Format("🤖 [{0}] {1}", directive, exp.Length > 40 ? exp.Substring(0, 40) + "..." : exp);
-                                        _lblStatus.ForeColor = Color.FromArgb(168, 85, 247);
-                                    }
 
                                     if (_webView != null && _webView.CoreWebView2 != null)
                                     {
@@ -2548,92 +2422,6 @@ namespace DofusFarm.Engine
             }
         }
 
-        private void ToggleAutoFight()
-        {
-            _autoFightEnabled = !_autoFightEnabled;
-            UpdateAutoFightButtonState();
-            if (IsReady && _webView != null && _webView.CoreWebView2 != null)
-            {
-                string js = string.Format("window.__FarmBot && window.__FarmBot.setEnabled({0});", _autoFightEnabled ? "true" : "false");
-                _webView.CoreWebView2.ExecuteScriptAsync(js);
-            }
-        }
-
-        private void UpdateAutoFightButtonState()
-        {
-            if (_btnAutoFight == null) return;
-            if (InvokeRequired)
-            {
-                Invoke(new Action(UpdateAutoFightButtonState));
-                return;
-            }
-            if (_autoFightEnabled)
-            {
-                _btnAutoFight.Text = "⚡ THX-01: ON";
-                _btnAutoFight.BackColor = Color.FromArgb(16, 185, 129);
-            }
-            else
-            {
-                _btnAutoFight.Text = "⚡ THX-01: OFF";
-                _btnAutoFight.BackColor = Color.FromArgb(51, 65, 85);
-            }
-        }
-
-        private void CycleZoomMode()
-        {
-            if (!IsReady || _webView == null || _webView.CoreWebView2 == null) return;
-
-            // Cycle: Auto -> 100% -> 80% -> 65% -> 50% -> Auto
-            if (_autoZoomEnabled)
-            {
-                _autoZoomEnabled = false;
-                SetZoom(1.0);
-            }
-            else
-            {
-                double z = _webView.ZoomFactor;
-                if (Math.Abs(z - 1.0) < 0.05)
-                {
-                    SetZoom(0.80);
-                }
-                else if (Math.Abs(z - 0.80) < 0.05)
-                {
-                    SetZoom(0.65);
-                }
-                else if (Math.Abs(z - 0.65) < 0.05)
-                {
-                    SetZoom(0.50);
-                }
-                else
-                {
-                    _autoZoomEnabled = true;
-                    ApplyAutoZoom();
-                }
-            }
-        }
-
-        private void SetZoom(double factor)
-        {
-            if (!IsReady || _webView == null || _webView.CoreWebView2 == null) return;
-            try
-            {
-                _isUpdatingZoom = true;
-                double clamped = Math.Max(0.25, Math.Min(3.0, factor));
-                _webView.ZoomFactor = clamped;
-                _currentZoomFactor = clamped;
-            }
-            catch (Exception ex)
-            {
-                _logCallback?.Invoke(string.Format("[{0}] SetZoom error: {1}", _instanceId, ex.Message));
-            }
-            finally
-            {
-                _isUpdatingZoom = false;
-            }
-            UpdateZoomButtonText();
-            TriggerGameResize();
-        }
-
         private void ApplyAutoZoom()
         {
             if (!IsReady || _webView == null || _webView.CoreWebView2 == null) return;
@@ -2661,36 +2449,13 @@ namespace DofusFarm.Engine
                     _currentZoomFactor = clampedZoom;
                     _webView.ZoomFactor = clampedZoom;
                     BeginInvoke(new Action(() => { _isUpdatingZoom = false; }));
-                    UpdateZoomButtonText();
                     TriggerGameResize();
-                }
-                else
-                {
-                    UpdateZoomButtonText();
                 }
             }
             catch (Exception ex)
             {
                 _isUpdatingZoom = false;
                 _logCallback?.Invoke(string.Format("[{0}] AutoZoom error: {1}", _instanceId, ex.Message));
-            }
-        }
-
-        private void UpdateZoomButtonText()
-        {
-            if (_btnZoom == null || _btnZoom.IsDisposed) return;
-            if (_webView == null) return;
-
-            int pct = (int)Math.Round(_webView.ZoomFactor * 100.0);
-            if (_autoZoomEnabled)
-            {
-                _btnZoom.Text = string.Format("🔍 Auto ({0}%)", pct);
-                _btnZoom.BackColor = Color.FromArgb(37, 99, 235);
-            }
-            else
-            {
-                _btnZoom.Text = string.Format("🔍 {0}%", pct);
-                _btnZoom.BackColor = Color.FromArgb(51, 65, 85);
             }
         }
 
@@ -2702,23 +2467,6 @@ namespace DofusFarm.Engine
                 _webView.CoreWebView2.ExecuteScriptAsync(
                     "try{if(window.gui&&window.gui.playerData&&window.gui.mapBorder1&&window.gui.mapBorder2&&window.gui.screenLeftover&&window.gui.sidebarBackground&&typeof window.gui._resizeUi==='function'){window.gui._resizeUi();}}catch(e){}try{window.dispatchEvent(new Event('resize'));}catch(e){}try{if(window.isoEngine&&window.isoEngine.mapScene&&typeof window.isoEngine.mapScene.requireCompleteRefresh==='function'){window.isoEngine.mapScene.requireCompleteRefresh();}}catch(e){}"
                 );
-            }
-            catch { }
-        }
-
-        private void UpdateMemoryUsage()
-        {
-            if (IsDisposed || !IsHandleCreated) return;
-            try
-            {
-                if (_lblMemory != null)
-                {
-                    _lblMemory.Visible = (Width >= 620);
-                }
-                double workingSetMb, commitMb;
-                ReadHostMemory(out workingSetMb, out commitMb);
-                _lblMemory.Text = string.Format("RAM: {0:F1} MB (Commit: {1:F1} MB)",
-                    workingSetMb, commitMb);
             }
             catch { }
         }
@@ -2762,13 +2510,6 @@ namespace DofusFarm.Engine
                     "[{0}] CDN intercept summary: {1} requests, {2} ok, {3} failed, {4} handler errors",
                     _instanceId, _cdnInterceptTotal, _cdnInterceptOk, _cdnInterceptFail, _cdnInterceptLoggedErrors));
 
-            if (_telemetryTimer != null)
-            {
-                _telemetryTimer.Stop();
-                _telemetryTimer.Dispose();
-                _telemetryTimer = null;
-            }
-
             if (_webView != null && _webView.CoreWebView2 != null)
             {
                 _webView.CoreWebView2.NavigationStarting -= OnNavigationStarting;
@@ -2800,12 +2541,6 @@ namespace DofusFarm.Engine
                 FarmEngine.ReleaseAccount(_instanceId);
                 CloseOAuthDialog();
 
-                if (_telemetryTimer != null)
-                {
-                    _telemetryTimer.Stop();
-                    _telemetryTimer.Dispose();
-                    _telemetryTimer = null;
-                }
                 if (_webView != null)
                 {
                     _webView.Dispose();

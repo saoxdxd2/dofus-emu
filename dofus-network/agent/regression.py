@@ -53,6 +53,18 @@ def section(title: str) -> None:
     print("\n== %s ==" % title)
 
 
+def code_only(text: str) -> str:
+    """Source with whole-line comments removed, for the C#/JS needle checks.
+
+    Measured twice, same trap: a needle matched a statement that had been
+    commented out (the updater's User-Agent assignment, the step-row fragment
+    filter), so the check passed while the code was broken and its mutation was
+    MISSED. A gate that reads comments is not reading the code.
+    """
+    return "\n".join(line for line in text.splitlines()
+                     if not line.strip().startswith("//"))
+
+
 # ---------------------------------------------------------------------------
 def test_verdict_vocabulary() -> None:
     from agent import verifier
@@ -880,8 +892,11 @@ def test_js_page_suites() -> None:
                    "tools/test_quest_accept.js",
                    "tools/test_quest_catalog.js",
                    "tools/test_page_build.js",
+                   "tools/test_session_login.js",
                    "tools/test_transition_watchdog.js",
-                   "tools/test_fight_planner.js"):
+                   "tools/test_fight_planner.js",
+                   "tools/test_geometry_watch.js",
+                   "tools/test_boot_alert.js"):
         path = ROOT / script
         if not path.exists():
             check("%s exists" % script, False, "missing")
@@ -1594,6 +1609,553 @@ def test_live_witnesses() -> None:
               for verdict in shadow_w["verdicts"]), shadow_w["verdicts"])
 
 
+def test_bundle_updater() -> None:
+    section("Bundle updater (a server build must actually reach the disk)")
+    # Measured on 2026-10-27: the client showed "a new version is available" because
+    # the login server runs build 1.74.10 and the local bundle is 1.74.9. Ankama had
+    # shipped it weeks earlier; the updater never installed it, for two reasons that
+    # both live in desktop/clientbundle.cs. These checks pin the fixes, because the
+    # only other witness is a launch against the real CDN.
+    src_path = ROOT / "desktop" / "clientbundle.cs"
+    check("the bundle updater source exists", src_path.exists(), str(src_path))
+    if not src_path.exists():
+        return
+    src = src_path.read_text(encoding="utf-8", errors="replace")
+
+    check("the download User-Agent is set per request, not on the shared header bag",
+          "\n                        if (!string.IsNullOrEmpty(Agent)) http.UserAgent = Agent;" in src
+          and 'wc.Headers["User-Agent"] =' not in src,
+          "WebClient empties Headers after its first request: every later request "
+          "goes without a UA and the origin answers 403")
+    gw = src.find("protected override WebRequest GetWebRequest")
+    ua_at = src.find("http.UserAgent = Agent;")
+    check("the User-Agent is applied inside GetWebRequest, where every request passes",
+          0 <= gw < ua_at < gw + 900, "the UA is set somewhere requests never see")
+    check("the update run uses that property",
+          'wc.Agent = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36";' in src,
+          "no agent is handed to the client")
+
+    check("a staged update is not judged on a page it never downloads",
+          "Validate(staging, false, out stagedWhy)" in src,
+          "the manifest ships only build/* files, so demanding index.html here "
+          "rejects every staged bundle and adopts nothing")
+    check("a staged bundle with no core patch is refused",
+          "coreTotal > 0 && coreHit == 0" in src,
+          "adopting an unpatched script.js is the login break this file exists to stop")
+    check("the update transaction is single-flight",
+          "lock (_gate)" in src,
+          "Launch All runs one updater per instance over the same script.js")
+    stamp_at = src.find("File.WriteAllText(stampPath")
+    restamp_at = src.find("RewriteCacheBusters(dir, log);", stamp_at) if stamp_at >= 0 else -1
+    check("the asset URLs are re-stamped after an adoption",
+          stamp_at >= 0 and restamp_at > stamp_at,
+          "the page keeps asking for the old ?v= and Chromium serves the old bundle")
+
+
+def test_multi_instance_targeting() -> None:
+    section("Multi-instance selection (the AI can address several clients at once)")
+    # The panel could name only ONE instance, and its "All instances" entry meant
+    # "whichever window the bridge happens to list first" -- so driving four open
+    # clients needed four panels, and the label promised something the code did not
+    # do. Requested 2026-10-27: real multi-selection plus every-instance selection.
+    panel = ROOT / "desktop" / "aipanel.cs"
+    bridge = ROOT / "desktop" / "agentbridge.cs"
+    check("the AI panel source exists", panel.exists(), str(panel))
+    check("the bridge source exists", bridge.exists(), str(bridge))
+    if not (panel.exists() and bridge.exists()):
+        return
+    p = panel.read_text(encoding="utf-8", errors="replace")
+    b = bridge.read_text(encoding="utf-8", errors="replace")
+
+    check("the selection is a list of slots, not one index",
+          "public List<int> TargetSlots = new List<int>();" in p, "no multi-target state")
+    check("the selection is persisted and re-read",
+          'case "target_slots":' in p and 'sb.AppendLine("target_slots="' in p,
+          "a restart would forget which instances were chosen")
+    check("the single-instance combo is gone",
+          "_cmbTarget" not in p and "_btnTargets" in p,
+          "a combo can only ever name one instance")
+    check("an unfiltered choice means every open window",
+          'return ids.Count == 0 ? "all" : string.Join(",", ids.ToArray());' in p,
+          "empty selection must become the literal all, not nothing")
+    check("the loop starts one child per selected instance",
+          "foreach (string instance in targets)" in p and "autopilot.\" + instance" in p,
+          "a shared log file would interleave two characters' rows")
+    check("every child is tracked",
+          "private readonly List<Process> _procs = new List<Process>();" in p
+          and "private Process _proc;" not in p, "stop would only ever reach one loop")
+    exited = p.find("private void OnChildExited(Process p)")
+    idle_at = p.find("TryIdleTraining();", exited) if exited >= 0 else -1
+    check("a child leaving alone does not declare the machine idle",
+          exited >= 0 and "!anyLeft" in p[exited:idle_at + 40],
+          "the quickest loop finishing used to flip the UI and train on half a run")
+
+    check("the bridge resolves 'all' against the windows that are open",
+          "private List<string> ResolveTargets(string target, int slot)" in b
+          and "GetActiveInstanceIds()" in b[b.find("private List<string> ResolveTargets"):
+                                            b.find("private string RunOne")],
+          "all must enumerate the active windows inside ResolveTargets, not elsewhere")
+    check("a comma-separated target list is accepted",
+          'target.Split(\',\')' in b, "one directive could only ever name one client")
+    fan = b.find("foreach (string one in targets) answers.Add(RunOne(")
+    single = b.find("RunOne(id, body, label, targets[0], true)")
+    check("one addressee keeps the exact response shape it always had",
+          0 <= single < fan, "the single-instance path must not change shape")
+    check("a fan-out answers for every instance and says so",
+          r',\"results\":[' in b and "fanned out to " in b, "silently answering for one is a lie")
+    check("the stale-name fallback is limited to a single addressee",
+          "bool allowFallback" in b and "allowFallback ? FirstActiveInstance() : null" in b,
+          "with several targets, substituting another window mislabels the answer")
+
+
+def test_per_instance_ai() -> None:
+    section("Per-instance AI (one client's badge must not drive the whole farm)")
+    # Measured cost of the shared flag: the panel had ONE "a loop is running" bool,
+    # PushAiState(instanceId) read it, and the in-game badge sent `stop_all`. So one
+    # window's button stopped every loop, every window showed the same step count,
+    # and the page's own keep-alive gate (`if (!enabled && !aiRunning) return`) then
+    # left clients with no loop to keep them server-visible -- the seven
+    # reason=INACTIVITY disconnects the triage script reads off DofusFarm.log.
+    panel = code_only((ROOT / "desktop" / "aipanel.cs").read_text(encoding="utf-8", errors="replace"))
+    form = code_only((ROOT / "desktop" / "mainform.cs").read_text(encoding="utf-8", errors="replace"))
+    page = code_only((REPO_ROOT.parent / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace"))
+
+    check("each loop child is attributed to the instance it drives",
+          "_instanceByProc" in panel and "_instanceByProc[p] = instance;" in panel,
+          "without attribution the panel can only say 'something is running'")
+    check("a client is 'on' only while its own loop runs",
+          "public bool IsRunningFor(string instanceId)" in panel
+          and "RunningInstanceOf(instanceId) != null" in panel, "a shared flag lights every window")
+    check("one instance's status is read from its own step log",
+          "public string LiveStatusFor(string instanceId)" in panel
+          and "ReadLastStepLine(StepLogFor(instanceId))" in panel,
+          "one client's step count was shown on all of them")
+    check("stopping one loop writes only that loop's stop file",
+          "public void StopInstance(string instanceId, string why)" in panel
+          and "File.WriteAllText(StopFilePath(instanceId)" in panel,
+          "the shared AUTOPILOT_STOP would stop every client")
+    check("each child watches its own stop file",
+          'sb.Append(" --stop-file \\"")' not in panel
+          and '+ " --stop-file \\"" + childStop' in panel,
+          "one global stop file cannot stop one instance")
+    check("a badge start targets exactly one instance",
+          "public void StartInstance(string instanceId, bool force)" in panel
+          and "string policyOverride = null, string onlyInstance = null)" in panel,
+          "the badge reused the panel's shared selection")
+    check("the badge state pushed to a page is that page's own",
+          "_aiPanel.IsRunningFor(instanceId)" in form
+          and "_aiPanel.LiveStatusFor(instanceId)" in form,
+          "PushAiState read the farm-wide flag")
+    check("the badge diff is tracked per instance",
+          "Dictionary<string, bool> _aiPushedByInstance" in form
+          and "_aiPushedByInstance[id] = mine;" in form,
+          "a single remembered bool re-pushes the same answer to every window")
+    check("the host answers start_one and stop_one",
+          '"start_one"' in form and '"stop_one"' in form,
+          "an unknown action logs and does nothing")
+    check("the in-game pill acts on its own instance, not on all",
+          "action: this.aiRunning ? 'stop_one' : 'start_one'" in page
+          and "action: this.aiRunning ? 'stop_all' : 'start_auto'" not in page,
+          "pressing AI in one window stopped every loop")
+    # The keep-alive was gated on a host-pushed flag, and a page reload resets the
+    # page's copy while the loop keeps driving -- measured as a live run losing its
+    # session to dofus.disconnect("INACTIVITY") ten minutes in (the client's own
+    # timer: warn at 5 min idle, drop at 10, checked every 2 min).
+    check("a directive marks activity without waiting for the pushed flag",
+          "try { window.__agentMarkActivity('directive'); } catch (eAct) {}" in page,
+          "the keep-alive gate could be shut by a reload while the loop ran")
+    check("the marks are published in the observation",
+          "snap.keep_alive = " in page
+          and "marks: ka.marks || 0, failed: ka.failed || 0," in page
+          and "idle_ms: ka.last_ts ? (Date.now() - ka.last_ts) : null" in page,
+          "a prevented AFK drop is silent, so an uncounted keep-alive is unprovable")
+    check("the page asks the host for its state when the bus comes up",
+          "window.chrome.webview.postMessage({ type: 'AI_REQUEST', action: 'state' });" in page,
+          "a reloaded page kept its own default and the badge lied")
+    # The status line is an instrument, and it was lying: four loops had taken 36-44
+    # steps each while every badge and the shell pill said "waiting for the first
+    # step". An 8 KB tail window lands inside an observation row, and one
+    # FileStream.Read may return less than it was asked for.
+    tail = panel[panel.find("public static string ReadLastStepLine(string path)"):]
+    check("the step tail is wide enough for a row that carries a snapshot",
+          "len - 65536" in tail, "8 KB lands inside an observation row")
+    check("the tail is read until the buffer is full",
+          "while (got < buf.Length)" in tail,
+          "a short first Read cut the tail and the last row was never reached")
+    check("only a real step row is returned, not a fragment",
+          'line.IndexOf("\\"index\\"") < 0' in tail and 'line.IndexOf("\\"tool\\"") < 0' in tail,
+          "a fragment starting with { formatted as no step")
+    # The picker and the Start button both had the same failure shape: a selection
+    # that named instances was overridden by a broader default, silently. Measured
+    # live on 2026-10-27 -- the dialog showed "All instances" AND "#1 dofus-01"
+    # checked at once, and Start refused outright while any loop was already running.
+    check("the target picker is exclusive in both directions",
+          "if (box.GetItemChecked(0)) box.SetItemChecked(0, false);" in panel,
+          "a row could be checked while 'All instances' stayed checked")
+    check("an explicit row beats a stale 'All instances' check",
+          "if (list.GetItemChecked(i)) next.Add(i);" in panel
+          and "!list.GetItemChecked(0)" not in panel,
+          "the 'All' tick swallowed the operator's selection")
+    check("Start stays clickable while a partial selection is idle",
+          "_btnStart.Enabled = !running || SelectedSlots().Count > 0;" in panel
+          and "SetRunningUi(RunningNow);" in panel,
+          "the button went dark with any loop running, so a second instance could not be added")
+    start_at = panel.find("public void StartAuto(bool force)")
+    picked_at = panel.find("if (picked.Count > 0)", start_at)
+    refuse_at = panel.find('if (IsRunning) { Append("[ai] already running', start_at)
+    check("Start honours the selection while another instance is already driving",
+          start_at >= 0 and 0 <= picked_at < refuse_at
+          and "StartInstance(id, force);" in panel[picked_at:refuse_at],
+          "the farm-wide 'press Stop first' refusal ran before the picked instances")
+    prog = code_only((ROOT / "desktop" / "program.cs").read_text(encoding="utf-8", errors="replace"))
+    check("the status selftest can target one instance",
+          "UI.AiPanel.StepLogFor(instance)" in prog,
+          "the selftest could only ever read the farm-wide log")
+    check("the selftest finds the instance argument after the flags",
+          "bool askedForInstance = instance != null;" in prog
+          and 'if (!args[i].StartsWith("--")) { instance = args[i]; break; }' in prog,
+          'reading args[1] reported the farm-wide log for every instance asked about')
+    check("the selftest reports a step row formatted as no step",
+          "RESULT: WRONG (" in prog and 'parsed && !UI.AiPanel.FormatStatus(true, line)' in prog,
+          "the formatter lying about a real row had no witness")
+    check("the selftest refuses an instance ask that fell back to the shared log",
+          "bool fellBack = askedForInstance && !log.EndsWith(instance + \".jsonl\");" in prog
+          and "but read the farm-wide log" in prog,
+          "a silent fallback made a broken per-instance read look like a pass")
+
+
+def test_keep_alive_instrument() -> None:
+    section("AFK witness (a prevented kick is silent, so the run has to say it was alive)")
+    from agent.autopilot import Autopilot, _compact
+
+    # The client's own timer warns at 5 min idle and calls disconnect("INACTIVITY")
+    # at 10 -- read off the served bundle, asserted in tools/test_keep_alive.js. A
+    # keep-alive that did nothing looks exactly like one that worked, so the page
+    # counts its marks and the loop folds that count into every step and the summary.
+    snap = {"position": {"map_id": 7, "cell": 3},
+            "keep_alive": {"marks": 12, "failed": 0, "present": True,
+                           "last_source": "directive", "idle_ms": 4200}}
+    kept = _compact(snap).get("keep_alive")
+    check("the step row carries the page's AFK witness",
+          isinstance(kept, dict) and kept.get("marks") == 12, _compact(snap))
+
+    loop = Autopilot.__new__(Autopilot)      # counters only: no host, no bridge
+    loop._keep_alive = {"steps": 0, "present_steps": 0, "marks": 0, "failed": 0,
+                        "idle_max_ms": 0, "last_source": None, "age_max_ms": 0,
+                        "inactive_steps": 0}
+    loop._note_keep_alive(snap)
+    loop._note_keep_alive({"keep_alive": {"marks": 30, "failed": 2, "present": False,
+                                          "last_source": None, "idle_ms": 900000,
+                                          "age_ms": 310000, "inactive": True}})
+    loop._note_keep_alive({"keep_alive": {"marks": 4, "failed": 0, "present": True,
+                                          "last_source": "timer", "idle_ms": 1500}})
+    counters = loop._keep_alive
+    check("the counters keep the worst reading, not the last one",
+          counters["marks"] == 30 and counters["idle_max_ms"] == 900000
+          and counters["last_source"] == "timer", counters)
+    check("the client's own countdown is what gets reported",
+          counters["age_max_ms"] == 310000 and counters["inactive_steps"] == 1, counters)
+    check("a client with no recordActivity to call is counted, not hidden",
+          counters["steps"] == 3 and counters["present_steps"] == 2
+          and counters["failed"] == 2, counters)
+    loop._note_keep_alive(None)
+    check("a step with no observation moves nothing",
+          loop._keep_alive["steps"] == 3, loop._keep_alive)
+    auto = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8", errors="replace")
+    check("every step folds the witness in",
+          "self._note_keep_alive(after)" in auto,
+          "a counter nothing feeds is a counter that stays at zero")
+    check("the run summary reports the witness",
+          '"keep_alive": dict(getattr(self, "_keep_alive", {})),' in auto,
+          "a multi-hour run that was never kicked would still not say it was alive")
+
+    geometry = {"boot": {"w": 1024, "h": 640}, "now": {"w": 640, "h": 360},
+                "drifted": True, "in_world": False, "reloads_last_2min": 1}
+    check("the step row carries the viewport witness",
+          _compact({"geometry": geometry}).get("geometry") == geometry)
+    loop._geometry = {"steps": 0, "drift_steps": 0, "in_world_steps": 0,
+                      "reloads": 0, "boot": None, "now": None}
+    loop._note_geometry({"geometry": geometry})
+    check("the run counters retain the geometry transition",
+          loop._geometry["steps"] == 1 and loop._geometry["drift_steps"] == 1
+          and loop._geometry["reloads"] == 1
+          and loop._geometry["now"] == {"w": 640, "h": 360}, loop._geometry)
+    check("the run summary reports the viewport witness",
+          '"geometry": dict(getattr(self, "_geometry", {})),' in auto)
+
+
+def test_window_layout() -> None:
+    section("Instance window layout (equal cells, browser-only client surface)")
+    desktop = REPO_ROOT.parent / "desktop"
+    form = (desktop / "WebView2ClientForm.cs").read_text(encoding="utf-8", errors="replace")
+    mainform = (desktop / "mainform.cs").read_text(encoding="utf-8", errors="replace")
+    backend = (desktop / "WebView2Backend.cs").read_text(encoding="utf-8", errors="replace")
+    native = (desktop / "win32.cs").read_text(encoding="utf-8", errors="replace")
+    for removed in ("_toolbarPanel", "_lblStatus", "_lblMemory", "_btnZoom",
+                    "_btnAutoFight", "_telemetryTimer"):
+        check("the instance toolbar has no %s remnant" % removed, removed not in form)
+    check("the browser fills the whole instance form",
+          "Dock = DockStyle.Fill" in form and "Controls.Add(_webView);" in form)
+    check("automatic tiling uses the full working area",
+          "SafeUiInvoke(main, () => TileWindows(true));" in backend)
+    check("the launch batch assigns the final tile before the page boots",
+          "LayoutSlotCount = layoutCount" in mainform
+          and "form.Bounds = target;" in backend
+          and "_expectedTileCount > active" in backend)
+    check("a short final row is centered with the same cell size",
+          "int rowWidth = rowCols * cellW + (rowCols - 1) * gap;" in native
+          and "int rowX = wa.X + (wa.Width - rowWidth) / 2;" in native
+          and "if (count == 3)" not in native)
+    check("a stalled guest login gets one bounded retry",
+          "if (++_watchTicks === 60)" in form
+          and "guest login made no progress in 60s; reloading to retry" in form)
+
+
+def test_tool_ensemble() -> None:
+    section("Tool ensemble (neural bases -> K-means context -> tree/boosting stack)")
+    from agent.ensemble import (BASE_FEATURES, ToolStack, candidate_features,
+                                fit_gbdt, fit_kmeans, fit_tree, gbdt_predict,
+                                kmeans_distances, tree_predict)
+
+    x = [[0.0], [0.0], [1.0], [1.0]]
+    y = [0.0, 0.0, 1.0, 1.0]
+    tree = fit_tree(x, y, depth=2, min_leaf=1)
+    check("a decision tree separates a threshold",
+          tree_predict(tree, [0.0]) < 0.25 and tree_predict(tree, [1.0]) > 0.75,
+          tree)
+    forest = fit_gbdt(x, y, rounds=4, depth=1, min_leaf=1, learning_rate=0.2)
+    check("gradient boosting improves the tree ensemble's ordering",
+          gbdt_predict(forest, [1.0]) > gbdt_predict(forest, [0.0]), forest)
+
+    points = [[0.0, 0.0], [0.0, 0.1], [5.0, 5.0], [5.1, 5.0],
+              [9.0, 0.0], [9.1, 0.1], [0.0, 9.0], [0.1, 9.0]]
+    kmeans = fit_kmeans(points, clusters=4, seed=3, iterations=10)
+    first = kmeans_distances(kmeans, [0.0, 0.0])
+    second = kmeans_distances(kmeans, [5.0, 5.0])
+    check("K-means exports four context distances",
+          len(first) == 4 and len(second) == 4
+          and kmeans["centroids"]
+          and first.index(min(first)) != second.index(min(second)),
+          str((first, second)))
+
+    tools = ["quest.advance", "nav.goto", "fight.join", "farm.start",
+             "inv.list", "state.snapshot"]
+    logits = [2.0, 1.0, 0.5, 0.2, -1.0, -2.0]
+    foresight = {tool: {"gain": gain, "move_prob": move, "curve": [gain, gain]}
+                 for tool, gain, move in zip(
+                     tools, [1.0, 0.6, 0.4, 0.1, 0.0, 0.0],
+                     [0.8, 0.6, 0.5, 0.2, 0.1, 0.1])}
+    names, rows = candidate_features(logits, foresight, tools,
+                                     context=[0.1, 0.2, 0.3, 0.4])
+    check("candidate features append the K-means context",
+          names == tools and len(rows) == len(tools)
+          and len(rows[0]) == len(BASE_FEATURES) + 4, rows[0])
+    payload = {
+        "kind": "tool-stacking", "features": list(BASE_FEATURES)
+        + ["cluster_0", "cluster_1", "cluster_2", "cluster_3"],
+        "model_type": "tree",
+        "tree": {"feature": 0, "threshold": -1.5,
+                 "left": {"value": -1.0}, "right": {"value": 1.0}},
+        "kmeans": {"centroids": [[0.0, 0.0]] * 4, "mean": [0.0, 0.0],
+                   "scale": [1.0, 1.0]},
+        "active": True, "gate": {"passed": True},
+        "chosen": {"gain_capture": 0.5, "top1": 0.5},
+    }
+    stack = ToolStack(payload)
+    choice = stack.choose(logits, foresight, tools, context=[0.1, 0.2, 0.3, 0.4])
+    check("the active tree stack is loadable and scores every candidate",
+          stack.active and choice is not None
+          and len(stack.rank(logits, foresight, tools, [0, 0, 0, 0])) == len(tools),
+          choice)
+    wide = tools + ["hdv.scan", "chat.say"]
+    wide_logits = logits + [-3.0, -4.0]
+    wide_fore = dict(foresight)
+    wide_fore.update({"hdv.scan": {"gain": 0, "move_prob": 0.1, "curve": [0]},
+                      "chat.say": {"gain": 0, "move_prob": 0.1, "curve": [0]}})
+    ranked_wide = stack.rank(wide_logits, wide_fore, wide, [0, 0, 0, 0])
+    check("the runtime shortlist keeps both leaders and matches training width",
+          len(ranked_wide) == 6
+          and ranked_wide[0]["tool"] in ("quest.advance", "hdv.scan"),
+          [row["tool"] for row in ranked_wide])
+
+    artifact_path = REPO_ROOT / "models" / "tool_stack.json"
+    check("the shipped stack artifact exists", artifact_path.is_file())
+    artifact = {}
+    if artifact_path.is_file():
+        try:
+            artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except Exception:       # noqa: BLE001 - a broken artifact is a failed check
+            artifact = {}
+    gate = artifact.get("gate") or {}
+    check("the shipped stack carries a held-out cross-validation gate",
+          artifact.get("kind") == "tool-stacking"
+          and gate.get("folds", 0) >= 2 and gate.get("fold_wins", 0) >= 1)
+    check("the shipped stack is active only when its gate passed",
+          bool(artifact.get("active")) == bool(gate.get("passed"))
+          and bool(artifact.get("active")))
+    check("the stack records provenance for both bases and the cluster corpus",
+          all((artifact.get("provenance") or {}).get(key)
+              for key in ("policy", "foresight", "cluster_corpus")))
+    selected = ToolStack.load(artifact_path)
+    check("the shipped stack loads through the runtime parser",
+          selected is not None and selected.model_type in ("linear", "tree", "gbdt")
+          and selected.features[:len(BASE_FEATURES)] == list(BASE_FEATURES))
+
+    planner = (REPO_ROOT / "agent" / "planner_nn.py").read_text(
+        encoding="utf-8", errors="replace")
+    check("the planner passes state context into the stack",
+          "self.stack.context(x)" in planner
+          and "self.stack.rank(logits, cells, self.tools, context=context)" in planner)
+    check("stacking fails open and still applies the safety guards",
+          "stacking must fail open" in planner
+          and "self.stack.active" in planner
+          and 'self.stack_mode == "act"' in planner)
+    check("the planner exposes off/shadow/act",
+          all(('"%s"' % mode) in planner for mode in ("off", "shadow", "act")))
+    auto = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8",
+                                                             errors="replace")
+    check("the CLI can select the ensemble without changing the default policy",
+          '"--ensemble"' in auto and '"--policy"' in auto
+          and 'default="rule"' in auto)
+    check("a live step records the stack proposal and the policy baseline",
+          "ensemble=ensemble" in auto
+          and 'getattr(self.runtime.policy, "last_stack", None)' in auto
+          and 'self.runtime.policy.last_stack = None' in auto)
+
+
+def test_fight_rotation() -> None:
+    section("Fight estimate (utility must not hide a damaging spell)")
+    from advisor.models import CharacterSnapshot, SpellState
+    from combat.fight_estimate import _player_facts, _spellbook
+
+    spells, _by_breed = _spellbook()
+    utility = SpellState(spell_id=7449, level=1, max_grade=6,
+                         max_grade_for_level=1, name_id=None, breed_id=6)
+    damage = SpellState(spell_id=7431, level=1, max_grade=6,
+                        max_grade_for_level=1, name_id=None, breed_id=6)
+    snap = CharacterSnapshot(
+        name="Brruh", level=1, breed_id=6,
+        stats={"actionPoints": 6, "movementPoints": 3,
+               "effectiveMaxLifePoints": 55, "maxLifePoints": 55},
+        spells=[utility, damage],
+    )
+    facts = _player_facts(snap, spells)
+    check("a zero-damage utility spell cannot starve the offensive rotation",
+          facts.damage_per_turn > 0 and bool(facts.dpt_by_element)
+          and "no_damaging_spell" not in facts.missing,
+          (facts.damage_per_turn, facts.dpt_by_element, facts.missing))
+
+    utility_only = CharacterSnapshot(
+        name="Brruh", level=1, breed_id=6,
+        stats={"actionPoints": 6, "movementPoints": 3,
+               "effectiveMaxLifePoints": 55, "maxLifePoints": 55},
+        spells=[utility],
+    )
+    none = _player_facts(utility_only, spells)
+    check("a character with only utility spells is still reported as no damage",
+          none.damage_per_turn == 0 and not none.dpt_by_element)
+
+
+def test_tutorial_hold() -> None:
+    section("Bounded patience (a scripted step can be waited on without a stampede)")
+    from agent.autopilot import (Autopilot, TUTORIAL_HOLD_S, _call_key,
+                           _world_sig)
+    from agent.runtime import ToolCall
+
+    call = ToolCall("quest.advance", {"npc_id": 3888, "quest_id": 3841}, "do all the quests")
+    check("one call has one signature",
+          _call_key(call) == _call_key(call) and "quest.advance" in _call_key(call),
+          _call_key(call))
+    check("argument order cannot hide a repeat",
+          _call_key(ToolCall("t", {"a": 1, "b": 2}, None))
+          == _call_key(ToolCall("t", {"b": 2, "a": 1}, None)))
+
+    loop = Autopilot.__new__(Autopilot)
+    loop._hold_key = None
+    loop._hold_world = None
+    loop._hold_started_at = 0.0
+    loop._hold_cycles = 0
+    world = {"position": {"map_id": 7, "cell": 3},
+             "current_objective": {"objective_id": 13493}}
+    moved = {"position": {"map_id": 7, "cell": 4},
+             "current_objective": {"objective_id": 13493}}
+    key = _call_key(call)
+    check("a new step gets its own patience window",
+          loop._tutorial_hold(key, world) is True and loop._hold_key == key)
+    check("the same call is not dispatched again while nothing has moved",
+          loop._holding(call, world) is True,
+          "a hold that still dispatches is the stampede with a deadline")
+    check("another call is not held",
+          loop._holding(ToolCall("nav.goto", {"direction": "left"}, None), world) is False)
+    check("a world that moves releases the hold at once",
+          loop._holding(call, moved) is False and loop._hold_key is None)
+    loop._tutorial_hold(key, world)
+    loop._hold_started_at -= (TUTORIAL_HOLD_S + 1)
+    check("an expired window restarts instead of ending the session",
+          loop._tutorial_hold(key, world) is True and loop._hold_cycles == 1,
+          loop._hold_cycles)
+    check("the retry is one call per window, not one per pass",
+          loop._holding(call, world) is True,
+          "a loop that ends stops marking activity, and the same client timer logs the "
+          "character out ten minutes later")
+    auto = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8", errors="replace")
+    check("the loop consults the hold before it dispatches",
+          "if call is not None and self._holding(call, before):" in auto,
+          "a hold that only delays the same call still sends it 119 times")
+    check("a stat that ticks on its own does not release the hold",
+          _world_sig(dict(world, hp={"life": 60}, kamas=120)) == _world_sig(world),
+          "hp and kamas move constantly; counting them would re-open the stampede")
+    from agent.autopilot import DEAD_TALK_TRIES
+    check("a talk that opens no dialog is noticed on the second send, not the 100th",
+          "self._dead_talks[key] >= DEAD_TALK_TRIES" in auto and DEAD_TALK_TRIES == 2,
+          DEAD_TALK_TRIES)
+    check("the dead-talk rule reads the page's own talk receipt",
+          'payload_of(result).get("via")' in auto
+          and '"talked", "walk_then_talk"' in auto,
+          "guessing that the talk happened is how 108 identical sends went unseen")
+    from agent.autopilot import _standing_on_exit
+    at_portal = {"position": {"cell": 322, "map_id": 147063810},
+                 "map": {"exits": [{"direction": "left", "cells": [322, 294]},
+                                   {"direction": "right", "cells": [321]}]}}
+    check("standing on the portal is recognised from the client's own exit list",
+          _standing_on_exit({"direction": "left"}, at_portal) is True
+          and _standing_on_exit({"direction": "right"}, at_portal) is False,
+          at_portal)
+    check("a crossing without a cell is not a refusal",
+          _standing_on_exit({"direction": "left"}, {"map": {"exits": []}}) is False
+          and _standing_on_exit({}, at_portal) is False)
+    check("a declined crossing is counted and reported",
+          "self._dead_navs[key] >= DEAD_TALK_TRIES" in auto
+          and '"declined_crossings": dict(' in auto)
+    from types import SimpleNamespace
+    from agent.executor import payload_of
+    live = SimpleNamespace(data={"directive_payload": {"tool": "quest.advance"},
+                                 "response": {"ok": True, "result": {"ok": True, "data": {
+                                     "via": "talked", "npc_contextual_id": -1}}}})
+    check("the bridge's two wrappers are unwrapped in one place",
+          payload_of(live).get("via") == "talked", payload_of(live))
+    check("a missing wrapper reads as empty instead of raising",
+          payload_of(SimpleNamespace(data=None)) == {}
+          and payload_of(SimpleNamespace(data={"response": "x"})) == {},
+          "a reader that guesses the shape returns None and the rule never fires")
+    check("the dead-talk counter accumulates per call",
+          "self._dead_talks[key] = self._dead_talks.get(key, 0) + 1" in auto)
+    check("the dead-talk hold comes before the general three-strike test",
+          0 <= auto.find("self._dead_talks[key] >= DEAD_TALK_TRIES")
+          < auto.find("repeated = (len(self._recent) >= 3"),
+          "a dead talk still had to repeat three times before anything noticed")
+    check("the run summary reports dead talks",
+          '"dead_talks": dict(' in auto)
+    holds = [i for i in range(len(auto)) if auto.startswith("self._tutorial_hold(", i)]
+    check("every bounded hold spends the time as a wait, not as another directive",
+          len(holds) >= 2 and all("self._hold_wait(goal, before)" in auto[i:i + 900]
+                                  and "time.sleep(" not in auto[i:i + 900]
+                                  for i in holds),
+          "%d hold sites, each must wait; a bounded hold that still dispatches is the "
+          "same stampede with a deadline" % len(holds))
+
+
 def test_verifier_head_gate() -> None:
     section("Verifier head (G6: no auto-load without a live/human contract)")
     panel = ROOT / "desktop" / "aipanel.cs"
@@ -1866,7 +2428,10 @@ def test_live_ready() -> None:
                             store=store, observed=observed,
                             command_model=tmp / "command-shadow.pt",
                             bridge=lambda: bridge, clients=lambda: clients,
-                            brain=lambda: brain)
+                            brain=lambda: brain,
+                            egress_entry=lambda: {"level": "PASS", "name": "egress",
+                                                  "detail": "injected: the egress itself is "
+                                                            "covered by test_egress_preflight"})
 
     def level(results, name):
         for item in results:
@@ -1913,9 +2478,9 @@ def test_live_ready() -> None:
     check("the last recorded build is the last, not the first",
           ready.last_log_build(log_with("2026-10-27a")) == "2026-10-27a",
           ready.last_log_build(log_with("2026-10-27a")))
-    check("the repo page carries the 2026-10-27a build",
+    check("the repo page carries the 2026-10-27q build",
           ready.page_build(REPO_ROOT.parent / "scripts" / "mobile-disguise.js")
-          == "2026-10-27a")
+          == "2026-10-27q")
 
 
 def test_sim_planner_runs() -> None:
@@ -4979,6 +5544,600 @@ def test_quest_advance_shapes() -> None:
           "## G32." in gaps and "## G33." in gaps)
 
 
+def test_live_transitions() -> None:
+    section("Live transitions (did the issued tool move the real world?)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "build_live_transitions.py"
+    check("the live transition builder exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("build_live_transitions", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def step(ts, goal, tool_name, before, after, ok=True, error=None):
+        return {"kind": "step", "ts": ts, "iso": "2026-10-27T00:00:00",
+                "instance": "unit", "goal": goal, "tool": tool_name, "args": {},
+                "ok": ok, "error": error, "latency_ms": 12,
+                "observation": before,
+                "result": {"ok": ok, "snapshot": after}}
+
+    obj = {"type_id": 14, "params": "{}"}
+    rows = [
+        step(1000, "do all the quests", "nav.goto",
+             {"map": {"map_id": 10898, "cell": 3}, "position": {"map_id": 10898, "cell": 3},
+              "current_objective": obj,
+              "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 0,
+              "hp": 100},
+             {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
+              "current_objective": obj,
+              "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 0,
+              "hp": 100}),
+        # accepted, and nothing moved: this is the 86% of the real corpus
+        step(1001, "do all the quests", "quest.advance",
+             {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
+              "current_objective": obj,
+              "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 0,
+              "hp": 100},
+             {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
+              "current_objective": obj,
+              "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 0,
+              "hp": 100}),
+        # a read that only refreshes hp is neither an action nor progress
+        step(1002, "do all the quests", "state.snapshot",
+             {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
+              "current_objective": obj,
+              "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 0,
+              "hp": 100},
+             {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
+              "current_objective": obj,
+              "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 0,
+              "hp": 96}),
+        step(1003, "do all the quests", "quest.advance",
+             {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
+              "current_objective": obj,
+              "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 0,
+              "hp": 96},
+             {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
+              "current_objective": obj,
+              "quests_active": [{"id": 3841, "level": 12}], "objectives_completed": 1,
+              "hp": 96}),
+    ]
+    segments = module.segments(rows, "unit.jsonl", gap_s=120.0)
+    check("one goal is one segment", len(segments) == 1, len(segments))
+    labelled = module.label_steps(segments[0])
+    check("labels per step",
+          [(row["tool"], row["was_read"], row["moved"], row["progress"]) for row in labelled]
+          == [("nav.goto", False, True, False),
+              ("quest.advance", False, False, False),
+              ("state.snapshot", True, False, False),
+              ("quest.advance", False, True, True)],
+          [(row["tool"], row["was_read"], row["moved"], row["progress"]) for row in labelled])
+    check("an hp tick alone is not the world moving",
+          "hp" in labelled[2]["changed"] and not labelled[2]["moved"], labelled[2]["changed"])
+    check("progress names the counter that moved",
+          labelled[3]["progress_keys"] == ["objectives_completed"], labelled[3]["progress_keys"])
+    from agent.features import FEATURE_COUNT
+    check("the live state vector is the same width as the harness corpus",
+          all(row["x"] and len(row["x"]) == FEATURE_COUNT for row in labelled),
+          [len(row["x"] or []) for row in labelled])
+    check("the streak is re-derived from the log itself",
+          labelled[-1]["x"] is not None and labelled[1]["x"] is not None,
+          labelled[1]["x_source"])
+
+    split_rows = module.segments(rows[:2] + [dict(rows[2], ts=1000 + 900)], "unit.jsonl", 120.0)
+    check("a long silence starts a new segment", len(split_rows) == 2, len(split_rows))
+    goal_rows = module.segments(rows[:1] + [dict(rows[1], goal="farm xuhs")], "unit.jsonl", 120.0)
+    check("a goal change starts a new segment", len(goal_rows) == 2, len(goal_rows))
+
+    key = module.segment_key(segments[0])
+    plan = module.plan_splits(labelled)
+    check("a segment lands in exactly one split",
+          len({plan[row["segment"]] for row in labelled}) == 1, plan.get(key))
+    check("the split is deterministic", module.plan_splits(labelled) == plan, None)
+    actions = [row for row in labelled if row["has_pair"] and not row["was_read"]]
+    synthetic = [dict(labelled[0], segment="s%d" % (index % 6), has_pair=True,
+                      was_read=False) for index in range(120)]
+    big = module.plan_splits(synthetic)
+    shares = {name: sum(1 for index in range(120)
+                        if big["s%d" % (index % 6)] == name) for name in ("train", "val", "test")}
+    check("a balanced plan leaves no fold nearly empty",
+          all(count >= 6 for count in shares.values()) or not actions, shares)
+
+    out = Path(tempfile.mkdtemp(prefix="transitions-"))
+    rc = module.main(["--log", "definitely-not-here.jsonl", "--out", str(out)])
+    check("a missing log is refused, not an empty dataset", rc == 2, rc)
+
+    # end to end: the writer, not just the planner, must keep a segment in one fold
+    fixture = Path(tempfile.mkdtemp(prefix="transitions-log-"))
+    log = fixture / "unit.jsonl"
+    log.write_text("".join(_json.dumps(row) + chr(10) for row in rows), encoding="utf-8")
+    written = fixture / "out"
+    rc = module.main(["--log", str(log), "--out", str(written)])
+    check("the builder writes a dataset", rc == 0, rc)
+    folds: Dict[str, set] = {}
+    landed: Dict[str, str] = {}
+    total = 0
+    for name in ("train", "val", "test"):
+        path = written / ("%s.jsonl" % name)
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            row = _json.loads(line)
+            total += 1
+            folds.setdefault(row["segment"], set()).add(name)
+            landed[row["id"]] = name
+    check("no segment is split across folds",
+          all(len(names) == 1 for names in folds.values()),
+          {key: sorted(names) for key, names in folds.items()})
+    # row for row, the writer must obey the plan: a "one fold per segment" assertion alone can
+    # pass by hash luck when a segment's rows happen to hash into the same bucket
+    expected = {row["id"]: plan[row["segment"]] for row in labelled}
+    check("every row lands in the fold its segment was planned for",
+          landed == expected,
+          {key: (landed.get(key), expected.get(key))
+           for key in expected if landed.get(key) != expected.get(key)})
+    check("every labelled row is written exactly once",
+          total == len(labelled) and len(folds) == 1, (total, len(labelled)))
+
+    # one segment cannot prove a per-segment split: with a single segment, a per-row hash agrees
+    # with the plan whenever the numbers happen to fall in the same bucket. Six segments, three
+    # steps each, is what makes the writer's contract testable.
+    multi: List[Dict[str, Any]] = []
+    base = {"map": {"map_id": 10898, "cell": 3}, "position": {"map_id": 10898, "cell": 3},
+            "current_objective": obj, "quests_active": [{"id": 3841, "level": 12}],
+            "objectives_completed": 0, "hp": 100}
+    for slot in range(6):
+        after = {"map": {"map_id": 10900 + slot, "cell": 4},
+                 "position": {"map_id": 10900 + slot, "cell": 4},
+                 "current_objective": obj,
+                 "quests_active": [{"id": 3841, "level": 12}],
+                 "objectives_completed": slot, "hp": 100}
+        for offset in range(3):
+            multi.append(step(2000 + slot * 20 + offset, "goal %d" % slot,
+                              "nav.goto", base, after))
+    big_log = fixture / "multi.jsonl"
+    big_log.write_text("".join(_json.dumps(row) + chr(10) for row in multi), encoding="utf-8")
+    big_out = fixture / "multi-out"
+    check("the multi-segment fixture is written",
+          module.main(["--log", str(big_log), "--out", str(big_out)]) == 0, None)
+    big_labelled = [row for segment in module.segments(multi, "multi.jsonl", 120.0)
+                    for row in module.label_steps(segment)]
+    big_plan = module.plan_splits(big_labelled)
+    check("the plan uses more than one fold",
+          len(set(big_plan.values())) >= 2, sorted(set(big_plan.values())))
+    actual: Dict[str, str] = {}
+    for name in ("train", "val", "test"):
+        path = big_out / ("%s.jsonl" % name)
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            actual[_json.loads(line)["id"]] = name
+    want = {row["id"]: big_plan[row["segment"]] for row in big_labelled}
+    check("the writer obeys the segment plan row for row",
+          actual == want,
+          {key: (actual.get(key), want.get(key))
+           for key in want if actual.get(key) != want.get(key)})
+    manifest = written / "manifest.json"
+    check("the manifest reports the real move rate it measured",
+          manifest.is_file() and "action_move_rate" in manifest.read_text(encoding="utf-8"),
+          None)
+
+
+def test_foresight_net() -> None:
+    section("Foresight net (candidate-conditioned progress, torch-free scoring)")
+    import json as _json
+    import tempfile
+
+    import numpy as np
+
+    from agent import foresight
+    from agent.features import FEATURE_COUNT, TOOLS
+
+    width, hidden, depth = FEATURE_COUNT, 4, 3
+    ntools = len(TOOLS)
+    rng = np.random.RandomState(7)
+    arrays = {
+        "w1": rng.randn(2 * width + ntools, hidden).astype(np.float32) * 0.05,
+        "b1": np.zeros(hidden, dtype=np.float32),
+        "w2": rng.randn(hidden, hidden).astype(np.float32) * 0.05,
+        "b2": np.zeros(hidden, dtype=np.float32),
+        "w3": np.zeros((hidden, 2 + depth), dtype=np.float32),
+        "b3": np.array([0.0, 0.5, 1.0, 1.0, 1.0], dtype=np.float32),
+        "x_mean": np.zeros(width, dtype=np.float32),
+        "x_std": np.ones(width, dtype=np.float32),
+        "tool_gate": np.zeros((ntools, width), dtype=np.float32),
+    }
+    net = foresight.ForesightNet(arrays, tools=list(TOOLS), meta={"depth": depth})
+    state = [0.0] * width
+    check("a known tool is scored",
+          net.score(state, "quest.advance") is not None, None)
+    check("an unknown tool fails closed instead of guessing",
+          net.score(state, "punch.a.wizard") is None, None)
+    cell = net.score(state, "quest.advance")
+    check("the curve is read at the trained depth",
+          cell is not None and len(cell["curve"]) == depth and not cell["flat"], cell)
+    arrays_zero = dict(arrays)
+    arrays_zero["b3"] = np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    flat_net = foresight.ForesightNet(arrays_zero, tools=list(TOOLS), meta={"depth": depth})
+    check("a flat curve is flagged, which is what an escalation decision needs",
+          flat_net.score(state, "nav.goto")["flat"] is True, None)
+
+    arrays_read = dict(arrays)
+    boost = np.zeros((ntools, width), dtype=np.float32)
+    w3 = np.asarray(arrays["w3"], dtype=np.float32).copy()
+    read_slot = TOOLS.index("state.snapshot")
+    action_slot = TOOLS.index("quest.advance")
+    w3[:, 1] = 1.0
+    w3[0, 1] = 100.0  # first hidden unit fires only for the read's own gate pattern
+    arrays_read["w3"] = w3
+    arrays_read["tool_gate"] = boost
+    skewed = foresight.ForesightNet(arrays_read, tools=list(TOOLS), meta={"depth": depth})
+    ranked = skewed.rank(state, ["state.snapshot", "quest.advance"])
+    check("a read never outranks an action, whatever it predicts",
+          [row["tool"] for row in ranked] == ["quest.advance", "state.snapshot"],
+          [(row["tool"], row["gain"], row["read"]) for row in ranked])
+
+    try:
+        net.score([0.0] * (width - 1), "nav.goto")
+        narrow_ok = False
+    except ValueError as exc:
+        # numpy also raises ValueError on a shape mismatch, so the *message* is the evidence that
+        # the module's own width guard ran; without it a removed guard would look like a pass
+        narrow_ok = "foresight expects" in str(exc)
+    check("a stale feature width raises instead of silently mis-scoring", narrow_ok, None)
+    check("scoring is deterministic",
+          net.score(state, "nav.goto") == net.score(state, "nav.goto"), None)
+
+    target = Path(tempfile.mkdtemp(prefix="foresight-")) / "foresight.json"
+    payload = {"meta": {"depth": depth, "hidden": hidden},
+               "tools": list(TOOLS),
+               "arrays": {k: np.asarray(v).tolist() for k, v in arrays.items()}}
+    target.write_text(_json.dumps(payload), encoding="utf-8")
+    loaded = foresight.load(target)
+    check("the shipped JSON form scores identically to the trained arrays",
+          loaded is not None and loaded.score(state, "nav.goto") == net.score(state, "nav.goto"),
+          None)
+    check("a missing artifact loads as None", foresight.load(target.with_name("nope.json")) is None,
+          None)
+    broken = _json.loads(_json.dumps({k: v for k, v in payload.items()}))
+    broken["arrays"].pop("tool_gate")
+    broken_path = target.with_name("broken.json")
+    broken_path.write_text(_json.dumps(broken), encoding="utf-8")
+    check("an artifact missing a required array loads as None",
+          foresight.load(broken_path) is None, None)
+    check("the runtime module needs no torch",
+          "import torch" not in (REPO_ROOT / "agent" / "foresight.py")
+          .read_text(encoding="utf-8"), None)
+
+
+def test_counterfactual_factory_alive() -> None:
+    section("Counterfactual factory is still alive (the corpus cannot silently empty)")
+    import json as _json
+    import subprocess
+    import tempfile
+
+    from agent.features import FEATURE_COUNT
+
+    out = Path(tempfile.mkdtemp(prefix="factory-"))
+    cmd = [sys.executable, str(REPO_ROOT / "sim" / "tool_choice.py"),
+           "--episodes", "2", "--steps", "24", "--seed", "3",
+           "--focus", "0", "--out", str(out)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                          cwd=str(REPO_ROOT), encoding="utf-8", errors="replace")
+    stats = {}
+    try:
+        stats = _json.loads(proc.stdout)
+    except ValueError:
+        pass
+    check("the harness still generates counterfactual rows",
+          proc.returncode == 0 and stats.get("rows", 0) > 0,
+          {"rc": proc.returncode, "rows": stats.get("rows"),
+           "tail": (proc.stderr or "")[-300:]})
+    check("the corpus is written at the live feature width",
+          stats.get("features") == FEATURE_COUNT, stats.get("features"))
+    focused = 0
+    train = out / "train.jsonl"
+    if train.is_file():
+        with train.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                row = _json.loads(line)
+                # A row only exists once an objective is active, so a row of the focused type
+                # proves the whole chain worked: the harness reported the offer, the planner
+                # accepted it, and the world produced a featurisable objective.
+                if row.get("objective_type") == 0:
+                    focused += 1
+    check("episodes reach an objective of the focused type", focused > 0, focused)
+
+
+def test_egress_preflight() -> None:
+    section("Egress preflight (no instance is launched into a dead path)")
+    import importlib.util
+    import socket as _socket
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location(
+        "live_ready_egress", REPO_ROOT / "tools" / "live_ready.py")
+    live_ready = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live_ready)
+
+    listener = _socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(64)   # several probes hit one socket; a backlog of 1 makes the test flaky
+    open_port = listener.getsockname()[1]
+    try:
+        dead = live_ready.egress({"mode": "custom", "upstream": "socks5://127.0.0.1:1",
+                                  "fail_closed": "1"}, relay_probe=False)
+        check("a configured upstream that is not listening is a FAIL",
+              dead["level"] == "FAIL" and "not listening" in dead["detail"], dead)
+        live = live_ready.egress({"mode": "custom",
+                                  "upstream": "socks5://127.0.0.1:%d" % open_port},
+                                 relay_probe=False)
+        check("an upstream that accepts connections passes",
+              live["level"] == "PASS", live)
+        check("direct is reported as a choice, not a failure",
+              live_ready.egress({"mode": "direct"})["level"] == "INFO", None)
+        check("wireproxy mode probes the tunnel port",
+              live_ready.egress({"mode": "wireproxy", "socks_port": "1"},
+                                relay_probe=False)["level"] == "FAIL", None)
+
+        out = Path(tempfile.mkdtemp(prefix="pool-")) / "proxies.txt"
+        out.write_text("# comment\nsocks5://127.0.0.1:1\nhttp://127.0.0.1:1\n",
+                       encoding="utf-8")
+        empty_pool = live_ready.egress({"mode": "custom", "upstream": ""}, relay_probe=False,
+                                       pool_path=out)
+        check("custom with a dead pool refuses to launch",
+              empty_pool["level"] == "FAIL" and "none of which accepts" in empty_pool["detail"],
+              empty_pool)
+        out.write_text("socks5://127.0.0.1:%d\n" % open_port, encoding="utf-8")
+        check("one live pool entry is enough to proceed",
+              live_ready.egress({"mode": "custom", "upstream": ""}, relay_probe=False,
+                                pool_path=out)["level"] == "PASS", None)
+        check("an unprobed mode warns instead of passing",
+              live_ready.egress({"mode": "auto"}, relay_probe=False)["level"] == "WARN", None)
+
+        parsed = live_ready._endpoint("socks5://127.0.0.1:40000")
+        check("the upstream endpoint is parsed, not string-matched",
+              parsed == ("127.0.0.1", 40000), parsed)
+        check("a bare word is not an endpoint", live_ready._endpoint("chain.Skip(1)") is None,
+              None)
+        cfg = live_ready.network_config()
+        check("network.ini is read as keys", cfg.get("mode") in
+              ("auto", "custom", "direct", "wireproxy", "warp"), cfg.get("mode"))
+        entries = live_ready.egress()
+        check("the real preflight reports a level for the actual config",
+              entries.get("level") in ("PASS", "FAIL", "WARN", "INFO"), entries)
+    finally:
+        listener.close()
+
+
+def test_host_launch_guard() -> None:
+    section("Host launcher refuses a dead path (no six-dialog stampede)")
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "host_control_guard", REPO_ROOT / "tools" / "host_control.py")
+    hc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hc)
+
+    # The game clients belong to the same process as the panel. Both reads below used to take
+    # "the first window of the process", which is a client: the panel's controls then vanished
+    # from the tree and a launch that had worked looked unverified.
+    src = (REPO_ROOT / "tools" / "host_control.py").read_text(encoding="utf-8")
+    check("the UIA read excludes a client window of the same process",
+          "-notmatch 'WebView2|Instance #'" in hc.UIA_SCRIPT, hc.UIA_SCRIPT[-420:])
+    check("focus raises the manager by its own title, not by the word 'farm'",
+          '_host_hwnd("farm manager")' in src, None)
+    check("reading the running count re-raises the host first",
+          "if items is None:\n        focus_host()\n        items = elements()" in src, None)
+
+    # the launcher waits on the UI thread; a gate must not spend 20 real seconds doing it.
+    # Only sleep is replaced — launch_all still needs time.time() for its own deadline.
+    class _SlowClock:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def sleep(self, seconds):
+            return None
+
+    real_time, real_alerts = hc.time, hc.dismiss_alerts
+    hc.time = _SlowClock(real_time)
+    hc.dismiss_alerts = lambda limit=3: 0
+    try:
+        _host_launch_cases(hc)
+    finally:
+        hc.time, hc.dismiss_alerts = real_time, real_alerts
+
+
+def _host_launch_cases(hc) -> None:
+    """`preflight(force)` says ok only when force is set, exactly as the real one does."""
+    import importlib.util
+    clicks: List[str] = []
+    hc.preflight = lambda force=False: {
+        "ok": bool(force),
+        "blocking": [{"level": "FAIL", "name": "egress", "detail": "upstream not listening"}],
+        "entries": {"egress": "FAIL"}}
+    hc._click = lambda x, y: clicks.append("click@%s,%s" % (x, y))
+    hc.elements = lambda: []
+    result = hc.launch_all(confirm_s=0.2)
+    check("a failed preflight refuses to click Launch All",
+          result.get("clicked") is None and result.get("refused") == "preflight"
+          and not clicks, result)
+    clicked: List[Any] = []
+    hc.focus_host = lambda: True
+    hc.running_counts = lambda items=None: {"running": 0, "configured": 1}
+    hc.elements = lambda: [{"name": "Launch All (1x)", "type": "ControlType.Pane",
+                            "x": 100, "y": 200, "w": 100, "h": 30},
+                           {"name": "Dofus Touch Farm Manager", "type": "ControlType.Window",
+                            "x": 90, "y": 100, "w": 1200, "h": 600}]
+    hc._click = lambda x, y: clicked.append((x, y))
+    forced = hc.launch_all(confirm_s=0.2, force=True)
+    check("--force is the deliberate escape hatch", bool(clicked),
+          {"attempts": forced.get("attempts"), "clicks": clicked})
+    # an element sitting on the title-bar close cluster must never be clicked
+    clicks2: List[Any] = []
+    hc.preflight = lambda force=False: {"ok": True, "blocking": [], "entries": {}}
+    hc._click = lambda x, y: clicks2.append((x, y))
+    hc.elements = lambda: [{"name": "Launch All (1x)", "type": "ControlType.Pane",
+                            "x": 1240, "y": 105, "w": 60, "h": 24},
+                           {"name": "Dofus Touch Farm Manager", "type": "ControlType.Window",
+                            "x": 90, "y": 100, "w": 1200, "h": 600}]
+    refused = hc.launch_all(confirm_s=0.2)
+    check("a rectangle over the window's close button is refused, not clicked",
+          refused.get("verified") is not True and not clicks2,
+          [a.get("reason") for a in refused.get("attempts", [])])
+    hc._click = clicks.append
+    spec2 = importlib.util.spec_from_file_location(
+        "live_ready_guard", REPO_ROOT / "tools" / "live_ready.py")
+    ready = importlib.util.module_from_spec(spec2)
+    spec2.loader.exec_module(ready)
+    check("a fetch through a port nobody listens on is False, not an exception",
+          ready._fetch_via(ready.LOGIN_ASSET, "http://127.0.0.1:1", timeout=1.0) is False, None)
+
+
+def test_auto_live_guards() -> None:
+    section("Unattended live runner (gates, waits and round accounting)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location(
+        "auto_live_guard", REPO_ROOT / "tools" / "auto_live.py")
+    al = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(al)
+
+    class _Clock:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def sleep(self, seconds):
+            return None
+
+    tmp = Path(tempfile.mkdtemp(prefix="auto-live-"))
+    log = tmp / "auto_0.jsonl"
+    # This is the shape the live loop really writes (see test_auto_live_summarise):
+    # `index` + `tool` with `kind` null. The fixture used to invent `kind: "step"`
+    # rows with a nested observation.position, which matched the code it was written
+    # beside and not the game: the first real unattended round reported rows: 0.
+    log.write_text("".join(_json.dumps(row) + chr(10) for row in [
+        {"index": 0, "kind": None, "tool": "nav.goto", "ok": True,
+         "obs_before": {"map_id": 100}, "obs_after": {"map_id": 101}},
+        {"index": 1, "kind": None, "tool": "quest.advance", "ok": False,
+         "obs_before": {"map_id": 101}, "obs_after": {"map_id": 101}},
+        {"kind": "decision", "goal": "do all the quests"},
+        "{ not json",
+    ]), encoding="utf-8")
+    summary = al.summarise(log)
+    check("a round is counted from its own rows, not from a summary line",
+          summary["rows"] == 2 and summary["ok"] == 1 and summary["map_changed"] == 1,
+          summary)
+    check("the tool mix is measured per round",
+          summary["tools"].get("nav.goto") == 1, summary["tools"])
+
+    al._load = lambda name: type("Stub", (), {"checks": staticmethod(lambda: [
+        {"level": "FAIL", "name": "egress", "detail": "upstream not listening"},
+        {"level": "PASS", "name": "client", "detail": "1 window"}])})()
+    check("a dead egress stops the runner before anything is launched",
+          al.preflight(force=False) == (False, [{"level": "FAIL", "name": "egress",
+                                                 "detail": "upstream not listening"}]), None)
+    ok, _ = al.preflight(force=True)
+    check("--force is the operator's explicit override", ok is True, None)
+    al._load = lambda name: type("Stub", (), {"checks": staticmethod(lambda: [
+        {"level": "PASS", "name": "egress", "detail": "relay ok"}])})()
+    check("a healthy preflight lets the run proceed", al.preflight(force=False)[0] is True, None)
+
+    stop = tmp / "stop"
+    calls: List[int] = []
+    responses = [{"slot": 1, "error": "timed out"},
+                 {"slot": 1, "in_world": False, "connected": True},
+                 {"slot": 1, "in_world": True, "name": "Aiai", "level": 3}]
+    real_probe, real_time = al.probe, al.time
+    al.probe = lambda slot, timeout=12.0: (calls.append(slot), responses[min(len(calls), 3) - 1])[1]
+    al.time = _Clock(real_time)
+    dismissed: List[int] = []
+    try:
+        result = al.wait_for_slot(1, 60.0, stop, dismiss=lambda limit=2: dismissed.append(1))
+        check("the loop waits for the page to report a world, not for a fixed timeout",
+              result.get("ok") is True and len(calls) == 3, (result, len(calls)))
+        check("an open dialog is dismissed while waiting", len(dismissed) >= 2, dismissed)
+        stop.write_text("stop", encoding="utf-8")
+        calls.clear()
+        stopped = al.wait_for_slot(1, 60.0, stop)
+        check("the stop file ends the wait immediately",
+              stopped.get("reason") == "stop file", stopped)
+        stop.unlink()
+        al.probe = lambda slot, timeout=12.0: {"slot": slot, "in_world": False}
+        out_of_time = al.wait_for_slot(2, 0.0, stop)
+        check("a slot that never answers is reported, not assumed",
+              out_of_time.get("ok") is False, out_of_time)
+    finally:
+        al.probe, al.time = real_probe, real_time
+
+    # the login screen used to be the step that needed a person: prove the runner presses
+    # the game's own guest button, and that it asks for the path the operator authorised
+    press_calls: List[Dict[str, Any]] = []
+    real_call = al.call
+    al.call = (lambda slot, tool, args=None, timeout=20.0:
+               (press_calls.append({"tool": tool, "args": args or {}}),
+                {"result": {"ok": True, "data": {"pressed": "_playGuestBtn.emit(tap,event)",
+                                                 "emit_error": None}}})[1])
+    try:
+        note = al.auto_login(1)
+        check("auto-login asks for the guest path, not a saved Google session",
+              press_calls and press_calls[0]["tool"] == "session.login"
+              and press_calls[0]["args"].get("target") == "guest", press_calls)
+        check("the press is reported with what it pressed",
+              note.get("pressed") == "_playGuestBtn.emit(tap,event)", note)
+        responses2 = [{"slot": 1, "in_world": False, "connected": True},
+                      {"slot": 1, "in_world": False, "connected": True},
+                      {"slot": 1, "in_world": True, "name": "Aiai", "level": 3}]
+        calls2: List[int] = []
+        al.probe = (lambda slot, timeout=12.0:
+                    (calls2.append(slot), responses2[min(len(calls2), 3) - 1])[1])
+        press_calls.clear()
+        al.time = _Clock(real_time)
+        got = al.wait_for_slot(1, 60.0, stop, login=al.auto_login, every_s=0.0)
+        check("a connected page with no world is pressed rather than only polled",
+              got.get("ok") is True and len(press_calls) == 2,
+              (got, press_calls, len(press_calls)))
+        check("the wait reports how many logins it took",
+              got.get("logins") == 2, got)
+        al.probe = lambda slot, timeout=12.0: {"slot": slot, "in_world": True, "name": "Y"}
+        press_calls.clear()
+        al.wait_for_slot(1, 60.0, stop, login=al.auto_login, every_s=0.0)
+        check("a client already in a world is never pressed", press_calls == [], press_calls)
+    finally:
+        al.call, al.probe, al.time = real_call, real_probe, real_time
+
+    class _Boom:
+        def __enter__(self):
+            raise OSError("page not answering")
+
+        def __exit__(self, *args):
+            return False
+
+    real_urlopen = al.urllib.request.urlopen
+    al.urllib.request.urlopen = lambda *a, **k: _Boom()
+    try:
+        errored = al.probe(3)
+        check("an unanswered probe returns a state, never an exception",
+              "error" in errored, errored)
+    finally:
+        al.urllib.request.urlopen = real_urlopen
+
+
 def run() -> Tuple[int, List[str]]:
     test_verdict_vocabulary()
     test_verifier_rules()
@@ -5012,6 +6171,12 @@ def run() -> Tuple[int, List[str]]:
     test_command_replay()
     test_live_evidence()
     test_command_onnx_decode()
+    test_egress_preflight()
+    test_auto_live_guards()
+    test_host_launch_guard()
+    test_live_transitions()
+    test_foresight_net()
+    test_counterfactual_factory_alive()
     test_repair_credit()
     test_reads_are_not_actions()
     test_dialog_labels()
@@ -5033,8 +6198,61 @@ def run() -> Tuple[int, List[str]]:
     test_intervention_instrument()
     test_js_page_suites()
     test_bundle_resilience()
+    test_bundle_updater()
+    test_multi_instance_targeting()
+    test_per_instance_ai()
+    test_keep_alive_instrument()
+    test_window_layout()
+    test_tool_ensemble()
+    test_fight_rotation()
+    test_tutorial_hold()
+    test_auto_live_summarise()
     test_go_relay_suites()
     return _CHECKS, _FAILURES
+
+
+def test_auto_live_summarise() -> None:
+    section("Round accounting (the manifest row must see the steps the round took)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location(
+        "auto_live_summarise", REPO_ROOT / "tools" / "auto_live.py")
+    al = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(al)
+
+    # The live loop's step rows carry `index`+`tool` and `kind: null`; the other
+    # row kinds are decision / wait / identity. This is the shape of the first real
+    # unattended round (2026-10-27), not an invention: a filter on `kind == "step"`
+    # matched nothing and every manifest reported rows: 0.
+    rows = [
+        {"index": 1, "tool": "nav.goto", "ok": True, "kind": None, "verdict": "advanced",
+         "obs_before": {"map_id": 100, "cell": 289}, "obs_after": {"map_id": 101, "cell": 4}},
+        {"index": 2, "tool": "quest.advance", "ok": True, "kind": None, "verdict": "noop",
+         "obs_before": {"map_id": 101, "cell": 4}, "obs_after": {"map_id": 101, "cell": 4}},
+        {"kind": "decision", "tool": "quest.advance", "ok": True},
+        {"kind": "wait", "tool": None},
+        {"kind": "identity", "tool": None},
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "round.jsonl"
+        path.write_text("".join(_json.dumps(r) + "\n" for r in rows) + "torn-half-line",
+                        encoding="utf-8")
+        summary = al.summarise(path)
+    check("a step row is one with an index and a tool, whatever its kind says",
+          summary.get("rows") == 2, summary)
+    check("only the executed rows are counted, not decisions, waits or identity",
+          summary.get("ok") == 2 and set(summary.get("tools") or {}) == {"nav.goto", "quest.advance"},
+          summary)
+    check("a map change is measured from the vectors the rows really hold",
+          summary.get("map_changed") == 1, summary)
+
+    rounds = sorted((REPO_ROOT / "data" / "auto_live").glob("*/auto_*.jsonl"))
+    if rounds:
+        real = al.summarise(rounds[-1])
+        check("the summariser counts the steps of a real recorded round",
+              real.get("rows", 0) > 0, "%s -> %s" % (rounds[-1].name, real))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

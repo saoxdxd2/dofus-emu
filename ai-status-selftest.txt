@@ -1,5 +1,8 @@
-last step line: {"index": 3, "goal": "plz do all the quests", "tool": "state.snapshot", "args": {}, "ok": false, "error": "client directive failed: instance 'dofus-05' is not a
-idle form  : AI stopped - last step 4
-running form: AI running - step 4 - state.snapshot failed (model)
+instance: dofus-05
+log     : C:\Users\sao\AppData\Local\DofusFarm\autopilot.dofus-05.jsonl
+last step line: {"index": 35, "goal": "do all the quests", "tool": "quest.advance", "args": {"npc_id": 3888, "quest_id": 3841}, "ok": true, "error": null, "latency_ms": 23.6541
+idle form  : AI stopped - last step 36
+running form: AI running - step 36 - quest.advance noop (observed)
 no log     : AI idle
 first step : AI running - waiting for the first step
+RESULT: ok

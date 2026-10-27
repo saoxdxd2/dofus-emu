@@ -1,0 +1,61 @@
+{
+ "action_move_rate": 13.96,
+ "actions": 1827,
+ "actions_moved": 255,
+ "actions_progress": 27,
+ "objective_types": {
+  "-1": 61,
+  "0": 4313,
+  "1": 215,
+  "4": 138,
+  "6": 543,
+  "None": 154
+ },
+ "per_tool": {
+  "farm.start": {
+   "failed_pct": 0.0,
+   "moved_pct": 1.3,
+   "n": 78,
+   "progress_pct": 0.0
+  },
+  "fight.join": {
+   "failed_pct": 0.0,
+   "moved_pct": 0.0,
+   "n": 7,
+   "progress_pct": 0.0
+  },
+  "nav.goto": {
+   "failed_pct": 0.3,
+   "moved_pct": 32.2,
+   "n": 385,
+   "progress_pct": 0.0
+  },
+  "quest.advance": {
+   "failed_pct": 2.1,
+   "moved_pct": 9.7,
+   "n": 1342,
+   "progress_pct": 2.0
+  },
+  "safe.stop": {
+   "failed_pct": 0.0,
+   "moved_pct": 0.0,
+   "n": 15,
+   "progress_pct": 0.0
+  }
+ },
+ "reads": 3597,
+ "rows": 5510,
+ "segments": 234,
+ "split_actions": {
+  "test": 274,
+  "train": 1279,
+  "val": 274
+ },
+ "split_rows": {
+  "test": 636,
+  "train": 4476,
+  "val": 398
+ },
+ "with_observation_pair": 5424,
+ "x_coverage_pct": 97.2
+}

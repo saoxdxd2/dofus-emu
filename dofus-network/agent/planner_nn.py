@@ -30,6 +30,8 @@ DEFAULT_MODEL = REPO_ROOT / "models" / "tool_policy.onnx"
 class NNPlanner(QuestPlanner):
     def __init__(self, model_path: Optional[Path] = None,
                  tool_penalty: Optional[Dict[str, float]] = None,
+                 stack_mode: str = "shadow",
+                 stack_path: Optional[Path] = None,
                  **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.tools: List[str] = []
@@ -49,6 +51,13 @@ class NNPlanner(QuestPlanner):
         # spurious farm.start burns one. Subtracting the cost before the argmax is the
         # decision-theoretic choice, and it is measurable.
         self.tool_penalty = dict(tool_penalty or {})
+        self.stack_mode = stack_mode if stack_mode in ("off", "shadow", "act") else "shadow"
+        self.stack_path = Path(stack_path) if stack_path else None
+        self.stack = None
+        self.foresight = None
+        self._stack_loaded = False
+        self.stack_note = "stack not loaded"
+        self.last_stack: Optional[Dict[str, Any]] = None
 
     def _ensure_model(self) -> None:
         if self._model_loaded:
@@ -74,6 +83,54 @@ class NNPlanner(QuestPlanner):
         except Exception as exc:  # noqa: BLE001
             self.note = "model unusable (%s); deterministic fallback" % exc
 
+    # -- stacked choice ----------------------------------------------------
+
+    def _ensure_stack(self) -> None:
+        if self._stack_loaded or self.stack_mode == "off":
+            return
+        self._stack_loaded = True
+        from agent.ensemble import ToolStack
+        from agent.foresight import load as load_foresight
+
+        self.stack = ToolStack.load(self.stack_path)
+        self.foresight = load_foresight()
+        if self.stack is None:
+            self.stack_note = "stack artifact unavailable; policy alone"
+        elif self.foresight is None:
+            self.stack_note = "foresight unavailable; policy alone"
+        else:
+            self.stack_note = self.stack.note
+
+    def _stack_choice(self, x: Any, logits: Any) -> Optional[Dict[str, Any]]:
+        if self.stack_mode == "off":
+            return None
+        self._ensure_stack()
+        if self.stack is None or self.foresight is None:
+            return None
+        try:
+            cells = {row["tool"]: row for row in
+                     self.foresight.rank(x, self.tools)}
+            if len(cells) < 2:
+                return None
+            context = self.stack.context(x) if hasattr(self.stack, "context") else None
+            ranked = self.stack.rank(logits, cells, self.tools, context=context)
+            if not ranked:
+                return None
+            for row in ranked:
+                row["score"] -= float(self.tool_penalty.get(row["tool"], 0.0))
+            ranked.sort(key=lambda row: row["score"], reverse=True)
+            self.last_stack = {
+                "mode": self.stack_mode,
+                "active": bool(self.stack.active),
+                "stack": ranked[0]["tool"],
+                "scores": [{key: row[key] for key in ("tool", "score")}
+                           for row in ranked[:5]],
+            }
+            return ranked[0]
+        except Exception as exc:  # noqa: BLE001 - stacking must fail open
+            self.stack_note = "stack failed open: %s: %s" % (type(exc).__name__, exc)
+            return None
+
     # -- learned choice ----------------------------------------------------
 
     def _choose_tool(self, quest: Dict[str, Any], step_idx: int,
@@ -96,7 +153,19 @@ class NNPlanner(QuestPlanner):
                 for name, cost in self.tool_penalty.items():
                     if name in self.tools:
                         scores[self.tools.index(name)] -= cost
-            return self.tools[int(max(range(len(scores)), key=lambda i: scores[i]))]
+            policy_tool = self.tools[int(max(range(len(scores)),
+                                             key=lambda i: scores[i]))]
+            stacked = self._stack_choice(x[0], logits)
+            if self.last_stack is not None:
+                self.last_stack["policy"] = policy_tool
+                self.last_stack["chosen"] = (
+                    stacked["tool"] if stacked is not None
+                    and self.stack is not None and self.stack.active
+                    and self.stack_mode == "act" else policy_tool)
+            if (stacked is not None and self.stack is not None
+                    and self.stack.active and self.stack_mode == "act"):
+                return str(stacked["tool"])
+            return policy_tool
         except Exception as exc:  # noqa: BLE001
             # A shape mismatch used to be swallowed here and the planner silently fell
             # back to the if-chain, which looks like "the model is no better than the

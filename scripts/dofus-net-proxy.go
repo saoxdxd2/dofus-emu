@@ -1089,10 +1089,20 @@ func (p *ProxyServer) pinRecentlyDead(u *url.URL) bool {
 // gameTunnel is one game connection's last sign of life.
 type gameTunnel struct {
 	lastActivity atomic.Int64
+	lastReceived atomic.Int64
 }
 
 func (g *gameTunnel) touch() {
 	g.lastActivity.Store(time.Now().UnixNano())
+}
+
+// touchReceived records bytes that actually came back from the server. A
+// half-open login socket can accept the client's TLS hello and then go silent;
+// that write must not make the pinned exit look alive.
+func (g *gameTunnel) touchReceived() {
+	now := time.Now().UnixNano()
+	g.lastActivity.Store(now)
+	g.lastReceived.Store(now)
 }
 
 // activityWriter marks the session alive only when the peer accepted bytes. Reading from the
@@ -1109,6 +1119,18 @@ func (a activityWriter) Write(b []byte) (int, error) {
 		a.touch()
 	}
 	return n, err
+}
+
+// registerGameTunnelFor registers only the actual game socket, not the login
+// page's own HTTPS traffic to Ankama. Both share the pinned exit, but a page
+// fetch to config.json must not keep a dead pin alive: measured 2026-10-27,
+// four clients sat on "Server busy" while eight login-page tunnels made the
+// relay believe game sessions were live and refuse to fail over.
+func (p *ProxyServer) registerGameTunnelFor(dest string) (*gameTunnel, func()) {
+	if !gameSessionDestination(dest) {
+		return nil, func() {}
+	}
+	return p.registerGameTunnel()
 }
 
 func (p *ProxyServer) registerGameTunnel() (*gameTunnel, func()) {
@@ -1130,15 +1152,17 @@ func (p *ProxyServer) registerGameTunnel() (*gameTunnel, func()) {
 	}
 }
 
-// liveGameSessions counts game tunnels that moved bytes within window. Background connections
-// are deliberately excluded: they are not the session the server binds to an address.
+// liveGameSessions counts game tunnels that received server bytes within window.
+// Background connections and client-only writes are deliberately excluded: the
+// former are not the session the server binds to an address, and the latter can
+// be a stalled login handshake aimed at a dead exit.
 func (p *ProxyServer) liveGameSessions(window time.Duration) int {
 	cutoff := time.Now().Add(-window).UnixNano()
 	p.gameMu.Lock()
 	defer p.gameMu.Unlock()
 	live := 0
 	for t := range p.gameConns {
-		if t.lastActivity.Load() >= cutoff {
+		if t.lastReceived.Load() >= cutoff {
 			live++
 		}
 	}
@@ -1163,21 +1187,11 @@ func (p *ProxyServer) setPinnedUpstream(u *url.URL) {
 // log line: a second pin in one process is a new session, and the log has to say so, because the
 // first session's address is gone and cannot be preserved.
 func (p *ProxyServer) establishPin(ctx context.Context, dest, socksTarget string, timeout time.Duration, skip *url.URL, resume bool) (net.Conn, *url.URL, error) {
-	order := make([]*url.URL, 0, len(p.upstreams))
-	for _, u := range p.upstreams {
-		if u == nil || (skip != nil && u.String() == skip.String()) || p.pinRecentlyDead(u) {
-			continue
-		}
-		order = append(order, u)
-	}
+	order, why := p.pinCandidates(skip)
 	if len(order) == 0 {
 		return nil, nil, fmt.Errorf("no upstream configured")
 	}
 	first := order[0]
-	why := "the supervisor's pick"
-	if skip != nil {
-		why = "the dead address was skipped"
-	}
 	started := time.Now()
 	conn, err := p.dialOne(first, dest, socksTarget, timeout)
 	p.recordHop(first, err == nil, time.Since(started))
@@ -1198,6 +1212,39 @@ func (p *ProxyServer) establishPin(ctx context.Context, dest, socksTarget string
 	p.setPinnedUpstream(winner)
 	p.logPin(winner, resume, "the first choice was unreachable")
 	return conn, winner, nil
+}
+
+// pinCandidates returns the hops worth trying for a new session.
+//
+// A 30-second death cooldown is useful while other hops remain. It must not
+// turn into a terminal state: public exits and local tunnels flap, and once
+// every hop is cooling down this used to return "no upstream configured" even
+// though the supervisor's pick was healthy again. In that case, retry the whole
+// chain rather than guarantee a failed login.
+func (p *ProxyServer) pinCandidates(skip *url.URL) ([]*url.URL, string) {
+	order := make([]*url.URL, 0, len(p.upstreams))
+	for _, u := range p.upstreams {
+		if u == nil || (skip != nil && u.String() == skip.String()) || p.pinRecentlyDead(u) {
+			continue
+		}
+		order = append(order, u)
+	}
+	if len(order) > 0 {
+		why := "the supervisor's pick"
+		if skip != nil {
+			why = "the dead address was skipped"
+		}
+		return order, why
+	}
+	for _, u := range p.upstreams {
+		if u != nil {
+			order = append(order, u)
+		}
+	}
+	if len(order) > 0 {
+		return order, "every hop was cooling down; retrying the chain"
+	}
+	return nil, "no upstream configured"
 }
 
 func (p *ProxyServer) logPin(winner *url.URL, resume bool, why string) {
@@ -1334,11 +1381,7 @@ func (p *ProxyServer) dialOne(u *url.URL, dest, socksTarget string, timeout time
 // game's next connection inherited a new address and was closed as a hijacked session. Background
 // telemetry may use a different hop; it must never be able to change which address Ankama sees.
 func isGameDestination(dest string) bool {
-	host := dest
-	if h, _, err := net.SplitHostPort(dest); err == nil {
-		host = h
-	}
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	host := destinationHost(dest)
 	if host == "dofus.local" || host == "dofus.localhost" {
 		return true
 	}
@@ -1348,6 +1391,24 @@ func isGameDestination(dest string) bool {
 		}
 	}
 	return false
+}
+
+func destinationHost(dest string) string {
+	host := dest
+	if h, _, err := net.SplitHostPort(dest); err == nil {
+		host = h
+	}
+	return strings.ToLower(strings.TrimSuffix(host, "."))
+}
+
+// gameSessionDestination is the subset of game traffic that is the actual
+// session socket. The client resolves its socket against the page origin, so it
+// arrives as dofus.local; the login page's config/primus requests go directly to
+// the Ankama host even though they share the same pinned exit. Only the former
+// may preserve the pin when a dial fails.
+func gameSessionDestination(dest string) bool {
+	host := destinationHost(dest)
+	return host == "dofus.local" || host == "dofus.localhost"
 }
 
 func (p *ProxyServer) raceUpstreams(ctx context.Context, order []*url.URL, dest, socksTarget string, timeout time.Duration) (net.Conn, *url.URL, error) {
@@ -1579,10 +1640,10 @@ func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWrite
 	tuneTCPConn(destConn)
 	var sentBytes, recvBytes int64
 	done := make(chan struct{}, 2)
-	copyDir := func(dst, src net.Conn, counter *int64, lead []byte, buffered *bufio.ReadWriter) {
+	copyDir := func(dst, src net.Conn, counter *int64, lead []byte, buffered *bufio.ReadWriter, touch func()) {
 		out := io.Writer(dst)
-		if tunnel != nil {
-			out = activityWriter{w: dst, touch: tunnel.touch}
+		if tunnel != nil && touch != nil {
+			out = activityWriter{w: dst, touch: touch}
 		}
 		if len(lead) > 0 {
 			n, _ := out.Write(lead)
@@ -1603,8 +1664,8 @@ func (p *ProxyServer) pipeTunnel(clientConn net.Conn, clientBuf *bufio.ReadWrite
 	if pre != nil {
 		toServer, toClient = pre.toServer, pre.toClient
 	}
-	go copyDir(destConn, clientConn, &sentBytes, toServer, clientBuf)
-	go copyDir(clientConn, destConn, &recvBytes, toClient, nil)
+	go copyDir(destConn, clientConn, &sentBytes, toServer, clientBuf, tunnel.touch)
+	go copyDir(clientConn, destConn, &recvBytes, toClient, nil, tunnel.touchReceived)
 	<-done
 	drainTimer := time.NewTimer(4 * time.Second)
 	select {
@@ -1783,7 +1844,7 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	var tunnel *gameTunnel
 	if isGameDestination(dest) {
 		var release func()
-		tunnel, release = p.registerGameTunnel()
+		tunnel, release = p.registerGameTunnelFor(dest)
 		defer release()
 	}
 	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel, nil)
@@ -1818,7 +1879,7 @@ func (p *ProxyServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	var tunnel *gameTunnel
 	if isGameDestination(r.Host) {
 		var release func()
-		tunnel, release = p.registerGameTunnel()
+		tunnel, release = p.registerGameTunnelFor(r.Host)
 		defer release()
 	}
 	p.pipeTunnel(clientConn, clientBuf, destConn, tunnel, nil)

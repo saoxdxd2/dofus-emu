@@ -73,6 +73,37 @@ check('the _type fallback is counted too, not only data.type',
 check('the matching actors are the groups, so a non-empty list has a matching count',
     scan.matched === 2, JSON.stringify(scan));
 
+// The full lister, not just the census head: a group row used to reference an
+// undefined `si`, so the first real group threw and the observation returned
+// `groups: []` on the exact tutorial map where the planner needed it.
+const fullStart = src.indexOf('var _groupMembers = function (a) {');
+const fullEnd = src.indexOf('var _agentTutorial = function', fullStart);
+check('the full group lister can be extracted', fullStart >= 0 && fullEnd > fullStart);
+if (fullStart >= 0 && fullEnd > fullStart) {
+    const fullBody = src.slice(fullStart, fullEnd)
+        + '\nreturn _listMonsterGroups();';
+    const liveWindow = {actorManager: {actors: {
+        g: {actorId: 7001, cellId: 321,
+            data: {type: 'GameRolePlayGroupMonsterInformations',
+                   scaleLevel: 2,
+                   staticInfos: {mainCreatureLightInfos:
+                       {creatureGenericId: 4192, level: 3, isBoss: true},
+                       underlings: [{creatureGenericId: 4193, level: 2}]}}}
+    }}};
+    let rows = [];
+    let thrown = null;
+    try { rows = new Function('window', fullBody)(liveWindow); }
+    catch (e) { thrown = e; }
+    check('a live group produces a row instead of throwing',
+        thrown == null && rows.length === 1 && rows[0].group_id === 7001,
+        thrown ? String(thrown) : JSON.stringify(rows));
+    check('the group row carries members and the static-key census',
+        !thrown && rows[0].monster_ids.join(',') === '4192,4193'
+        && rows[0].member_count === 2 && rows[0].max_level === 3
+        && rows[0].is_boss === true && rows[0].static_keys.indexOf('mainCreatureLightInfos') >= 0,
+        thrown ? String(thrown) : JSON.stringify(rows[0]));
+}
+
 const many = {};
 for (let i = 0; i < 40; i++) many['k' + i] = {data: {type: 'Type' + i}};
 scan = run({actorManager: {actors: many}});

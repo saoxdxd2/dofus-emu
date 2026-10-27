@@ -125,7 +125,10 @@ re-observe, not a fixed sleep.
 * **planner** — `NNPlanner` hybrid (`agent/planner_nn.py`): the ONNX
   `tool_policy.onnx` does `argmax` over 21 tool logits, but the deterministic
   planner still owns argument filling and the safety gates. A wrong model argmax
-  cannot produce an illegal call.
+  cannot produce an illegal call. `--ensemble act|shadow|off` controls the
+  23-leaf decision-tree stack over policy + foresight + K-means state context;
+  the default `act` is honoured only when `models/tool_stack.json` carries a
+  passed cross-validation gate (§9.3 of `AI_ARCHITECTURE.md`).
 * **encoder** — the 30M language encoder via `ai/encoder_serve.py`; `--model-dir`
   defaults to `models/encoder30_v15`.
 

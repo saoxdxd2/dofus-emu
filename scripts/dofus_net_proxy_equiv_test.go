@@ -6,9 +6,11 @@ package main
 import (
 	"math/rand"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 var (
@@ -63,6 +65,87 @@ func TestStripWebViewTokensFuzzEquivalence(t *testing.T) {
 		got := stripWebViewTokens(s)
 		if want != got {
 			t.Fatalf("stripWebViewTokens mismatch on %q: got %q want %q", s, got, want)
+		}
+	}
+}
+
+func TestGameSessionDestinationSeparatesPageTraffic(t *testing.T) {
+	cases := []struct {
+		dest string
+		want bool
+	}{
+		{"dofus.local:443", true},
+		{"dofus.localhost:443", true},
+		{"dt-proxy-production-login.ankama-games.com:443", false},
+		{"dofustouch.cdn.ankama.com:443", false},
+		{"config.edge.skype.com:443", false},
+	}
+	for _, c := range cases {
+		if got := gameSessionDestination(c.dest); got != c.want {
+			t.Errorf("gameSessionDestination(%q) = %v, want %v", c.dest, got, c.want)
+		}
+	}
+}
+
+func TestPinCandidatesNeverGivesUpAfterCooldowns(t *testing.T) {
+	first, _ := url.Parse("socks5://127.0.0.1:40000")
+	second, _ := url.Parse("socks5://203.0.113.5:1080")
+	p := &ProxyServer{upstreams: []*url.URL{first, second}}
+
+	p.markPinDead(first)
+	order, _ := p.pinCandidates(nil)
+	if len(order) != 1 || order[0].String() != second.String() {
+		t.Fatalf("a cooling-down hop was reused while a live one remained: %v", order)
+	}
+
+	p.markPinDead(second)
+	order, why := p.pinCandidates(first)
+	if len(order) != 2 {
+		t.Fatalf("all-cooling-down chain returned %d candidates, want 2 (%s)", len(order), why)
+	}
+	if !strings.Contains(why, "retrying the chain") {
+		t.Fatalf("fallback reason = %q", why)
+	}
+}
+
+func TestLoginFetchDoesNotPreserveThePin(t *testing.T) {
+	p := &ProxyServer{}
+	page, releasePage := p.registerGameTunnelFor(
+		"dt-proxy-production-login.ankama-games.com:443")
+	if page != nil {
+		t.Fatal("a login-page fetch was registered as a live game session")
+	}
+	releasePage()
+	if live := p.liveGameSessions(time.Minute); live != 0 {
+		t.Fatalf("login-page traffic kept %d game session(s) alive", live)
+	}
+
+	game, releaseGame := p.registerGameTunnelFor("dofus.local:443")
+	if game == nil {
+		t.Fatal("the real game socket was not registered")
+	}
+	game.touch()
+	if live := p.liveGameSessions(time.Minute); live != 0 {
+		t.Fatalf("a client-only write counted as %d live session(s), want 0", live)
+	}
+	game.touchReceived()
+	if live := p.liveGameSessions(time.Minute); live != 1 {
+		t.Fatalf("real game socket counted as %d sessions, want 1", live)
+	}
+	releaseGame()
+	if live := p.liveGameSessions(time.Minute); live != 0 {
+		t.Fatalf("released game socket still counted as %d session(s)", live)
+	}
+}
+
+func TestIsGameDestinationStillIncludesLoginHosts(t *testing.T) {
+	for _, dest := range []string{
+		"dofus.local:443",
+		"dt-proxy-production-login.ankama-games.com:443",
+		"dofustouch.cdn.ankama.com:443",
+	} {
+		if !isGameDestination(dest) {
+			t.Errorf("%q must still use the pinned exit", dest)
 		}
 	}
 }

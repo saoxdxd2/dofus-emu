@@ -40,6 +40,12 @@ namespace DofusFarm.Engine
         public string AccountLogin { get; set; }
         public string AccountPassword { get; set; }
 
+        // The final tiled geometry this launch belongs to. Launch All supplies the
+        // batch size so the first window is already at its final cell when the page
+        // boots; zero means "infer from the forms currently active".
+        public int LayoutSlotCount { get; set; }
+        public int LayoutSlotIndex { get; set; }
+
         // Shared asset cache directory (relay cache + wizAssets mirror).
         public string CacheDir { get; set; }
 
@@ -58,6 +64,7 @@ namespace DofusFarm.Engine
             Cores = 1;
             TargetFps = 60;
             EnableBackgroundThrottling = false;
+            LayoutSlotIndex = -1;
         }
     }
 

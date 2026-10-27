@@ -204,6 +204,18 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             model: Optional[Path] = None) -> List[Dict[str, Any]]:
     world = World(level=level, seed=seed, max_steps=steps, noise=noise,
                   travel_cost=travel_cost)
+    # Stand the character on an NPC that offers a quest of the focused type. G31 only lets the
+    # planner start an id the client reported, and the harness reports an offer through the
+    # dialog link, so an episode that begins in the middle of nowhere can never accept anything.
+    if focus is not None:
+        for quest in sorted(world.quests.values(), key=lambda q: q.id):
+            if not quest.start_map or not world.can_start(quest):
+                continue
+            first = next((o for s in quest.steps
+                          for o in (s.get("objectives") or []) if o), None)
+            if first is not None and objective_type(first) == focus:
+                world.place_at(int(quest.start_map))
+                break
     if behavior == "nn":
         # A DAgger round: walk the states the deployed policy actually reaches,
         # then label every candidate by the same fork. The teacher corpus alone
@@ -311,11 +323,14 @@ def _parallel(args: argparse.Namespace) -> int:
             cmd += ["--model", str(args.model)]
         if deadline:
             cmd += ["--deadline-epoch", "%.0f" % deadline]
-        procs.append(subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+        procs.append(subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE))
 
+    tails: List[str] = []
     for proc in procs:
         proc.wait()
+        out = (proc.stdout.read() or b"").decode("utf-8", "replace").strip()
+        tails.append(out)
         if proc.returncode != 0:
             # The first version discarded this stream, so a crashed worker showed
             # up only as "0 rows" and the real exception was lost.
@@ -341,6 +356,14 @@ def _parallel(args: argparse.Namespace) -> int:
                             pass
 
     total = counts["train"] + counts["val"]
+    if total == 0:
+        # A generator that quietly yields nothing is worse than one that crashes: the corpus on
+        # disk keeps looking authoritative while every future number is stale. This is exactly
+        # how the offer/focus bug hid for five days.
+        print("0 rows from %d workers; worker output:\n%s"
+              % (args.parallel, "\n---\n".join((t or "<empty>")[-600:] for t in tails)),
+              file=sys.stderr)
+        return 1
     stats = {"workers": args.parallel, "rows": total, **counts,
              "minutes": args.minutes, "depth": args.depth,
              "score_mode": args.score, "travel_cost": args.travel_cost,

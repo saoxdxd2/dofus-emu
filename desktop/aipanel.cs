@@ -37,7 +37,11 @@ namespace DofusFarm.UI
     public sealed class AiSettings
     {
         public string Mode = "off";          // off | order | auto
-        public int TargetSlot = 0;           // 0 = all instances
+        public int TargetSlot = 0;           // 0 = all instances (kept for compatibility)
+        // 1-based instance slots the panel may drive. Empty = every instance.
+        // A single slot used to be the only choice, so one loop could only ever
+        // watch one client while four were open.
+        public List<int> TargetSlots = new List<int>();
         public string Policy = "planner";    // rule | encoder | planner
         public bool DryRun = false;
         // No wall-clock budget and no interval: the loop runs until the goals are
@@ -135,6 +139,14 @@ namespace DofusFarm.UI
                     {
                         case "mode": s.Mode = val; break;
                         case "target_slot": s.TargetSlot = ParseInt(val, 0); break;
+                        case "target_slots":
+                            s.TargetSlots = new List<int>();
+                            foreach (string part in val.Split(','))
+                            {
+                                int slot = ParseInt(part.Trim(), 0);
+                                if (slot >= 1 && !s.TargetSlots.Contains(slot)) s.TargetSlots.Add(slot);
+                            }
+                            break;
                         case "policy": s.Policy = val; break;
                         case "dry": s.DryRun = val == "1"; break;
                         case "steps": s.Steps = ParseInt(val, 200); break;
@@ -160,7 +172,12 @@ namespace DofusFarm.UI
                 var sb = new StringBuilder();
                 sb.AppendLine("# DofusFarm AI panel settings");
                 sb.AppendLine("mode=" + Mode);
+                // target_slot stays the first selection (0 = all) so an older build
+                // reading this file still points at a real instance.
+                TargetSlot = TargetSlots != null && TargetSlots.Count > 0 ? TargetSlots[0] : 0;
                 sb.AppendLine("target_slot=" + TargetSlot.ToString());
+                sb.AppendLine("target_slots=" + string.Join(",",
+                    (TargetSlots ?? new List<int>()).ConvertAll(delegate(int v) { return v.ToString(); }).ToArray()));
                 sb.AppendLine("policy=" + Policy);
                 sb.AppendLine("dry=" + (DryRun ? "1" : "0"));
                 sb.AppendLine("steps=" + Steps.ToString());
@@ -299,7 +316,11 @@ namespace DofusFarm.UI
         private readonly AiSettings _settings;
 
         private ComboBox _cmbMode;
-        private ComboBox _cmbTarget;
+        // Multi-select: a ComboBox can name exactly one instance, so "All instances"
+        // was the only way to address more than one and it silently meant "whichever
+        // window the bridge happens to pick first". A button that opens a checklist
+        // gives every combination, and the label states what will actually be driven.
+        private Button _btnTargets;
         private CheckBox _chkDry;
         private TextBox _txtGoals;
         private RichTextBox _output;
@@ -309,7 +330,12 @@ namespace DofusFarm.UI
         private Button _btnKeys;
         private Label _lblState;
 
-        private Process _proc;
+        private readonly List<Process> _procs = new List<Process>();
+        // Which instance each child drives. Without this the panel knows only "a
+        // loop is running", so the in-game badge, the shell pill and Stop all
+        // described the whole farm: pressing AI in one window turned it on (or off)
+        // for every client, and one client's step count was shown on all of them.
+        private readonly Dictionary<Process, string> _instanceByProc = new Dictionary<Process, string>();
         private readonly object _procLock = new object();
 
         public AiPanel(string baseDir, Func<int, string> instanceBySlot, Func<int> instanceCount, Action<string> log)
@@ -358,8 +384,10 @@ namespace DofusFarm.UI
             row1.Controls.Add(_cmbMode);
 
             row1.Controls.Add(MakeLabel("Target", 154, 4));
-            _cmbTarget = MakeCombo(204, 0, 170, new object[] { "All instances" });
-            row1.Controls.Add(_cmbTarget);
+            _btnTargets = MakeButton("Targets: All instances", Color.FromArgb(40, 44, 58),
+                                     Color.FromArgb(55, 62, 80), 204, 0, 300);
+            _btnTargets.Click += delegate { OpenTargetsDialog(); };
+            row1.Controls.Add(_btnTargets);
 
 
             _chkDry = new CheckBox();
@@ -548,32 +576,160 @@ namespace DofusFarm.UI
         }
 
         /// <summary>
-        /// Rebuild the target list from the instances that actually exist. The old
+        /// Rebuild the target label from the instances that actually exist. The old
         /// combo was a fixed "Slot #1..#4", so it offered slots with no instance
         /// behind them and hid the fifth one.
         /// </summary>
         public void RefreshTargets()
         {
-            if (_cmbTarget == null) return;
-            int want = _settings.TargetSlot;
-            int count = 0;
-            try { count = _instanceCount != null ? _instanceCount() : 0; }
-            catch { count = 0; }
-            if (count < 0) count = 0;
+            if (_btnTargets == null) return;
+            UpdateTargetsLabel();
+        }
 
-            if (_cmbTarget.Items.Count != count + 1)
+        private int InstanceCount()
+        {
+            try { int n = _instanceCount != null ? _instanceCount() : 0; return n < 0 ? 0 : n; }
+            catch { return 0; }
+        }
+
+        /// <summary>The checked slots, ascending. An empty list means every instance.</summary>
+        private List<int> SelectedSlots()
+        {
+            var chosen = new List<int>();
+            if (_settings.TargetSlots == null) return chosen;
+            int count = InstanceCount();
+            foreach (int slot in _settings.TargetSlots)
+                if (slot >= 1 && (count == 0 || slot <= count) && !chosen.Contains(slot)) chosen.Add(slot);
+            chosen.Sort();
+            return chosen;
+        }
+
+        private string SlotName(int slot)
+        {
+            string name = null;
+            try { name = _instanceBySlot != null ? _instanceBySlot(slot) : null; }
+            catch { name = null; }
+            return string.IsNullOrEmpty(name) ? ("Slot #" + slot) : name;
+        }
+
+        private void UpdateTargetsLabel()
+        {
+            List<int> chosen = SelectedSlots();
+            var parts = new List<string>();
+            foreach (int slot in chosen) parts.Add("#" + slot.ToString());
+            _btnTargets.Text = "Targets: " + (chosen.Count == 0 ? "All instances" : string.Join(" ", parts.ToArray()))
+                             + " (" + InstanceCount().ToString() + " configured)";
+        }
+
+        /// <summary>
+        /// Comma-separated instance ids for a directive, or "all". "all" is resolved
+        /// by the bridge against the windows that are actually open, which is the
+        /// only honest answer: the panel cannot know which instances were launched.
+        /// </summary>
+        private string TargetsForDirective()
+        {
+            List<int> chosen = SelectedSlots();
+            if (chosen.Count == 0) return "all";
+            var ids = new List<string>();
+            foreach (int slot in chosen)
             {
-                _cmbTarget.Items.Clear();
-                _cmbTarget.Items.Add("All instances");
+                string id = SlotName(slot);
+                if (!string.IsNullOrEmpty(id) && !id.StartsWith("Slot #")) ids.Add(id);
+            }
+            return ids.Count == 0 ? "all" : string.Join(",", ids.ToArray());
+        }
+
+        /// <summary>Instance ids for the loop: one autopilot child each.</summary>
+        private List<string> TargetsForLoop()
+        {
+            var ids = new List<string>();
+            List<int> chosen = SelectedSlots();
+            if (chosen.Count == 0)
+            {
+                int count = InstanceCount();
                 for (int i = 1; i <= count; i++)
                 {
-                    string name = null;
-                    try { name = _instanceBySlot != null ? _instanceBySlot(i) : null; }
-                    catch { name = null; }
-                    _cmbTarget.Items.Add(string.IsNullOrEmpty(name) ? ("Slot #" + i) : name);
+                    string id = SlotName(i);
+                    if (!string.IsNullOrEmpty(id) && !id.StartsWith("Slot #") && !ids.Contains(id)) ids.Add(id);
                 }
+                return ids;
             }
-            _cmbTarget.SelectedIndex = Math.Max(0, Math.Min(_cmbTarget.Items.Count - 1, want));
+            foreach (int slot in chosen)
+            {
+                string id = SlotName(slot);
+                if (!string.IsNullOrEmpty(id) && !id.StartsWith("Slot #")) ids.Add(id);
+            }
+            return ids;
+        }
+
+        private void OpenTargetsDialog()
+        {
+            int count = InstanceCount();
+            var items = new List<string>();
+            items.Add("All instances");
+            for (int i = 1; i <= count; i++) items.Add("#" + i.ToString() + "  " + SlotName(i));
+
+            var dlg = new Form();
+            dlg.Text = "Which instances does the AI drive?";
+            dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+            dlg.StartPosition = FormStartPosition.CenterParent;
+            dlg.MinimizeBox = false;
+            dlg.MaximizeBox = false;
+            dlg.ClientSize = new Size(320, 60 + 22 * Math.Max(1, items.Count));
+
+            var list = new CheckedListBox();
+            list.Location = new Point(10, 10);
+            list.Size = new Size(300, 30 + 22 * Math.Max(1, items.Count));
+            list.Items.AddRange(items.ToArray());
+
+            List<int> chosen = SelectedSlots();
+            if (chosen.Count == 0) list.SetItemChecked(0, true);
+            else foreach (int slot in chosen) list.SetItemChecked(slot, true);
+
+            var ok = new Button();
+            ok.Text = "OK";
+            ok.DialogResult = DialogResult.OK;
+            ok.Location = new Point(150, list.Bottom + 8);
+            var cancel = new Button();
+            cancel.Text = "Cancel";
+            cancel.DialogResult = DialogResult.Cancel;
+            cancel.Location = new Point(236, list.Bottom + 8);
+            dlg.Controls.Add(list);
+            dlg.Controls.Add(ok);
+            dlg.Controls.Add(cancel);
+            dlg.AcceptButton = ok;
+            dlg.CancelButton = cancel;
+
+            // "All instances" is exclusive in BOTH directions. Only one direction was
+            // wired, and the live picker then showed "All instances + #1" at once; the
+            // read below honoured the "All" check and dropped the operator's selection
+            // without a word.
+            list.ItemCheck += delegate(object s, ItemCheckEventArgs e)
+            {
+                if (e.NewValue != CheckState.Checked) return;
+                var box = (CheckedListBox)s;
+                if (e.Index == 0)
+                {
+                    for (int i = 1; i < box.Items.Count; i++)
+                        if (box.GetItemChecked(i)) box.SetItemChecked(i, false);
+                    return;
+                }
+                if (box.GetItemChecked(0)) box.SetItemChecked(0, false);
+            };
+
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+            // Explicit rows win over a stale "All instances" check: the list is what
+            // was asked for, and "all" is only the answer when nothing was picked.
+            var next = new List<int>();
+            for (int i = 1; i < list.Items.Count; i++)
+                if (list.GetItemChecked(i)) next.Add(i);
+            _settings.TargetSlots = next;
+            UpdateTargetsLabel();
+            SaveSettings();
+            // A selection made while a loop runs changes what Start may do, and the
+            // button's enable state is derived from exactly that.
+            SetRunningUi(RunningNow);
         }
 
         private static decimal Clamp(decimal v, decimal lo, decimal hi)
@@ -586,7 +742,6 @@ namespace DofusFarm.UI
         private void HarvestUiIntoSettings()
         {
             _settings.Mode = _cmbMode.SelectedIndex == 2 ? "auto" : (_cmbMode.SelectedIndex == 1 ? "order" : "off");
-            _settings.TargetSlot = _cmbTarget.SelectedIndex;
             _settings.DryRun = _chkDry.Checked;
             _settings.Goals = _txtGoals.Text;
         }
@@ -609,6 +764,30 @@ namespace DofusFarm.UI
         public void StartAuto(bool force)
         {
             HarvestUiIntoSettings();
+            // An explicit selection names instances, not "the farm". The refusal below
+            // used to run first, so with #1 already driving, Start said "press Stop
+            // first" and the picker could never bring up a second instance -- the only
+            // remaining path was that window's in-world badge. Selected instances now
+            // start on their own; a running one is reported, never restarted under it.
+            List<int> picked = SelectedSlots();
+            if (picked.Count > 0)
+            {
+                int started = 0;
+                foreach (int slot in picked)
+                {
+                    string id = SlotName(slot);
+                    if (string.IsNullOrEmpty(id) || id.StartsWith("Slot #"))
+                    {
+                        Append("[ai] target #" + slot.ToString() + " has no client window to drive");
+                        continue;
+                    }
+                    if (IsRunningFor(id)) { Append("[ai] " + id + " is already running"); continue; }
+                    StartInstance(id, force);
+                    started++;
+                }
+                if (started == 0) Append("[ai] nothing started - no selected instance is idle");
+                return;
+            }
             if (IsRunning) { Append("[ai] already running; press Stop first"); return; }
 
             string goals = _settings.Goals.Trim();
@@ -626,6 +805,31 @@ namespace DofusFarm.UI
             Launch(goals, _settings.Steps, 0, 0, "auto");
         }
 
+        /// <summary>
+        /// Start the loop for ONE instance -- the in-game badge of that client.
+        /// StartAuto honours the panel's selection, and a badge belongs to a single
+        /// window, so using the shared selection there made one window's button
+        /// start loops for instances nobody asked it to touch.
+        /// </summary>
+        public void StartInstance(string instanceId, bool force)
+        {
+            HarvestUiIntoSettings();
+            if (string.IsNullOrEmpty(instanceId))
+            {
+                Append("[ai] a badge asked to start without saying which instance");
+                return;
+            }
+            if (IsRunningFor(instanceId)) { Append("[ai] " + instanceId + " is already running"); return; }
+            string goals = _settings.Goals.Trim();
+            if (goals.Length == 0)
+            {
+                Append("[ai] " + instanceId + ": no goals, full auto (planner: quests first, then farm)");
+                Launch("auto", _settings.Steps, 0, 0, "auto", "planner", instanceId);
+                return;
+            }
+            Launch(goals, _settings.Steps, 0, 0, "auto", null, instanceId);
+        }
+
         public void SendOrder()
         {
             HarvestUiIntoSettings();
@@ -637,7 +841,7 @@ namespace DofusFarm.UI
         }
 
         private void Launch(string goalsText, int steps, double interval, double minutes, string mode,
-                            string policyOverride = null)
+                            string policyOverride = null, string onlyInstance = null)
         {
             string python = ResolvePython();
             if (python == null)
@@ -689,8 +893,6 @@ namespace DofusFarm.UI
             sb.Append(" --steps ").Append(steps.ToString());
             sb.Append(" --interval ").Append(interval.ToString(System.Globalization.CultureInfo.InvariantCulture));
             sb.Append(" --policy ").Append(policyOverride ?? _settings.Policy);
-            sb.Append(" --stop-file \"").Append(stopFile).Append("\"");
-            sb.Append(" --log \"").Append(logFile).Append("\"");
             if (minutes > 0) sb.Append(" --minutes ").Append(minutes.ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (_settings.DryRun) sb.Append(" --dry-run");
             if (!RuntimeSettings.Current.FightBoards) sb.Append(" --no-fight-boards");
@@ -733,35 +935,75 @@ namespace DofusFarm.UI
                 if (verifier != null) sb.Append(" --verifier-model \"").Append(verifier).Append("\"");
             }
             catch { }
-            string instance = InstanceForTarget();
-            if (!string.IsNullOrEmpty(instance)) sb.Append(" --instance \"").Append(instance).Append("\"");
 
-            var psi = new ProcessStartInfo();
-            psi.FileName = python;
-            psi.Arguments = "\"" + script + "\" " + sb.ToString();
-            psi.WorkingDirectory = work;
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            psi.StandardOutputEncoding = Encoding.UTF8;
-            psi.StandardErrorEncoding = Encoding.UTF8;
-            psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
-            psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+            // One loop child per selected instance. They share the goals file and
+            // the stop file, so Stop ends all of them at once, but each writes its
+            // own log: two loops appending to one JSONL interleave rows from two
+            // characters and the run becomes unreadable. With a single target the
+            // filename stays as it was, because the report tools look for it.
+            List<string> targets = string.IsNullOrEmpty(onlyInstance)
+                ? TargetsForLoop()
+                : new List<string> { onlyInstance };
+            if (targets.Count == 0) targets.Add(null);
+            bool shared = targets.Count == 1 && targets[0] == null;
 
             try
             {
-                var p = new Process();
-                p.StartInfo = psi;
-                p.EnableRaisingEvents = true;
-                p.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) Append(e.Data); };
-                p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) Append("! " + e.Data); };
-                p.Exited += delegate { OnChildExited(); };
-                p.Start();
-                p.BeginOutputReadLine();
-                p.BeginErrorReadLine();
-                lock (_procLock) { _proc = p; }
-                Append("[ai] " + mode + " started (pid " + p.Id.ToString() + ", " + steps.ToString() + " steps, policy " + (policyOverride ?? _settings.Policy) + ")");
+                foreach (string instance in targets)
+                {
+                    string childLog = shared || instance == null
+                        ? logFile
+                        : Path.Combine(stateDir, "autopilot." + instance + ".jsonl");
+                    string childStop = StopFilePath(instance);
+                    // A stop file left from a previous per-instance stop would make
+                    // this child exit on its first check, looking like it started.
+                    try { if (File.Exists(childStop)) File.Delete(childStop); } catch { }
+                    string args = sb.ToString()
+                        + " --stop-file \"" + childStop + "\""
+                        + " --log \"" + childLog + "\""
+                        + (string.IsNullOrEmpty(instance) ? "" : " --instance \"" + instance + "\"");
+
+                    var psi = new ProcessStartInfo();
+                    psi.FileName = python;
+                    psi.Arguments = "\"" + script + "\" " + args;
+                    psi.WorkingDirectory = work;
+                    psi.UseShellExecute = false;
+                    psi.CreateNoWindow = true;
+                    psi.RedirectStandardOutput = true;
+                    psi.RedirectStandardError = true;
+                    psi.StandardOutputEncoding = Encoding.UTF8;
+                    psi.StandardErrorEncoding = Encoding.UTF8;
+                    psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+                    psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+
+                    var p = new Process();
+                    p.StartInfo = psi;
+                    p.EnableRaisingEvents = true;
+                    p.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    {
+                        if (e.Data == null) return;
+                        Append(string.IsNullOrEmpty(instance) ? e.Data
+                              : ("[" + instance + "] " + e.Data));
+                    };
+                    p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+                    {
+                        if (e.Data == null) return;
+                        Append(string.IsNullOrEmpty(instance) ? "! " + e.Data
+                              : ("[" + instance + "] ! " + e.Data));
+                    };
+                    p.Exited += delegate { OnChildExited(p); };
+                    p.Start();
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
+                    lock (_procLock)
+                    {
+                        _procs.Add(p);
+                        _instanceByProc[p] = instance;
+                    }
+                    Append("[ai] " + mode + " started (" + (instance ?? "default instance")
+                          + ", pid " + p.Id.ToString() + ", " + steps.ToString() + " steps, policy "
+                          + (policyOverride ?? _settings.Policy) + ")");
+                }
                 if (_log != null) _log("[AI] " + mode + " loop started");
                 SetRunningUi(true);
             }
@@ -771,10 +1013,130 @@ namespace DofusFarm.UI
             }
         }
 
+        /// <summary>
+        /// The file one loop watches. The unaddressed child keeps the historical
+        /// shared path (external tooling and the sentinel read it), and a named
+        /// instance gets its own -- otherwise "stop this one" would have to write
+        /// the file every other loop is watching.
+        /// </summary>
+        private static string StopFilePath(string instance)
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DofusFarm");
+            return string.IsNullOrEmpty(instance)
+                ? Path.Combine(dir, "AUTOPILOT_STOP")
+                : Path.Combine(dir, "AUTOPILOT_STOP." + instance);
+        }
+
+        /// <summary>The loop child that drives this instance, or null.</summary>
+        public string RunningInstanceOf(string instanceId)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return null;
+            lock (_procLock)
+            {
+                foreach (KeyValuePair<Process, string> kv in _instanceByProc)
+                {
+                    if (!string.Equals(kv.Value, instanceId, StringComparison.OrdinalIgnoreCase)) continue;
+                    try { if (!kv.Key.HasExited) return kv.Value; } catch { }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>True while the loop that drives THIS instance is alive.</summary>
+        public bool IsRunningFor(string instanceId)
+        {
+            return RunningInstanceOf(instanceId) != null;
+        }
+
+        /// <summary>Every instance with a live loop, for the per-window badge.</summary>
+        public List<string> RunningInstances()
+        {
+            var ids = new List<string>();
+            lock (_procLock)
+            {
+                foreach (KeyValuePair<Process, string> kv in _instanceByProc)
+                {
+                    if (string.IsNullOrEmpty(kv.Value)) continue;
+                    try { if (!kv.Key.HasExited && !ids.Contains(kv.Value)) ids.Add(kv.Value); } catch { }
+                }
+            }
+            return ids;
+        }
+
+        /// <summary>Status of one instance, read from ITS OWN log.</summary>
+        public string LiveStatusFor(string instanceId)
+        {
+            string line = ReadLastStepLine(StepLogFor(instanceId));
+            return FormatStatus(IsRunningFor(instanceId), line);
+        }
+
+        /// <summary>The log one instance's loop writes: its own file when it has one.</summary>
+        public static string StepLogFor(string instanceId)
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DofusFarm");
+            if (string.IsNullOrEmpty(instanceId)) return Path.Combine(dir, "autopilot.jsonl");
+            string own = Path.Combine(dir, "autopilot." + instanceId + ".jsonl");
+            return File.Exists(own) ? own : Path.Combine(dir, "autopilot.jsonl");
+        }
+
+        /// <summary>
+        /// Stop one instance's loop. Nothing else is touched: no shared stop file is
+        /// written, so the other clients keep playing.
+        /// </summary>
+        public void StopInstance(string instanceId, string why)
+        {
+            Process target = null;
+            lock (_procLock)
+            {
+                foreach (KeyValuePair<Process, string> kv in _instanceByProc)
+                {
+                    if (string.Equals(kv.Value, instanceId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        target = kv.Key;
+                        break;
+                    }
+                }
+                if (target != null)
+                {
+                    _instanceByProc.Remove(target);
+                    _procs.Remove(target);
+                }
+            }
+            if (target == null)
+            {
+                Append("[ai] " + instanceId + " has no loop to stop (" + why + ")");
+                return;
+            }
+            try { File.WriteAllText(StopFilePath(instanceId), why + " at " + DateTime.Now.ToString("HH:mm:ss")); }
+            catch { }
+            Append("[ai] " + instanceId + ": stop requested (" + why + "); waiting for its current step");
+            try
+            {
+                if (!target.WaitForExit(4000))
+                {
+                    Append("[ai] " + instanceId + ": child did not exit; killing it");
+                    try { target.Kill(); } catch { }
+                }
+            }
+            catch { }
+        }
+
+
         public void StopAuto(string why)
         {
-            Process p;
-            lock (_procLock) { p = _proc; }
+            List<Process> children;
+            Dictionary<Process, string> attributed;
+            lock (_procLock)
+            {
+                children = new List<Process>(_procs);
+                attributed = new Dictionary<Process, string>(_instanceByProc);
+                _procs.Clear();
+                _instanceByProc.Clear();
+            }
             string stopFile = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DofusFarm", "AUTOPILOT_STOP");
@@ -782,24 +1144,38 @@ namespace DofusFarm.UI
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(stopFile));
                 File.WriteAllText(stopFile, why + " at " + DateTime.Now.ToString("HH:mm:ss"));
+                // Each named child watches its OWN file, so stopping the farm has to
+                // ask each of them; the shared one stays written for the sentinel and
+                // for any external tool that watches it.
+                foreach (Process p in children)
+                {
+                    string instance;
+                    if (!attributed.TryGetValue(p, out instance) || string.IsNullOrEmpty(instance)) continue;
+                    try { File.WriteAllText(StopFilePath(instance), why + " at " + DateTime.Now.ToString("HH:mm:ss")); }
+                    catch { }
+                }
             }
             catch { }
 
-            if (p == null)
+            if (children.Count == 0)
             {
                 Append("[ai] stop requested (" + why + "); no child process to stop");
                 return;
             }
-            Append("[ai] stop requested (" + why + "); waiting for the loop to finish the current step");
-            try
+            Append("[ai] stop requested (" + why + "); waiting for "
+                  + children.Count.ToString() + " loop(s) to finish the current step");
+            foreach (Process p in children)
             {
-                if (!p.WaitForExit(4000))
+                try
                 {
-                    Append("[ai] child did not exit; killing it");
-                    try { p.Kill(); } catch { }
+                    if (!p.WaitForExit(4000))
+                    {
+                        Append("[ai] a child did not exit; killing it");
+                        try { p.Kill(); } catch { }
+                    }
                 }
+                catch { }
             }
-            catch { }
         }
 
         public void EmergencyStop()
@@ -923,7 +1299,7 @@ namespace DofusFarm.UI
 
         public void Quick(string tool, string argsJson)
         {
-            string target = InstanceForTarget();
+            string target = TargetsForDirective();
             string payload = "{\"id\":\"" + Guid.NewGuid().ToString("N") + "\",\"ts\":" +
                              ((long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds).ToString() +
                              ",\"directive\":\"" + tool.ToUpperInvariant().Replace('.', '_') + "\"" +
@@ -947,54 +1323,53 @@ namespace DofusFarm.UI
             }
         }
 
-        private string InstanceForTarget()
-        {
-            int slot = _cmbTarget.SelectedIndex;
-            if (slot <= 0 || _instanceBySlot == null) return null;
-            try
-            {
-                string id = _instanceBySlot(slot);
-                return id == "all" ? null : id;
-            }
-            catch { return null; }
-        }
-
         // -- child process ----------------------------------------------------
 
         public bool IsRunning
         {
             get
             {
-                Process p;
-                lock (_procLock) { p = _proc; }
-                if (p == null) return false;
-                try { return !p.HasExited; } catch { return false; }
+                List<Process> children;
+                lock (_procLock) { children = new List<Process>(_procs); }
+                foreach (Process p in children)
+                    try { if (!p.HasExited) return true; } catch { }
+                return false;
             }
         }
 
-        private void OnChildExited()
+        private void OnChildExited(Process p)
         {
-            Process p;
-            lock (_procLock) { p = _proc; _proc = null; }
+            bool anyLeft;
+            lock (_procLock)
+            {
+                if (p != null) { _procs.Remove(p); _instanceByProc.Remove(p); }
+                anyLeft = _procs.Count > 0;
+            }
             try
             {
                 if (p != null)
                 {
                     int code = p.ExitCode;
                     Append("[ai] loop finished (exit " + code.ToString() + ")");
-                    // The machine is now idle and the run just produced data: this is
-                    // the only moment training is free. It writes a *candidate*; it
-                    // never replaces the model that was just used.
-                    TryIdleTraining();
-                    if (_log != null) _log("[AI] loop finished (exit " + code.ToString() + ")");
                 }
             }
             catch { }
-            try
+            // Idle training and the UI flip belong to the LAST child, not the first:
+            // with several loops running, the quickest one finishing would train on
+            // half a run and show "idle" while the others were still playing.
+            if (!anyLeft)
             {
-                BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); });
+                // The machine is now idle and the run just produced data: this is
+                // the only moment training is free. It writes a *candidate*; it
+                // never replaces the model that was just used.
+                TryIdleTraining();
+                if (_log != null) _log("[AI] loop finished");
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); });
+                }
+                catch { }
             }
-            catch { }
         }
 
         /// <summary>
@@ -1043,28 +1418,48 @@ namespace DofusFarm.UI
 
         public static string ReadLastStepLine()
         {
+            return ReadLastStepLine(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DofusFarm", "autopilot.jsonl"));
+        }
+
+        public static string ReadLastStepLine(string path)
+        {
             try
             {
-                string path = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "DofusFarm", "autopilot.jsonl");
                 if (!File.Exists(path)) return null;
 
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
-                    // Tail the last 8 KB: a step row is a few hundred bytes, so this
-                    // is enough for the last line without reading a 100 MB log.
+                    // Tail the last 64 KB: a step row is a few hundred bytes, but the
+                    // observation rows carry a whole snapshot, so a smaller window can
+                    // land inside one row. Read until the buffer is really full -- a
+                    // single FileStream.Read may return less than asked, and on a log
+                    // being written that cut the tail short and the pill then said
+                    // "waiting for the first step" about a loop that had taken 44.
                     long len = fs.Length;
-                    long start = Math.Max(0, len - 8192);
+                    long start = Math.Max(0, len - 65536);
                     fs.Seek(start, SeekOrigin.Begin);
                     var buf = new byte[len - start];
-                    int read = fs.Read(buf, 0, buf.Length);
-                    string text = Encoding.UTF8.GetString(buf, 0, read);
+                    int got = 0;
+                    while (got < buf.Length)
+                    {
+                        int read = fs.Read(buf, got, buf.Length - got);
+                        if (read <= 0) break;
+                        got += read;
+                    }
+                    string text = Encoding.UTF8.GetString(buf, 0, got);
                     string[] lines = text.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    // Newest first, and only a row that really is a step: a window
+                    // opening mid-row yields a fragment that starts with '{' and has
+                    // no index in it, which is exactly what the pill showed as "idle".
                     for (int i = lines.Length - 1; i >= 0; i--)
                     {
                         string line = lines[i].Trim();
-                        if (line.Length > 0 && line.StartsWith("{")) return line;
+                        if (line.Length == 0 || !line.StartsWith("{")) continue;
+                        if (line.IndexOf("\"index\"") < 0) continue;
+                        if (line.IndexOf("\"tool\"") < 0) continue;
+                        return line;
                     }
                 }
             }
@@ -1108,7 +1503,12 @@ namespace DofusFarm.UI
 
         private void SetRunningUi(bool running)
         {
-            _btnStart.Enabled = !running;
+            // Start went dark the moment ANY loop was running, which made the picker a
+            // lie: with #1-#4 selected and #1-#2 driving, adding the two idle
+            // instances was not refused with a reason -- the button was unclickable.
+            // It stays enabled while an explicit selection exists, because StartAuto
+            // can act on that; "all instances" keeps the old rule.
+            _btnStart.Enabled = !running || SelectedSlots().Count > 0;
             _btnSend.Enabled = !running;
             _lblState.Text = running ? "running" : (_cmbMode.SelectedIndex == 2 ? "auto" : "idle");
             _lblState.ForeColor = running ? Color.FromArgb(74, 222, 128) : Color.FromArgb(148, 163, 184);
