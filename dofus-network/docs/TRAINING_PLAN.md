@@ -141,12 +141,16 @@ live corpus from `tools/collect_live_data.py` with the new tools exercised.
 `ai/train_cause_head.py` trains a hashed-feature MLP on 9 families/cause, calibrates
 on 2 and validates on 2 **unseen families per cause**. The MLP alone scores mean **0.81 accuracy / 0.19 ECE** (range 0.7625–0.875) and
 fails the ≥0.85 / <0.15 gate. The MLP + cosine-kNN blend (weight chosen on calib)
-reaches mean **0.855 / 0.089** and passes; one fold is weak at 0.807 / 0.163. The
-artifact keeps both halves (`models/cause_head.onnx` + prototypes `.npz`) and the
-MLP-alone result, is rule-distilled (`live: false`), and is not loaded by the
-controller. This is rule-distilled data
-(`live: false`); the verdict is a data/representation limit, not a width limit. The
-next cause model needs live error phrasings or a pretrained text encoder.
+reported mean **0.855 / 0.089**, but that gate-pass claim is withdrawn: an input-level
+audit found 50/400 seed-7 validation vectors identical to fit and calibration vectors.
+Reloaded FP32/INT8 scores reproduce; excluding duplicates yields **292/350 = 0.8343**
+accuracy. This is a diagnostic on a development set, not independent validation.
+The trainer now rejects family/input overlaps or missing causes before training
+and export; the existing artifacts remain untouched and unpromoted. The text
+cross-product is not an applicability-checked game constraint set. Next: meaningful
+precondition cases, source-weighted live failures, a frozen independent split,
+then cause/repair training and regret evaluation against always-continue. No new
+training run is justified by the old score alone.
 
 **Combat-grid data gate (2026-10-27).** `python -m combat.grid_probe` over the
 local corpus reports **156 boards parsed, 64 on the controlled turn, 0 with

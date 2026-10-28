@@ -147,11 +147,9 @@ class BrainDaemon:
     # -- lifecycle -----------------------------------------------------------
 
     def _write_daemon_lock(self) -> None:
-        # A thread executing its own `finally` is still `is_alive()`, so a raw
-        # aliveness test made the last writer publish itself as active after the
-        # whole farm had finished. The state is the truth here.
+        # Cleanup still owns the instance, including after a pilot error.
         active = [name for name, item in self._instances.items()
-                  if item.alive() and item.state in ("starting", "running", "stopping")]
+                  if item.alive() and item.finished_at is None]
         payload = {
             "session": "brain-daemon",
             "pid": os.getpid(),
@@ -270,13 +268,16 @@ class BrainDaemon:
         return {"ok": True, "instances": started}
 
     def _run_instance(self, item: BrainInstance) -> None:
-        item.state = "running"
+        with self._lock:
+            should_run = item.state != "stopping"
+            if should_run:
+                item.state = "running"
         completed = False
         try:
-            summary = item.pilot.run()
-            item.summary = summary if isinstance(summary, dict) else {"result": summary}
-            item.state = "finished"
-            completed = True
+            if should_run:
+                summary = item.pilot.run()
+                item.summary = summary if isinstance(summary, dict) else {"result": summary}
+                completed = True
         except BaseException as exc:  # noqa: BLE001 - SystemExit is a preflight outcome too
             item.error = "%s: %s" % (type(exc).__name__, exc)
             item.state = "error"
@@ -289,12 +290,12 @@ class BrainDaemon:
                 item.pilot.stop_client()
             except Exception:
                 pass
-            if item.state == "running":
-                item.state = "finished" if completed else "exited"
-            elif item.state == "stopping":
-                item.state = "stopped"
-            item.finished_at = time.time()
             with self._lock:
+                if item.state == "running":
+                    item.state = "finished" if completed else "exited"
+                elif item.state == "stopping":
+                    item.state = "stopped"
+                item.finished_at = time.time()
                 self._write_daemon_lock()
 
     def stop(self, instance: Optional[str] = None, stop_all: bool = False,
@@ -306,14 +307,13 @@ class BrainDaemon:
                 item = self._instances.get(name)
                 if item is None:
                     continue
-                item.state = "stopping"
-                try:
-                    item.stop_path.write_text(why + " at " + time.strftime("%H:%M:%S"),
-                                              encoding="utf-8")
-                except OSError:
-                    pass
-                if item.thread is not None and item.thread.is_alive():
-                    item.thread.join(timeout=2.0)
+                if item.alive() and item.state in ("starting", "running", "stopping"):
+                    item.state = "stopping"
+                    try:
+                        item.stop_path.write_text(why + " at " + time.strftime("%H:%M:%S"),
+                                                  encoding="utf-8")
+                    except OSError:
+                        pass
                 stopped.append(item.status())
             self._write_daemon_lock()
         return {"ok": True, "stopped": stopped}

@@ -265,13 +265,13 @@ say "16 tools", "18 tools" or "21 tools" are stale; the schema is 25.
 
 ## 8. Always-on AI and dynamic instance count (2026-10-28)
 
-The farm no longer needs a Start press per client, and the Python side no longer
-pays per instance for the quest graph.
+Automatic per-client startup is implemented but not yet verified in the UI. The
+Python planner shares its quest graph; full live-daemon scaling remains unmeasured.
 
 | part | cost / behaviour | measured by |
 |---|---|---|
-| quest graph | 21.8 MB, loaded **once** per process and shared read-only | 40 planners = 22.1 MB total (~0.55 MB each) vs ~872 MB before |
-| brain daemon | one process, one thread per instance, no fixed cap | 40 fake instances accepted, 40 statuses, one `brain.lock` |
+| quest graph | loaded **once** per process, read-only by convention | tracemalloc: 40 planners = 22.1 MB total; earlier 5 independent planners = 109.1 MB. Not live daemon RSS |
+| brain daemon | one process, one thread per instance, no fixed cap | 40 immediately returning fake pilots via direct calls, 40 statuses, one `brain.lock`; not concurrent live-client or HTTP load proof |
 | per-instance state | sub-goal stack < 2 KB, own log + stop file | `test_brain_scaling_40`, `test_plan_stack` |
 | always-on | `runtime.ini auto_ai=1` (default on): each launch and each client already running at startup is adopted; a manual Stop wins until the next launch | `test_always_on_ai` (source gate), C# Roslyn compile |
 
@@ -281,16 +281,42 @@ not the whole farm; the loop's own `_require_world` wait makes starting at the
 login screen safe. The number of clients is whatever the grid has — `+ Add`
 allocates `dofus-01..dofus-999`, and the relay port is `base_port + slot`.
 
-**What is still expensive is the client, not the brain.** Each WebView2 window is
-its own Chromium renderer; 40 on one server is a RAM/GPU decision for the host,
-not a Python limit. The shared daemon removes the 40 × (ONNX sessions + 21.8 MB
-quest graph) that the old one-process-per-instance path paid.
+**Daemon lifecycle, verified offline.** Stop now signals workers without joining
+under their shared lock; the old implementation could wait two seconds per client
+while blocking worker cleanup. Eight behavioural tests cover scoped/idempotent
+Stop, cleanup after success or failure, duplicate starts, and real loopback HTTP with 1, 7 and 43 concurrent
+fake workers. These are not live-client load or memory measurements.
+
+**Still open in the host.** Desktop review found pending-start/Stop races, UI-thread
+violations and blocking network calls, non-atomic daemon startup, per-client process
+fallback on ambiguous failures, and one-shot adoption. Always-on operation is not
+yet verified end-to-end. Each WebView2 window also has its own Chromium renderer;
+shared Python resources do not establish that 40 live windows fit the host.
+
+**Collection and rebuilds.** `tools/collect_live_data.py` now monitors the changing
+fleet read-only by default, with no default instance or deadline. Explicit cohorts
+are pinned to their returned session start times; timeout/Ctrl-C never stop any
+client. Rebuild is opt-in after successful finite completion. Its 49 fixture tests
+pass; this is not a live-run proof.
+
+`tools/build_entity_pointer_dataset.py --check` scans all per-instance trajectory
+logs, excludes non-live/unattributed steps, deduplicates copied rows, keeps instance
+streams separate, and requires explicit before/outcome snapshots. It refuses to
+replace a dataset below 2,000 action rows, 50 progress-labelled action rows or 10
+rows for any legal tool. Measured 2026-10-28: **4,018 action pairs, 34 progress-labelled
+action rows, 20 undercovered tools**; the four new tools still have zero rows.
+Thirteen tests cover rejection and output preservation. No dataset was rebuilt
+and no training or promotion followed this check.
 
 **Constraint corpus.** `python -m agent.constraint_corpus --generate --out
 data/constraint_synthetic.jsonl` writes **2,600** rows (25 tools × 8 causes × 13
-variants). The controller routes **100% cause / 100% action** on it; the gate
-enforces ≥95% / ≥90% and ≥50 rows per tool. The cause head's MLP alone does **not** clear the unseen-phrase gate (mean 0.81
-accuracy / 0.19 ECE over five splits); the MLP + cosine-kNN ensemble does
-(**0.855 / 0.089** mean; seed 7 0.855 / 0.077). It is still rule-distilled and is
-**not loaded** by the controller; `test_cause_head_artifact` pins the sidecar and
-the fact that nothing wires it in.
+variants). The controller routes **100% cause / 100% action** on these taxonomy
+probes; this does not establish that their tool/precondition combinations can
+occur in the game. The earlier ensemble gate-pass claim is withdrawn: seed 7 has
+50/400 validation inputs identical to fit inputs, despite different family names.
+FP32 and INT8 reload at 0.855 accuracy / 0.0768 ECE; excluding duplicates gives
+292/350 = **0.8343 accuracy**, not a passing independent benchmark. The trainer now
+rejects overlapping families or model inputs before training/export. Existing
+artifacts remain **unpromoted and unloaded**; the regression gate tests rejection,
+not a claimed model-quality pass. Applicability-aware constraints, independent
+held-out data and repair-outcome regret remain open.

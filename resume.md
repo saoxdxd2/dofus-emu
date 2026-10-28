@@ -160,7 +160,7 @@ Other readouts from the same logs:
   proof is still owed (G9).
 - The last live run's long "no action" wait is unexplained in the current docs and
   should be diagnosed first.
-- Test coverage is still split: `agent.regression` (**922 checks**, exit 0) + 20 JS suites +
+- Test coverage is still split: `agent.regression` (**937 checks**, exit 0) + 20 JS suites +
   Go relay tests + C# selftests. The combat suites, the simulator floor (119 quests /
   148 objectives, no stall), the 40-instance daemon control plane and the checked-in
   Kaggle mirror are now inside that gate; the C# bundle selftest and the full release
@@ -1147,9 +1147,13 @@ writes 2,600 rows (25 tools × 8 causes × 13 families) and the controller route
 cause / 100% action. `ai/train_cause_head.py` was trained on 9 families/cause and
 validated on 2 unseen families/cause over five splits: the MLP alone has mean
 accuracy **0.81** / ECE **0.19**; the MLP + cosine-kNN ensemble has mean **0.855** /
-**0.089** (single seed 0.855 / 0.077, one weak fold 0.807 / 0.163), so the synthetic
-≥0.85 / <0.15 gate passes for the ensemble. It is still rule-distilled and **not
-loaded** by the controller; live error phrasings remain the promotion gate.
+**0.089** (single seed 0.855 / 0.077, one weak fold 0.807 / 0.163). **The gate-pass
+claim is withdrawn:** 50/400 validation inputs duplicate fit and calibration inputs;
+excluding them gives 292/350 = **0.8343 accuracy**. Reloaded FP32/INT8 artifacts
+reproduce the old score, but this is not independent validation. Eight new tests
+pin input/family leakage rejection before training or export. Artifacts remain
+**unpromoted and unloaded**; applicable constraint scenarios, live failure data,
+independent evaluation and repair-regret proof remain open.
 
 ---
 
@@ -1474,7 +1478,7 @@ touching the area.
 | G5 | Network-health forecaster dark | torch import + missing checkpoint; ONNX port + retrain owed |
 | G6 | Verifier head wired but unmeasured/circular | GUI auto-load gated on a live/human validation contract; no contract → rules-only |
 | G7 | Live combat unverified | open; fallback planner now behaviorally tested; brain auto-start wired |
-| G8 | Test gate was deleted; partially restored | `agent.regression` **922 checks, exit 0**; combat suites, sim floor, 40-instance daemon and live toolkit drift are gated; C# selftest/release still outside |
+| G8 | Test gate was deleted; partially restored | `agent.regression` **937 checks, exit 0**; combat suites, sim floor, 40-instance daemon and live toolkit drift are gated; C# selftest/release still outside |
 | G9 | Identity keyed by slot, not account | fail-closed binding shipped 2026-10-27, offline-verified; live relogin proof owed |
 | G10 | `kaggle/toolkit/` drifts with no generator | generator + real-tree drift gate shipped 2026-10-28; dataset re-upload owed |
 | G11 | `js-error-finder.js` red (9 bundle checks) | checker vs runtime-patch mismatch |
@@ -1742,7 +1746,7 @@ go test dofus-net-proxy.go dofus_net_proxy_equiv_test.go
 
 ```bat
 cd dofus-network
-python -m agent.regression       :: 922 checks, 0 failed (latest)
+python -m agent.regression       :: 937 checks, 0 failed (latest)
 python -m agent.constraint_corpus --check  :: 33 hand cases, 25-tool preconditions and causes
 python -m agent.constraint_corpus --generate --out data/constraint_synthetic.jsonl
                                   :: 2,600 synthetic rows, 100% cause/action agreement
@@ -1813,12 +1817,14 @@ changed; `noop` means the call succeeded and nothing moved; `failed` means it di
 run. A run ending with `done: the client window closed` lost its window, not its mind.
 
 **Always-on AI and dynamic instances (2026-10-28).** `runtime.ini auto_ai=1`
-(default) makes every launched client, and every client already running at startup,
-adopt the AI without a Start press; a manual Stop wins until the next launch. The
-brain daemon has no fixed instance cap (40 accepted by `test_brain_scaling_40`) and
-the 21.8 MB quest graph is shared once per process: **40 planners = 22.1 MB total**
-(~0.55 MB each) instead of ~872 MB. The per-client WebView2 renderer remains the
-dominant host cost.
+(default) implements automatic startup, but desktop review found pending-start/Stop
+races, UI-thread violations, blocking requests, non-atomic readiness and a
+per-client process fallback. End-to-end always-on behavior is not yet verified.
+The daemon now signals Stop without joining under its global lock; eight tests
+cover scoped/idempotent Stop, cleanup and real loopback HTTP with **1, 7 and 43
+concurrent fake workers**. This is not live-client scaling proof. Separately,
+tracemalloc measured **40 planners = 22.1 MB total** with one shared quest graph,
+versus 109.1 MB for five independent planners. Full daemon/WebView2 RSS is unmeasured.
 
 ### 17.5 Kaggle
 
@@ -2011,10 +2017,16 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
 9. **Run unattended sessions** (`tools/auto_live.py`) so outcome labels accumulate
    without a human. The runner already does preflight → verified launch → guest press →
    run; the missing piece is a session that produces non-zero objectives.
-   For one bounded session plus data rebuild, use
-   `python tools/collect_live_data.py --instances dofus-01,dofus-02 --steps 200`
-   (refuses on a FAIL `live_ready`, prints the entity-pointer build and
-   `combat.grid_probe` gate; `--dry-run` is safe).
+   `python tools/collect_live_data.py` now follows the changing daemon fleet
+   read-only, without a default instance or deadline. Explicit `--instances` starts
+   or reuses only that cohort; `--steps 200 --rebuild` additionally requests a rebuild
+   after successful finite completion. Timeout/Ctrl-C never stop clients.
+   `python tools/build_entity_pointer_dataset.py --check` scans all trajectory logs
+   without writing. It requires ≥2,000 action pairs, ≥50 progress-labelled action
+   rows and ≥10 rows per tool before any rebuild. The current check finds **4,018 /
+   34**, with **20 undercovered tools** and zero rows for the four new tools; it
+   exits 1 and preserves the old dataset. Collector/coverage tests pass (49/13);
+   no live proof or new training follows from those tests.
 
 ### P2 — promote one component at a time
 

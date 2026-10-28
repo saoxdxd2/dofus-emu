@@ -4,9 +4,9 @@
 drifted, and the rule for "which file is a copy and which is dataset-specific" was never
 written down. This tool writes it down:
 
-- code under `agent/`, `sim/` and `ai/` is copied from the harness when the source exists;
+- Python modules in the runtime/training packages are mirrored, including new modules;
 - a toolkit-only module (removed from the harness) is **pinned**, not deleted;
-- `data/capabilities.json` and the quest/subarea caches are copied;
+- `data/capabilities.json` is copied; downloaded quest/subarea caches are not refreshed;
 - `data/maps/_index.json` is **pinned** because the toolkit ships a trimmed map index;
 - `dataset-metadata.json` is pinned (Kaggle metadata).
 
@@ -30,15 +30,13 @@ ROOT = Path(__file__).resolve().parent.parent
 TOOLKIT = ROOT / "kaggle" / "toolkit"
 MANIFEST = TOOLKIT / "TOOLKIT_MANIFEST.json"
 
-SYNC_DIRS = ("agent", "sim", "ai")
-SYNC_FILES = (
-    "data/cache/quests_full.json",
-    "data/cache/subareas_full.json",
-    "data/capabilities.json",
-)
+SYNC_DIRS = ("agent", "sim", "ai", "knowledge", "combat", "advisor", "tools")
+SYNC_FILES = ("_lazy_exports.py", "run_autopilot.py", "run_brain.py", "data/capabilities.json")
 PINNED = (
     "dataset-metadata.json",
     "data/maps/_index.json",
+    "data/cache/quests_full.json",
+    "data/cache/subareas_full.json",
 )
 SKIP_SUFFIXES = (".pyc",)
 SKIP_PARTS = ("__pycache__",)
@@ -71,17 +69,18 @@ def plan(root: Path = ROOT, toolkit: Path = TOOLKIT) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     seen = set()
     for name in SYNC_DIRS:
-        for rel in _iter_dir(toolkit, name):
+        paths = set(_iter_dir(toolkit, name))
+        paths.update(rel for rel in _iter_dir(root, name) if rel.suffix == ".py")
+        for rel in sorted(paths):
             source = root / rel
-            status = "sync" if source.is_file() else "pinned"
-            entries.append(_entry(rel, source, toolkit / rel, status))
+            status = "sync" if source.is_file() and rel.suffix == ".py" else "pinned"
+            entries.append(_entry(rel, source if status == "sync" else None,
+                                  toolkit / rel, status))
             seen.add(rel.as_posix())
     for rel in SYNC_FILES:
         path = Path(rel)
-        if (toolkit / path).is_file():
-            source = root / path
-            if not source.is_file():
-                raise FileNotFoundError("toolkit file has no source: %s" % rel)
+        source = root / path
+        if source.is_file() or (toolkit / path).is_file():
             entries.append(_entry(path, source, toolkit / path, "sync"))
             seen.add(rel)
     for rel in PINNED:
@@ -117,7 +116,7 @@ def write(entries: List[Dict[str, Any]], root: Path = ROOT,
           toolkit: Path = TOOLKIT) -> int:
     copied = 0
     for item in entries:
-        if item["status"] != "sync":
+        if item["status"] != "sync" or not (item["drift"] or item["missing"]):
             continue
         source = root / item["source"]
         target = toolkit / item["path"]

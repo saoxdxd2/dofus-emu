@@ -106,8 +106,8 @@ reachable for the first time."
 | **The loop reports its own end honestly** | `[autopilot] the client is gone: … stopping` / `done: the client window closed` — instead of retiring a quest and saying "goals exhausted" |
 | **The planner can see the player** | `flatten()` supplies `map_id`, `level`, `cell`, inventory-by-id; the plan it produces uses a real map (`nav.goto {'map_id': 54165306}`) |
 | **Loopback calls bypass the proxy** | `opener_for('http://127.0.0.1:…')` returns a proxy-free opener; two checks pin it |
-| Planner completes quests (sim) | deterministic, L60, 400 steps: **119 quests / 148 objectives**; random 0, rule 0 |
-| Planner does not loop (sim) | `max_repeat: 1`, `stalled: false` across L20/L60/L100 |
+| Planner completes quests (sim) | Re-measured 2026-10-28, planner L60, 400 steps, seed 7: **119 quests / 148 objectives**, max_repeat 1, stalled false; the intervening 82-quest regression was a fabricated open-dialog observation, now fixed |
+| Planner under noise / poor start (sim) | Same command with `--noise`: **94 quests / 99 objectives**, max_repeat 5, no stall; `--kamas 0 --random-start-map`: **119 / 148**, max_repeat 1, no stall. Broad harness quest knowledge means this is not a realistic poor live-start proof |
 | Tool policy beats the teacher (free-travel sim) | 7 seeds, `--noise`, 400 steps: 99.6 vs 96.9 quests — **but see §3, it loses 19% once travel is priced** |
 | Tool policy beats copying the teacher | val acc **0.8986** vs teacher-agreement **0.8235** (+7.5 pts), 48,594 params |
 | Where the label is meaningful, it is near-perfect | margin > 0.1 (60.6% of val): accuracy **0.9691** |

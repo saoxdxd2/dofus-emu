@@ -10,16 +10,21 @@ below.
 its own 21.8 MB trimmed quest graph; 40 instances would have paid ~872 MB for the
 same rows. `shared_quest_table()` now loads it once per process and planners
 reference it read-only. Measured: **40 planners = 22.1 MB total (~0.55 MB each)**.
-`test_brain_scaling_40` starts 40 fake instances through `POST /brain/start`,
-checks one `brain.lock` and 40 statuses, and stops them; there is no fixed instance
-cap in the daemon. The daemon lock now derives `active` from state, not from
-`Thread.is_alive()` inside the thread's own `finally`, so the last finisher cannot
-publish itself as still active. The knowledge store uses a connection per thread
+`test_brain_scaling_40` directly starts 40 immediately returning fake pilots and
+checks one `brain.lock` plus 40 statuses; it is not HTTP concurrency evidence.
+The eight tests in `agent/test_brain_daemon.py` additionally exercise real local
+HTTP with 1, 7 and 43 concurrent, event-controlled fake workers. They cover scoped
+Stop, duplicate starts, cancellation before worker entry and terminal cleanup;
+these are not live gameplay or RSS measurements. The daemon lock checks completion
+time as well as thread liveness, so cleanup after success or failure remains active
+but the last finisher cannot publish itself as running. The knowledge store uses a connection per thread
 (`_ThreadLocalConnection`) because one shared `check_same_thread=False` handle
-raised `IndexError` under four concurrent readers. The C# host adds
-`runtime.ini auto_ai=1` (default): every launched client, and every client already
-running at startup, is adopted without pressing Start; a manual Stop wins until
-the next launch.
+raised `IndexError` under four concurrent readers.
+
+The C# host adds `runtime.ini auto_ai=1` (default), but end-to-end always-on behavior
+is **not verified**. Review found pending-start/Stop races, UI-thread violations,
+blocking requests, daemon-readiness races and a per-client process fallback.
+Manual-Stop precedence and dynamic adoption still need host lifecycle fixes.
 
 ## 1. The problem
 
@@ -96,9 +101,12 @@ is recorded on that instance and does not take the daemon down.
 {"all": true, "why": "window closed"}
 ```
 
-Stop writes that instance's `AUTOPILOT_STOP.<instance>` file and joins its thread
-for up to two seconds. The thread cannot be killed safely, so a loop blocked in a
-bridge call finishes that call and exits at the next stop check.
+Stop writes that active instance's `AUTOPILOT_STOP.<instance>` file and returns
+without joining workers. The response acknowledges a **request**, not completed
+shutdown: state stays `stopping` until the current call and cleanup finish, then
+becomes `stopped`. Stopping an already terminal instance preserves its result.
+The former join-under-lock path blocked the worker's own finalization and could
+cost two seconds per client; the lifecycle test rejects that behavior.
 
 ### `GET /brain/status`
 
@@ -148,7 +156,9 @@ Returns `status: ok`, service name, pid, active names and instance count.
   the instance exited on its own and `/brain/status` reported it.
 - `POST /brain/stop` accepted and wrote the stop file.
 - The C# host compiles with Roslyn against the new daemon calls.
-- `python -m agent.regression` → **922 checks, 0 failed**.
+- `python -m agent.regression` → **937 checks, 0 failed, exit 0** (2026-10-28),
+  including eight daemon lifecycle tests, 49 collector tests and 13 pointer
+  coverage tests through delegated suites.
 
 ## 8. Shared caches (implemented 2026-10-27)
 

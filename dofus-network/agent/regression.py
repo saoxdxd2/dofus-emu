@@ -338,6 +338,42 @@ def test_shared_resources() -> None:
     check("one ONNX session per model path", one is two)
 
 
+def test_brain_lifecycle() -> None:
+    import unittest
+    from agent.test_brain_daemon import BrainLifecycleTests
+
+    section("Brain daemon lifecycle (cooperative Stop, dynamic HTTP fleets)")
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(BrainLifecycleTests)
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    check("daemon lifecycle tests execute and pass",
+          result.testsRun >= 8 and result.wasSuccessful(),
+          {"tests": result.testsRun, "failures": result.failures, "errors": result.errors})
+
+
+def test_live_collection_lifecycle() -> None:
+    import unittest
+    from tools import test_collect_live_data
+
+    section("Live collector (read-only fleet discovery, scoped sessions)")
+    suite = unittest.defaultTestLoader.loadTestsFromModule(test_collect_live_data)
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    check("collector lifecycle tests execute and pass",
+          result.testsRun >= 49 and result.wasSuccessful(),
+          {"tests": result.testsRun, "failures": result.failures, "errors": result.errors})
+
+
+def test_pointer_coverage_gate() -> None:
+    import unittest
+    from tools.test_entity_pointer_gate import PointerCoverageTests
+
+    section("Entity-pointer rebuild (live coverage and output preservation)")
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(PointerCoverageTests)
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    check("pointer coverage checks execute and pass",
+          result.testsRun >= 13 and result.wasSuccessful(),
+          {"tests": result.testsRun, "failures": result.failures, "errors": result.errors})
+
+
 def test_brain_scaling_40() -> None:
     section("Brain daemon scaling (dynamic instances, shared graph)")
     import tempfile
@@ -2482,6 +2518,11 @@ def test_kaggle_toolkit_sync() -> None:
     put(toolkit / "agent" / "a.py", "old A")
     put(toolkit / "agent" / "legacy.py", "legacy")
     put(root / "agent" / "b.py", "source only")
+    put(root / "knowledge" / "store.py", "required dependency")
+    put(root / "_lazy_exports.py", "root helper")
+    put(root / "agent" / "checkpoint.pkl", "not code")
+    put(root / "data" / "cache" / "quests_full.json", "do not redistribute")
+    put(toolkit / "data" / "cache" / "quests_full.json", "pinned cache")
     put(root / "sim" / "s.py", "same")
     put(toolkit / "sim" / "s.py", "same")
     put(root / "data" / "capabilities.json", '{"new":1}')
@@ -2503,11 +2544,20 @@ def test_kaggle_toolkit_sync() -> None:
           and by.get("dataset-metadata.json", {}).get("status") == "pinned")
     check("bytecode is ignored",
           not any("__pycache__" in path or path.endswith(".pyc") for path in by))
-    check("a source-only file is not added to the toolkit", "agent/b.py" not in by)
-    check("drift finds exactly the stale copies",
+    check("a source-only module is included as missing from the mirror",
+          by.get("agent/b.py", {}).get("status") == "sync"
+          and by.get("agent/b.py", {}).get("missing") is True)
+    check("drift includes both stale and missing modules",
           {item["path"] for item in sync.drift(entries)}
-          == {"agent/a.py", "data/capabilities.json"},
+          == {"agent/a.py", "agent/b.py", "knowledge/store.py", "_lazy_exports.py",
+              "data/capabilities.json"},
           [item["path"] for item in sync.drift(entries)])
+    check("runtime dependencies are included without model artifacts",
+          by.get("knowledge/store.py", {}).get("missing") is True
+          and by.get("_lazy_exports.py", {}).get("missing") is True
+          and "agent/checkpoint.pkl" not in by)
+    check("downloaded quest data is pinned rather than refreshed",
+          by.get("data/cache/quests_full.json", {}).get("status") == "pinned")
 
     sync.TOOLKIT = toolkit
     sync.MANIFEST = toolkit / "TOOLKIT_MANIFEST.json"
@@ -2516,9 +2566,16 @@ def test_kaggle_toolkit_sync() -> None:
         copied = sync.write(entries, root, toolkit)
     except Exception:      # noqa: BLE001 - the checks below report the broken plan
         copied = -1
-    check("write copies only the sync files", copied == 3
-          and (toolkit / "agent" / "a.py").read_text(encoding="utf-8") == "new A",
-          copied)
+    check("write copies changed and newly added modules", copied == 5
+          and (toolkit / "agent" / "a.py").read_text(encoding="utf-8") == "new A"
+          and (toolkit / "agent" / "b.py").read_text(encoding="utf-8") == "source only"
+          and (toolkit / "knowledge" / "store.py").is_file()
+          and (toolkit / "_lazy_exports.py").is_file(), copied)
+    check("write preserves pinned downloaded data",
+          (toolkit / "data" / "cache" / "quests_full.json").read_text(encoding="utf-8")
+          == "pinned cache")
+    check("a second write copies nothing unchanged",
+          sync.write(sync.plan(root, toolkit), root, toolkit) == 0)
     check("write never overwrites the pinned files",
           (toolkit / "data" / "maps" / "_index.json").read_text(encoding="utf-8")
           == "trimmed"
@@ -2549,6 +2606,21 @@ def test_kaggle_toolkit_sync() -> None:
         live_drift = sync.drift(sync.plan(live_root, live_toolkit))
         check("the checked-in Kaggle toolkit matches the harness",
               not live_drift, [item["path"] for item in live_drift][:8])
+        import subprocess
+        probe = (
+            "from pathlib import Path; import importlib; "
+            "names = ('_lazy_exports', 'agent.planner', 'agent.autopilot', "
+            "'agent.brain_daemon', 'ai.train_cause_head', 'run_brain', 'run_autopilot'); "
+            "modules = [importlib.import_module(name) for name in names]; "
+            "assert all(Path(m.__file__).resolve().is_relative_to(Path.cwd()) "
+            "for m in modules), 'import escaped the toolkit'; "
+            "print('TOOLKIT_IMPORT_OK')"
+        )
+        result = subprocess.run([sys.executable, "-E", "-c", probe], cwd=live_toolkit,
+                                capture_output=True, text=True, timeout=60)
+        check("the toolkit imports independently of the source tree",
+              result.returncode == 0 and "TOOLKIT_IMPORT_OK" in result.stdout,
+              result.stderr[-2000:])
 
 
 def test_quest_chain_replay() -> None:
@@ -4620,8 +4692,20 @@ def test_planner_buy_branch() -> None:
           and calls[0].get("args", {}).get("npc_id") == npc, calls[:2])
 
 
+def test_cause_split_audit() -> None:
+    import unittest
+    from ai.test_cause_head import SplitAuditTests
+
+    section("Cause-head input leakage guards")
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(SplitAuditTests)
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    check("cause-head split checks execute and pass",
+          result.testsRun >= 8 and result.wasSuccessful(),
+          {"tests": result.testsRun, "failures": result.failures, "errors": result.errors})
+
+
 def test_cause_head_artifact() -> None:
-    section("Cause head artifact (rule-distilled, synthetic gate only)")
+    section("Cause head artifact (experimental; not a promotion gate)")
     path = REPO_ROOT / "models" / "cause_head.json"
     if not path.is_file():
         print("   SKIP: models/cause_head.json not present")
@@ -4629,11 +4713,12 @@ def test_cause_head_artifact() -> None:
     import json as _json
     metrics = _json.loads(path.read_text(encoding="utf-8"))
     val = metrics.get("val") or {}
-    check("the cause head's held-out metrics are recorded",
+    check("the experimental cause head records its evaluation size",
           int(val.get("n") or 0) > 0, val)
-    check("the cause head clears its synthetic gate (>=0.85 acc, <0.15 ECE)",
-          float(val.get("accuracy") or 0.0) >= 0.85
-          and float(val.get("ece") or 1.0) < 0.15, val)
+    check("the experimental artifact is not marked as promoted",
+          metrics.get("promotion_ready") is not True, metrics.get("promotion_ready"))
+    if not (metrics.get("split_audit") or {}).get("valid"):
+        print("   UNVERIFIED MODEL: no passing input-level split audit; scores are not promotion evidence")
     check("the MLP-alone result is not hidden by the ensemble",
           "mlp_val" in metrics and "ensemble" in metrics,
           sorted(metrics))
@@ -6507,6 +6592,9 @@ def run() -> Tuple[int, List[str]]:
     test_plan_stack()
     test_shared_resources()
     test_brain_scaling_40()
+    test_brain_lifecycle()
+    test_live_collection_lifecycle()
+    test_pointer_coverage_gate()
     test_constraint_corpus()
     test_objective_buckets()
     test_objective_parameter_table()
@@ -6523,6 +6611,7 @@ def run() -> Tuple[int, List[str]]:
     test_identity_binding()
     test_live_witnesses()
     test_verifier_head_gate()
+    test_cause_split_audit()
     test_cause_head_artifact()
     test_observation_text()
     test_kaggle_toolkit_sync()

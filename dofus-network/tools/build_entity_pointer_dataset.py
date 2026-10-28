@@ -14,14 +14,18 @@ after observation:
     data/entity_pointer/manifest.json
 
 Split is by segment (`build_live_transitions.split_of`), never by row.
+Only source-tagged live steps with explicit observation/outcome pairs are included.
+Writes require 2,000 action rows, 50 action-progress rows and 10 rows per tool;
+--check reports coverage without replacing an existing dataset.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -254,9 +258,11 @@ def _chosen(tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
 def build(paths: Iterable[Path], gap_s: float,
           observed: Optional[Path] = None) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     hints = _observed_hints(observed)
-    rows: List[Dict[str, Any]] = []
+    streams = defaultdict(list)
+    fingerprints = set()
+    duplicates = 0
     sources = []
-    for path in paths:
+    for path in sorted({Path(path).resolve() for path in paths}):
         if not path.is_file():
             continue
         sources.append(str(path))
@@ -269,21 +275,28 @@ def build(paths: Iterable[Path], gap_s: float,
                     row = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(row, dict):
-                    rows.append(row)
+                if not isinstance(row, dict) or row.get("source") != "live":
+                    continue
+                if row.get("kind") != "step" or not row.get("tool"):
+                    continue
+                fingerprint = hashlib.sha256(json.dumps(
+                    row, sort_keys=True, separators=(",", ":")).encode("utf-8")).digest()
+                if fingerprint in fingerprints:
+                    duplicates += 1
+                    continue
+                fingerprints.add(fingerprint)
+                key = (str(row.get("instance") or "default"), str(row.get("session") or ""))
+                streams[key].append(row)
     out: List[Dict[str, Any]] = []
-    segments = blt.segments(rows, "live", gap_s)
+    segments = []
+    for stream in streams.values():
+        segments.extend(blt.segments(sorted(stream, key=blt._row_ts), "live", gap_s))
     for segment in segments:
         labels = blt.label_steps(segment)
-        carried = None
         for step, label in zip(segment["steps"], labels):
             before = step.get("observation")
-            if not isinstance(before, dict):
-                before = carried
-            after = blt._after_obs(step) or carried
-            if isinstance(after, dict):
-                carried = after
-            if not isinstance(before, dict) or not isinstance(after, dict):
+            after = blt._after_obs(step)
+            if not isinstance(before, dict) or not before or not isinstance(after, dict):
                 continue
             base_quest = _quest(before)
             key = None
@@ -332,17 +345,40 @@ def build(paths: Iterable[Path], gap_s: float,
         "moved": sum(1 for row in out if row["moved"]),
         "progress": sum(1 for row in out if row["progress"]),
         "read_rows": sum(1 for row in out if row["was_read"]),
+        "action_rows": sum(1 for row in out if not row["was_read"]),
+        "action_progress_rows": sum(1 for row in out if not row["was_read"] and row["progress"]),
+        "duplicate_steps": duplicates,
         "observed_hints": sum(1 for row in out if row.get("observed_hint")),
         "segments": len({row["segment"] for row in out}),
     }
+    manifest["coverage_gate"] = coverage_gate(manifest)
     return out, manifest
+
+
+def coverage_gate(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    from agent.schema import tool_names
+
+    tools = manifest["tools"]
+    undercovered = {name: tools.get(name, 0) for name in tool_names() if tools.get(name, 0) < 10}
+    actions = manifest["action_rows"]
+    progress = manifest["action_progress_rows"]
+    return {
+        "passed": actions >= 2000 and progress >= 50 and not undercovered,
+        "action_rows": actions,
+        "action_progress_rows": progress,
+        "minimum_action_rows": 2000,
+        "minimum_action_progress_rows": 50,
+        "minimum_rows_per_tool": 10,
+        "undercovered_tools": undercovered,
+    }
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--log", nargs="*", default=None,
-                        help="JSONL step logs; default: trajectories/default.jsonl and autopilot.jsonl")
+                        help="JSONL step logs; default: all per-instance trajectories/*.jsonl")
+    parser.add_argument("--check", action="store_true", help="report coverage without writing a dataset")
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "data" / "entity_pointer")
     parser.add_argument("--observed", type=Path,
                         default=REPO_ROOT / "data" / "entity_pointer" / "observed_quests.jsonl",
@@ -352,13 +388,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.log:
         paths = [Path(p) for p in args.log]
     else:
-        paths = [REPO_ROOT / "trajectories" / "default.jsonl",
-                 REPO_ROOT / "trajectories" / "autopilot.jsonl"]
-        paths = [path for path in paths if path.is_file()]
+        paths = sorted((REPO_ROOT / "trajectories").glob("*.jsonl"))
     if not paths:
         print("no step logs found", file=sys.stderr)
         return 2
     rows, manifest = build(paths, args.segment_gap_s, args.observed)
+    gate = manifest["coverage_gate"]
+    print(json.dumps(gate, sort_keys=True))
+    if not gate["passed"]:
+        print("coverage gate failed; existing dataset unchanged")
+        return 1
+    if args.check:
+        return 0
     args.out.mkdir(parents=True, exist_ok=True)
     sinks = {}
     try:

@@ -479,21 +479,26 @@ runs. It had **already drifted** (18 files, including `autopilot.py`, `planner.p
 `schema.py` and `data/capabilities.json`) and there was no export script in the repo to regenerate
 it. It is not a fork to delete — deleting it breaks the dataset a kernel depends on.
 
-**Shipped 2026-10-27.** `tools/sync_kaggle_toolkit.py` makes the copy/pin matrix explicit and
-regenerates the toolkit. Code under `agent/`, `sim/` and `ai/` is copied when the harness has the
-file; `data/capabilities.json` and the quest/subarea caches are copied; **pinned** files are never
-deleted or overwritten: `agent/episodes.py`, `agent/selftest.py`, `agent/smoke_verifier.py`,
-`agent/synthetic_tools.py` (removed from the harness), `data/maps/_index.json` (the toolkit ships a
-trimmed map index) and `dataset-metadata.json` (Kaggle metadata). `--check` reports drift and exits
-1; `--write` copies atomically and records `TOOLKIT_MANIFEST.json` (path, source, sha256, status,
-generated_at) **after** the copy, so the manifest cannot claim the files still drift. The real run
-synced **25 files, pinned 6, 0 drift**; the toolkit's `features.py` is now the 42-feature contract,
-`schema.py`/`capabilities.json` carry `accept`, and the planner/autopilot match the harness.
-**Reopened and re-closed 2026-10-28:** the mirror had drifted again because nothing checked the
-real tree. `test_kaggle_toolkit_sync` now plans the checked-in `kaggle/toolkit` against the
-harness and fails on any drift; `--write` re-synced it. **What remains:** re-upload the
-dataset/kernel on Kaggle if it should consume this snapshot (the
-local copy is current; the published one is not).
+**Generator corrected 2026-10-28.** The first generator only visited files already
+present in the toolkit, so its 25-file check missed **135 stale or absent modules**.
+`tools/sync_kaggle_toolkit.py` now mirrors source Python modules under `agent/`,
+`sim/`, `ai/`, `knowledge/`, `combat/`, `advisor/` and `tools/`, including source-only
+modules, plus the three root Python helpers and `data/capabilities.json`.
+Standalone imports exposed a further missing `_lazy_exports.py` dependency, now
+included. After adding the lifecycle and coverage tests, the measured matrix is
+**164 sync, 8 pinned, 0 drift/missing**.
+
+Toolkit-only legacy modules, downloaded quest/subarea caches, the trimmed map index
+and Kaggle metadata are pinned: a write neither deletes nor refreshes them. New
+non-code artifacts are excluded. Writes copy only changed/missing files atomically
+and record the post-copy manifest; a second write copies nothing unchanged.
+`test_kaggle_toolkit_sync` checks source-only dependencies, root helpers, pinned
+cache preservation, real-tree drift, and imports in a separate toolkit-cwd process
+with Python path environment overrides ignored.
+
+**What remains:** no dataset was uploaded. Before a new training publication,
+exclude any downloaded data whose licence disallows AI use and use client-derived
+inputs; a current local code mirror is not an updated or training-approved dataset.
 
 ---
 
@@ -2331,7 +2336,7 @@ sim; the planner starts quests through the harness's reported ids. That is
 sufficient for the planning corpus and is deliberately not a claim about the live
 dialog gate.
 
-## G35. A rule-distilled cause head needed an ensemble to generalise to unseen wording *(measured 2026-10-28, synthetic gate only)*
+## G35. Cause-head validation leaked identical inputs *(gate-pass claim withdrawn 2026-10-28)*
 
 **What was built.** `agent/constraint_corpus.py` now generates **2,600** rows
 (25 tools × 8 causes × 13 template families) with expected cause and action.
@@ -2345,11 +2350,25 @@ marker features, MLP 256, calibrated on a separate family split) was evaluated o
 splits. The MLP alone scores mean **0.81 accuracy / 0.19 ECE** (range
 0.7625–0.875) and fails the gate. A cosine-kNN retrieval half over the same
 features reaches **0.853**; the MLP+kNN blend (weight chosen on calib) scores mean
-**0.855 / 0.089**, clearing ≥0.85 / <0.15, with one weak fold at 0.807 / 0.163.
+**0.855 / 0.089**, originally reported as clearing ≥0.85 / <0.15, with one weak fold at 0.807 / 0.163.
 The artifact is exported with both halves (`models/cause_head.onnx`,
 `models/cause_head_prototypes.npz`) and the MLP-alone number is kept in the
 sidecar rather than hidden. It is **not wired** into the controller and
 `test_cause_head_artifact` pins that.
+
+**Correction after input-level audit (2026-10-28).** The seed-7 validation set has
+**50 of 400 feature vectors identical to fit and calibration inputs**, all labelled
+`none`: changing the family name did not change the model input. Reloading both
+FP32 and INT8 artifacts with their stored prototypes reproduces 0.855 accuracy /
+0.0768 ECE, but excluding the duplicated validation inputs yields **292/350 =
+0.8343 accuracy**, below the 0.85 gate. This exclusion is a diagnostic, not a new
+held-out benchmark. The prior gate-pass claim is withdrawn; all five splits were
+used during development, so an independent evaluation is still required.
+`audit_splits` now rejects family overlap, identical float32 model inputs, and
+missing cause coverage before training or export; eight behavioural tests exercise
+that rejection. Existing artifacts are retained, not promoted. The 2,600 text rows
+also cross irrelevant preconditions with tools (for example a snapshot needing a
+purchase price); they are taxonomy probes, not 2,600 validated game scenarios.
 
 **Why.** With 13 template families per cause, holding out 2 leaves ~11 examples of
 each phrasing pattern. Some held-out templates share no surface marker with the
@@ -2361,38 +2380,9 @@ outcomes.
 **What would promote it.** Live error texts from a real session (the
 entity-pointer/live collection route), a pretrained text encoder instead of hashed
 features, and a shadow run where the ensemble's cause agrees with the rule or the
-outcome. Until then the artifact is a synthetic-gate result; the controller keeps
-its rules.
+outcome. Until then the artifact is an unverified development result; the
+controller keeps its rules.
 
-Guards: `test_constraint_corpus` (generated set + agreement floors),
-`test_planner_buy_branch`, `test_brain_scaling_40`, `test_always_on_ai`.
-
-## G36. The simulator reported an open quest dialog just for standing on a start map *(fixed 2026-10-28, measured)*
-
-**Symptom.** The teacher fell from **119 quests / 148 objectives, max_repeat 1** to
-**82 / 177, max_repeat 13, stalled** in a 400-step level-60 run. The user's first
-hypothesis was the new `hdv.buy` branch or the sub-goal stack; both were tested and
-neither was the cause (disabling `child_for_objective` and removing prices changed
-nothing).
-
-**Bisect.** Worktrees at `51c429c` (Oct 24), `bd6a04b`, `08c1a8c`, and `0990695`
-all score **119/148**. `f690da0` (the next commit) scores **82/177**, and the
-working tree matches it. The causal diff is `sim/world.py`: `_observe_now()`
-started publishing `dialog: {open: true, start_quest: ...}` from `offer_here()`
-whenever the character merely stood on a quest's start map. The planner took that
-as a real offer and accepted quests instead of completing the one in front of it.
-The 13 identical `nav.goto {direction: top}` calls were a corridor walk (each moved
-1–3 hops), not a loop; they were a consequence of the diverted route.
-
-**Fix.** The simulator publishes `dialog: {open: false}`; a dialog is a talk, not a
-map. The harness still offers its ids through `_client_quests` (the G31 seed), so
-`sim/tool_choice.py` continues to generate rows (108 rows / 65 advanced in the
-smoke test). `test_sim_planner_runs` now runs the full 400-step level-60 gate and
-requires **≥119 quests, max_repeat ≤3, stalled false**, plus a direct check that a
-standing character is not in a dialog. Re-measured: **119 / 148, max_repeat 1,
-stalled false**; noise 94 / 99; poor start (`--kamas 0 --random-start-map`) 119 / 148.
-
-**What is still not modelled.** A real NPC talk does not yet open a dialog in the
-sim; the planner starts quests through the harness's reported ids. That is
-sufficient for the planning corpus and is deliberately not a claim about the live
-dialog gate.
+Guards: `test_constraint_corpus` (taxonomy agreement, not scenario applicability),
+`test_cause_split_audit` (input/family leakage rejection),
+`test_cause_head_artifact` (unpromoted status, not a model-quality pass).
