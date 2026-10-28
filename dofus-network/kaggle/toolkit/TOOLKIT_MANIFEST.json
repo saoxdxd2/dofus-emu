@@ -14,18 +14,18 @@
       "missing": false,
       "path": "agent/autopilot.py",
       "source": "agent/autopilot.py",
-      "source_sha256": "9a033a5e2e3a8a6eaef0a481f84c7d311bf1cc0c58a48bf37d94fd5e8ea817dc",
+      "source_sha256": "f6293136f9b4e323825831a19f54e18a5aabb2ef686a1a4c99613c3903c0c98d",
       "status": "sync",
-      "toolkit_sha256": "9a033a5e2e3a8a6eaef0a481f84c7d311bf1cc0c58a48bf37d94fd5e8ea817dc"
+      "toolkit_sha256": "f6293136f9b4e323825831a19f54e18a5aabb2ef686a1a4c99613c3903c0c98d"
     },
     {
       "drift": false,
       "missing": false,
       "path": "agent/controller.py",
       "source": "agent/controller.py",
-      "source_sha256": "4f5d8589edbb6116065918c063c70c02a341833896dfba13a9fc46101fb1bc8e",
+      "source_sha256": "c9621bf9af8fc5c09f92bbf761a228e7c04acc56e509b256f849453b4c5e6cdb",
       "status": "sync",
-      "toolkit_sha256": "4f5d8589edbb6116065918c063c70c02a341833896dfba13a9fc46101fb1bc8e"
+      "toolkit_sha256": "c9621bf9af8fc5c09f92bbf761a228e7c04acc56e509b256f849453b4c5e6cdb"
     },
     {
       "drift": false,
@@ -41,18 +41,18 @@
       "missing": false,
       "path": "agent/executor.py",
       "source": "agent/executor.py",
-      "source_sha256": "9f5a61d3e8fda24880def544b884da52e921c9d7065448c618b9653cbacd945b",
+      "source_sha256": "285915957fb13fb4826475bbe5e3b022e6973680c008a1c3e9f5c52a507ba0ab",
       "status": "sync",
-      "toolkit_sha256": "9f5a61d3e8fda24880def544b884da52e921c9d7065448c618b9653cbacd945b"
+      "toolkit_sha256": "285915957fb13fb4826475bbe5e3b022e6973680c008a1c3e9f5c52a507ba0ab"
     },
     {
       "drift": false,
       "missing": false,
       "path": "agent/features.py",
       "source": "agent/features.py",
-      "source_sha256": "b8c729e8bb2db62e707bac21ac0ceb7c8ff80cb9826c868b1a1e459848d3e897",
+      "source_sha256": "20ad8a6be2afed8286541d8bc23d967a0a41f3d3f2ea3caf129d04a067e4ed18",
       "status": "sync",
-      "toolkit_sha256": "b8c729e8bb2db62e707bac21ac0ceb7c8ff80cb9826c868b1a1e459848d3e897"
+      "toolkit_sha256": "20ad8a6be2afed8286541d8bc23d967a0a41f3d3f2ea3caf129d04a067e4ed18"
     },
     {
       "drift": false,
@@ -77,18 +77,18 @@
       "missing": false,
       "path": "agent/planner.py",
       "source": "agent/planner.py",
-      "source_sha256": "081d3e0828c869382480506b75416627a170244bb6c48bb733c410a97ba9fd54",
+      "source_sha256": "97af8d254244bbe0aca02ab8e2ac8a75e9ebe56740a020b9cfecc4460cad530d",
       "status": "sync",
-      "toolkit_sha256": "081d3e0828c869382480506b75416627a170244bb6c48bb733c410a97ba9fd54"
+      "toolkit_sha256": "97af8d254244bbe0aca02ab8e2ac8a75e9ebe56740a020b9cfecc4460cad530d"
     },
     {
       "drift": false,
       "missing": false,
       "path": "agent/planner_nn.py",
       "source": "agent/planner_nn.py",
-      "source_sha256": "83ff31e19fe6bb003b54a79b5a775614b65b6a0d0ffd62862080a2aa63ce0719",
+      "source_sha256": "5f8b749b69c7ba39942d39a912cbe32bd2538c1cb8f67ccb7d85206ec7be8dbf",
       "status": "sync",
-      "toolkit_sha256": "83ff31e19fe6bb003b54a79b5a775614b65b6a0d0ffd62862080a2aa63ce0719"
+      "toolkit_sha256": "5f8b749b69c7ba39942d39a912cbe32bd2538c1cb8f67ccb7d85206ec7be8dbf"
     },
     {
       "drift": false,
@@ -113,9 +113,9 @@
       "missing": false,
       "path": "agent/schema.py",
       "source": "agent/schema.py",
-      "source_sha256": "9c69ad61b462c6943a4c968cc5b85158762bd4fa4b63724acedf0a9da651d52d",
+      "source_sha256": "16d6f1559795ce702129b3b0d8a06a9d68d0d113eea4266d9377a52dfa77f900",
       "status": "sync",
-      "toolkit_sha256": "9c69ad61b462c6943a4c968cc5b85158762bd4fa4b63724acedf0a9da651d52d"
+      "toolkit_sha256": "16d6f1559795ce702129b3b0d8a06a9d68d0d113eea4266d9377a52dfa77f900"
     },
     {
       "drift": false,
@@ -131,9 +131,9 @@
       "missing": false,
       "path": "agent/serve.py",
       "source": "agent/serve.py",
-      "source_sha256": "26cac6bc201d564cb1462fcbc107924e45da7e7f0247454a124d990cd541e2b4",
+      "source_sha256": "cd4e29385963fa66a8e3f6dd31196e63029b9277337b9c276a42052f1f2382df",
       "status": "sync",
-      "toolkit_sha256": "26cac6bc201d564cb1462fcbc107924e45da7e7f0247454a124d990cd541e2b4"
+      "toolkit_sha256": "cd4e29385963fa66a8e3f6dd31196e63029b9277337b9c276a42052f1f2382df"
     },
     {
       "drift": false,
@@ -176,9 +176,9 @@
       "missing": false,
       "path": "agent/verifier.py",
       "source": "agent/verifier.py",
-      "source_sha256": "50e54814e42eba75cc6224bb0d3466047e21016ea1cd06b6378e82d25f697c30",
+      "source_sha256": "c33c173ad40b53dd91f8eb33a85b4eb2cbd4ada0b4aa51666fb4c1309df40a7b",
       "status": "sync",
-      "toolkit_sha256": "50e54814e42eba75cc6224bb0d3466047e21016ea1cd06b6378e82d25f697c30"
+      "toolkit_sha256": "c33c173ad40b53dd91f8eb33a85b4eb2cbd4ada0b4aa51666fb4c1309df40a7b"
     },
     {
       "drift": false,
@@ -212,9 +212,9 @@
       "missing": false,
       "path": "data/capabilities.json",
       "source": "data/capabilities.json",
-      "source_sha256": "4b64b56f89758882835658c0513c6826cfadcf2c0edb32c02102d1f4e9703fff",
+      "source_sha256": "1769c2c61422f5b5bfdd9db7f431c1f7f95b1e41f36c026e70742610853d8345",
       "status": "sync",
-      "toolkit_sha256": "4b64b56f89758882835658c0513c6826cfadcf2c0edb32c02102d1f4e9703fff"
+      "toolkit_sha256": "1769c2c61422f5b5bfdd9db7f431c1f7f95b1e41f36c026e70742610853d8345"
     },
     {
       "drift": false,
@@ -257,30 +257,30 @@
       "missing": false,
       "path": "sim/run.py",
       "source": "sim/run.py",
-      "source_sha256": "36552f558c219fe99d9d8eb4a1c932b950d2a0472696bf8a2d5e59a3d5fc42e1",
+      "source_sha256": "04182c9b09cebd57c2930a7365ba1ad1a29b9f87505a1282e583c9fa7ed6dfa9",
       "status": "sync",
-      "toolkit_sha256": "36552f558c219fe99d9d8eb4a1c932b950d2a0472696bf8a2d5e59a3d5fc42e1"
+      "toolkit_sha256": "04182c9b09cebd57c2930a7365ba1ad1a29b9f87505a1282e583c9fa7ed6dfa9"
     },
     {
       "drift": false,
       "missing": false,
       "path": "sim/tool_choice.py",
       "source": "sim/tool_choice.py",
-      "source_sha256": "aa84c9bc3f66bee625d9b43bc511dea2934658e6826915e14b1f03b81e159bf9",
+      "source_sha256": "c4f04dab144a5afd56a73132a04c141c519770d36fcd620708c42a551eab4a86",
       "status": "sync",
-      "toolkit_sha256": "aa84c9bc3f66bee625d9b43bc511dea2934658e6826915e14b1f03b81e159bf9"
+      "toolkit_sha256": "c4f04dab144a5afd56a73132a04c141c519770d36fcd620708c42a551eab4a86"
     },
     {
       "drift": false,
       "missing": false,
       "path": "sim/world.py",
       "source": "sim/world.py",
-      "source_sha256": "7e2ad78f09d2dcef9e5bac5a82f54b89bb3ce463130f4de95f30ead2f6998ca1",
+      "source_sha256": "7e48ff7f0a82b55e401c34c23d69c1afa650a55d0702259b2f6257c605d0a833",
       "status": "sync",
-      "toolkit_sha256": "7e2ad78f09d2dcef9e5bac5a82f54b89bb3ce463130f4de95f30ead2f6998ca1"
+      "toolkit_sha256": "7e48ff7f0a82b55e401c34c23d69c1afa650a55d0702259b2f6257c605d0a833"
     }
   ],
-  "generated_at": "2026-10-27T00:32:15.545442+00:00",
+  "generated_at": "2026-10-28T01:25:06.709042+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }

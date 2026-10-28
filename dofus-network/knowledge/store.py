@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -89,6 +90,37 @@ def _row_names(row: sqlite3.Row) -> dict[str, str]:
     }
 
 
+class _ThreadLocalConnection:
+    """One read-only SQLite connection per thread.
+
+    The daemon shares a cached store across instance workers, and a single
+    `check_same_thread=False` connection is still unsafe when two threads step a
+    cursor at once (observed as `IndexError: tuple index out of range` in the
+    gate). A connection per thread removes the race and keeps the cache shared.
+    """
+
+    def __init__(self, uri: str):
+        self._uri = uri
+        self._local = threading.local()
+
+    def _conn(self) -> sqlite3.Connection:
+        con = getattr(self._local, "con", None)
+        if con is None:
+            con = sqlite3.connect(self._uri, uri=True, check_same_thread=False)
+            con.row_factory = sqlite3.Row
+            self._local.con = con
+        return con
+
+    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        return self._conn().execute(sql, params)
+
+    def close(self) -> None:
+        con = getattr(self._local, "con", None)
+        if con is not None:
+            con.close()
+            self._local.con = None
+
+
 class CanonicalStore:
     """A read-only handle to `dofus_knowledge.sqlite`."""
 
@@ -99,8 +131,7 @@ class CanonicalStore:
                 f"knowledge store not found: {self.path}; run python -m knowledge.build"
             )
         uri = self.path.resolve().as_uri() + "?mode=ro"
-        self._con = sqlite3.connect(uri, uri=True)
-        self._con.row_factory = sqlite3.Row
+        self._con = _ThreadLocalConnection(uri)
 
     def close(self) -> None:
         self._con.close()

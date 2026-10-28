@@ -276,10 +276,10 @@ rate that never happened. The autopilot therefore records a successful listing a
 `listing_open` with `state: "open"`, and never as kamas earned — there is a test
 for exactly this (`test_autopilot_listing_is_not_revenue`).
 
-**Buying is not automated at all.** `ExchangeBidHouseBuyMessage` spends money
-irreversibly at whatever price is on the listing, with no undo and no negotiation.
-`hdv.buy` is in `FORBIDDEN_TOOLS` and the guard refuses it before it can reach the
-client.
+**Buying is available through `hdv.buy`.** The 25-tool research vocabulary includes
+the purchase verb; it requires an explicit listing uid and a max price, and the page
+only uses prices the server already sent. The details of the buy packet are in
+`PROTOCOL_NOTES.md` (`ExchangeBidHouseBuyMessage`).
 
 ### How the price is resolved now
 
@@ -399,31 +399,26 @@ The M5 lane now exists end to end:
 4. **Fail soft on the client, hard on privacy.** A stale patch, a missing SDK or a
    failed download must degrade; an IP leak must stop the instance.
 5. **Numbers in docs are measured.** Anything unmeasured is labelled as such.
-6. **A listing is supply, not revenue.** Only a completed sale is income, and only
-   the server can say one happened. `listing_open` != kamas earned.
-7. **Nothing irreversible runs unattended.** Buying spends money with no undo, so
-   it stays a human action; the autonomous loop may only do what can be undone or
-   waited out.
-8. **A bound port is not a working tunnel.** `wireproxy` binds before the
+6. **A bound port is not a working tunnel.** `wireproxy` binds before the
    handshake completes, so an ISP that drops WARP's UDP looks healthy to a port
    check. Probe with a real CONNECT, or do not claim it works.
-9. **An update is a transaction.** Download to staging, re-apply the patches,
+7. **An update is a transaction.** Download to staging, re-apply the patches,
    validate, commit with a backup. Never delete a live file before its
    replacement exists — that is how a 403 became a black screen.
-10. **Fail closed covers launching.** If egress cannot be wired and the mode is
-    not `direct`, the client does not open. A leak is worse than a no-show.
-11. **An outage must not require a relaunch.** WARP drops on a network change
+8. **Fail closed covers launching.** If egress cannot be wired and the mode is
+   not `direct`, the client does not open. A leak is worse than a no-show.
+9. **An outage must not require a relaunch.** WARP drops on a network change
    (wifi <-> ethernet) and returns by itself; the proxy keeps listening and keeps
    failing closed, and the host reconnects WARP before starting an instance. A
    forty-second tunnel gap must cost forty seconds, not a restart.
-12. **Text is an observation, not a program.** The model proposes `reply_text`;
-   the client resolves it to a reply id; the handler sends it. Never fabricate a
-   protocol message from parsed text.
-13. **Unknown is not zero.** A missing level, price or monster input stays null
-   and forces an abstain, never a default.
-14. **Reference is not training.** Papycha's content signal forbids AI training;
-   guides are RAG with attribution, never labels.
-15. **The planner may estimate; only the server decides.** A win probability is a
-   falsifiable claim; the outcome row is the answer.
-16. **Every head abstains when its inputs are missing.** An abstain is a logged,
-   valid decision; a guess is not.
+10. **Text is an observation, not a program.** The model proposes `reply_text`;
+    the client resolves it to a reply id; the handler sends it. Never fabricate a
+    protocol message from parsed text.
+11. **Unknown is not zero.** A missing level, price or monster input stays null
+    and forces an abstain, never a default.
+12. **Reference is not training.** Papycha's content signal forbids AI training;
+    guides are RAG with attribution, never labels.
+13. **The planner may estimate; only the server decides.** A win probability is a
+    falsifiable claim; the outcome row is the answer.
+14. **Every head abstains when its inputs are missing.** An abstain is a logged,
+    valid decision; a guess is not.

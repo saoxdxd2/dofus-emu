@@ -13,6 +13,7 @@ what the client provided.
 from __future__ import annotations
 
 import json
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -30,12 +31,23 @@ OBSERVED_FILE = (
 )
 
 
+_STORE_CACHE: Dict[str, CanonicalStore] = {}
+_STORE_LOCK = threading.Lock()
+
+
 def load_default_store(path: Optional[Path] = None) -> Optional[CanonicalStore]:
     target = Path(path) if path is not None else DEFAULT_STORE
+    key = str(target)
+    with _STORE_LOCK:
+        cached = _STORE_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
-        return CanonicalStore(target)
+        store = CanonicalStore(target)
     except FileNotFoundError:
         return None
+    with _STORE_LOCK:
+        return _STORE_CACHE.setdefault(key, store)
 
 
 def _current_objective(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:

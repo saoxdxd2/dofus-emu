@@ -1,0 +1,32 @@
+{
+ "generated_at": "2026-10-27T23:29:07",
+ "moved": 325,
+ "pointer_kinds": {
+  "direction": 179,
+  "farm": 1,
+  "npc": 367,
+  "objective": 278,
+  "quest": 149,
+  "reply": 110,
+  "tool": 2933
+ },
+ "progress": 4,
+ "read_rows": 2933,
+ "rows": 4017,
+ "segments": 6,
+ "sources": [
+  "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\trajectories\\default.jsonl",
+  "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\trajectories\\autopilot.jsonl"
+ ],
+ "splits": {
+  "test": 87,
+  "train": 3885,
+  "val": 45
+ },
+ "tools": {
+  "farm.start": 1,
+  "nav.goto": 180,
+  "quest.advance": 903,
+  "state.snapshot": 2933
+ }
+}

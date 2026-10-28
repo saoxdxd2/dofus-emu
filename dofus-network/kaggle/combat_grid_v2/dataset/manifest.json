@@ -1,0 +1,16 @@
+{
+ "actionable": 1318,
+ "boards": 1872,
+ "kind": "solver_distillation",
+ "live": false,
+ "notes": 1318,
+ "pass_only": 554,
+ "rows": 1318,
+ "source": "C:\\Users\\sao\\AppData\\Local\\DofusFarm\\fight_boards.jsonl",
+ "source_boards": 156,
+ "test": 120,
+ "train": 1114,
+ "val": 84,
+ "variants": "random:12:seed=11",
+ "verdict": "actionable"
+}

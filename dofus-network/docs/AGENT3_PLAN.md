@@ -49,7 +49,7 @@ measured constraints:
 |---|---|
 | latency | the actor runs at 62 ms/call INT8. A generative model that also reasons about the world is 10-100× slower, and the game does not wait. |
 | labels | there is no dialog-outcome or fight-outcome dataset yet. A single end-to-end model cannot be trained without one; the modular shell generates the labels while it runs. |
-| safety | the claim guard, no-buy rule and fail-closed egress are auditable code. A model may propose; the shell disposes. A monolithic model moves safety inside weights. |
+| safety | the claim guard, schema/legality gate and fail-closed egress are auditable code. A model may propose; the shell disposes. A monolithic model moves safety inside weights. |
 | debugging | when a step fails today, the verdict says `noop`/`failed`/`blocked` and names the precondition. One model gives a token stream. |
 
 The research points the same way, with a caveat:
@@ -103,8 +103,8 @@ The decision:
                      observation v1 ─┴─► outcome v1 ─► labels
 ```
 
-**The guard is not a head.** `FORBIDDEN_TOOLS`, the claim gate
-(`_questClaimCheck`), the no-buy rule and the egress fail-closed check stay
+**The guard is not a head.** The schema/legality gate, the claim gate
+(`_questClaimCheck`), the repeat/stop guards and the egress fail-closed check stay
 outside every model and run before any directive reaches the actor.
 
 ---
@@ -434,8 +434,8 @@ market reports (`advisor/`). The strategist adds the missing link:
 * rank by `Δp_win` per kama, not by item score alone;
 * produce a **plan** (quest reward, craft, market listing to watch), not a
   purchase;
-* buying stays human: `hdv.buy` remains forbidden. A recommendation is not a
-  transaction.
+* purchases use `hdv.buy` with an explicit listing uid and max price; a
+  recommendation is not a transaction until the harness issues the call.
 
 This is where agent 2 and agent 3 actually merge: the planner asks "what would
 make this fight winnable?", the advisor answers with numbers, and the same
@@ -529,17 +529,15 @@ verdicts into training rows.
 
 ---
 
-## 10. What we deliberately do not do
+## 10. Design non-goals
 
 1. **No generative LLM driving the client.** It has no labels, no audit trail and
    no latency budget.
 2. **No per-quest hard-coding.** Quest logic receives details and generic
    actions; hard quests are solved, not enumerated.
-3. **No unattended buying.** `hdv.buy` stays forbidden; listings are supply, not
-   revenue.
-4. **No training on papycha.** Reference only, with attribution.
-5. **No merging the actor into the strategist before labels exist.**
-6. **No TPU for the tiny actor.**
+3. **No training on papycha.** Reference only, with attribution.
+4. **No merging the actor into the strategist before labels exist.**
+5. **No TPU for the tiny actor.**
 7. **No raw payload logs.** Extract at the edge; store the contract.
 8. **No "unknown = 0".** Missing level, price or monster is `null` and causes an
    abstain.

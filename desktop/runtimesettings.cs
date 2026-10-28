@@ -20,6 +20,9 @@ namespace DofusFarm.Engine
         public bool Governor = true;
         public bool Telemetry = true;
         public bool FightBoards = true;
+        // Always-on AI: every client that launches is driven without pressing Start.
+        // A manual Stop still wins until the next launch.
+        public bool AutoAi = true;
 
         private static readonly object _lock = new object();
         private static RuntimeSettings _current;
@@ -66,6 +69,7 @@ namespace DofusFarm.Engine
                     else if (Same(key, "governor")) settings.Governor = ParseBool(value, settings.Governor);
                     else if (Same(key, "telemetry")) settings.Telemetry = ParseBool(value, settings.Telemetry);
                     else if (Same(key, "fight_boards")) settings.FightBoards = ParseBool(value, settings.FightBoards);
+                    else if (Same(key, "auto_ai")) settings.AutoAi = ParseBool(value, settings.AutoAi);
                 }
             }
             catch { }
@@ -84,6 +88,7 @@ namespace DofusFarm.Engine
                 text.AppendLine("governor=" + (Governor ? "1" : "0"));
                 text.AppendLine("telemetry=" + (Telemetry ? "1" : "0"));
                 text.AppendLine("fight_boards=" + (FightBoards ? "1" : "0"));
+                text.AppendLine("auto_ai=" + (AutoAi ? "1" : "0"));
                 File.WriteAllText(path, text.ToString(), Encoding.UTF8);
                 lock (_lock) { _current = this; }
             }

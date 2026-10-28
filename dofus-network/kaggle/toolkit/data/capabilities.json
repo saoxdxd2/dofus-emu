@@ -625,11 +625,12 @@
     },
     "ranker": {
      "type": "str",
-     "doc": "Which plan ranker to use. 'solver' keeps the solver order; 'value' ranks candidates with the learned value head and refuses when the live observation lacks self stats or enemy spell facts.",
+     "doc": "Which plan ranker to use. 'solver' keeps the solver order; 'value' ranks candidates with the learned value head and refuses when the live observation lacks self stats or enemy spell facts; 'grid' ranks with the 30M 560-cell solver-distillation model (opt-in, read-only, fails open when the artifact is absent).",
      "required": false,
      "enum": [
       "solver",
-      "value"
+      "value",
+      "grid"
      ],
      "default": "solver"
     }
@@ -651,6 +652,168 @@
     "monster": {
      "type": "id_or_name",
      "doc": "Monster id or name. When several visible groups contain it, the least favourable one is estimated.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "hdv.buy",
+   "verb": "hdv",
+   "description": "Buy a market listing at or below a maximum unit price. uid is the listing id, not the item id. Use hdv.scan/hdv.prices first when only an item name or gid is known; the page resolves a listing only from prices the server already sent.",
+   "backend": "directive",
+   "directive": "HDV_BUY",
+   "returns": "listing uid, quantity, unit price, total and price source",
+   "params": {
+    "uid": {
+     "type": "int",
+     "doc": "Market listing id (ExchangeBidHouseBuyMessage.uid), not the item id.",
+     "required": false
+    },
+    "listing_uid": {
+     "type": "int",
+     "doc": "Alias of uid.",
+     "required": false
+    },
+    "item": {
+     "type": "str",
+     "doc": "Item name; used only to resolve an inventory-known gid.",
+     "required": false
+    },
+    "gid": {
+     "type": "int",
+     "doc": "Item generic id; used to find a cached listing.",
+     "required": false
+    },
+    "quantity": {
+     "type": "int",
+     "doc": "Units to buy.",
+     "required": false,
+     "default": 1
+    },
+    "qty": {
+     "type": "int",
+     "doc": "Alias of quantity.",
+     "required": false
+    },
+    "max_price": {
+     "type": "int",
+     "doc": "Maximum unit price. Required unless price is given; the handler never buys above it.",
+     "required": false
+    },
+    "price": {
+     "type": "int",
+     "doc": "Expected unit price; must be <= max_price when both are present.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "inv.equip",
+   "verb": "inv",
+   "description": "Equip an item. The proven path applies a saved inventory preset; direct object UID equip is refused until the client path is captured.",
+   "backend": "directive",
+   "directive": "INV_EQUIP",
+   "returns": "preset/object, post-state and the available presets",
+   "params": {
+    "preset_id": {
+     "type": "int",
+     "doc": "Saved inventory preset id (InventoryPresetUseMessage).",
+     "required": false
+    },
+    "preset": {
+     "type": "int",
+     "doc": "Alias of preset_id.",
+     "required": false
+    },
+    "object_uid": {
+     "type": "int",
+     "doc": "Inventory object UID. Refused when no proven direct-equip path exists.",
+     "required": false
+    },
+    "slot": {
+     "type": "str",
+     "doc": "Equipment slot name, when the client exposes it.",
+     "required": false
+    },
+    "name": {
+     "type": "str",
+     "doc": "Item name or preset name.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "hdv.prices",
+   "verb": "hdv",
+   "description": "Read or capture current market prices from the page's server-message price cache. This is a read-only observation, not a purchase.",
+   "backend": "directive",
+   "directive": "HDV_PRICES",
+   "returns": "average prices, cached listing statistics and cache ages",
+   "params": {
+    "item": {
+     "type": "str",
+     "doc": "Item name, when the page can resolve it from the inventory.",
+     "required": false
+    },
+    "gid": {
+     "type": "int",
+     "doc": "Item generic id.",
+     "required": false
+    },
+    "type": {
+     "type": "int",
+     "doc": "Item type id filter.",
+     "required": false
+    },
+    "category": {
+     "type": "int",
+     "doc": "Market category id.",
+     "required": false
+    },
+    "refresh": {
+     "type": "bool",
+     "doc": "Ask the server for the average-price table.",
+     "required": false,
+     "default": false
+    }
+   }
+  },
+  {
+   "id": "tap.interactive",
+   "verb": "tap",
+   "description": "Use a visible interactive element (door, chest, quest object, resource) through the client's own InteractiveUseRequestMessage.",
+   "backend": "directive",
+   "directive": "INTERACTIVE",
+   "returns": "chosen element id, skill instance uid and cell",
+   "params": {
+    "element_id": {
+     "type": "int",
+     "doc": "Interactive element id from map.interactives.",
+     "required": false
+    },
+    "elem_id": {
+     "type": "int",
+     "doc": "Alias of element_id.",
+     "required": false
+    },
+    "skill_id": {
+     "type": "int",
+     "doc": "Skill instance uid, when known.",
+     "required": false
+    },
+    "skill_uid": {
+     "type": "int",
+     "doc": "Alias of skill_id.",
+     "required": false
+    },
+    "cell": {
+     "type": "int",
+     "doc": "Select the element standing on this cell.",
+     "required": false
+    },
+    "name": {
+     "type": "str",
+     "doc": "Reserved for a future named lookup; the page does not invent names it cannot read.",
      "required": false
     }
    }

@@ -28,7 +28,7 @@
     // injected page changes: a client that was not fully restarted keeps the previous
     // script, and a recorded observation is how that becomes visible instead of looking
     // like a fix that does not work.
-    var AGENT_BUILD = '2026-10-27q';
+    var AGENT_BUILD = '2026-10-27s';
 
     // The client's inactivity countdown lives in ONE object -- the tracker whose
     // `_checkActivity` warns at 5 min idle and then calls
@@ -2722,10 +2722,13 @@
                         var el = list[k] || {};
                         var elemId = el.id != null ? el.id : (el.elemId != null ? el.elemId : parseInt(k, 10));
                         if (elemId == null || isNaN(elemId)) continue;
+                        var elName = el.name
+                            || (el.staticInfos && el.staticInfos.name) || null;
                         out.push({
                             elemId: elemId,
                             skillInstanceUid: el.skillInstanceUid != null ? el.skillInstanceUid : null,
-                            cell: el.cell != null ? el.cell : (el.position != null ? el.position.cell : null)
+                            cell: el.cell != null ? el.cell : (el.position != null ? el.position.cell : null),
+                            name: typeof elName === 'string' ? elName.slice(0, 60) : null
                         });
                     }
                 }
@@ -3471,6 +3474,28 @@
                             typeof bag.isInFight === 'function' && bag.isInFight());
                     } catch (e) {}
                 }
+                // Compact server-measured market rows. The page cache only ever
+                // holds values the server sent; the pointer model needs the gid,
+                // average and a few listing uids/prices, not the whole table.
+                try {
+                    var priceRows = [];
+                    var priceGids = Object.keys(__PriceCache.listings || {}).slice(0, 20);
+                    for (var pri = 0; pri < priceGids.length; pri++) {
+                        var pgid = Number(priceGids[pri]);
+                        var prows = (__PriceCache.listings[pgid] || []).slice(0, 5)
+                            .map(function (row) {
+                                return { uid: row.uid, price: row.price,
+                                         quantity: row.quantity };
+                            });
+                        priceRows.push({
+                            gid: pgid,
+                            avg: __PriceCache.average[pgid] != null
+                                ? __PriceCache.average[pgid] : null,
+                            listings: prows
+                        });
+                    }
+                    snap.prices = priceRows;
+                } catch (ePrice) { snap.prices = []; }
             } catch(err) {
                 snap.error = err.toString();
             }
@@ -3986,10 +4011,12 @@
                     : (d.contextualId != null ? d.contextualId
                     : (a.contextualId != null ? a.contextualId
                     : (a.id != null ? a.id : k)));
+                var npcName = si.name || d.name || a.name || null;
                 out.push({
                     templateId: Number(template),
                     contextualId: Number(cid),
-                    cell: a.cellId != null ? a.cellId : (a.position && a.position.cell)
+                    cell: a.cellId != null ? a.cellId : (a.position && a.position.cell),
+                    name: typeof npcName === 'string' ? npcName.slice(0, 60) : null
                 });
             }
             return out;
@@ -4570,14 +4597,14 @@
             try {
                 npcs = _listNpcActors().slice(0, 20).map(function (n) {
                     return { npc_id: n.templateId, actor_id: n.contextualId,
-                             cell: n.cell };
+                             cell: n.cell, name: n.name || null };
                 });
             } catch (e) {}
             var interactives = [];
             try {
                 interactives = _interactives().slice(0, 12).map(function (el) {
                     return { elem_id: el.elemId, cell: el.cell,
-                             skill_uid: el.skillInstanceUid };
+                             skill_uid: el.skillInstanceUid, name: el.name || null };
                 });
             } catch (e) {}
             var allGroups = [];
@@ -7686,6 +7713,164 @@
                     note: 'listing_open: the sale depends on a buyer, not on us' },
                     r.ok ? null : r.error);
             },
+            'hdv.buy': function(args) {
+                args = args || {};
+                var qty = _agentNum(args.quantity != null ? args.quantity : args.qty);
+                if (qty == null || qty < 1) qty = 1;
+                var maxPrice = _agentNum(args.max_price);
+                var explicitPrice = _agentNum(args.price);
+                var uid = _agentNum(args.uid != null ? args.uid : args.listing_uid);
+                var gid = _agentNum(args.gid);
+                var itemName = args.item || null;
+
+                if (gid == null && itemName) {
+                    var found = _findItem(itemName);
+                    if (found.length && found[0].gid != null) gid = Number(found[0].gid);
+                }
+                var price = explicitPrice;
+                var priceSource = explicitPrice != null ? 'explicit' : 'cache';
+                if (uid == null) {
+                    if (gid == null) {
+                        return _agentResult(false,
+                            { item: itemName, reason: 'listing_uid_or_gid_required' },
+                            'hdv.buy needs a listing uid, or a gid/item with a cached server price');
+                    }
+                    var rows = (__PriceCache.listings && __PriceCache.listings[gid]) || [];
+                    var best = null;
+                    for (var i = 0; i < rows.length; i++) {
+                        var row = rows[i];
+                        if (row == null || row.uid == null || !(Number(row.price) > 0)) continue;
+                        if (maxPrice != null && Number(row.price) > maxPrice) continue;
+                        if (best == null || Number(row.price) < Number(best.price)) best = row;
+                    }
+                    if (best == null) {
+                        return _agentResult(false,
+                            { gid: gid, item: itemName, cached: rows.length, max_price: maxPrice },
+                            'hdv.buy found no cached listing at or below max_price; run hdv.scan on this item first');
+                    }
+                    uid = Number(best.uid);
+                    price = Number(best.price);
+                    priceSource = 'cache';
+                }
+                if (price == null || !(price > 0)) {
+                    return _agentResult(false, { uid: uid, gid: gid },
+                        'hdv.buy needs the listing price; pass price or use a cached listing');
+                }
+                if (maxPrice != null && price > maxPrice) {
+                    return _agentResult(false, { uid: uid, price: price, max_price: maxPrice },
+                        'hdv.buy refused: listing price is above max_price');
+                }
+                if (maxPrice == null && explicitPrice == null) {
+                    return _agentResult(false, { uid: uid, price: price },
+                        'hdv.buy needs max_price (or an explicit price) so the purchase is bounded');
+                }
+                var r = _cmSend('ExchangeBidHouseBuyMessage', { uid: uid, qty: qty, price: price });
+                return _agentResult(r.ok, {
+                    listing_uid: uid, gid: gid, item: itemName, quantity: qty,
+                    price: price, total: price * qty, price_source: priceSource
+                }, r.ok ? null : r.error);
+            },
+            'inv.equip': function(args) {
+                args = args || {};
+                var bag = null;
+                try {
+                    var pd = window.gui && window.gui.playerData;
+                    bag = pd && pd.inventory ? pd.inventory : null;
+                    if (bag && bag.presets == null
+                            && typeof bag.getCorrectInventory === 'function') {
+                        bag = bag.getCorrectInventory(bag._type) || bag;
+                    }
+                } catch (e) {}
+                var presets = (bag && bag.presets) || null;
+                var rows = [];
+                try {
+                    if (presets && typeof presets === 'object') {
+                        var keys = Array.isArray(presets) ? [] : Object.keys(presets);
+                        var limit = Array.isArray(presets) ? presets.length : keys.length;
+                        for (var i = 0; i < limit && rows.length < 24; i++) {
+                            var key = Array.isArray(presets) ? null : keys[i];
+                            var preset = Array.isArray(presets) ? presets[i] : presets[key];
+                            if (preset == null) continue;
+                            rows.push({
+                                preset_id: key != null ? Number(key)
+                                    : (preset.presetId != null ? Number(preset.presetId) : null),
+                                name: typeof preset.name === 'string' ? preset.name.slice(0, 40) : null
+                            });
+                        }
+                    }
+                } catch (e2) {}
+                var wanted = _agentNum(args.preset_id != null ? args.preset_id : args.preset);
+                var wantedName = typeof args.name === 'string' ? args.name.toLowerCase() : null;
+                var chosen = null;
+                for (var p = 0; p < rows.length; p++) {
+                    if (wanted != null && Number(rows[p].preset_id) === wanted) { chosen = rows[p]; break; }
+                    if (wanted == null && wantedName && rows[p].name
+                            && rows[p].name.toLowerCase() === wantedName) { chosen = rows[p]; break; }
+                }
+                if (chosen == null) {
+                    var reason = wanted != null || wantedName ? 'preset_not_found'
+                        : (args.object_uid != null ? 'direct_object_uid_not_proven' : 'preset_id_required');
+                    return _agentResult(false, {
+                        reason: reason, presets: rows,
+                        object_uid: args.object_uid != null ? Number(args.object_uid) : null,
+                        note: reason === 'direct_object_uid_not_proven'
+                            ? 'the served bundle has no proven direct object_uid equip path; use a saved preset'
+                            : 'pass preset_id (or name) from inventory.presets'
+                    }, reason === 'preset_not_found'
+                        ? 'no saved inventory preset matches ' + (wanted != null ? wanted : args.name)
+                        : 'inv.equip needs a saved preset id; direct object_uid equip is not proven');
+                }
+                var blocked = false;
+                try {
+                    blocked = !!(bag && typeof bag.blockPreset === 'function' && bag.blockPreset());
+                } catch (e3) {}
+                var r = _cmSend('InventoryPresetUseMessage', { presetId: chosen.preset_id });
+                return _agentResult(r.ok, {
+                    preset_id: chosen.preset_id, name: chosen.name,
+                    blocked: blocked, via: 'InventoryPresetUseMessage',
+                    presets: rows
+                }, r.ok ? null : r.error);
+            },
+            'tap.interactive': function(args) {
+                args = args || {};
+                var list = _interactives();
+                var elemId = _agentNum(args.element_id != null ? args.element_id : args.elem_id);
+                var skill = _agentNum(args.skill_id != null ? args.skill_id : args.skill_uid);
+                var cell = _agentNum(args.cell);
+                var target = null;
+                for (var i = 0; i < list.length; i++) {
+                    var el = list[i];
+                    if (elemId != null && Number(el.elemId) !== elemId) continue;
+                    if (cell != null && Number(el.cell) !== cell) continue;
+                    if (skill != null && Number(el.skillInstanceUid) !== skill) continue;
+                    target = el;
+                    break;
+                }
+                var visible = list.slice(0, 20).map(function (el) {
+                    return { elem_id: el.elemId, skill_uid: el.skillInstanceUid, cell: el.cell };
+                });
+                if (target == null) {
+                    return _agentResult(false, {
+                        reason: args.name ? 'name_not_readable' : 'element_not_found',
+                        elements: visible
+                    }, args.name
+                        ? 'tap.interactive cannot match an element by name on this build; pass element_id or cell'
+                        : 'no visible interactive element matches the requested id/cell/skill');
+                }
+                var useSkill = skill != null ? skill : target.skillInstanceUid;
+                if (useSkill == null) {
+                    return _agentResult(false, {
+                        elem_id: target.elemId, cell: target.cell,
+                        reason: 'skill_uid_required', elements: visible
+                    }, 'interactive element ' + target.elemId + ' has no skillInstanceUid; pass skill_uid');
+                }
+                var r = _cmSend('InteractiveUseRequestMessage',
+                    { elemId: target.elemId, skillInstanceUid: useSkill });
+                return _agentResult(r.ok, {
+                    elem_id: target.elemId, skill_instance_uid: useSkill,
+                    cell: target.cell, elements: visible
+                }, r.ok ? null : r.error);
+            },
             'hdv.prices': function(args) {
                 return _agentMarketCapture(args || {});
             },
@@ -7699,7 +7884,8 @@
             'AUTO_JOIN_COMBAT': 'fight.join', 'PASS_TURN': 'fight.pass',
             'FIGHT_STATE': 'fight.state', 'FOLLOW': 'nav.follow',
             'INV_LIST': 'inv.list', 'INV_SELL': 'inv.sell', 'HDV_SCAN': 'hdv.scan',
-            'HDV_LIST': 'hdv.list', 'HDV_PRICES': 'hdv.prices',
+            'HDV_LIST': 'hdv.list', 'HDV_BUY': 'hdv.buy', 'HDV_PRICES': 'hdv.prices',
+            'INV_EQUIP': 'inv.equip', 'INTERACTIVE': 'tap.interactive',
             'MARKET_CAPTURE': 'market.capture', 'CHARACTER_REPORT': 'debug.character',
             'ITEM_DB': 'debug.itemdb', 'EFFECT_DB': 'debug.effectdb',
             'CHAT_SAY': 'chat.say', 'STATE_SNAPSHOT': 'state.snapshot',

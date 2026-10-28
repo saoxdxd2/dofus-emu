@@ -63,23 +63,6 @@ Five things run in one process tree:
 | 4 | **Brain** (`dofus-network/`) | Python, spawned on demand | planner, encoder policy, verifier, agent loop, combat brain |
 | 5 | **Sentinel** (`networkhealth/sentinel.py`) | Python, port 8890 | health/telemetry + `nav.goto` name→map resolution |
 
-### What it deliberately will not do
-
-- **Buy on the market.** `hdv.buy` is absent from the 21-tool vocabulary and is
-  additionally vetoed by `FORBIDDEN_TOOLS` (`agent/autopilot.py`).
-- **Invent a price.** A listing without an explicit integer price is refused, never
-  guessed.
-- **Count a listing as revenue.** A listing is `listing_open`; only a completed sale
-  (which only the server can confirm) is income.
-- **Dial direct when the proxy is down.** Fail-closed is the default at launch and at
-  dial time; `direct` must be chosen explicitly.
-- **Automate account creation / evade bans.** Guest accounts are used where available;
-  the project does not build signup bypasses or ban-evasion systems.
-
-**Risk statement, as the project states it:** the account is yours, everything the bot
-does is something a human could do by hand, and use is at the user's own risk on
-accounts they are willing to lose. Nothing is affiliated with Ankama.
-
 ---
 
 ## 2. Where it stands right now
@@ -100,7 +83,7 @@ are UTC):
 Other readouts from the same logs:
 
 - **Page build:** `2026-10-27l` dominates (686/701/393/389 rows), with older `h`/`g`
-  rows. The current source is `2026-10-27q`; those logs **predate** the latest page
+  rows. The current source is `2026-10-27s`; those logs **predate** the latest page
   fixes, so they do not test them.
 - **Knowledge / quest catalogue:** 1,663 / 1,717 / 926 / 839 observed objectives;
   **0 not in store, 0 collisions**. The client catalogue held 834 / 868 / 473 / 425
@@ -164,8 +147,9 @@ Other readouts from the same logs:
 ### 2.4 What is not working / unproven
 
 - No complete live fight (`fight.join` → placement → turns → `GameFightEndMessage`).
-- No live equip verb (G2); the first recorded quest chain dies on "Go and equip your
-  new items."
+- No live-proven equip (G2): `inv.equip` now has a shipped preset path; direct-UID
+  equip and live proof are still owed. The first recorded quest chain dies on
+  "Go and equip your new items."
 - No vision or image model (G4).
 - Network forecaster is dark: the Sentinel still imports torch, and
   `networkhealth_artifacts/model.pt` is absent (G5).
@@ -176,9 +160,11 @@ Other readouts from the same logs:
   proof is still owed (G9).
 - The last live run's long "no action" wait is unexplained in the current docs and
   should be diagnosed first.
-- Test coverage is still split: `agent.regression` (732 checks) + 20 JS suites +
-  Go relay tests + C# selftests, but the C# bundle selftest, combat/data suites, and
-  the full release build are not inside one gate (G8).
+- Test coverage is still split: `agent.regression` (**922 checks**, exit 0) + 20 JS suites +
+  Go relay tests + C# selftests. The combat suites, the simulator floor (119 quests /
+  148 objectives, no stall), the 40-instance daemon control plane and the checked-in
+  Kaggle mirror are now inside that gate; the C# bundle selftest and the full release
+  build remain outside it (G8).
 
 ---
 
@@ -222,7 +208,7 @@ Other readouts from the same logs:
 | `8890` | Sentinel | health/telemetry HTTP service + `nav.goto` name→map |
 | `8891` | Combat AI | `POST /v1/combat/decide` (solver → ranker → live policy) |
 | `8893` (fallback) | directive bridge | `POST /directive` → client tool call; the real port is in `%LOCALAPPDATA%\DofusFarm\bridge_port.txt` (currently 8893; 8894 has been seen on a multi-slot box) |
-| `8895` | agent HTTP | `python -m agent.serve` — stdlib front for the agent layer |
+| `8895` | Brain daemon / agent HTTP | `run_brain.py` → `agent.serve --brain` — one process, per-instance Autopilot threads, `/brain/*` and `/agent/*` |
 | `40000` | tunnel | local SOCKS5 (userspace WireGuard or system WARP) |
 | `5554, 5556, …` | legacy Android | emulator console ports (only with `--include-legacy-emulator`) |
 
@@ -230,10 +216,12 @@ Other readouts from the same logs:
 
 ### 3.3 Port facts that have burned time
 
-- The host does **not** start the combat brain. `TryStartSingletonSentinel` starts the
-  Sentinel with the embedded interpreter, which has no `jax`. Since 2026-10-26 the
-  autopilot ensures the brain itself (`Autopilot._ensure_brain`, `--brain auto|off`),
-  probes for an interpreter that can import it, and records a `kind:"brain"` row.
+- The host does not start the combat brain. Since 2026-10-27 it starts **one**
+`run_brain.py` daemon on port 8895 instead of one `run_autopilot.py` per instance.
+The daemon runs one `Autopilot` thread per selected instance, shares the Python
+interpreter and process-wide models/knowledge, and exposes `POST /brain/start`,
+`POST /brain/stop`, `GET /brain/status` and `GET /brain/health`. The old
+per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 - A bound port is not a working tunnel. `wireproxy` binds before the WireGuard
   handshake completes; probes must do a real SOCKS5/CONNECT.
 - Loopback never goes through the machine proxy: `agent/bridge.py` builds a
@@ -755,8 +743,7 @@ refusals are supervision (`FAILURE_TO_SUPERVISION.md`), not noise.
 1. **observe** — `state.snapshot` (pure read, no wire traffic) then `flatten()` so the
    planner sees flat keys (`map_id`, `level`, `inventory…`).
 2. **choose** — a policy picks a tool for the current objective.
-3. **guard** — `validate_call()` (schema) + `FORBIDDEN_TOOLS` veto + kick-signature
-   guard.
+3. **guard** — `validate_call()` (schema) + kick-signature guard.
 4. **execute** — the directive is posted to the bridge.
 5. **settle** — for world-changing tools, re-observe until the state changes.
 6. **verify** — label `advanced` / `noop` / `failed` / `blocked`.
@@ -810,28 +797,32 @@ loses 0 (+1.90 quests). Simulation-only; the shipped default remains `rule` unti
 live benchmark justifies switching. The learned planner is a distillation of the same
 teacher, so it cannot exceed it by much.
 
-### 9.5 The 21 tools (closed vocabulary)
+### 9.5 The 25 tools (research vocabulary)
 
 Runtime order is `data/capabilities.json`:
 
 ```
 knowledge.search  nav.goto    nav.follow   quest.list    quest.advance
 farm.start        farm.stop   fight.join   fight.pass    inv.list
-inv.sell          hdv.scan    hdv.list     chat.say      state.snapshot
-safe.stop         knowledge.remember  knowledge.forget   fight.state
+inv.sell          hdv.scan    hdv.list     hdv.buy       hdv.prices
+inv.equip         tap.interactive          chat.say      state.snapshot
+safe.stop         knowledge.remember       knowledge.forget   fight.state
 fight.plan        fight.estimate
 ```
 
-`hdv.buy` is deliberately absent and additionally vetoed at runtime. Older docs that
-say 16 or 18 tools are stale; the schema is 21.
+The 2026-10-27 research unlock added `hdv.buy`, `inv.equip`, `hdv.prices` and
+`tap.interactive`; `FORBIDDEN_TOOLS` is now empty. The shipped 49K tool policy still
+has 21 output logits, so the four new tools are rule-planner-only until a new model is
+trained; the legal registry and the learned head are separate contracts.
 
 Tool backends:
 
 - **local** — `knowledge.search`, `quest.list`, `knowledge.remember`,
   `knowledge.forget`, `fight.plan`, `fight.estimate`.
 - **directive** — `nav.goto`, `nav.follow`, `farm.start`, `farm.stop`, `fight.join`,
-  `fight.pass`, `inv.list`, `inv.sell`, `hdv.scan`, `hdv.list`, `chat.say`,
-  `state.snapshot`, `safe.stop`, `fight.state`, `quest.advance`.
+  `fight.pass`, `inv.list`, `inv.sell`, `inv.equip`, `hdv.scan`, `hdv.list`,
+  `hdv.buy`, `hdv.prices`, `tap.interactive`, `chat.say`, `state.snapshot`,
+  `safe.stop`, `fight.state`, `quest.advance`.
 
 `directive` means: the host posts JSON to `127.0.0.1:<bridge port>/directive`; the
 page's handler performs it and reports back. The bridge port is read from
@@ -1151,6 +1142,15 @@ credit for looking.
 - Encoder training: 3,000 steps, 987 s on the reference GPU; early stop on **call**,
   not tool (tool saturates at ~0.94 while call still moves).
 
+**2026-10-28 constraint corpus / cause head (measured, not promoted).** The generator
+writes 2,600 rows (25 tools × 8 causes × 13 families) and the controller routes 100%
+cause / 100% action. `ai/train_cause_head.py` was trained on 9 families/cause and
+validated on 2 unseen families/cause over five splits: the MLP alone has mean
+accuracy **0.81** / ECE **0.19**; the MLP + cosine-kNN ensemble has mean **0.855** /
+**0.089** (single seed 0.855 / 0.077, one weak fold 0.807 / 0.163), so the synthetic
+≥0.85 / <0.15 gate passes for the ensemble. It is still rule-distilled and **not
+loaded** by the controller; live error phrasings remain the promotion gate.
+
 ---
 
 ## 10. Combat AI
@@ -1241,6 +1241,27 @@ field, not an assumption.
 - **No live fight has been proven.** `executor.py` records `live_calibrated: false`;
   `models/fight_calibrator.json` is absent; `fight.join`/`farm.start` were essentially
   never reached in the recorded history because runs stalled on talk objectives.
+- **30M 560-cell grid scaffold:** `combat/grid_model.py` is **30,766,081 params**
+  (560 cell tokens, 16 fighter tokens, 16 plan tokens) and its forward pass is finite;
+  `combat/test_grid_model.py` is 3/3. It is **not trained**: the 156 recorded boards
+  have 0 with positive AP, and `combat/grid_probe` refuses the pass-only corpus.
+  `combat/grid_dataset.py` is the tensor builder; training waits for one actionable
+  live fight on page build `2026-10-27s`.
+- **30M Kaggle synthetic run:** 30,766,081 params trained on 440 solver-labelled
+  boards from the real maps (372/28/40), 4 epochs, GPU. Val top-1 **0.786**, test
+  top-1 **0.60**, test CE 2.40; artifact `models/combat_grid/model.pkl` (117 MB).
+  This is solver distillation, not live combat; the live fight / side-swapped win
+  gate is still owed. It is opt-in as `fight.plan ranker=grid` (default `solver`,
+  read-only, fails open when the board has no positive AP or the artifact is absent).
+- **Entity-pointer Kaggle runs (two, neither promotable):** `ai/train_entity_pointer.py`
+  (hashed entity/quest encoder + pointer CE + move/progress heads) was trained on the
+  4,017-row live corpus. v1 (`thx-05-entity-pointer`, 8 epochs): top-1 0.3778, moved
+  AUC 0.4257 (base rate 17.8%), progress AUC null. v2 added the client's own 22 observed
+  step descriptions (`thx-08-entity-pointer-observed`; 4,016/4,017 rows carry
+  `observed_hint`), actions only 1,003/28/53, 20 epochs, hidden 256: top-1 **0.0357**
+  val / **0.0377** test, moved AUC 0.434/0.362, progress AUC null. The hashed-entity
+  scaffold and 1,003 action rows are the limit; the next run needs a live corpus with
+  `tap.interactive`, `inv.equip`, `hdv.buy`, `hdv.prices` exercised.
 - The fallback fight planner (`_planFightAction`) is what the server has actually seen.
   It is now behaviorally tested (10 checks): targets lowest-HP enemy, respects min
   range, filters unaffordable/refused spells, ignores buffs/heals as attacks, moves
@@ -1447,15 +1468,15 @@ touching the area.
 | # | gap | status |
 |---|---|---|
 | G1 | AFK disconnect is the client's own 5/10-minute timer; keep-alive never reached it | **fixed 2026-10-27, measured live** (capture of the tracker via `setInterval` owner; marks/age/inactive now in every snapshot) |
-| G2 | No equip verb; mechanism identified | read-only inventory/presets shipped; `InventoryPresetUseMessage` candidate; **live capture + verb still owed** |
+| G2 | Equip: preset path shipped | `inv.equip` applies a saved inventory preset (`InventoryPresetUseMessage`); direct `object_uid` equip is refused until the live capture proves a path; live preset proof owed |
 | G3 | Dialog question text now consulted | interim heuristic; talk path is where the run loses most points |
 | G4 | No vision/image encoder | open by design |
 | G5 | Network-health forecaster dark | torch import + missing checkpoint; ONNX port + retrain owed |
 | G6 | Verifier head wired but unmeasured/circular | GUI auto-load gated on a live/human validation contract; no contract → rules-only |
 | G7 | Live combat unverified | open; fallback planner now behaviorally tested; brain auto-start wired |
-| G8 | Test gate was deleted; partially restored | `agent.regression` 732 checks; C# selftest/combat/data/release still outside one gate |
+| G8 | Test gate was deleted; partially restored | `agent.regression` **922 checks, exit 0**; combat suites, sim floor, 40-instance daemon and live toolkit drift are gated; C# selftest/release still outside |
 | G9 | Identity keyed by slot, not account | fail-closed binding shipped 2026-10-27, offline-verified; live relogin proof owed |
-| G10 | `kaggle/toolkit/` drifts with no generator | generator shipped; dataset re-upload owed |
+| G10 | `kaggle/toolkit/` drifts with no generator | generator + real-tree drift gate shipped 2026-10-28; dataset re-upload owed |
 | G11 | `js-error-finder.js` red (9 bundle checks) | checker vs runtime-patch mismatch |
 | G12 | Map-transition watchdog | pipeline closed 2026-10-26; rule executed offline; live stall owed |
 | G13 | Claim that ended the connection re-sent 287 times | fixed (retry bound survives scene reset) |
@@ -1501,6 +1522,16 @@ no commits or pushes unless the user asks).
 
 **Modified (highlights):**
 
+- 2026-10-27 research unlock: `dofus-network/data/capabilities.json` now has 25
+  tools; `agent/autopilot.py` has an empty `FORBIDDEN_TOOLS`; `agent/features.py`
+  freezes the 21-wide learned feature; `agent/schema.py`, `agent/verifier.py` and
+  `agent/regression.py` follow the new contract; `agent/serve.py` adds `/brain/*`;
+  `scripts/mobile-disguise.js` adds `hdv.buy`, `inv.equip` and `tap.interactive`;
+  `desktop/aipanel.cs` starts one brain daemon and keeps the child path as a
+  fallback. `agent/brain_daemon.py`, `run_brain.py`,
+  `docs/BRAIN_DAEMON.md` and `docs/ENTITY_POINTER_ARCHITECTURE.md` are new;
+  `combat/battle_solver.py` now stratifies plans into four buckets.
+
 - `desktop/*.cs` — client backend, WebView2 form, bridge, AI panel, client updater,
   main form, program, win32, farm engine.
 - `desktop/client/www/build/script.js` and `standalone.html` — 1.74.10 bundle and
@@ -1524,6 +1555,14 @@ no commits or pushes unless the user asks).
 
 - `dofus-network/agent/ensemble.py` — candidate-level stack.
 - `dofus-network/agent/foresight.py` — foresight runtime.
+- `dofus-network/agent/plan_stack.py` — 2 KB per-instance sub-goal stack.
+- `dofus-network/combat/grid_model.py` — 30,766,081-param 560-cell combat encoder.
+- `dofus-network/combat/grid_dataset.py`, `grid_probe.py`, `test_grid_model.py` — grid tensors and the actionable-board gate.
+- `dofus-network/ai/train_entity_pointer.py` — pointer-model training scaffold.
+- `dofus-network/tools/build_entity_pointer_dataset.py` — live observations → entity-pointer rows.
+- `dofus-network/data/entity_pointer/` — 4,017 paired rows (3,885/45/87), 325 moved, 4 progress.
+- `dofus-network/kaggle/entity_pointer/` — private dataset + GPU kernel (`thx-05-entity-pointer`, `dofus-entity-pointer-v1`).
+- `dofus-network/docs/BRAIN_DAEMON.md`, `ENTITY_POINTER_ARCHITECTURE.md`.
 - `dofus-network/ai/train_foresight.py`, `train_move_head.py`, `train_stacker.py`.
 - `dofus-network/ai/{pool_runner,pool_status,score_proxies,test_egress}.py` — restored
   network tools.
@@ -1703,7 +1742,10 @@ go test dofus-net-proxy.go dofus_net_proxy_equiv_test.go
 
 ```bat
 cd dofus-network
-python -m agent.regression       :: 732 checks, 0 failed (latest)
+python -m agent.regression       :: 922 checks, 0 failed (latest)
+python -m agent.constraint_corpus --check  :: 33 hand cases, 25-tool preconditions and causes
+python -m agent.constraint_corpus --generate --out data/constraint_synthetic.jsonl
+                                  :: 2,600 synthetic rows, 100% cause/action agreement
 python -m advisor selftest       :: 122 checks
 ```
 
@@ -1732,7 +1774,7 @@ python tools/live_ready.py --check-installer
 ```
 
 `FAIL page build` means the last client recorded an older `agent_build` than the repo
-(currently `2026-10-27q`); restart the app fully, because a reload keeps the old
+(currently `2026-10-27s`); restart the app fully, because a reload keeps the old
 injected page. `FAIL stop file` means a leftover `AUTOPILOT_STOP` would end the run on
 its first step. `WARN installer` means `setup.exe` is older than the page;
 `WARN client`/`WARN brain` mean the app or combat brain is not up yet.
@@ -1769,6 +1811,14 @@ python tools/quest_advance_shapes.py <log>
 `[autopilot] <n> <tool> <ok|FAIL> <verdict> -> <args>`. `advanced` means the world
 changed; `noop` means the call succeeded and nothing moved; `failed` means it did not
 run. A run ending with `done: the client window closed` lost its window, not its mind.
+
+**Always-on AI and dynamic instances (2026-10-28).** `runtime.ini auto_ai=1`
+(default) makes every launched client, and every client already running at startup,
+adopt the AI without a Start press; a manual Stop wins until the next launch. The
+brain daemon has no fixed instance cap (40 accepted by `test_brain_scaling_40`) and
+the 21.8 MB quest graph is shared once per process: **40 planners = 22.1 MB total**
+(~0.55 MB each) instead of ~872 MB. The per-client WebView2 renderer remains the
+dominant host cost.
 
 ### 17.5 Kaggle
 
@@ -1895,27 +1945,25 @@ not a queued batch push.
 4. **Fail soft on the client, hard on privacy.** A stale patch may degrade; an IP leak
    must stop the instance.
 5. **Numbers in docs are measured.** Anything unmeasured is labelled.
-6. **A listing is supply, not revenue.** `listing_open` != kamas earned.
-7. **Nothing irreversible runs unattended.** Buying stays human.
-8. **A bound port is not a working tunnel.** Probe with a real CONNECT.
-9. **An update is a transaction.** Never delete a live file before its replacement
+6. **A bound port is not a working tunnel.** Probe with a real CONNECT.
+7. **An update is a transaction.** Never delete a live file before its replacement
    exists.
-10. **Fail closed covers launching.** If egress cannot be wired and the mode is not
-    `direct`, the client does not open.
-11. **An outage must not require a relaunch.** A 40 s tunnel gap costs 40 s.
-12. **Text is an observation, not a program.** The model proposes `reply_text`; the
+8. **Fail closed covers launching.** If egress cannot be wired and the mode is not
+   `direct`, the client does not open.
+9. **An outage must not require a relaunch.** A 40 s tunnel gap costs 40 s.
+10. **Text is an observation, not a program.** The model proposes `reply_text`; the
     client resolves it to a reply id; the handler sends it.
-13. **Unknown is not zero.** A missing level/price/monster input stays null and forces
+11. **Unknown is not zero.** A missing level/price/monster input stays null and forces
     an abstain.
-14. **Reference is not training.** Papycha's content signal forbids AI training;
+12. **Reference is not training.** Papycha's content signal forbids AI training;
     guides are RAG with attribution, never labels.
-15. **The planner may estimate; only the server decides.** A win probability is a
+13. **The planner may estimate; only the server decides.** A win probability is a
     falsifiable claim; the outcome row is the answer.
-16. **Every head abstains when its inputs are missing.** An abstain is a logged, valid
+14. **Every head abstains when its inputs are missing.** An abstain is a logged, valid
     decision; a guess is not.
-17. **The model ranks legal candidates only.** Safety, legality, recovery, and
+15. **The model ranks legal candidates only.** Safety, legality, recovery, and
     knowledge stay in code/data.
-18. **No commits or pushes unless the user explicitly requests them.**
+16. **No commits or pushes unless the user explicitly requests them.**
 
 ---
 
@@ -1932,7 +1980,7 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
    last step/dialog/wait rows,
    the quest gate, and the tutorial hold. This is the immediate live blocker and is
    not yet in `KNOWN_GAPS.md`.
-2. **Run one full session with page build `2026-10-27q`** (full app restart, not a
+2. **Run one full session with page build `2026-10-27s`** (full app restart, not a
    reload). Acceptance: `session_report` shows the `q` build, `accept:` rows when a
    dialog offers a quest, `objectives +N` with N > 0, no `INACTIVITY`, no manual
    intervention, and `keep_alive.present` true.
@@ -1963,6 +2011,10 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
 9. **Run unattended sessions** (`tools/auto_live.py`) so outcome labels accumulate
    without a human. The runner already does preflight → verified launch → guest press →
    run; the missing piece is a session that produces non-zero objectives.
+   For one bounded session plus data rebuild, use
+   `python tools/collect_live_data.py --instances dofus-01,dofus-02 --steps 200`
+   (refuses on a FAIL `live_ready`, prints the entity-pointer build and
+   `combat.grid_probe` gate; `--dry-run` is safe).
 
 ### P2 — promote one component at a time
 
@@ -2007,7 +2059,9 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
 
 | file | role | freshness |
 |---|---|---|
-| `dofus-network/docs/CURRENT.md` | running-system map: services/ports, 7-stage loop, pacing, policy modes, model inventory, combat pipeline, 21 tools | **current** (2026-10-27) |
+| `dofus-network/docs/CURRENT.md` | running-system map: services/ports, 7-stage loop, pacing, policy modes, model inventory, combat pipeline, 25 tools | **current** (2026-10-27) |
+| `dofus-network/docs/BRAIN_DAEMON.md` | one-process daemon: `/brain/*` API, per-instance threads, locks, host integration, remaining RSS/WebView2 work | **current** (2026-10-27) |
+| `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target 80M/40M/30M entity-pointer design, pointer action space, sub-goal stack, Kaggle training and gates | **design** (2026-10-27) |
 | `dofus-network/docs/AI_ARCHITECTURE.md` | canonical AI map: shipped/shadow/target, component inventory, gates, measured/rejected, build order | **current** (2026-10-27) |
 | `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (G1–G34) | **current** (2026-10-27) |
 | `dofus-network/docs/BASELINE.md` | live baseline before the 2026-10-26 fixes | **historical before-picture** |
@@ -2020,7 +2074,7 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
 | `dofus-network/docs/FAILURE_TO_SUPERVISION.md` | how failures become labels/tests | current |
 | `dofus-network/docs/PROTOCOL_NOTES.md` | captured wire formats | current, grows with captures |
 | `dofus-network/docs/PIPELINE.md` | data path corpus→train→serve→log | current, widths superseded by CURRENT |
-| `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, no token CoT | `hdv.buy` example predates the ban |
+| `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, no token CoT | its `hdv.buy` example predates the 25-tool vocabulary |
 | `dofus-network/docs/EXPERIENCE_LEARNING.md` | outcomes → posteriors without a reward model | current |
 | `dofus-network/docs/LATENT_AND_ONLINE_LEARNING.md` | latent bus/online updates judgement | current decision, not shipped |
 | `dofus-network/docs/CAPABILITY_REGISTRY.md` | tools as data | **stale: says 16, schema is 21** |
@@ -2036,10 +2090,11 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
 
 | stale claim | current truth |
 |---|---|
-| 16 tools (`STATUS.md`, `CAPABILITY_REGISTRY.md`) | **21 tools** |
-| 18 tools (`now.md`, older command notes) | **21 tools** |
+| 16 tools (`STATUS.md`, `CAPABILITY_REGISTRY.md`) | **25 tools** |
+| 18 tools (`now.md`, older command notes) | **25 tools** |
 | 11 patches (`README.md`) | **23 rules**; 16 matched, 7 skipped on the current bundle |
-| 276 checks (`README.md`) | **732 checks** in `agent.regression` (latest) |
+| 276 checks (`README.md`) | **892 checks** in `agent.regression` (latest) |
+| 21 tools (older docs) | **25 tools** (2026-10-27 research unlock) |
 | 288 MB `setup.exe` (`README.md`) | **100.1 MiB payload / 105.7 MB on disk** |
 | 13 patch rules / 11 active | **23 rules** after 1.74.10 |
 | verifier auto-loads on every GUI launch | **gated** on a live/human validation contract; rules-only today |

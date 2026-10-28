@@ -107,9 +107,10 @@ class StrategyStat:
 
 
 STRUCTURAL_MARKERS = (
-    "no client instance", "not an active client", "unknown tool",
-    "not_mapped", "no local handler", "no sentinel handler",
+    "no client instance", "not an active client", "is not active",
+    "unknown tool", "not_mapped", "no local handler", "no sentinel handler",
     "no simulator for tool", "needs quest_id", "requires quest_id",
+    "not in a fight", "no live fight board",
 )
 TRANSIENT_MARKERS = (
     "timed out", "timeout", "refused", "reset by peer", "resisted",
@@ -298,8 +299,24 @@ class Controller:
                 # The plan built a call with no destination in it.
                 or "needs one of" in err
                 or "schema rejected" in err
-                or "offers no replies" in err):
+                or "offers no replies" in err
+                # Research tools: a missing bound, preset or skill is a plan
+                # assumption, not a wrong target. `hdv.buy` above its own max is
+                # the same: the next plan needs a different price.
+                or "needs max_price" in err
+                or "needs an explicit price" in err
+                or "needs a saved preset" in err
+                or "direct object_uid equip is not proven" in err
+                or "price is above max_price" in err
+                or "has no skillinstanceuid" in err
+                or "hdv.scan needs" in err
+                or "hdv.list needs a price" in err
+                or "invalid fact" in err):
             return "invalid_assumption"
+        # A price cache with no listing is a measurement that has gone stale, not
+        # a target that does not exist: re-scan/re-observe before changing plan.
+        if "no cached listing" in err:
+            return "stale_state"
         # The thing the call pointed at is not where we are standing.
         #
         # One exception, decided by the page's counts rather than by its sentence: groups on this
@@ -311,8 +328,12 @@ class Controller:
             from agent.planner import group_refusal_outcome
             if group_refusal_outcome(detail, error) == "unread_members":
                 return "stale_state"
-        if any(w in err for w in ("not on this map", "on the current map",
+        if any(w in err for w in ("not on this map", "not on map",
+                                  "on the current map",
                                   "no visible group contains",
+                                  "not adjacent",
+                                  "not in inventory",
+                                  "no visible interactive element",
                                   # The page's own join refusal, worded differently from the
                                   # planner's; until now it landed in `unknown`.
                                   "no group on this map",
@@ -322,7 +343,8 @@ class Controller:
         # whether the action landed, so the read is what broke -- not the target,
         # not the plan. Re-observe before deciding anything.
         if ("cannot read properties" in err or "typeerror" in err
-                or "is not a function" in err or "referenceerror" in err):
+                or "is not a function" in err or "referenceerror" in err
+                or "preset blocked" in err):
             return "stale_state"
         if any(w in err for w in ("unknown", "not found", "no such", "invalid id",
                                   "out of range", "too far", "cannot reach")):
@@ -337,6 +359,8 @@ class Controller:
         # client is just a second call that cannot work. `_decide` already routes a
         # structural failure to a replan; this keeps the *label* honest, because the
         # 27 live rows of it used to sit inside `unknown`.
+        if "not in a fight" in err:
+            return "unavailable"
         if error_class(error) == "structural":
             return "unavailable"
 

@@ -9,20 +9,31 @@ file wins.
 
 Everything below is labelled **shipped**, **shadow**, or **target**. Nothing is claimed as live
 that was only measured offline. Gate at time of writing: `python -m agent.regression` →
-**672 checks / 0 failed**; mutation driver `tools/mutate_cause_gate.py` → **329 mutations**,
+**922 checks / 0 failed**; mutation driver `tools/mutate_cause_gate.py` → **329 mutations**,
 command batch 19/19 caught.
 
 ## 0. The division of labour (permanent)
 
 | Layer | Owner | Examples | Can a model ever own it? |
 |---|---|---|---|
-| **Legality** | code | tool registry (`agent/features.py:TOOLS`, 21 tools), arg schema (`agent/schema.py`), `args_for_tool` | never |
+| **Legality** | code | tool registry (`agent/features.py:TOOLS`, 25 tools), arg schema (`agent/schema.py`), `args_for_tool` | never |
 | **Safety / recovery** | code | stop file, kick/disconnect recovery, `_farm_allowed` guard, repeat/no-op guards | never |
 | **Knowledge** | data | quest graph, map graph, client-reported observed quests | never (it is content, not a decision) |
 | **Decision** | model | what to do next, which tool, which dialog reply, whether the world moved | yes — and it must, that is the whole project |
 
 The model may only ever **rank legal candidates**. A proposal the harness rejects is logged as a
 refusal, and refusals are supervision (`docs/FAILURE_TO_SUPERVISION.md`), not noise.
+
+**Process model (2026-10-27).** The host starts **one** `run_brain.py` daemon on
+`127.0.0.1:8895`; the daemon runs one `Autopilot` thread per instance and shares the
+Python interpreter and process-wide models/knowledge. The old per-instance
+`run_autopilot.py` child path remains as a fallback. See `BRAIN_DAEMON.md`.
+
+**Tool vocabulary (2026-10-27).** The legal registry is **25 tools**: the original 21 plus
+`hdv.buy`, `inv.equip`, `hdv.prices` and `tap.interactive`. The shipped 49K tool policy has
+**21 trained logits**; the four research tools are rule-only until a new head is trained. The
+legal registry and the learned head are separate contracts, so adding a capability does not
+silently change the model's output width.
 
 ## 1. Shipped inventory (measured, this machine)
 
@@ -34,7 +45,7 @@ refusal, and refusals are supervision (`docs/FAILURE_TO_SUPERVISION.md`), not no
 | 4 | Deployable runtime form | `command_encoder_int8.onnx` + `command_onnx.json` + `tokenizer.json` | **25,813,919 B** | same as 2+3, torch-free via `agent/command_onnx.py` | shipped, in `setup.exe` (100.1 MiB, 513 entries) |
 | 5 | Shadow instrument | `agent/command_shadow.py`, `tools/command_shadow_report.py` | — | did the model and the rule agree | shipped (`--command-shadow auto`, default off) |
 | 6 | Replay instrument | `tools/command_replay.py` | — | did the parsed action's tool get executed, did the session advance | shipped: 71 groups / 5,721 steps, 46 advanced / 25 stalled |
-| 7 | Tool policy (opt-in) | `ai/train_tool_policy.py`, `--policy` | 49K MLP | which of 18+ tools to issue | shipped, opt-in, not the default path |
+| 7 | Tool policy (opt-in) | `ai/train_tool_policy.py`, `--policy` | 49K MLP | which tool (21 trained logits; 25 legal tools) | shipped, opt-in, not the default path |
 | 8 | Combat actor | JAX PPO `dofus-network/models/encounter_selfplay.pkl`, `combat/brain_service.py` | ~0.2M | per-turn fight action | shipped + auto-start probe; **never taken a live turn** |
 | 9 | Live evidence runner | `tools/live_evidence.py` | — | refuses to claim anything without a client window | shipped; live bridge reachable, evidence accumulates per run |
 | 10 | Tool ensemble | `models/tool_stack.json`, `agent/ensemble.py`, `ai/train_stacker.py` | 21 KB, 23 leaves | which tool: policy + foresight + K-means context | shipped, gate-passed, active only under `--policy planner` |
@@ -306,6 +317,15 @@ kamas, no accepted quest and zero-parameter objectives, then regenerate and re-r
 that table reads `rows_outside_harness_range_pct` near 0, a live transfer number from a harness-trained
 score is extrapolation, and §5's gate 2 must not be claimed.
 
+**Progress 2026-10-28.** `World(start_kamas=0, random_start_map=True)` and
+`sim/tool_choice.py --kamas 0 --random-start-map` can now seed poor, low-level states. A
+six-episode sample (`data/tool_sft_lowkamas`) covers `kamas 0.0` and `level 0.005–0.025`
+(the old harness was `0.5–1.0` and `0.005–0.5`). Two cells remain uncovered:
+`quest_level 0.0` (a no-offer episode yields 0 rows because the planner has no legal action
+before a quest is offered) and `n_params 0.0` (the KB has no zero-parameter objective). Neither
+is faked; the first real tutorial state remains the source. The corpus must be regenerated after
+the client-data/No-AI licence question is resolved, not from a new DofusDB sync.
+
 ### 9.3 Tool ensemble — model stacking measured (2026-10-27)
 
 `ai/train_stacker.py` stacks the two learned tool bases: the 49K ONNX tool policy
@@ -430,7 +450,7 @@ mutations were "caught" only because the section crashed. All 349 anchors now re
 verified statically before any run, and the driver refuses to be imported (`__name__ != "__main__"`),
 because importing it writes broken code into the working tree: a killed run had left
 `if False and client_absent(step_error)` in `agent/autopilot.py`, disabling the client-absent
-recovery, and it sat there unnoticed until this pass. Gate today: **732 checks, 0 failed**, plus
+recovery, and it sat there unnoticed until this pass. Gate today: **922 checks, 0 failed**, plus
 `tools/test_session_login.js` in the delegated JS suite.
 
 ### 11.1 The client version gate (measured 2026-10-27)

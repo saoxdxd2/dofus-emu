@@ -170,6 +170,7 @@ namespace DofusFarm.UI
         private readonly CheckBox _chkGovernor;
         private readonly CheckBox _chkTelemetry;
         private readonly CheckBox _chkFightBoards;
+        private readonly CheckBox _chkAutoAi;
         private bool _suppressRuntime;
 
         private readonly ComboBox _mode;
@@ -250,13 +251,18 @@ namespace DofusFarm.UI
             _chkFightBoards.CheckedChanged += delegate { ApplyRuntime(); };
             Controls.Add(_chkFightBoards);
 
-            _runtimeState = UiKit.Note("", 0, y + 108);
+            _chkAutoAi = UiKit.Check("Always-on AI: drive every launched client automatically (Stop still wins)", 0, y + 104,
+                RuntimeSettings.Current.AutoAi);
+            _chkAutoAi.CheckedChanged += delegate { ApplyRuntime(); };
+            Controls.Add(_chkAutoAi);
+
+            _runtimeState = UiKit.Note("", 0, y + 134);
             Controls.Add(_runtimeState);
-            Controls.Add(UiKit.Button("Reset runtime defaults", 0, y + 134, 150,
+            Controls.Add(UiKit.Button("Reset runtime defaults", 0, y + 160, 150,
                 Color.FromArgb(127, 29, 29), delegate { ResetRuntime(); }));
-            Controls.Add(UiKit.Button("Open runtime.ini", 158, y + 134, 130, Color.FromArgb(51, 65, 85),
+            Controls.Add(UiKit.Button("Open runtime.ini", 158, y + 160, 130, Color.FromArgb(51, 65, 85),
                 delegate { RuntimeSettings.Current.Save(); OpenPath(RuntimeSettings.PathFor()); }));
-            y += 174;
+            y += 200;
 
             // ---- Network --------------------------------------------------
             Controls.Add(UiKit.Heading("Network", 0, y));
@@ -733,11 +739,13 @@ namespace DofusFarm.UI
                 current.Governor = loaded.Governor;
                 current.Telemetry = loaded.Telemetry;
                 current.FightBoards = loaded.FightBoards;
+                current.AutoAi = loaded.AutoAi;
                 _refresh.SelectedIndex = RefreshIndex(current.RefreshMs);
                 _chkWatchdog.Checked = current.Watchdog;
                 _chkGovernor.Checked = current.Governor;
                 _chkTelemetry.Checked = current.Telemetry;
                 _chkFightBoards.Checked = current.FightBoards;
+                _chkAutoAi.Checked = current.AutoAi;
                 UpdateRuntimeNote();
             }
             finally { _suppressRuntime = false; }
@@ -752,12 +760,14 @@ namespace DofusFarm.UI
             settings.Governor = _chkGovernor.Checked;
             settings.Telemetry = _chkTelemetry.Checked;
             settings.FightBoards = _chkFightBoards.Checked;
+            settings.AutoAi = _chkAutoAi.Checked;
             settings.Save();
             UpdateRuntimeNote();
             if (_log != null)
                 _log("[SETTINGS] runtime: refresh=" + (settings.RefreshMs > 0 ? settings.RefreshMs + "ms" : "manual") +
                      ", watchdog=" + OnOff(settings.Watchdog) + ", governor=" + OnOff(settings.Governor) +
-                     ", telemetry=" + OnOff(settings.Telemetry) + ", fight-boards=" + OnOff(settings.FightBoards));
+                     ", telemetry=" + OnOff(settings.Telemetry) + ", fight-boards=" + OnOff(settings.FightBoards) +
+                     ", auto-ai=" + OnOff(settings.AutoAi));
             if (_onApplyRuntime != null) _onApplyRuntime();
         }
 
@@ -771,6 +781,7 @@ namespace DofusFarm.UI
                 _chkGovernor.Checked = true;
                 _chkTelemetry.Checked = true;
                 _chkFightBoards.Checked = true;
+                _chkAutoAi.Checked = true;
             }
             finally { _suppressRuntime = false; }
             ApplyRuntime();
@@ -783,7 +794,8 @@ namespace DofusFarm.UI
             RuntimeSettings s = RuntimeSettings.Current;
             _runtimeState.Text = "Saved to " + RuntimeSettings.PathFor() + "  |  watchdog " +
                                  OnOff(s.Watchdog) + ", governor " + OnOff(s.Governor) +
-                                 ", telemetry " + OnOff(s.Telemetry) + ", fight boards " + OnOff(s.FightBoards);
+                                 ", telemetry " + OnOff(s.Telemetry) + ", fight boards " + OnOff(s.FightBoards) +
+                                 ", auto-ai " + OnOff(s.AutoAi);
         }
 
         private static bool PortOpen(string host, int port, int timeoutMs)

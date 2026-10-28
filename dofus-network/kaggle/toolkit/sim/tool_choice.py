@@ -201,9 +201,24 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             travel_cost: bool = False,
             ordering: str = "step",
             behavior: str = "teacher",
-            model: Optional[Path] = None) -> List[Dict[str, Any]]:
+            model: Optional[Path] = None,
+            start_kamas: int = 5000,
+            random_start_map: bool = False) -> List[Dict[str, Any]]:
     world = World(level=level, seed=seed, max_steps=steps, noise=noise,
-                  travel_cost=travel_cost)
+                  travel_cost=travel_cost, start_kamas=start_kamas,
+                  random_start_map=random_start_map)
+    # Stand the character on an NPC that offers a quest of the focused type. G31 only lets the
+    # planner start an id the client reported, and the harness reports an offer through the
+    # dialog link, so an episode that begins in the middle of nowhere can never accept anything.
+    if focus is not None:
+        for quest in sorted(world.quests.values(), key=lambda q: q.id):
+            if not quest.start_map or not world.can_start(quest):
+                continue
+            first = next((o for s in quest.steps
+                          for o in (s.get("objectives") or []) if o), None)
+            if first is not None and objective_type(first) == focus:
+                world.place_at(int(quest.start_map))
+                break
     if behavior == "nn":
         # A DAgger round: walk the states the deployed policy actually reaches,
         # then label every candidate by the same fork. The teacher corpus alone
@@ -216,6 +231,10 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
     else:
         planner = QuestPlanner(level_hint=level, curriculum="random", seed=seed,
                                focus=focus, ordering=ordering)
+    # The harness is a client too. It reports the ids it is about to offer in the same
+    # way `sim/run.py` does, instead of the simulator claiming a dialog is already open
+    # on the start map (that lie let the planner skip the objective loop: 119->82).
+    planner._client_quests |= {q.id for q in world.quests.values()}
     rows: List[Dict[str, Any]] = []
 
     for _ in range(steps):
@@ -306,16 +325,21 @@ def _parallel(args: argparse.Namespace) -> int:
         if args.travel_cost:
             cmd.append("--travel-cost")
         cmd += ["--ordering", args.ordering, "--val-every", str(args.val_every),
-                "--behavior", args.behavior]
+                "--behavior", args.behavior, "--kamas", str(args.kamas)]
+        if args.random_start_map:
+            cmd += ["--random-start-map"]
         if args.model:
             cmd += ["--model", str(args.model)]
         if deadline:
             cmd += ["--deadline-epoch", "%.0f" % deadline]
-        procs.append(subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+        procs.append(subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE))
 
+    tails: List[str] = []
     for proc in procs:
         proc.wait()
+        out = (proc.stdout.read() or b"").decode("utf-8", "replace").strip()
+        tails.append(out)
         if proc.returncode != 0:
             # The first version discarded this stream, so a crashed worker showed
             # up only as "0 rows" and the real exception was lost.
@@ -341,6 +365,14 @@ def _parallel(args: argparse.Namespace) -> int:
                             pass
 
     total = counts["train"] + counts["val"]
+    if total == 0:
+        # A generator that quietly yields nothing is worse than one that crashes: the corpus on
+        # disk keeps looking authoritative while every future number is stale. This is exactly
+        # how the offer/focus bug hid for five days.
+        print("0 rows from %d workers; worker output:\n%s"
+              % (args.parallel, "\n---\n".join((t or "<empty>")[-600:] for t in tails)),
+              file=sys.stderr)
+        return 1
     stats = {"workers": args.parallel, "rows": total, **counts,
              "minutes": args.minutes, "depth": args.depth,
              "score_mode": args.score, "travel_cost": args.travel_cost,
@@ -386,6 +418,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          "instead puts the tail of a trajectory in val while its "
                          "head is in train, so the reported score measures memory "
                          "of that episode, not generalisation")
+    ap.add_argument("--kamas", type=int, default=5000,
+                    help="starting kamas; 0 covers the poor-start live states")
+    ap.add_argument("--random-start-map", action="store_true",
+                    help="start on a random quest-start map instead of the lowest id")
     args = ap.parse_args(argv)
 
     if args.parallel > 1:
@@ -403,7 +439,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         focus = focus_cycle[i % len(focus_cycle)] if focus_cycle else None
         rows = episode(level, args.steps, args.seed + i, rng, args.noise,
                        args.depth, focus, args.score, args.travel_cost,
-                       args.ordering, args.behavior, args.model)
+                       args.ordering, args.behavior, args.model,
+                       args.kamas, args.random_start_map)
         name = "val" if (i + 1) % max(1, args.val_every) == 0 else "train"
         parts[name].extend(rows)
 

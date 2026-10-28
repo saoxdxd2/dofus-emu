@@ -1008,6 +1008,40 @@ class ToolExecutor:
                         "value_ranked": True,
                         "value_checkpoint": checkpoint,
                     }
+            elif ranker == "grid":
+                top_k = max(top_k, 5)
+                plans = solver.plan_candidates(board, top_k)
+                grid_meta = {}
+                grid_refused = None
+                if board.me is None or board.me.ap is None or board.me.ap <= 0:
+                    grid_refused = "observation_not_grid_ready"
+                else:
+                    from combat.grid_infer import rank_plans as rank_grid
+
+                    ranked = rank_grid(board, plans)
+                    if ranked is None:
+                        grid_refused = "grid_checkpoint_missing"
+                    else:
+                        ranked_plans, grid_meta = ranked
+                        checkpoint = grid_meta.get("checkpoint")
+                        if grid_meta.get("config", {}).get("hidden") not in (None, 768):
+                            grid_refused = "grid_checkpoint_shape"
+                        else:
+                            data = {
+                                "plans": [
+                                    {"rank_score": round(score, 4), **plan.as_dict()}
+                                    for score, plan in ranked_plans
+                                ],
+                                "grid_ranked": True,
+                                "grid": grid_meta,
+                            }
+                if grid_refused is not None:
+                    refused = grid_refused
+                    data = {
+                        "plans": [plan.as_dict() for plan in plans],
+                        "grid_ranked": False,
+                        "grid_refused": grid_refused,
+                    }
             elif top_k > 1:
                 plans = solver.plan_candidates(board, top_k)
                 data = {"plans": [plan.as_dict() for plan in plans]}
@@ -1018,11 +1052,13 @@ class ToolExecutor:
             data["contract"] = contract
             data["ranker"] = {
                 "requested": ranker,
-                "used": bool(data.get("value_ranked")),
-                "scope": "encounter_v3_synthetic",
+                "used": bool(data.get("value_ranked") or data.get("grid_ranked")),
+                "scope": ("grid_solver_distillation" if ranker == "grid"
+                          else "encounter_v3_synthetic"),
                 "live_calibrated": False,
-                "checkpoint": checkpoint,
-                "refused": refused,
+                "checkpoint": (data.get("grid", {}).get("checkpoint")
+                               if ranker == "grid" else checkpoint),
+                "refused": data.get("grid_refused") if ranker == "grid" else refused,
             }
         except Exception as exc:  # noqa: BLE001 - a bad board must not kill the loop
             return ToolResult(

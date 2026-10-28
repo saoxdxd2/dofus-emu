@@ -1,12 +1,9 @@
 # Planner design — intelligence per megabyte of RAM
 
-> **Status note (2026-10-26).** The planning/economy/bandit reasoning below stands,
-> but one recommendation is **reversed by policy**: this doc treats `hdv.buy` as the
-> "single highest-value harness change". It is not — buying on the market is now
-> deliberately **forbidden** (`FORBIDDEN_TOOLS`, `agent/autopilot.py:77`) because a
-> purchase is irreversible. The `buy` branch is out of scope by design; use
-> `hdv.scan`/`hdv.list`/`inv.sell` (supply side) only. See `CURRENT.md` §7 for the
-> real 21-tool schema.
+> **Status note (2026-10-27).** The planning/economy/bandit reasoning below stands.
+> The `hdv.buy` path it recommends is now part of the **25-tool research vocabulary**:
+> `hdv.buy` requires an explicit listing uid and max price, and the page only uses
+> prices the server already sent. See `CURRENT.md` §7 for the live schema.
 
 Constraint, restated: **RAM, not disk.** One game instance gets ~90 MB; the whole
 AI side gets 70–150 MB for two agents. Inside that budget the agent must still be
@@ -135,7 +132,6 @@ $ buy 1x Griffe de la Déchireuse  (369m, 41,627k)  [uncalibrated, conf 45%]
       . 113 k/min at level 1, short 41,627k
   rejected:
     - craft 1x Griffe de la Déchireuse (9 ingredients) (3,318m)
-  missing tools: hdv.buy
 ```
 
 That is the requested behaviour, and the rejection line is the part a user
@@ -215,14 +211,13 @@ next: hdv.scan {"item": "Griffe de la Déchireuse"}  <- buy 1x Griffe de la Déc
 
 | tool | needed by | status |
 | --- | --- | --- |
-| `hdv.buy` | every `buy` branch | **missing** — `hdv.scan`/`hdv.list`/`inv.sell` exist, nothing purchases |
+| `hdv.buy` | every `buy` branch | **available** — 25-tool vocabulary; requires a listing uid and max price |
 | `craft.make` | every `craft` branch | **missing** |
 | `char.stats` | level gate, profession gate | **missing** — `state.snapshot` partially covers it |
 
-The planner reports these instead of pretending: `plan.missing_tools()` →
-`['hdv.buy']`, and the schedule manager falls back to a preflight `hdv.scan`.
-Adding `hdv.buy` is the single highest-value harness change in the whole
-roadmap — without it, the smartest plan is unrunnable.
+The planner reports these instead of pretending: `plan.missing_tools()` names them,
+and the schedule manager falls back to a preflight `hdv.scan`. Adding `craft.make` is
+the remaining high-value harness change in the roadmap.
 
 ### Data that must be calibrated
 
@@ -292,8 +287,8 @@ Then the C# bridge asks for one action at a time instead of one goal at a time.
 
 Gates:
 
-1. **P1** — `hdv.buy` + `craft.make` implemented; `plan.next_action()` returns
-   zero `missing_tools` for the 200-item case. *(harness)*
+1. **P1** — `craft.make` implemented; `hdv.buy` is available; `plan.next_action()`
+   returns zero `missing_tools` for the 200-item case. *(harness)*
 2. **P2** — 100 real farm sessions logged; drop-rate posteriors move off the
    prior and the L-cycle residual beats the hand estimate on held-out runs.
    *(calibration)*

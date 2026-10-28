@@ -91,12 +91,14 @@ of a non-tracker, and the bundle thresholds re-read at test time) plus the
 
 ---
 
-## G2. Equip: no verb yet — mechanism identified, implementation gated on a live capture
+## G2. Equip: inv.equip preset path shipped; direct-UID equip and live proof owed
 
 **Symptom.** When an NPC instructs the player to *equip* something (the referenced
-session's "equip equipment" case), the agent has no verb for it. The 21-tool
-vocabulary (`CURRENT.md` §7) has no `equip`/`wear`/`preset` action, so the step
-cannot be satisfied.
+session's "equip equipment" case), the agent used to have no verb for it. The
+25-tool vocabulary (`CURRENT.md` §7) now includes `inv.equip`; it applies a saved
+inventory preset through `InventoryPresetUseMessage`. Direct `object_uid` equip is
+still refused because the served bundle has no proven drag-to-slot packet, and the
+preset path has not yet been proven in a live session.
 
 **Mechanism — found in the bundle (`script.js`), not guessed.** Two candidate
 paths:
@@ -403,21 +405,24 @@ is still G7's proof.
 
 The `agent/smoke_verifier.py` gate (last reported 110 checks) was deleted on
 2026-10-25 along with the rest of the Python test suite. It has been **partly
-rebuilt**: `python -m agent.regression` now runs 82 offline checks against the real
+rebuilt**: `python -m agent.regression` now runs **922 checks** against the real
 code paths — the verifier rule engine (all four verdicts, the nested `position.*`
 aliases, the `ready_objectives` claim-proof, read-only-answered-is-advanced), the
 verifier model contract (a baseline json loads; a wrong-kind artifact degrades to
-rules; the read-only model-label guard), the tool-vocabulary equality
-(`schema.TOOLS` == `capabilities.json` == `features.tool_registry()` == 21), the
-`hdv.buy` ban, the objective-type buckets, the dialog question tie-break, and
+rules; the read-only model-label guard), the 25-tool vocabulary equality
+(`schema.TOOLS` == `capabilities.json` == `features.tool_registry()` == 25), the
+objective-type buckets, the dialog question tie-break, and
 prompt/named-mob fidelity (`_goal_mode` + `Autopilot._farm_allowed`: a quests prompt
 never farms unless the objective is a delivery; `_farm_target` +
 `QuestPlanner._visible_target`: a named mob stays that mob), plus the recovery
 layer's no-repeat/terminate invariant. It **delegates the JS page suites**
 (`tools/test_keep_alive.js`, `tools/test_npc_actor.js`) to `node`, **the read-only
 bundle-resilience classification** (`tools/apply-map-resilience.js --check`, see G12) to
-`node`, **and the Go relay tests** (`go test dofus-net-proxy.go *_test.go`) to `go`. **Still not covered by any
-single gate:** the C# `DofusFarm.exe --bundle-selftest`, the combat/data suites,
+`node`, **and the Go relay tests** (`go test dofus-net-proxy.go *_test.go`) to `go`. **Combat suites are now delegated into the same gate** (`combat.test_battle_solver`,
+`combat.test_grid_model`), and the simulator floor is pinned (119 quests/148 objectives,
+max_repeat <= 3) so a silent teacher regression cannot pass. The 40-instance daemon
+control plane is gated by `test_brain_scaling_40`. **Still not covered by any
+single gate:** the C# `DofusFarm.exe --bundle-selftest`,
 and the "full release build" the goal names — those are run separately, and the
 loop→live behaviour still needs a real session. `advisor/selftest.py`
 (`python -m advisor selftest`, 122 checks) covers the knowledge repository, not the
@@ -484,7 +489,10 @@ trimmed map index) and `dataset-metadata.json` (Kaggle metadata). `--check` repo
 generated_at) **after** the copy, so the manifest cannot claim the files still drift. The real run
 synced **25 files, pinned 6, 0 drift**; the toolkit's `features.py` is now the 42-feature contract,
 `schema.py`/`capabilities.json` carry `accept`, and the planner/autopilot match the harness.
-**What remains:** re-upload the dataset/kernel on Kaggle if it should consume this snapshot (the
+**Reopened and re-closed 2026-10-28:** the mirror had drifted again because nothing checked the
+real tree. `test_kaggle_toolkit_sync` now plans the checked-in `kaggle/toolkit` against the
+harness and fails on any drift; `--write` re-synced it. **What remains:** re-upload the
+dataset/kernel on Kaggle if it should consume this snapshot (the
 local copy is current; the published one is not).
 
 ---
@@ -2186,7 +2194,7 @@ default (offline it is the same packet).
    of them scored `advanced`. A wait now costs time instead of a step, bounded at 40 passes.
    This is the number that makes criterion (2) readable at all: read `steps`, `waits` and the
    productive rate together, not `steps` alone.
-9. **G8** test gate — **672 checks** (2026-10-27), delegating JS + Go + bundle `--check` and a
+9. **G8** test gate — **922 checks** (2026-10-27), delegating JS + Go + bundle `--check` and a
    whole-file `node --check` of the injected patch; green, and every new
    section is mutation-tested: `tools/mutate_cause_gate.py` holds **329 mutations**. The count
    recorded here said 431 checks / 194 mutations and was stale: the tree measured 461/0 with 217
@@ -2292,3 +2300,99 @@ session can start from the measurement instead of rediscovering it.
 
 Guards: `test_tutorial_hold` (16 checks, behavioural on `_tutorial_hold`, `_holding`,
 `_standing_on_exit` and `payload_of`) plus the `hold:` and `talk:` mutation batches.
+
+## G36. The simulator reported an open quest dialog just for standing on a start map *(fixed 2026-10-28, measured)*
+
+**Symptom.** The teacher fell from **119 quests / 148 objectives, max_repeat 1** to
+**82 / 177, max_repeat 13, stalled** in a 400-step level-60 run. The first
+hypothesis was the new `hdv.buy` branch or the sub-goal stack; both were tested and
+neither was the cause (disabling `child_for_objective` and removing prices changed
+nothing).
+
+**Bisect.** Worktrees at `51c429c` (Oct 24), `bd6a04b`, `08c1a8c`, and `0990695`
+all score **119/148**. `f690da0` (the next commit) scores **82/177**, and the
+working tree matches it. The causal diff is `sim/world.py`: `_observe_now()`
+started publishing `dialog: {open: true, start_quest: ...}` from `offer_here()`
+whenever the character merely stood on a quest's start map. The planner took that
+as a real offer and accepted quests instead of completing the one in front of it.
+The 13 identical `nav.goto {direction: top}` calls were a corridor walk (each moved
+1–3 hops), not a loop; they were a consequence of the diverted route.
+
+**Fix.** The simulator publishes `dialog: {open: false}`; a dialog is a talk, not a
+map. The harness still offers its ids through `_client_quests` (the G31 seed), so
+`sim/tool_choice.py` continues to generate rows (108 rows / 65 advanced in the
+smoke test). `test_sim_planner_runs` now runs the full 400-step level-60 gate and
+requires **≥119 quests, max_repeat ≤3, stalled false**, plus a direct check that a
+standing character is not in a dialog. Re-measured: **119 / 148, max_repeat 1,
+stalled false**; noise 94 / 99; poor start (`--kamas 0 --random-start-map`) 119 / 148.
+
+**What is still not modelled.** A real NPC talk does not yet open a dialog in the
+sim; the planner starts quests through the harness's reported ids. That is
+sufficient for the planning corpus and is deliberately not a claim about the live
+dialog gate.
+
+## G35. A rule-distilled cause head needed an ensemble to generalise to unseen wording *(measured 2026-10-28, synthetic gate only)*
+
+**What was built.** `agent/constraint_corpus.py` now generates **2,600** rows
+(25 tools × 8 causes × 13 template families) with expected cause and action.
+The controller routes **100% cause / 100% action** on the generated set; the
+built-in 33 hand cases still pass, and the gate checks the 95%/90% floors and
+≥50 rows per tool.
+
+**The measured result.** `ai/train_cause_head.py` (hashed char + word + generic
+marker features, MLP 256, calibrated on a separate family split) was evaluated on
+**two whole phrase families per cause that were never trained on**, across five
+splits. The MLP alone scores mean **0.81 accuracy / 0.19 ECE** (range
+0.7625–0.875) and fails the gate. A cosine-kNN retrieval half over the same
+features reaches **0.853**; the MLP+kNN blend (weight chosen on calib) scores mean
+**0.855 / 0.089**, clearing ≥0.85 / <0.15, with one weak fold at 0.807 / 0.163.
+The artifact is exported with both halves (`models/cause_head.onnx`,
+`models/cause_head_prototypes.npz`) and the MLP-alone number is kept in the
+sidecar rather than hidden. It is **not wired** into the controller and
+`test_cause_head_artifact` pins that.
+
+**Why.** With 13 template families per cause, holding out 2 leaves ~11 examples of
+each phrasing pattern. Some held-out templates share no surface marker with the
+training ones (`"the walk ended on the same cell"` for `incomplete`), and a hashed
+n-gram model cannot infer the cause from semantics. The corpus is rule-distilled
+(`kind: constraint_synthetic`, `live: false`); it measures the taxonomy, not game
+outcomes.
+
+**What would promote it.** Live error texts from a real session (the
+entity-pointer/live collection route), a pretrained text encoder instead of hashed
+features, and a shadow run where the ensemble's cause agrees with the rule or the
+outcome. Until then the artifact is a synthetic-gate result; the controller keeps
+its rules.
+
+Guards: `test_constraint_corpus` (generated set + agreement floors),
+`test_planner_buy_branch`, `test_brain_scaling_40`, `test_always_on_ai`.
+
+## G36. The simulator reported an open quest dialog just for standing on a start map *(fixed 2026-10-28, measured)*
+
+**Symptom.** The teacher fell from **119 quests / 148 objectives, max_repeat 1** to
+**82 / 177, max_repeat 13, stalled** in a 400-step level-60 run. The user's first
+hypothesis was the new `hdv.buy` branch or the sub-goal stack; both were tested and
+neither was the cause (disabling `child_for_objective` and removing prices changed
+nothing).
+
+**Bisect.** Worktrees at `51c429c` (Oct 24), `bd6a04b`, `08c1a8c`, and `0990695`
+all score **119/148**. `f690da0` (the next commit) scores **82/177**, and the
+working tree matches it. The causal diff is `sim/world.py`: `_observe_now()`
+started publishing `dialog: {open: true, start_quest: ...}` from `offer_here()`
+whenever the character merely stood on a quest's start map. The planner took that
+as a real offer and accepted quests instead of completing the one in front of it.
+The 13 identical `nav.goto {direction: top}` calls were a corridor walk (each moved
+1–3 hops), not a loop; they were a consequence of the diverted route.
+
+**Fix.** The simulator publishes `dialog: {open: false}`; a dialog is a talk, not a
+map. The harness still offers its ids through `_client_quests` (the G31 seed), so
+`sim/tool_choice.py` continues to generate rows (108 rows / 65 advanced in the
+smoke test). `test_sim_planner_runs` now runs the full 400-step level-60 gate and
+requires **≥119 quests, max_repeat ≤3, stalled false**, plus a direct check that a
+standing character is not in a dialog. Re-measured: **119 / 148, max_repeat 1,
+stalled false**; noise 94 / 99; poor start (`--kamas 0 --random-start-map`) 119 / 148.
+
+**What is still not modelled.** A real NPC talk does not yet open a dialog in the
+sim; the planner starts quests through the harness's reported ids. That is
+sufficient for the planning corpus and is deliberately not a claim about the live
+dialog gate.

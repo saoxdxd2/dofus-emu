@@ -278,10 +278,9 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
                 default=False),
             "ranker": _p(
                 "str", "Which plan ranker to use. 'solver' keeps the solver order; "
-                        "'value' ranks candidates with the learned value head and "
-                        "refuses when the live observation lacks self stats or enemy "
-                        "spell facts.",
-                enum=["solver", "value"], default="solver"),
+                        "'value' ranks candidates with the learned value head; "
+                        "'grid' uses the 30M 560-cell solver-distillation model.",
+                enum=["solver", "value", "grid"], default="solver"),
         },
         backend="local",
         returns=("actions with cells/targets/AP/MP/damage, plus the normalized live "
@@ -395,6 +394,66 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
         backend="directive",
         directive="SAFE_STOP",
         returns="ack",
+    ),
+    ToolSpec(
+        name="hdv.buy",
+        description="Buy a market listing at or below a maximum unit price.",
+        params={
+            "uid": _p("int", "Market listing id, not the item id."),
+            "listing_uid": _p("int", "Alias of uid."),
+            "item": _p("str", "Item name."),
+            "gid": _p("int", "Item generic id."),
+            "quantity": _p("int", "Units to buy.", default=1),
+            "qty": _p("int", "Alias of quantity."),
+            "max_price": _p("int", "Maximum unit price."),
+            "price": _p("int", "Expected unit price."),
+        },
+        backend="directive",
+        directive="HDV_BUY",
+        returns="listing uid, quantity, unit price and total",
+    ),
+    ToolSpec(
+        name="inv.equip",
+        description="Equip an item through a saved inventory preset.",
+        params={
+            "preset_id": _p("int", "Saved inventory preset id."),
+            "preset": _p("int", "Alias of preset_id."),
+            "object_uid": _p("int", "Inventory object UID."),
+            "slot": _p("str", "Equipment slot."),
+            "name": _p("str", "Item or preset name."),
+        },
+        backend="directive",
+        directive="INV_EQUIP",
+        returns="preset/object and post-state",
+    ),
+    ToolSpec(
+        name="hdv.prices",
+        description="Read or capture market prices from the server-message cache.",
+        params={
+            "item": _p("str", "Item name."),
+            "gid": _p("int", "Item generic id."),
+            "type": _p("int", "Item type id."),
+            "category": _p("int", "Market category id."),
+            "refresh": _p("bool", "Ask the server for the average-price table.", default=False),
+        },
+        backend="directive",
+        directive="HDV_PRICES",
+        returns="average prices and cached listing statistics",
+    ),
+    ToolSpec(
+        name="tap.interactive",
+        description="Use a visible interactive element on the current map.",
+        params={
+            "element_id": _p("int", "Interactive element id."),
+            "elem_id": _p("int", "Alias of element_id."),
+            "skill_id": _p("int", "Skill instance uid."),
+            "skill_uid": _p("int", "Alias of skill_id."),
+            "cell": _p("int", "Select the element on this cell."),
+            "name": _p("str", "Reserved name lookup."),
+        },
+        backend="directive",
+        directive="INTERACTIVE",
+        returns="chosen element id, skill uid and cell",
     ),
 ]
 

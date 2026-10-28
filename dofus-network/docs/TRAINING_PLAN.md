@@ -113,6 +113,78 @@ Use an interactive GPU notebook (T4×2/P100); the toolkit is synced by
 `models/shared_brain/`, with params/FLOPs/p50/p95 recorded in the run manifest. TPU only if a
 measured speedup justifies it. The user runs/pastes notebooks; no queued batch dependency.
 
+**First entity-pointer Kaggle run (2026-10-27, pipeline smoke).** Dataset
+`tajdinenizar/thx-05-entity-pointer` (4,017 rows; 3,885 / 45 / 87), kernel
+`tajdinenizar/dofus-entity-pointer-v1`, GPU, 8 epochs, hidden 256. Metrics: top-1
+**0.3778**, moved AUC **0.4257** (base rate 17.8%), moved ECE 0.259, progress AUC
+**null** (zero positives in val). The upload, recursive mount lookup, GPU training and
+artifact download all work; the model is not promotable. The corpus is 73% reads,
+1,003 action rows, 4 progress labels, and the new tools have no live rows yet. Rebuild
+`data/entity_pointer` after a live session on page build `2026-10-27s` before another
+training run.
+
+**Observed-text actions-only run (2026-10-28, not promotable).** The same corpus was
+enriched with the client's own 22 observed step descriptions (4,016 of 4,017 rows carry
+`observed_hint`; dataset `tajdinenizar/thx-08-entity-pointer-observed`, kernel
+`tajdinenizar/dofus-entity-pointer-observed-v1`) and trained on action rows only —
+**1,003 train / 28 val / 53 test**, 20 epochs, hidden 256. Result: val top-1 **0.0357**,
+test top-1 **0.0377**, moved AUC **0.434 / 0.362** (below chance), moved ECE 0.29/0.41,
+progress AUC **null** (0 test positives). Adding observed text did not move the
+pointer; the limits are the hashed-entity scaffold and 1,003 action rows with 325 moves
+and 4 progress labels. Do not rerun this table — the next entity-pointer run requires a
+live corpus from `tools/collect_live_data.py` with the new tools exercised.
+
+**Constraint corpus and cause head (2026-10-28, scale-up measured).**
+`agent/constraint_corpus.py --generate --out data/constraint_synthetic.jsonl` writes
+**2,600** rows (25 tools × 8 causes × 13 template families); the controller routes
+**100% cause / 100% action** on it (gate floors 95% / 90%, ≥50 rows per tool).
+`ai/train_cause_head.py` trains a hashed-feature MLP on 9 families/cause, calibrates
+on 2 and validates on 2 **unseen families per cause**. The MLP alone scores mean **0.81 accuracy / 0.19 ECE** (range 0.7625–0.875) and
+fails the ≥0.85 / <0.15 gate. The MLP + cosine-kNN blend (weight chosen on calib)
+reaches mean **0.855 / 0.089** and passes; one fold is weak at 0.807 / 0.163. The
+artifact keeps both halves (`models/cause_head.onnx` + prototypes `.npz`) and the
+MLP-alone result, is rule-distilled (`live: false`), and is not loaded by the
+controller. This is rule-distilled data
+(`live: false`); the verdict is a data/representation limit, not a width limit. The
+next cause model needs live error phrasings or a pretrained text encoder.
+
+**Combat-grid data gate (2026-10-27).** `python -m combat.grid_probe` over the
+local corpus reports **156 boards parsed, 64 on the controlled turn, 0 with
+positive AP, 0 with more than the pass plan**. The raw boards carry
+`my_ap/my_mp = null` (decoded as 0), so the solver cannot produce a cast. Do not
+train the 30M 560-cell combat core on this corpus. The required input is one live
+fight on page build `2026-10-27s` with a real turn and AP > 0; then rerun the probe,
+build the grid tensors, and train compute-matched and side-swapped.
+
+The 30M shape is implemented in `combat/grid_model.py` (**30,766,081** params:
+560 cell tokens, 16 fighter tokens, 16 plan tokens, hidden 768, heads 8) and
+`combat/test_grid_model.py` passes 3/3. `combat/grid_dataset.py` refuses the
+156/156 no-positive-AP corpus rather than writing a pass-only dataset. Training
+starts only after `grid_probe` reports `multi_plan > 0`.
+
+**First 30M Kaggle run (2026-10-27, synthetic distillation).** The 156 real maps
+were swept over four AP/MP variants, yielding **440 actionable solver-labelled
+boards (372/28/40)**; 184 variants stayed pass-only and were dropped. Kernel
+`tajdinenizar/dofus-combat-grid-30m-v1`, dataset `tajdinenizar/thx-06-combat-grid`,
+GPU, 4 epochs, hidden 768. Result: **val top-1 0.786, test top-1 0.60**, test CE
+2.40; `model.pkl` 117 MB saved at `models/combat_grid/`. This is a
+solver-distillation model, not a live combat policy: test CE exceeds val CE and
+the labels are the solver's plans. It is wired as an opt-in `fight.plan
+ranker=grid` (default `solver`, read-only, fails open when the artifact is absent or
+the board has no positive AP). The live fight / side-swapped win gate remains.
+
+**Next live step (one command).** With the app, tunnel and clients running on
+page build `2026-10-27s`:
+
+```bash
+python tools/collect_live_data.py --instances dofus-01,dofus-02 --steps 200
+```
+
+It runs `live_ready`, refuses on any FAIL, reuses/starts the single brain daemon,
+runs the selected instances with the command shadow, stops them, rebuilds
+`data/entity_pointer`, and prints `combat.grid_probe`. Use `--dry-run` to inspect
+the request without starting anything.
+
 ## Acceptance rules (non-negotiable)
 
 - Held-out **real/outcome** labels, not teacher imitation alone; no 100% scores taken at face value.
@@ -129,7 +201,7 @@ measured speedup justifies it. The user runs/pastes notebooks; no queued batch d
    adapter, intent, action conditioned on intent, BIO slot spans) on `data/commands`:
    **1,619 train / 20 val / 23 test**, 13 intents. The builder holds out 26 base phrasings
    (13 val / 13 test), keeps held-out entities disjoint, and rejects eval texts and full-phrase
-   near-copies from train; all four properties are gated (672 checks; `MUT_ONLY=command`
+   near-copies from train; all four properties are gated (922 checks; `MUT_ONLY=command`
    proves the checks, 19/19 caught). Measured by `models/command_encoder30/metrics_eval.json`:
    - 26 held-out base phrasings: **84.6% exact command vs 53.8% rule**; intent **96.2% vs
      69.2%**; slot exact 84.6% vs 69.2%.

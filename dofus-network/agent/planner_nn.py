@@ -68,9 +68,8 @@ class NNPlanner(QuestPlanner):
             self.note = "no model (deterministic planner)"
             return
         try:
-            import onnxruntime as ort
-            self.session = ort.InferenceSession(str(path),
-                                                providers=["CPUExecutionProvider"])
+            from agent.model_cache import onnx_session
+            self.session = onnx_session(str(path))
             self.input_name = self.session.get_inputs()[0].name
             self.expected_features = int(self.session.get_inputs()[0].shape[1])
             meta = path.with_suffix(".json")

@@ -176,6 +176,10 @@ namespace DofusFarm.UI
 
         private bool _keepInstancesOnExit = true;
 
+        // True once the always-on AI has adopted the clients that were already
+        // running when the app started. New launches are adopted at the launch site.
+        private bool _autoAiBootstrapped;
+
 
 
         private DataGridView _grid;
@@ -1741,6 +1745,25 @@ namespace DofusFarm.UI
                 LayoutSlotIndex = layoutIndex
             };
             if (WireWebView2LocalProxy(opts, inst)) _webViewBackend.Start(opts);
+            AutoStartAi(inst.Name);
+        }
+
+        /// <summary>
+        /// Always-on AI: a launched client is driven without pressing Start, and the
+        /// number of clients is whatever the farm has. A manual Stop still wins until
+        /// the next launch, and the loop waits for the world itself, so starting it at
+        /// launch is safe even when the character is still at the login screen.
+        /// </summary>
+        private void AutoStartAi(string instanceName)
+        {
+            try
+            {
+                if (!RuntimeSettings.Current.AutoAi || _aiPanel == null) return;
+                if (string.IsNullOrEmpty(instanceName)) return;
+                if (_aiPanel.IsRunningFor(instanceName)) return;
+                _aiPanel.StartInstance(instanceName, true);
+            }
+            catch (Exception ex) { Log("[AI] auto-start failed: " + ex.Message); }
         }
 
         private void LaunchSelectedInWebView2()
@@ -2188,6 +2211,19 @@ namespace DofusFarm.UI
 
 
 
+                            if (!_autoAiBootstrapped && RuntimeSettings.Current.AutoAi
+                                && runningCount > 0 && _aiPanel != null)
+                            {
+                                _autoAiBootstrapped = true;
+                                foreach (InstanceModel im in list)
+                                {
+                                    bool up = im.IsRunning
+                                        || (_webViewBackend != null
+                                            && _webViewBackend.GetState(im.Name) == ClientInstanceState.Running);
+                                    if (up) AutoStartAi(im.Name);
+                                }
+                            }
+
                             _btnLaunchFarm.Text = string.Format("Launch All ({0}x)", list.Count > 0 ? list.Count : 4);
 
                             _lblActiveBadge.Text = string.Format("● {0} / {1} Running", runningCount, list.Count);
@@ -2322,6 +2358,8 @@ namespace DofusFarm.UI
                             if (_isClosing || !_isFarmLaunching) return;
 
                             _engine.LaunchInstance(im.Name, im.Port, im.RamMb > 0 ? im.RamMb : defaultRam, im.Cores > 0 ? im.Cores : defaultCores, im.Proxy);
+
+                            AutoStartAi(im.Name);
 
                             Thread.Sleep(1500);
 
@@ -2812,7 +2850,7 @@ namespace DofusFarm.UI
 
                         _engine.UpdateInstanceConfig(slotName, customName, ram, cores, profileId, proxy);
 
-                        if (restartNow) { _engine.LaunchInstance(slotName, slotPort, ram, cores, proxy); Thread.Sleep(1500); }
+                        if (restartNow) { _engine.LaunchInstance(slotName, slotPort, ram, cores, proxy); AutoStartAi(slotName); Thread.Sleep(1500); }
 
                         RefreshGrid(true);
 
@@ -2946,7 +2984,7 @@ namespace DofusFarm.UI
 
                                 if (inst.IsRunning) _engine.StopInstance(inst.Serial, inst.Name);
 
-                                else _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, inst.Proxy);
+                                else { _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, inst.Proxy); AutoStartAi(inst.Name); }
 
                             }
 

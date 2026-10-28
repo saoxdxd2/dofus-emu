@@ -10,19 +10,26 @@ Status and next moves live in `PLAN.md`; the reasoning behind decisions lives in
 
 ## 1. Services and ports
 
-Five processes cooperate. The host (WinForms, outside this repo) spawns the
-Python ones on demand and the autopilot spawns the combat brain; each binds one
-loopback port.
+Five services cooperate. The host starts one brain daemon, and the daemon runs
+one Autopilot per instance; the combat brain and Sentinel remain separate
+loopback services.
 
 | service | entry point | port | job |
 |---|---|---|---|
-| **Autopilot** | `run_autopilot.py` → `agent.autopilot.main` | (client) | the autonomous loop: observe → choose → guard → execute → settle → verify → decide |
-| **Agent HTTP** | `python -m agent.serve` | **8895** | stdlib HTTP front for the agent layer (observe / plan / recorder) |
+| **Autopilot (per instance)** | inside the brain daemon, `agent.autopilot` | (client) | the autonomous loop: observe → choose → guard → execute → settle → verify → decide |
+| **Brain daemon / Agent HTTP** | `run_brain.py` → `agent.serve --brain` | **8895** | one process: per-instance Autopilot threads, shared models/knowledge, `POST /brain/start|stop`, `GET /brain/status|health`, plus `/agent/*` |
 | **Combat AI** | `combat/combat_ai_server.py` `run_server()`, started by the autopilot through `combat/brain_service.py` | **8891** | `POST /v1/combat/decide` — solver + learned ranker + live policy |
 | **Sentinel** | `networkhealth/sentinel.py` `run_sentinel_service()` | **8890** | health/telemetry + `nav.goto` name→map resolution |
 | **Directive bridge** | `agent/bridge.py` (host owns the listener) | **8893** (fallback) | `POST /directive` → client tool call; the *real* port is read from `%LOCALAPPDATA%\DofusFarm\bridge_port.txt` |
 
 Facts about ports that have burned time before:
+
+* **One Python process, many instances.** `desktop/aipanel.cs` starts
+  `run_brain.py` once and drives it through `/brain/start` and `/brain/stop`.
+  The daemon runs a `_DaemonAutopilot` thread per selected instance, owns the
+  shared `brain.lock` (per-instance `autopilot.lock` writes are disabled), and
+  keeps the old per-instance `run_autopilot.py` path only as a fallback. See
+  `BRAIN_DAEMON.md`.
 
 * **The host does not start 8891, and cannot.** `desktop/mainform.cs:342
   TryStartSingletonSentinel` is the only Python service the host spawns, and it uses the
@@ -76,8 +83,7 @@ about `mobile-disguise.js`, and a changed `mobile-disguise.js` says nothing abou
 1. **observe** — `state.snapshot` (a pure read, no wire traffic) then `flatten()`
    so the planner sees flat keys (`map_id`, `level`, `inventory…`).
 2. **choose** — a policy picks a tool for the current objective.
-3. **guard** — `validate_call()` (schema) + `FORBIDDEN_TOOLS` veto
-   (`{hdv.buy}`, `autopilot.py:77`) + the kick-signature guard.
+3. **guard** — `validate_call()` (schema) + the kick-signature guard.
 4. **execute** — the directive is posted to the bridge.
 5. **settle** — for tools that move the world, re-observe until the state changes.
 6. **verify** — label the step `advanced` / `noop` / `failed` / `blocked`.
@@ -123,9 +129,10 @@ re-observe, not a fixed sleep.
 * **rule** — the deterministic `QuestPlanner` only. No model, fully inspectable.
   This is the shipped default.
 * **planner** — `NNPlanner` hybrid (`agent/planner_nn.py`): the ONNX
-  `tool_policy.onnx` does `argmax` over 21 tool logits, but the deterministic
-  planner still owns argument filling and the safety gates. A wrong model argmax
-  cannot produce an illegal call. `--ensemble act|shadow|off` controls the
+  `tool_policy.onnx` does `argmax` over its 21 trained tool logits, but the
+  deterministic planner still owns argument filling and the safety gates. A wrong
+  model argmax cannot produce an illegal call. The legal registry is 25 tools; the
+  four research tools added on 2026-10-27 are rule-only until the head is retrained. `--ensemble act|shadow|off` controls the
   23-leaf decision-tree stack over policy + foresight + K-means state context;
   the default `act` is honoured only when `models/tool_stack.json` carries a
   passed cross-validation gate (§9.3 of `AI_ARCHITECTURE.md`).
@@ -224,9 +231,18 @@ combat is unverified against the real server** — `executor.py` records
 combat number as offline until a fight is proven against the client. (Do not count
 offline tests as live combat proof.)
 
+The 30M 560-cell grid model (`combat/grid_model.py`, 30,766,081 params) exists and
+passes a finite forward check. The first Kaggle run (synthetic solver distillation,
+440 rows, 4 epochs) reached val top-1 0.786 / test top-1 0.60 and saved
+`models/combat_grid/model.pkl`; it is **not** a live combat policy. It is wired as an
+opt-in read-only ranker (`fight.plan ranker=grid`), default is still `solver`, and
+it refuses when the board has no positive AP or the artifact is absent. The live
+gate is one actionable fight on page build `2026-10-27s` with AP > 0, then a
+side-swapped win.
+
 ---
 
-## 7. The 21 tools
+## 7. The 25 tools
 
 Runtime order is `data/capabilities.json` (`_registry or _BUILTIN_TOOLS` in
 `agent/schema.py`):
@@ -234,11 +250,47 @@ Runtime order is `data/capabilities.json` (`_registry or _BUILTIN_TOOLS` in
 ```
 knowledge.search  nav.goto    nav.follow   quest.list    quest.advance
 farm.start        farm.stop   fight.join   fight.pass    inv.list
-inv.sell          hdv.scan    hdv.list     chat.say      state.snapshot
-safe.stop         knowledge.remember  knowledge.forget   fight.state
+inv.sell          inv.equip   hdv.scan     hdv.list      hdv.buy
+hdv.prices        tap.interactive          chat.say      state.snapshot
+safe.stop         knowledge.remember       knowledge.forget   fight.state
 fight.plan        fight.estimate
 ```
 
-`hdv.buy` is **not** in the vocabulary — it is deliberately absent and additionally
-vetoed at runtime by `FORBIDDEN_TOOLS` (`autopilot.py:77`, guard at `:700`).
-Older docs that say "16 tools" or "18 tools" are stale; the schema is 21.
+The 2026-10-27 research unlock added `hdv.buy`, `inv.equip`, `hdv.prices` and
+`tap.interactive`; the old `FORBIDDEN_TOOLS` set is empty. `hdv.prices` is read-only;
+`hdv.buy`, `inv.equip` and `tap.interactive` are directive actions. Older docs that
+say "16 tools", "18 tools" or "21 tools" are stale; the schema is 25.
+
+---
+
+## 8. Always-on AI and dynamic instance count (2026-10-28)
+
+The farm no longer needs a Start press per client, and the Python side no longer
+pays per instance for the quest graph.
+
+| part | cost / behaviour | measured by |
+|---|---|---|
+| quest graph | 21.8 MB, loaded **once** per process and shared read-only | 40 planners = 22.1 MB total (~0.55 MB each) vs ~872 MB before |
+| brain daemon | one process, one thread per instance, no fixed cap | 40 fake instances accepted, 40 statuses, one `brain.lock` |
+| per-instance state | sub-goal stack < 2 KB, own log + stop file | `test_brain_scaling_40`, `test_plan_stack` |
+| always-on | `runtime.ini auto_ai=1` (default on): each launch and each client already running at startup is adopted; a manual Stop wins until the next launch | `test_always_on_ai` (source gate), C# Roslyn compile |
+
+`runtime.ini` gains `auto_ai` (Settings → Runtime → "Always-on AI: drive every
+launched client automatically"). Adoption calls `StartInstance` for that client,
+not the whole farm; the loop's own `_require_world` wait makes starting at the
+login screen safe. The number of clients is whatever the grid has — `+ Add`
+allocates `dofus-01..dofus-999`, and the relay port is `base_port + slot`.
+
+**What is still expensive is the client, not the brain.** Each WebView2 window is
+its own Chromium renderer; 40 on one server is a RAM/GPU decision for the host,
+not a Python limit. The shared daemon removes the 40 × (ONNX sessions + 21.8 MB
+quest graph) that the old one-process-per-instance path paid.
+
+**Constraint corpus.** `python -m agent.constraint_corpus --generate --out
+data/constraint_synthetic.jsonl` writes **2,600** rows (25 tools × 8 causes × 13
+variants). The controller routes **100% cause / 100% action** on it; the gate
+enforces ≥95% / ≥90% and ≥50 rows per tool. The cause head's MLP alone does **not** clear the unseen-phrase gate (mean 0.81
+accuracy / 0.19 ECE over five splits); the MLP + cosine-kNN ensemble does
+(**0.855 / 0.089** mean; seed 7 0.855 / 0.077). It is still rule-distilled and is
+**not loaded** by the controller; `test_cause_head_artifact` pins the sidecar and
+the fact that nothing wires it in.

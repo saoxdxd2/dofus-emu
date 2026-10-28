@@ -140,6 +140,19 @@ def tool_registry() -> List[str]:
 TOOLS: List[str] = tool_registry()
 TOOL_INDEX: Dict[str, int] = {name: i for i, name in enumerate(TOOLS)}
 
+# The shipped 49K tool policy was trained on these 21 names and normalises the
+# `last_tool` feature against that width. The legal registry is now 25; the four
+# research tools must not shift the learned feature distribution, so they map to
+# the same neutral value as an unknown tool until a new head is trained.
+LEARNED_TOOLS: List[str] = [
+    "knowledge.search", "nav.goto", "nav.follow", "quest.list", "quest.advance",
+    "farm.start", "farm.stop", "fight.join", "fight.pass", "inv.list", "inv.sell",
+    "hdv.scan", "hdv.list", "chat.say", "state.snapshot", "safe.stop",
+    "knowledge.remember", "knowledge.forget", "fight.state", "fight.plan",
+    "fight.estimate",
+]
+LEARNED_TOOL_INDEX: Dict[str, int] = {name: i for i, name in enumerate(LEARNED_TOOLS)}
+
 
 def _params(obj: Dict[str, Any]) -> Dict[str, Any]:
     raw = obj.get("params")
@@ -424,7 +437,7 @@ def objective_features(obj: Dict[str, Any], quest_level: int, step_index: int,
     vec.append(min(1.0, streak / 5.0))
     vec.append(1.0 if last_ok is None else (1.0 if last_ok else 0.0))
     last_tool = ctx.get("last_tool")
-    vec.append((TOOL_INDEX.get(last_tool, 0) / 17.0) if last_tool else 0.0)
+    vec.append((LEARNED_TOOL_INDEX.get(last_tool, 0) / 17.0) if last_tool else 0.0)
     slot = _err_slot(ctx.get("last_note"))
     for name in ERROR_SLOTS:
         vec.append(1.0 if slot == name else 0.0)

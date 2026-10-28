@@ -896,6 +896,7 @@ class TurnPlan:
     score: float
     notes: List[str] = field(default_factory=list)
     final_hp: Dict[int, int] = field(default_factory=dict)
+    bucket: str = "damage"
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -909,6 +910,7 @@ class TurnPlan:
             "score": round(self.score, 2),
             "notes": self.notes,
             "final_hp": {str(k): int(v) for k, v in self.final_hp.items()},
+            "bucket": self.bucket,
         }
 
 
@@ -970,6 +972,10 @@ class BattleSolver:
         self.max_actions = max(0, max_actions)
         self.max_nodes = max(1, max_nodes)
         self.last_candidates: List[TurnPlan] = []
+        # Per-bucket counts from the last stratified search. A learner can see
+        # whether the beam actually explored setup/displacement/boss plans or
+        # collapsed onto direct damage.
+        self.last_buckets: Dict[str, int] = {}
 
     def plan_candidates(self, board: Board, k: int = 5) -> List[TurnPlan]:
         """The top-k distinct turn plans from the last search, pass included.
@@ -1341,6 +1347,7 @@ class BattleSolver:
         if not best.actions:
             return self._pass(board, notes)
         plan = self._to_plan(best, notes)
+        plan.bucket = self._classify_plan(plan, board)
         nodes = [best] + [node for node in frontier if node.actions]
         plans: List[TurnPlan] = []
         seen_plans = set()
@@ -1353,8 +1360,93 @@ class BattleSolver:
             seen_plans.add(signature)
             plans.append(self._to_plan(node, notes))
         plans.append(self._pass_plan(board, notes))
-        self.last_candidates = plans
+        self.last_candidates = self._stratify(plans, board, self.beam_width)
         return plan
+
+    def _classify_plan(self, plan: TurnPlan, board: Board) -> str:
+        """The strategic bucket a legal plan belongs to.
+
+        The buckets are a budget, not new mechanics: direct damage, displacement/
+        kiting, setup (traps/glyphs/buffs/AP-MP/push-pull), and boss state-lock
+        breakers. A plan with a mechanic on a boss is boss work; a plan that moves
+        a target is displacement; a plan with a non-damaging mechanic is setup;
+        otherwise it is damage. Unsupported mechanics stay in ``notes`` and are
+        not priced as damage.
+        """
+        actions = plan.actions or []
+        if not actions or actions[0].kind == "pass":
+            return "pass"
+        spells = {spell.id: spell for spell in board.spells}
+        boss_ids = {fighter.id for fighter in board.fighters
+                    if getattr(fighter, "is_boss", False)}
+        moved = any(action.moved or action.moved_target is not None
+                    for action in actions)
+        mechanics = []
+        for action in actions:
+            spell = spells.get(action.spell_id)
+            if spell is not None and spell.has_mechanic:
+                mechanics.append((action, spell))
+        if any(action.target_id in boss_ids for action, _spell in mechanics):
+            return "boss"
+        if moved:
+            return "displacement"
+        if mechanics:
+            return "setup"
+        if plan.expected_damage > 0 or plan.expected_healing > 0:
+            return "damage"
+        return "setup"
+
+    def _stratify(self, plans: List[TurnPlan], board: Board,
+                  width: int) -> List[TurnPlan]:
+        """Keep up to four plans per strategic bucket inside the beam width.
+
+        The best plan stays first. The pass plan is always retained so a caller
+        that wants alternatives can still see the do-nothing option.
+        """
+        for plan in plans:
+            plan.bucket = self._classify_plan(plan, board)
+        selected: List[TurnPlan] = []
+        seen = set()
+
+        def signature(plan: TurnPlan):
+            return tuple((action.kind, action.move_to, action.spell_id,
+                          action.target_id) for action in plan.actions)
+
+        def add(plan: TurnPlan) -> bool:
+            signature_key = signature(plan)
+            if signature_key in seen:
+                return False
+            seen.add(signature_key)
+            selected.append(plan)
+            return True
+
+        if plans:
+            add(plans[0])
+        for bucket in ("damage", "displacement", "setup", "boss"):
+            if len(selected) >= width:
+                break
+            taken = 0
+            for plan in plans:
+                if plan.bucket != bucket:
+                    continue
+                if len(selected) >= width:
+                    break
+                if add(plan):
+                    taken += 1
+                if taken >= 4:
+                    break
+        pass_plan = next((plan for plan in plans
+                          if plan.bucket == "pass"), None)
+        for plan in plans:
+            if len(selected) >= width:
+                break
+            add(plan)
+        if pass_plan is not None:
+            add(pass_plan)
+        self.last_buckets = {}
+        for plan in selected:
+            self.last_buckets[plan.bucket] = self.last_buckets.get(plan.bucket, 0) + 1
+        return selected
 
     def _templates(self, board: Board, cell: int, character: CharacterStats,
                    occupied: FrozenSet[int],

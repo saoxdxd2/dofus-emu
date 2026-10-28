@@ -17,7 +17,7 @@
 //   * Settings and shortcuts persist to ai_settings.ini next to the exe.
 //
 // The panel never decides anything itself: it starts a process and shows its
-// output. Every guard that matters (no buying, no invented prices) lives in
+// output. Every guard that matters (schema, no-progress, recovery) lives in
 // agent/autopilot.py, where a test can see it.
 
 using System;
@@ -28,6 +28,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Windows.Forms;
 using DofusFarm.Engine;
 
@@ -338,6 +339,18 @@ namespace DofusFarm.UI
         private readonly Dictionary<Process, string> _instanceByProc = new Dictionary<Process, string>();
         private readonly object _procLock = new object();
 
+        // One brain daemon for every instance. The old path spawned one Python
+        // child per selected instance, each with its own interpreter, numpy,
+        // ONNX Runtime and knowledge cache. This is the single-process control
+        // plane on 127.0.0.1:8895; the per-instance child path remains below as
+        // a fallback if the daemon cannot start.
+        private Process _brain;
+        private readonly object _brainLock = new object();
+        private readonly HashSet<string> _brainRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private DateTime _brainStatusAt = DateTime.MinValue;
+        private bool _brainHadInstances;
+        private const int BrainPort = 8895;
+
         public AiPanel(string baseDir, Func<int, string> instanceBySlot, Func<int> instanceCount, Action<string> log)
         {
             _baseDir = baseDir;
@@ -478,7 +491,7 @@ namespace DofusFarm.UI
             row3.Controls.Add(_lblState);
 
             var lblHint = new Label();
-            lblHint.Text = "Guards live in agent/autopilot.py: no buying, no invented prices, no-progress stop.";
+            lblHint.Text = "All 25 tools enabled; schema, no-progress and recovery guards live in agent/autopilot.py.";
             lblHint.ForeColor = Color.FromArgb(100, 116, 139);
             lblHint.AutoSize = true;
             lblHint.Location = new Point(0, 27);
@@ -899,6 +912,7 @@ namespace DofusFarm.UI
 
             // Use the verifier if one has been trained. It is optional by design:
             // without it the loop labels with rules, which is still a valid label.
+            string verifier = null;
             try
             {
                 // Prefer the neural head; fall back to the linear baseline. Both are
@@ -914,7 +928,6 @@ namespace DofusFarm.UI
                 // enough examples and above the rule baseline, unlocks the auto-load.
                 // Without it the loop labels with rules; a CLI --verifier-model still
                 // overrides this choice for an experiment.
-                string verifier = null;
                 try
                 {
                     if (File.Exists(contractPath))
@@ -946,6 +959,17 @@ namespace DofusFarm.UI
                 : new List<string> { onlyInstance };
             if (targets.Count == 0) targets.Add(null);
             bool shared = targets.Count == 1 && targets[0] == null;
+
+            // Default path: one daemon, one model copy, one control plane. If it
+            // cannot start (missing script, port held, import failure), the old
+            // per-instance child loop below still runs.
+            if (BrainStart(targets, goalsText, steps, interval, minutes, mode,
+                           policyOverride, verifier))
+            {
+                if (_log != null) _log("[AI] " + mode + " loop started (brain daemon)");
+                SetRunningUi(true);
+                return;
+            }
 
             try
             {
@@ -1033,6 +1057,7 @@ namespace DofusFarm.UI
         public string RunningInstanceOf(string instanceId)
         {
             if (string.IsNullOrEmpty(instanceId)) return null;
+            if (BrainIsRunning(instanceId)) return instanceId;
             lock (_procLock)
             {
                 foreach (KeyValuePair<Process, string> kv in _instanceByProc)
@@ -1054,6 +1079,12 @@ namespace DofusFarm.UI
         public List<string> RunningInstances()
         {
             var ids = new List<string>();
+            RefreshBrainStatus();
+            lock (_brainLock)
+            {
+                foreach (string id in _brainRunning)
+                    if (!ids.Contains(id)) ids.Add(id);
+            }
             lock (_procLock)
             {
                 foreach (KeyValuePair<Process, string> kv in _instanceByProc)
@@ -1089,6 +1120,11 @@ namespace DofusFarm.UI
         /// </summary>
         public void StopInstance(string instanceId, string why)
         {
+            if (BrainIsRunning(instanceId) && BrainStopOne(instanceId, why))
+            {
+                SetRunningUi(IsRunning);
+                return;
+            }
             Process target = null;
             lock (_procLock)
             {
@@ -1128,6 +1164,8 @@ namespace DofusFarm.UI
 
         public void StopAuto(string why)
         {
+            bool hadBrain = BrainAnyRunning();
+            if (hadBrain) BrainStopAll(why);
             List<Process> children;
             Dictionary<Process, string> attributed;
             lock (_procLock)
@@ -1160,6 +1198,7 @@ namespace DofusFarm.UI
             if (children.Count == 0)
             {
                 Append("[ai] stop requested (" + why + "); no child process to stop");
+                SetRunningUi(BrainAnyRunning());
                 return;
             }
             Append("[ai] stop requested (" + why + "); waiting for "
@@ -1323,12 +1362,344 @@ namespace DofusFarm.UI
             }
         }
 
+        // -- brain daemon -----------------------------------------------------
+        //
+        // One process, one copy of the models and knowledge, one control plane.
+        // The per-instance child path below is the fallback, not the default.
+
+        private static string BrainUrl(string path)
+        {
+            return "http://127.0.0.1:" + BrainPort.ToString() + path;
+        }
+
+        private static string JsonEscape(string value)
+        {
+            if (value == null) return "";
+            var sb = new StringBuilder(value.Length + 8);
+            foreach (char ch in value)
+            {
+                switch (ch)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (ch < 0x20) sb.Append("\\u").Append(((int)ch).ToString("x4"));
+                        else sb.Append(ch);
+                        break;
+                }
+            }
+            return sb.ToString();
+        }
+
+        private static string JsonQuote(string value)
+        {
+            return "\"" + JsonEscape(value) + "\"";
+        }
+
+        private static string BrainRequest(string method, string path, string json, int timeoutMs)
+        {
+            try
+            {
+                var req = (HttpWebRequest)WebRequest.Create(BrainUrl(path));
+                req.Method = method;
+                req.Timeout = timeoutMs;
+                req.ReadWriteTimeout = timeoutMs;
+                // Loopback must not be routed through a system HTTP proxy.
+                req.Proxy = null;
+                req.KeepAlive = false;
+                if (json != null)
+                {
+                    byte[] data = Encoding.UTF8.GetBytes(json);
+                    req.ContentType = "application/json";
+                    req.ContentLength = data.Length;
+                    using (Stream stream = req.GetRequestStream())
+                        stream.Write(data, 0, data.Length);
+                }
+                using (var resp = (HttpWebResponse)req.GetResponse())
+                using (var reader = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                    return reader.ReadToEnd();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private bool BrainProcessAlive()
+        {
+            lock (_brainLock)
+            {
+                if (_brain == null) return false;
+                try { return !_brain.HasExited; } catch { return false; }
+            }
+        }
+
+        private bool EnsureBrain()
+        {
+            if (BrainProcessAlive()) return true;
+            string python = ResolvePython();
+            if (python == null)
+            {
+                Append("[ai] brain daemon: python runtime not found");
+                return false;
+            }
+            string script = Path.Combine(_baseDir, Path.Combine("dofus-network", "run_brain.py"));
+            if (!File.Exists(script))
+            {
+                Append("[ai] brain daemon: missing " + script);
+                return false;
+            }
+            string work = Path.Combine(_baseDir, "dofus-network");
+            string stateDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DofusFarm");
+            try { Directory.CreateDirectory(stateDir); } catch { }
+
+            var psi = new ProcessStartInfo();
+            psi.FileName = python;
+            psi.Arguments = "\"" + script + "\" --port " + BrainPort.ToString()
+                + " --brain --brain-log-dir \"" + stateDir + "\""
+                + " --recorder-dir \"" + Path.Combine(work, "trajectories") + "\"";
+            psi.WorkingDirectory = work;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.StandardOutputEncoding = Encoding.UTF8;
+            psi.StandardErrorEncoding = Encoding.UTF8;
+            psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+            psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+
+            var p = new Process();
+            p.StartInfo = psi;
+            p.EnableRaisingEvents = true;
+            p.OutputDataReceived += delegate(object s, DataReceivedEventArgs e)
+            { if (e.Data != null) Append("[brain] " + e.Data); };
+            p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e)
+            { if (e.Data != null) Append("[brain!] " + e.Data); };
+            p.Exited += delegate { OnBrainExited(p); };
+            try
+            {
+                p.Start();
+                p.BeginOutputReadLine();
+                p.BeginErrorReadLine();
+                lock (_brainLock) _brain = p;
+                Append("[ai] brain daemon started (pid " + p.Id.ToString() + ", port "
+                      + BrainPort.ToString() + ")");
+            }
+            catch (Exception ex)
+            {
+                Append("[ai] brain daemon failed to start: " + ex.Message);
+                return false;
+            }
+
+            // Wait for the control plane, not just the process. A Python process
+            // that is still importing is not a daemon yet.
+            for (int i = 0; i < 30; i++)
+            {
+                if (BrainRequest("GET", "/brain/health", null, 500) != null) return true;
+                Thread.Sleep(150);
+            }
+            Append("[ai] brain daemon did not answer /brain/health on port " + BrainPort.ToString());
+            return false;
+        }
+
+        private bool BrainStart(List<string> targets, string goalsText, int steps,
+                                double interval, double minutes, string mode,
+                                string policy, string verifier)
+        {
+            var ids = new List<string>();
+            foreach (string target in targets)
+                if (!string.IsNullOrEmpty(target)) ids.Add(target);
+            if (ids.Count == 0) return false;
+            if (!EnsureBrain()) return false;
+
+            var goals = new List<string>();
+            foreach (string line in (goalsText ?? "").Replace("\r", "").Split('\n'))
+            {
+                string trimmed = line.Trim();
+                if (trimmed.Length > 0) goals.Add(trimmed);
+            }
+            if (goals.Count == 0) goals.Add("do all the quests");
+
+            var json = new StringBuilder();
+            json.Append("{\"instances\":[");
+            for (int i = 0; i < ids.Count; i++)
+            {
+                if (i > 0) json.Append(',');
+                json.Append(JsonQuote(ids[i]));
+            }
+            json.Append("],\"goals\":[");
+            for (int i = 0; i < goals.Count; i++)
+            {
+                if (i > 0) json.Append(',');
+                json.Append(JsonQuote(goals[i]));
+            }
+            json.Append("],\"steps\":").Append(steps.ToString());
+            json.Append(",\"interval\":").Append(interval.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            json.Append(",\"minutes\":").Append(minutes.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            json.Append(",\"policy\":").Append(JsonQuote(policy ?? _settings.Policy));
+            json.Append(",\"mode\":").Append(JsonQuote(mode ?? "auto"));
+            json.Append(",\"dry_run\":").Append(_settings.DryRun ? "true" : "false");
+            json.Append(",\"fight_boards\":").Append(RuntimeSettings.Current.FightBoards ? "true" : "false");
+            json.Append(",\"brain\":\"auto\"");
+            json.Append(",\"command_shadow\":\"off\"");
+            json.Append(",\"verifier_model\":").Append(
+                string.IsNullOrEmpty(verifier) ? "null" : JsonQuote(verifier));
+            json.Append('}');
+
+            string body = BrainRequest("POST", "/brain/start", json.ToString(), 15000);
+            if (body == null || body.IndexOf("\"ok\":true", StringComparison.Ordinal) < 0)
+            {
+                Append("[ai] brain daemon refused the start request; falling back to per-instance children"
+                      + (body == null ? "" : ": " + Shorten(body, 240)));
+                return false;
+            }
+            _brainStatusAt = DateTime.MinValue;
+            _brainHadInstances = true;
+            RefreshBrainStatus();
+            Append("[ai] " + mode + " started on the brain daemon ("
+                  + ids.Count.ToString() + " instance(s), " + steps.ToString()
+                  + " steps, policy " + (policy ?? _settings.Policy) + ")");
+            return true;
+        }
+
+        private bool BrainStopOne(string instance, string why)
+        {
+            if (string.IsNullOrEmpty(instance)) return false;
+            if (!BrainProcessAlive()) return false;
+            string json = "{\"instance\":" + JsonQuote(instance)
+                + ",\"why\":" + JsonQuote(why) + "}";
+            string body = BrainRequest("POST", "/brain/stop", json, 6000);
+            bool ok = body != null && body.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0;
+            if (ok)
+            {
+                lock (_brainLock) _brainRunning.Remove(instance);
+                Append("[ai] " + instance + ": stop requested (" + why + ") on the brain daemon");
+            }
+            return ok;
+        }
+
+        private bool BrainStopAll(string why)
+        {
+            if (!BrainProcessAlive()) return false;
+            string json = "{\"all\":true,\"why\":" + JsonQuote(why) + "}";
+            string body = BrainRequest("POST", "/brain/stop", json, 6000);
+            bool ok = body != null && body.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0;
+            if (ok)
+            {
+                lock (_brainLock) _brainRunning.Clear();
+                _brainHadInstances = false;
+                Append("[ai] stop requested (" + why + ") on the brain daemon");
+            }
+            return ok;
+        }
+
+        private void RefreshBrainStatus()
+        {
+            Process process;
+            lock (_brainLock) process = _brain;
+            if (process == null)
+            {
+                lock (_brainLock) _brainRunning.Clear();
+                return;
+            }
+            bool exited;
+            try { exited = process.HasExited; } catch { exited = true; }
+            if (exited)
+            {
+                lock (_brainLock) _brainRunning.Clear();
+                return;
+            }
+            if ((DateTime.UtcNow - _brainStatusAt).TotalMilliseconds < 1500) return;
+            _brainStatusAt = DateTime.UtcNow;
+            string body = BrainRequest("GET", "/brain/status", null, 1200);
+            if (body == null) return;
+
+            var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Match list = Regex.Match(body, "\"active\"\\s*:\\s*\\[([^\\]]*)\\]");
+            if (list.Success)
+            {
+                foreach (Match item in Regex.Matches(list.Groups[1].Value, "\"([^\"]+)\""))
+                    active.Add(item.Groups[1].Value);
+            }
+            bool wasRunning = _brainHadInstances;
+            lock (_brainLock)
+            {
+                _brainRunning.Clear();
+                foreach (string id in active) _brainRunning.Add(id);
+                _brainHadInstances = active.Count > 0;
+            }
+            if (wasRunning && active.Count == 0)
+            {
+                // The last instance finished on its own: same idle-training window
+                // the child path gets from OnChildExited.
+                TryIdleTraining();
+                try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch { }
+            }
+        }
+
+        private bool BrainAnyRunning()
+        {
+            RefreshBrainStatus();
+            lock (_brainLock) return _brainRunning.Count > 0;
+        }
+
+        private bool BrainIsRunning(string instance)
+        {
+            if (string.IsNullOrEmpty(instance)) return false;
+            RefreshBrainStatus();
+            lock (_brainLock) return _brainRunning.Contains(instance);
+        }
+
+        private void OnBrainExited(Process p)
+        {
+            bool had;
+            lock (_brainLock)
+            {
+                had = _brainRunning.Count > 0;
+                _brainRunning.Clear();
+                _brainHadInstances = false;
+                if (_brain == p) _brain = null;
+            }
+            try
+            {
+                int code = p.ExitCode;
+                Append("[ai] brain daemon exited (code " + code.ToString() + ")");
+            }
+            catch { }
+            if (had) TryIdleTraining();
+            try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch { }
+        }
+
+        private void StopBrainProcess()
+        {
+            Process process;
+            lock (_brainLock)
+            {
+                process = _brain;
+                _brain = null;
+                _brainRunning.Clear();
+                _brainHadInstances = false;
+            }
+            if (process == null) return;
+            try
+            {
+                if (!process.HasExited) process.Kill();
+            }
+            catch { }
+        }
+
         // -- child process ----------------------------------------------------
 
         public bool IsRunning
         {
             get
             {
+                if (BrainAnyRunning()) return true;
                 List<Process> children;
                 lock (_procLock) { children = new List<Process>(_procs); }
                 foreach (Process p in children)
@@ -1581,6 +1952,7 @@ namespace DofusFarm.UI
             if (disposing)
             {
                 try { StopAuto("window closed"); } catch { }
+                try { StopBrainProcess(); } catch { }
             }
             base.Dispose(disposing);
         }

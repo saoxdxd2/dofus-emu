@@ -55,7 +55,7 @@ function check(name, got, want) {
 }
 
 check('lists only real NPC actors', h.list(), [
-    { templateId: 3888, contextualId: 123456, cell: 255 }
+    { templateId: 3888, contextualId: 123456, cell: 255, name: null }
 ]);
 const found = h.find(3888);
 check('resolves the actor id and cell', {

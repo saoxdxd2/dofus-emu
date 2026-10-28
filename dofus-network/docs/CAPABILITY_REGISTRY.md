@@ -6,13 +6,12 @@ The rule:
 > in a registry, and selected by a model that reads the description. Adding one is
 > a data change, not a code change and not a retraining run.
 
-> **Status note (2026-10-26).** The live schema is **21 tools**, not the 16
-> described below — `CURRENT.md` §7 lists them. And the `hdv.buy` example further
-> down is **historical**: buying on the market is now deliberately *forbidden*
-> (`FORBIDDEN_TOOLS`, `agent/autopilot.py:77`) because it spends kamas
-> irreversibly. Do not re-add it. The mechanism the example demonstrates (a tool
-> added as data, widening the head without retraining the trunk) is still exactly
-> right; only that particular tool choice has been vetoed on purpose.
+> **Status note (2026-10-27).** The live schema is **25 tools**, not the 16
+> described below — `CURRENT.md` §7 lists them. The `hdv.buy` example further down
+> is now a shipped research capability; the 25-tool vocabulary also includes
+> `inv.equip`, `hdv.prices` and `tap.interactive`. The mechanism the example
+> demonstrates (a tool added as data, widening the head without retraining the
+> trunk) is still exactly right.
 
 ## What was wrong before
 

@@ -44,6 +44,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent.brain_daemon import BrainDaemon
 from agent.executor import ToolExecutor
 from agent.jsonio import dumps_bytes, loads
 from agent.recorder import TrajectoryRecorder
@@ -62,11 +63,13 @@ class AgentHTTPServer(ThreadingHTTPServer):
         address: tuple[str, int],
         runtime: AgentRuntime,
         recorder: TrajectoryRecorder,
+        brain: Optional[BrainDaemon] = None,
     ) -> None:
         super().__init__(address, AgentRequestHandler)
         self.runtime = runtime
         self.recorder = recorder
         self.executor: ToolExecutor = runtime.executor
+        self.brain = brain
 
 
 class AgentRequestHandler(BaseHTTPRequestHandler):
@@ -141,6 +144,16 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 50
             self._send_json(200, {"records": self.server.recorder.tail(limit)})
+        elif path == "/brain/health":
+            if self.server.brain is None:
+                self._send_json(503, {"status": "error", "error": "brain mode is off"})
+            else:
+                self._send_json(200, self.server.brain.health())
+        elif path == "/brain/status":
+            if self.server.brain is None:
+                self._send_json(503, {"status": "error", "error": "brain mode is off"})
+            else:
+                self._send_json(200, self.server.brain.status())
         else:
             self._send_json(404, {"error": f"unknown GET path {path}"})
 
@@ -195,6 +208,21 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 source=str(payload.get("source", "live")),
             )
             self._send_json(200, {"ok": True, "record": record})
+        elif path == "/brain/start":
+            if self.server.brain is None:
+                self._send_json(503, {"ok": False, "error": "brain mode is off"})
+                return
+            self._send_json(200, self.server.brain.start(payload))
+        elif path == "/brain/stop":
+            if self.server.brain is None:
+                self._send_json(503, {"ok": False, "error": "brain mode is off"})
+                return
+            instance = payload.get("instance")
+            self._send_json(200, self.server.brain.stop(
+                instance=str(instance) if instance else None,
+                stop_all=bool(payload.get("all")),
+                why=str(payload.get("why") or "stopped by the host"),
+            ))
         else:
             self._send_json(404, {"error": f"unknown POST path {path}"})
 
@@ -218,6 +246,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="fall back to RulePolicy when THX-01 is invalid or unsure")
     parser.add_argument("--schedule", action="store_true",
                         help="wire ScheduleManager.active_objective as policy context (§C)")
+    parser.add_argument("--brain", action="store_true",
+                        help="serve the multi-instance brain control plane "
+                             "(POST /brain/start, /brain/stop; GET /brain/status)")
+    parser.add_argument("--brain-policy", choices=["rule", "planner", "encoder"],
+                        default="rule", help="default policy for /brain/start")
+    parser.add_argument("--brain-log-dir", type=Path, default=None,
+                        help="per-instance autopilot logs (default: LOCALAPPDATA/DofusFarm)")
     return parser
 
 
@@ -255,10 +290,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         except Exception as exc:  # noqa: BLE001
             logger.warning("schedule wiring failed: %s; running without objective context", exc)
 
-    server = AgentHTTPServer((args.host, args.port), runtime, recorder)
+    server = AgentHTTPServer((args.host, args.port), runtime, recorder,
+                             brain=BrainDaemon(
+                                 log_dir=args.brain_log_dir,
+                                 recorder_dir=args.recorder_dir,
+                                 default_policy=args.brain_policy,
+                             ) if args.brain else None)
     logger.info(f"Dofus agent service listening on http://{args.host}:{args.port} "
                 f"({len(TOOL_SCHEMA['tools'])} tools, policy {type(runtime.policy).__name__}, "
-                f"trajectory {recorder.path})")
+                f"trajectory {recorder.path}"
+                + (", brain daemon on" if args.brain else "") + ")")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

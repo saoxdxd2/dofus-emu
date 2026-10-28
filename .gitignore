@@ -48,6 +48,13 @@ userdata*.img
 *.lock
 *.iso
 *.7z
+
+# Measured artifacts: large and reproducible from the dataset/training scripts
+/dofus-network/models/combat_grid/*.pkl
+/dofus-network/models/entity_pointer/*.pkl
+/dofus-network/data/combat_grid_synth*/
+/dofus-network/data/entity_pointer/
+/dofus-network/data/entity_pointer_observed/
 *.zip
 *.tar.gz
 *.tgz

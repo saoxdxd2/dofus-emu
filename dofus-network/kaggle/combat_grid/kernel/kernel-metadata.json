@@ -1,0 +1,16 @@
+{
+ "id": "tajdinenizar/dofus-combat-grid-v1",
+ "title": "Dofus combat grid 30M v1",
+ "code_file": "dofus-combat-grid-v1.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_internet": false,
+ "dataset_sources": [
+  "tajdinenizar/thx-06-combat-grid"
+ ],
+ "competition_sources": [],
+ "kernel_sources": [],
+ "model_sources": []
+}

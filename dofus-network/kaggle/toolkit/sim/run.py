@@ -66,9 +66,11 @@ class RulePolicy:
 
 def run(policy: Any, level: int = 60, steps: int = 500, seed: int = 7,
         verbose: bool = False, noise: bool = False,
-        travel_cost: bool = False, ordering: str = "step") -> Dict[str, Any]:
+        travel_cost: bool = False, ordering: str = "step",
+        start_kamas: int = 5000, random_start_map: bool = False) -> Dict[str, Any]:
     world = World(level=level, seed=seed, max_steps=steps, noise=noise,
-                  travel_cost=travel_cost)
+                  travel_cost=travel_cost, start_kamas=start_kamas,
+                  random_start_map=random_start_map)
     goal = GOALS[0]
     while world.steps < steps:
         obs = world.observe()
@@ -112,6 +114,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--travel-cost", action="store_true",
                     help="travel costs hops instead of one free step; without it the "
                          "teacher is optimal by construction and nothing can beat it")
+    ap.add_argument("--kamas", type=int, default=5000,
+                    help="starting kamas; 0 covers the poor-start live states")
+    ap.add_argument("--random-start-map", action="store_true",
+                    help="start on a random quest-start map instead of the lowest id")
     args = ap.parse_args(argv)
 
     if args.policy == "planner":
@@ -120,14 +126,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.policy == "nn":
         from agent.planner_nn import NNPlanner
         policy = NNPlanner(level_hint=args.level, ordering=args.ordering)
+        policy._ensure_model()
         print("# %s" % policy.note)
     elif args.policy == "random":
         policy = RandomPolicy(args.seed)
     else:
         policy = RulePolicy()
 
+    if args.policy in ("planner", "nn"):
+        # The symbolic world *is* the client here, and it offers these quests. The
+        # live G31 guard refuses any id the client never reported; without this seed
+        # every sim run ends at step 0, which reads as a broken planner.
+        policy._client_quests |= set(policy._curriculum(args.level))
+
     score = run(policy, args.level, args.steps, args.seed, args.verbose, args.noise,
-                args.travel_cost, args.ordering)
+                args.travel_cost, args.ordering, args.kamas, args.random_start_map)
     print(json.dumps(score, indent=1))
     return 0
 

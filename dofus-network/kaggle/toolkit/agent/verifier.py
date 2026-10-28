@@ -69,8 +69,8 @@ STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
 # controller dutifully retried, recovered and gave up. `quest.list` returning
 # data IS success.
 READ_ONLY_TOOLS = frozenset({
-    "knowledge.search", "quest.list", "inv.list", "hdv.scan", "state.snapshot",
-    "fight.state", "fight.plan",
+    "knowledge.search", "quest.list", "inv.list", "hdv.scan", "hdv.prices",
+    "state.snapshot", "fight.state", "fight.plan",
 })
 
 # Tools that are *supposed* to change the map / the cell. Used by drift only.
@@ -330,11 +330,12 @@ class Verifier:
                     path.name, val.get("accuracy", "untrained"))
                 return "baseline"
 
-            import onnxruntime as ort  # optional dependency
+            from agent.model_cache import onnx_session
+
             if not path.exists():
                 self._model_note = "model not found: %s (rules only)" % path
                 return None
-            session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+            session = onnx_session(str(path))
             self._onnx_input = session.get_inputs()[0].name
             self._model_note = "onnx %s (%d features)" % (path.name, session.get_inputs()[0].shape[-1])
             return session

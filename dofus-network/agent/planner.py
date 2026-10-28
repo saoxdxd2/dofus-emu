@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import random
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -30,6 +31,7 @@ from agent.observe import flatten
 from agent.jsonio import loads as fast_loads
 from agent.dialog_policy import rank_dialog
 from agent.awareness import quest_key, scene_key
+from agent.plan_stack import PlanStack, child_for_objective
 from agent.features import (CRAFT_TYPES, DELIVER_TYPES,  # noqa: E402
                             KILL_TYPES, MAP_TYPES, OBJECTIVE_TYPES,
                             ObsTracker, TALK_TYPES,
@@ -139,6 +141,40 @@ def group_refusal_outcome(detail: Any, note: Any = "") -> str:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE = REPO_ROOT / "data" / "cache"
+
+# The trimmed quest graph is ~21.8 MB. Loaded per planner, 40 instances paid ~872 MB
+# for the same bytes. Planners only read this table (every merge copies), so one
+# process-wide copy is both correct and what makes 40 instances cheap.
+_QUEST_TABLE: Optional[Dict[int, Dict[str, Any]]] = None
+_QUEST_TABLE_LOCK = threading.Lock()
+
+
+def shared_quest_table() -> Dict[int, Dict[str, Any]]:
+    """The process-wide quest graph, trimmed once and shared read-only."""
+    global _QUEST_TABLE
+    if _QUEST_TABLE is not None:
+        return _QUEST_TABLE
+    with _QUEST_TABLE_LOCK:
+        if _QUEST_TABLE is not None:
+            return _QUEST_TABLE
+        table: Dict[int, Dict[str, Any]] = {}
+        path = CACHE / "quests_full.json"
+        if path.exists():
+            for q in fast_loads(path.read_bytes()):
+                if not q.get("steps"):
+                    continue
+                for step in q["steps"]:
+                    step["objectives"] = step.get("objectives") or []
+                    for key in ("id", "name", "description", "optimal_level"):
+                        step.pop(key, None)
+                for key in ("name", "category_id", "level_max", "is_dungeon",
+                            "is_event", "is_party", "start_criterion",
+                            "start_position"):
+                    q.pop(key, None)
+                q["level_min"] = q.get("level_min") or 1
+                table[int(q["id"])] = q
+        _QUEST_TABLE = table
+        return table
 
 # A refused claim is the start of the objective's action path, not the end of the
 # quest. The planner retires a ready objective only after this many hard failures
@@ -375,6 +411,10 @@ class QuestPlanner:
         # needs this: featurising the world's oldest active objective labelled
         # actions for a different quest whenever the planner skipped one.
         self.current_objective: Optional[int] = None
+        # Persisted child goals for the current objective. A precondition that
+        # spans steps (buy -> deliver, equip -> talk) must not be re-derived from
+        # scratch every step, and a child must not pop because a read answered.
+        self.plan_stack = PlanStack()
         self._order: Optional[List[int]] = None
         # Monotone memory of what the observation ever said was finished. The
         # planner is otherwise a pure function of the observation, which is correct
@@ -519,27 +559,7 @@ class QuestPlanner:
         if self._quests_loaded:
             return
         self._quests_loaded = True
-        path = CACHE / "quests_full.json"
-        if not path.exists():
-            return
-        for q in fast_loads(path.read_bytes()):
-            if not q.get("steps"):
-                continue
-            # Keep only what planning reads: id/level gate, the step list,
-            # and the objectives. Names, descriptions, categories, event
-            # flags and start metadata are for display/training tooling,
-            # not for a live decision. Trim in place; the JSON file is
-            # untouched for offline tools.
-            for step in q["steps"]:
-                step["objectives"] = step.get("objectives") or []
-                for key in ("id", "name", "description", "optimal_level"):
-                    step.pop(key, None)
-            for key in ("name", "category_id", "level_max", "is_dungeon",
-                        "is_event", "is_party", "start_criterion",
-                        "start_position"):
-                q.pop(key, None)
-            q["level_min"] = q.get("level_min") or 1
-            self._quests[int(q["id"])] = q
+        self._quests = shared_quest_table()
 
     # -- curriculum --------------------------------------------------------
 
@@ -1146,12 +1166,81 @@ class QuestPlanner:
                 self._skipped.discard(qid)
                 self._skip_sigs.pop(qid, None)
 
+    def _market_listing(self, obs: Dict[str, Any], gid: Any) -> Optional[Dict[str, Any]]:
+        """The cheapest cached listing for a gid, or None.
+
+        `state.snapshot.prices` only contains rows the page built from server
+        messages. A row without a listing uid is not buyable, so it is not
+        returned; the caller falls back to farming.
+        """
+        try:
+            wanted = int(gid)
+        except (TypeError, ValueError):
+            return None
+        rows = obs.get("prices")
+        if not isinstance(rows, list):
+            rows = flatten(obs or {}).get("prices")
+        if not isinstance(rows, list):
+            return None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("gid")) != wanted:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            candidates = []
+            for listing in row.get("listings") or []:
+                if not isinstance(listing, dict):
+                    continue
+                try:
+                    price = int(listing.get("price"))
+                    uid = int(listing.get("uid"))
+                except (TypeError, ValueError):
+                    continue
+                if uid > 0 and price > 0:
+                    candidates.append({"uid": uid, "price": price,
+                                       "quantity": int(listing.get("quantity") or 1)})
+            if candidates:
+                return min(candidates, key=lambda item: item["price"])
+        return None
+
     def plan_objective(self, quest: Dict[str, Any], step_idx: int,
                        obj: Dict[str, Any], obs: Dict[str, Any]) -> List[Dict[str, Any]]:
         """The calls this objective needs, in order. Empty when unsupported."""
         t = obj.get("type_id")
         p = _params(obj)
         here = obs.get("map_id")
+
+        # The sub-goal stack's live decompositions. The existing planner owns
+        # travel/talk/delivery rules; these branches only add a child when a
+        # precondition is unmet, and the stack keeps it across steps.
+        child = child_for_objective(obj, obs)
+        top = self.plan_stack.top()
+        if child is None:
+            while top is not None and top.kind != "objective":
+                top = self.plan_stack.pop()
+        elif (top is None or top.kind != child["kind"]
+              or top.args != child.get("args")):
+            if top is not None and top.kind != "objective":
+                self.plan_stack.pop()
+            self.plan_stack.push(child["kind"], child.get("args"),
+                                 parent="objective")
+        if child is not None:
+            child_args = child.get("args") or {}
+            if child["kind"] == "equip":
+                preset = child_args.get("preset_id")
+                if preset is not None:
+                    return [{"tool": "inv.equip", "args": {"preset_id": int(preset)},
+                             "why": "objective asks to equip; apply the saved preset"}]
+                return [{"tool": "inv.list", "args": {},
+                         "why": "objective asks to equip; read presets first"}]
+            if child["kind"] == "explore" and t in KILL_TYPES:
+                direction = child_args.get("direction")
+                if direction:
+                    return [{"tool": "nav.goto", "args": {"direction": direction},
+                             "why": "no readable group on this map; explore for one"}]
 
         # Where this objective has to happen. The knowledge base names a map for
         # 10,421 of its objectives and the world refuses to complete one from the
@@ -1248,7 +1337,27 @@ class QuestPlanner:
             inv = obs.get("inventory") or {}
             have = bool(item is not None and (inv.get(item) or inv.get(str(item))))
             cap = int(obs.get("inventory_capacity") or 0)
-            if item is not None and not have and cap and len(inv) >= cap:
+            listing = self._market_listing(obs, item) if (item is not None and not have) else None
+            kamas = int(obs.get("kamas") or 0)
+            if listing is not None and kamas >= listing["price"]:
+                # The price and listing uid both came from the page's
+                # server-message cache. Buy only the units this listing carries;
+                # the next observation re-plans if more are needed.
+                quantity = 1
+                try:
+                    quantity = max(1, int(obj.get("max_completion") or 1))
+                except (TypeError, ValueError):
+                    quantity = 1
+                quantity = min(quantity, max(1, int(listing.get("quantity") or 1)))
+                calls.append({
+                    "tool": "hdv.buy",
+                    "args": {"uid": listing["uid"], "gid": int(item),
+                             "quantity": quantity,
+                             "max_price": listing["price"]},
+                    "why": ("objective %d: item %s is cheaper on the market "
+                            "(%d kamas) than farming it" % (t, item, listing["price"])),
+                })
+            elif item is not None and not have and cap and len(inv) >= cap:
                 # Nowhere to put the thing we need. Selling is a precondition here,
                 # not an optimisation: without it the loop gathers into a full bag
                 # for the rest of its budget.
@@ -1477,6 +1586,19 @@ class QuestPlanner:
         `note` does, and for a group refusal the difference is which repair is right.
         """
         self.tracker.record(tool, ok, note, obs)
+        # A child goal pops only on a real advance, never on a read or a no-op.
+        # Three failed attempts release it so the planner can choose a different
+        # decomposition instead of looping on one broken child.
+        action_tools = {"inv.equip", "nav.goto", "quest.advance", "hdv.buy",
+                        "farm.start", "fight.join", "tap.interactive", "chat.say"}
+        top = self.plan_stack.top()
+        if tool in action_tools and top is not None and top.kind != "objective":
+            if ok and "advanced" in (note or "").lower():
+                self.plan_stack.advance(moved=True)
+            else:
+                self.plan_stack.advance(moved=False)
+                if top.attempts >= 3:
+                    self.plan_stack.pop()
         if tool in ("farm.start", "fight.join"):
             if ok:
                 self._farm_target_missing = False
@@ -1610,6 +1732,7 @@ class QuestPlanner:
         twin.ordering = self.ordering
         twin._by_type = self._by_type
         twin.tracker = ObsTracker()
+        twin.plan_stack = PlanStack(self.plan_stack.as_dict().get("goals"))
         return twin
 
     def _plannable(self, quest_id: int) -> bool:

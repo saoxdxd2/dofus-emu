@@ -94,7 +94,9 @@ class World:
                  max_steps: int = 2000, kb_limit: Optional[int] = None,
                  noise: bool = False, action_fail: float = 0.15,
                  obs_lag: float = 0.20, obs_drop: float = 0.10,
-                 travel_cost: bool = False) -> None:
+                 travel_cost: bool = False, start_kamas: int = 5000,
+                 random_start_map: bool = False,
+                 start_map: Optional[int] = None) -> None:
         self.rng = random.Random(seed)
         raw = _load("quests_full.json")
         if kb_limit:
@@ -123,15 +125,25 @@ class World:
         # first objectives are often deliveries with no map, that never happened. The
         # agent was not failing to plan; it was standing in the void. Start on the
         # lowest-numbered quest's start map, which is a real map from the KB.
-        for _q in sorted(self.quests.values(), key=lambda x: x.id):
-            if _q.start_map:
-                self.map_id = int(_q.start_map)
-                break
+        if start_map is not None:
+            self.map_id = int(start_map)
+        elif random_start_map:
+            starts = [int(q.start_map) for q in self.quests.values() if q.start_map]
+            if starts:
+                self.map_id = self.rng.choice(sorted(starts))
+        else:
+            for _q in sorted(self.quests.values(), key=lambda x: x.id):
+                if _q.start_map:
+                    self.map_id = int(_q.start_map)
+                    break
         # The places the character has stood on. A generic "discover a map"
         # objective is satisfied by the first crossing to a map not in this set;
         # named objectives are still matched by id.
         self.visited: Set[int] = {int(self.map_id)} if self.map_id else set()
-        self.kamas = 5000
+        # A live level-3 tutorial character starts with 0 kamas. The fixed 5,000
+        # made every harness state sit at the top of the `kamas` feature range;
+        # this knob lets the corpus cover the poor-start half.
+        self.kamas = max(0, int(start_kamas))
         self.inventory: Dict[int, int] = {}
         self.capacity = DEFAULT_CAPACITY
         self.quests_done: Set[int] = set()
@@ -282,7 +294,6 @@ class World:
                     "map_id": self._required_map(o),
                     "done": key in self.objectives_done,
                 })
-        offer = self.offer_here()
         return {
             "level": self.level,
             "map_id": self.map_id,
@@ -290,12 +301,11 @@ class World:
             # discovery objective plannable: its text names no destination, so the
             # only actionable move is crossing one of these edges.
             "map": {"map_id": self.map_id, "cell": None, "exits": self.exits()},
-            # What the page publishes when an NPC is offering a quest (G32). `open: false`
-            # is the shape a real snapshot carries when nothing is open, so the harness now
-            # reports the same field a live client does instead of omitting it.
-            "dialog": ({"open": True, "start_quest": offer.id, "npc_id": offer.start_npc,
-                        "replies": [], "reply_count": 0}
-                       if offer is not None else {"open": False}),
+            # A dialog is open only after a talk, as in the client. Reporting an offer
+            # merely because the character stands on the quest's start map made the
+            # planner accept a new quest every few steps and cost 37 completions
+            # (119 -> 82). The harness reports its known ids via `_client_quests`.
+            "dialog": {"open": False},
             "kamas": self.kamas,
             "inventory": dict(self.inventory),
             "inventory_capacity": self.capacity,

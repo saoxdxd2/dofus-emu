@@ -6,7 +6,7 @@ No client, no network, no torch, no onnxruntime. It runs the REAL code paths:
   * the verifier rule engine (all four verdicts, nested-alias changes, the
     ready_objectives claim-proof, read-only-as-advanced),
   * the schema / capability / feature tool vocabulary (they must be one set,
-    and hdv.buy must stay absent and forbidden),
+    and the 25-tool research vocabulary must include hdv.buy),
   * the objective-type buckets,
   * the JS page suites, by delegating to ``node tools/test_*.js``,
   * the bundle map-transition resilience rules, by delegating to
@@ -204,24 +204,243 @@ def test_tool_vocabulary() -> None:
 
     reg_ids = features.tool_registry()
 
-    check("schema declares 21 tools", len(tool_names) == 21, len(tool_names))
-    check("capabilities.json lists 21 tools", len(caps_ids) == 21, len(caps_ids))
+    check("schema declares 25 tools", len(tool_names) == 25, len(tool_names))
+    check("capabilities.json lists 25 tools", len(caps_ids) == 25, len(caps_ids))
     check("features.tool_registry lists the same set as the schema",
           set(reg_ids) == set(tool_names), (sorted(set(reg_ids) ^ set(tool_names))))
     check("capabilities.json matches the schema set",
           set(caps_ids) == set(tool_names), (sorted(set(caps_ids) ^ set(tool_names))))
     check("no duplicate tool ids", len(set(tool_names)) == len(tool_names))
-    check("hdv.buy is not in the schema (purchases are forbidden)",
-          "hdv.buy" not in tool_names)
+    for name in ("hdv.buy", "inv.equip", "hdv.prices", "tap.interactive"):
+        check(name + " is in the schema", name in tool_names)
+    from agent.verifier import READ_ONLY_TOOLS
+    check("hdv.prices is read-only", "hdv.prices" in READ_ONLY_TOOLS)
+
+
+def test_plan_stack() -> None:
+    from agent.plan_stack import MAX_BYTES, PlanStack, child_for_objective
+
+    section("Sub-goal stack (precondition decomposition)")
+    stack = PlanStack()
+    stack.push("objective", {"quest_id": 1})
+    stack.push("goto_npc", {"npc_id": 3888}, parent="objective")
+    top = stack.pop()
+    check("push/pop is LIFO", top is not None and top.kind == "goto_npc", top)
+    check("the parent remains after a child pops",
+          stack.top() is not None and stack.top().kind == "objective")
+    stack.clear()
+    for index in range(40):
+        stack.push("goal", {"i": index})
+    check("the stack is bounded", len(stack) == 16, len(stack))
+    check("the stack stays under 2 KB", stack.size_bytes() <= MAX_BYTES,
+          stack.size_bytes())
+
+    talk = {"type_id": 1, "npc_id": 3888, "params": {"parameter0": 3888},
+            "text": "talk"}
+    empty_map = {"map": {"npcs": [], "groups": [], "exits": []}, "inventory": {}}
+    child = child_for_objective(talk, empty_map)
+    check("a talk with the NPC elsewhere decomposes to goto_npc",
+          child is not None and child["kind"] == "goto_npc", child)
+    here = {"map": {"npcs": [{"template_id": 3888}], "groups": []}}
+    check("a talk with the NPC on the map needs no child",
+          child_for_objective(talk, here) is None)
+    fight = {"type_id": 6, "text": "kill"}
+    child = child_for_objective(
+        fight, {"map": {"groups": [], "exits": [{"direction": "left"}]}})
+    check("a fight with no group decomposes to explore",
+          child is not None and child["kind"] == "explore", child)
+    equip = {"type_id": 0, "text": "Go and equip your new items"}
+    child = child_for_objective(
+        equip, {"inventory": {"presets": [{"preset_id": 3}]}})
+    check("an equip instruction decomposes to a preset",
+          child is not None and child["args"].get("preset_id") == 3, child)
+
+    from agent.planner import QuestPlanner
+    planner = QuestPlanner()
+    delivery = {"id": 1, "type_id": 2,
+                "params": {"parameter0": 123, "parameter1": 55},
+                "max_completion": 1}
+    priced = {"kamas": 1000, "inventory": {},
+              "prices": [{"gid": 123, "listings": [
+                  {"uid": 77, "price": 400, "quantity": 1}]}]}
+    calls = planner.plan_objective({"id": 1}, 0, delivery, priced)
+    check("a missing delivery item with a cached listing plans hdv.buy",
+          bool(calls) and calls[0].get("tool") == "hdv.buy", calls[:2])
+    check("the buy is bounded by the cached listing price",
+          bool(calls) and calls[0].get("args", {}).get("max_price") == 400,
+          calls[:1])
+    check("the delivery follows the buy",
+          any(call.get("tool") == "quest.advance" for call in calls), calls)
+    unpriced = {"kamas": 1000, "inventory": {}}
+    calls = planner.plan_objective({"id": 1}, 0, delivery, unpriced)
+    check("without a cached listing it falls back to farming",
+          bool(calls) and calls[0].get("tool") == "farm.start", calls[:2])
+
+    # The child persists until the action advances; a read must not pop it, and
+    # three failures must release it so another decomposition can be chosen.
+    planner = QuestPlanner()
+    equip_obs = {"inventory": {"presets": [{"preset_id": 3}]}, "map": {}}
+    planner.plan_objective({"id": 1}, 0, equip, equip_obs)
+    check("the equip child is persisted on the stack",
+          planner.plan_stack.top() is not None
+          and planner.plan_stack.top().kind == "equip")
+    planner.note_result("state.snapshot", True, "advanced", equip_obs)
+    check("a read does not pop the equip child",
+          planner.plan_stack.top() is not None)
+    planner.note_result("inv.equip", True, "advanced", equip_obs)
+    check("an advanced equip pops the child",
+          planner.plan_stack.top() is None)
+    planner.plan_objective({"id": 1}, 0, equip, equip_obs)
+    for _ in range(3):
+        planner.note_result("inv.equip", True, "noop", equip_obs)
+    check("three failed attempts release the child",
+          planner.plan_stack.top() is None)
+
+
+def test_shared_resources() -> None:
+    import threading
+
+    from agent.knowledge_context import load_default_store
+
+    section("shared daemon resources")
+    first = load_default_store()
+    second = load_default_store()
+    check("the canonical store is cached per path",
+          first is not None and first is second)
+    if first is not None:
+        errors: List[BaseException] = []
+
+        def read_meta() -> None:
+            try:
+                first.meta()
+            except BaseException as exc:  # noqa: BLE001 - report, do not hide
+                errors.append(exc)
+
+        threads = [threading.Thread(target=read_meta) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        check("the cached store reads across worker threads",
+              not errors, errors[:2])
+
+    model = REPO_ROOT / "models" / "tool_policy.onnx"
+    try:
+        from agent.model_cache import onnx_session
+    except ImportError:
+        print("   SKIP: onnxruntime not installed")
+        return
+    if not model.is_file():
+        print("   SKIP: tool_policy.onnx not present")
+        return
+    one = onnx_session(str(model))
+    two = onnx_session(str(model))
+    check("one ONNX session per model path", one is two)
+
+
+def test_brain_scaling_40() -> None:
+    section("Brain daemon scaling (dynamic instances, shared graph)")
+    import tempfile
+
+    from agent.planner import QuestPlanner
+    from agent.brain_daemon import BrainDaemon
+
+    one = QuestPlanner(level_hint=60)
+    two = QuestPlanner(level_hint=60)
+    check("planners share one quest graph instead of copying 21.8 MB each",
+          one.quests is two.quests, (len(one.quests), len(two.quests)))
+    check("the shared graph still carries the curriculum",
+          len(one.quests) >= 1900, len(one.quests))
+
+    class _Pilot:
+        def __init__(self, instance: str, root: Path):
+            self.goals = ["auto"]
+            self.log_path = root / ("autopilot.%s.jsonl" % instance)
+            self.stop_file = root / ("AUTOPILOT_STOP.%s" % instance)
+
+        def run(self) -> Dict[str, Any]:
+            return {"steps": 0, "instance": self.log_path.stem}
+
+        def stop_client(self) -> None:
+            return None
+
+    with tempfile.TemporaryDirectory(prefix="brain-40-") as tmp:
+        root = Path(tmp)
+        daemon = BrainDaemon(log_dir=root, recorder_dir=root)
+        daemon._make_pilot = lambda instance, config: _Pilot(instance, root)
+        names = ["dofus-%02d" % i for i in range(1, 41)]
+        started = daemon.start({"instances": names, "steps": 0, "dry_run": True})
+        check("40 instances are accepted with no hard cap",
+              started.get("ok") is True and len(started.get("instances") or []) == 40,
+              started.get("error") or len(started.get("instances") or []))
+        for item in list(daemon._instances.values()):
+            if item.thread is not None:
+                item.thread.join(timeout=10)
+        health = daemon.health()
+        check("the daemon counts all 40 instance states",
+              health.get("instances") == 40, health)
+        check("none of the 40 loops is left running",
+              not health.get("active"), health.get("active"))
+        check("one daemon lock covers the whole farm, not one per instance",
+              json.loads((root / "brain.lock").read_text(encoding="utf-8"))
+              .get("instances") == [], "brain.lock")
+        check("40 status rows stay small enough for a server",
+              sum(len(json.dumps(item.status())) for item in daemon._instances.values())
+              < 40000, sum(len(json.dumps(item.status()))
+                           for item in daemon._instances.values()))
+
+
+def test_constraint_corpus() -> None:
+    from agent.constraint_corpus import (_generated_cases,
+                                         check as check_constraints,
+                                         manifest_for, measure)
+    from agent.schema import tool_names
+
+    section("Constraint corpus (every tool x failure mode)")
+    failures, manifest = check_constraints()
+    check("all constraint cases route to the expected cause/action",
+          not failures, failures[:3])
+    check("every tool has a constraint case",
+          not manifest["missing_tools"], manifest["missing_tools"])
+    check("every controller cause is exercised",
+          not manifest["missing_causes"], manifest["missing_causes"])
+    check("unknown is exceptional, not the default",
+          manifest["causes"].get("unknown", 0) <= 1,
+          manifest["causes"].get("unknown", 0))
+
+    rows = _generated_cases()
+    gen_failures, agreement = measure(rows)
+    gen_manifest = manifest_for(rows, "constraint_synthetic", agreement)
+    check("the synthetic corpus has at least 2,500 rows",
+          len(rows) >= 2500, len(rows))
+    check("every one of the 25 tools has at least 50 rows",
+          all(gen_manifest["tools"].get(tool, 0) >= 50
+              for tool in tool_names()),
+          {tool: gen_manifest["tools"].get(tool, 0) for tool in tool_names()})
+    check("all eight causes are represented",
+          not gen_manifest["missing_causes"], gen_manifest["missing_causes"])
+    check("synthetic cause agreement is at least 95%",
+          agreement["cause"] >= 0.95, agreement)
+    check("synthetic action agreement is at least 90%",
+          agreement["action"] >= 0.90, agreement)
+    check("the synthetic corpus routes every row as expected",
+          not gen_failures, gen_failures[:6])
 
 
 def test_forbidden_and_validation() -> None:
     from agent.autopilot import FORBIDDEN_TOOLS
     from agent import schema
 
-    section("safety gates")
-    check("the purchase ban is exactly hdv.buy",
-          set(FORBIDDEN_TOOLS) == {"hdv.buy"}, sorted(FORBIDDEN_TOOLS))
+    section("guards")
+    check("FORBIDDEN_TOOLS is empty", not FORBIDDEN_TOOLS, sorted(FORBIDDEN_TOOLS))
+
+    ok_buy, buy_error = schema.validate_call(
+        "hdv.buy", {"gid": 1, "quantity": 1, "max_price": 10})
+    check("hdv.buy validates with an explicit max price", ok_buy is True, buy_error)
+    ok_equip, equip_error = schema.validate_call("inv.equip", {"preset_id": 1})
+    check("inv.equip validates with a preset id", ok_equip is True, equip_error)
+    ok_tap, tap_error = schema.validate_call("tap.interactive", {"element_id": 1})
+    check("tap.interactive validates with an element id", ok_tap is True, tap_error)
 
     ok_unknown, _ = schema.validate_call("definitely.not.a.tool", {})
     check("validate_call rejects an unknown tool", ok_unknown is False, ok_unknown)
@@ -853,6 +1072,15 @@ def test_thinking_layer() -> None:
     check("it enumerated at least one proposal", calls >= 1, calls)
 
 
+def test_combat_suites() -> None:
+    section("Combat suites (delegated, so '892 checks' includes them)")
+    for module in ("combat.test_battle_solver", "combat.test_grid_model"):
+        proc = subprocess.run([sys.executable, "-m", module], cwd=str(REPO_ROOT),
+                              capture_output=True, text=True, timeout=300)
+        check("%s passes" % module, proc.returncode == 0,
+              (proc.stderr or proc.stdout).strip()[-300:])
+
+
 def test_go_relay_suites() -> None:
     section("Go relay tests (delegated to go, criterion 6)")
     if not shutil.which("go"):
@@ -892,6 +1120,7 @@ def test_js_page_suites() -> None:
                    "tools/test_quest_accept.js",
                    "tools/test_quest_catalog.js",
                    "tools/test_page_build.js",
+                   "tools/test_research_tools.js",
                    "tools/test_session_login.js",
                    "tools/test_transition_watchdog.js",
                    "tools/test_fight_planner.js",
@@ -1078,6 +1307,21 @@ def test_failure_causes() -> None:
         ("refused: fight blocked - no monster group on the current map",
          "fight.join", "wrong_target"),
         ("target monster 715354 is not on this map", "farm.start", "wrong_target"),
+        ("map 698953 is not adjacent to 147063812", "nav.goto", "wrong_target"),
+        ("hdv.buy needs max_price (or an explicit price) so the purchase is bounded",
+         "hdv.buy", "invalid_assumption"),
+        ("hdv.buy found no cached listing at or below max_price; run hdv.scan on this item first",
+         "hdv.buy", "stale_state"),
+        ("hdv.buy refused: listing price is above max_price", "hdv.buy",
+         "invalid_assumption"),
+        ("inv.equip needs a saved preset id; direct object_uid equip is not proven",
+         "inv.equip", "invalid_assumption"),
+        ("no visible interactive element matches the requested id/cell/skill",
+         "tap.interactive", "wrong_target"),
+        ("interactive element 4491 has no skillInstanceUid; pass skill_uid",
+         "tap.interactive", "invalid_assumption"),
+        ("no live fight board: the client is not in a fight", "fight.plan",
+         "unavailable"),
     )
     for text, tool, want in live:
         got = Controller.cause_of("failed", tool, False, text, {"map_id": 1}, {"map_id": 1})
@@ -2297,6 +2541,15 @@ def test_kaggle_toolkit_sync() -> None:
     check("after write the plan has no drift",
           sync.drift(sync.plan(root, toolkit)) == [])
 
+    # The live tree, not only the fixture: G10 reopened because the checked-in
+    # mirror was hand-edited while the harness moved on.
+    live_root = REPO_ROOT
+    live_toolkit = REPO_ROOT / "kaggle" / "toolkit"
+    if live_toolkit.is_dir():
+        live_drift = sync.drift(sync.plan(live_root, live_toolkit))
+        check("the checked-in Kaggle toolkit matches the harness",
+              not live_drift, [item["path"] for item in live_drift][:8])
+
 
 def test_quest_chain_replay() -> None:
     section("Quest chain replay (G29+G33: offer -> accept -> plan -> next offer)")
@@ -2478,9 +2731,9 @@ def test_live_ready() -> None:
     check("the last recorded build is the last, not the first",
           ready.last_log_build(log_with("2026-10-27a")) == "2026-10-27a",
           ready.last_log_build(log_with("2026-10-27a")))
-    check("the repo page carries the 2026-10-27q build",
+    check("the repo page carries the 2026-10-27s build",
           ready.page_build(REPO_ROOT.parent / "scripts" / "mobile-disguise.js")
-          == "2026-10-27q")
+          == "2026-10-27s")
 
 
 def test_sim_planner_runs() -> None:
@@ -2493,17 +2746,30 @@ def test_sim_planner_runs() -> None:
 
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        code = sim_run.main(["--policy", "planner", "--steps", "30", "--seed", "1"])
+        code = sim_run.main(["--policy", "planner", "--level", "60",
+                             "--steps", "400", "--seed", "7"])
     text = buffer.getvalue()
     at = text.find("{")
     payload = _json.loads(text[at:]) if at >= 0 else {}
     check("the rule planner completes steps in the simulator",
           code == 0 and payload.get("steps", 0) > 0, text[-200:])
-    check("and completes quests instead of stopping at step 0",
-          payload.get("quests", 0) > 0, payload)
+    # The teacher's measured floor. 119 quests / 148 objectives was the last known
+    # good state (2026-10-24). A simulator that only checks "> 0" hid a 119 -> 82
+    # regression for a day, so the floor is pinned here.
+    check("the teacher completes at least 119 quests in 400 steps",
+          payload.get("quests", 0) >= 119, payload)
+    check("and does not loop (max_repeat <= 3, not stalled)",
+          payload.get("max_repeat", 99) <= 3 and payload.get("stalled") is False,
+          payload)
     check("the simulator seeds the client's offered quests for the planner",
           "_client_quests |= set(policy._curriculum" in
           inspect.getsource(sim_run.main), "the G31 guard would end every run at 0")
+    # Standing on a quest-start map is not a dialog. The simulator published an open
+    # offer there once, and the planner spent the run accepting instead of acting.
+    from sim.world import World
+    obs = World(level=60, seed=7).observe()
+    check("standing on a start map does not invent an open dialog",
+          (obs.get("dialog") or {}).get("open") is False, obs.get("dialog"))
 
 
 def test_command_parser() -> None:
@@ -4309,6 +4575,100 @@ def test_dialog_label_reader() -> None:
               wire[10]["sends"] == 1, str(wire[10]))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_planner_buy_branch() -> None:
+    section("Planner buy branch (server-sent prices, bounded price, farm fallback)")
+    from agent.planner import QuestPlanner
+
+    item, npc, quest_id = 1234, 3888, 999
+    obj = {"id": 7, "type_id": 3,
+           "params": {"parameter0": npc, "parameter1": item},
+           "map_id": 1}
+    quest = {"id": quest_id, "steps": [{"id": 1, "objectives": [obj]}]}
+    planner = QuestPlanner(level_hint=60)
+    base = {"map_id": 1, "cell": 1, "inventory": {}, "inventory_capacity": 40,
+            "kamas": 100, "current_objective": {"quest_id": quest_id, "objective_id": 7}}
+    prices = [{"gid": item, "listings": [
+        {"uid": 90, "price": 30, "quantity": 1},
+        {"uid": 77, "price": 10, "quantity": 2},
+    ]}]
+
+    calls = planner.plan_objective(quest, 0, obj, dict(base, prices=prices))
+    first = calls[0] if calls else {}
+    check("a delivery whose item is missing and affordable buys it",
+          first.get("tool") == "hdv.buy", first)
+    check("the buy uses the cheapest server-sent listing and its uid",
+          (first.get("args") or {}).get("uid") == 77
+          and (first.get("args") or {}).get("gid") == item
+          and (first.get("args") or {}).get("max_price") == 10, first.get("args"))
+    check("the buy is bounded by the max_price the listing carried",
+          (first.get("args") or {}).get("max_price") == 10, first.get("args"))
+
+    calls = planner.plan_objective(quest, 0, obj, dict(base, kamas=5, prices=prices))
+    check("an unaffordable listing falls back to farming, never to a blind buy",
+          calls and calls[0].get("tool") == "farm.start"
+          and calls[0].get("args", {}).get("resource") == item, calls[:2])
+
+    calls = planner.plan_objective(quest, 0, obj, dict(base))
+    check("no cached price falls back to farming rather than inventing one",
+          calls and calls[0].get("tool") == "farm.start", calls[:2])
+
+    calls = planner.plan_objective(quest, 0, obj, dict(base, inventory={str(item): 1}))
+    check("an item already in the bag is delivered, not bought or farmed",
+          calls and calls[0].get("tool") == "quest.advance"
+          and calls[0].get("args", {}).get("npc_id") == npc, calls[:2])
+
+
+def test_cause_head_artifact() -> None:
+    section("Cause head artifact (rule-distilled, synthetic gate only)")
+    path = REPO_ROOT / "models" / "cause_head.json"
+    if not path.is_file():
+        print("   SKIP: models/cause_head.json not present")
+        return
+    import json as _json
+    metrics = _json.loads(path.read_text(encoding="utf-8"))
+    val = metrics.get("val") or {}
+    check("the cause head's held-out metrics are recorded",
+          int(val.get("n") or 0) > 0, val)
+    check("the cause head clears its synthetic gate (>=0.85 acc, <0.15 ECE)",
+          float(val.get("accuracy") or 0.0) >= 0.85
+          and float(val.get("ece") or 1.0) < 0.15, val)
+    check("the MLP-alone result is not hidden by the ensemble",
+          "mlp_val" in metrics and "ensemble" in metrics,
+          sorted(metrics))
+    check("the cause head is labelled rule-distilled, not live",
+          "live=false" in str(metrics.get("labels") or ""), metrics.get("labels"))
+    proto = Path(str(metrics.get("prototypes_path") or ""))
+    check("the retrieval half of the ensemble is stored", proto.is_file(), str(proto))
+    check("nothing auto-loads the cause head into the controller",
+          not (REPO_ROOT / "agent" / "controller.py").read_text(
+              encoding="utf-8", errors="replace").count("cause_head"),
+          "controller.py mentions cause_head")
+
+
+def test_always_on_ai() -> None:
+    section("Always-on AI (every launched client is driven without a Start press)")
+    def read(name: str) -> str:
+        path = ROOT / "desktop" / name
+        return code_only(path.read_text(encoding="utf-8", errors="replace")) if path.is_file() else ""
+
+    runtime = read("runtimesettings.cs")
+    check("always-on AI is a persisted runtime setting, default on",
+          "public bool AutoAi = true;" in runtime and 'Same(key, "auto_ai")' in runtime
+          and 'AppendLine("auto_ai=' in runtime, runtime[:80])
+    form = read("mainform.cs")
+    check("a launched WebView2 client is adopted automatically",
+          "AutoStartAi(inst.Name)" in form)
+    check("a launched emulator client is adopted automatically",
+          "AutoStartAi(im.Name)" in form and "AutoStartAi(slotName)" in form)
+    check("clients already running when the app starts are adopted once",
+          "_autoAiBootstrapped" in form and "AutoStartAi(im.Name)" in form)
+    panel = read("pages.cs")
+    check("the setting has a UI switch", "_chkAutoAi" in panel)
+    brain = read("aipanel.cs")
+    check("adoption starts one instance, never the whole farm by surprise",
+          "public void StartInstance(string instanceId, bool force)" in brain)
 
 
 def test_brain_autostart() -> None:
@@ -6144,6 +6504,10 @@ def run() -> Tuple[int, List[str]]:
     test_verifier_model_contract()
     test_tool_vocabulary()
     test_forbidden_and_validation()
+    test_plan_stack()
+    test_shared_resources()
+    test_brain_scaling_40()
+    test_constraint_corpus()
     test_objective_buckets()
     test_objective_parameter_table()
     test_knowledge_identity()
@@ -6159,6 +6523,7 @@ def run() -> Tuple[int, List[str]]:
     test_identity_binding()
     test_live_witnesses()
     test_verifier_head_gate()
+    test_cause_head_artifact()
     test_observation_text()
     test_kaggle_toolkit_sync()
     test_quest_chain_replay()
@@ -6186,6 +6551,8 @@ def run() -> Tuple[int, List[str]]:
     test_observed_quest_ingest()
     test_dialog_label_reader()
     test_brain_autostart()
+    test_planner_buy_branch()
+    test_always_on_ai()
     test_brain_readiness()
     test_board_replay()
     test_group_scan_reader()
@@ -6207,6 +6574,7 @@ def run() -> Tuple[int, List[str]]:
     test_fight_rotation()
     test_tutorial_hold()
     test_auto_live_summarise()
+    test_combat_suites()
     test_go_relay_suites()
     return _CHECKS, _FAILURES
 

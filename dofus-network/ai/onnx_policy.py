@@ -185,9 +185,10 @@ class OnnxEncoder:
         options.intra_op_num_threads = threads
         options.inter_op_num_threads = 1
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        from agent.model_cache import onnx_session
+
         started = time.perf_counter()
-        self.session = ort.InferenceSession(
-            str(onnx_path), sess_options=options, providers=["CPUExecutionProvider"])
+        self.session = onnx_session(str(onnx_path), sess_options=options)
         self.load_ms = (time.perf_counter() - started) * 1000.0
 
     def _id(self, token: str) -> int:

@@ -201,9 +201,12 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
             travel_cost: bool = False,
             ordering: str = "step",
             behavior: str = "teacher",
-            model: Optional[Path] = None) -> List[Dict[str, Any]]:
+            model: Optional[Path] = None,
+            start_kamas: int = 5000,
+            random_start_map: bool = False) -> List[Dict[str, Any]]:
     world = World(level=level, seed=seed, max_steps=steps, noise=noise,
-                  travel_cost=travel_cost)
+                  travel_cost=travel_cost, start_kamas=start_kamas,
+                  random_start_map=random_start_map)
     # Stand the character on an NPC that offers a quest of the focused type. G31 only lets the
     # planner start an id the client reported, and the harness reports an offer through the
     # dialog link, so an episode that begins in the middle of nowhere can never accept anything.
@@ -228,6 +231,10 @@ def episode(level: int, steps: int, seed: int, rng: random.Random,
     else:
         planner = QuestPlanner(level_hint=level, curriculum="random", seed=seed,
                                focus=focus, ordering=ordering)
+    # The harness is a client too. It reports the ids it is about to offer in the same
+    # way `sim/run.py` does, instead of the simulator claiming a dialog is already open
+    # on the start map (that lie let the planner skip the objective loop: 119->82).
+    planner._client_quests |= {q.id for q in world.quests.values()}
     rows: List[Dict[str, Any]] = []
 
     for _ in range(steps):
@@ -318,7 +325,9 @@ def _parallel(args: argparse.Namespace) -> int:
         if args.travel_cost:
             cmd.append("--travel-cost")
         cmd += ["--ordering", args.ordering, "--val-every", str(args.val_every),
-                "--behavior", args.behavior]
+                "--behavior", args.behavior, "--kamas", str(args.kamas)]
+        if args.random_start_map:
+            cmd += ["--random-start-map"]
         if args.model:
             cmd += ["--model", str(args.model)]
         if deadline:
@@ -409,6 +418,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          "instead puts the tail of a trajectory in val while its "
                          "head is in train, so the reported score measures memory "
                          "of that episode, not generalisation")
+    ap.add_argument("--kamas", type=int, default=5000,
+                    help="starting kamas; 0 covers the poor-start live states")
+    ap.add_argument("--random-start-map", action="store_true",
+                    help="start on a random quest-start map instead of the lowest id")
     args = ap.parse_args(argv)
 
     if args.parallel > 1:
@@ -426,7 +439,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         focus = focus_cycle[i % len(focus_cycle)] if focus_cycle else None
         rows = episode(level, args.steps, args.seed + i, rng, args.noise,
                        args.depth, focus, args.score, args.travel_cost,
-                       args.ordering, args.behavior, args.model)
+                       args.ordering, args.behavior, args.model,
+                       args.kamas, args.random_start_map)
         name = "val" if (i + 1) % max(1, args.val_every) == 0 else "train"
         parts[name].extend(rows)
 

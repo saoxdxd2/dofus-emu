@@ -77,15 +77,15 @@ def decode_slots(text: str, offsets: Sequence[Tuple[int, int]], tags: Sequence[i
 class CommandOnnxModel:
     def __init__(self, config_path: Path) -> None:
         import numpy as np
-        import onnxruntime as ort
         from tokenizers import Tokenizer
 
         self.np = np
         self.config = json.loads(Path(config_path).read_text(encoding="utf-8"))
         base = Path(config_path).parent
         self.tokenizer = Tokenizer.from_file(str(base / self.config["tokenizer"]))
-        self.session = ort.InferenceSession(str(base / self.config["onnx"]),
-                                            providers=["CPUExecutionProvider"])
+        from agent.model_cache import onnx_session
+
+        self.session = onnx_session(str(base / self.config["onnx"]))
         self.intents = self.config["intents"]
         self.actions = self.config["actions"]
         self.tags = self.config["tags"]

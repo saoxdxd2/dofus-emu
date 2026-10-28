@@ -5,11 +5,6 @@ packet through a local proxy that never leaks your address, and drives the game
 with a small language model plus a deterministic planner — including an
 autonomous loop that chooses its own actions and labels the outcome.
 
-Nothing here is affiliated with Ankama. It is a personal automation project: the
-client is the real one, the account is yours, and everything it does is something
-a human could do by hand. Use it at your own risk, on accounts you are willing to
-lose.
-
 ---
 
 ## Table of contents
@@ -50,18 +45,6 @@ Five things, in one process tree:
 The client is not an emulator. There is no Android, no APK, no QEMU in the
 default build: the Cordova bundle is served over a local origin (`dofus.local`),
 Edge renders it, and a shim makes the browser look like an Android phone.
-
-### What it deliberately will not do
-
-* **Buy on the market.** `hdv.buy` is in `FORBIDDEN_TOOLS`. Spending money on a
-  listing is irreversible and there is no undo.
-* **Invent a price.** A listing without an explicit integer price is refused
-  before it reaches the client.
-* **Count a listing as revenue.** Putting an item on the market is controllable;
-  *someone buying it* is not. A successful `hdv.list` is recorded as
-  `listing_open` with an expected fill time, never as kamas earned.
-* **Dial direct when the proxy is down.** Fail-closed is the default, at launch
-  and at dial time. `direct` is a mode you have to choose on purpose.
 
 ---
 
@@ -659,23 +642,27 @@ Training runs offline on Kaggle; `--resume` continues from a checkpoint, and
 
 ## 10. The agent loop and the second agent
 
-### 10.1 Tools (21, closed vocabulary)
+### 10.1 Tools (25, research vocabulary)
 
-Runtime order is `data/capabilities.json`. `hdv.buy` is **not** in the vocabulary —
-buying is irreversible and is banned at runtime too (`FORBIDDEN_TOOLS`).
+Runtime order is `data/capabilities.json`. The 2026-10-27 research unlock added
+`hdv.buy`, `inv.equip`, `hdv.prices` and `tap.interactive`; the old
+`FORBIDDEN_TOOLS` set is empty. The shipped 49K policy still has 21 trained logits,
+so the four new tools are rule-only until the head is retrained.
 
 | tool | backend | tool | backend |
 |---|---|---|---|
 | `knowledge.search` | local | `inv.sell` | directive |
-| `quest.list` | local | `hdv.scan` | directive |
-| `knowledge.remember` | local | `hdv.list` | directive |
-| `knowledge.forget` | local | `chat.say` | directive |
-| `fight.plan` | local | `state.snapshot` | directive |
-| `fight.estimate` | local | `safe.stop` | directive |
-| `nav.goto` † | directive | `fight.state` | directive |
-| `nav.follow` | directive | `quest.advance` | directive |
-| `farm.start` | directive | `farm.stop` | directive |
-| `fight.join` | directive | `fight.pass` | directive |
+| `quest.list` | local | `inv.equip` | directive |
+| `knowledge.remember` | local | `hdv.scan` | directive |
+| `knowledge.forget` | local | `hdv.list` | directive |
+| `fight.plan` | local | `hdv.buy` | directive |
+| `fight.estimate` | local | `hdv.prices` | directive |
+| `nav.goto` † | directive | `chat.say` | directive |
+| `nav.follow` | directive | `state.snapshot` | directive |
+| `farm.start` | directive | `safe.stop` | directive |
+| `farm.stop` | directive | `fight.state` | directive |
+| `fight.join` | directive | `quest.advance` | directive |
+| `fight.pass` | directive | `tap.interactive` | directive |
 | `inv.list` | directive | | |
 
 † `nav.goto` is a directive, but its name→map resolution is answered by the
@@ -946,9 +933,9 @@ python -m advisor selftest
 
 > The previous three-command gate — `agent.smoke_verifier`, `agent.selftest`,
 > `networkhealth.selftest` — no longer exists; all three were removed 2026-10-25.
-> `agent.regression` (276 checks) rebuilds the loop/verifier contract (verdicts,
-> nested-alias changes, the claim-proof, tool-vocabulary equality, the `hdv.buy`
-> ban, dialog question tie-break, prompt/named-mob fidelity, the verifier-model
+> `agent.regression` rebuilds the loop/verifier contract (verdicts,
+> nested-alias changes, the claim-proof, the 25-tool vocabulary equality, dialog
+> question tie-break, prompt/named-mob fidelity, the verifier-model
 > guard, the recovery layer's no-repeat/terminate invariant, the failure-cause
 > labels, absent-client rescue, repair credit, idle waits, dialog outcome labels, the baseline report itself and the settle window) and
 > delegates the JS
@@ -966,7 +953,6 @@ python -m advisor selftest
 * **Guest accounts die on update.** They are server-side; the update wipes them.
 * **The pool is public proxies.** They are slow, shared, and die often. `Scan
   proxies.txt` prunes them; nothing here makes a free proxy reliable.
-* **`hdv.buy` is disabled.** Deliberate, see §1.
 * **The verifier head is not a learned improvement yet.** The GUI auto-loads
   `verifier_head.onnx`, but its 1.0 accuracy is circular (rule labels on rule
   features), so it clones the rules rather than adding signal; read-only tools are
@@ -983,11 +969,11 @@ python -m advisor selftest
 
 | file | what is in it |
 |---|---|
-| `dofus-network/docs/CURRENT.md` | **the running-system map** — services/ports, the 7-stage loop, think-token pacing, model inventory, combat pipeline, the 21 tools |
+| `dofus-network/docs/CURRENT.md` | **the running-system map** — services/ports, the 7-stage loop, think-token pacing, model inventory, combat pipeline, the 25 tools |
 | `dofus-network/docs/KNOWN_GAPS.md` | **honest limits** — no keep-alive (INACTIVITY), no equip tool, dialog text unread, no vision, forecaster dark, live fight unverified, tests gone |
 | `dofus-network/docs/PLAN.md` | the authoritative plan and phase list (single status source) |
 | `dofus-network/docs/PROJECT_LOG.md` | every decision (D1–D21) with the falsifier |
-| `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, why no token CoT (note: `hdv.buy` recommendation is now forbidden) |
+| `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, why no token CoT |
 | `dofus-network/docs/SECOND_AGENT.md` | the verifier: design and how it was meant to be tested (test gate removed — see KNOWN_GAPS G8) |
 | `dofus-network/docs/AGENT2_DESIGN.md` | earlier second-agent design (superseded by AGENT3_PLAN) |
 | `dofus-network/docs/AGENT3_PLAN.md` | the current second-agent plan (design, not shipped) |
