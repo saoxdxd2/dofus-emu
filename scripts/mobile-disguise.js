@@ -28,7 +28,7 @@
     // injected page changes: a client that was not fully restarted keeps the previous
     // script, and a recorded observation is how that becomes visible instead of looking
     // like a fix that does not work.
-    var AGENT_BUILD = '2026-10-27s';
+    var AGENT_BUILD = '2026-10-29bg';
 
     // The client's inactivity countdown lives in ONE object -- the tracker whose
     // `_checkActivity` warns at 5 min idle and then calls
@@ -126,6 +126,20 @@
             rec.failed += 1;
         }
         return false;
+    };
+
+    // Is this client actually in the game world? Cheap identity check used where a
+    // missing position is meaningful (the keep-alive must not fire at the login
+    // screen). The same shape the snapshot reads: playerData.position.mapId.
+    var _agentInWorld = function () {
+        try {
+            var pd = window.gui && window.gui.playerData;
+            var pos = pd && pd.position;
+            var mapId = pos && Number(pos.mapId);
+            return !!(isFinite(mapId) && mapId > 0);
+        } catch (e) {
+            return false;
+        }
     };
 
     // The client measures the viewport once, at document creation, and never re-fits
@@ -1493,6 +1507,42 @@
                 this.setEnabled(!this.enabled);
             },
 
+            // Spend unspent points on the automated path. Only while this bot is
+            // driving and never mid-fight; `char.build` owns the actual choice.
+            autoBuild: function() {
+                if (!this.enabled || this.state.inFight) return null;
+                if (this._lastBuildAt && Date.now() - this._lastBuildAt < 60000) return null;
+                var chc = null, level = null;
+                try {
+                    var pd = window.gui.playerData;
+                    chc = pd.characters.mainCharacter.characteristics;
+                    level = Number(pd.characterBaseInformations
+                        && pd.characterBaseInformations.level) || null;
+                } catch (e) { return null; }
+                var stats = Number(chc.statsPoints);
+                var spells = Number(chc.spellsPoints);
+                if (!(stats > 0) && !(spells > 0)) return null;
+                // A rank the server refused at this character level is not asked
+                // again: the spell cap moves only on a level-up, so repeating the
+                // same request is one wasted packet every minute.
+                var ask = this._spellAsk;
+                var spellAllowed = !(ask && ask.level === level
+                    && Date.now() - ask.at < 600000);
+                if (!(stats > 0) && !spellAllowed) return null;
+                this._lastBuildAt = Date.now();
+                try {
+                    var res = _agentHandlers['char.build']({
+                        stats: stats > 0, spells: spellAllowed });
+                    var data = res && res.data;
+                    if (data && data.spell_rank_requested != null) {
+                        this._spellAsk = { spell: data.spell,
+                            rank: data.spell_rank_requested,
+                            level: level, at: Date.now() };
+                    }
+                    return res;
+                } catch (e) { return null; }
+            },
+
             // -- the badge is the AI button -------------------------------------
             aiRunning: false,
 
@@ -1755,7 +1805,20 @@
                 if (!self._keepAliveTimer) {
                     self._keepAliveTimer = setInterval(function () {
                         if (!self.enabled && !self.aiRunning) return;
+                        // Never at the login screen. The host auto-starts the AI the
+                        // moment an instance launches, so `aiRunning` is already true
+                        // while the guest login is still in progress; the keep-alive
+                        // then flips the client's own activity tracker and its ping
+                        // every 20 s, which keeps the half-open session alive and the
+                        // account "busy" for the next login. A session that is not in
+                        // the world has nothing to keep alive: the login screen does
+                        // its own reconnect and an idle login is reaped by the server.
+                        if (!_agentInWorld()) return;
                         window.__agentMarkActivity('timer');
+                        // Level-up housekeeping rides this timer: an unattended run
+                        // leveling past 10 with 35 points unspent was fighting at
+                        // base stats. Cheap check (two numbers), throttled inside.
+                        try { self.autoBuild(); } catch (e) {}
                     }, 20000);
                 }
 
@@ -1817,11 +1880,17 @@
                                 window.__agentLastDisconnect = { at: Date.now(), reason: why,
                                                                  via: name };
                                 // Only attributes the kick when a claim was sent in the
-                                // last few seconds. A network drop an hour after the
-                                // last validation must not blacklist an objective.
+                                // last few seconds AND the close came from the server.
+                                // A client-side disconnect (INACTIVITY, a timeout) or a
+                                // bare socket loss is not the server answering a
+                                // validation; blaming it permanently retired an
+                                // objective that had actually completed (13950/4262
+                                // validated, then the session ended client-side).
                                 try {
                                     if (window.__agentRecordKick) {
-                                        window.__agentRecordKick('dofus_' + name);
+                                        var sc = window.__agentServerClosing;
+                                        var srv = !!(sc && Date.now() - Number(sc.at || 0) < 5000);
+                                        window.__agentRecordKick('dofus_' + name, why, srv);
                                     }
                                 } catch (e) {}
                                 // console.log, not info: the host captures log lines,
@@ -1872,14 +1941,39 @@
                 // reloads; recording here catches a kick even when the host-side
                 // disconnect wrapper is not the code that fires.
                 try {
-                    cm.on('serverDisconnecting', function () {
+                    cm.on('serverDisconnecting', function (msg) {
+                        // The server has announced the close. This flag is the only
+                        // signal that separates "the server did not like that
+                        // packet" from "the socket dropped": the client answers both
+                        // with dofus.disconnect("SOCKET_LOST").
+                        window.__agentServerClosing = { at: Date.now(),
+                            reason: (msg && msg.reason != null) ? msg.reason : null };
                         if (window.__agentRecordKick) {
-                            window.__agentRecordKick('serverDisconnecting');
+                            window.__agentRecordKick('serverDisconnecting',
+                                (msg && msg.reason != null) ? msg.reason : null, true);
+                        }
+                    });
+                } catch (e) {}
+                // A validation the server accepts is proof the claim was fine.
+                // Clear the signature the close may have written a second earlier,
+                // or one bad attribution would retire a working objective forever.
+                try {
+                    cm.on('QuestObjectiveValidatedMessage', function (msg) {
+                        if (window.__agentClearKick && msg) {
+                            window.__agentClearKick(msg.questId, msg.objectiveId);
                         }
                     });
                 } catch (e) {}
 
                 cm.on('GameFightStartingMessage', function(msg) {
+                    // The ring outlives a fight; the next fight's battle log has to
+                    // start at this message or the damage join re-reads the previous
+                    // fight's casts (measured: fight 137's 194-row log contained fight
+                    // 133's 7041/7051 casts and produced duplicate calibration pairs).
+                    try {
+                        window.__agentBattleRing = [];
+                        window.__agentBattleSigs = {};
+                    } catch (eRing) {}
                     self.state.inFight = true;
                     self.state.myTurn = false;
                     self.state.placement = null;
@@ -1907,6 +2001,202 @@
                     }, self.config.autoReadyDelayMs);
                 });
 
+                // The server's authoritative movement broadcast. A fight move
+                // request that the server refuses is indistinguishable from one
+                // that lands unless this is recorded: the actor cell only changes
+                // on this message, and without it a planner re-sends the same
+                // move every tick until the turn budget expires.
+                try {
+                    cm.on('GameMapMovementMessage', function (msg) {
+                        window.__agentLastServerMovement = { at: Date.now(),
+                            fighter: msg && (msg.id != null ? msg.id : msg.actorId),
+                            cell: msg && (msg.cellId != null ? msg.cellId : msg.cell),
+                            keys: msg && msg.keyMovements ? msg.keyMovements.length : null };
+                    });
+                } catch (e) {}
+
+                // Map-transition diagnostics. A refused ChangeMapMessage is silent:
+                // the client stays put and nothing says why, so a stuck tutorial
+                // step and a missing exit look identical. Record the outgoing
+                // packet stream (names only) and every server answer that can
+                // explain a refusal.
+                try {
+                    // A packet's arguments are diagnostics, not a secret store.
+                    // AuthenticationTicketMessage carries the live session ticket,
+                    // and these rings are persisted to logs and training data. The
+                    // snapshot must never publish a credential-shaped value.
+                    var _agentSecretPacketArg =
+                        /^(ticket|password|pass|secret|token|salt|apikey|api_key|key)$/i;
+                    var _agentPacketArgs = function (a) {
+                        var out = {};
+                        if (!a || typeof a !== 'object') return out;
+                        var n = 0;
+                        for (var k in a) {
+                            if (!Object.prototype.hasOwnProperty.call(a, k)) continue;
+                            if (n++ >= 8) break;
+                            if (_agentSecretPacketArg.test(String(k))) continue;
+                            var v = a[k];
+                            if (v == null || typeof v === 'number'
+                                    || typeof v === 'boolean'
+                                    || typeof v === 'string') {
+                                out[k] = typeof v === 'string' ? v.slice(0, 40) : v;
+                            } else if (Object.prototype.toString.call(v) === '[object Array]') {
+                                out[k] = 'array[' + v.length + ']';
+                            } else {
+                                out[k] = 'object';
+                            }
+                        }
+                        return out;
+                    };
+                    var cmOut = window.__agentOutgoingRing
+                        || (window.__agentOutgoingRing = []);
+                    if (!cm.__agentOutWrapped && typeof cm.sendMessage === 'function') {
+                        var origSend = cm.sendMessage;
+                        cm.sendMessage = function (name) {
+                            try {
+                                var row = { at: Date.now(), name: String(name),
+                                            args: _agentPacketArgs(arguments[1]) };
+                                cmOut.push(row);
+                                if (cmOut.length > 60) cmOut.shift();
+                            } catch (e) {}
+                            return origSend.apply(cm, arguments);
+                        };
+                        cm.__agentOutWrapped = true;
+                    }
+                } catch (e) {}
+                try {
+                    cm.on('MapComplementaryInformationsDataMessage', function (msg) {
+                        window.__agentLastMapInfo = { at: Date.now(),
+                            map: msg && (msg.mapId != null ? msg.mapId : msg.map),
+                            sub_area: msg && msg.subAreaId };
+                    });
+                } catch (e) {}
+                // Incoming names too: a dialog that never opens and a map change
+                // that never lands both look like "nothing happened" from the
+                // snapshot, and the server's answer (or its absence) is the only
+                // difference. Names plus a few scalar fields, bounded.
+                try {
+                    if (!cm.__agentInWrapped && typeof cm.emit === 'function') {
+                        var cmIn = window.__agentIncomingRing
+                            || (window.__agentIncomingRing = []);
+                        var origEmit = cm.emit;
+                        cm.emit = function (name) {
+                            try {
+                                var row = { at: Date.now(), name: String(name) };
+                                var a = arguments[1];
+                                if (a && typeof a === 'object') {
+                                    row.keys = Object.keys(a).slice(0, 8);
+                                }
+                                cmIn.push(row);
+                                if (cmIn.length > 60) cmIn.shift();
+                                // The battle log the outcome row needs. The client's
+                                // own stack is cleared at fight end, so the numbers
+                                // have to be copied as each fight message arrives.
+                                var fightRing = window.__agentBattleRing
+                                    || (window.__agentBattleRing = []);
+                                var rowName = String(name);
+                                if (/^Game(Action)?Fight/.test(rowName)) {
+                                    var fightRow = _agentBattleRow(a, rowName);
+                                    if (fightRow) {
+                                        fightRing.push(fightRow);
+                                        if (fightRing.length > 800) fightRing.shift();
+                                    }
+                                } else if (/sequence/i.test(rowName)
+                                        && a && typeof a === 'object') {
+                                    // Sequence batches carry the actions; expand them
+                                    // so the tap is not blind to every damaging cast.
+                                    var seq = a.sequence || a.messages || null;
+                                    if (seq && typeof seq.length === 'number') {
+                                        for (var si = 0; si < seq.length; si++) {
+                                            var sm = seq[si];
+                                            if (!sm || typeof sm !== 'object') continue;
+                                            var st = typeof sm._messageType === 'string'
+                                                ? sm._messageType : null;
+                                            if (!st || !/^Game(Action)?Fight/.test(st)) continue;
+                                            var srow = _agentBattleRow(sm, st);
+                                            if (!srow) continue;
+                                            fightRing.push(srow);
+                                            if (fightRing.length > 800) fightRing.shift();
+                                        }
+                                    }
+                                }
+                            } catch (e) {}
+                            return origEmit.apply(cm, arguments);
+                        };
+                        cm.__agentInWrapped = true;
+                    }
+                } catch (e) {}
+                // A fight message stack is bounded and the end message clears it;
+                // polling every 250 ms copies action rows out while they still
+                // exist, independent of which dispatcher the sequence used.
+                try {
+                    if (!window.__agentBattleHarvestTimer) {
+                        window.__agentBattleHarvestTimer = setInterval(function () {
+                            try { _agentHarvestStack(); } catch (eHt) {}
+                        }, 250);
+                    }
+                } catch (e) {}
+                try {
+                    cm.on('GameMapNoMovementMessage', function (msg) {
+                        window.__agentLastMapNoMove = { at: Date.now(),
+                            cell: msg && (msg.cellId != null ? msg.cellId : msg.cell),
+                            map: msg && msg.mapId };
+                    });
+                } catch (e) {}
+                // Fight challenges: the client receives ChallengeInfoMessage when a
+                // challenge is rolled and ChallengeResultMessage when it resolves.
+                // Nothing read them, so the AI could not even know a challenge
+                // existed. The fields are the bundle's own (`_name`, `_description`,
+                // `dropBonus`, `xpBonus`, `_points`, `targetId`); `%1` in the raw
+                // description is the target fighter's name.
+                try {
+                    if (!cm.__agentChallengeWrapped) {
+                        cm.__agentChallengeWrapped = true;
+                        var chMap = window.__agentChallenges || (window.__agentChallenges = {});
+                        cm.on('ChallengeInfoMessage', function (msg) {
+                            try {
+                                if (!msg || msg.challengeId == null) return;
+                                var cid = Number(msg.challengeId);
+                                chMap[cid] = {
+                                    id: cid,
+                                    name: typeof msg._name === 'string' ? msg._name
+                                        : (typeof msg.name === 'string' ? msg.name : null),
+                                    description: typeof msg._description === 'string' ? msg._description
+                                        : (typeof msg.description === 'string' ? msg.description : null),
+                                    target_id: msg.targetId != null ? Number(msg.targetId) : null,
+                                    drop_bonus: msg.dropBonus != null ? Number(msg.dropBonus) : null,
+                                    xp_bonus: msg.xpBonus != null ? Number(msg.xpBonus) : null,
+                                    points: msg._points != null ? Number(msg._points) : null,
+                                    success: null,
+                                    at: Date.now()
+                                };
+                                window.__agentLastChallenge = chMap[cid];
+                            } catch (eCh) {}
+                        });
+                        cm.on('ChallengeResultMessage', function (msg) {
+                            try {
+                                if (!msg || msg.challengeId == null) return;
+                                var cid = Number(msg.challengeId);
+                                var row = chMap[cid] || (chMap[cid] = {
+                                    id: cid, name: null, description: null,
+                                    target_id: null, drop_bonus: null,
+                                    xp_bonus: null, points: null });
+                                row.success = !!msg.success;
+                                row.result_at = Date.now();
+                                window.__agentLastChallenge = row;
+                            } catch (eChr) {}
+                        });
+                        cm.on('GameFightStartMessage', function () {
+                            // A new fight rolls new challenges; the previous fight's
+                            // results must not leak into this one. Clear in place so
+                            // every closure above keeps the same object.
+                            for (var ck in chMap) {
+                                if (Object.prototype.hasOwnProperty.call(chMap, ck)) delete chMap[ck];
+                            }
+                        });
+                    }
+                } catch (e) {}
+
                 cm.on('GameFightTurnStartMessage', function(msg) {
                     // Any turn means placement is over. A cached placement
                     // replayed after this point is stale and would toggle
@@ -1933,6 +2223,48 @@
                 });
 
                 cm.on('GameFightEndMessage', function(msg) {
+                    // The server's own verdict on the fight. Everything before this
+                    // could only infer an outcome from HP after the board vanished,
+                    // which cannot tell a win from a flee. Capture the message the
+                    // client actually received, with the results entry for this
+                    // character, so a fight can be proven from join to end.
+                    try {
+                        var liveFightId = null;
+                        try {
+                            var fmEnd = (window.gui && window.gui.fightManager)
+                                || window.fightManager || null;
+                            if (fmEnd && fmEnd.fightId != null) liveFightId = Number(fmEnd.fightId);
+                        } catch (eFm) {}
+                        var endResults = (msg && msg.results) || [];
+                        var meId = null;
+                        try { meId = window.gui.playerData.id; } catch (eId) {}
+                        var mine = null;
+                        var compact = [];
+                        for (var ri = 0; ri < endResults.length; ri++) {
+                            var rr = endResults[ri] || {};
+                            if (String(rr.id) === String(meId)) mine = rr;
+                            if (compact.length < 12) compact.push({
+                                id: rr.id, alive: !!rr.alive,
+                                xp: rr.xp != null ? rr.xp : null,
+                                kamas: rr.kamas != null ? rr.kamas : null,
+                                rewards: rr.rewards ? rr.rewards.length : 0
+                            });
+                        }
+                        var msgFightId = msg && (msg.fightId != null ? msg.fightId : msg.fightID);
+                        window.__agentLastFightEnd = {
+                            at: Date.now(),
+                            fight_id: msgFightId != null ? Number(msgFightId) : liveFightId,
+                            my_id: meId != null ? Number(meId) : null,
+                            won: mine ? !!mine.alive : null,
+                            results: compact,
+                            duration: msg && msg.duration != null ? msg.duration : null,
+                            keys: msg ? Object.keys(msg).slice(0, 16) : [],
+                            // The challenge verdicts are resolved during the fight,
+                            // not by this message; read the map the hooks filled.
+                            challenges: _challenges(),
+                            battle_log: _battleLog(800)
+                        };
+                    } catch (eEnd) {}
                     self.state.inFight = false;
                     self.state.myTurn = false;
                     self.state.placement = null;
@@ -1975,7 +2307,12 @@
                 } else {
                     cell = current;
                 }
-                if (cell != null && cell !== current) {
+                // Always send the position, even when it equals the current cell.
+                // The tutorial's placement step ends on the client's own
+                // FIGHT_PLACEMENT_POSITION event, and readying without it left the
+                // step ("Tap a red cell to position yourself") stuck with the fight
+                // already readied under it.
+                if (cell != null) {
                     this.sendPacket('GameFightPlacementPositionRequestMessage', { cellId: cell });
                 }
                 var self = this;
@@ -2111,12 +2448,55 @@
             _executeAction: function(ctx, action, tick, fighterId, meta) {
                 var self = this;
                 if (!self._stillMyTurn(ctx)) return;
-                if (!action || action.type === 'pass') { self._endFightTurn(); return; }
+                if (!action || action.type === 'pass') {
+                    // A pass with MP left is the policy declining to walk. The local
+                    // planner still owns movement, so try it before ending the turn;
+                    // without this every turn with an out-of-range target was skipped.
+                    if (ctx && ctx.mp > 0 && ctx.enemies && ctx.enemies.length) {
+                        if (typeof window !== 'undefined') window.__agentLastFightFallback = {
+                            at: Date.now(), why: 'policy_pass', mp: ctx.mp,
+                            enemies: ctx.enemies.length };
+                        self._localTick(ctx, fighterId, tick);
+                        return;
+                    }
+                    self._endFightTurn(); return;
+                }
                 try {
                     if (action.type === 'cast') {
                         var usable = false;
                         try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, action.spellId); } catch (e) {}
                         if (!usable) { self._localTick(ctx, fighterId, tick); return; }
+                        // The policy plans casts, not walks: executing a cast the
+                        // client's own range check refuses spends the 8-step budget
+                        // re-sending the same refused action, and the turn ends with
+                        // full MP. Fall back to the local planner, which either casts
+                        // something that reaches or walks toward the target.
+                        var spellObj = null;
+                        try {
+                            spellObj = ctx.spells[String(action.spellId)]
+                                || ctx.spells[action.spellId] || null;
+                        } catch (e) {}
+                        var targetCell = action.cell != null ? action.cell : null;
+                        if (targetCell == null && action.targetId != null) {
+                            for (var ei = 0; ei < ctx.enemies.length; ei++) {
+                                if (String(ctx.enemies[ei].id) === String(action.targetId)) {
+                                    targetCell = ctx.enemies[ei].cell; break;
+                                }
+                            }
+                        }
+                        if (spellObj && targetCell != null) {
+                            var reaches = true;
+                            try { reaches = self._spellReaches(ctx, spellObj, targetCell); }
+                            catch (e) { reaches = true; }
+                            if (!reaches) {
+                                if (typeof window !== 'undefined') window.__agentLastFightFallback = {
+                                    at: Date.now(), why: 'out_of_range', spell: action.spellId,
+                                    target: action.targetId, cell: targetCell,
+                                    my_cell: ctx.myCell, mp: ctx.mp };
+                                self._localTick(ctx, fighterId, tick);
+                                return;
+                            }
+                        }
                         window.__agentLastFightTurn = { at: Date.now(), action: 'cast',
                             spell: action.spellId, target: action.targetId,
                             cell: action.cell, brain: meta || action.brain || null };
@@ -2145,10 +2525,18 @@
                             self._localTick(ctx, fighterId, tick);
                             return;
                         }
+                        // displayPathInFight returns the steps after the actor's own
+                        // cell; the bundle's _tapFight runs `w.unshift(c)` before
+                        // compressPath. Without that start cell every key is shifted
+                        // by one and the server ignores the request.
+                        if (path[0] !== ctx.myCell) path = [ctx.myCell].concat(path);
+                        var compressed = self._compressPath(path);
                         window.__agentLastFightTurn = { at: Date.now(), action: 'move',
-                            cell: action.cell, path: path, brain: meta || action.brain || null };
+                            cell: action.cell, path_len: path.length,
+                            path: path.slice(0, 16), keys: compressed.slice(0, 16),
+                            brain: meta || action.brain || null };
                         self.sendPacket('GameMapMovementRequestMessage', {
-                            keyMovements: self._compressPath(path), mapId: mapId });
+                            keyMovements: compressed, mapId: mapId });
                         setTimeout(tick, 700);
                         return;
                     }
@@ -2235,9 +2623,14 @@
                     enemies.push({ id: id, cell: a.cellId,
                         hp: st.lifePoints != null ? st.lifePoints : 1 });
                 }
+                var fighterStates = [];
+                try {
+                    var selfF = fm.getFighter ? fm.getFighter(myId) : null;
+                    fighterStates = (selfF && selfF.states) || [];
+                } catch (e) {}
                 return { fm: fm, iso: iso, am: am, myId: myId, myCell: myCell,
                     ap: ap, mp: mp, ap_source: apFrom, mp_source: mpFrom,
-                    spells: spells, enemies: enemies };
+                    spells: spells, enemies: enemies, states: fighterStates };
             },
 
             // A spell is worth casting at an enemy only if it actually damages. Buffs
@@ -2265,6 +2658,33 @@
                     if (rawDamage.indexOf(eid) !== -1) return true;
                 }
                 return false;
+            },
+
+            // Pandawa spells need the Boozer state, and the client's own legality
+            // gate (`canCastThisSpell`) refuses them without it. Effects 950-952
+            // are the state family and carry the state id in `value`; that is what
+            // makes "cast the enabler first" readable from the live spell data
+            // instead of being hardcoded per class.
+            _spellStates: function(spell) {
+                var prop = function(name) {
+                    try {
+                        var v = spell.getProperty ? spell.getProperty(name) : null;
+                        return v && v.length ? v : [];
+                    } catch (e) { return []; }
+                };
+                var grants = [];
+                try {
+                    var fx = (spell.spellLevel && spell.spellLevel.effects) || [];
+                    for (var i = 0; i < fx.length; i++) {
+                        var e = fx[i] || {};
+                        var eid = Number(e.effectId);
+                        if (eid !== 950 && eid !== 951 && eid !== 952) continue;
+                        var state = e.value != null ? Number(e.value) : Number(e.diceNum);
+                        if (state) grants.push(state);
+                    }
+                } catch (e) {}
+                return { required: prop('statesRequired'),
+                    forbidden: prop('statesForbidden'), grants: grants };
             },
 
             _spellDescriptor: function(spell) {
@@ -2329,6 +2749,8 @@
             _planFightAction: function(ctx) {
                 if (ctx.myCell == null) return null;
                 var candidates = [];
+                var stateBlocked = [];
+                var states = ctx.states || [];
                 for (var k in ctx.spells) {
                     if (!Object.prototype.hasOwnProperty.call(ctx.spells, k)) continue;
                     var sid = parseInt(k, 10);
@@ -2337,7 +2759,23 @@
                     if (!this._damageSpell(spell)) continue;
                     var usable = false;
                     try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, sid); } catch (e) {}
-                    if (!usable) continue;
+                    if (!usable) {
+                        // Distinguish "this spell is broken" from "this spell waits
+                        // for a state": only the second is fixable this turn.
+                        var st = this._spellStates(spell);
+                        if (st.required && st.required.length) {
+                            var missing = [];
+                            for (var rq = 0; rq < st.required.length; rq++) {
+                                if (states.indexOf(st.required[rq]) < 0) {
+                                    missing.push(st.required[rq]);
+                                }
+                            }
+                            if (missing.length) {
+                                stateBlocked.push({ id: sid, missing: missing });
+                            }
+                        }
+                        continue;
+                    }
                     var desc = this._spellDescriptor(spell);
                     var cost = desc.apCost != null ? desc.apCost : 1;
                     // Spend only what the client says is left. `canCastThisSpell` above is
@@ -2350,6 +2788,15 @@
                 }
                 candidates.sort(function(a, b) { return b.cost - a.cost; });
                 var enemies = ctx.enemies.slice().sort(function(a, b) { return a.hp - b.hp; });
+                // Unlock first. The enabler costs a point or two and turns a
+                // hammer-only turn into a 20-damage spell next tick; casting the
+                // weapon because it happens to reach keeps the good spells locked
+                // for the whole fight. `canCastThisSpell` refuses a second cast
+                // while the enabler's cooldown runs, so this cannot loop.
+                if (stateBlocked.length) {
+                    var unlock = this._planStateEnabler(ctx, stateBlocked);
+                    if (unlock) return unlock;
+                }
                 for (var e = 0; e < enemies.length; e++) {
                     for (var s = 0; s < candidates.length; s++) {
                         if (this._spellReaches(ctx, candidates[s].spell, enemies[e].cell)) {
@@ -2359,6 +2806,48 @@
                     }
                 }
                 if (ctx.mp > 0 && enemies.length) return this._planFightMove(ctx, enemies);
+                if (typeof window !== 'undefined') window.__agentLastFightPlan = {
+                    at: Date.now(), my_cell: ctx.myCell,
+                    mp: ctx.mp, ap: ctx.ap, mp_source: ctx.mp_source,
+                    ap_source: ctx.ap_source, candidates: candidates.length,
+                    state_blocked: stateBlocked.map(function (x) {
+                        return { id: x.id, missing: x.missing };
+                    }),
+                    enemies: enemies.map(function (e) {
+                        return { id: e.id, cell: e.cell, hp: e.hp };
+                    }),
+                    reason: ctx.mp > 0 ? 'no_move' : 'no_mp' };
+                return null;
+            },
+
+            // The first castable spell whose state effects include a state that a
+            // blocked damage spell is waiting for.
+            _planStateEnabler: function(ctx, blocked) {
+                for (var k in ctx.spells) {
+                    if (!Object.prototype.hasOwnProperty.call(ctx.spells, k)) continue;
+                    var sid = parseInt(k, 10);
+                    if (isNaN(sid)) continue;
+                    var spell = ctx.spells[k];
+                    var st = this._spellStates(spell);
+                    if (!st.grants.length) continue;
+                    var wanted = false;
+                    for (var b = 0; b < blocked.length && !wanted; b++) {
+                        for (var m = 0; m < blocked[b].missing.length; m++) {
+                            if (st.grants.indexOf(blocked[b].missing[m]) >= 0) {
+                                wanted = true; break;
+                            }
+                        }
+                    }
+                    if (!wanted) continue;
+                    var usable = false;
+                    try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, sid); } catch (e) {}
+                    if (!usable) continue;
+                    if (typeof window !== 'undefined') window.__agentLastFightStateEnabler = {
+                        at: Date.now(), spell: sid, grants: st.grants,
+                        unlocks: blocked.map(function (x) { return x.id; }) };
+                    return { type: 'cast', spellId: sid,
+                        targetId: ctx.myId, cell: ctx.myCell };
+                }
                 return null;
             },
 
@@ -2376,6 +2865,7 @@
                 }
                 var limit = Math.max(1, Math.min(ctx.mp, 6));
                 var best = null;
+                var tried = 0, reachable = 0;
                 for (var cell = 0; cell < 560; cell++) {
                     if (cell === ctx.myCell) continue;
                     if (this._cellDistance(cell, ctx.myCell) > limit) continue;
@@ -2385,13 +2875,20 @@
                         if (typeof ctx.am.getActorsOnCell === 'function'
                             && ctx.am.getActorsOnCell(cell).length > 0) continue;
                     } catch (e) {}
+                    tried += 1;
                     var path = null;
                     try { path = iso._displayPathInFight(cell); } catch (e) {}
                     if (!path || !path.reachable || path.reachable.indexOf(cell) === -1) continue;
                     if (path.costMP != null && path.costMP > ctx.mp) continue;
+                    reachable += 1;
                     best = { cell: cell, path: path.reachable };
                     bestDist = dist;
                 }
+                if (typeof window !== 'undefined') window.__agentLastFightMove = {
+                    at: Date.now(), my_cell: ctx.myCell,
+                    mp: ctx.mp, mp_source: ctx.mp_source, nearest: nearest.cell,
+                    best_dist: bestDist, tried: tried, reachable: reachable,
+                    chosen: best ? best.cell : null };
                 return best ? { type: 'move', cell: best.cell, path: best.path } : null;
             },
 
@@ -2482,6 +2979,407 @@
             return JSON.stringify({ ok: !!ok, data: data || null, error: error || null, at: Date.now() });
         };
 
+        // Login cooldown. The client answers "Server busy" when the account still has a
+        // session or the server is rate-limiting the address, and every press inside
+        // that window re-arms it: a stop/relaunch five minutes apart, then a page reload
+        // minutes later, each produced the same alert again. The alert text is the only
+        // signal the page gets, so it is captured before the game's scripts run (this
+        // script executes at document creation) and our own login and reload presses
+        // refuse while it is fresh. The login screen's own retry loop is the game's code
+        // and is not touched; what this stops is the agent adding attempts on top of it.
+        var _LOGIN_BUSY_STORE = 'dofus.agent.loginBusy.v1';
+        // A ten-minute window is not enough. Measured on dofus-05 (2026-10-28):
+        // "Server busy" armed at 22:28:46, the press at the end of that window was
+        // refused again at 22:39:28, and the same guest logged in at 23:50 after
+        // ~70 quiet minutes. Consecutive refusals therefore buy longer quiet:
+        // 10 min, then 60 min, then 3 h. The window is derived from the stored
+        // refusal times, so a reload that drops the busy record cannot shorten it.
+        var _LOGIN_BACKOFF_MS = [10 * 60 * 1000, 60 * 60 * 1000, 3 * 60 * 60 * 1000];
+        var _loginBackoff = function(n) {
+            var idx = Math.min(Math.max(Number(n) || 1, 1), _LOGIN_BACKOFF_MS.length) - 1;
+            return _LOGIN_BACKOFF_MS[idx];
+        };
+        var _lastLoginPress = 0;
+        var _LOGIN_FAIL_STORE = 'dofus.agent.loginFails.v1';
+        var _LOGIN_FAIL_WINDOW_MS = 3 * 60 * 60 * 1000;
+        // A refusal is only evidence while its burst is still open. Once the
+        // longest single backoff has been served, the record decays: the retry
+        // that follows it is a new incident and restarts the 10-min step.
+        // Without this, two refusals an hour apart left the slot one press away
+        // from a 3-hour lockout (live 2026-10-29: "Server busy" never cleared).
+        var _LOGIN_FAIL_DECAY_MS = 60 * 60 * 1000;
+        var _LOGIN_FAIL_LIMIT = 3;
+        var _LOGIN_EXHAUST_MS = _LOGIN_BACKOFF_MS[2];
+        // The refused popup stays on screen after its window expires and is not a
+        // new press. Measured on dofus-05: the window ended at 22:38:46 and the
+        // background-throttled text scan (one pass a minute) re-armed a fresh one at
+        // 22:39:28 with nobody pressing. The signature is cleared by a real press,
+        // by the popup leaving the screen, and by the fail window running out.
+        var _LOGIN_POPUP_STORE = 'dofus.agent.loginPopup.v1';
+        var _loginFails = [];
+        try {
+            var rawFails = window.localStorage && window.localStorage.getItem(_LOGIN_FAIL_STORE);
+            var savedFails = rawFails ? JSON.parse(rawFails) : [];
+            if (Object.prototype.toString.call(savedFails) === '[object Array]') {
+                _loginFails = savedFails.filter(function (t) { return typeof t === 'number'; });
+            }
+        } catch (eFails) { _loginFails = []; }
+        var _pruneLoginFails = function(now) {
+            var kept = [];
+            for (var i = 0; i < _loginFails.length; i++) {
+                var t = Number(_loginFails[i]);
+                if (!(now - t < _LOGIN_FAIL_WINDOW_MS)) continue;
+                if (now - t >= _LOGIN_FAIL_DECAY_MS) continue;
+                kept.push(t);
+            }
+            if (kept.length !== _loginFails.length) {
+                _loginFails = kept;
+                try {
+                    window.localStorage && window.localStorage.setItem(
+                        _LOGIN_FAIL_STORE, JSON.stringify(_loginFails));
+                } catch (ePrune) {}
+            }
+            return kept;
+        };
+        var _noteLoginFail = function(reason) {
+            var now = Date.now();
+            _pruneLoginFails(now);
+            _loginFails.push(now);
+            try {
+                window.localStorage && window.localStorage.setItem(
+                    _LOGIN_FAIL_STORE, JSON.stringify(_loginFails));
+            } catch (eStore) {}
+            if (_loginFails.length >= _LOGIN_FAIL_LIMIT) {
+                _loginBusy = { at: now, until: now + _loginBackoff(_loginFails.length),
+                               text: 'login exhausted after ' + _loginFails.length
+                                   + ' refused guest attempts: '
+                                   + String(reason || '').slice(0, 90) };
+                try {
+                    window.localStorage && window.localStorage.setItem(
+                        _LOGIN_BUSY_STORE, JSON.stringify(_loginBusy));
+                } catch (e2) {}
+                try {
+                    window.sessionStorage
+                        && window.sessionStorage.setItem('dfGuestTries', '5');
+                } catch (e3) {}
+                try {
+                    console.log('[AgentGuard] guest login exhausted; backing off '
+                                + Math.round(_loginBackoff(_loginFails.length) / 60000)
+                                + ' minutes');
+                } catch (e4) {}
+            }
+        };
+        var _clearLoginFails = function() {
+            if (!_loginFails.length && !_loginBusy) return;
+            _loginFails = [];
+            _loginBusy = null;
+            try {
+                window.localStorage && window.localStorage.removeItem(_LOGIN_FAIL_STORE);
+                window.localStorage && window.localStorage.removeItem(_LOGIN_BUSY_STORE);
+            } catch (e) {}
+        };
+        var _loginBusy = null;
+        try {
+            var rawBusy = window.localStorage && window.localStorage.getItem(_LOGIN_BUSY_STORE);
+            var savedBusy = rawBusy ? JSON.parse(rawBusy) : null;
+            if (savedBusy && Number(savedBusy.at) > 0) _loginBusy = savedBusy;
+        } catch (e) { _loginBusy = null; }
+        var _noteLoginBusy = function(text) {
+            var msg = String(text == null ? '' : text);
+            if (!/server\s*busy|accessDenied|too many|try again later|permanently banned/i.test(msg)) return false;
+            // A second alert inside an already-running window is the host's 60s
+            // reload re-pressing through the gap before the screen exists (measured
+            // on dofus-03, 2026-10-28: 586s left, then a fresh 596s). Each extension
+            // makes the lockout last forever, so the first alert owns the window.
+            if (_loginCooldown()) {
+                try {
+                    console.log('[AgentGuard] login alert again inside the cooldown; '
+                                + 'not extending the window');
+                } catch (eKeep) {}
+                return true;
+            }
+            _loginBusy = { at: Date.now(), text: msg.slice(0, 120) };
+            try { _noteLoginFail(msg); } catch (eCount) {}
+            try {
+                window.localStorage
+                    && window.localStorage.setItem(_LOGIN_BUSY_STORE, JSON.stringify(_loginBusy));
+            } catch (e) {}
+            // Spend the host seeder's five-attempt budget on the alert itself.
+            // Its check is `attempts >= 5` at document start; leaving 0 there is
+            // what let every reload press again and re-arm the server lockout.
+            try {
+                window.sessionStorage
+                    && window.sessionStorage.setItem('dfGuestTries', '5');
+                window.sessionStorage
+                    && window.sessionStorage.setItem('dfGuestLastAt', String(Date.now()));
+            } catch (e2) {}
+            try { console.log('[AgentGuard] login cooldown armed by: ' + msg.slice(0, 120)); } catch (e2) {}
+            return true;
+        };
+        try {
+            var _origAlert = window.alert;
+            window.alert = function(msg) {
+                var busy = false;
+                try { busy = _noteLoginBusy(msg); } catch (e) {}
+                // A native alert blocks this page's JS thread: every directive times
+                // out while it is on screen and only a person can dismiss it. The
+                // text is already recorded in the cooldown, so the page stays
+                // responsive (and the reason stays visible in the snapshot) instead
+                // of wedging the automation behind a dialog.
+                if (busy) {
+                    try {
+                        console.log('[AgentGuard] swallowed login alert: '
+                                    + String(msg).slice(0, 120));
+                    } catch (e2) {}
+                    return;
+                }
+                if (typeof _origAlert === 'function') return _origAlert.call(window, msg);
+            };
+        } catch (e) {}
+        // "The Dofus access has been revoked" is the game's own DOM popup
+        // (`en[?ui.popup.accessDenied]`), not a JS alert, so the wrapper above never
+        // sees it. An auto-started AI then keeps pressing login inside the lockout
+        // and re-arms it, which is the "server busy keeps coming back" report. Scan
+        // visible text (innerText ignores hidden templates) on a 5 s throttle and
+        // route the same words through the same cooldown.
+        var _lastPopupScan = 0;
+        var _popupSig = function(text) {
+            var m = String(text == null ? '' : text).match(
+                /.{0,40}(?:access has been revoked|accessdenied|access revoked|permanently banned|server\s*busy).{0,40}/i);
+            if (!m) return null;
+            // Digits vary with timestamps and counts; the words are the identity.
+            return m[0].replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
+        };
+        var _popupScan = function() {
+            var now = Date.now();
+            if (now - _lastPopupScan < 5000) return false;
+            _lastPopupScan = now;
+            try {
+                var body = document.body;
+                var txt = body && typeof body.innerText === 'string' ? body.innerText : '';
+                var sig = _popupSig(txt);
+                if (!sig) {
+                    try {
+                        window.localStorage
+                            && window.localStorage.removeItem(_LOGIN_POPUP_STORE);
+                    } catch (eGone) {}
+                    return false;
+                }
+                var seen = null;
+                try {
+                    var rawSig = window.localStorage
+                        && window.localStorage.getItem(_LOGIN_POPUP_STORE);
+                    seen = rawSig ? JSON.parse(rawSig) : null;
+                } catch (eSeen) { seen = null; }
+                if (seen && seen.sig === sig
+                        && now - Number(seen.at || 0) < _LOGIN_FAIL_WINDOW_MS) {
+                    return false;
+                }
+                try {
+                    window.localStorage && window.localStorage.setItem(
+                        _LOGIN_POPUP_STORE, JSON.stringify({ sig: sig, at: now }));
+                } catch (ePut) {}
+                return _noteLoginBusy(sig);
+            } catch (e) {}
+            return false;
+        };
+        try {
+            if (window.MutationObserver && document.documentElement) {
+                var _popupObserver = new MutationObserver(function () { _popupScan(); });
+                _popupObserver.observe(document.documentElement,
+                                       { childList: true, subtree: true });
+            }
+        } catch (e) {}
+        try { setInterval(function () { try { _popupScan(); } catch (e) {} }, 5000); } catch (e) {}
+        var _loginCooldown = function() {
+            var nowMs = Date.now();
+            var kept = _pruneLoginFails(nowMs), lastFail = 0;
+            for (var i = 0; i < kept.length; i++) {
+                var t = Number(kept[i]);
+                if (t > lastFail) lastFail = t;
+            }
+            // The quiet is owned by the newest refusal and the number of refusals
+            // behind it, not by the record that armed the first window: a reload
+            // that dropped `_loginBusy` must not shorten an escalation.
+            var until = 0, why = '';
+            if (lastFail) {
+                until = lastFail + _loginBackoff(_loginFails.length);
+                why = 'quiet after ' + _loginFails.length + ' refused guest login(s)';
+            }
+            if (_loginBusy) {
+                var busyUntil = Number(_loginBusy.until || 0)
+                    || (Number(_loginBusy.at || 0)
+                        + _loginBackoff(_loginFails.length || 1));
+                if (busyUntil >= until && busyUntil > 0) {
+                    until = busyUntil;
+                    why = _loginBusy.text || why;
+                }
+            }
+            if (!(until > nowMs)) {
+                if (!_loginBusy) return null;
+                // The lockout is over; give the host seeder its budget back so a
+                // future launch seeds normally instead of inheriting the "5/5".
+                _loginBusy = null;
+                try { window.localStorage && window.localStorage.removeItem(_LOGIN_BUSY_STORE); } catch (e) {}
+                try {
+                    window.sessionStorage
+                        && window.sessionStorage.setItem('dfGuestTries', '0');
+                    window.sessionStorage
+                        && window.sessionStorage.setItem('dfGuestLastAt', '0');
+                } catch (e2) {}
+                try { console.log('[AgentGuard] login cooldown expired; guest retry budget restored'); } catch (e3) {}
+                return null;
+            }
+            return { at: lastFail || Number(_loginBusy.at || 0),
+                     reason: why || 'login cooldown',
+                     remaining_s: Math.ceil((until - nowMs) / 1000),
+                     fails: _loginFails.length };
+        };
+        // The host seeder reloads the page when a login makes no progress in 60s.
+        // At the login screen a reload is another login attempt, so inside the
+        // cooldown it is refused: the lockout has to expire before the next press,
+        // and a reload loop only keeps the server angry. `debug.reload` with
+        // force:true sets `__agentReloadForced` to bypass this once.
+        try {
+            var _origReload = window.location && window.location.reload;
+            if (typeof _origReload === 'function') {
+                var _patchedReload = function() {
+                    var forced = false;
+                    try {
+                        forced = !!window.__agentReloadForced;
+                        window.__agentReloadForced = false;
+                    } catch (eF) {}
+                    if (!forced) {
+                        var cool = null;
+                        try { cool = _loginCooldown(); } catch (eC) {}
+                        if (cool) {
+                            try {
+                                console.log('[AgentGuard] blocked reload with '
+                                            + cool.remaining_s + 's of login cooldown left');
+                            } catch (eL) {}
+                            return undefined;
+                        }
+                    }
+                    return _origReload.apply(window.location, arguments);
+                };
+                var _reloadPatched = false;
+                try {
+                    Object.defineProperty(window.location, 'reload', {
+                        value: _patchedReload, configurable: true, writable: true
+                    });
+                    _reloadPatched = true;
+                } catch (eDef) {}
+                if (!_reloadPatched) {
+                    try { window.location.reload = _patchedReload; _reloadPatched = true; } catch (eAsg) {}
+                }
+                try {
+                    if (_reloadPatched) console.log('[AgentGuard] reload guarded against the login cooldown');
+                } catch (eLog) {}
+            }
+        } catch (eR) {}
+        // The host seeds a guest login itself (playWithGuest, a five-attempt budget,
+        // and a reload when nothing moves in 60 s), so guarding only the agent's own
+        // tool would leave three other callers pressing inside the cooldown. Wrap the
+        // screen's methods once it exists: every caller then hits the same rule.
+        // The host counts an attempt before it calls, so a refusal also resets its
+        // counter -- five attempts spent while the server is busy would otherwise
+        // leave the page with no attempt left once the cooldown expires.
+        var _guardLoginScreen = function() {
+            var ls = null;
+            try { ls = window.gui && window.gui.loginScreen; } catch (e) { ls = null; }
+            if (!ls || ls.__agentCooldownWrapped) return false;
+            ls.__agentCooldownWrapped = true;
+            var names = ['playWithGuest', '_createGuest', '_continueGuest',
+                         '_continueGuestFollow'];
+            // One initial press at a time. The host seeder presses 800ms after the
+            // document and an auto-started AI loop presses on its own schedule; two
+            // presses inside one server round trip are answered "Server busy" or
+            // "already using that account" even with no lockout yet. `_continueGuestFollow`
+            // is a follow-up step of a press that already happened, not a new one.
+            var _singleFlight = { playWithGuest: true, _createGuest: true,
+                                  _continueGuest: true };
+            for (var i = 0; i < names.length; i++) {
+                (function(name) {
+                    var original = ls[name];
+                    if (typeof original !== 'function') return;
+                    ls[name] = function() {
+                        var cool = _loginCooldown();
+                        if (cool) {
+                            try {
+                                // Keep the host seeder's budget spent, not reset: a
+                                // reset here is what re-armed the lockout every minute.
+                                window.sessionStorage
+                                    && window.sessionStorage.setItem('dfGuestTries', '5');
+                                window.sessionStorage
+                                    && window.sessionStorage.setItem('dfGuestLastAt',
+                                                                   String(Date.now()));
+                            } catch (e) {}
+                            try {
+                                console.log('[AgentGuard] refused loginScreen.' + name
+                                            + '() with ' + cool.remaining_s
+                                            + 's of login cooldown left');
+                            } catch (e2) {}
+                            return undefined;
+                        }
+                        var now = Date.now();
+                        if (_singleFlight[name] && now - _lastLoginPress < 20000) {
+                            try {
+                                console.log('[AgentGuard] ignored loginScreen.' + name
+                                            + '(): another login press was '
+                                            + Math.round((now - _lastLoginPress) / 1000)
+                                            + 's ago');
+                            } catch (e3) {}
+                            return undefined;
+                        }
+                        var callArgs = Array.prototype.slice.call(arguments);
+                        // A press makes any popup on screen old news: if the server
+                        // refuses again, the refusal must be able to arm a window.
+                        try {
+                            window.localStorage
+                                && window.localStorage.removeItem(_LOGIN_POPUP_STORE);
+                        } catch (eSigClear) {}
+                        var out;
+                        try {
+                            out = original.apply(ls, callArgs);
+                        } catch (eCall) {
+                            // Measured on a fresh boot (build ad, 22:07): playWithGuest
+                            // threw `Cannot read properties of null (reading 'error')`
+                            // because the client's login manager was not initialised
+                            // yet, and the host seeder presses only once per document.
+                            // One delayed retry turns that into a login instead of a
+                            // 60 s no-progress reload. A local throw is not a server
+                            // refusal, so it does not count against the fail budget.
+                            try {
+                                console.log('[AgentGuard] loginScreen.' + name
+                                            + ' threw; retrying once: ' + eCall);
+                                setTimeout(function () {
+                                    try {
+                                        if (!_loginCooldown()) {
+                                            if (_singleFlight[name]) {
+                                                _lastLoginPress = Date.now();
+                                            }
+                                            original.apply(ls, callArgs);
+                                        }
+                                    } catch (eRetry) {}
+                                }, 2500);
+                            } catch (e4) {}
+                            throw eCall;
+                        }
+                        if (_singleFlight[name]) _lastLoginPress = Date.now();
+                        return out;
+                    };
+                })(names[i]);
+            }
+            try { console.log('[AgentGuard] login screen wrapped for the login cooldown'); } catch (e) {}
+            return true;
+        };
+        var _guardTimer = setInterval(function() {
+            try { if (_guardLoginScreen()) clearInterval(_guardTimer); } catch (e) {}
+        }, 150);
+        // A wrapped screen that is replaced by a re-render must not lose the guard;
+        // the flag lives on the screen object, so a new one is wrapped again.
+        setInterval(function() { try { _guardLoginScreen(); } catch (e) {} }, 5000);
+
         // Send a protocol message through the game's own connection manager.
         //
         // Every payload below was taken from a recorded session (see
@@ -2512,8 +3410,16 @@
         // loads. Nothing here is a quest list -- only what the server itself
         // rejected, on this machine or in a recorded session.
         var _KICK_STORE = 'dofus.agent.unsafeClaims.v1';
+        // A signature is a hypothesis about one packet, and a wrong one permanently
+        // disables an objective. Two costless corrections keep it honest: an accepted
+        // validation clears its own signature (`__agentClearKick`), and a signature
+        // older than a day is forgotten rather than trusted forever. A real kick is
+        // re-learned with one disconnect; a stale false positive never expires
+        // otherwise.
+        var _KICK_TTL_MS = 24 * 60 * 60 * 1000;
         var _knownKickSignatures = function() {
             var out = {};
+            var now = Date.now();
             try {
                 var seeded = window.__agentKnownKickSignatures;
                 if (seeded && seeded.length) {
@@ -2525,13 +3431,64 @@
                 var saved = raw ? JSON.parse(raw) : null;
                 if (saved && typeof saved === 'object') {
                     for (var k in saved) {
-                        if (Object.prototype.hasOwnProperty.call(saved, k)) out[k] = true;
+                        if (!Object.prototype.hasOwnProperty.call(saved, k)) continue;
+                        var row = saved[k];
+                        var at = row && typeof row === 'object' ? Number(row.at) : 0;
+                        if (at && now - at > _KICK_TTL_MS) continue;
+                        out[k] = true;
                     }
                 }
             } catch (e) {}
             return out;
         };
-        window.__agentRecordKick = function(via) {
+        window.__agentClearKick = function(questId, objectiveId) {
+            if (questId == null || objectiveId == null) return false;
+            var sig = Number(questId) + '/' + Number(objectiveId);
+            var cleared = false;
+            // A seeded signature is a hypothesis too, and it is the only kind
+            // with no expiry: without this, one wrong seed would disable the
+            // objective in every future session, and the accepted validation
+            // that proves it wrong had no effect at all on a fresh profile
+            // (there is no localStorage row to delete).
+            try {
+                var seeded = window.__agentKnownKickSignatures;
+                if (seeded && seeded.length) {
+                    for (var i = seeded.length - 1; i >= 0; i--) {
+                        if (String(seeded[i]) === sig) {
+                            seeded.splice(i, 1);
+                            cleared = true;
+                        }
+                    }
+                }
+            } catch (e) {}
+            try {
+                var raw = window.localStorage && window.localStorage.getItem(_KICK_STORE);
+                var saved = raw ? JSON.parse(raw) : null;
+                if (saved && typeof saved === 'object'
+                        && Object.prototype.hasOwnProperty.call(saved, sig)) {
+                    delete saved[sig];
+                    if (window.localStorage) {
+                        window.localStorage.setItem(_KICK_STORE, JSON.stringify(saved));
+                    }
+                    cleared = true;
+                }
+            } catch (e) {}
+            if (cleared) {
+                console.log('[AgentGuard] kick signature cleared by an accepted '
+                            + 'validation: quest=' + questId + ' objective=' + objectiveId);
+            }
+            return cleared;
+        };
+        window.__agentRecordKick = function(via, reason, serverSide) {
+            // A claim is blamed only for a close the *server* announced. The client
+            // disconnects itself for INACTIVITY, SESSION_TIMED_OUT, CLIENT_CLOSING and
+            // SWITCHING_TO_GAME, and a bare socket loss has no author; none of those
+            // is the server answering a validation.
+            if (serverSide !== true) return false;
+            var why = String(reason == null ? '' : reason);
+            if (/INACTIVITY|SESSION_TIMED_OUT|CLIENT_CLOSING|SWITCHING_TO_GAME|NICKNAME_CLOSING|ASSET_MISSING|UserClosing/i.test(why)) {
+                return false;
+            }
             var prev = window.__agentLastValidate;
             if (!prev || !prev.quest_id || !prev.objective_id) return false;
             var age = Date.now() - Number(prev.at || 0);
@@ -2544,6 +3501,7 @@
                 if (!saved || typeof saved !== 'object') saved = {};
             } catch (e) { saved = {}; }
             saved[sig] = { at: Date.now(), via: String(via || ''),
+                           reason: why.slice(0, 80),
                            count: ((saved[sig] && saved[sig].count) || 0) + 1 };
             var keys = [];
             for (var k in saved) {
@@ -2557,7 +3515,8 @@
             } catch (e) {}
             console.log('[AgentGuard] kick signature recorded: quest=' + prev.quest_id
                         + ' objective=' + prev.objective_id
-                        + ' via=' + (via || '') + ' age_ms=' + age);
+                        + ' via=' + (via || '') + ' reason=' + why
+                        + ' age_ms=' + age);
             return true;
         };
 
@@ -2637,6 +3596,13 @@
                 // Spyr") while the NPC was not on the map was followed 230 ms
                 // later by serverDisconnecting SERVER_GONE.
                 QuestObjectiveGoToNpc: true,
+                // FreeForm is counted by the server too. Measured on dofus-05
+                // (2026-10-28): claims of 3841/13537 at 23:59:22.352 and
+                // 4260/14078 at 00:04:31.942 were each followed ~0.3 s later by
+                // SERVER_GONE. CAN_BE_FINISHED only means the step is current;
+                // the action the step names (talk, enter, use the gift) completes
+                // it, and a refused claim ends the connection.
+                QuestObjectiveFreeForm: true,
                 QuestObjectiveDiscoverMap: true,
                 QuestObjectiveDiscoverSubArea: true,
                 QuestObjectiveFightMonster: true,
@@ -2711,26 +3677,226 @@
 
         // The interactive elements on the current map, as {elemId, skillInstanceUid}.
         // Harvest is `InteractiveUseRequestMessage` with exactly these two fields.
+        //
+        // The live client keeps them on the *renderer*:
+        //   isoEngine.mapRenderer.interactiveElements[elemId] = {elementId, elementTypeId,
+        //       enabledSkills, disabledSkills}
+        //   isoEngine.mapRenderer.identifiedElements[elemId] = graphic with .position (cell)
+        // Reading `isoEngine.interactiveElements` returned nothing on every map, so
+        // tap.interactive reported "no visible interactive element" for every quest
+        // objective that needs one (measured 2026-10-28 on map 145490432).
         var _interactives = function() {
             var out = [];
+            var seen = {};
+            var add = function(id, el, graphic) {
+                var elemId = Number(id);
+                if (!isFinite(elemId) || seen[elemId]) return;
+                seen[elemId] = true;
+                el = el || {};
+                var g = graphic || {};
+                var data = (g.data && typeof g.data === 'object') ? g.data : {};
+                var enabled = [], disabled = [];
+                try {
+                    var en = el.enabledSkills || [];
+                    for (var a = 0; a < en.length; a++) {
+                        if (en[a] && en[a].skillInstanceUid != null) enabled.push(Number(en[a].skillInstanceUid));
+                    }
+                    var dis = el.disabledSkills || [];
+                    for (var b = 0; b < dis.length; b++) {
+                        if (dis[b] && dis[b].skillInstanceUid != null) disabled.push(Number(dis[b].skillInstanceUid));
+                    }
+                } catch (eSkills) {}
+                var elName = el.name || (el.staticInfos && el.staticInfos.name)
+                    || el._name || data.name || null;
+                var cell = g.position != null ? g.position
+                    : (data.position != null ? data.position
+                    : (data.cellId != null ? data.cellId : null));
+                out.push({
+                    elemId: elemId,
+                    skillInstanceUid: enabled.length ? enabled[0]
+                        : (el.skillInstanceUid != null ? el.skillInstanceUid
+                        : (disabled.length ? disabled[0] : null)),
+                    enabled_skills: enabled,
+                    disabled_skills: disabled,
+                    element_type_id: el.elementTypeId != null ? Number(el.elementTypeId) : null,
+                    is_door: !!el._isDoor,
+                    cell: cell,
+                    name: typeof elName === 'string' ? elName.slice(0, 60) : null
+                });
+            };
             try {
                 var ie = window.isoEngine;
-                var list = (ie && (ie.interactiveElements || (ie.mapData && ie.mapData.interactiveElements))) || null;
-                if (list && typeof list === 'object') {
+                var mr = ie && ie.mapRenderer;
+                var lists = [
+                    mr && mr.interactiveElements,
+                    ie && ie.interactiveElements,
+                    ie && ie.mapData && ie.mapData.interactiveElements
+                ];
+                for (var li = 0; li < lists.length; li++) {
+                    var list = lists[li];
+                    if (!list || typeof list !== 'object') continue;
                     for (var k in list) {
                         if (!Object.prototype.hasOwnProperty.call(list, k)) continue;
                         var el = list[k] || {};
-                        var elemId = el.id != null ? el.id : (el.elemId != null ? el.elemId : parseInt(k, 10));
-                        if (elemId == null || isNaN(elemId)) continue;
-                        var elName = el.name
-                            || (el.staticInfos && el.staticInfos.name) || null;
-                        out.push({
-                            elemId: elemId,
-                            skillInstanceUid: el.skillInstanceUid != null ? el.skillInstanceUid : null,
-                            cell: el.cell != null ? el.cell : (el.position != null ? el.position.cell : null),
-                            name: typeof elName === 'string' ? elName.slice(0, 60) : null
-                        });
+                        var id = el.elementId != null ? el.elementId
+                            : (el.id != null ? el.id
+                            : (el.elemId != null ? el.elemId : parseInt(k, 10)));
+                        var graphic = (mr && mr.identifiedElements ? mr.identifiedElements[id] : null) || null;
+                        add(id, el, graphic);
                     }
+                }
+            } catch (e) {}
+            return out;
+        };
+
+        // The fight's challenges, as the client received them. A challenge is
+        // optional: the page only reports it so the planner and the outcome log
+        // can see one existed, and so learning can add a small bonus for a
+        // completed one without ever scoring a miss as a failure.
+        //
+        // The raw message carries ids, and its text fields were null on every
+        // recorded fight; the names the client actually shows come from the
+        // bundle's own panel (`gui.challengeIndicator.challengesData[id]`, filled
+        // by setChallenge from `_name`/`_description`/`dropBonus`/`xpBonus`).
+        // Merge that panel in, message first so a raw value still wins.
+        var _challenges = function() {
+            var out = [];
+            try {
+                var map = window.__agentChallenges || {};
+                var panel = null;
+                try {
+                    panel = window.gui && window.gui.challengeIndicator;
+                } catch (eP) {}
+                var pdata = (panel && panel.challengesData) || null;
+                for (var k in map) {
+                    if (!Object.prototype.hasOwnProperty.call(map, k)) continue;
+                    var row = map[k] || {};
+                    if (row.id == null) continue;
+                    var src = (pdata && pdata[row.id]) || {};
+                    var pick = function(a, b) { return a != null ? a : b; };
+                    var target = pick(row.target_id,
+                        src.targetFighter && src.targetFighter.id != null
+                            ? src.targetFighter.id : null);
+                    var drop = pick(row.drop_bonus, src.dropBonus);
+                    var xp = pick(row.xp_bonus, src.xpBonus);
+                    var pts = pick(row.points, src.points);
+                    out.push({
+                        id: Number(row.id),
+                        name: pick(row.name, src.name) || null,
+                        description: pick(row.description, src.description) || null,
+                        target_id: target != null ? Number(target) : null,
+                        drop_bonus: drop != null ? Number(drop) : null,
+                        xp_bonus: xp != null ? Number(xp) : null,
+                        points: pts != null ? Number(pts) : null,
+                        gfx_id: src.gfxId != null ? Number(src.gfxId) : null,
+                        category_id: src.categoryId != null ? Number(src.categoryId) : null,
+                        success: row.success === true ? true : (row.success === false ? false : null)
+                    });
+                }
+            } catch (e) {}
+            return out;
+        };
+
+        // The client's own fight-message stack, mapped to a compact battle log.
+        // `fm.fightMessagesStack` is the bundle's per-fight message list; the page
+        // already read the last 48 of it into `last_actions` but dropped the
+        // fields that carry the actual numbers (`loss`, `permanentDamages`,
+        // `shieldLoss`). This is the battle log the game itself keeps: who cast
+        // what, on whom, for how much, AP/MP changes, deaths.
+        // One fight message -> one battle-log row. Used by the reader below and by
+        // the incoming-message tap, so both produce the same shape: who did what,
+        // to whom, for how much, AP/MP changes, deaths.
+        var _agentBattleRow = function(msg, type) {
+            if (!msg || typeof msg !== 'object') return null;
+            var mt = type || (typeof msg._messageType === 'string' ? msg._messageType : null);
+            if (!mt) return null;
+            return {
+                type: mt,
+                at_action: msg.actionId != null ? Number(msg.actionId) : null,
+                source: msg.sourceId != null ? Number(msg.sourceId) : null,
+                target: msg.targetId != null ? Number(msg.targetId) : null,
+                spell: msg.spellId != null ? Number(msg.spellId) : null,
+                spell_level: msg.spellLevel != null ? Number(msg.spellLevel) : null,
+                cell: msg.cellId != null ? Number(msg.cellId) : null,
+                effect: msg.effectId != null ? Number(msg.effectId) : null,
+                critical: msg.critical != null ? Number(msg.critical) : null,
+                delta: msg.delta != null ? Number(msg.delta) : null,
+                value: msg.value != null ? Number(msg.value) : null,
+                loss: msg.loss != null ? Number(msg.loss) : null,
+                permanent_damages: msg.permanentDamages != null
+                    ? Number(msg.permanentDamages) : null,
+                shield_loss: msg.shieldLoss != null ? Number(msg.shieldLoss) : null,
+                fight_id: msg.fightId != null ? Number(msg.fightId) : null
+            };
+        };
+        // Damaging actions arrive in messageSequence batches on this client, so the
+        // emit tap alone saw only the standalone lifecycle messages (fight 900's
+        // 22-row log had zero casts). The client keeps every fight message in
+        // `fightMessagesStack`; copy the action-bearing rows out of it while the
+        // fight runs, deduped by action id so a repoll cannot double-count.
+        var _agentHarvestStack = function() {
+            try {
+                var fm = (window.gui && window.gui.fightManager) || window.fightManager;
+                var stack = (fm && (fm.fightMessagesStack || fm._fightMessagesStack)) || null;
+                if (!stack || typeof stack.length !== 'number' || !stack.length) return 0;
+                var ring = window.__agentBattleRing || (window.__agentBattleRing = []);
+                var sigs = window.__agentBattleSigs || (window.__agentBattleSigs = {});
+                var added = 0;
+                var start = Math.max(0, stack.length - 400);
+                for (var i = start; i < stack.length; i++) {
+                    var m = stack[i];
+                    if (!m || typeof m !== 'object') continue;
+                    var t = typeof m._messageType === 'string' ? m._messageType : null;
+                    if (!t || t.indexOf('GameActionFight') !== 0) continue;
+                    var row = _agentBattleRow(m, t);
+                    if (!row || row.at_action == null) continue;
+                    var sig = [row.type, row.at_action, row.source, row.target,
+                               row.spell, row.loss, row.value, row.delta].join('|');
+                    if (sigs[sig]) continue;
+                    sigs[sig] = 1;
+                    ring.push(row);
+                    added++;
+                }
+                if (added) {
+                    while (ring.length > 800) ring.shift();
+                    var keys = Object.keys(sigs);
+                    if (keys.length > 1200) {
+                        window.__agentBattleSigs = {};
+                        var keep = keys.slice(keys.length - 600);
+                        for (var ki = 0; ki < keep.length; ki++) {
+                            window.__agentBattleSigs[keep[ki]] = 1;
+                        }
+                    }
+                }
+                return added;
+            } catch (e) { return 0; }
+        };
+        var _battleLog = function(limit) {
+            var out = [];
+            var cap = limit && limit > 0 ? Math.min(limit, 800) : 800;
+            try {
+                // Copy any action rows the tap missed (sequence batches) before
+                // reading, so an end-of-fight read still sees the whole fight.
+                try { _agentHarvestStack(); } catch (eH) {}
+                // The tap first. The client's own stack is cleared when a fight ends
+                // (measured on fights 124/125: `fightMessagesStack` was empty by the
+                // time the end message arrived), which is exactly when the outcome row
+                // needs the numbers, so a stack-only reader recorded `battle_log: []`
+                // for both of them.
+                var ring = window.__agentBattleRing || [];
+                if (ring.length) {
+                    var start = Math.max(0, ring.length - cap);
+                    for (var r = start; r < ring.length; r++) {
+                        if (ring[r]) out.push(ring[r]);
+                    }
+                    return out;
+                }
+                var fm = (window.gui && window.gui.fightManager) || window.fightManager;
+                var stack = (fm && (fm.fightMessagesStack || fm._fightMessagesStack)) || [];
+                var from = Math.max(0, stack.length - cap);
+                for (var i = from; i < stack.length; i++) {
+                    var row = _agentBattleRow(stack[i]);
+                    if (row) out.push(row);
                 }
             } catch (e) {}
             return out;
@@ -2927,6 +4093,11 @@
                 // position.mapId is 0 there. Treating "not null" as in-world reported
                 // a character standing on map 0, so guard the value itself.
                 snap.in_world = (mapId != null && Number(mapId) > 0);
+                try { if (snap.in_world) _clearLoginFails(); } catch (eClear) {}
+                // Whether the login screen is refusing this account for good. The
+                // autopilot stops the loop on this instead of pressing login into
+                // a permanent refusal; a cooldown would only delay the same answer.
+                try { snap.login = _agentLoginBan(); } catch (eBan) {}
                 var stats = (ua && ua.stats) || {};
                 // The live stats live on the selected character, not on playerData:
                 //   playerData.characters.mainCharacter.characteristics
@@ -2960,7 +4131,32 @@
                 var lifeSelf = _agentLife();
                 snap.alive = lifeSelf.alive;
                 snap.life_state = lifeSelf.state;
+                // Unspent points are part of the character's state: a level-up that
+                // nobody spends leaves every later fight at base stats, which looks
+                // like a balance problem rather than the housekeeping gap it is.
+                try {
+                    var hm = pd.characters && pd.characters.mainCharacter;
+                    var hc = hm && hm.characteristics;
+                    snap.points = {
+                        stats: _agentNum(hc && hc.statsPoints),
+                        spells: _agentNum(hc && hc.spellsPoints)
+                    };
+                } catch (e) { snap.points = null; }
                 snap.in_fight = !!(pd && pd.isFighting);
+                // The server's verdict on the previous fight, and the id of the
+                // one in progress: an outcome inferred from HP cannot tell a win
+                // from a flee, and the id is what ties a join to that verdict.
+                snap.last_fight_end = window.__agentLastFightEnd || null;
+                try {
+                    var fmSnap = (window.gui && window.gui.fightManager)
+                        || window.fightManager || null;
+                    snap.fight_id = fmSnap && fmSnap.fightId != null
+                        ? Number(fmSnap.fightId) : null;
+                } catch (eFightId) { snap.fight_id = null; }
+                // Optional fight challenges and the tail of the client's own
+                // battle log. Both are reads: nothing here changes play.
+                snap.challenges = _challenges();
+                try { snap.battle_log_tail = _battleLog(12); } catch (eBt) { snap.battle_log_tail = []; }
                 // A talk objective opens a dialog; without this flag the verifier sees
                 // no change and calls the step a noop, and the loop retires a quest
                 // that was actually progressing.
@@ -2976,6 +4172,7 @@
                 // observation so a session that died of a kick can be told apart from one
                 // that was closed by hand — the two look identical from the host side.
                 snap.agent_build = window.__agentBuild || null;
+                try { snap.login_cooldown = _loginCooldown(); } catch (e) { snap.login_cooldown = null; }
                 snap.last_disconnect = window.__agentLastDisconnect || null;
                 // What the last navigation attempt actually did. A failed walk and a
                 // rejected transition look identical in the position fields; this
@@ -3322,6 +4519,11 @@
                 // nothing rather than silently reading an empty table.
                 snap.quests_catalog = qs.catalog;
                 snap.quest_catalog_status = qs.catalog_status;
+                // Which windows the player has open. The tutorial's UI steps are
+                // presses on the client's menu, so the planner needs to see a
+                // window stay open (the step completes on the press, not on a
+                // claim) and close it again before walking on.
+                snap.open_windows = _agentOpenWindows();
                 // XP is what makes a farm measurable: it is the only quantity the
                 // client reports on every kill, and a fight that yields 0 xp is a
                 // fight that was lost or abandoned. Read several candidate keys
@@ -3366,13 +4568,15 @@
                         var n = Number(v);
                         return isFinite(n) ? n : 1;
                     };
-                    var _pushItem = function (gid, qty) {
+                    var _pushItem = function (gid, qty, uid) {
                         if (gid == null) return;
                         if (snap.inventory.items.length >= 120) {
                             snap.inventory.items_truncated = true;
                             return;
                         }
-                        snap.inventory.items.push({ gid: gid, qty: _qty(qty) });
+                        var row = { gid: gid, qty: _qty(qty) };
+                        if (uid != null) row.object_uid = Number(uid);
+                        snap.inventory.items.push(row);
                     };
                     var items = inv.objects || inv.items || null;
                     if (Array.isArray(items)) {
@@ -3380,7 +4584,8 @@
                             var it = items[i] || {};
                             _pushItem(it.objectGID != null ? it.objectGID
                                       : (it.gid != null ? it.gid : null),
-                                      it.quantity != null ? it.quantity : it.qty);
+                                      it.quantity != null ? it.quantity : it.qty,
+                                      it.objectUID != null ? it.objectUID : it.uid);
                         }
                     } else if (items && typeof items === 'object') {
                         for (var key in items) {
@@ -3390,9 +4595,11 @@
                                 _pushItem(entry.objectGID != null ? entry.objectGID
                                           : (entry.gid != null ? entry.gid
                                           : (parseInt(key, 10) || null)),
-                                          entry.quantity != null ? entry.quantity : entry.qty);
+                                          entry.quantity != null ? entry.quantity : entry.qty,
+                                          entry.objectUID != null ? entry.objectUID
+                                              : (entry.uid != null ? entry.uid : key));
                             } else {
-                                _pushItem(parseInt(key, 10) || key, entry);
+                                _pushItem(parseInt(key, 10) || key, entry, key);
                             }
                         }
                     } else {
@@ -4496,11 +5703,109 @@
             var questId = Number(sm.currentQuestId);
             var stepId = Number(sm.currentStepId);
             var specialId = Number(sm.currentSpecialStepId);
+            // What the current step itself asks the player to press. A scenario
+            // step's executeStart calls a hint helper by name (`pointToChallenge`,
+            // `pointToConfirmUpgradeSpell`); those controls have no stable CSS
+            // class, so the page resolves them by object path in ui.tap. The
+            // checkpoint and the numeric behaviour list are published as data so
+            // the planner can tell two steps apart even when both are sub-steps.
+            var checkpoint = null, behaviours = null, hint = null, wantsTap = false;
+            var endNames = null;
+            var menuHint = null, openWindow = null, interactiveHint = null;
+            // Every later tutorial points at its control the same way the first one
+            // does: an executeStart call to a hint helper. The helper name is the
+            // control's identity; a numeric argument is the row it wants. The page
+            // resolves each name by the same object path the helper itself walks
+            // (see _agentClientTarget); `close:NAME` is a window close, not a tap.
+            var HINTS = [
+                ['pointToChallenge', 'challenge', null],
+                ['pointToConfirmUpgradeSpell', 'spell_upgrade_confirm', null],
+                ['displayHighlightedSpellButtons', 'spell_plus', null],
+                ['characUpdate', 'charac_update', null],
+                [/pointToInteractiveNPCContextualMenuAction\((\d+)/, 'npc_menu', 'index'],
+                [/pointToInteractiveContextualMenuAction\((\d+)/, 'contextual_menu', 'index'],
+                [/pointToFirstDropBestiaryMonsterWithSpecificDrop/, 'bestiary_drop', null],
+                [/pointToFirstNormalBestiaryMonsterWithSpecificDrop/, 'bestiary_monster', null],
+                [/pointToFirstTradeNPCInventorySlot/, 'trade_slot', null],
+                [/pointToNPCTradeValidateBtn/, 'trade_validate', null],
+                [/pointToFirstCraftItemSlot/, 'craft_slot', null],
+                [/dragDropItemSlotToCraftActorBox/, 'craft_drag', null],
+                [/pointToRecipeBtn/, 'craft_recipe', null],
+                [/pointToMergeBtn/, 'craft_merge', null],
+                [/pointToShopCategory\((\d+)/, 'shop_category', 'index'],
+                [/pointToShopItem\((\d+)/, 'shop_item', 'index'],
+                [/pointToInfoBtnSellShop/, 'sell_info', null],
+                [/pointToWindowCloseButton\(["']([A-Za-z]+)["']\)/, 'close', 'name'],
+            ];
+            try {
+                var step = sm.currentStep || null;
+                if (step) {
+                    var cp = Number(step.questStepCheckpoint);
+                    if (isFinite(cp)) checkpoint = cp;
+                    var beh = step.behaviours;
+                    if (Object.prototype.toString.call(beh) === '[object Array]') {
+                        behaviours = [];
+                        for (var bi = 0; bi < beh.length; bi++) {
+                            var bn = Number(beh[bi]);
+                            if (isFinite(bn)) behaviours.push(bn);
+                        }
+                    }
+                    var startSrc = '';
+                    try { startSrc = String(step.executeStart || ''); } catch (eSrc) {}
+                    var endSrc = '';
+                    try { endSrc = String(step.endingCondition || ''); } catch (eEnd) {}
+                    wantsTap = endSrc.indexOf('TAP_ANYWHERE') !== -1;
+                    // What the step's own condition names, as data: a step that ends on
+                    // FIGHTER_TURN is waiting for a fight to begin, one that ends on
+                    // CHANGE_MAP is waiting for a crossing. Live 2026-10-29 the loop
+                    // re-asked crossings for a FIGHTER_TURN step on a map with no
+                    // monster group; the name was in this source the whole time.
+                    endNames = [];
+                    var erx = /conditionTypeEnum\.([A-Z_]+)/g;
+                    var em;
+                    while ((em = erx.exec(endSrc)) !== null) {
+                        if (endNames.indexOf(em[1]) === -1) endNames.push(em[1]);
+                    }
+                    var mm = startSrc.match(/pointToMenuIcon\(["']([A-Za-z]+)["']\)/);
+                    if (mm) menuHint = mm[1];
+                    // A step that ends on WINDOW_OPENED names the window it is
+                    // waiting for (`WINDOW_OPENED && "characUpdate" === t.windowId`).
+                    // The planner presses whatever control opens that window.
+                    var mo = endSrc.match(/WINDOW_OPENED[^;?]{0,100}?["']([A-Za-z]+)["']\s*===\s*t\.windowId/);
+                    if (mo) openWindow = mo[1];
+                    // The map element a step highlights (playInteractiveElementTap)
+                    // is tapped through isoEngine.useInteractive by element id.
+                    var ih = startSrc.match(/playInteractiveElementTap\((\d+)/);
+                    if (ih) interactiveHint = Number(ih[1]);
+                    for (var hi = 0; hi < HINTS.length && !hint; hi++) {
+                        var pat = HINTS[hi][0];
+                        var hname = HINTS[hi][1];
+                        var hkind = HINTS[hi][2];
+                        if (typeof pat === 'string') {
+                            if (startSrc.indexOf(pat) !== -1) hint = hname;
+                            continue;
+                        }
+                        var hmt = startSrc.match(pat);
+                        if (!hmt) continue;
+                        hint = hkind === 'index' ? hname + ':' + (hmt[1] || '0')
+                            : hkind === 'name' ? hname + ':' + hmt[1]
+                            : hname;
+                    }
+                }
+            } catch (eStep) {}
             return {
                 active: !!(sm.currentStep || specialId >= 0),
                 quest_id: questId > 0 ? questId : null,
                 step_id: stepId >= 0 ? stepId : null,
                 special_step_id: specialId >= 0 ? specialId : null,
+                step_checkpoint: checkpoint,
+                hint_target: hint,
+                interactive_hint: interactiveHint,
+                menu_hint: menuHint,
+                open_window: openWindow,
+                tap_anywhere: wantsTap,
+                ending_conditions: endNames,
+                behaviour_ids: behaviours,
                 can_change_map: can,
                 unblocked_cells: cells,
                 unblocked_npc_id: npc
@@ -4515,6 +5820,106 @@
         // the exits and their border cells, the NPCs here, and the interactive
         // elements here. It is deliberately generic -- no quest ids, no hard-coded
         // targets -- so a policy can decide from the details for any objective.
+        // A house door is a cell, not a border flag.
+        //
+        // Live 2026-10-29 on map 146276352: the map publishes no change-map cell,
+        // no door element and no interactive, yet walking onto cell 451 moved the
+        // party to 145490435, and walking onto 346 outside moved it back. The mark
+        // is painted into the map, so the only source of truth is a transition that
+        // actually happened -- the server performs it when the cell is stepped on.
+        // Every change (ours or a human's) records (from_map, cell) -> to_map in
+        // localStorage, so the second visit to that map needs no discovery. This is
+        // what makes entering and leaving a house repeatable instead of a one-off.
+        var _DOOR_STORE = 'dofusFarm.doorCells';
+        var _agentDoorMap = null;
+        var _agentDoorLoad = function() {
+            if (_agentDoorMap) return _agentDoorMap;
+            _agentDoorMap = {};
+            try {
+                var raw = window.localStorage && window.localStorage.getItem(_DOOR_STORE);
+                var obj = raw ? JSON.parse(raw) : null;
+                if (obj && typeof obj === 'object') _agentDoorMap = obj;
+            } catch (e) {}
+            return _agentDoorMap;
+        };
+        var _agentDoorSave = function() {
+            try {
+                var keys = Object.keys(_agentDoorMap || {});
+                while (keys.length > 400) {
+                    delete _agentDoorMap[keys.shift()];
+                }
+                window.localStorage
+                    && window.localStorage.setItem(_DOOR_STORE, JSON.stringify(_agentDoorMap));
+            } catch (e) {}
+        };
+        var _agentDoorNote = function(fromMap, cell, toMap) {
+            if (fromMap == null || cell == null || toMap == null) return;
+            if (Number(fromMap) === Number(toMap)) return;
+            // Map id 0 is "the client is between maps" (login, transition, fallout),
+            // not a destination: recording it taught a door to nowhere (2026-10-29).
+            if (!(Number(fromMap) > 0) || !(Number(toMap) > 0)
+                    || !isFinite(Number(cell))) return;
+            var store = _agentDoorLoad();
+            var bucket = store[String(fromMap)] || (store[String(fromMap)] = {});
+            bucket[String(cell)] = { to: Number(toMap), at: Date.now() };
+            _agentDoorSave();
+        };
+        var _agentDoorList = function(mapId) {
+            var store = _agentDoorLoad();
+            var bucket = store[String(mapId)] || {};
+            var out = [];
+            for (var k in bucket) {
+                if (!Object.prototype.hasOwnProperty.call(bucket, k)) continue;
+                var v = bucket[k] || {};
+                out.push({ cell: Number(k), to_map: v.to != null ? Number(v.to) : null,
+                           at: v.at || null });
+            }
+            return out;
+        };
+        var _agentDoorFor = function(mapId, toMap) {
+            var list = _agentDoorList(mapId);
+            for (var i = 0; i < list.length; i++) {
+                if (Number(list[i].to_map) === Number(toMap)) return list[i].cell;
+            }
+            return null;
+        };
+        // The sampler sees the map change but not which of the last cells was the
+        // door, so our own walks leave a hint: a nav to a cell that is followed by
+        // a change within a few seconds is that cell. A human's walk lands on the
+        // star and stops there, which the sampler catches on its own.
+        var _agentDoorHint = null;
+        var _agentDoorWatch = { map: null, cell: null };
+        var _agentDoorTick = function() {
+            try {
+                var pd = window.gui && window.gui.playerData;
+                var pos = pd && pd.position;
+                var iso = window.isoEngine || null;
+                var ua = iso && iso.actorManager && iso.actorManager.userActor;
+                // The live cell lives on the user actor (`cellId`); `position.cell`
+                // is not populated in this build and reading it recorded nothing.
+                var cell = ua && ua.cellId != null ? Number(ua.cellId)
+                    : (pos && pos.cell != null ? Number(pos.cell) : null);
+                var mapId = pos && pos.mapId != null ? Number(pos.mapId)
+                    : (iso && iso.mapRenderer && iso.mapRenderer.map
+                        && iso.mapRenderer.map.id != null
+                        ? Number(iso.mapRenderer.map.id) : null);
+                if (mapId == null || !(mapId > 0)) return;
+                if (_agentDoorWatch.map != null && mapId !== _agentDoorWatch.map) {
+                    var from = _agentDoorWatch.cell;
+                    var hint = _agentDoorHint;
+                    if (hint && Number(hint.map) === Number(_agentDoorWatch.map)
+                            && Date.now() - hint.at < 6000) {
+                        from = hint.cell;
+                    }
+                    if (from != null) _agentDoorNote(_agentDoorWatch.map, from, mapId);
+                    _agentDoorHint = null;
+                }
+                _agentDoorWatch.map = mapId;
+                _agentDoorWatch.cell = cell;
+            } catch (e) {}
+        };
+        try { window.setInterval(_agentDoorTick, 400); } catch (e) {}
+
         var _agentMapDetails = function () {
             var iso = window.isoEngine || null;
             var pd = (window.gui && window.gui.playerData) || null;
@@ -4603,8 +6008,16 @@
             var interactives = [];
             try {
                 interactives = _interactives().slice(0, 12).map(function (el) {
+                    // `enabled_skills` is what tap.interactive needs when the
+                    // renderer has not yet produced a skillInstanceUid for the
+                    // element: the skill list is on the element itself, and a
+                    // free-form objective can only be performed through it.
                     return { elem_id: el.elemId, cell: el.cell,
-                             skill_uid: el.skillInstanceUid, name: el.name || null };
+                             skill_uid: el.skillInstanceUid,
+                             enabled_skills: (el.enabled_skills || []).slice(0, 4),
+                             element_type_id: el.element_type_id,
+                             is_door: !!el.is_door,
+                             name: el.name || null };
                 });
             } catch (e) {}
             var allGroups = [];
@@ -4616,11 +6029,19 @@
                 y: coords.posY != null ? coords.posY : (pos.y != null ? pos.y : null),
                 neighbours: neighbours,
                 exits: exits,
+                doors: _agentDoorList(mapId),
                 npcs: npcs,
                 interactives: interactives,
                 groups: allGroups.slice(0, 20),
                 group_count: allGroups.length,
-                groups_scan: window.__agentGroupScan || null
+                groups_scan: window.__agentGroupScan || null,
+                transition: {
+                    outgoing: (window.__agentOutgoingRing || []).slice(-20),
+                    incoming: (window.__agentIncomingRing || []).slice(-20),
+                    map_info: window.__agentLastMapInfo || null,
+                    no_move: window.__agentLastMapNoMove || null,
+                    last_nav: window.__agentLastNav || null
+                }
             };
         };
 
@@ -5285,6 +6706,336 @@
                 prices: prices,
                 listings: listings
             });
+        };
+
+        // The windows the client itself reports as open, by the names its window
+        // manager uses ("grimoire > quests", "worldMap"). Read-only.
+        var _agentWindowManager = function() {
+            try {
+                var wc = window.gui && window.gui.windowsContainer;
+                var mgr = wc && wc.windowManager;
+                if (!mgr && wc) {
+                    var kids = wc._childrenList || [];
+                    for (var i = 0; i < kids.length && !mgr; i++) {
+                        if (kids[i] && kids[i].windowManager) mgr = kids[i].windowManager;
+                    }
+                }
+                return mgr || null;
+            } catch (e) {}
+            return null;
+        };
+        var _agentOpenWindows = function() {
+            try {
+                var mgr = _agentWindowManager();
+                if (mgr && typeof mgr.getOpenWindows === 'function') {
+                    var list = mgr.getOpenWindows();
+                    if (Object.prototype.toString.call(list) === '[object Array]') {
+                        return list.map(String);
+                    }
+                }
+            } catch (e) {}
+            return null;
+        };
+        // Close one named window through the client's own manager. The tutorial's
+        // shop step ends on SHOP_LOADED, which the shop fires when it *opens* and
+        // its articles arrive (bundle: scenario endingCondition(e) { return
+        // e === conditionTypeEnum.SHOP_LOADED }), so re-pressing the floating shop
+        // button while "market > shop" is already open is a no-op the step never
+        // sees. Closing first makes the press an opening again.
+        var _agentCloseWindow = function(name) {
+            var mgr = _agentWindowManager();
+            if (!mgr || typeof mgr.close !== 'function') return false;
+            var win = null;
+            try {
+                win = typeof mgr.getWindow === 'function' ? mgr.getWindow(name) : null;
+            } catch (e) { win = null; }
+            if (!win || !win.openState) return false;
+            try { mgr.close(name); return true; } catch (e2) { return false; }
+        };
+        // A permanently banned guest is not a cooldown: no wait makes the next
+        // press succeed, and every press is another auth attempt. The client's own
+        // popup is the only place this is stated, so read it from the visible text
+        // once and let the caller stop instead of retrying.
+        var _agentLoginBanAt = 0;
+        var _agentLoginBanText = { banned: false };
+        var _agentLoginBan = function() {
+            var now = Date.now();
+            if (now - _agentLoginBanAt < 2000) return _agentLoginBanText;
+            _agentLoginBanAt = now;
+            _agentLoginBanText = { banned: false };
+            try {
+                var body = document.body;
+                var txt = body && typeof body.innerText === 'string' ? body.innerText : '';
+                var m = txt.match(/(?:permanently banned|permanently suspended|account (?:has been|is) banned|banni(?:e)? d[ée]finitivement|compte[^\n]{0,40}banni|access (?:has been )?revoked|accessdenied|ui\.popup\.accessdenied|acc[eè]s r[ée]voqu[ée])/i);
+                if (m) {
+                    _agentLoginBanText = {
+                        banned: true,
+                        text: String(m[0]).replace(/\s+/g, ' ').trim().slice(0, 160),
+                        at: now
+                    };
+                }
+                // The popup itself can be gone (a reload wipes the DOM) while the
+                // refusal is still on record: the login cooldown persists the reason
+                // it was armed with. An access-denied reason is the same verdict as
+                // the popup -- waiting cannot fix it -- so it reads as a ban too.
+                if (!_agentLoginBanText.banned) {
+                    try {
+                        var cool = _loginCooldown();
+                        var why = cool && String(cool.reason || '');
+                        if (why && /accessdenied|access has been revoked|ui\.popup\.accessdenied/i.test(why)) {
+                            _agentLoginBanText = {
+                                banned: true,
+                                text: why.replace(/\s+/g, ' ').trim().slice(0, 160),
+                                at: now
+                            };
+                        }
+                    } catch (eCool) {}
+                }
+            } catch (e) {}
+            return _agentLoginBanText;
+        };
+        // A window object, but only while it is open: the tutorial helpers all
+        // gate on `openState` before pointing at anything inside.
+        var _agentOpenWindowObject = function(name) {
+            try {
+                var mgr = _agentWindowManager();
+                var win = mgr && typeof mgr.getWindow === 'function'
+                    ? mgr.getWindow(name) : null;
+                return win && win.openState ? win : null;
+            } catch (e) {}
+            return null;
+        };
+        // Controls the client's own tutorial hints point at, reachable only
+        // through its objects (no stable CSS class). Each name mirrors a bundle
+        // hint helper exactly; the helper is the specification, not a guess:
+        //   contextual_menu:N -> getContextMenu("interactive").actionsContainer
+        //                        .getChildren()[N]
+        //   npc_menu:N        -> getContextMenu("npc").actionsContainer
+        //                        .getChildren()[N]
+        //   trade_validate    -> getWindow("tradeWithNPC").getValidateBtn()
+        //   trade_slot        -> getWindow("tradeWithPlayerAndNPCInventory")
+        //                        .getStorageFirstSlotForTuto()
+        //   craft_recipe      -> getWindow("crafting").getFirstRecipe().craftButton
+        //   craft_merge       -> getWindow("crafting").getMergeBtn()
+        //   craft_slot        -> getWindow(<correct craft inventory>)
+        //                        .getStorageFirstSlotForTuto()
+        //   shop_category:N   -> getWindow("bidHouseShop").getCategoryDom(N)
+        //   shop_item:N       -> getWindow("bidHouseShop").getItemInSaleDom(N)
+        //   sell_info         -> getWindow("tradeStorage").infoButton
+        //   bestiary_monster  -> grimoire tab bestiary: getMonsterWithDrop([drop])
+        //   bestiary_drop     -> getDropDomFromMonster(getMonsterWithDrop([drop]))
+        var _agentClientTarget = function(name) {
+            try {
+                var parts = String(name || '').split(':');
+                var kind = parts[0];
+                var arg = parts.length > 1 ? parts[1] : null;
+                var idx = arg != null && /^\d+$/.test(arg) ? parseInt(arg, 10) : null;
+                if (kind === 'challenge') {
+                    var g = window.gui;
+                    var slot = g && g.challengeIndicator && g.challengeIndicator.challengeSlot;
+                    return slot ? (slot.rootElement || slot) : null;
+                }
+                if (kind === 'contextual_menu' || kind === 'npc_menu') {
+                    var wmC = _agentWindowManager();
+                    var menu = wmC && typeof wmC.getContextMenu === 'function'
+                        ? wmC.getContextMenu(kind === 'npc_menu' ? 'npc' : 'interactive')
+                        : null;
+                    var kids = menu && menu.actionsContainer
+                        && typeof menu.actionsContainer.getChildren === 'function'
+                        ? menu.actionsContainer.getChildren() : null;
+                    var action = kids ? kids[idx == null ? 0 : idx] : null;
+                    return action ? (action.rootElement || action) : null;
+                }
+                if (kind === 'trade_validate') {
+                    var tw = _agentOpenWindowObject('tradeWithNPC');
+                    var vbtn = tw && typeof tw.getValidateBtn === 'function'
+                        ? tw.getValidateBtn() : null;
+                    return vbtn ? (vbtn.rootElement || vbtn) : null;
+                }
+                if (kind === 'trade_slot') {
+                    var iw = _agentOpenWindowObject('tradeWithPlayerAndNPCInventory');
+                    var islot = iw && typeof iw.getStorageFirstSlotForTuto === 'function'
+                        ? iw.getStorageFirstSlotForTuto() : null;
+                    return islot ? (islot.rootElement || islot) : null;
+                }
+                if (kind === 'craft_recipe' || kind === 'craft_merge') {
+                    var cw = _agentOpenWindowObject('crafting');
+                    var cbtn = null;
+                    if (cw && kind === 'craft_recipe') {
+                        var recipe = typeof cw.getFirstRecipe === 'function'
+                            ? cw.getFirstRecipe() : null;
+                        cbtn = recipe && recipe.craftButton;
+                    } else if (cw && typeof cw.getMergeBtn === 'function') {
+                        cbtn = cw.getMergeBtn();
+                    }
+                    return cbtn ? (cbtn.rootElement || cbtn) : null;
+                }
+                if (kind === 'craft_slot') {
+                    var invName = null;
+                    try {
+                        invName = window.gui.playerData.jobs.getCorrectCraftingInventory();
+                    } catch (eInv) { invName = null; }
+                    var cinv = invName ? _agentOpenWindowObject(invName) : null;
+                    var cslot = cinv && typeof cinv.getStorageFirstSlotForTuto === 'function'
+                        ? cinv.getStorageFirstSlotForTuto() : null;
+                    return cslot ? (cslot.rootElement || cslot) : null;
+                }
+                if (kind === 'shop_category' || kind === 'shop_item') {
+                    var sw = _agentOpenWindowObject('bidHouseShop');
+                    var sdom = null;
+                    if (sw) {
+                        if (kind === 'shop_category') {
+                            sdom = typeof sw.getCategoryDom === 'function'
+                                ? sw.getCategoryDom(idx == null ? 0 : idx) : null;
+                        } else {
+                            sdom = typeof sw.getItemInSaleDom === 'function'
+                                ? sw.getItemInSaleDom(idx == null ? 0 : idx) : null;
+                        }
+                    }
+                    return sdom ? (sdom.rootElement || sdom) : null;
+                }
+                if (kind === 'sell_info') {
+                    var sew = _agentOpenWindowObject('tradeStorage');
+                    var ibtn = sew && sew.infoButton;
+                    return ibtn ? (ibtn.rootElement || ibtn) : null;
+                }
+                if (kind === 'bestiary_monster' || kind === 'bestiary_drop') {
+                    var grimoireW = null;
+                    try {
+                        var wmB = _agentWindowManager();
+                        grimoireW = wmB && typeof wmB.getWindow === 'function'
+                            ? wmB.getWindow('grimoire') : null;
+                    } catch (eGw) { grimoireW = null; }
+                    var btab = grimoireW && grimoireW.tabs && grimoireW.tabs.tabsMap
+                        ? grimoireW.tabs.tabsMap.bestiary : null;
+                    var btarget = btab && btab.target;
+                    var monster = null;
+                    if (btarget && typeof btarget.getMonsterWithDrop === 'function') {
+                        monster = idx != null ? btarget.getMonsterWithDrop(idx)
+                            : btarget.getMonsterWithDrop();
+                        if (!monster) monster = btarget.getMonsterWithDrop();
+                    }
+                    if (!monster) return null;
+                    if (kind === 'bestiary_monster') {
+                        return monster.rootElement || monster;
+                    }
+                    var drop = typeof btarget.getDropDomFromMonster === 'function'
+                        ? btarget.getDropDomFromMonster(monster) : null;
+                    return drop ? (drop.rootElement || drop) : null;
+                }
+                if (kind === 'spell_upgrade_confirm') {
+                    var wm = _agentWindowManager();
+                    var grimoire = wm && typeof wm.getWindow === 'function'
+                        ? wm.getWindow('grimoire') : null;
+                    var tab = grimoire && grimoire.tabs && grimoire.tabs.tabsMap
+                        && grimoire.tabs.tabsMap.spells;
+                    var book = tab && tab.target && tab.target.spellBook;
+                    var button = book && book.confirmButton;
+                    return button ? (button.rootElement || button) : null;
+                }
+                if (name === 'spell_plus') {
+                    // The upgrade step highlights the spell book and waits for a
+                    // spell's "+" press to reveal the confirm button. The first
+                    // visible, enabled plus in the spell table is that press; the
+                    // DOM class is the fallback when the table object is rebuilt.
+                    var wm2 = _agentWindowManager();
+                    var gr2 = wm2 && typeof wm2.getWindow === 'function'
+                        ? wm2.getWindow('grimoire') : null;
+                    var tab2 = gr2 && gr2.tabs && gr2.tabs.tabsMap
+                        && gr2.tabs.tabsMap.spells;
+                    var book2 = tab2 && tab2.target && tab2.target.spellBook;
+                    var table = book2 && book2.table;
+                    var pick = null;
+                    try {
+                        for (var sid in (book2 && book2.spellMap) || {}) {
+                            if (!Object.prototype.hasOwnProperty.call(book2.spellMap, sid)) continue;
+                            var cell = table && typeof table.getCell === 'function'
+                                ? table.getCell(sid, 'rank') : null;
+                            var btn = cell && cell.plusBtn;
+                            if (!btn) continue;
+                            if (btn._enable === false) continue;
+                            try { if (btn.isVisible && !btn.isVisible()) continue; } catch (eVis) {}
+                            var bel = btn.rootElement || btn;
+                            var br = bel && bel.getBoundingClientRect
+                                ? bel.getBoundingClientRect() : null;
+                            if (!br || !br.width || !br.height) continue;
+                            pick = bel;
+                            break;
+                        }
+                    } catch (ePlus) { pick = null; }
+                    if (!pick && typeof document !== 'undefined') {
+                        var plusNodes = document.querySelectorAll('.addSignButton');
+                        for (var pi = 0; pi < plusNodes.length; pi++) {
+                            var pel = plusNodes[pi];
+                            if (!pel || (pel.className || '').toString().indexOf('disabled') !== -1) continue;
+                            var pr = pel.getBoundingClientRect ? pel.getBoundingClientRect() : null;
+                            if (!pr || !pr.width || !pr.height) continue;
+                            pick = pel;
+                            break;
+                        }
+                    }
+                    return pick;
+                }
+            } catch (e) {}
+            return null;
+        };
+        // The client's own tap path. Not a shortcut into the window manager: this
+        // is the event sequence a finger produces on a wui button.
+        var _agentUiTap = function(el) {
+            var r = el.getBoundingClientRect();
+            var o = { clientX: Math.round(r.left + r.width / 2),
+                      clientY: Math.round(r.top + r.height / 2),
+                      bubbles: true, cancelable: true, view: window };
+            el.dispatchEvent(new PointerEvent('pointerdown', o));
+            el.dispatchEvent(new PointerEvent('pointerup', o));
+            el.dispatchEvent(new MouseEvent('mousedown', o));
+            el.dispatchEvent(new MouseEvent('mouseup', o));
+            el.dispatchEvent(new MouseEvent('click', o));
+            if (typeof el.click === 'function') el.click();
+        };
+        // A finger drag: press on the source, move in steps (wui's drag manager
+        // arms on dom.touchstart and starts on the first move past its
+        // sensitivity), release over the destination. The moves and the release
+        // go to wBody's root element, the same surface `_agentUiTap` presses: wui
+        // converts a held left-button move and release there into
+        // dom.touchmove/dom.touchend, which is what the manager listens for. The
+        // drop target is resolved by the client from the release *coordinates*
+        // (document.elementFromPoint inside the manager), so the destination is
+        // carried in clientX/clientY rather than by the event target.
+        var _agentUiDrag = function(src, dst) {
+            var rs = src.getBoundingClientRect();
+            var rd = dst.getBoundingClientRect();
+            var sx = Math.round(rs.left + rs.width / 2);
+            var sy = Math.round(rs.top + rs.height / 2);
+            var dx = Math.round(rd.left + rd.width / 2);
+            var dy = Math.round(rd.top + rd.height / 2);
+            var body = null;
+            try {
+                body = window.gui && window.gui.wBody && window.gui.wBody.rootElement;
+            } catch (eBody) { body = null; }
+            var surface = body || document;
+            var fire = function(el, type, x, y, buttons) {
+                var o = { clientX: x, clientY: y, screenX: x, screenY: y,
+                          button: 0, buttons: buttons, bubbles: true,
+                          cancelable: true, view: window };
+                var ev = (type.indexOf('pointer') === 0
+                          && typeof PointerEvent !== 'undefined')
+                    ? new PointerEvent(type, o) : new MouseEvent(type, o);
+                el.dispatchEvent(ev);
+            };
+            fire(src, 'pointerdown', sx, sy, 1);
+            fire(src, 'mousedown', sx, sy, 1);
+            var steps = 6;
+            for (var s = 1; s <= steps; s++) {
+                var x = Math.round(sx + (dx - sx) * s / steps);
+                var y = Math.round(sy + (dy - sy) * s / steps);
+                fire(surface, 'pointermove', x, y, 1);
+                fire(surface, 'mousemove', x, y, 1);
+            }
+            fire(surface, 'pointerup', dx, dy, 0);
+            fire(surface, 'mouseup', dx, dy, 0);
+            return { from: [sx, sy], to: [dx, dy], steps: steps,
+                     surface: body ? 'wBody' : 'document' };
         };
 
         var _agentHandlers = {
@@ -6022,12 +7773,23 @@
                             delta: num(msg.delta),
                             effect_id: num(msg.effectId),
                             cell: num(msg.cellId),
+                            // The numbers the battle log is for. `loss` is the HP the
+                            // server says the target lost; `permanentDamages` is the
+                            // part that cannot be healed; `shieldLoss` is absorbed.
+                            loss: num(msg.loss),
+                            permanent_damages: num(msg.permanentDamages),
+                            shield_loss: num(msg.shieldLoss),
                             key_movements: Array.isArray(msg.keyMovements)
                                 ? msg.keyMovements.slice(0, 32) : null
                         });
                     }
                 } catch (e) {}
                 state.last_actions = lastActions;
+                // The whole fight so far, from the client's own message stack: this
+                // is the damage/heal/AP/MP record the game keeps, and it is the data
+                // source for damage calibration and for challenge conditions.
+                try { state.battle_log = _battleLog(800); } catch (eBl) { state.battle_log = []; }
+                try { state.challenges = _challenges(); } catch (eCh2) { state.challenges = []; }
                 try { state.spell_cast_counts = fm.spellCastCounts || {}; } catch (e) {}
                 for (var la = 0; la < lastActions.length; la++) {
                     var lastAction = lastActions[la];
@@ -6175,6 +7937,25 @@
                 if (!wantMap && dir) {
                     var edge = exitFor(dir);
                     if (!edge) {
+                        // An interior map (a house, a solo area) has neighbours but no
+                        // change-map cell: its exit is a door or a scripted step, and
+                        // the client publishes nothing to walk to. The transition is
+                        // still the client's own request -- ask the server directly and
+                        // let it adjudicate, which is exactly what a tapped door does.
+                        // Measured live 2026-10-29 on the Albuera solo area: four edges
+                        // known, zero change cells, and every plan died on "no exit".
+                        var nearDir = details.neighbours && details.neighbours[dir];
+                        if (nearDir != null && !(tutorialActive && tutorial.can_change_map
+                                && tutorial.can_change_map[dir] === false)
+                                && typeof iso._requestMapChange === 'function') {
+                            window.__agentLastNav = { at: Date.now(),
+                                stage: 'change_requested_no_cell', from_map: here,
+                                to_map: Number(nearDir), direction: dir };
+                            iso._requestMapChange(Number(nearDir), dir);
+                            return _agentResult(true, { from_map: here,
+                                to_map: Number(nearDir), direction: dir,
+                                via: 'isoEngine._requestMapChange (no exit cell published)' });
+                        }
                         return _agentResult(false, { map_id: here, direction: dir,
                             exits: exits, neighbours: details.neighbours },
                             'no exit to the ' + dir + ' on map ' + here);
@@ -6186,6 +7967,92 @@
                 if (wantMap && Number(wantMap) !== Number(here)) {
                     var crossing = dir ? exitFor(dir) : exitTo(wantMap);
                     if (!crossing) {
+                        // A remembered door on this map reaches the target directly.
+                        // Stepping on the cell is the transition, so the walk *is* the
+                        // whole request. Checked before the neighbour fallback because
+                        // a door names a destination, not a map edge.
+                        var doorCell = _agentDoorFor(here, wantMap);
+                        if (doorCell != null && iso
+                                && typeof iso._movePlayerOnMap === 'function') {
+                            try {
+                                var doorHint = function () {
+                                    window.__agentDoorHint = { at: Date.now(), map: here,
+                                        cell: doorCell };
+                                    try { _agentDoorHint = window.__agentDoorHint; } catch (eH) {}
+                                };
+                                if (Number(doorCell) === Number(details.cell)) {
+                                    // Standing on the door does not trigger it; stepping
+                                    // onto it does. A transition lands the character on
+                                    // the door cell, so the next "leave" would be a
+                                    // no-op without stepping off first (2026-10-29).
+                                    var mrDoor = iso.mapRenderer || null;
+                                    var off = null;
+                                    var around = [Number(doorCell) - 1, Number(doorCell) + 1,
+                                                  Number(doorCell) - 14, Number(doorCell) - 15,
+                                                  Number(doorCell) - 13, Number(doorCell) + 13,
+                                                  Number(doorCell) + 14, Number(doorCell) + 15];
+                                    for (var ai = 0; ai < around.length && off == null; ai++) {
+                                        var cand = around[ai];
+                                        var okCand = false;
+                                        try {
+                                            okCand = !!(mrDoor
+                                                && typeof mrDoor.isWalkable === 'function'
+                                                && mrDoor.isWalkable(cand));
+                                        } catch (eWalk) {}
+                                        if (okCand) off = cand;
+                                    }
+                                    if (off != null) {
+                                        doorHint();
+                                        window.__agentLastNav = { at: Date.now(),
+                                            stage: 'door_step_off', from_map: here,
+                                            to_map: Number(wantMap), cell: doorCell };
+                                        iso._movePlayerOnMap(off, false, function () {
+                                            setTimeout(function () {
+                                                doorHint();
+                                                iso._movePlayerOnMap(doorCell, false,
+                                                    function () {});
+                                            }, 700);
+                                        });
+                                        return _agentResult(true, { from_map: here,
+                                            to_map: Number(wantMap), cell: doorCell,
+                                            via: 'isoEngine._movePlayerOnMap (door step off then on)' });
+                                    }
+                                }
+                                doorHint();
+                                window.__agentLastNav = { at: Date.now(),
+                                    stage: 'walk_to_door', from_map: here,
+                                    to_map: Number(wantMap), cell: doorCell };
+                                var doorWalk = iso._movePlayerOnMap(doorCell, false,
+                                    function () {});
+                                if (doorWalk != null) {
+                                    return _agentResult(true, { from_map: here,
+                                        to_map: Number(wantMap), cell: doorCell,
+                                        via: 'isoEngine._movePlayerOnMap (remembered door cell)' });
+                                }
+                            } catch (eDoor) {}
+                        }
+                        // Same doorless-interior case, addressed by map id: the target
+                        // is a known neighbour but the client published no cell for it.
+                        var nearKey = null;
+                        try {
+                            for (var nk in (details.neighbours || {})) {
+                                if (Number(details.neighbours[nk]) === Number(wantMap)) {
+                                    nearKey = nk;
+                                    break;
+                                }
+                            }
+                        } catch (eNear) {}
+                        if (nearKey && !(tutorialActive && tutorial.can_change_map
+                                && tutorial.can_change_map[nearKey] === false)
+                                && typeof iso._requestMapChange === 'function') {
+                            window.__agentLastNav = { at: Date.now(),
+                                stage: 'change_requested_no_cell', from_map: here,
+                                to_map: Number(wantMap), direction: nearKey };
+                            iso._requestMapChange(Number(wantMap), nearKey);
+                            return _agentResult(true, { from_map: here,
+                                to_map: Number(wantMap), direction: nearKey,
+                                via: 'isoEngine._requestMapChange (no exit cell published)' });
+                        }
                         return _agentResult(false, { map_id: here, target_map: wantMap,
                             direction: dir, exits: exits, neighbours: details.neighbours },
                             'map ' + wantMap + ' is not adjacent to ' + here
@@ -6319,6 +8186,10 @@
                     via: 'isoEngine._movePlayerOnMap' };
                 window.__agentLastNav = { at: Date.now(), stage: 'walking',
                     from_map: here, cell: wantCell };
+                // If this walk ends in a map change, this cell is the door. The
+                // interval reads the closure binding, so both are kept in step.
+                window.__agentDoorHint = { at: Date.now(), map: here, cell: wantCell };
+                try { _agentDoorHint = window.__agentDoorHint; } catch (eHint) {}
                 try {
                     // The callback fires after the server confirms; the request itself
                     // goes out synchronously inside the call, so ok here means "asked",
@@ -6357,6 +8228,638 @@
             // built on its data instead of a guess. `getChangeMapFlags(cell)` tells us
             // which border cell leads off this map; the *destination* ids come from the
             // server's map information, and this reports wherever they landed.
+            'debug.scenario': function() {
+                var out = {};
+                var sm = window.gui && window.gui.scenarioManager;
+                var pd = window.gui && window.gui.playerData;
+                var wc = window.gui && window.gui.windowsContainer;
+                var mgr = wc && wc.windowManager;
+                if (!mgr && wc) {
+                    var kids = wc._childrenList || [];
+                    for (var i = 0; i < kids.length && !mgr; i++) {
+                        if (kids[i] && kids[i].windowManager) mgr = kids[i].windowManager;
+                    }
+                }
+                var val = function (fn) {
+                    try { var v = fn(); return v === undefined ? '__undefined' : v; }
+                    catch (e) { return 'ERR:' + e; }
+                };
+                out.scenario_keys = val(function () { return sm ? Object.keys(sm).slice(0, 60) : null; });
+                out.current_step = val(function () { return sm && sm.currentStep; });
+                out.current_tutorial = val(function () {
+                    return sm && (sm.currentTutorial || sm.scenarioId || sm.tutorialId);
+                });
+                out.step_3841 = val(function () {
+                    return sm && typeof sm._getCurrentStepFromTutorial === 'function'
+                        ? sm._getCurrentStepFromTutorial(3841) : null;
+                });
+                out.player_objective = val(function () { return pd && pd.shieldTutorialQuestObjective; });
+                out.in_dialog = val(function () { return pd && pd.isInDialog; });
+                out.equipment_open = val(function () {
+                    return mgr && typeof mgr.getWindow === 'function'
+                        ? !!(mgr.getWindow('equipment') || {}).openState : null;
+                });
+                out.open_windows = val(function () {
+                    return mgr && typeof mgr.getOpenWindows === 'function'
+                        ? mgr.getOpenWindows() : null;
+                });
+                out.menu_bar_keys = val(function () {
+                    return window.gui && window.gui.menuBar
+                        ? Object.keys(window.gui.menuBar).slice(0, 40) : null;
+                });
+                return _agentResult(true, out);
+            },
+            'debug.ui': function(args) {
+                // Test-only UI driver: opens one of the game's own windows through its
+                // window container. The tutorial's "open inventory" step waits on the
+                // equipment window's open event, and no agent tool owns a menu tap.
+                args = args || {};
+                var wc = window.gui && window.gui.windowsContainer;
+                if (!wc) return _agentResult(false, null, 'window container is not exposed');
+                var name = String(args.window || args.name || '');
+                // windowsContainer is a UI element; the manager is attached to the
+                // window objects registered with it (`windowManager`).
+                var mgr = wc.windowManager || null;
+                if (!mgr) {
+                    var kids = wc._childrenList || [];
+                    for (var i = 0; i < kids.length && !mgr; i++) {
+                        if (kids[i] && kids[i].windowManager) mgr = kids[i].windowManager;
+                    }
+                }
+                if (!mgr) return _agentResult(false, null, 'window manager is not reachable');
+                var w = null;
+                try { w = typeof mgr.getWindow === 'function' ? mgr.getWindow(name) : null; }
+                catch (e4) {}
+                if (!name) {
+                    var methods = [];
+                    try {
+                        for (var k in mgr) {
+                            if (typeof mgr[k] === 'function') methods.push(k);
+                        }
+                    } catch (e5) {}
+                    return _agentResult(true, { methods: methods.slice(0, 40),
+                                                has_getWindow: typeof mgr.getWindow === 'function' });
+                }
+                var result = { window: name, opened: !!(w && w.openState) };
+                if (args.close) {
+                    try {
+                        if (typeof mgr.close === 'function') { mgr.close(name); result.via = 'manager.close'; }
+                        else return _agentResult(false, result, 'window manager has no close');
+                    } catch (e7) { return _agentResult(false, result, 'close failed: ' + e7); }
+                    result.opened = !!(w && w.openState);
+                    return _agentResult(true, result);
+                }
+                var params = args.params && typeof args.params === 'object'
+                    ? args.params : undefined;
+                try {
+                    if (typeof mgr.open === 'function') {
+                        mgr.open(name, params); result.via = 'manager.open';
+                    } else if (typeof mgr['switch'] === 'function') {
+                        mgr['switch'](name, params); result.via = 'manager.switch';
+                    } else {
+                        return _agentResult(false, result, 'window manager has no open/switch');
+                    }
+                } catch (e6) { return _agentResult(false, result, 'open failed: ' + e6); }
+                result.opened = !!(w && w.openState);
+                return _agentResult(true, result);
+            },
+            'debug.stat_upgrade': function(args) {
+                // Test-only: the tutorial's statistics step waits for statsPoints<=0
+                // and no agent tool owns the characteristics "+" tap. The packet is
+                // the one the characUpdate window's confirm button sends.
+                args = args || {};
+                var ids = { vitality: 11, wisdom: 12, strength: 10,
+                            intelligence: 15, chance: 13, agility: 14 };
+                var statId = _agentNum(args.stat_id);
+                if (statId == null && typeof args.stat === 'string') {
+                    statId = ids[args.stat.toLowerCase()] || null;
+                }
+                if (statId == null) statId = ids.strength;
+                var pd = window.gui && window.gui.playerData;
+                var main = pd && pd.characters && pd.characters.mainCharacter;
+                var charac = main && main.characteristics;
+                var remaining = charac && charac.statsPoints != null
+                    ? Number(charac.statsPoints) : null;
+                var points = _agentNum(args.points);
+                if (remaining != null && (points == null || points > remaining)) points = remaining;
+                if (points == null || !(points > 0)) {
+                    return _agentResult(false, { stats_points: remaining },
+                        'no unspent stat points');
+                }
+                // Measured: this client accepted StatsUpgradeRequestMessage (strength
+                // 0->10); the Hero* variant was ignored. `hero:true` opts into it.
+                var msg = args.hero ? 'HeroStatsUpgradeRequestMessage'
+                    : 'StatsUpgradeRequestMessage';
+                window.dofus.sendMessage(msg, { statId: statId,
+                    pointsUsed: Math.floor(points), useAdditional: false });
+                return _agentResult(true, { message: msg, stat_id: statId,
+                    points_used: Math.floor(points), stats_points_before: remaining });
+            },
+            'char.build': function(args) {
+                // Level-up housekeeping as a build decision: unspent stat points go
+                // into the element of the character's best damage spell, and unspent
+                // spell points raise that same spell. Nothing here is per-class; the
+                // element comes from the live damage effect (client action table
+                // 96 water, 97 earth, 98 air, 99 fire, 100 neutral) and the stat id
+                // is the one the characteristics window's "+" sends.
+                args = args || {};
+                var pd = window.gui && window.gui.playerData;
+                var main = pd && pd.characters && pd.characters.mainCharacter;
+                var chc = main && main.characteristics;
+                var sd = main && main.spellData;
+                var fm = window.gui && window.gui.fightManager;
+                var myId = null;
+                try {
+                    myId = (pd.characters && pd.characters.controlledCharacterId != null)
+                        ? Number(pd.characters.controlledCharacterId) : null;
+                } catch (e) {}
+                if (myId == null && pd.characterBaseInformations) {
+                    myId = Number(pd.characterBaseInformations.id);
+                }
+                if (!chc || !sd) return _agentResult(false, null, 'characteristics unavailable');
+                var elementOf = {91: 'water', 92: 'earth', 93: 'air', 94: 'fire',
+                                 95: 'neutral', 96: 'water', 97: 'earth',
+                                 98: 'air', 99: 'fire', 100: 'neutral'};
+                var statOf = {water: 13, earth: 10, air: 14, fire: 15, neutral: 10};
+                var statName = {water: 'chance', earth: 'strength', air: 'agility',
+                                fire: 'intelligence', neutral: 'strength'};
+                var spells = {};
+                try { spells = sd.getSpellListDependingOnGameMode() || {}; } catch (e) {}
+                var best = null;
+                for (var k in spells) {
+                    if (!Object.prototype.hasOwnProperty.call(spells, k)) continue;
+                    var sp = spells[k];
+                    if (!sp || !sp.spellLevel) continue;
+                    var lvl = sp.spellLevel;
+                    var fx = lvl.effects || [];
+                    var dmg = null;
+                    for (var i = 0; i < fx.length; i++) {
+                        var e = fx[i] || {};
+                        var el = elementOf[Number(e.effectId)];
+                        if (!el) continue;
+                        var mid = ((Number(e.diceNum) || 0) + (Number(e.diceSide) || 0)) / 2;
+                        if (mid > 0) { dmg = { mid: mid, element: el }; break; }
+                    }
+                    if (!dmg) continue;
+                    var ap = Number(lvl.apCost) || 1;
+                    var score = dmg.mid / Math.max(1, ap);
+                    var status = null;
+                    try { status = sd.getSpellStatus(Number(k)); } catch (e2) {}
+                    // Prefer a spell the client will actually let us cast; a
+                    // state-gated one still counts, because the page casts its
+                    // enabler before it (G37).
+                    var castable = false;
+                    try {
+                        castable = fm && myId != null
+                            ? !!fm.canCastThisSpell(myId, Number(k)) : false;
+                    } catch (e3) {}
+                    var bias = castable ? 1.15 : (Number(status) === 2 ? 1.0 : 0.6);
+                    score *= bias;
+                    if (!best || score > best.score) {
+                        best = { id: Number(k), score: score, element: dmg.element,
+                                 ap: ap, level: Number(sp.level) || 1,
+                                 castable: castable };
+                    }
+                }
+                var statsLeft = _agentNum(chc.statsPoints);
+                var spellsLeft = _agentNum(chc.spellsPoints);
+                var out = { stats_points: statsLeft, spells_points: spellsLeft,
+                            spell: best ? best.id : null,
+                            element: best ? best.element : null };
+                if (!best) {
+                    return _agentResult(false, out,
+                        'no damage spell to build around');
+                }
+                if (args.dry_run) return _agentResult(true, out);
+                var spent = 0;
+                if (statsLeft != null && statsLeft > 0
+                        && !(args.stats === false)) {
+                    var statId = best.element ? statOf[best.element] : 10;
+                    window.dofus.sendMessage('StatsUpgradeRequestMessage', {
+                        statId: statId, pointsUsed: Math.floor(statsLeft),
+                        useAdditional: false });
+                    spent = Math.floor(statsLeft);
+                    out.stat = statName[best.element] || 'strength';
+                    out.stat_id = statId;
+                    out.stats_spent = spent;
+                }
+                var upgradedTo = null;
+                if (spellsLeft != null && spellsLeft > 0 && !(args.spells === false)) {
+                    var next = best.level + 1;
+                    _cmSend('SpellChangeRequestMessage',
+                        { spells: [{ spellId: best.id, spellLevel: next }] });
+                    upgradedTo = next;
+                    out.spell_rank_requested = next;
+                    out.spell_rank_before = best.level;
+                }
+                out.note = 'stat points are spent in one message; a spell rank '
+                    + 'change is only confirmed by the server on the next read';
+                return _agentResult(spent > 0 || upgradedTo != null, out,
+                    spent > 0 || upgradedTo != null ? null
+                        : 'no unspent points to spend');
+            },
+            'debug.npc_menu': function(args) {
+                // Test-only: open the client's own NPC contextual menu path. Unlike
+                // the raw NpcGenericActionRequestMessage, this fires the scenario's
+                // NPC_INTERACTION condition first (the tutorial's claim) and only then
+                // decides between highlight and action, exactly like a player's tap.
+                args = args || {};
+                var npc = _agentNum(args.npc_id != null ? args.npc_id : args.id);
+                if (npc == null) return _agentResult(false, null, 'npc_menu needs npc_id');
+                var found = _findNpcActor(npc);
+                var actor = found && found.actor;
+                if (!actor) {
+                    var here = [];
+                    try { here = _listNpcActors(); } catch (e) {}
+                    return _agentResult(false, { npc_id: npc, npcs_here: here },
+                        'npc ' + npc + ' is not on this map');
+                }
+                var cid = actor.contextualId != null ? Number(actor.contextualId) : null;
+                var am = window.actorManager
+                    || (window.isoEngine && window.isoEngine.actorManager) || null;
+                var live = null;
+                try { live = (am && cid != null && typeof am.getActor === 'function') ? am.getActor(cid) : null; }
+                catch (e3) { live = null; }
+                if (!live && typeof am.getActorFromNpcId === 'function') {
+                    try { live = am.getActorFromNpcId(npc); } catch (e4) { live = null; }
+                }
+                if (!live || typeof live.openNpcContextualMenu !== 'function') {
+                    return _agentResult(false, { npc_id: npc, contextual_id: cid },
+                        'the live actor has no openNpcContextualMenu');
+                }
+                var res = null;
+                try { res = live.openNpcContextualMenu(); } catch (e2) {
+                    return _agentResult(false, { npc_id: npc }, 'openNpcContextualMenu threw: ' + e2);
+                }
+                return _agentResult(true, { npc_id: npc, cell: actor.cell != null ? actor.cell : null,
+                    via: 'actor.openNpcContextualMenu', returned: res == null ? null : String(res).slice(0, 60) });
+            },
+            'debug.scenario_condition': function(args) {
+                // Test-only: fire one of the client's own scenario condition types.
+                // Every tutorial step that waits on a UI event (window opened,
+                // placement tap, spell upgrade confirmed, ...) is advanced by
+                // `scenarioManager.checkCondition(type)`, which is what the UI calls;
+                // the step's own endingCondition then claims its objective.
+                args = args || {};
+                var sm = window.gui && window.gui.scenarioManager;
+                if (!sm || typeof sm.checkCondition !== 'function') {
+                    return _agentResult(false, null, 'scenarioManager.checkCondition unavailable');
+                }
+                var enumObj = sm.conditionTypeEnum || {};
+                var type = _agentNum(args.type != null ? args.type : args.condition);
+                if (type == null && typeof args.name === 'string') {
+                    type = enumObj[String(args.name).toUpperCase()];
+                }
+                if (type == null) {
+                    return _agentResult(false, { types: enumObj },
+                        'scenario_condition needs type (number) or name');
+                }
+                sm.checkCondition(type, args.data && typeof args.data === 'object'
+                    ? args.data : undefined);
+                return _agentResult(true, { condition: type });
+            },
+            'debug.spell_upgrade': function(args) {
+                // Test-only: the tutorial's spells step wants one usable spell at
+                // level > 1 and no agent tool owns the grimoire's upgrade button.
+                // This sends the same request the button does: {spellId} only.
+                args = args || {};
+                var pd = window.gui && window.gui.playerData;
+                var main = pd && pd.characters && pd.characters.mainCharacter;
+                var sd = main && main.spellData;
+                var charac = main && main.characteristics;
+                var pts = charac && charac.spellsPoints != null
+                    ? Number(charac.spellsPoints) : null;
+                if (!sd) return _agentResult(false, { spells_points: pts },
+                    'spell data unavailable');
+                var want = _agentNum(args.spell_id != null ? args.spell_id : args.id);
+                var chosen = want;
+                if (chosen == null) {
+                    try {
+                        var statuses = sd._spellsStatus || {};
+                        for (var k in statuses) {
+                            if (!Object.prototype.hasOwnProperty.call(statuses, k)) continue;
+                            if (Number(statuses[k]) !== 2) continue;
+                            var sp = sd.spells && sd.spells[k];
+                            if (!sp || Number(sp.level) !== 1) continue;
+                            chosen = Number(k);
+                            break;
+                        }
+                    } catch (e) {}
+                }
+                if (chosen == null) {
+                    return _agentResult(false, { spells_points: pts },
+                        'no level-1 usable spell to upgrade');
+                }
+                if (pts != null && pts <= 0) {
+                    return _agentResult(false, { spell_id: chosen, spells_points: pts },
+                        'no unspent spell points');
+                }
+                var lvl = _agentNum(args.level);
+                if (lvl == null) lvl = 2;
+                // The grimoire's own path (bundle): SpellChangeRequestMessage with a
+                // list of {spellId, spellLevel}, then checkCondition(CONFIRM_UPGRADE_SPELL)
+                // so the tutorial scenario sees the confirmation. SpellUpgradeRequestMessage
+                // was acked and ignored by this server.
+                var r = _cmSend('SpellChangeRequestMessage',
+                    { spells: [{ spellId: chosen, spellLevel: lvl }] });
+                var confirmed = null;
+                try {
+                    var sm = window.gui && window.gui.scenarioManager;
+                    if (sm && typeof sm.checkCondition === 'function'
+                            && sm.conditionTypeEnum
+                            && sm.conditionTypeEnum.CONFIRM_UPGRADE_SPELL != null) {
+                        sm.checkCondition(sm.conditionTypeEnum.CONFIRM_UPGRADE_SPELL);
+                        confirmed = sm.conditionTypeEnum.CONFIRM_UPGRADE_SPELL;
+                    }
+                } catch (e) {}
+                return _agentResult(r.ok, { spell_id: chosen, spell_level: lvl,
+                    spells_points_before: pts, condition: confirmed },
+                    r.ok ? null : r.error);
+            },
+            'debug.spell_probe': function(args) {
+                // Test-only: why does the client refuse a class spell in combat?
+                // `canCastThisSpell` is one boolean built from ~8 gates, so a live
+                // fight that only offers the weapon says nothing about which gate
+                // closed. This replays each gate per spell and reports the first
+                // one that fails, which is what a planner needs to know.
+                args = args || {};
+                var pd = window.gui && window.gui.playerData;
+                var main = pd && pd.characters && pd.characters.mainCharacter;
+                var sd = main && main.spellData;
+                var fm = window.gui && window.gui.fightManager;
+                var charac = main && main.characteristics;
+                var myId = null;
+                try {
+                    myId = (pd.characters && pd.characters.controlledCharacterId != null)
+                        ? Number(pd.characters.controlledCharacterId) : null;
+                } catch (e) {}
+                if (myId == null && pd.characterBaseInformations) {
+                    myId = Number(pd.characterBaseInformations.id);
+                }
+                if (!sd) return _agentResult(false, null, 'spell data unavailable');
+                var apNow = charac && charac.actionPointsCurrent != null
+                    ? Number(charac.actionPointsCurrent) : null;
+                var list = {};
+                try { list = sd.getSpellListDependingOnGameMode() || {}; } catch (e) {}
+                var fighter = null, states = [];
+                try {
+                    fighter = fm && fm.getFighter ? fm.getFighter(myId) : null;
+                    states = (fighter && fighter.states) || [];
+                } catch (e) {}
+                var only = args.ids ? String(args.ids).split(',') : null;
+                var rows = [];
+                for (var k in (sd.spells || {})) {
+                    if (!Object.prototype.hasOwnProperty.call(sd.spells, k)) continue;
+                    if (only && only.indexOf(String(k)) < 0) continue;
+                    var sp = sd.spells[k];
+                    if (!sp) continue;
+                    var row = { id: Number(k), level: sp.level != null ? Number(sp.level) : null };
+                    try { row.status = sd.getSpellStatus(Number(k)); } catch (e) { row.status = null; }
+                    var listed = null;
+                    try { listed = list[k] || list[Number(k)] || null; } catch (e) {}
+                    row.listed = !!listed;
+                    row.is_loaded = listed ? !!listed.isLoaded : null;
+                    row.is_weapon = !!(listed && listed.isWeapon && listed.isWeapon());
+                    try {
+                        row.ap_cost = listed && listed.getProperty
+                            ? Number(listed.getProperty('apCost')) : null;
+                    } catch (e) { row.ap_cost = null; }
+                    row.ap_current = apNow;
+                    if (listed && listed.getProperty) {
+                        try {
+                            var forb = listed.getProperty('statesForbidden');
+                            if (forb && forb.length) row.states_forbidden = forb;
+                        } catch (e) {}
+                        try {
+                            var req = listed.getProperty('statesRequired');
+                            if (req && req.length) row.states_required = req;
+                        } catch (e) {}
+                    }
+                    var gate = null;
+                    try {
+                        if (fm && typeof fm.canControlCharacterId === 'function'
+                                && !fm.canControlCharacterId(myId)) gate = 'cannot_control';
+                    } catch (e) {}
+                    if (!gate && row.status == null) gate = 'status_unknown';
+                    if (!gate && Number(row.status) !== 2) gate = 'status_' + row.status;
+                    if (!gate && !row.listed) gate = 'not_listed';
+                    if (!gate && row.is_loaded === false) gate = 'not_loaded';
+                    if (!gate && row.ap_cost != null && apNow != null
+                            && row.ap_cost > apNow) gate = 'ap_' + row.ap_cost + '>' + apNow;
+                    if (!gate && row.states_forbidden && states.length) {
+                        for (var sf = 0; sf < row.states_forbidden.length; sf++) {
+                            if (states.indexOf(row.states_forbidden[sf]) >= 0) {
+                                gate = 'forbidden_state_' + row.states_forbidden[sf];
+                                break;
+                            }
+                        }
+                    }
+                    if (!gate && row.states_required) {
+                        for (var sr = 0; sr < row.states_required.length; sr++) {
+                            if (states.indexOf(row.states_required[sr]) < 0) {
+                                gate = 'missing_state_' + row.states_required[sr];
+                                break;
+                            }
+                        }
+                    }
+                    var fs = null;
+                    try {
+                        fs = fighter && fighter.spells ? fighter.spells[k] : null;
+                        if (fs) {
+                            row.cooldown = Number(fs.getCooldown ? fs.getCooldown() : 0);
+                            row.cast_this_turn = fs.castingData
+                                ? Number(fs.castingData.castThisTurn) : null;
+                        }
+                    } catch (e) {}
+                    if (!gate && row.cooldown > 0) gate = 'cooldown_' + row.cooldown;
+                    row.gate = gate;
+                    var castable = null;
+                    try {
+                        castable = fm && myId != null
+                            ? !!fm.canCastThisSpell(myId, Number(k)) : null;
+                    } catch (e) { castable = 'threw:' + String(e).slice(0, 60); }
+                    row.can_cast = castable;
+                    rows.push(row);
+                }
+                rows.sort(function (x, y) { return x.id - y.id; });
+                return _agentResult(true, { my_id: myId, ap_current: apNow,
+                    fighter_present: !!fighter, states: states,
+                    count: rows.length, spells: rows });
+            },
+            'debug.ui_click': function(args) {
+                // Test-only: tap the first visible element matching a CSS selector.
+                // The menu icons carry stable classes (`menuIconMap`,
+                // `menuIconBook`, `shopBtn`, ...), so a selector beats guessing
+                // screen coordinates from a screenshot. Fires the same synthetic
+                // event sequence debug.tap_text uses.
+                args = args || {};
+                var sel = String(args.selector || '').trim();
+                if (!sel) return _agentResult(false, null, 'ui_click needs selector');
+                var nodes = null;
+                try { nodes = document.querySelectorAll(sel); } catch (e) {
+                    return _agentResult(false, { selector: sel }, 'bad selector: ' + e);
+                }
+                var found = 0;
+                for (var i = 0; i < nodes.length; i++) {
+                    var el = nodes[i];
+                    var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                    if (!r || !r.width || !r.height) continue;
+                    found += 1;
+                    if (found < (Number(args.index) || 0) + 1) continue;
+                    var o = { clientX: Math.round(r.left + r.width / 2),
+                              clientY: Math.round(r.top + r.height / 2),
+                              bubbles: true, cancelable: true, view: window };
+                    try {
+                        el.dispatchEvent(new PointerEvent('pointerdown', o));
+                        el.dispatchEvent(new PointerEvent('pointerup', o));
+                        el.dispatchEvent(new MouseEvent('mousedown', o));
+                        el.dispatchEvent(new MouseEvent('mouseup', o));
+                        el.dispatchEvent(new MouseEvent('click', o));
+                        if (typeof el.click === 'function') el.click();
+                    } catch (e3) {
+                        return _agentResult(false, { selector: sel }, 'click threw: ' + e3);
+                    }
+                    return _agentResult(true, { selector: sel, matches: nodes.length,
+                        class: String(el.className || '').slice(0, 80) });
+                }
+                return _agentResult(false, { selector: sel, nodes: nodes.length },
+                    'no visible element matches "' + sel + '"');
+            },
+            'debug.npc_talk': function(args) {
+                // Test-only: send the NPC action exactly as given, so a server
+                // refusal can be attributed to the id instead of guessed at.
+                args = args || {};
+                var id = _agentNum(args.npc_id != null ? args.npc_id : args.id);
+                var action = _agentNum(args.action);
+                if (action == null) action = 3;
+                var mapId = _agentNum(args.map_id);
+                if (mapId == null) {
+                    try {
+                        mapId = window.gui.playerData.position.mapId;
+                    } catch (e) { mapId = null; }
+                }
+                if (id == null) return _agentResult(false, null, 'npc_talk needs npc_id');
+                var r = _cmSend('NpcGenericActionRequestMessage',
+                    { npcId: id, npcActionId: action, npcMapId: mapId });
+                return _agentResult(r.ok, { npc_id: id, action: action, map_id: mapId },
+                    r.ok ? null : r.error);
+            },
+            'debug.gui': function(args) {
+                // Test-only introspection: which managers the live gui exposes.
+                // Used to answer "who owns character selection / logout" without
+                // shipping a new tool for every screen.
+                args = args || {};
+                var gui = window.gui || null;
+                if (!gui) return _agentResult(false, null, 'gui is not exposed');
+                var keys = [];
+                try {
+                    for (var k in gui) {
+                        if (typeof gui[k] === 'function') continue;
+                        keys.push(k);
+                    }
+                } catch (e) { return _agentResult(false, null, 'gui key scan failed: ' + e); }
+                var out = { keys: keys.slice(0, 120) };
+                var match = args.match ? new RegExp(String(args.match), 'i') : null;
+                if (match) {
+                    out.matches = {};
+                    for (var i = 0; i < keys.length; i++) {
+                        if (!match.test(keys[i])) continue;
+                        if (Object.keys(out.matches).length >= 12) break;
+                        var v = null;
+                        try { v = gui[keys[i]]; } catch (e2) { continue; }
+                        out.matches[keys[i]] = v && typeof v === 'object'
+                            ? { type: String((v.constructor && v.constructor.name) || 'object'),
+                                keys: Object.keys(v).slice(0, 30) }
+                            : String(v).slice(0, 80);
+                    }
+                }
+                return _agentResult(true, out);
+            },
+            'debug.inspect': function(args) {
+                // Test-only bounded object walk: dotted path from window, keys and
+                // scalar values only, depth-limited. The scenario manager's current
+                // step is an object with no public reader; a stuck tutorial step is
+                // otherwise a guessing game.
+                args = args || {};
+                var path = String(args.path || '').split('.').filter(function (p) { return p; });
+                var depth = _agentNum(args.depth);
+                if (depth == null || depth < 0) depth = 2;
+                if (depth > 4) depth = 4;
+                var node = window;
+                var walked = [];
+                for (var i = 0; i < path.length; i++) {
+                    if (node == null) break;
+                    try { node = node[path[i]]; walked.push(path[i]); }
+                    catch (e) { return _agentResult(false, { walked: walked }, 'read failed: ' + e); }
+                }
+                var bounded = function (v, d) {
+                    if (v == null || typeof v === 'number' || typeof v === 'boolean') return v;
+                    if (typeof v === 'string') return v.length > 120 ? v.slice(0, 120) + '...' : v;
+                    if (typeof v === 'function') {
+                        if (!args.source) return 'function';
+                        var src = '';
+                        try { src = Function.prototype.toString.call(v); } catch (eSrc) {}
+                        return src.length > 500 ? src.slice(0, 500) + '...' : src;
+                    }
+                    if (Object.prototype.toString.call(v) === '[object Array]') {
+                        var arr = [];
+                        for (var j = 0; j < v.length && j < 8; j++) arr.push(bounded(v[j], d - 1));
+                        return arr;
+                    }
+                    if (d <= 0) return 'object';
+                    var o = {};
+                    var count = 0;
+                    for (var k in v) {
+                        if (count++ >= 20) break;
+                        try { o[k] = bounded(v[k], d - 1); } catch (e2) { o[k] = 'ERR'; }
+                    }
+                    return o;
+                };
+                return _agentResult(true, { path: walked.join('.'),
+                    value: bounded(node, depth) });
+            },
+            'debug.tap_text': function(args) {
+                // Test-only synthetic tap by visible text. The login and character
+                // selection screens are DOM UI with no tool of their own; this taps
+                // the smallest visible element whose text contains the needle, the
+                // same event sequence session.login uses for its buttons.
+                args = args || {};
+                var text = String(args.text || '').toLowerCase().trim();
+                if (!text) return _agentResult(false, null, 'tap_text needs text');
+                var best = null;
+                var nodes = document.querySelectorAll('[class]');
+                for (var i = 0; i < nodes.length; i++) {
+                    var el = nodes[i];
+                    var t = String(el.textContent || '').trim().toLowerCase();
+                    if (t.indexOf(text) < 0) continue;
+                    var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                    if (!r || !r.width || !r.height) continue;
+                    var area = r.width * r.height;
+                    if (!best || area < best.area) {
+                        best = { el: el, area: area, r: r, cls: String(el.className || '') };
+                    }
+                }
+                if (!best) {
+                    return _agentResult(false, { text: text },
+                        'no visible element contains "' + text + '"');
+                }
+                var o = { clientX: Math.round(best.r.left + best.r.width / 2),
+                          clientY: Math.round(best.r.top + best.r.height / 2),
+                          bubbles: true, cancelable: true, view: window };
+                try {
+                    best.el.dispatchEvent(new PointerEvent('pointerdown', o));
+                    best.el.dispatchEvent(new PointerEvent('pointerup', o));
+                    best.el.dispatchEvent(new MouseEvent('mousedown', o));
+                    best.el.dispatchEvent(new MouseEvent('mouseup', o));
+                    best.el.dispatchEvent(new MouseEvent('click', o));
+                    if (typeof best.el.click === 'function') best.el.click();
+                } catch (e3) {
+                    return _agentResult(false, { text: text },
+                        'tap threw: ' + e3);
+                }
+                return _agentResult(true, { text: text, class: best.cls.slice(0, 80),
+                    box: [Math.round(best.r.width), Math.round(best.r.height)] });
+            },
             'debug.map': function() {
                 var iso = window.isoEngine || null;
                 var pd = (window.gui && window.gui.playerData) || null;
@@ -6382,6 +8885,7 @@
                     out.exit_cells = details.exits;
                     out.npcs = details.npcs;
                     out.interactives = details.interactives;
+                    out.transition = details.transition;
                 } catch (e) { out.exit_cells = []; }
                 return _agentResult(true, out);
             },
@@ -6393,9 +8897,22 @@
                 var list = _listNpcActors();
                 return _agentResult(true, { count: list.length, npcs: list });
             },
-            'debug.reload': function() {
+            'debug.reload': function(args) {
+                // A reload at the login screen is a new login attempt: after "Server
+                // busy" it is one more press that re-arms the cooldown, so it is
+                // refused for the same window session.login honours.
+                var cool = _loginCooldown();
+                if (cool && !(args && args.force)) {
+                    return _agentResult(false, { login_cooldown: cool },
+                        'reload refused: login cooldown has ' + cool.remaining_s + 's left '
+                        + '(the page answered "' + cool.reason + '"); pass force:true '
+                        + 'to reload anyway');
+                }
                 setTimeout(function () {
-                    try { window.location.reload(); } catch (e) {}
+                    try {
+                        if (args && args.force) window.__agentReloadForced = true;
+                        window.location.reload();
+                    } catch (e) {}
                 }, 250);
                 return _agentResult(true, { reloading: true,
                     build: window.__agentBuild || AGENT_BUILD,
@@ -6422,6 +8939,10 @@
                     ready: window.__agentLastFightReady || null,
                     last_turn: window.__agentLastFightTurn || null,
                     last_turn_error: window.__agentLastFightTurnError || null,
+                    fallback: window.__agentLastFightFallback || null,
+                    plan: window.__agentLastFightPlan || null,
+                    move_probe: window.__agentLastFightMove || null,
+                    server_movement: window.__agentLastServerMovement || null,
                     note: window.__agentLastFight ? null
                         : 'no fight attempted since this page loaded'
                 });
@@ -6782,8 +9303,55 @@
             'session.login': function(args) {
                 var inspectOnly = !!(args && (args.inspect || args.dry_run));
                 var want = String((args && args.target) || 'play').toLowerCase();
+                var cool = _loginCooldown();
+                if (!inspectOnly && cool && !(args && args.force)) {
+                    return _agentResult(false, { login_cooldown: cool, pressed: null },
+                        'login cooldown: the page answered "' + cool.reason + '" and '
+                        + cool.remaining_s + 's remain; pressing login inside that '
+                        + 'window re-arms the lockout (force:true overrides)');
+                }
                 var seen = [];
                 var pressable = [];
+                var ban = _agentLoginBan();
+                if (!inspectOnly && ban && ban.banned) {
+                    // A permanent ban answers every press the same way, so the
+                    // press is not sent at all: it is another auth attempt, not a
+                    // retry. The caller has to reset the slot to get a new guest.
+                    return _agentResult(false, {
+                        banned: true, login_banned: true, pressed: null,
+                        text: ban.text || null
+                    }, 'the account is permanently banned ("' + String(ban.text || '')
+                        + '"); pressing login again cannot succeed -- reset the slot '
+                        + 'for a fresh guest');
+                }
+                if (want === 'character') {
+                    // The character-selection screen is not the login form: the
+                    // client already holds the account's characters and the
+                    // player's action is "play as this one", which the client's
+                    // own selectCharacter(id) implements as exactly this message.
+                    // Without it a fall-out that lands here waits out the whole
+                    // recovery budget (live 2026-10-29: 751.8 s, recovered false).
+                    var snapSel = _agentSnapshot();
+                    if (!snapSel || snapSel.in_world !== false) {
+                        return _agentResult(false, {
+                            in_world: snapSel ? snapSel.in_world : null
+                        }, 'the client is already in the world');
+                    }
+                    var selChar = snapSel.character && snapSel.character.id != null
+                        ? Number(snapSel.character.id) : null;
+                    var wantId = args && args.character_id != null
+                        ? Number(args.character_id) : selChar;
+                    if (wantId == null || !isFinite(wantId) || wantId <= 0) {
+                        return _agentResult(false, { character_id: null },
+                            'no character id is known at character selection');
+                    }
+                    var selSent = _cmSend('CharacterSelectionMessage', { id: wantId });
+                    return _agentResult(selSent.ok, {
+                        target: 'character', character_id: wantId,
+                        in_world_before: snapSel.in_world,
+                        via: 'CharacterSelectionMessage'
+                    }, selSent.ok ? null : selSent.error);
+                }
                 try {
                     var nodes = document.querySelectorAll('[class]');
                     for (var i = 0; i < nodes.length; i++) {
@@ -7101,6 +9669,15 @@
                 // The client exposes the whole dialog: gui.npcDialogUi._uiReplyHandler
                 // (index) sends NpcDialogReplyMessage{replyId: replyIds[index]}.
                 var pd0 = (window.gui && window.gui.playerData) || null;
+                if (args && args.close && !(pd0 && pd0.isInDialog)) {
+                    // Closing a dialog that is already gone is the state the caller
+                    // asked for. Live 2026-10-29: the close that worked a beat after
+                    // the page read it was answered `failed`, the controller retried
+                    // it, and the retry fell through to the talk path and was refused
+                    // for having no npc_id -- three steps lost per close.
+                    return _agentResult(true,
+                        { stage: 'dialog_closed', note: 'no dialog was open' }, null);
+                }
                 if (pd0 && pd0.isInDialog) {
                     // G33: the quest an NPC offers is a LINK in its own text (G32), and
                     // QuestStartRequestMessage is what this client sends when that link is
@@ -7511,18 +10088,55 @@
                     return _agentResult(false, { quest_id: questId },
                         'no NPC on this map to talk to; pass objective_id to validate directly');
                 }
-                if (npc.contextualId == null || isNaN(Number(npc.contextualId))) {
+                // Negative ids are this build's normal NPC actor ids, not a
+                // sentinel: measured live 2026-10-28 20:22 on map 145490944, NPC
+                // 3900 ("Roki") is actorId -4, and the client's own contextual
+                // menu sends exactly that value as `npcId`. The old refusal for
+                // any id < 0 therefore made every NPC talk impossible. The id
+                // that must never be named is the one with no actor behind it,
+                // so resolve the live actor and require a finite id.
+                var resolvedId = npc.contextualId != null
+                    ? Number(npc.contextualId) : NaN;
+                var liveActor = null;
+                try {
+                    var amResolve = window.actorManager
+                        || (window.isoEngine && window.isoEngine.actorManager);
+                    if (amResolve && typeof amResolve.getActor === 'function'
+                            && isFinite(resolvedId)) {
+                        liveActor = amResolve.getActor(resolvedId) || null;
+                    }
+                } catch (e) {}
+                if (!isFinite(resolvedId) && !liveActor) {
                     return _agentResult(false, {
                         quest_id: questId, npc_template: npc.templateId,
-                        npc_cell: npc.cell },
-                        'npc ' + npc.templateId + ' has no actor id in the client model, '
-                            + 'so a talk request cannot name it');
+                        npc_cell: npc.cell, npc_contextual_id: npc.contextualId },
+                        'npc ' + npc.templateId + ' has no actor id and no live actor '
+                            + 'in the client model (got ' + npc.contextualId + '), so a '
+                            + 'talk request cannot name it');
                 }
+                if (isFinite(resolvedId)) npc.contextualId = resolvedId;
                 var mapId = _currentMapId();
                 // The wire field is the actor's contextual id, which this build
                 // stores as `actorId` (the menu sends `npcId: actorId`). The template
                 // id talks to nobody.
                 var doTalk = function () {
+                    // The client's own tap path. `openNpcContextualMenu()` fires the
+                    // scenario's NPC_INTERACTION condition (the tutorial's claim) and
+                    // prepares the dialog handler before sending the action; the raw
+                    // packet skips both and the server refused every tutorial talk
+                    // (NpcGenericActionFailureMessage, measured 2026-10-28), while the
+                    // same click through this path opened the dialog and completed the
+                    // objective.
+                    try {
+                        var am3 = window.actorManager
+                            || (window.isoEngine && window.isoEngine.actorManager);
+                        var live = am3 && typeof am3.getActor === 'function'
+                            ? am3.getActor(Number(npc.contextualId)) : null;
+                        if (live && typeof live.openNpcContextualMenu === 'function') {
+                            live.openNpcContextualMenu();
+                            return { ok: true, via: 'actor.openNpcContextualMenu' };
+                        }
+                    } catch (e) {}
                     return _cmSend('NpcGenericActionRequestMessage',
                         { npcId: npc.contextualId, npcActionId: 3, npcMapId: mapId });
                 };
@@ -7801,6 +10415,189 @@
                 } catch (e2) {}
                 var wanted = _agentNum(args.preset_id != null ? args.preset_id : args.preset);
                 var wantedName = typeof args.name === 'string' ? args.name.toLowerCase() : null;
+                var directUid = _agentNum(args.object_uid);
+                if (directUid != null) {
+                    // The client's own context-menu path: getCorrectInventoryByItemInstance
+                    // (item).equipItem(objectUID). Measured in the served bundle, so this
+                    // sends the game's own equip request instead of a guessed packet.
+                    var manager = window.gui && window.gui.playerData
+                        && window.gui.playerData.inventoryManager;
+                    var base = window.gui && window.gui.playerData
+                        && window.gui.playerData.inventory;
+                    var instance = null;
+                    try {
+                        var objs = base && (base.objects || base.items);
+                        if (Array.isArray(objs)) {
+                            for (var oi = 0; oi < objs.length; oi++) {
+                                if (objs[oi] && Number(objs[oi].objectUID) === directUid) {
+                                    instance = objs[oi]; break;
+                                }
+                            }
+                        } else if (objs && typeof objs === 'object') {
+                            instance = objs[directUid] || null;
+                            if (!instance) {
+                                for (var ok2 in objs) {
+                                    if (objs[ok2] && Number(objs[ok2].objectUID) === directUid) {
+                                        instance = objs[ok2]; break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e6) {}
+                    if (!instance || !manager
+                            || typeof manager.getCorrectInventoryByItemInstance !== 'function') {
+                        return _agentResult(false, { object_uid: directUid },
+                            'object_uid_not_found or direct equip unavailable');
+                    }
+                    var bag2 = manager.getCorrectInventoryByItemInstance(instance);
+                    if (!bag2 || typeof bag2.equipItem !== 'function') {
+                        return _agentResult(false, { object_uid: directUid },
+                            'inventory does not expose equipItem');
+                    }
+                    // equipItem is silent on four different gates: the object is not in
+                    // *this* bag, its position is not `notEquipped` (63), the template is
+                    // missing (`i.item` undefined), or the type category is not
+                    // equippable. A plain `ok` cannot tell them apart, so every gate the
+                    // call can hit is reported and "sent no message" is a failure.
+                    var template = instance.item || null;
+                    var ttype = template && template.type ? template.type : null;
+                    // doDefaultAction (double-tap) branches on `usable` before it ever
+                    // reaches isEquippable; the tutorial hammer is a quest type with no
+                    // possiblePositions, so its only client path is ObjectUseMessage.
+                    var usable = false;
+                    try {
+                        usable = template && typeof template.getProperty === 'function'
+                            ? !!template.getProperty('usable') : !!(template && template.usable);
+                    } catch (e6a) {}
+                    var bagObj = null;
+                    try {
+                        var bObjs = bag2.objects || null;
+                        bagObj = bObjs ? (Array.isArray(bObjs) ? null : bObjs[directUid]) : null;
+                        if (!bagObj && bObjs && Array.isArray(bObjs)) {
+                            for (var bi = 0; bi < bObjs.length; bi++) {
+                                if (bObjs[bi] && Number(bObjs[bi].objectUID) === directUid) {
+                                    bagObj = bObjs[bi]; break;
+                                }
+                            }
+                        }
+                    } catch (e6b) {}
+                    var equippedBefore = [];
+                    try { equippedBefore = bag2.equippedItems ? Object.keys(bag2.equippedItems) : []; } catch (e6c) {}
+                    var sent = [];
+                    var dmsg = window.dofus && window.dofus.sendMessage;
+                    if (typeof dmsg === 'function') {
+                        window.dofus.sendMessage = function (name) {
+                            sent.push(String(name));
+                            return dmsg.apply(window.dofus, arguments);
+                        };
+                    }
+                    var er = null, thrown = null;
+                    try { er = bag2.equipItem(directUid); }
+                    catch (e7) { thrown = String((e7 && e7.message) || e7); }
+                    finally {
+                        if (typeof dmsg === 'function') window.dofus.sendMessage = dmsg;
+                    }
+                    // `slot` is the explicit escape hatch: the bundle's own _equip sends
+                    // ObjectSetPositionMessage {objectUID, position, quantity:1}. Positions
+                    // are only used when the caller names one or the item's own template
+                    // declares them -- never guessed from the gid.
+                    var slotPos = _agentNum(args.slot);
+                    if (slotPos == null && typeof args.slot === 'string'
+                            && args.slot.toLowerCase() === 'weapon') slotPos = 1;
+                    // Removing is equipping's other half, and an occupied slot does not
+                    // swap: live 2026-10-29, an ObjectSetPositionMessage for slot 1 left
+                    // both items where they were (the recruit weapon still worn, the
+                    // tutorial hammer still at position 63). The bundle's own remove
+                    // sends the same message with position -1.
+                    var removeWanted = args.remove === true || args.unequip === true
+                        || slotPos === -1;
+                    if (removeWanted) slotPos = -1;
+                    if (!removeWanted && slotPos == null && !thrown && sent.length === 0
+                            && ttype && ttype.possiblePositions
+                            && ttype.possiblePositions.length) {
+                        // Live 2026-10-29: the recruit-set ring's equipItem sent nothing
+                        // (it can live in another bag) and the caller had no slot, so the
+                        // tool failed although the template says exactly where it goes.
+                        for (var pp = 0; pp < ttype.possiblePositions.length; pp++) {
+                            var posv = Number(ttype.possiblePositions[pp]);
+                            if (posv >= 0 && posv <= 16) { slotPos = posv; break; }
+                        }
+                    }
+                    if (!removeWanted && slotPos == null && !thrown && sent.length === 0
+                            && ttype && ttype.id != null) {
+                        // The type table does not always say where an item lives (its
+                        // `possiblePositions` can be empty), but a sibling of the same
+                        // type already worn is the client's own answer for that type.
+                        // Live 2026-10-29: 76 refused equips, every one from a type
+                        // with no declared positions, while the same slot held another
+                        // item of that type.
+                        try {
+                            var worn = bag2.equippedItems || {};
+                            for (var wk in worn) {
+                                if (!Object.prototype.hasOwnProperty.call(worn, wk)) continue;
+                                var w = worn[wk];
+                                var wt = w && ((w.item && w.item.type) || w.type);
+                                if (!wt || wt.id == null) continue;
+                                if (Number(wt.id) !== Number(ttype.id)) continue;
+                                var wp = _agentNum(w.position != null ? w.position : wk);
+                                if (wp != null && wp >= 0 && wp <= 16) { slotPos = wp; break; }
+                            }
+                        } catch (e6d) {}
+                    }
+                    var via = 'inventoryManager.equipItem';
+                    if (!thrown && sent.length === 0 && removeWanted
+                            && typeof dmsg === 'function') {
+                        dmsg.call(window.dofus, 'ObjectSetPositionMessage',
+                            { objectUID: directUid, position: -1, quantity: 1 });
+                        via = 'ObjectSetPositionMessage (remove)';
+                        sent.push('ObjectSetPositionMessage');
+                    }
+                    if (!thrown && sent.length === 0 && !removeWanted && slotPos != null
+                            && slotPos >= 0 && slotPos <= 16 && typeof dmsg === 'function') {
+                        dmsg.call(window.dofus, 'ObjectSetPositionMessage',
+                            { objectUID: directUid, position: slotPos, quantity: 1 });
+                        via = 'ObjectSetPositionMessage';
+                        sent.push('ObjectSetPositionMessage');
+                    }
+                    // Same branch doDefaultAction takes for a usable, non-equippable
+                    // item: ObjectUseMessage {objectUID}. The tutorial weapon is granted
+                    // this way and the server places it in the weapon slot.
+                    if (!thrown && sent.length === 0 && !removeWanted && usable
+                            && typeof dmsg === 'function') {
+                        dmsg.call(window.dofus, 'ObjectUseMessage', { objectUID: directUid });
+                        via = 'ObjectUseMessage';
+                        sent.push('ObjectUseMessage');
+                    }
+                    var data = {
+                        object_uid: directUid,
+                        gid: instance.objectGID != null ? Number(instance.objectGID) : null,
+                        via: via,
+                        usable: usable,
+                        messages: sent,
+                        equipped_before: equippedBefore,
+                        equipped_after: bag2.equippedItems ? Object.keys(bag2.equippedItems) : [],
+                        instance_position: instance.position != null ? instance.position : null,
+                        bag_has_instance: !!bagObj,
+                        has_template: !!template,
+                        type_id: ttype && ttype.id != null ? Number(ttype.id) : null,
+                        type_category: ttype && ttype.category != null ? Number(ttype.category) : null,
+                        possible_positions: ttype && ttype.possiblePositions
+                            ? ttype.possiblePositions.slice(0, 16) : null,
+                        slot: slotPos,
+                        remove: removeWanted || undefined
+                    };
+                    if (thrown) return _agentResult(false, data, 'equipItem threw: ' + thrown);
+                    if (!sent.length) {
+                        return _agentResult(false, data, !template
+                            ? 'item template is not loaded; pass slot to send ObjectSetPositionMessage directly'
+                            : (removeWanted
+                                ? 'nothing removed: the client and the direct message both stayed silent'
+                                : (usable
+                                    ? 'no equip/use path sent a message'
+                                    : 'equipItem sent nothing and the item is not usable; pass slot to send ObjectSetPositionMessage directly')));
+                    }
+                    return _agentResult(true, data);
+                }
                 var chosen = null;
                 for (var p = 0; p < rows.length; p++) {
                     if (wanted != null && Number(rows[p].preset_id) === wanted) { chosen = rows[p]; break; }
@@ -7809,16 +10606,16 @@
                 }
                 if (chosen == null) {
                     var reason = wanted != null || wantedName ? 'preset_not_found'
-                        : (args.object_uid != null ? 'direct_object_uid_not_proven' : 'preset_id_required');
+                        : (args.object_uid != null ? 'object_uid_invalid' : 'preset_id_required');
                     return _agentResult(false, {
                         reason: reason, presets: rows,
                         object_uid: args.object_uid != null ? Number(args.object_uid) : null,
-                        note: reason === 'direct_object_uid_not_proven'
-                            ? 'the served bundle has no proven direct object_uid equip path; use a saved preset'
+                        note: reason === 'object_uid_invalid'
+                            ? 'object_uid must be numeric (inventory.items[].object_uid)'
                             : 'pass preset_id (or name) from inventory.presets'
                     }, reason === 'preset_not_found'
                         ? 'no saved inventory preset matches ' + (wanted != null ? wanted : args.name)
-                        : 'inv.equip needs a saved preset id; direct object_uid equip is not proven');
+                        : 'inv.equip needs a saved preset_id, or a numeric object_uid from inventory.items');
                 }
                 var blocked = false;
                 try {
@@ -7831,6 +10628,360 @@
                     presets: rows
                 }, r.ok ? null : r.error);
             },
+            'ui.tap': function(args) {
+                // A press on the client's own UI. The tutorial's UI steps ("Open
+                // the Spell Interface", "Open the World Map", "Do the quest book
+                // tutorial", "Open the Encyclopaedia") are not packets: the client
+                // completes them when its menu button is pressed, and a
+                // quest.advance claim on one of their objectives is a disconnect
+                // (those objectives are server-counted, see SERVER_TYPES). A menu
+                // press is the same event a player produces.
+                args = args || {};
+                var menu = args.menu == null ? '' : String(args.menu);
+                var sel = args.selector == null ? '' : String(args.selector);
+                var ctarget = args.client_target == null ? '' : String(args.client_target);
+                var nodes = null, target = null;
+                if (ctarget) {
+                    if (menu || sel) {
+                        return _agentResult(false, {
+                            client_target: ctarget, menu: menu || null, selector: sel || null
+                        }, 'ui.tap takes either client_target or menu/selector, not both');
+                    }
+                    // `close:<window>` is a window close, not a press: several
+                    // tutorial steps *end* on WINDOW_CLOSED (the bestiary and job
+                    // steps call pointToWindowCloseButton("grimoire")). Closing
+                    // through the client's manager fires the same event the close
+                    // button does.
+                    if (ctarget.indexOf('close:') === 0) {
+                        var closeName = ctarget.slice('close:'.length);
+                        if (!/^[A-Za-z]+$/.test(closeName)) {
+                            return _agentResult(false, { client_target: ctarget },
+                                'close: needs a plain window name');
+                        }
+                        var closeBefore = _agentOpenWindows();
+                        var didClose = _agentCloseWindow(closeName);
+                        var closeAfter = _agentOpenWindows();
+                        return _agentResult(didClose, {
+                            client_target: ctarget, closed: didClose ? closeName : null,
+                            open_before: closeBefore, open_windows: closeAfter,
+                            changed: JSON.stringify(closeBefore) !== JSON.stringify(closeAfter)
+                        }, didClose ? null : 'window "' + closeName + '" is not open');
+                    }
+                    // A control the tutorial's own hint code taps by object path
+                    // (there is no stable class to select): the fight's challenge
+                    // slot, the spell book's upgrade confirm, and every control a
+                    // later tutorial's hint helper names (see _agentClientTarget).
+                    // A TAP_ANYWHERE scenario step listens for the touchend this
+                    // press produces.
+                    if (ctarget === 'charac_update') {
+                        // The characteristics step ends on CHARAC_UPDATE, which the
+                        // window's own Validation button fires *after* spending the
+                        // points. Its "+" and confirm have no stable element path, so
+                        // this reproduces the button's two effects: spend the points
+                        // through the client message char.build already sends, then
+                        // fire the condition. While points would remain unspent the
+                        // client's button refuses, and so does this.
+                        var smc = window.gui && window.gui.scenarioManager;
+                        var stepSrc = '';
+                        try { stepSrc = String((smc && smc.currentStep
+                            && smc.currentStep.executeStart) || ''); } catch (eS) {}
+                        if (stepSrc.indexOf('characUpdate') === -1) {
+                            return _agentResult(false, { client_target: ctarget },
+                                'the current tutorial step does not ask for the characteristics update');
+                        }
+                        var mainc = window.gui && window.gui.playerData
+                            && window.gui.playerData.characters
+                            && window.gui.playerData.characters.mainCharacter;
+                        var chc2 = mainc && mainc.characteristics;
+                        var pts = chc2 ? Number(chc2.statsPoints) : null;
+                        if (pts == null || !isFinite(pts)) {
+                            return _agentResult(false, { client_target: ctarget },
+                                'the character characteristics are not loaded');
+                        }
+                        var spent = 0, build = null;
+                        if (pts > 0) {
+                            build = _agentHandlers['char.build']({ stats: true, spells: false });
+                            spent = Number(build && build.data && build.data.stats_spent) || 0;
+                            if (!build || !build.ok || spent <= 0) {
+                                return _agentResult(false, {
+                                    client_target: ctarget, stats_points: pts,
+                                    error: (build && build.error) || null
+                                }, 'could not spend a stat point: '
+                                    + String((build && build.error) || 'char.build spent none'));
+                            }
+                        }
+                        var cond = null, condErr = null;
+                        try {
+                            cond = smc && smc.conditionTypeEnum
+                                ? smc.checkCondition(smc.conditionTypeEnum.CHARAC_UPDATE) : null;
+                        } catch (eC) { condErr = String(eC); }
+                        if (condErr) {
+                            return _agentResult(false, {
+                                client_target: ctarget, stats_points: pts, stats_spent: spent
+                            }, 'could not fire the characteristics condition: ' + condErr);
+                        }
+                        return _agentResult(true, {
+                            client_target: ctarget, stats_points_before: pts,
+                            stats_spent: spent, condition_return: cond == null ? null : cond,
+                            via: 'StatsUpgradeRequestMessage + CHARAC_UPDATE'
+                        });
+                    }
+                    if (ctarget === 'world') {
+                        // The shop chain has a step that advances on TAP_ANYWHERE and
+                        // *rewinds* if the market window closes, so its only action is
+                        // a real touchend on the game body. wui turns a left-button
+                        // mouseup on wBody's root element into dom.touchend, which is
+                        // the event this step's own condition watches.
+                        var smw = window.gui && window.gui.scenarioManager;
+                        var endSrc = '';
+                        try { endSrc = String((smw && smw.currentStep
+                            && smw.currentStep.endingCondition) || ''); } catch (eE) {}
+                        if (endSrc.indexOf('TAP_ANYWHERE') === -1) {
+                            return _agentResult(false, { client_target: ctarget },
+                                'the current tutorial step does not wait for a tap');
+                        }
+                        var wbody = window.gui && window.gui.wBody;
+                        var wroot = wbody && wbody.rootElement;
+                        var wr = wroot && wroot.getBoundingClientRect
+                            ? wroot.getBoundingClientRect() : null;
+                        if (!wroot || !wr || !wr.width || !wr.height) {
+                            return _agentResult(false, { client_target: ctarget },
+                                'the game body is not on screen right now');
+                        }
+                        var openBefore = _agentOpenWindows();
+                        _agentUiTap(wroot);
+                        var openAfter = _agentOpenWindows();
+                        return _agentResult(true, {
+                            client_target: ctarget, via: 'wBody mouseup',
+                            open_before: openBefore, open_windows: openAfter,
+                            changed: JSON.stringify(openBefore) !== JSON.stringify(openAfter)
+                        });
+                    }
+                    if (ctarget === 'craft_drag') {
+                        // The job tutorial's add-ingredient step waits for
+                        // CRAFT_ITEM_ADDED and *disables slot taps*
+                        // (DISABLE_SLOT_TAP), so the only finger path is a drag from
+                        // the crafting inventory's first slot onto the crafting
+                        // window's ingredient box (bundle:
+                        // dragDropItemSlotToCraftActorBox ->
+                        // getWindow(craftInv).getStorageFirstSlotForTuto() ->
+                        // getWindow("crafting")._mySlotElems).
+                        var invNameD = null;
+                        try {
+                            invNameD = window.gui.playerData.jobs
+                                .getCorrectCraftingInventory();
+                        } catch (eInvD) { invNameD = null; }
+                        var cinvD = invNameD ? _agentOpenWindowObject(invNameD) : null;
+                        var craftD = _agentOpenWindowObject('crafting');
+                        var srcSlot = cinvD
+                            && typeof cinvD.getStorageFirstSlotForTuto === 'function'
+                            ? cinvD.getStorageFirstSlotForTuto() : null;
+                        var dstBox = craftD && craftD._mySlotElems;
+                        var srcEl = srcSlot && (srcSlot.rootElement || srcSlot);
+                        var dstEl = dstBox && (dstBox.rootElement || dstBox);
+                        if (!srcEl || !dstEl) {
+                            return _agentResult(false, {
+                                client_target: ctarget,
+                                source: !!srcEl, destination: !!dstEl
+                            }, 'the crafting inventory slot or the crafting box is not open');
+                        }
+                        var srd = srcEl.getBoundingClientRect
+                            ? srcEl.getBoundingClientRect() : null;
+                        var drd = dstEl.getBoundingClientRect
+                            ? dstEl.getBoundingClientRect() : null;
+                        if (!srd || !srd.width || !srd.height
+                                || !drd || !drd.width || !drd.height) {
+                            return _agentResult(false, { client_target: ctarget },
+                                'the crafting slots are not on screen right now');
+                        }
+                        var dragSeq = _agentUiDrag(srcEl, dstEl);
+                        return _agentResult(true, {
+                            client_target: ctarget, via: 'pointer drag',
+                            from: dragSeq.from, to: dragSeq.to,
+                            open_windows: _agentOpenWindows()
+                        });
+                    }
+                    var cel = _agentClientTarget(ctarget);
+                    var cr = cel && cel.getBoundingClientRect ? cel.getBoundingClientRect() : null;
+                    if (!cel || !cr || !cr.width || !cr.height) {
+                        return _agentResult(false, {
+                            client_target: ctarget, present: !!cel
+                        }, 'the client target "' + ctarget + '" is not on screen right now');
+                    }
+                    target = cel;
+                    nodes = [cel];
+                } else {
+                    if (menu) {
+                        if (!/^[A-Za-z]+$/.test(menu)) {
+                            return _agentResult(false, { menu: menu },
+                                'menu must be a plain name such as Spell or Book');
+                        }
+                        sel = '.menuIcon' + menu;
+                    }
+                    if (!sel) return _agentResult(false, null, 'ui.tap needs menu, selector or client_target');
+                    try { nodes = document.querySelectorAll(sel); }
+                    catch (eSel) { return _agentResult(false, { selector: sel }, 'bad selector: ' + eSel); }
+                    var index = Math.max(0, Math.floor(_agentNum(args.index) || 0));
+                    var visible = 0;
+                    for (var i = 0; i < nodes.length; i++) {
+                        var el = nodes[i];
+                        var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                        if (!r || !r.width || !r.height) continue;
+                        if (visible === index) { target = el; break; }
+                        visible += 1;
+                    }
+                    if (!target) {
+                        return _agentResult(false, { selector: sel, matches: nodes.length },
+                            'no visible element matches "' + sel + '"');
+                    }
+                }
+                var before = _agentOpenWindows();
+                // Some steps complete on the window *loading*, not on the press
+                // (the tutorial's shop step ends on SHOP_LOADED, fired when the
+                // shop opens and its articles arrive). A window left open from an
+                // earlier step makes the next press a no-op the step never sees,
+                // so the caller can name windows to close first — the names come
+                // from the client's own mapping (`shopBtn` -> open("market")).
+                var closed = [];
+                if (args.close_first) {
+                    var want = Object.prototype.toString.call(args.close_first) === '[object Array]'
+                        ? args.close_first : [args.close_first];
+                    for (var ci = 0; ci < want.length; ci++) {
+                        var wname = String(want[ci] == null ? '' : want[ci]);
+                        if (wname && _agentCloseWindow(wname)) closed.push(wname);
+                    }
+                    if (closed.length) before = _agentOpenWindows();
+                }
+                _agentUiTap(target);
+                var after = _agentOpenWindows();
+                var result = {
+                    selector: ctarget ? null : sel, menu: menu || null,
+                    client_target: ctarget || null, matches: nodes.length,
+                    class: String(target.className || '').slice(0, 80),
+                    open_before: before, open_windows: after,
+                    changed: JSON.stringify(before) !== JSON.stringify(after)
+                };
+                if (args.close_first) result.closed_before = closed;
+                var cycle = _agentNum(args.cycle_ms);
+                if (args.cycle && (cycle == null || cycle <= 0)) cycle = 1200;
+                if (args.cycle && cycle > 0) {
+                    // Press, then press again only if the window set really
+                    // changed. The check runs a beat later so a window the
+                    // client opens on the next frame is seen too; a press that
+                    // opened nothing (a disabled icon) must not be repeated,
+                    // and the step completes on the close, which is why the
+                    // press has to be given back.
+                    setTimeout(function () {
+                        try {
+                            var now = _agentOpenWindows();
+                            if (JSON.stringify(now) === JSON.stringify(before)) return;
+                            if (target && target.isConnected !== false) _agentUiTap(target);
+                        } catch (e2) {}
+                    }, cycle);
+                    result.cycle_ms = cycle;
+                }
+                return _agentResult(true, result);
+            },
+            'ui.icons': function(args) {
+                // What the player can press on the menu bar right now. The planner
+                // picks a menu by the surface a step names; this reports the list
+                // the client itself built rather than a hardcoded guess.
+                args = args || {};
+                var out = [];
+                var nodes = null;
+                try { nodes = document.querySelectorAll('[class*="menuIcon"]'); }
+                catch (e) { nodes = null; }
+                for (var i = 0; nodes && i < nodes.length; i++) {
+                    var el = nodes[i];
+                    var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                    if (!r || !r.width || !r.height) continue;
+                    var cls = String(el.className || '');
+                    var m = cls.match(/menuIcon([A-Za-z]+)/);
+                    out.push({ key: m ? m[1] : null, class: cls.slice(0, 80),
+                               disabled: /(?:^|\s)disabled(?:\s|$)/.test(cls),
+                               x: Math.round(r.left + r.width / 2),
+                               y: Math.round(r.top + r.height / 2) });
+                }
+                return _agentResult(true, { icons: out.slice(0, 40), count: out.length,
+                                            open_windows: _agentOpenWindows() });
+            },
+            'shop.buy': function(args) {
+                // The tutorial's free pack is bought through the client's *fake*
+                // shop: with ENABLE_FAKE_SHOP (behaviour 16 in this build) the
+                // article's hard-price button does not charge anything -- it makes
+                // the client emit FAKE_SHOP_BUY and the scenario sends the
+                // QuestObjectiveValidationMessage itself (bundle: the purchase
+                // handler's fake branch -> checkCondition(FAKE_SHOP_BUY)).
+                // Outside that mode the same button starts a real-currency
+                // purchase through an account confirm window, which this tool
+                // must never press by itself.
+                args = args || {};
+                var which = String(args.which == null ? 'first' : args.which).toLowerCase();
+                if (which !== 'first') {
+                    // The schema documents 'first' because that is the only article
+                    // the tutorial's fake category carries; accepting another value
+                    // and buying the first anyway would be a lie in the result.
+                    return _agentResult(false, { which: which },
+                        "shop.buy buys the first article only ('first'); '" + which
+                        + "' is not selectable on this build");
+                }
+                var manager = window.gui && window.gui.scenarioManager;
+                var fake = false;
+                try {
+                    fake = !!(manager && typeof manager.isBehaviourEnabled === 'function'
+                              && manager.isBehaviourEnabled(16));
+                } catch (eFake) { fake = false; }
+                var win = null;
+                try {
+                    var wm = _agentWindowManager();
+                    win = wm && typeof wm.getWindow === 'function' ? wm.getWindow('market') : null;
+                } catch (eWin) { win = null; }
+                var opened = !!(win && win.openState);
+                if (!fake) {
+                    return _agentResult(false, {
+                        fake_shop: false, window_open: opened,
+                        open_windows: _agentOpenWindows()
+                    }, 'the client does not have the tutorial fake shop enabled; '
+                        + 'this button would start a real-currency purchase');
+                }
+                if (!opened) {
+                    return _agentResult(false, { fake_shop: true, window_open: false },
+                        'the shop window is not open; open it first');
+                }
+                var article = null, buttons = null;
+                try {
+                    var tab = win.tabs && typeof win.tabs.getFirstTab === 'function'
+                        ? win.tabs.getFirstTab() : null;
+                    article = tab && tab.target && typeof tab.target.getFirstArticle === 'function'
+                        ? tab.target.getFirstArticle() : null;
+                    buttons = article && typeof article.getButtons === 'function'
+                        ? article.getButtons() : null;
+                } catch (eArt) { article = null; buttons = null; }
+                if (!article || !buttons || !buttons.hardButton) {
+                    // The fake shop loads its articles after the window opens
+                    // (the medal image is preloaded first), so "no article yet" is
+                    // a state the caller should retry, not a broken plan.
+                    return _agentResult(false, {
+                        fake_shop: true, window_open: true, article: !!article,
+                        buttons: buttons ? Object.keys(buttons) : []
+                    }, 'the shop has no article to buy yet (the fake shop is still '
+                        + 'loading its list)');
+                }
+                var target = buttons.hardButton;
+                var el = target && (target.rootElement || target);
+                var seen = {
+                    article_id: article.id != null ? article.id : null,
+                    button: 'hardButton',
+                    open_before: _agentOpenWindows()
+                };
+                if (!el || typeof el.getBoundingClientRect !== 'function') {
+                    return _agentResult(false, seen,
+                        'the article button has no element to press on this build');
+                }
+                _agentUiTap(el);
+                seen.open_windows = _agentOpenWindows();
+                return _agentResult(true, seen);
+            },
             'tap.interactive': function(args) {
                 args = args || {};
                 var list = _interactives();
@@ -7842,12 +10993,15 @@
                     var el = list[i];
                     if (elemId != null && Number(el.elemId) !== elemId) continue;
                     if (cell != null && Number(el.cell) !== cell) continue;
-                    if (skill != null && Number(el.skillInstanceUid) !== skill) continue;
+                    if (skill != null && Number(el.skillInstanceUid) !== skill
+                            && el.enabled_skills.indexOf(skill) === -1
+                            && el.disabled_skills.indexOf(skill) === -1) continue;
                     target = el;
                     break;
                 }
                 var visible = list.slice(0, 20).map(function (el) {
-                    return { elem_id: el.elemId, skill_uid: el.skillInstanceUid, cell: el.cell };
+                    return { elem_id: el.elemId, skill_uid: el.skillInstanceUid, cell: el.cell,
+                             name: el.name, enabled: el.enabled_skills };
                 });
                 if (target == null) {
                     return _agentResult(false, {
@@ -7864,11 +11018,37 @@
                         reason: 'skill_uid_required', elements: visible
                     }, 'interactive element ' + target.elemId + ' has no skillInstanceUid; pass skill_uid');
                 }
-                var r = _cmSend('InteractiveUseRequestMessage',
-                    { elemId: target.elemId, skillInstanceUid: useSkill });
+                var myCell = null;
+                try {
+                    var ua = window.isoEngine && window.isoEngine.actorManager
+                        && window.isoEngine.actorManager.userActor;
+                    myCell = ua && ua.cellId != null ? Number(ua.cellId) : null;
+                } catch (eCell) {}
+                // `isoEngine.useInteractive` is the client's own tap path: it orients,
+                // walks to the element when it is not adjacent, then sends
+                // InteractiveUseRequestMessage. Sending the message from afar only
+                // produced a silent server-side refusal.
+                var via = null;
+                var r = null;
+                try {
+                    var ie = window.isoEngine;
+                    if (ie && typeof ie.useInteractive === 'function'
+                            && ie.mapRenderer && ie.mapRenderer.identifiedElements
+                            && ie.mapRenderer.identifiedElements[target.elemId]) {
+                        ie.useInteractive(target.elemId, useSkill);
+                        via = 'isoEngine.useInteractive';
+                        r = { ok: true };
+                    }
+                } catch (eUse) { r = null; via = null; }
+                if (!r) {
+                    r = _cmSend('InteractiveUseRequestMessage',
+                        { elemId: target.elemId, skillInstanceUid: useSkill });
+                    via = 'InteractiveUseRequestMessage';
+                }
                 return _agentResult(r.ok, {
                     elem_id: target.elemId, skill_instance_uid: useSkill,
-                    cell: target.cell, elements: visible
+                    cell: target.cell, my_cell: myCell, via: via,
+                    elements: visible
                 }, r.ok ? null : r.error);
             },
             'hdv.prices': function(args) {
@@ -7889,7 +11069,8 @@
             'MARKET_CAPTURE': 'market.capture', 'CHARACTER_REPORT': 'debug.character',
             'ITEM_DB': 'debug.itemdb', 'EFFECT_DB': 'debug.effectdb',
             'CHAT_SAY': 'chat.say', 'STATE_SNAPSHOT': 'state.snapshot',
-            'QUEST_ADVANCE': 'quest.advance'
+            'QUEST_ADVANCE': 'quest.advance', 'CHAR_BUILD': 'char.build',
+            'UI_TAP': 'ui.tap', 'UI_ICONS': 'ui.icons', 'SHOP_BUY': 'shop.buy'
         };
 
         window.__agentDirective = function(payload) {

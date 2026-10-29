@@ -22,6 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from agent.awareness import scene_key
 from agent.dialog_policy import rank_dialog
+from agent.features import declares_monster_target
 from agent.observe import flatten
 from agent.planner import QuestPlanner
 
@@ -90,7 +91,15 @@ def _quest_id(obs: Dict[str, Any], obj: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _exits(obs: Dict[str, Any]) -> List[str]:
+def _exits(obs: Dict[str, Any], avoid: Optional[int] = None) -> List[str]:
+    """Walkable exits, minus the map just left when `avoid` names it.
+
+    Thinking runs on replan, so an exit that undoes the last walk is how a step
+    turns into a two-map loop: live 2026-10-29 the character walked a tutorial
+    step back and forth between 145490435 and 145490947 for twenty steps, each
+    walk reported `advanced`. Going back is the planner's decision (it knows the
+    objective's map); a *repair* must not re-run the walk that just happened.
+    """
     block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
     here = _map_id_of(obs)
     out: List[str] = []
@@ -100,10 +109,17 @@ def _exits(obs: Dict[str, Any]) -> List[str]:
         dest = _as_int(entry.get("map_id"))
         if here is not None and dest == here:
             continue
+        if avoid is not None and dest is not None and dest == avoid:
+            continue
         direction = entry.get("direction")
         if direction and direction not in out:
             out.append(str(direction))
     return out
+
+
+def _came_from(obs: Dict[str, Any]) -> Optional[int]:
+    nav = obs.get("last_nav") if isinstance(obs.get("last_nav"), dict) else {}
+    return _as_int(nav.get("from_map"))
 
 
 def _npcs(obs: Dict[str, Any]) -> List[int]:
@@ -235,7 +251,7 @@ class ThinkingLayer:
             if need and need != _map_id_of(obs):
                 yield Thought("nav.goto", {"map_id": need},
                               "the objective names a different map")
-            for direction in _exits(obs):
+            for direction in _exits(obs, avoid=_came_from(obs)):
                 yield Thought("nav.goto", {"direction": direction},
                               "try the %s exit" % direction)
             yield Thought("state.snapshot", {},
@@ -254,26 +270,45 @@ class ThinkingLayer:
                         yield Thought("quest.advance",
                                       {"quest_id": quest_id, "npc_id": other},
                                       "try another map NPC for this step")
-            for direction in _exits(obs):
+            for direction in _exits(obs, avoid=_came_from(obs)):
                 yield Thought("nav.goto", {"direction": direction},
                               "the NPC may be on the next map")
             yield Thought("state.snapshot", {}, "wait for the NPC or a state change")
             return
 
         if type_id == 4:               # discover a map
-            for direction in _exits(obs):
+            for direction in _exits(obs, avoid=_came_from(obs)):
                 yield Thought("nav.goto", {"direction": direction},
                               "discover by taking the %s exit" % direction)
             yield Thought("state.snapshot", {}, "wait for a map change")
             return
 
         if type_id in (0, 14, 16):     # kill/farm objectives
+            if declares_monster_target(obj) is False:
+                # The client's own parameter table says this objective carries
+                # text, not a creature. Live 2026-10-29: a free-form step's
+                # parameter0 (715354, a text id) became `fight.join {monster:
+                # 715354}`, then `farm.start`, then a walk between two maps on
+                # every replan -- three nonsensical repairs for a step that only
+                # needed its equip half to finish.
+                if quest_id:
+                    for npc in _npcs(obs):
+                        yield Thought("quest.advance",
+                                      {"quest_id": quest_id, "npc_id": npc},
+                                      "free-form step; ask a map NPC")
+                need = _as_int(obj.get("map_id"))
+                if need and need != _map_id_of(obs):
+                    yield Thought("nav.goto", {"map_id": need},
+                                  "the objective names a different map")
+                yield Thought("state.snapshot", {},
+                              "wait for the free-form step's own event")
+                return
             if monster is not None:
                 yield Thought("fight.join", {"monster": monster},
                               "join the target's group")
                 yield Thought("farm.start", {"monster": monster},
                               "farm the target if no group is joinable")
-            for direction in _exits(obs):
+            for direction in _exits(obs, avoid=_came_from(obs)):
                 yield Thought("nav.goto", {"direction": direction},
                               "search the next map for the target")
             yield Thought("state.snapshot", {}, "wait for the target to spawn")
@@ -285,7 +320,7 @@ class ThinkingLayer:
                 yield Thought("quest.advance",
                               {"quest_id": quest_id, "npc_id": npc},
                               "ask a map NPC about the step")
-        for direction in _exits(obs):
+        for direction in _exits(obs, avoid=_came_from(obs)):
             yield Thought("nav.goto", {"direction": direction},
                           "explore the %s exit" % direction)
         yield Thought("state.snapshot", {}, "refresh the observation")

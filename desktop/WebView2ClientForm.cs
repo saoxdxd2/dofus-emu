@@ -3316,10 +3316,27 @@ namespace DofusFarm.Engine
         // keeps everything it recorded, and the in-memory byte counter replaces
         // the per-append stat(). UTF8 without BOM: a BOM at the head of a .jsonl
         // file breaks every naive line parser.
+        // A snapshot from a client running an older page build can still carry
+        // the login ticket in its packet ring. The page filters it at the source
+        // (build 2026-10-29aw) and the Python ingest strips it for daemon rows;
+        // this is the last stop before disk for the manager's own recorder.
+        private static readonly System.Text.RegularExpressions.Regex SecretTicket =
+            new System.Text.RegularExpressions.Regex(
+                "\"ticket\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static string RedactSecrets(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return json;
+            try { return SecretTicket.Replace(json, "\"ticket\":\"[redacted]\""); }
+            catch { return json; }
+        }
+
         public static void Append(string instanceId, string json)
         {
             try
             {
+                json = RedactSecrets(json);
                 string safe = SafeName(instanceId);
                 string path = Path.Combine(Directory_, "play_" + safe + ".jsonl");
                 lock (_gate)

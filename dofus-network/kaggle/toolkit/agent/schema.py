@@ -455,6 +455,65 @@ _BUILTIN_TOOLS: List[ToolSpec] = [
         directive="INTERACTIVE",
         returns="chosen element id, skill uid and cell",
     ),
+    ToolSpec(
+        name="ui.tap",
+        description="Press the game's own UI: a menu-bar icon (Carac, Spell, Bag, Book, "
+                    "Map, Help, BidHouse, DailyQuest, ...), any visible control by CSS "
+                    "selector, or a control the tutorial's own hint taps by object path "
+                    "(client_target: challenge, spell_upgrade_confirm, spell_plus, "
+                    "charac_update, world, contextual_menu:N, npc_menu:N, trade_slot, "
+                    "trade_validate, craft_slot, craft_recipe, craft_merge, craft_drag, "
+                    "shop_category:N, shop_item:N, sell_info, bestiary_monster, "
+                    "bestiary_drop, close:NAME). A tutorial step "
+                    "that says 'open the ... interface' is completed by this press, not "
+                    "by a quest claim -- claiming one of those objectives ends the "
+                    "connection.",
+        params={
+            "menu": _p("str", "Menu icon name, e.g. 'Spell', 'Book', 'Map', 'Bag', 'Carac'."),
+            "selector": _p("str", "CSS selector for any other visible control, e.g. '.shopBtn'."),
+            "client_target": _p("str", "Client-object control the tutorial points at: "
+                                      "'challenge', 'spell_upgrade_confirm', 'spell_plus', "
+                                      "'charac_update', 'world', the later tutorials' "
+                                      "controls (contextual_menu:N, npc_menu:N, trade_slot, "
+                                      "trade_validate, craft_slot, craft_recipe, craft_merge, "
+                                      "craft_drag, shop_category:N, shop_item:N, sell_info, "
+                                      "bestiary_monster, bestiary_drop) and 'close:NAME' for "
+                                      "a window the step ends on closing."),
+            "close_first": _p("str", "Window name to close before pressing, so the "
+                                     "press produces a real opening."),
+            "index": _p("int", "Which visible match to press (0-based).", default=0),
+            "cycle": _p("bool", "Press again after the window opens, so the step's "
+                                "'open and close' shape is given back.", default=False),
+            "cycle_ms": _p("int", "Delay before the second press.", default=1200),
+        },
+        backend="directive",
+        directive="UI_TAP",
+        returns="pressed selector, open windows before/after, changed flag",
+    ),
+    ToolSpec(
+        name="ui.icons",
+        description="List the menu-bar icons the client currently shows (key, disabled, "
+                    "position) and the open windows. Read-only.",
+        params={},
+        backend="directive",
+        directive="UI_ICONS",
+        returns="icons list and open window names",
+    ),
+    ToolSpec(
+        name="shop.buy",
+        description="Buy the first article of the tutorial's shop window with the "
+                    "client's own hard-price button. The tutorial enables a fake shop "
+                    "whose purchase is free and whose button makes the client validate "
+                    "the quest objective itself; outside that mode the same button "
+                    "starts a real-currency purchase, so the page refuses and says so.",
+        params={
+            "which": _p("str", "Which article to buy; 'first' is the tutorial's pack.",
+                        default="first"),
+        },
+        backend="directive",
+        directive="SHOP_BUY",
+        returns="article id, the button pressed, open windows before/after",
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -661,6 +720,11 @@ def _special_rules(name: str, args: Dict[str, Any]) -> Optional[str]:
     if name == "chat.say":
         if args.get("channel") == "whisper" and not args.get("target"):
             return "chat.say on the whisper channel needs a target"
+    if name == "ui.tap":
+        if not args.get("menu") and not args.get("selector") and not args.get("client_target"):
+            return "ui.tap needs one of menu, selector or client_target"
+        if args.get("client_target") and (args.get("menu") or args.get("selector")):
+            return "ui.tap takes either client_target or menu/selector, not both"
     return None
 
 

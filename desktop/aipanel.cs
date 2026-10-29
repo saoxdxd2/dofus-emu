@@ -663,14 +663,26 @@ namespace DofusFarm.UI
                 for (int i = 1; i <= count; i++)
                 {
                     string id = SlotName(i);
-                    if (!string.IsNullOrEmpty(id) && !id.StartsWith("Slot #") && !ids.Contains(id)) ids.Add(id);
+                    if (string.IsNullOrEmpty(id) || id.StartsWith("Slot #") || ids.Contains(id)) continue;
+                    if (!InstanceIsOpen(id))
+                    {
+                        Append("[ai] " + id + ": no client window; not starting a loop for it");
+                        continue;
+                    }
+                    ids.Add(id);
                 }
                 return ids;
             }
             foreach (int slot in chosen)
             {
                 string id = SlotName(slot);
-                if (!string.IsNullOrEmpty(id) && !id.StartsWith("Slot #")) ids.Add(id);
+                if (string.IsNullOrEmpty(id) || id.StartsWith("Slot #")) continue;
+                if (!InstanceIsOpen(id))
+                {
+                    Append("[ai] " + id + ": no client window; not starting a loop for it");
+                    continue;
+                }
+                ids.Add(id);
             }
             return ids;
         }
@@ -833,6 +845,11 @@ namespace DofusFarm.UI
                 return;
             }
             if (IsRunningFor(instanceId)) { Append("[ai] " + instanceId + " is already running"); return; }
+            if (!InstanceIsOpen(instanceId))
+            {
+                Append("[ai] " + instanceId + ": no client window; not starting a loop");
+                return;
+            }
             string goals = _settings.Goals.Trim();
             if (goals.Length == 0)
             {
@@ -957,7 +974,19 @@ namespace DofusFarm.UI
             List<string> targets = string.IsNullOrEmpty(onlyInstance)
                 ? TargetsForLoop()
                 : new List<string> { onlyInstance };
-            if (targets.Count == 0) targets.Add(null);
+            if (targets.Count == 0)
+            {
+                // The shared (null) target used to mean "the default instance", and
+                // the bridge's stale-name fallback then aimed it at whichever client
+                // happened to be open. With a host probe, no targets means nothing
+                // is open: refuse instead of starting a loop nobody can serve.
+                if (_clientIsOpen != null)
+                {
+                    Append("[ai] no open client to drive; launch an instance first");
+                    return;
+                }
+                targets.Add(null);
+            }
             bool shared = targets.Count == 1 && targets[0] == null;
 
             // Default path: one daemon, one model copy, one control plane. If it
@@ -1253,6 +1282,35 @@ namespace DofusFarm.UI
 
         private Action _onReloadClients;
 
+        /// <summary>Set by the host: is this instance's client window open?
+        ///
+        /// Measured 2026-10-28: pressing Auto in one open client started loops for
+        /// every configured slot, including three with no window. Those loops then
+        /// hit the bridge's stale-name fallback and all drove the one open client,
+        /// stacking logins until the login server answered "It was not possible to
+        /// connect to the server". A loop with no client is never useful.
+        /// </summary>
+        public Func<string, bool> ClientIsOpen
+        {
+            set { _clientIsOpen = value; }
+        }
+
+        private Func<string, bool> _clientIsOpen;
+
+        /// <summary>Whether the host has a window for this instance. The loop
+        /// starter needs this before StartInstance, which refuses a closed slot.</summary>
+        public bool HasClientWindow(string instanceId)
+        {
+            return InstanceIsOpen(instanceId);
+        }
+
+        private bool InstanceIsOpen(string instanceId)
+        {
+            var probe = _clientIsOpen;
+            if (probe == null) return true;       // no host attached (tests, CLI)
+            try { return probe(instanceId); } catch { return false; }
+        }
+
         public void EditShortcuts()
         {
             using (var dlg = new ShortcutEditorForm(_settings.Shortcuts))
@@ -1437,9 +1495,45 @@ namespace DofusFarm.UI
             }
         }
 
+        // A daemon this panel did not spawn is still a daemon. Without the probe,
+        // every panel start (and every instance launch, which auto-starts the AI)
+        // spawned a second python that BOUND THE SAME PORT, because Windows
+        // SO_REUSEADDR lets it: two instance tables answered :8895 and a stop
+        // could land on the one that never heard of that instance.
+        private string BrainHealth()
+        {
+            return BrainRequest("GET", "/brain/health", null, 700);
+        }
+
+        private bool BrainAnswers()
+        {
+            string body = BrainHealth();
+            return body != null && body.IndexOf("dofus-brain", StringComparison.Ordinal) >= 0;
+        }
+
+        private static bool JsonOk(string body)
+        {
+            // The embedded runtime has no orjson, so the daemon answers with
+            // stdlib json: `"ok": true`, with a space. The old substring test
+            // missed every success and drove the per-instance child fallback.
+            return body != null && Regex.IsMatch(body, "\"ok\"\\s*:\\s*true");
+        }
+
         private bool EnsureBrain()
         {
             if (BrainProcessAlive()) return true;
+            string health = BrainHealth();
+            if (health != null)
+            {
+                if (health.IndexOf("dofus-brain", StringComparison.Ordinal) >= 0)
+                {
+                    Append("[ai] attached to the brain daemon already on port " + BrainPort.ToString());
+                    return true;
+                }
+                Append("[ai] port " + BrainPort.ToString() + " is answered, but not by the brain daemon: "
+                       + Shorten(health, 120));
+                return false;
+            }
             string python = ResolvePython();
             if (python == null)
             {
@@ -1552,7 +1646,7 @@ namespace DofusFarm.UI
             json.Append('}');
 
             string body = BrainRequest("POST", "/brain/start", json.ToString(), 15000);
-            if (body == null || body.IndexOf("\"ok\":true", StringComparison.Ordinal) < 0)
+            if (!JsonOk(body))
             {
                 Append("[ai] brain daemon refused the start request; falling back to per-instance children"
                       + (body == null ? "" : ": " + Shorten(body, 240)));
@@ -1570,11 +1664,11 @@ namespace DofusFarm.UI
         private bool BrainStopOne(string instance, string why)
         {
             if (string.IsNullOrEmpty(instance)) return false;
-            if (!BrainProcessAlive()) return false;
+            if (!BrainProcessAlive() && !BrainAnswers()) return false;
             string json = "{\"instance\":" + JsonQuote(instance)
                 + ",\"why\":" + JsonQuote(why) + "}";
             string body = BrainRequest("POST", "/brain/stop", json, 6000);
-            bool ok = body != null && body.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0;
+            bool ok = JsonOk(body);
             if (ok)
             {
                 lock (_brainLock) _brainRunning.Remove(instance);
@@ -1585,10 +1679,10 @@ namespace DofusFarm.UI
 
         private bool BrainStopAll(string why)
         {
-            if (!BrainProcessAlive()) return false;
+            if (!BrainProcessAlive() && !BrainAnswers()) return false;
             string json = "{\"all\":true,\"why\":" + JsonQuote(why) + "}";
             string body = BrainRequest("POST", "/brain/stop", json, 6000);
-            bool ok = body != null && body.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0;
+            bool ok = JsonOk(body);
             if (ok)
             {
                 lock (_brainLock) _brainRunning.Clear();
@@ -1604,15 +1698,22 @@ namespace DofusFarm.UI
             lock (_brainLock) process = _brain;
             if (process == null)
             {
-                lock (_brainLock) _brainRunning.Clear();
-                return;
+                // Attached daemon: the status route is the only liveness signal.
+                if (!BrainAnswers())
+                {
+                    lock (_brainLock) _brainRunning.Clear();
+                    return;
+                }
             }
-            bool exited;
-            try { exited = process.HasExited; } catch { exited = true; }
-            if (exited)
+            else
             {
-                lock (_brainLock) _brainRunning.Clear();
-                return;
+                bool exited;
+                try { exited = process.HasExited; } catch { exited = true; }
+                if (exited)
+                {
+                    lock (_brainLock) _brainRunning.Clear();
+                    return;
+                }
             }
             if ((DateTime.UtcNow - _brainStatusAt).TotalMilliseconds < 1500) return;
             _brainStatusAt = DateTime.UtcNow;

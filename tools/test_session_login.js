@@ -96,16 +96,34 @@ const doc = (classes) => ({
 });
 
 const agentResult = (ok, data, error) => ({ ok, data, error });
+const noCool = () => null;
 const snapshot = (inWorld) => () => ({ in_world: inWorld, connected: true });
+// The enter-world branch sends the client's own CharacterSelectionMessage; the
+// stub records what went out so the tests can prove what was (not) sent.
+const sent = [];
+const sendStub = (name, payload) => { sent.push([name, payload]); return { ok: true }; };
 
 const fnSrc = src.slice(start + "'session.login': ".length, end + 1);
 let built = null, buildErr = null;
 try {
     built = new Function('window', 'document', '_agentResult', '_agentSnapshot',
-                         'PointerEvent', 'MouseEvent', 'TouchEvent',
+                         'PointerEvent', 'MouseEvent', 'TouchEvent', '_loginCooldown',
+                         '_agentLoginBan', '_cmSend',
                          'return (' + fnSrc + ');');
 } catch (e) { buildErr = e; }
 check('the extracted handler is valid JavaScript', !!built, buildErr);
+
+// The page's ban reader is a closure, so it is injected like the other helpers.
+// A permanent ban is not a cooldown: the handler must not touch the screen at all,
+// and 'force' must not open a way through it either.
+let banNow = () => ({ banned: false });
+const builtRaw = built;
+if (built) {
+    built = function (win, docEl, ar, sn, pe, me, te, cool) {
+        return builtRaw(win, docEl, ar, sn, pe, me, te, cool,
+                        function () { return banNow(); }, sendStub);
+    };
+}
 
 if (built) {
     // first run: no guest stored, so the game's create step must be the one that runs
@@ -114,7 +132,7 @@ if (built) {
     try {
         r1 = built(fresh.win, doc(['loginScreen screen', 'linkGuest Button scaleOnPress',
                                    'LoginsForm rightColumn']),
-                   agentResult, snapshot(false), undefined, undefined, undefined)({ target: 'guest' });
+                   agentResult, snapshot(false), undefined, undefined, undefined, noCool)({ target: 'guest' });
     } catch (e) { e1 = e; }
     check('a fresh client runs _createGuest, not _continueGuest',
         !e1 && fresh.calls.indexOf('create') === 0, e1 || fresh.calls);
@@ -128,7 +146,7 @@ if (built) {
     let r2 = null, e2 = null;
     try {
         r2 = built(returning.win, doc(['continueGuestBtn']), agentResult, snapshot(false),
-                   undefined, undefined, undefined)({ target: 'guest' });
+                   undefined, undefined, undefined, noCool)({ target: 'guest' });
     } catch (e) { e2 = e; }
     check('a client with a stored guest runs _continueGuest',
         !e2 && returning.calls.indexOf('continue') === 0, e2 || returning.calls);
@@ -138,7 +156,7 @@ if (built) {
     let r3 = null, e3 = null;
     try {
         r3 = built(idle.win, doc(['loginScreen screen']), agentResult, snapshot(false),
-                   undefined, undefined, undefined)({ inspect: true });
+                   undefined, undefined, undefined, noCool)({ inspect: true });
     } catch (e) { e3 = e; }
     check('inspect reports and presses nothing',
         !e3 && r3.ok === true && idle.calls.length === 0, e3 || idle.calls);
@@ -150,7 +168,7 @@ if (built) {
     let r4 = null, e4 = null;
     try {
         r4 = built(playing.win, doc([]), agentResult, snapshot(true),
-                   undefined, undefined, undefined)({ target: 'guest' });
+                   undefined, undefined, undefined, noCool)({ target: 'guest' });
     } catch (e) { e4 = e; }
     check('in a world it still does not fabricate anything',
         !e4 && playing.calls.indexOf('continue') === 0 && r4.data.after.in_world === true,
@@ -163,7 +181,7 @@ if (built) {
     let r6 = null, e6 = null;
     try {
         r6 = built(oneShot.win, doc(['continueGuestBtn']), agentResult, snapshot(false),
-                   undefined, undefined, undefined)({ target: 'guest' });
+                   undefined, undefined, undefined, noCool)({ target: 'guest' });
     } catch (e) { e6 = e; }
     check('playWithGuest is preferred over the step methods',
         !e6 && r6.data.pressed === 'gui.loginScreen.playWithGuest()'
@@ -182,14 +200,115 @@ if (built) {
     let r5 = null, e5 = null;
     try {
         r5 = built(empty.win, doc([]), agentResult, snapshot(false),
-                   undefined, undefined, undefined)({ target: 'guest' });
+                   undefined, undefined, undefined, noCool)({ target: 'guest' });
     } catch (e) { e5 = e; }
     check('an empty screen refuses instead of claiming a press',
         !e5 && r5.ok === false && /nothing on the login screen could be pressed/.test(r5.error || ''),
         e5 || r5);
     check('a refusal still reports what it looked at',
         !e5 && r5.data.pressable === 0 && !!r5.data.seen, e5 || (r5 && r5.data));
+
+    // "Server busy" cooldown: a press inside the window is what re-arms the lockout,
+    // so the handler must refuse it without touching the screen, and say how long.
+    const cool = () => ({ at: Date.now(), reason: 'Server busy', remaining_s: 420 });
+    const blocked = makeWindow(true);
+    let r7 = null, e7 = null;
+    try {
+        r7 = built(blocked.win, doc(['continueGuestBtn']), agentResult, snapshot(false),
+                   undefined, undefined, undefined, cool)({ target: 'guest' });
+    } catch (e) { e7 = e; }
+    check('a press inside the cooldown is refused and touches nothing',
+        !e7 && r7.ok === false && blocked.calls.length === 0
+        && /login cooldown/.test(r7.error || ''), e7 || [r7, blocked.calls]);
+    check('the refusal names the remaining wait',
+        !e7 && r7.data.login_cooldown && r7.data.login_cooldown.remaining_s === 420,
+        e7 || (r7 && r7.data));
+    const forced = makeWindow(true);
+    let r8 = null, e8 = null;
+    try {
+        r8 = built(forced.win, doc(['continueGuestBtn']), agentResult, snapshot(false),
+                   undefined, undefined, undefined, cool)({ target: 'guest', force: true });
+    } catch (e) { e8 = e; }
+    check('force:true is the only way through the cooldown',
+        !e8 && forced.calls.indexOf('continue') === 0 && r8.ok === true,
+        e8 || [r8, forced.calls]);
+    const looked = makeWindow(true);
+    let r9 = null, e9 = null;
+    try {
+        r9 = built(looked.win, doc(['continueGuestBtn']), agentResult, snapshot(false),
+                   undefined, undefined, undefined, cool)({ inspect: true });
+    } catch (e) { e9 = e; }
+    check('inspect still reads the screen during a cooldown',
+        !e9 && r9.ok === true && looked.calls.length === 0 && r9.data.at_login === true,
+        e9 || (r9 && r9.data));
+
+    // A permanent ban answers every press the same way. The press is another auth
+    // attempt, so the handler refuses it -- and `force` is not a way around a fact.
+    banNow = () => ({ banned: true, text: 'Your account has been permanently banned.' });
+    const banned = makeWindow(true);
+    let r10 = null, e10 = null;
+    try {
+        r10 = built(banned.win, doc(['continueGuestBtn']), agentResult, snapshot(false),
+                    undefined, undefined, undefined, noCool)({ target: 'guest' });
+    } catch (e) { e10 = e; }
+    check('a permanently banned login is refused without touching the screen',
+        !e10 && r10.ok === false && banned.calls.length === 0
+        && /permanently banned/.test(r10.error || ''), e10 || [r10, banned.calls]);
+    check('the refusal carries the ban flag the loop stops on',
+        !e10 && r10.data.banned === true && r10.data.login_banned === true,
+        e10 || (r10 && r10.data));
+    const bannedForce = makeWindow(true);
+    let r11 = null, e11 = null;
+    try {
+        r11 = built(bannedForce.win, doc(['continueGuestBtn']), agentResult, snapshot(false),
+                    undefined, undefined, undefined, noCool)({ target: 'guest', force: true });
+    } catch (e) { e11 = e; }
+    check('force:true cannot press through a permanent ban',
+        !e11 && r11.ok === false && bannedForce.calls.length === 0, e11 || bannedForce.calls);
+    banNow = () => ({ banned: false });
 }
+
+    // Character selection is not the login form: the account already holds its
+    // characters and the player's action is "play as this one". The client's own
+    // selectCharacter(id) sends exactly CharacterSelectionMessage, so that is the
+    // press that must happen there (a fall-out that lands on this screen used to
+    // wait out the whole recovery budget: 751.8 s, recovered false).
+    sent.length = 0;
+    const selection = makeWindow(true);
+    let r12 = null, e12 = null;
+    try {
+        r12 = built(selection.win, doc([]), agentResult, snapshot(false),
+                    undefined, undefined, undefined, noCool)(
+            { target: 'character', character_id: 4409663 });
+    } catch (e) { e12 = e; }
+    check('at character selection the tool enters the world with the given id',
+        !e12 && r12.ok === true && sent.length === 1
+        && sent[0][0] === 'CharacterSelectionMessage' && sent[0][1].id === 4409663,
+        e12 || [r12, sent]);
+    check('entering the world presses no login button',
+        !e12 && selection.calls.length === 0, e12 || selection.calls);
+    check('the enter-world result names its message path',
+        !e12 && r12.data.via === 'CharacterSelectionMessage', e12 || r12.data);
+
+    sent.length = 0;
+    let r13 = null, e13 = null;
+    try {
+        r13 = built(makeWindow(true).win, doc([]), agentResult, snapshot(true),
+                    undefined, undefined, undefined, noCool)({ target: 'character' });
+    } catch (e) { e13 = e; }
+    check('already in the world, the enter-world press is refused',
+        !e13 && r13.ok === false && sent.length === 0 && /already in the world/.test(r13.error),
+        e13 || [r13, sent]);
+
+    sent.length = 0;
+    let r14 = null, e14 = null;
+    try {
+        r14 = built(makeWindow(true).win, doc([]), agentResult, snapshot(false),
+                    undefined, undefined, undefined, noCool)({ target: 'character' });
+    } catch (e) { e14 = e; }
+    check('with no character id the enter-world press is refused',
+        !e14 && r14.ok === false && sent.length === 0 && /character id/.test(r14.error),
+        e14 || [r14, sent]);
 
 console.log(fail ? 'FAILURES: ' + fail : 'session.login suite: all checks passed');
 process.exit(fail ? 1 : 0);

@@ -51,6 +51,10 @@ INCOMING_AP_REFERENCE = 6.0
 
 MIN_P_WIN = 0.90
 MAX_HP_LOSS_FRACTION = 0.50
+# A completed challenge is a nudge, never a second objective: worth a quarter of
+# a win, and a missed challenge costs exactly nothing. The game offers challenges
+# per fight and the client reports each result; only the page used to drop them.
+CHALLENGE_BONUS = 0.25
 ALLOW_BOSS = False
 MAX_TURNS = 100.0
 # The M3 gate: the fitted probability may misstate the observed win rate by at
@@ -1347,8 +1351,19 @@ class FightOutcomeLog:
         self.pending: Optional[Dict[str, Any]] = None
 
     def start(self, estimate: Optional[Dict[str, Any]],
-              observation: Optional[Dict[str, Any]], session: str = "") -> Dict[str, Any]:
+              observation: Optional[Dict[str, Any]], session: str = "",
+              started_by: Optional[str] = None) -> Dict[str, Any]:
         hp = _hp_of(observation)
+        fight_id = None
+        # Only an in-fight observation carries *this* fight's id. The page keeps
+        # the last fight id in its snapshot after the fight is over, so reading
+        # it unconditionally made the next fight start with the previous id and
+        # resolve with a mismatched end (measured 2026-10-28: row said 124, the
+        # GameFightEndMessage said 125).
+        if isinstance(observation, dict) and observation.get("in_fight"):
+            fight_id = observation.get("fight_id")
+            if fight_id is None and isinstance(observation.get("fight"), dict):
+                fight_id = observation["fight"].get("fight_id")
         self.pending = {
             "kind": "fight_start",
             "session": session,
@@ -1357,6 +1372,10 @@ class FightOutcomeLog:
             "estimate": estimate,
             "hp_before": hp,
             "model_version": (estimate or {}).get("model_version"),
+            # The call that opened the fight, and the server's fight id. Without
+            # them an outcome row cannot say "this fight.join produced a win".
+            "started_by": started_by,
+            "fight_id": fight_id,
         }
         # Written before the fight, not only when it resolves: a session that
         # dies mid-fight still leaves the claim the estimate made.
@@ -1384,6 +1403,32 @@ class FightOutcomeLog:
         hp_loss = (max(0.0, float(hp_before) - float(hp_after))
                    if isinstance(hp_before, (int, float))
                    and isinstance(hp_after, (int, float)) else None)
+        end = observation.get("last_fight_end") if isinstance(observation, dict) else None
+        fight_id = pending.get("fight_id")
+        end_matches = False
+        if isinstance(end, dict):
+            end_at = end.get("at")
+            started = pending.get("at")
+            fresh = (not isinstance(end_at, (int, float))
+                     or not isinstance(started, (int, float))
+                     or float(end_at) / 1000.0 >= float(started) - 1.0)
+            end_fight_id = end.get("fight_id")
+            same_fight = (fight_id is None or end_fight_id is None
+                          or str(fight_id) == str(end_fight_id))
+            end_matches = bool(fresh and same_fight)
+            if end_matches:
+                if fight_id is None:
+                    fight_id = end_fight_id
+                if end.get("won") is not None:
+                    won = bool(end.get("won"))
+        # Challenges belong to the end message of *this* fight. A completed one
+        # adds CHALLENGE_BONUS; a missed one, or an empty list, adds nothing.
+        challenge_rows: List[Dict[str, Any]] = []
+        if end_matches and isinstance(end, dict) and isinstance(end.get("challenges"), list):
+            challenge_rows = [row for row in end["challenges"] if isinstance(row, dict)]
+        challenges_done = sum(1 for row in challenge_rows if row.get("success") is True)
+        challenge_bonus = round(CHALLENGE_BONUS * challenges_done, 3)
+        reward = round((1.0 if won else 0.0) + challenge_bonus, 3)
         estimate = pending.get("estimate") or {}
         row = {
             "kind": "fight_outcome",
@@ -1391,7 +1436,14 @@ class FightOutcomeLog:
             "at": _now(),
             "started_at": pending.get("at"),
             "group_id": pending.get("group_id"),
+            "started_by": pending.get("started_by"),
+            "fight_id": fight_id,
             "won": won,
+            "reward": reward,
+            "challenges": challenge_rows,
+            "challenges_done": challenges_done,
+            "challenge_bonus": challenge_bonus,
+            "end": end if isinstance(end, dict) else None,
             "hp_before": hp_before,
             "hp_after": hp_after,
             "hp_loss": round(hp_loss, 1) if hp_loss is not None else None,
@@ -1423,6 +1475,8 @@ class FightOutcomeLog:
             "at": _now(),
             "started_at": pending.get("at"),
             "group_id": pending.get("group_id"),
+            "started_by": pending.get("started_by"),
+            "fight_id": pending.get("fight_id"),
             "won": None,
             "status": status,
             "hp_before": pending.get("hp_before"),

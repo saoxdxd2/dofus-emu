@@ -306,16 +306,24 @@ class Controller:
                 or "needs max_price" in err
                 or "needs an explicit price" in err
                 or "needs a saved preset" in err
-                or "direct object_uid equip is not proven" in err
+                or "equipitem sent nothing" in err
+                or "no equip/use path sent a message" in err
                 or "price is above max_price" in err
                 or "has no skillinstanceuid" in err
                 or "hdv.scan needs" in err
                 or "hdv.list needs a price" in err
+                # `shop.buy` without the window open is a missing precondition,
+                # not a missing control: the plan opens the shop first.
+                or "shop window is not open" in err
                 or "invalid fact" in err):
             return "invalid_assumption"
         # A price cache with no listing is a measurement that has gone stale, not
         # a target that does not exist: re-scan/re-observe before changing plan.
         if "no cached listing" in err:
+            return "stale_state"
+        # The fake shop loads its articles after the window opens, so an empty
+        # list is a read taken too early: re-observe, do not change the plan.
+        if "no article to buy yet" in err:
             return "stale_state"
         # The thing the call pointed at is not where we are standing.
         #
@@ -334,6 +342,10 @@ class Controller:
                                   "not adjacent",
                                   "not in inventory",
                                   "no visible interactive element",
+                                  # A UI press whose control is not on screen (or is
+                                  # disabled by the tutorial) is a re-observe: the
+                                  # button is the target, not the plan.
+                                  "no visible element",
                                   # The page's own join refusal, worded differently from the
                                   # planner's; until now it landed in `unknown`.
                                   "no group on this map",
@@ -361,6 +373,8 @@ class Controller:
         # 27 live rows of it used to sit inside `unknown`.
         if "not in a fight" in err:
             return "unavailable"
+        if "tutorial fake shop" in err:
+            return "unavailable"
         if error_class(error) == "structural":
             return "unavailable"
 
@@ -385,8 +399,10 @@ class Controller:
 
     def on_step(self, verdict: Any, tool: str, ok: bool, error: Optional[str],
                 before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]],
-                now: Optional[float] = None, detail: Any = None) -> Decision:
-        decision = self._decide(verdict, tool, ok, error, before, after, now, detail)
+                now: Optional[float] = None, detail: Any = None,
+                args: Optional[Dict[str, Any]] = None) -> Decision:
+        decision = self._decide(verdict, tool, ok, error, before, after, now, detail,
+                                args)
         return self._maybe_explore(decision, error)
 
     def _maybe_explore(self, decision: Decision, error: Optional[str]) -> Decision:
@@ -419,7 +435,8 @@ class Controller:
 
     def _decide(self, verdict: Any, tool: str, ok: bool, error: Optional[str],
                 before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]],
-                now: Optional[float] = None, detail: Any = None) -> Decision:
+                now: Optional[float] = None, detail: Any = None,
+                args: Optional[Dict[str, Any]] = None) -> Decision:
         now = time.time() if now is None else now
         self.steps += 1
         name = getattr(verdict, "verdict", verdict)
@@ -482,6 +499,16 @@ class Controller:
         # window", and every retry of them failed too -- 0 for 9. Retrying an
         # unavailable environment is not resilience, it is a loop.
         kind = error_class(error)
+        if cause == "unavailable":
+            # The taxonomy says the environment cannot serve this call; the wording
+            # of the refusal does not change that answer. (shop.buy outside the
+            # tutorial's fake shop is the first case that says it plainly.)
+            self._bump("replan", "unavailable", False)
+            self.replans += 1
+            self._failures[tool] = 0
+            return Decision("replan", "unavailable",
+                            "%s cannot succeed here (%s); retrying would be a loop"
+                            % (tool, str(error)[:60]), None, "replan", 0.9)
         if kind == "refused":
             # A rule refusal is not a network hiccup. Re-issuing the call cannot
             # succeed, and each replay costs a step in a session the server is
@@ -511,6 +538,18 @@ class Controller:
             return Decision("replan", "unavailable",
                             "%s cannot succeed here (%s); retrying would be a loop"
                             % (tool, str(error)[:60]), None, "replan", 0.9)
+
+        # Closing twice is not a repair. A close that did not take is either
+        # already done a beat later (the page read the dialog one frame too early)
+        # or the next observation's dialog state decides what to do; re-sending it
+        # costs a step and, live 2026-10-29, was refused for having no npc_id while
+        # the controller retried it against a dialog that had closed.
+        if tool == "quest.advance" and isinstance(args, dict) and args.get("close"):
+            self._bump("replan", cause, False)
+            self.replans += 1
+            return Decision("replan", cause,
+                            "a close is not retried; the next observation says whether it took",
+                            None, "replan", 0.6)
 
         # Pick the recovery the history says works best for this cause.
         strategy, score = self._best_strategy(cause)

@@ -141,5 +141,49 @@ check('the passed cell is the enemy cell for a cast',
         return !!a && a.type === 'cast' && a.cell === near;
     })());
 
+// A class kit that is locked behind a state (Pandawa's spells need Boozer) must
+// spend the cheap enabler before swinging a reachable weapon, or the good spells
+// stay locked for the whole fight.
+function gated(id, cost, minRange, range, required) {
+    const props = {apCost: cost, minRange: minRange, range: range,
+                   castInLine: false, castInDiagonal: false, castTestLos: true,
+                   statesRequired: required};
+    return {
+        id: id, level: cost,
+        spellLevel: {effects: [{effectId: 82}]},
+        getProperty: function (name) { return props[name]; },
+        getName: function () { return 'gated' + id; }
+    };
+}
+function enabler(id, cost, state) {
+    const props = {apCost: cost, minRange: 0, range: 0};
+    return {
+        id: id, level: cost,
+        spellLevel: {effects: [{effectId: 950, value: state}]},
+        getProperty: function (name) { return props[name]; },
+        getName: function () { return 'enabler' + id; }
+    };
+}
+const locked = gated(4, 3, 1, 4, [1]);
+const booze = enabler(9, 1, 1);
+action = planner._planFightAction(world({
+    spells: {1: short, 4: locked, 9: booze},
+    enemies: [{id: 11, cell: near, hp: 50}],
+    states: [],
+    fm: {canCastThisSpell: function (my, id) { return id !== 4; }}
+}));
+check('a state-gated spell casts its enabler before a reachable weapon',
+    !!action && action.type === 'cast' && action.spellId === 9
+    && action.cell === myCell && action.targetId === 7, JSON.stringify(action));
+
+action = planner._planFightAction(world({
+    spells: {1: short, 4: locked, 9: booze},
+    enemies: [{id: 11, cell: near, hp: 50}],
+    states: [1],
+    fm: {canCastThisSpell: function () { return true; }}
+}));
+check('with the state present the gated spell is cast normally',
+    !!action && action.type === 'cast' && action.spellId === 4, JSON.stringify(action));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

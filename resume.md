@@ -160,7 +160,7 @@ Other readouts from the same logs:
   proof is still owed (G9).
 - The last live run's long "no action" wait is unexplained in the current docs and
   should be diagnosed first.
-- Test coverage is still split: `agent.regression` (**937 checks**, exit 0) + 20 JS suites +
+- Test coverage is still split: `agent.regression` (**1,241 checks**, exit 0) + 27 JS suites +
   Go relay tests + C# selftests. The combat suites, the simulator floor (119 quests /
   148 objectives, no stall), the 40-instance daemon control plane and the checked-in
   Kaggle mirror are now inside that gate; the C# bundle selftest and the full release
@@ -278,7 +278,7 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 │  ├─ make-patch-rules.py      extracts them → patch-rules.json/.txt
 │  ├─ apply-patch-rules.py     Python reference applier
 │  ├─ apply-map-resilience.js  map-transition watchdog
-│  ├─ test_*.js                20 page/JS suites (see §17)
+│  ├─ test_*.js                27 page/JS suites (see §17)
 │  └─ js-error-finder.js       bundle checker (currently red — G11)
 ├─ bin/warp/                   wireproxy, wgcf, warp-plus + configs
 ├─ bin/webview2/               Edge WebView2 bootstrapper
@@ -395,6 +395,920 @@ for the last child, not the first.
 
 Measured live: `target_instance=all` → 4 envelopes; `dofus-01,dofus-02` → 2;
 `target_slot=3` → the old single shape, unchanged.
+
+### 5.8 Instance reset (2026-10-28)
+
+The manager grid has a **Reset** button per row (and the same action in the row
+menu). It exists because a banned guest cannot be repaired: the identity is gone
+at the server, so the slot has to be rebuilt from zero.
+
+`Reset` → stop that instance's AI loop → stop the client and wait for the
+WebView2 form to be disposed → `ForceDeleteDirectory` on
+`%LOCALAPPDATA%\DofusFarm\webview2_profiles\<slot>` → verify the directory is
+actually gone → create it empty and write `force_fresh_identity.flag` (the same
+guard the account-collision path uses, so `accounts.txt` can never seed a saved
+`[GUEST]` entry into the fresh profile) → relaunch through the normal
+`StartWebView2Instance` path.
+
+A wipe that does not finish (WebView2 still holds `EBWebView` locked) aborts
+without relaunching, so a "fresh" guest can never start on top of old state.
+The installer already provisions each slot as an empty profile directory with no
+template copy, which is the same invariant: installation never transfers data.
+
+### 5.9 Quest interactive elements, the fight witness, and the "AI kicks me" chain (2026-10-28)
+
+**Interactive elements live on the renderer, not on `isoEngine`.** The page's
+enumerator read `isoEngine.interactiveElements` (and `mapData.interactiveElements`)
+and returned `[]` on every map, so `tap.interactive` answered
+"no visible interactive element" for every free-form quest objective. The live client
+keeps them at `isoEngine.mapRenderer.interactiveElements[elemId]`
+(`{elementId, elementTypeId, enabledSkills, disabledSkills}`) with the cell at
+`isoEngine.mapRenderer.identifiedElements[elemId].position`. The reader now prefers
+that store and carries `enabled_skills`/`disabled_skills`, and `tap.interactive` uses
+the client's own `isoEngine.useInteractive(elemId, skillUid)` — which orients, walks
+to the element when it is not adjacent, and only then sends
+`InteractiveUseRequestMessage`. Sending the message from a distance was a silent
+server-side refusal.
+
+Measured: map 145490432 holds exactly one element (id 513208, cell 330, skill 184
+"Use", job Base). The *claim* (`quest.advance {quest_id, objective_id}`) is what
+completed 13948 and then 13950 in the 18:13–18:24 window of
+`trajectories/dofus-03.jsonl`; the interactive reader was fixed later and has not yet
+been exercised live. The client's own step list is captured in
+`trajectories/quest_state.dofus-03.jsonl` (`13948 done: true`, `13950 done: true`,
+current `13952` "Talk to Roki").
+
+**The fight witness closed.** `dofus-network/trajectories/fight_outcomes.jsonl` now
+holds a row with `started_by: "fight.join"`, `fight_id: 124`, `won: true`, and the
+page's `GameFightEndMessage` in `end` (`won: true`, `fight_id: 124`,
+`results: [{id: 4434090, alive: true}, {id: -1, alive: false}]`, duration 15,965 ms).
+`trajectories/` is gitignored runtime data, so that row is also kept verbatim in
+`dofus-network/data/live_evidence/fight_outcomes.jsonl`;
+`agent.regression` has `test_fight_end_witness`, which fails until such a row exists in
+either file (and skips only in the Kaggle code mirror, which has no live logs).
+
+Two bugs surfaced while producing it:
+`FightOutcomeLog.start` read `fight_id` from the pre-join observation, where the
+client still holds the *previous* fight's id — the second fight wrote 124 into a row
+whose end message said 125. It now reads the id only from an in-fight observation.
+And the rule policy answered "join the fight" with a targetless `fight.join {}`, which
+the advisor's guard refuses on any map with more than one group (every map on this
+route). `_join_args` now names the first group the observation's `fight_estimates`
+marks `allowed`, keeping the refusal for the genuinely ambiguous case.
+
+**Why the client appeared to "kick" when the AI was used.** Three separate effects,
+none of them a ban:
+1. The page's 20 s keep-alive is gated on the host's `aiRunning` flag. With no AI loop
+   running, the session marks no activity and the server sends "Prolonged inactivity
+   will lead to automatic disconnection" — observed in the host log as
+   `AI_DISCONNECT reason=INACTIVITY`, ~4 minutes after the last directive.
+2. `mobile-disguise.js` reloads the page when the viewport drifts ≥8% from its boot
+   size *before* the world is reached. Resizing/maximizing the window at the login
+   screen therefore reloads the login page (budget: 2 per 2 minutes), and the reload
+   never touches the game session — it only makes it look like a kick.
+3. The login page retries guest login up to five times; a retry while the old session
+   is still alive is answered "You have just disconnected a character that was already
+   using that account", and that *does* end the old session. Answer: one client, one
+   login, and keep the AI loop (or a heartbeat) running while the character is idle.
+
+**Challenge and battle-log capture (2026-10-28).** The client already receives everything
+the AI was missing and the page discarded it:
+- `fm.fightMessagesStack` holds the fight's action messages, and
+  `GameActionFightLifePointsLostMessage` carries the server's own `loss` and
+  `permanentDamages`, plus `shieldLoss`, AP/MP deltas, spell casts and deaths. The
+  page's `last_actions` kept spell/source/target and dropped the amounts; `fight.state`
+  now also carries `battle_log` (the whole stack, capped at 240 entries) with those
+  fields, and the snapshot carries `battle_log_tail` (12).
+- `ChallengeInfoMessage` / `ChallengeResultMessage` describe the optional fight
+  challenges (`challengeId`, `_name`, `_description`, `targetId`, `dropBonus`,
+  `xpBonus`, `_points`, `success`). Nothing read them; the page now keeps them in
+  `window.__agentChallenges`, clears them on `GameFightStartMessage`, and exposes
+  `challenges` in `fight.state`, in the snapshot, and in `__agentLastFightEnd`.
+- The outcome row now carries `challenges`, `challenges_done`, `challenge_bonus` and
+  `reward`: `reward = won + 0.25 × completed`, with a miss worth exactly nothing.
+  The bonus is only credited from a fresh, same-fight end message.
+
+**Corpora from the new live rows.** `data/combat_grid` was rebuilt from the 171 live
+boards: exactly 1 actionable board (158 captured with no positive AP, 6 not on the
+player's turn, 6 pass-only), manifest `verdict: actionable`. The entity-pointer
+rebuild was attempted and **refused by its own coverage gate** (4,091 action rows but
+42 progress rows against a floor of 50, and 18 tools with zero live rows), so the
+dataset on disk is unchanged by design. Live coverage, not the builder, is now the
+blocker for that corpus.
+
+### 5.10 Free-form taps, the executed move head, and fast-fail guards (2026-10-28)
+
+**Free-form objectives now have an action.** `QuestObjectiveFreeForm` (type 0) fell
+into the kill branch; `declares_monster_target` correctly says the parameter is text,
+and the planner then returned travel or nothing. The claim works when the server
+accepts it (13948/13950 above), but when it does not, nothing performed the objective.
+`QuestPlanner._free_form_calls` now offers the current map's interactive elements one
+at a time (`tap.interactive`, with the element's own `enabled_skills[0]` when the
+renderer has no `skillInstanceUid` yet), remembers `(map, element)` per objective so
+the same one is not tapped forever, and leaves travel/talk untouched for every other
+type. `parameter0` is a text id (704145 against element 513208), so it is only used as
+a preference when it happens to equal an `element_type_id` — never as an id lookup.
+`tap.interactive` is also in `SETTLE_TOOLS`: it answers ok before the walk to the
+element starts, and observing immediately would score it `noop` (the same failure the
+settle window was built for on `quest.advance`).
+
+**A claim is blamed only for a close the server announced.** The page recorded a
+"kick signature" (quest/objective pair in `localStorage`) for any disconnect within
+3 s of a claim, and the recorder fired for *every* client-side close including
+`INACTIVITY`. That permanently retired 13950/4262 minutes after the server had
+accepted it. Now: only `serverDisconnecting` sets `__agentServerClosing` and only that
+flag makes the disconnect wrapper record a signature; an accepted
+`QuestObjectiveValidatedMessage` clears the pair (`__agentClearKick`), and signatures
+expire after 24 h. A genuine rejection is re-learned with one disconnect.
+
+**The trained move head is executed.** The encounter env applies the actor's move
+(0 toward, 1 hold, 2 away) after every cast; the live `_realize` dropped it and ended
+the turn in `policy_pass` once AP ran out — the page's local heuristic then walked
+forward, which is the "it just fights forward" report. `LivePolicy` now emits a real
+`move` (a path on the cell graph, MP-bounded, strict distance improvement) for
+`pass + move 0/2`, for an unreachable cast with `move == 2` (retreat instead of
+walking into range), and when no legal plan exists. When several plans realize the
+chosen spell/target, the trained critic (`plan_value.rank_plans`, P(win) over the
+plan's resulting board) now picks between them instead of cell distance — but only
+when the observation contract says `value_ready` (the enemy's own spells are loaded);
+otherwise the old choice stands. Tests in
+`combat/test_live_policy.py` pin approach, retreat, hold, zero MP, the
+retreat-over-approach case, and the critic's three gates (not ready, ready, ranker
+failure).
+
+Offline replay of all 171 recorded boards through the updated policy: 164 rejected by
+the observation contract (placement / other team's turn), and of the 7 actionable
+decisions 1 `policy_direct` cast, 3 `policy_retreat` moves (all with the trained move
+head choosing "away"), 2 `policy_pass`, 1 `no_legal_plan`. The critic was value-ready
+on 2 of the 7 and disagreed with the distance tiebreak on one, so the wiring is live
+but only where its inputs are complete.
+
+**Routing and guards.**
+- `rule_parse("do all the quests")` labelled `quest/list` while the router and the
+  learned parser said run. The rule now answers a list only for a read ("list my
+  quests", the quest log, a named area) and otherwise falls through to
+  `intent=quest, action=run`, so the layer that labels prompts agrees with the layer
+  that routes them.
+- `ToolExecutor` has a fast-fail circuit: two consecutive page stalls ("timed out",
+  "not ready", no client instance) open it for 15 s, during which calls return
+  immediately instead of paying the C# 10 s wait; one answered probe closes it. A
+  stale instance name while other windows are alive does **not** open it.
+- `combat_ai_server` decision rows now keep the fight's `challenges`, so a later
+  policy can be taught to respect one.
+- The planner's own `_server_counted_types` was `{1,4,5,6}` while the page refuses a
+  claim for every class in its `SERVER_TYPES` list; it now mirrors the page
+  (`{1,2,3,4,5,6,12,14,16,17}`), so a delivery or multi-fight objective no longer
+  spends one step on a claim the client will refuse.
+
+**Damage calibration harness.** `tools/damage_calibration.py` joins the solver's
+predicted `slots[].damage` (decision log) with the server's own `loss` numbers
+(`end.battle_log`) by the Dofus `actionId` that a cast and its loss messages share;
+unpaired casts are reported, not dropped, and fewer than five pairs reads
+`not_enough_casts`. `agent.regression` proves the join on a synthetic fight; with no
+live battle log yet the live report says so honestly. It becomes evidence on the
+first fight the page records.
+
+**Measured verdict on training (2026-10-28, corrected).** No promotable training is
+possible from the data on disk: entity-pointer coverage is 4,091 action / 42 progress
+rows (floor 50) with 18 tools at zero and `tap.interactive` at 1, and only 7 of the 171
+recorded combat boards pass the observation contract. Those 7 come from the two most
+recent fights (ids 124/125); the other 156 boards predate the fighter-stats fix
+(`enemy_max_hp_missing` fires 445 times across them) and can never train anything. The
+synthetic solver-distillation corpus (`data/combat_grid_synth_v2`, 1,318 rows from 156
+boards) trains the grid model the live brain does not use
+(`fight.plan --ranker grid` only). The unblock is live fights on the fixed build, not
+another Kaggle run.
+
+### 5.11 The login block, and a PCA signature of a board (2026-10-28)
+
+**"Server busy" is a login block, and the host was feeding it.** After a stop/relaunch
+of dofus-03 at 20:20 the first login answered `en?[ui.popup.accessDenied]` (dismissible,
+login then succeeded). The next stop/relaunch at 20:25 produced `dofus.local says:
+Server busy`, and it stayed for more than 25 minutes: it re-appeared on a page reload at
+20:33 and again on a single `session.login` press at 20:44. Two properties of that alert
+matter for the agent:
+
+1. A native `alert()` blocks the page's JS thread. Every directive to that page timed
+   out while the dialog was on screen (`state.snapshot -> timed out`), so the agent could
+   not even read the state it was in.
+2. The host's own guest seeder (`WebView2ClientForm.cs`) presses
+   `loginScreen.playWithGuest()` up to five times and reloads the document after 60 s
+   with no progress. Inside the block every one of those presses is one more attempt,
+   and the reload is a new login page load. The manager log shows the chain ending with
+   `[AgentGuard] Server busy persisted through 3 retries; letting the client show its
+   alert`.
+
+The page now owns a login cooldown (`_LOGIN_BUSY_STORE` = `dofus.agent.loginBusy.v1`,
+10 minutes): `window.alert` is captured before the game's scripts run, a matching
+message (`server busy`, `accessDenied`, `too many`, `try again later`) arms the cooldown
+and is **swallowed** (recorded in the snapshot as `login_cooldown`, logged, not shown), so
+the page stays responsive; `session.login` and `debug.reload` refuse inside the window
+unless called with `force:true`; and the login screen's own guest methods
+(`playWithGuest`, `_createGuest`, `_continueGuest`, `_continueGuestFollow`) are wrapped
+once the screen object exists and re-wrapped if it is replaced, so the host seeder and the
+game's own retry hit the same rule. `tools/test_session_login.js` runs the extracted
+handler against a stub cooldown (refuse, remaining seconds, `force:true`, inspect
+allowed) and the gate pins the wrap and the swallow.
+
+**Why the block kept coming back, and the fix in build `2026-10-28z`.** Restarting
+dofus-03 at 21:33 showed the loop live: the cooldown was armed at 21:33:55 with 586 s
+left, and at 21:36:00 it had been **re-armed to a fresh 596 s**. The host's seeder presses
+`playWithGuest()` 800 ms after every document, while the page's wrap poll only ran every
+500 ms and needs `gui.loginScreen` to exist; a press that slipped through before the wrap
+re-armed the lockout, and the seeder's 60 s no-progress reload started the cycle again
+(a reload re-runs the seeder, and the guard's old refusal path reset `dfGuestTries` to 0,
+restoring the five-attempt budget the seeder is supposed to exhaust). Build z closes it
+four ways: a second "busy" alert inside an active window **does not extend** it; arming
+spends the host budget (`dfGuestTries = 5`) instead of resetting it; the wrap poll runs at
+150 ms; and `window.location.reload` is guarded so the host's no-progress reload is
+blocked while the window is open (`debug.reload force:true` sets `__agentReloadForced`
+to bypass once). On expiry the stored alert is cleared and the budget is restored to 0.
+Build ab adds a 20 s **single flight** on the initial guest presses (`playWithGuest`,
+`_createGuest`, `_continueGuest`; `_continueGuestFollow` is a follow-up and stays
+unthrottled), so the host seeder and an auto-started AI loop cannot press inside one
+server round trip even before any cooldown exists -- that overlap is the remaining way
+to earn a "Server busy" from a healthy server.
+
+**The other popup is DOM, not a JS alert (build ac).** Closing a client window and
+relaunching it twice inside five minutes (21:31-21:39) put both dofus-03 and dofus-05 on
+`en[?ui.popup.accessDenied]` / "The Dofus access has been revoked". That popup is the
+game's own window, so `window.alert` never sees it, the cooldown stayed unarmed, and an
+auto-started AI could keep pressing into the lockout -- exactly the "server busy keeps
+coming back when it auto-starts the AI" report. The page now scans **visible** text
+(`document.body.innerText`, so hidden templates cannot false-positive) on a MutationObserver
+plus a 5 s tick, throttled to one scan per 5 s, and routes `access has been revoked` /
+`accessDenied` / `server busy` through the same cooldown and budget rules. Recovery that
+afternoon: dofus-03 reached the world on ab by itself; dofus-05 needed one trusted click
+on CONTINUE AS A GUEST (21:47) after its AI loop was paused with the project's own
+`AUTOPILOT_STOP.dofus-05` file (removed once it was in the world).
+
+**A fresh boot can throw inside `playWithGuest` (build ae).** The first press after the
+22:06 restart failed with `TypeError: Cannot read properties of null (reading 'error')`
+in the client's own login manager, and the host seeder presses only once per document, so
+the instance would have waited for its 60 s no-progress reload. The wrapped guest methods
+now retry a throwing press once after 2.5 s (still refusing inside a cooldown) and record
+that retry as the single-flight press. The restart also earned a real "Server busy" (the
+previous session was still warm): the page armed the cooldown on its own, spent the host
+budget and held the window steady for the full ten minutes -- the guard working on a
+fresh document rather than a stale one.
+
+**A refused guest is not retried forever (build af).** The retry does not help when the
+server itself refuses: at 23:17:44, the moment the 10-minute window expired, the press
+threw again and the "Server busy" alert armed a **fresh** 10 minutes (581 s at 23:19:04).
+One refusal per window forever is still a storm, so the page keeps a persisted fail
+budget: three refused attempts inside 30 minutes (`playWithGuest` throw or busy alert)
+arm a **30-minute** window whose reason reads `login exhausted after N refused guest
+attempts`, and a login that reaches the world clears both the fails and the window
+(`dofus.agent.loginFails.v1` / `dofus.agent.loginBusy.v1`). The live consequence is a
+policy, not just a guard: after a refused press, stop pressing for much longer than ten
+minutes; repeated presses extend the server's own lockout. `tools/test_login_guard.js`
+pins the budget (two failures are free, the third backs off, the host budget is spent,
+success clears it).
+Measured live on build z: the cooldown `at` stayed `1793219809288` across 21:37:54,
+21:39:09 and 21:40:24 (536 -> 461 -> 386 s), where the old build had re-armed twice in
+the same span. `tools/test_login_guard.js` (new, in the gate) runs the guard block against
+fake storage and a fake location: no extension, budget spent, reload blocked/forced,
+expiry restores, and non-login alerts keep the native behaviour. Gate: **1,038 checks,
+0 failed**.
+
+**Ten minutes is too short, and the page was re-arming itself (build ag).** The cooldown
+that armed at 22:28:46 expired at 22:38:46; at **22:39:28, with no press from anyone**, a
+fresh ten-minute window was armed. The source was the agent's own popup scan: a WebView2
+window in the background runs its 5 s tick about once a minute, the refused "Server busy"
+text was still in `document.body.innerText`, and the scan matched it again. The server's own
+block also outlasts our window: a single `session.login {"target":"guest"}` at **23:50:48**
+(nothing pressed for ~70 minutes) logged in on the first press as Bruih (id 4434148, map
+147064834), where the press at +10 minutes had been refused. Build ag therefore identifies
+the popup instead of matching words: the matched text (digits collapsed) is stored in
+`dofus.agent.loginPopup.v1`, the same signature never re-arms, a real press clears it, and it
+is cleared when the words leave the screen. The quiet is derived from the stored refusal
+times (`lastFail + backoff(n)`), not from the armed record, so a reload cannot shorten it:
+**10 min, then 60 min, then 3 h**. A local `playWithGuest` throw no longer counts as a server
+refusal. `tools/test_login_guard.js` pins all of it (stale popup, press clears it, a popup
+that returns is new, escalation, reload-derived quiet). Gate: **1,056 checks, 0 failed**.
+
+**A free-form step can be a person, not an element (live, 23:56-23:59).** Step 4974 of
+quest 3841 is "Go to Albuera with Ayin Spyr": a free-form objective, no monster, one
+interactive already spent, three NPCs on the map, and the planner answered
+`state.snapshot` for 600+ waits ("the policy had no action to take"). Talking to the
+nearest NPC (3888) opened Ayin Spyr's own dialog; five replies (introduce, listen, "go and
+equip your new items", talk again, "one last gift") took `objectives_completed` 13 -> 15 and
+the step to 4976 ("Get the Albuera Elite Bonus Pack"). The three equippable pieces of the
+granted set went on with `inv.equip {object_uid}` (slots 1/6/7); the fourth (gid 18974,
+type 210) has `possible_positions: []` and the client sends nothing for it. The planner now
+gives a free-form objective the same NPC question the fight objectives use: every NPC of the
+map, once, nearest first (`_npc_talk_calls(..., why_fmt=...)`), after its interactives are
+spent and only when the step names no map to travel to. The check that a text-only wrapper
+"plans no hunt" still holds -- it now asks an NPC instead of sending nothing.
+
+**A tutorial UI step is a press, not a claim (build ah, live 00:22-00:23).** The onboarding
+quest 3841 has 22 objectives, and six of them name a window instead of an action: "Open the
+Spell Interface", "Open your inventory from the menu", "Open the Characteristics
+Interface", "Open the quest book", "Open the World Map", "Open the Encyclopaedia", plus the
+floating Shop button. The client completes each of them from its own menu bar
+(`WINDOW_OPENED` / `WINDOW_CLOSED` in `scenarioManager.conditionTypeEnum`), and the page
+already knew the DOM classes (`menuIconBook`, `menuIconMap`, ...). Driving them by hand
+closed the quest-book step (quest step 4581 -> 4968, objectives 16 -> 17) and the world-map
+step (4968 -> 4970, objectives 17 -> 18) through the client's own
+`QuestObjectiveValidationMessage`, with no disconnect. A claim on those objectives is the
+opposite: they are server-counted (type 0 `QuestObjectiveFreeForm`), and the two claims we
+did send were each followed 0.3 s later by `serverDisconnecting SERVER_GONE`.
+So build ah adds a first-class capability, `ui.tap` (menu key or CSS selector, optional
+`cycle` that presses again after the window opens, so an "open and then close" step is given
+back), and `ui.icons` (the visible menu keys and the open windows, read-only). The planner's
+tutorial branch now reads the *current step's own name and description* from the quest
+catalogue the page publishes (`quests_catalog`), maps the surface word to the client's menu
+key, and emits `ui.tap {menu, cycle:true}` at most twice per (quest, step, surface) before
+holding. This is plumbing, not per-quest logic: the vocabulary is window names
+(map/book/spell/bag/carac/shop), and any step that names one is covered. The tool surface is
+27 (schema + `data/capabilities.json` + the Kaggle toolkit mirror). The "no visible element"
+refusal routes to `wrong_target` (re-observe) in the controller, and a press with neither
+`menu` nor `selector` is refused as an invalid assumption. Gate: **1,067 checks, 0 failed**
+(now 1,076 with the control-plane checks).
+Not yet exercised live: bit 4980 ("Open the Encyclopaedia") names no menu key this build
+exposes; it will be mapped from the live DOM when the step arrives.
+
+**An instanced solo map can have no exit at all (live, 00:23-00:35).** After the shop step the
+character stood in `146276352` ("Albuera Village - Solo Area"). The map reports four
+neighbours but `map.cells` is 560 cells and `mapRenderer.getChangeMapFlags(c)` is false for
+every one of them: no exit cell in any direction, `interactiveElements` empty, no
+`animatedElements` that is a door, and clicking the black margin outside the floor clamps to
+the nearest walkable cell instead of leaving. Tapping the ladder, the wall, the map-bar
+house icon and the star icon changed nothing, and only one of the three NPCs
+("Forgelance Intellectual", 3966) answers a talk; the other two (3894, 3892) return no
+dialog to `npcActionId` 1 or 3. The tutorial step itself is 4970 ("Start a Fight with a
+Monster"), which waits for `FIGHT_START` and there is no group on the map, so the script
+cannot advance by itself. A page reload re-entered the world on the same map and step, so
+the scenario's start hook does not re-run on reconnect. This is the one shape the agent
+cannot solve with movement: a map that the server must teleport it out of. Note that the
+four neighbours' map assets return **403** from the CDN relay while the current map is
+served from cache, so even a scripted crossing would need those assets first.
+
+**Egress re-pin can outlive the dead address (live, 01:36-01:44 local).** The proxy
+re-pinned the session egress at 01:36:57 (the old pin was dead and no game traffic was
+live), and the next guest login through the new pin failed before the game was reached:
+`assetsVersions.json` fetch **REJECTED** and the client's own "Unable to log in - The
+connection failed" popup. That is the triage skill's egress branch, not a game refusal:
+the login guard must not treat it as a "Server busy" refusal, and a retry should wait for
+the proxy to pick a working address rather than pressing repeatedly. Do not force an exit;
+the egress identity is the operator's.
+
+**A blackholing hop is invisible to the relay (measured 01:44-01:59).** The pinned address
+`182.18.83.37:7890` passes a SOCKS5 handshake and then delivers nothing: `curl` through it
+returns exit 35 after 16 s while the same request through `127.0.0.1:40000` answers 200 in
+0.7 s. `dialOne` reports success on the handshake, so `recoverPin` never runs (it is only
+reached when the dial *errors*), no `[UPSTREAM]` line is written, and every login fetch
+times out. The recovery that works today is a **relaunch of the slot**: the manager's
+per-row Launch re-picks the egress (`Auto-Random`), and the first guarded login after a
+fresh pick succeeded on one press. Per-instance WebView2 uses `--proxy-server=
+http://127.0.0.1:<slotPort>` (the relay) for *all* traffic, including the login host, and
+`isGameDestination` includes the login host on purpose (the OAuth popup must share the
+game's exit IP), which is why a dead pin strands the login phase and not just the game.
+A real fix belongs in the relay: prove the tunnel with a first-byte deadline when no game
+traffic is live, then `recoverPin`. Not shipped -- it needs a Go rebuild and a relay
+restart, and the relaunch already recovers the session.
+
+**`ui.tap` proven live on build ah (01:10).** `ui.tap {menu:"Book", cycle:true}` on the
+world screen pressed `.menuIconBook`, `open_before: []` -> `open_windows:
+["grimoire > quests"]`, `changed: true`, and the scheduled second press closed it again
+(`open_windows: []` three seconds later). No disconnect: `connected: true`,
+`last_disconnect: null`, quest state unchanged. `ui.icons` listed 25 live menu keys with
+their enabled flags (Carac/Spell/Bag/Book/Map/Goultine enabled; Help/Zaap/BidHouse/... all
+disabled by the tutorial). The step-level proof (a tutorial UI objective advancing on the
+press) is still owed: the only live account sits on step 4970, a fight step, in a map with
+no group.
+
+**dofus-05 is parked at tutorial step 4970 (01:10).** After the relaunch and one successful
+login, the character re-entered map `146276352`, step 4970, zero groups, zero exits -- the
+sealed-room finding above. No in-game action can leave it and no group exists to start the
+scripted fight, so the loop stays stopped: a loop there would only burn the session. The
+account needs a server teleport (tutorial restart) or a fresh guest to continue the chain.
+
+**Two brain daemons can share one port (live, 01:57 and 02:29-02:31).** `netstat` showed
+pids 17476 and 9996 both LISTENING on `:8895`, each with its own instance table.
+`HTTPServer` sets `SO_REUSEADDR`, which on Windows behaves like `SO_REUSEPORT`: the second
+`run_brain.py` bound the occupied port with no error, and from then on the two answered an
+arbitrary share of `/brain/status`, `/brain/start` and `/brain/stop`. The host caused it in
+two ways. `EnsureBrain()` tracked only the python child *it* had spawned (`BrainProcessAlive`
+looks at `_brain`), so a panel restart or the always-on autostart spawned another daemon over
+the live one. And every success check was `body.IndexOf("\"ok\":true")`, while the embedded
+runtime has no orjson and stdlib `json.dumps` writes `"ok": true` with a space: the host read
+**every** accepted start as a refusal (log: `brain daemon refused the start request; falling
+back to per-instance children: {"ok": true, ...}`) and spawned duplicate children that raced
+the daemon for the instance lock, and every Stop as a failure. Fixed on both sides:
+`agent/serve.py` probes the port with a TCP connect before building anything and exits **3**
+(`EXIT_PORT_TAKEN`) if a service already answers; `desktop/aipanel.cs` probes
+`/brain/health` for `"dofus-brain"` before spawning (attaching instead), parses ok with
+`JsonOk()` (`"ok"\s*:\s*true`), polls status for a daemon it did not spawn, and lets Stop
+reach that daemon. Live proof: a second `run_brain.py` on `:8895` prints the refusal and
+exits 3 while pid 5884 keeps serving. The C# half ships on the next app start (the running
+`DofusFarm.exe` is file-locked); until then the agent-side guard alone stops the split brain.
+Gate: **1,076 checks, 0 failed**; both mutations (guard removed, `JsonOk` reverted) are
+caught by `test_single_control_plane`.
+
+**The skill-less element is not an answer (live, 01:31-01:34).** dofus-02 stood on step 4974
+with `_free_form_calls` proposing element 513203 (`skill_uid: null`, `enabled_skills: []`) --
+a call the page always refuses -- and the ready scan taking only that first call, so the NPC
+question behind it was never reached (1,386 waits in 44 steps). `_element_usable` now drops
+interactives without a skill (or enabled skill) before the choice, and the same loop resumed:
+`quest.advance {npc_id: 3920}` opened the Class-Changing Sorcerer, `tap.interactive
+{element_id: 513195, skill_uid: 136122302}` on a *skill-bearing* element advanced, and the
+dialog replies walked through to "Go and equip your new item" (quest 4260's equip step).
+
+**A loop at the login screen can now come back by itself (live, 02:20).** A session that
+ended at the guest screen parked the loop for 90+ minutes ("still waiting for the world"),
+because `session.login` is not one of the policy's tools. `Autopilot._require_world` now
+presses a guarded guest login through `ToolExecutor.recovery_call` (a directive the 27-tool
+vocabulary does not contain): at most 3 presses, 20 s apart, only when the snapshot says
+`in_world: false` **and** the character has no name -- the live login screen keeps the old
+character id with `name: null`, which the first version of the guard missed. The page's own
+cooldown stays the authority, so this cannot become a stampede. Live proof: "login press ->
+ok=True", then "the character is in the world; starting", with no manual press.
+
+**A repair must not hunt a text id or walk back where it came from (live, 02:10-02:11).**
+After a failed step the controller asks the thinking layer; for `type_id 0` it assumed
+"kill/farm" and turned the objective's `parameter0` (715354, a text id) into
+`fight.join {monster: 715354}`, then `farm.start`, then a walk that ping-ponged the character
+between 145490435 and 145490947 on every replan. The log showed twenty steps reported
+`advanced` that never touched the objective. Two rules now: a free-form objective whose
+client class declares text only (`declares_monster_target(obj) is False`) is repaired by
+asking the map's NPCs and by the objective's own map, never by a hunt; and exit proposals
+skip the map the character just left (`_exits(obs, avoid=_came_from(obs))`). The gate's
+mutation (removing the declares check) reproduces the exact live calls.
+
+**A failed close is not retried (live, 02:16-02:19).** The close that landed a beat after the
+page looked was answered `failed`, the controller retried it once, and the retry ran against
+a closed dialog: "quest is active but no npc_id was given". `Controller.on_step` now receives
+the call's `args` and turns any `quest.advance {close}` failure into a replan; the page
+(build ai) also answers a close with nothing open as success, so both halves agree.
+
+**An equip objective with no preset uses the bag's own uids (live, 02:11).** Quest 4260's
+"Equip the Albueran recruit set, then talk to Ayin Spyr" had four items, zero presets, and the
+preset-only branch answered `inv.list` forever. `_next_equip_uid` offers the bag's uids
+least-tried first (two tries each, then retired) and falls through to the talk half. Live:
+`inv.equip {object_uid}` fired on the four items; the page refused each with "equipItem sent
+nothing and the item is not usable; pass slot", so build ai uses the item's own
+`template.possiblePositions` for one `ObjectSetPositionMessage` (the bundle's own `_equip`
+path) when `equipItem` sent nothing -- never a slot guessed from the gid. After the relaunch
+on build ai the equip step was behind the character: step 4974 -> 4976.
+
+**Step 4976 ends on the shop *opening*, not on a claim or a press (bundle evidence, 03:00).**
+"Open the Shop Interface": press the floating Shop button and get the Albueran Elite Bonus
+Pack. `open_windows` already reported `market > shop`, and the `.shopBtn` press answered
+`changed: false`, because the window had been opened by an earlier step. The client's own
+step table settles it: `questStepCheckpoint: 4976` has `executeStart` enabling
+`ENABLE_FAKE_SHOP` and pointing the hint at `gui.shopFloatingToolbar`, and its
+`endingCondition(e)` is `e === conditionTypeEnum.SHOP_LOADED`. `SHOP_LOADED` is checked when
+the shop's articles arrive (`onShopOpenCategorySuccess` -> `addArticles`), and the fake shop
+runs only when the window is opened *while the step is active*. So the action is: close the
+market window if it is open, then press the button -- one real opening. Build `2026-10-29al`
+carries `close_first` in `ui.tap` (it closes named windows through the client's own
+`windowManager.close`, reports `closed_before`, and re-reads `open_before` afterwards), and the
+planner's shop surface now carries `close_first: ["market"]` with no `cycle` (the cycle would
+close the shop the step is waiting to load). With the window already open the step no longer
+presses at all. `tools/test_ui_tap_close.js` runs the handler and pins close-before-press.
+
+**The pack is a fake-shop purchase, and only the client's own condition completes it
+(bundle evidence, 04:40).** The scripted step that follows 4976 (`questStepCheckpoint: -1`,
+dialog portrait `happy_spear`) ends on `conditionTypeEnum.FAKE_SHOP_BUY`: the article's
+hard-price button, pressed while `ENABLE_FAKE_SHOP` (behaviour 16) is on, makes the client
+emit the condition and the scenario itself sends
+`QuestObjectiveValidationMessage {objectiveId: 14072}`. Outside that mode the same button
+starts a real-currency purchase through an account confirm window. New capability
+`shop.buy` (the 28th tool) uses the client's own hint path -- `market` window ->
+`tabs.getFirstTab()` -> `target.getFirstArticle()` -> `getButtons().hardButton` -- and
+refuses unless `scenarioManager.isBehaviourEnabled(16)` is true, reporting the article id
+and the window set. The planner's shop branch now buys the first article when the window
+is already open (bounded at four attempts), instead of pressing the floating button again.
+`tools/test_shop_buy.js` runs the handler against stubbed client objects (12 checks); the
+constraint corpus gained the three refusal texts, and the controller now routes an
+`unavailable` cause to replan regardless of how the refusal is worded. Build `2026-10-29al`.
+
+**A tutorial hint can name a control with no CSS class, so `ui.tap` takes `client_target`
+(bundle evidence + code, 05:30).** The step after the shop's fight (`questStepCheckpoint:
+-1`, dialog 25477) starts with `o.pointToChallenge()` and its endingCondition is
+`TAP_ANYWHERE`; the scenario listens for `gui.wBody`'s `dom.touchend`, while the bot's
+combat casts go through `gui.fightManager.castSpell` and never produce that event -- so
+the step would wait forever. The hint code itself is the specification:
+`pointToChallenge` taps `gui.challengeIndicator.challengeSlot`, and
+`pointToConfirmUpgradeSpell` taps
+`grimoire.tabs.tabsMap.spells.target.spellBook.confirmButton`. The scenario's listener
+is satisfied by a synthetic press: wui binds `mouseup` on `wBody`'s root element and
+emits `dom.touchend` for a left button (`which === 1`) unless a real touch happened in
+the last 500 ms, and `_agentUiTap` dispatches exactly that mouseup. Build `2026-10-29an`
+resolves both by that object path (`_agentClientTarget`) and `ui.tap {client_target}`
+refuses a missing or zero-sized control instead of pressing some other element. The
+tutorial snapshot now publishes `step_checkpoint`, `hint_target` (read from the step's
+own `executeStart` source: `pointToChallenge` / `pointToConfirmUpgradeSpell`) and
+`behaviour_ids` (the numeric list, additive: `can_change_map` keeps its name-based read,
+which is all-true and harmless because live crossings succeeded with those flags set).
+The planner acts on `hint_target` before any stale NPC/cell gate and bounds the press at
+four attempts per step; the autopilot, which owns the loop while `in_fight` is true (the
+planner returns `state.snapshot` there), also presses once per fight, spaced three
+seconds and capped at five, only while the hint names the challenge. Both presses pass
+the *runtime* contract (`data/capabilities.json`, loaded instead of `schema.py`'s
+builtins): the first version sent `close_first: ["market"]` against a string parameter,
+and the executor would have refused the shop press before it reached the page -- so
+`close_first` is now one window name, the registry carries `client_target` and
+`close_first`, and `ui.tap`'s special rule accepts a client target alone. The gate now
+runs every press the planner produces through `validate_call`. `tools/
+test_ui_tap_client_target.js` (13 checks) and `tools/test_tutorial_hint.js` (9 checks)
+run the extracted page code; the gate also gained five planner assertions and seven
+autopilot ones for this path.
+
+**The characteristics step needs the window's Validation *effect*, not its window
+(bundle evidence, 05:44).** The later step that waits on `CHARAC_UPDATE` (objective
+13531) cannot be satisfied by opening the Carac menu: the window's Validation button
+spends the points (`StatsUpgradeRequestMessage`) and *then* calls
+`scenarioManager.checkCondition(CHARAC_UPDATE)`, and neither the "+" nor the confirm
+has a stable element path. The snapshot now publishes `hint_target: "charac_update"`
+when the current step's `executeStart` touches the `characUpdate` window, and
+`ui.tap {client_target: "charac_update"}` reproduces the button's two effects in that
+order: `char.build` spends the unspent stat points (spells untouched), then the
+condition is fired. A spend that moved no point refuses and does not claim the
+objective; the action also re-checks the current step's own `executeStart`, so a stale
+caller cannot fire the condition on an unrelated step. `tools/test_tutorial_hint.js`
+now evaluates the *real* `characUpdate` step object from the bundle and pins its `-1`
+checkpoint and hint, beside the real challenge step.
+
+One more step sits between them: the step whose endingCondition is `WINDOW_OPENED`
+with windowId `characUpdate` (the stat-spending mini-window). Its executeStart has no
+hint, so the snapshot now publishes `open_window`, parsed from the endingCondition,
+and the planner presses `_WINDOW_CONTROLS["characUpdate"]` -- `.upgradeButton`, the
+"+" cell of a characteristic row and the client's own opener for that window --
+before the generic surface path. The real dialog-25463 step is pinned in the same
+canary.
+
+**The spell upgrade step needs the plus press, not just the confirm (bundle evidence,
+06:02).** The step before `pointToConfirmUpgradeSpell` calls
+`displayHighlightedSpellButtons(true)` and ends on `SHOW_CONFIRM_BUTTON` with
+`canConfirm`; its only action is a spell's "+" (`addSignButton`), which raises
+`levelWanted` and reveals the confirm button the next step taps. The snapshot publishes
+`hint_target: "spell_plus"` from that executeStart, and `ui.tap {client_target:
+"spell_plus"}` walks the spell book's `spellMap` -> `table.getCell(id, "rank").plusBtn`
+and presses the first visible enabled plus (DOM `.addSignButton` as the fallback), so
+the confirm press has a button to press. The real step is pinned in the same canary.
+
+**The whole Albuera chain is audited against the bundle (06:04).**
+`tools/audit_tutorial_chain.js` evaluates the real 51-step array and classifies every
+step: each one is either game-progress (fight, map, quest, window, shop) or has a
+control path the page can press. The nine steps with no condition are state-driven
+transitions (level 10, quest-tracker moves, the terminal step) and need no action. The
+audit runs inside the node gate, so a client rebuild that adds an unreachable step
+fails the gate instead of stalling a fresh guest silently.
+
+**The C# host is now compiled by the gate (06:25).** `aipanel.cs` changed at 02:29 and
+had never been compiled, so a broken host was invisible until the next release (the
+running exe is locked and predates the change). `agent.regression` now finds the same
+compiler `builder/Build.cs` picks (Roslyn `csc.dll` from the newest .NET SDK, else the
+framework `csc.exe`), compiles the exact source list with the same references into a
+temp directory -- never the shipped exe -- and fails on a compile error; it skips with
+a printed SKIP when no compiler exists. The current sources compile clean.
+
+**A fall-out that lands on character selection used to wait forever (log triage, 06:30).**
+The last live session (`dofus-02`, session 5bef45f2) ended with `kind:"recovery",
+trigger:"fell_out", recovered:false, waited_s:751.8`: the client left the world 6 s
+after its last `nav.goto`, and the recovery waited 12.5 minutes without pressing
+anything. The reason: recovery only pressed the *guest form*, and only when the
+snapshot had no character name. Character selection is a different screen -- the
+client holds the last character, so `at_login` was false -- and nothing pressed
+there. The client's own play action on that screen is `selectCharacter(id)`, which
+sends exactly `CharacterSelectionMessage`; `session.login {target:"character",
+character_id}` now sends that message (refused while already in the world, refused
+without an id, and still under the page's login cooldown and ban guard), and
+`_require_world` uses the bound identity's id, pressing at most three times per
+fall-out. The press budgets are now per wait, reset when the world returns: before,
+a second dropout in the same run could never be answered. The run-away triage also
+showed every `closing:` line in the log is a user/host close (`UserClosing`,
+`TaskManagerClosing`), not a kick, and that the host seed
+`data/safety/kick_signatures.json` is behind this profile's localStorage store
+(5 pairs the client refuses: 3841/13537, 3841/14070, 4262/13948, 4262/13950,
+4262/13956) -- the seed file protects fresh profiles, so those pairs will need a
+review before they are copied in; the log that recorded their reasons has rotated
+away. Build `2026-10-29au`.
+
+**The later tutorials' controls are resolved the same way (bundle evidence, 06:15).**
+The same bundle holds five more step arrays after Albuera: `F` (Astrub, 9),
+`k` (profession/craft, 20), `B` (job, 3), `P` (bestiary, 5) and `W` (trade, 6).
+Their steps point at controls through the same helper convention, so the snapshot's
+hint table now reads the whole helper family from `executeStart` and `ui.tap` resolves
+each name by the exact object path the helper itself walks:
+`contextual_menu:N` / `npc_menu:N` -> `getContextMenu(kind).actionsContainer
+.getChildren()[N]`; `trade_validate` -> `tradeWithNPC.getValidateBtn()`;
+`trade_slot` -> `tradeWithPlayerAndNPCInventory.getStorageFirstSlotForTuto()`;
+`craft_recipe` -> `crafting.getFirstRecipe().craftButton`; `craft_merge` ->
+`crafting.getMergeBtn()`; `craft_slot` -> the correct crafting inventory's first slot;
+`shop_category:N` / `shop_item:N` -> `bidHouseShop.getCategoryDom/getItemInSaleDom`;
+`sell_info` -> `tradeStorage.infoButton`; `bestiary_monster` / `bestiary_drop` ->
+the bestiary tab's `getMonsterWithDrop` / `getDropDomFromMonster`; and
+`close:NAME` closes a window through the client manager (the bestiary and job steps
+end on `pointToWindowCloseButton("grimoire")` -> `WINDOW_CLOSED`, and two Albuera
+steps do the same for the spell book at checkpoint 4950 and the equipment window,
+whose close sends the objective validation itself). The manager's `closed` listener
+fires `checkCondition(WINDOW_CLOSED, {windowId})`, so a manager close is the same
+event the close button produces. Every window path gates on `openState`, exactly
+like the helpers. `playInteractiveElementTap(<id>)`
+publishes `interactive_hint`, and the planner answers it with
+`tap.interactive {element_id}`, which is `isoEngine.useInteractive` (it walks there
+and sends the use request) -- the profession chain opens two workshop menus that way.
+The job chain's add-ingredient step cannot be tapped (`DISABLE_SLOT_TAP`) and waits
+for `CRAFT_ITEM_ADDED`, so `ui.tap {client_target: "craft_drag"}` performs a real
+pointer drag from the crafting inventory's first slot onto the crafting window's
+`_mySlotElems`: press on the slot, six stepped held moves on `wBody.rootElement`
+(wui converts those and the release into `dom.touchmove`/`dom.touchend`, the events
+the drag manager binds), and the release carries the destination centre as its
+client coordinates -- the manager resolves the drop target with
+`document.elementFromPoint` and dispatches a bubbling native `drop` there. The audit now tags every control
+with whether the page can perform it, treats data-load events (`FAKE_STORAGE_LOADED`,
+`BESTIARY_MONSTER_LOADED`) and condition-less/rewind-only steps as progression, and
+carries an NPC lock across steps so a menu step that re-taps the NPC counts; all six
+arrays report zero unhandled steps, and `H` still fails the gate on any regression.
+`tools/test_ui_tap_client_target.js` grew to 51 checks (twelve later-tutorial targets,
+a closed-window refusal, `close:`, the drag focus and the raw drag sequence) and
+`tools/test_tutorial_hint.js` to 74 (a synthetic and a real-bundle canary per helper,
+plus `interactive_hint`). Build `2026-10-29au`.
+
+**Travel is routed over the map index, one border at a time (07:00).** `_travel_call`
+used to send `nav.goto {map_id: <destination>}` whenever the destination appeared
+anywhere in `data/maps/_index.json`. The client only crosses an exit of the map it
+stands on, so a destination four crossings away was either refused ("map X is not
+adjacent") or walked one edge and asked for again. The live dofus-02 session of
+2026-10-29 (03:25-03:26, session `5bef45f2`, objectives 4262/13940 and 4264/13960)
+alternated maps 145489920 and 145489921 for twenty steps, every leg `ok advanced`:
+one ready objective's map was the map just left, and the other is four crossings
+away. `features.map_graph()` now returns the id set **and** each map's
+`neighbours` from the same read, `route_first_hop`/`route_distance` BFS that
+graph, and `_travel_call` asks for the first crossing -- matched against the exits
+the client actually reports, with the index direction as the fallback -- never the
+raw destination. When the index does not hold both ends (a newer map, or the
+offline simulator's synthetic ids) the old request is kept, so the explore branch
+still owns discovery. Travel that does not come nearer is bounded by `_route_tries`
+(12 decisions without a shorter distance) because the ordinary claim counters are
+wiped whenever the scene key changes and a crossing *is* a scene change; the
+counter survives crossings, resets when the distance drops, and after the bound the
+planner explores instead of re-sending the same request. The ready scan's
+`_exhausted_at` record (a map stood on with nothing to do for that objective) now
+also gates `plan_objective`, so the active-quest path cannot walk back to a map it
+already found empty -- that path was the one still emitting the return leg. A
+forward simulation of the live state now walks 145489920 -> 145489921 -> 145489922
+-> 145490434 -> 145490946 (four crossings) instead of bouncing.
+`test_index_route_travel` pins the first hop, the distance reset on arrival and the
+expiry after twelve non-improving requests; `test_exhausted_ready_maps` now expects
+the first crossing rather than the destination. Build `2026-10-29au`.
+
+**The tutorial's NPC gate is bounded too (07:20).** `_tutorial_call`'s
+`unblocked_npc_id` branch returned `quest.advance {npc_id, quest_id}` on every
+decision and remembered nothing. A talk either opens the dialogue in that one call
+or it does not, so a repeat asks the same NPC the same question: the recorded
+dofus-05 session of 2026-10-27 (build `2026-10-27l`, step 1 "Parler a Jin Spyr")
+dispatched 277 identical no-op talks, and dofus-03 dispatched 272 in the same
+window. The branch now shares the tutorial press budget (four attempts keyed by
+quest, step, special step and npc), after which the step's other gates and the
+ready objective get their turn and the caller waits on the step. Replaying that
+session against today's planner now emits five talks and then reads. The
+autopilot's call hold and dead-talk receipt still sit on top; this is the
+planner-level bound for callers that do not hold (brain threads, corpus
+generation, replay). Build `2026-10-29au`.
+
+**An interior is not a map you can walk out of (07:45).** The client publishes
+each map's `neighbours` and, separately, only the borders it can actually cross in
+`exits`. A house interior reported four neighbours and zero exits, and the planner
+kept requesting another map's id from inside it (dofus-05, 2026-10-27, session
+`cabda584`, map 146276352: ten `nav.goto {map_id: 145489920}` on a map whose way
+out is a door the snapshot did not list). `_travel_call` now distinguishes *no edge
+information* (a partial snapshot, or the offline simulator's synthetic maps -- the
+destination request is kept) from *edges known and none crossable* (an interior):
+for the interior it returns `state.snapshot`, which the ready scan treats as a
+detour, so a locally actionable ready objective or a read takes the step instead of
+a change request that cannot be satisfied. Both shapes are pinned in
+`test_index_route_travel`. Build `2026-10-29au`.
+
+**Recorded turns are now a gate, not a one-off measurement (08:20).** The
+autopilot logs rotate, so the numbers quoted above were only reproducible while
+the files survived. `tools/freeze_planner_replay.py` samples up to 30 decision
+rows per recorded session from `autopilot.dofus-02/05/03.jsonl`, trims the heavy
+and volatile blocks (geometry, keep-alive, user input, last disconnect/nav, farm
+state, ensemble) plus the `map.transition` packet log (it carries the
+AuthenticationTicket), and writes `data/replay/planner_obs.jsonl`: 420 rows over
+17 sessions. `agent.regression.test_planner_replay` replays every row through
+`QuestPlanner().choose` and pins the invariants the live bugs violated: zero
+map-change requests naming a non-adjacent map, zero requests from an interior
+with no crossable border, at most 3 turns with no decision (measured 1), plus
+non-vacuity (>=3 sessions, >0 map requests, >=5 distinct tools; measured 2 map
+requests, 270 `quest.advance`, 109 `tap.interactive`, 19 `state.snapshot`, 18
+`shop.buy`, 1 `ui.tap`). Regenerate deliberately with
+`python tools/freeze_planner_replay.py`; `--check` reports drift. The baseline
+turns are trimmed snapshots only -- no credentials, tokens or packet tickets.
+Build `2026-10-29au`.
+
+**The 751.8 s rescue was ended by the operator, and now leaves the screen behind
+(08:45).** Triage of dofus-02 session `5bef45f2` (the nav-bounce session): the
+farm log carries no `closing`/`AI_DISCONNECT` line for dofus-02 near it and the
+recovery row's `reason` is null, so the loss itself was unlabelled -- the shape
+a page reload leaves when it wipes `dofus.disconnect(reason)` before it can be
+read. The wait ended at 03:39:11, one second after `AUTOPILOT_STOP.dofus-02` was
+written at 03:39:10: recovery did not give up, the operator stopped the slot.
+Why the world never returned during those 751.8 s is *not* in the surviving
+logs -- that loop's console lived in the daemon process and was overwritten by
+the next restart -- and neither press branch can be shown to have fired. The
+wait now records what it is looking at: `_world_screen` classifies
+login / character selection / in-world / dead page (`no_snapshot`) / unknown,
+every 30 s report names the screen and the login/enter press counts, the stop
+line prints the last screen, and the persisted `kind: recovery` row carries a
+`screen` field so the next triage does not depend on a console that rotates.
+The selection-enter and guest-login presses already existed and are pinned in
+`test_login_recovery`, together with the new screen fields. Build
+`2026-10-29au`.
+
+**A session ticket was being written to every corpus (09:20).** The page's
+map-transition ring copied up to eight scalar arguments of every outgoing
+packet so a refused map change could name its map. `AuthenticationTicketMessage`
+carries the session `ticket`, so the snapshot -- and everything built from it --
+contained a live credential: 1,582 values across 11 files, three autopilot logs
+and eight trajectory files, including the corpus Kaggle runs read. Four layers
+now stop it: the ring filters credential-shaped names at the source
+(`_agentPacketArgs`, page build `2026-10-29av`), `agent.observe.redact_packet_secrets`
+strips them from any snapshot a runtime records (so an older page build cannot
+leak again), the manager's own play recorder strips the value in C# before its
+final write (`WebView2ClientForm.RedactSecrets`, the writer that holds
+`play_*.jsonl` open), and `tools/scrub_packet_secrets.py` rewrites what was
+already stored (dry run by default, atomic per file, skips `[redacted]`). The scrub
+removed 1,014 values; 568 remain in `trajectories/play_dofus-0{2,3,5}.jsonl`,
+which another process holds open -- re-run `python tools/scrub_packet_secrets.py
+--write` once they are released, and the tool reports `0` when the corpora are
+clean. `test_packet_redaction` (Python) and `tools/test_packet_redaction.js`
+(page) pin the filter, the surviving map/refusal fields and the clean frozen
+corpus, and `test_cs_secret_redaction` compiles the recorder's own regex into a
+probe and executes it (ticket redacted; other keys, escapes and spacing
+untouched), so the C# layer is verified rather than grepped. Build `2026-10-29av`.
+
+**A seeded kick signature can now be proven wrong (09:35).** The disconnect
+triager found five pairs the client's own store blames but the checked-in seed
+does not list (`3841/13537`, `3841/14070`, `4262/13948`, `4262/13950`,
+`4262/13956`). They were not merged into `data/safety/kick_signatures.json`:
+a seed is permanent, while the learned rows expire after a day, so a wrong seed
+would disable an objective in every future session. The asymmetry that made
+that dangerous is fixed instead -- `__agentClearKick` used to return early when
+localStorage had no row (a fresh profile, i.e. the normal case) and never
+touched `window.__agentKnownKickSignatures`, so the accepted-validation handler
+that is supposed to lift a false signature did nothing for a seeded one. It now
+removes the pair from both stores and reports whether anything was cleared;
+learned rows still expire after 24 h and the accepted validation still clears
+them. `tools/test_kick_signature_clear.js` executes the real reader and clear
+action against a fake window (seeded, learned, stale, unknown, missing args).
+Page build `2026-10-29aw`.
+
+**The shop chain's post-load step is a tap, not a purchase (bundle evidence, 05:48).**
+Between `SHOP_LOADED` (4976) and the fake-shop purchase there is a `-1` step (dialog
+26689) that advances on `TAP_ANYWHERE` and *rewinds* if the market window closes.
+Buying on that step loses the `FAKE_SHOP_BUY` event -- the next step is the one that
+listens for it -- and pressing the floating button again closes the market window,
+which is exactly the rewind branch. The snapshot now publishes `tap_anywhere`, read
+from the current step's `endingCondition` source, and `ui.tap {client_target: "world"}`
+dispatches the mouseup on `wBody.rootElement` (wui turns a left-button mouseup into
+`dom.touchend`, the event the step watches) only while that source names
+`TAP_ANYWHERE`. The planner runs this before the shop surface's close-first press, and
+a spent hint falls back to the world tap because the step ends on any touchend.
+`tools/test_tutorial_hint.js` evaluates the real dialog-26689 step and pins
+`tap_anywhere: true` with no client-target hint on it; `tools/
+test_ui_tap_client_target.js` runs the world tap and its refusal on a non-tap step.
+Press budgets are keyed by the scenario's array index (`step_id`), not by the
+checkpoint: every sub-step carries `questStepCheckpoint: -1`, so a checkpoint-keyed
+budget is one budget shared across unrelated steps (the gate proves two sub-steps
+with the same checkpoint each get their own).
+
+**A step that points at a menu now names it in the data (bundle evidence, 05:51).**
+`executeStart` calls `pointToMenuIcon("Carac")` (or Book, Map, Help, ...); the
+snapshot publishes `menu_hint`, and the planner presses exactly that menu with the
+press-back cycle before falling back to matching the step's English name against
+`_UI_SURFACES`. The real checkpoint-4573 step is evaluated in the same canary and
+pins `menu_hint: "Carac"` with `checkpoint: 4573`.
+
+The same table shows what the run must expect next, and the planner now expresses it:
+step 4978 idles until the character is **level 10** (its endingCondition sends objective
+14074 when `level >= 10` and no fight is running), step 4980 opens the **Help** window
+(`pointToMenuIcon("Help")`, `WINDOW_OPENED "help"`) and the step after it ends on that
+window's close (objective 14076), and a later step waits on the characteristic update
+(13531). `_UI_SURFACES` gained `("help", {"menu": "Help"})`, and surface matching is now
+**name-first**: a step's name is the client's own label ("Open the Help Interface") while
+its description is prose ("ask him to help you"), so only a step with no name falls back
+to the full text. The pinned case: a step named "Talk to Ayin Spyr" with a description
+saying "help" must not press Help.
+
+**A permanent ban ends the run instead of pressing into it (live, 03:26).** The dofus-02
+guest came back from the login server with `popup ... message=Your account has been
+permanently banned.` (`DofusFarm.log` lines 99795-99811, the same answer dofus-01's guest got
+earlier). The page's cooldown scanner only knew "server busy"/"access denied", so the new
+self-login recovery would have pressed three times and then parked forever. The page now
+reads the visible text (`_agentLoginBan`, cached 2 s), publishes `snap.login = {banned, text}`,
+and `session.login` refuses with `banned: true`, `login_banned: true` -- `force` does not get
+through a fact. `_require_world` checks it before every press and ends the loop with "reset
+this slot for a fresh guest"; `_recover_world` inherits the same check. The loop was parked
+with a stop file rather than left pressing. The ban itself is an account state, not a code
+defect: only a per-slot Reset (fresh guest) changes it, and that wipes the profile, so it is
+the operator's call.
+
+**Two exhausted ready objectives no longer walk back and forth (live, 03:06-03:26, steps
+71-80).** Quests 4262 and 4264 each held a ready free-form "go back and see X" objective on
+adjacent maps (145489920 and 145490946). Standing on either map, every NPC had already been
+asked, so `plan_objective` returned nothing and the only available call was the walk to the
+*other* objective's map; the log shows ten alternating `nav.goto` steps. The planner now
+records `(quest, objective, map)` when it stands on the objective's own map with no action
+left (`_exhausted_at`), and the ready scan refuses to travel for a triple it has already
+exhausted -- the loop waits (`state.snapshot`) instead of pacing between two maps. Only a new
+tutorial step clears the record; a map change must not, because that is exactly the loop. The
+oscillation was a symptom of the blocked shop step, and this bound is what makes the wait
+honest when a step cannot complete. Replayed against the recorded `obs_before` of steps
+68-80 (`autopilot.dofus-02.jsonl`), the live planner alternated `145489920`/`145490946`
+every step; the new one plans `145490946` on every observation after the first arrival and
+never walks back.
+
+**Live session on build `2026-10-28x` (20:14-20:22).** A stop/relaunch finally
+happened through the manager's row context menu (the per-row ACTION cell ignored
+synthetic clicks; "Launch / Stop" in the right-click menu worked). The client came up
+on build `x`, **logged in on the first press** (`gui.loginScreen.playWithGuest()` ->
+`in_world: true` in under 6 s, no cooldown), walked four maps, and fought: during a
+fight `battle_log_tail` held **12 rows** and the ending row for fight 900 recorded
+**`battle_log: 22`** where the two morning rows had `[]`. That is the ring tap proven
+live; the client's own stack was indeed empty at the end.
+
+**`battle_log: 22` was lifecycle only (found 21:30).** Those 22 rows were
+`GameFightStartingMessage` ... `GameFightEndMessage` with no cast or damage row, so
+`tools/damage_calibration.py` honestly printed `0 matched cast(s)`. The emit tap sees
+messages the client dispatches standalone, but damaging actions on this client arrive
+inside `messageSequence` batches; build z expands those batches in the tap **and** copies
+action rows out of `fightMessagesStack` on a 250 ms poll and inside `_battleLog`, deduped
+by `(type, actionId, source, target, spell, loss, value, delta)` so a re-poll cannot
+double-count. `tools/test_battle_log.js` grew from 10 to 18 checks (harvester copies,
+dedupes, skips lifecycle; reader sees harvested rows; sequence expansion pinned).
+The same fight exposed a
+second bug: **two `fight_outcome` rows were written 127 ms apart** for one fight, because
+the host's own autopilot and the brain daemon's per-instance thread both drove dofus-05.
+`Autopilot.run()` now takes an **exclusive OS lock per instance**
+(`msvcrt.locking`/`flock` on `autopilot.<instance>.lock`) and a second driver prints
+"another loop already drives this instance; standing down" instead of doubling every
+directive and row. The keep-alive is also gated on the client actually being in the
+world: with the AI auto-started at launch, it used to flip the activity tracker and
+ping every 20 s while the guest login was still in flight, which is the mechanism that
+kept the half-open session alive and the account "busy" (the user's hypothesis, now
+pinned by `keep_alive.marks: 0, failed: 11, present: false` at the login screen).
+After the loop stopped, the client was kicked for inactivity about four minutes later,
+exactly as the AFK model predicts, and came straight back on one press.
+
+**First live damage calibration: fights 133 and 138, build aa.** With the harvest in
+place the fight-end row carried **59 battle-log rows / 22 with an action id** for fight
+133 and then 240/109 for fight 138. `tools/capture_fight_outcome.py` (new) copies
+`state.snapshot.last_fight_end` into `data/live_evidence/fight_outcomes.jsonl`, so a
+fight played outside the autopilot loop still becomes evidence. Two bugs surfaced while
+building the join:
+
+* `report()` had been reading the `{kind, outcome}` envelope as if it were the outcome,
+  which is why every earlier run said `0 matched` even when rows existed; it now unwraps.
+* The ring outlived a fight: fight 137's 194-row log contained fight 133's casts and
+  produced duplicate pairs (the same 26/18/2 three times). `GameFightStartingMessage`
+  now clears the ring and the harvest signature set, so a fight's log starts at its own
+  start message (build aa). The ring/read cap also went 400->800 (build ab) because a
+  three-monster fight passed 240 messages and lost its opening rows.
+
+The clean result is **2 fights, 9 matched casts, 0 unmatched, MAE 9.44, bias -7.48**:
+spell 7041 (2 casts, MAE 8.95), spell 7045 (6 casts, MAE 10.50, bias -8.92), spell
+7051 (1 cast, MAE 4.05). The solver **overestimates** damage by ~7.5 on average, which
+matches the contract's own warning (`enemy_stats_not_exposed`: no enemy resistances in
+the model) and is the correction a learned calibration head should learn, not a constant
+to hardcode. The join also had to learn two protocol facts: the cast's action id (300)
+is not the effect's (96/97) and is reused within a fight, so pairs are formed by log
+order (the newest cast by my side owns the losses that follow it), and a summon's loss
+(`source: -22358`) is still my side's damage while an enemy source is not. Self-casts are
+counted separately as non-damage, not as misses.
+
+**Challenges are live.** Every recorded fight on builds z/aa carried two
+`ChallengeInfoMessage` rows with their result (`{id: 40, success: true}`, `{id: 366,
+success: true}` for fight 133; `{id: 25, success: false}`, `{id: 368, ...}` for fight
+138). The message's own text fields are null on this build, but the names are not
+missing from the client: the bundle's challenge panel fills
+`gui.challengeIndicator.challengesData[id]` in `setChallenge` from
+`_name`/`_description`/`dropBonus`/`xpBonus`/`points`/`_gfxId`/`_categoryId` (verified
+in `client/www/build/script.js`), and the path resolves live on dofus-05 (empty outside a
+fight). Build ad merges that panel into `_challenges()` (message first, so a raw value
+still wins; icon and category are carried too), so the AI can name a challenge, read its
+bonus and target, and the reward can stay small and optional -- a miss is never a
+failure. `tools/test_challenges.js` runs the reader against a stub panel (panel fills a
+missing name, message wins, bonuses/target/icon merge, no panel still works) and is in
+the gate. Live confirmation of a named challenge lands with the first fight on ad.
+
+**PCA of a board: measured, and not wired into the live path yet.** A board is
+`560 x 12` cell features plus `16 x 20` fighter features = 7,040 numbers.
+`combat/board_pca.py` (fit/project/reconstruct/save/load, centring only) plus
+`tools/pca_probe.py` measured the recorded corpus: **2 components carry 90% of the
+variance, 3 carry 95%, 11 carry 99%**; reconstruction MSE is 4.4e-4 at k=4 and 2e-4 at
+k=8; projection costs **0.03 ms per board**; and **10.6% of board pairs are closer than
+1% of the median distance**, i.e. the corpus holds redundant frames. The spectrum is
+dominated by map geometry and occupancy, which is exactly why the raw width is not the
+problem: the grid transformer already consumes 12 features per cell, and the live
+bottleneck is 7 actionable boards, not 7,040 columns. A PCA signature therefore stays a
+tool for clustering/de-duplication and a future value head's board id, not a live input;
+it will be wired only when there are labelled boards on which a PCA-space head can be
+measured against the raw one.
 
 ---
 
@@ -1478,7 +2392,7 @@ touching the area.
 | G5 | Network-health forecaster dark | torch import + missing checkpoint; ONNX port + retrain owed |
 | G6 | Verifier head wired but unmeasured/circular | GUI auto-load gated on a live/human validation contract; no contract → rules-only |
 | G7 | Live combat unverified | open; fallback planner now behaviorally tested; brain auto-start wired |
-| G8 | Test gate was deleted; partially restored | `agent.regression` **937 checks, exit 0**; combat suites, sim floor, 40-instance daemon and live toolkit drift are gated; C# selftest/release still outside |
+| G8 | Test gate was deleted; partially restored | `agent.regression` **1,241 checks, exit 0** (2026-10-29, build 2026-10-29bb); combat suites, sim floor, 40-instance daemon, C# compile and live toolkit drift are gated; C# selftest/release still outside |
 | G9 | Identity keyed by slot, not account | fail-closed binding shipped 2026-10-27, offline-verified; live relogin proof owed |
 | G10 | `kaggle/toolkit/` drifts with no generator | generator + real-tree drift gate shipped 2026-10-28; dataset re-upload owed |
 | G11 | `js-error-finder.js` red (9 bundle checks) | checker vs runtime-patch mismatch |
@@ -1723,6 +2637,11 @@ compile.bat
 compile.bat --include-legacy-emulator
 ```
 
+A running `DofusFarm.exe` locks its own image, so `compile.bat` only succeeds with
+the app closed. The checked-in `desktop/aipanel.cs` fixes (attach flow, `JsonOk`
+reply, per-instance status/stop) are therefore source-only until the next
+rebuild; the running exe keeps the older page until then.
+
 ### 17.3 Tests and self-checks
 
 **C# headless:**
@@ -1746,8 +2665,8 @@ go test dofus-net-proxy.go dofus_net_proxy_equiv_test.go
 
 ```bat
 cd dofus-network
-python -m agent.regression       :: 937 checks, 0 failed (latest)
-python -m agent.constraint_corpus --check  :: 33 hand cases, 25-tool preconditions and causes
+python -m agent.regression       :: 1,241 checks, 0 failed (latest)
+python -m agent.constraint_corpus --check  :: 39 hand cases, 28-tool preconditions and causes
 python -m agent.constraint_corpus --generate --out data/constraint_synthetic.jsonl
                                   :: 2,600 synthetic rows, 100% cause/action agreement
 python -m advisor selftest       :: 122 checks
@@ -1760,13 +2679,16 @@ python tools/mutate_cause_gate.py
 :: 329 mutations; 349 anchors resolve exactly once; MUT_ONLY=<batch> for one batch
 ```
 
-**JS page suites (20 files):** `tools/test_boot_alert.js`, `test_dialog_close.js`,
+**JS page suites (27 files):** `tools/test_boot_alert.js`, `test_battle_log.js`,
+`test_challenges.js`, `test_char_build.js`, `test_dialog_close.js`,
 `test_dialog_links.js`, `test_fight_budget.js`, `test_fight_planner.js`,
 `test_fight_state_fields.js`, `test_geometry_watch.js`, `test_group_scan.js`,
 `test_intervention_instrument.js`, `test_inventory_equip.js`, `test_keep_alive.js`,
-`test_npc_actor.js`, `test_page_build.js`, `test_quest_accept.js`,
-`test_quest_catalog.js`, `test_quest_progress.js`, `test_session_login.js`,
-`test_transition_watchdog.js`, plus `js-error-finder.js` and `auth-bypass-suite.js`.
+`test_login_guard.js`, `test_npc_actor.js`, `test_page_build.js`, `test_quest_accept.js`,
+`test_quest_catalog.js`, `test_quest_progress.js`, `test_research_tools.js`,
+`test_session_login.js`, `test_shop_buy.js`, `test_transition_watchdog.js`,
+`test_tutorial_hint.js`, `test_ui_tap_client_target.js`, `test_ui_tap_close.js`, plus `audit_tutorial_chain.js`;
+and `js-error-finder.js` and `auth-bypass-suite.js`.
 `agent.regression` delegates several of them to `node`.
 
 **Live preflight:**
@@ -1778,7 +2700,7 @@ python tools/live_ready.py --check-installer
 ```
 
 `FAIL page build` means the last client recorded an older `agent_build` than the repo
-(currently `2026-10-27s`); restart the app fully, because a reload keeps the old
+(currently `2026-10-29az`); restart the app fully, because a reload keeps the old
 injected page. `FAIL stop file` means a leftover `AUTOPILOT_STOP` would end the run on
 its first step. `WARN installer` means `setup.exe` is older than the page;
 `WARN client`/`WARN brain` mean the app or combat brain is not up yet.
@@ -1979,6 +2901,279 @@ This reconciles the three live plans (`docs/PLAN.md`, `AI_ARCHITECTURE.md`,
 `TRAINING_PLAN.md`). The order below is the one that avoids repeating the project's
 own history: prove the loop, fix the first hard stop, then train on real outcomes.
 
+### P-1 — shipped today, the loop is proven to its first hard stop (2026-10-29)
+
+**Why the loop sat on "the policy had no action to take" (467 passes, 172 s).**
+Replayed from `autopilot.dofus-02.jsonl` (index 16206): the policy returned a read
+every pass, the wait escalation proposed `farm.start` at every 40-pass window, the
+quest gate refused it (*"a farm.start was refused because this prompt is a quest
+goal"*), and the refusal only reset the wait counter -- so the same window repeated
+~11 times and the run could neither act nor stop. Three fixes, all gated:
+a kill objective bound to its own map now waits for a respawn for one window
+(`SPAWN_WAIT_PASSES = 90`, ~half a minute) and then walks an exit to search
+(`test_spawn_wait_is_bounded`); the escalation skips a `farm.start` the goal gate
+would refuse, so the next candidate (a walk) is tried; and four whole windows that
+end with nothing actionable end the run with *"the step needs a human or a new
+plan"* (`DEAD_WINDOW_LIMIT`) instead of parking forever. The daemon in flight still
+runs the pre-fix code: restart it before the next session.
+
+**And the free-form half of the same stall (same day).** Objective 14070 is a
+free-form step with no map: the planner tried the map's element, asked its NPCs, then
+returned *nothing*, so the policy fell back to a read every pass. A different map
+carries different elements and NPCs, so the step now walks to a neighbour once this
+map is retired for it (`_exhausted_at`), and the new map's element is tried in turn
+(`test_free_form_searches_new_maps`). If the search runs out of maps, the dead-window
+bound ends the run instead of spinning.
+
+**The equip verb is being refused by the client, and the reason was being
+dropped (2026-10-29 audit).** `tools/session_report.py` now prints a `proofs:`
+line per file: on `autopilot.dofus-02.jsonl` it reads `equip 6 ok / 76 refused`,
+`fight 24 joins (12 named)`, `buy 0`, because the report can only be as honest as
+the rows. Every refusal says *"equipItem sent nothing and the item is not usable;
+pass slot to send ObjectSetPositionMessage directly"* and the page's own answer
+(which positions the type allows, whether the template loaded, whether the bag
+held the instance) was not on the step row. A failed step now carries
+`evidence` with exactly those fields (`test_refusal_evidence`), so the next live
+session names the cause instead of repeating the sentence.
+
+**The equip slot is now inferred from a worn twin (page `ba`, planner today).**
+The page's inventory publishes the bag as `{gid, qty, object_uid}` and what is
+worn as `{slot, gid}`, so a second copy of a worn template names its own slot.
+The planner passes `slot` with the uid when that join succeeds
+(`_worn_slot_for`), and the page does the same client-side when `equipItem` sends
+nothing and the type declares no `possiblePositions` — the exact shape of all 76
+refusals. `tools/test_equip_slot_inference.js` executes the real handler; the
+planner cases are in `test_free_form_uses_interactive`. Works on the page build
+already loaded (`ay` honours `args.slot`), so the next live session can prove the
+equip without a client reload.
+
+**Waking a locked-out slot** (`tools/wake_login.py`): reads the snapshot, never
+presses inside the cooldown, sleeps to its stated expiry, spends exactly one guarded
+`session.login {target: guest}`, and reports the world or the new refusal. It is an
+operator tool -- a banned slot is never pressed. With `--start-loop` it hands the
+recovered world to `/brain/start` in the same step, so a lockout costs one press and
+no operator. Running for dofus-02 while this note was written (cooldown expiry
+~12:04Z).
+
+**The live character was trapped in a map with no exit the client can use, and
+three separate mechanisms kept it there (2026-10-29 15:00-15:20, dofus-05).**
+The guest logged in on map 146276352 ("Albuera Village - Solo Area"), an interior
+the client reports with four neighbours, `exits: []`, no `interactiveElements`
+and no monster group; its only transition had been a scripted NPC reply, and the
+dialogs no longer offered it. Diagnosis, in order:
+
+1. **The loop's retirement was undone on the next step.** `_reopen` discarded
+   every *active* quest from `_skipped` whenever a tutorial step was running, so
+   the dead-window retirement of quest 3841 lasted exactly one step and the loop
+   kept returning `state.snapshot`. Retirements now reopen only when their own
+   situation signature changes (step, tracker step, map, gate) -- the same rule
+   non-tutorial quests already followed.
+2. **The planner waited for a door that never appears.** A map with neighbours
+   and no crossable border made `_travel_call` answer `state.snapshot` ("waiting
+   for its door") forever. It now asks the server for the neighbour with the
+   client's own transition (`nav.goto {map_id, direction}`, rotated over the four
+   edges per attempt). The page side (`bb`) sends `isoEngine._requestMapChange`
+   when the client knows the neighbour but publishes no change cell -- the same
+   `ChangeMapMessage` a tapped door sends, adjudicated by the server. The
+   tutorial's own `can_change_map` gate is still honoured first.
+3. **The dialog policy chose a courtesy line and closed the only exit.** The
+   agent answered "Wish him good luck." to a quest NPC and lost the conversation
+   that had offered "Bow and take your leave." (the actual map transition). The
+   ranker keeps objective overlap primary, then inside a tie prefers: a reply that
+   moves to another map when the objective is on one ("travel reply"), the reply
+   the client marks with a quest icon, a reply that keeps the dialog open
+   (courtesy closers last), and only then the question text.
+
+`tools/test_nav_doorless_exit.js` runs the real `nav.goto` handler against a fake
+client; `test_doorless_map_asks_for_the_neighbour` covers the planner rotation,
+the retirement surviving `_reopen`, and the tutorial release; the dialog cases are
+in `test_dialog_ranking`. Page build **`2026-10-29bb`**, gate **1,241 checks, 0
+failed**. The page fix needs one client relaunch to take effect; the running
+session was left alone until its login window cooled (~45 min after 15:00).
+
+**Live result of that relaunch (15:46, dofus-05, build `bb`).** The guest logged
+back in on the same map and the doorless fallback fired for real: the packet ring
+shows `ChangeMapMessage {mapId: 146407936}` and `{mapId: 146276864}`, `ok: true`,
+stage `change_requested_no_cell`. The server accepted none of them -- the map never
+changed -- and the client's own CDN answered 403 for neighbour map 146276864, so
+those neighbours are not loadable maps. A human must leave this solo area through
+the scripted reply that the dialog no longer offers; the page cannot conjure it.
+Two consequences shipped: the loop now counts crossings that never change the map
+and ends the run with that reason after 12 (`NAV_DECLINE_LIMIT`), instead of ~100
+silent refusals in two minutes (which is also anti-bot signal); and the guest was
+left parked in the world with the loop stopped rather than hammering a dead exit.
+The dialog ranker was verified on the live NPC that caused the original failure
+(Forgelance Intellectual): it now picks "Ask what he means by that." and marks
+"Wish him good luck." as a closer instead of choosing it.
+
+1. **Done: rebuilt and fully restarted the host.** Page build `2026-10-29az`
+   (ticket filter in the packet ring, seeded kick signatures clearable by an
+   accepted validation, access-denied popup read as a ban, refusal decay), C#
+   play-recorder redaction, `--launch <instance>` CLI and the bounded AI-autostart
+   retry all ship in the rebuilt `DofusFarm.exe` (release suite, 213.0 MB).
+2. **Done: the ticket scrub.** `python tools/scrub_packet_secrets.py --write`
+   scrubbed the last 568 values once the host released `play_dofus-0{2,3,5}.jsonl`;
+   the tool now exits 0 only when the corpora are clean.
+3. **Live evidence on build `ay`**: the guest slot was refused ("Server busy"
+   popup), the page armed an hour-long cooldown after two presses, and the loop
+   now *ends* with
+   `the guest login is locked out (Server busy; 55 min left after 2 refused
+   attempts); ending the run -- wait out the cooldown or reset this slot for a
+   fresh guest` instead of parking under "still waiting for the world". Refusals
+   now decay once the served backoff passes, so the retry after that hour starts
+   at ten minutes instead of jumping to three hours.
+4. **Live proof owed**: equip (`inv.equip` with slot), buy (`hdv.buy`), one fight,
+   and relogin identity — each is blocked on the locked-out guest; a per-slot
+   Reset wipes the profile and needs the operator's consent. The lockout clears
+   about an hour after the last refusal; run the session then.
+
+### P-1b — the live proofs are account-blocked; equip gained its missing half (2026-10-29, later)
+
+**What dofus-05 can and cannot do.** The guest is alive and in the world (same
+identity, character 4434148, level 5, 11 kamas), but it is inside map
+`146276352`: four neighbours, zero crossable cells, zero interactive elements,
+zero monster groups, and three NPCs that answer nothing. (1) The tutorial is at
+step 4970, *"Start a fight with a monster"* — its live step object ends on
+`FIGHTER_TURN` — so the script itself now waits for a fight this map cannot
+offer. (2) A full page reload re-entered the world in 9 s on the same map with
+the same zero groups: the server does not spawn a scripted group on map load,
+so re-entry is not the way out. (3) Talking was retried the correct way this
+time — the client addresses NPCs by **contextual id** (`-1/-3/-4`, not the
+template id) and the character stood on the adjacent cell 312 — and the server
+still answered nothing; the three NPCs are mute from this map. The scripted
+"Bow and take your leave." reply of P-1 is gone for good.
+
+**Equip, measured.** The tutorial hammer (gid 1512, uid 85997419, type 25,
+`possiblePositions: []`) is genuinely non-equippable: `equipItem` sends
+nothing, `ObjectUseMessage` is accepted and changes nothing, and an explicit
+`ObjectSetPositionMessage {position: 1}` is sent and moves nothing because
+**slot 1 already holds gid 18844** (type 7, declared position `[1]`) — an
+occupied slot does not swap. The tool had no way to free a slot, so equip had
+no other half.
+
+**Shipped: `inv.equip {remove: true}`** (aliases `unequip: true`, `slot: -1`).
+It sends the bundle's own remove — `ObjectSetPositionMessage {objectUID,
+position: -1, quantity: 1}` — and the three equip fallbacks (declared
+position, worn sibling, `ObjectUseMessage`) all refuse to run for a remove.
+`tools/test_inv_unequip.js` (13 checks, runs the real handler) covers it.
+
+**Shipped: `tutorial.ending_conditions`** (build `2026-10-29bd`). The live step
+object's `endingCondition` source names what the step waits for
+(`conditionTypeEnum.FIGHTER_TURN` on step 4970); the page published
+`tap_anywhere`/`hint_target` but not the condition itself, so nothing could say
+"this step is waiting for a fight" while the loop re-asked for crossings. The
+snapshot now carries the names in source order (`[]` when a step has none), and
+`tools/test_tutorial_hint.js` grew three checks (FIGHTER_TURN published, no
+duplicates, empty list for a step with no condition).
+
+Page build **`2026-10-29bd`**, gate **1,245 checks / 0 failed**, Kaggle toolkit
+synced. The running page is still `bb`: the live remove proof and the first read
+of the new field both need the next client launch, and are owed together with
+the buy and fight proofs.
+
+**Accounts, as of this session.** dofus-01 permanently banned; dofus-02's
+fresh guest banned within 40 s; dofus-03 banned on one press; dofus-05 is the
+only live guest. Its day: login 13:46Z, page reload + re-entry 15:05Z, then at
+15:09Z an `accessDenied` popup and a 434 s cold-down that the tooling read as a
+permanent ban — wrongly. The page's cooldown record clears when the window
+expires, and **one press at 15:18Z put the same guest back in the world** on the
+same character. That re-login also settled the last open question about the
+trap: the map came back with **zero groups**, so no tutorial fight is spawned on
+login either. Every route to the three remaining proofs runs through this
+character's map or a new account; a per-slot Reset wipes the profile and still
+needs the operator's consent. Relogin identity is the one proof that is done,
+three times over.
+
+### P-1c — correction: it was a house, not a trap; doors are learned cells (2026-10-29, evening)
+
+The operator proved it: map `146276352` is an ordinary house interior and the way
+out is a **star painted on the floor**, not a border cell. Stepping on cell 451
+moves the party to 145490435 (landing on 346); stepping on 346 outside moves it
+back in (landing on 424). Nothing in the client publishes these cells — no `c`
+flag, no interactive element, no door element — and *standing* on the door does
+not trigger it, only stepping onto it does. So the P-1/P-1b conclusion was wrong
+in the one way that mattered: the exit exists.
+
+**Shipped (offline-verified; gate 1,254/0; build `bf` live, `bg` on disk):**
+- a **door memory** in the page: every observed transition (agent's or a human's)
+  records `(from_map, cell) -> to_map` in localStorage and exposes it as
+  `map.doors`; ids of 0 (the login/transition "no map") are never recorded;
+- `nav.goto {map_id}` uses a remembered door for a non-neighbour target, and when
+  the character is already standing on the door it steps off and back on, because
+  a transition lands you on the door cell;
+- the planner walks a remembered door instead of asking for a border;
+- interactives now carry `is_door`.
+
+**Live proof, build `bf`, two consecutive cycles by map id only:**
+`nav.goto {map_id: 145490435}` answered `via: ... (remembered door cell)` and left
+the house; `nav.goto {map_id: 146276352}` answered `via: ... (door step off then
+on)` and entered it; repeated twice, the session stayed in the world throughout,
+and the learned cells survived a full host restart in between.
+
+**The fight proof is done in the same run.** `fight.join` on the level-7 Merkaptan
+group (map 145490945) started fight 647; the page's auto-fight won it in 18.8 s;
+level 5 -> 6; the tutorial's step 45 ended on `FIGHTER_TURN` exactly as its own
+bundle source says; a world tap then validated objective 14062. The tutorial now
+asks for level 10.
+
+First-visit discovery is still manual: a house the bot has never entered or left
+has no remembered door and nothing in the client data names the cell (the star is
+painted into the map art). After one transition the cell is known for good.
+
+### P-1d — the tutorial is finished; objectives are now planned together (2026-10-29, night)
+
+The operator's diagnosis was exact: the loop was "going around talking, no
+quests". The log agreed — 54 waits and five dialog stalls over three maps, all of
+them `quest.advance {quest_id: 3841}` against a step that says **"Reach level 10"**.
+A level gate is not a conversation; the planner read one ready objective at a time
+and answered the free-form gate with the only fallback it had (ask an NPC).
+
+**Finished live, dofus-05, build `bf`:** level 8 -> 11 (and 13 by the end of the
+evening) by fighting the tutorial-allowed groups on 145490434/145490945;
+objective 14074 validated; quest 3841 left `quests_active`; `tutorial.active`
+went `false` with the Help window opened; `quests_finished` 3. All further work
+below ran on that same live session.
+
+**Shipped (gate 1,269/0; brain daemon restarted, page unchanged at `bf`):**
+- **objectives read together** (`_combined_objective_call`, planner): while a
+  level gate is open, every ready/current objective is priced at once. A group
+  holding a kill objective's monster wins ("one fight advances both"), a usable
+  group on this map beats a trip, then the kill objective's map serves gate+kill
+  in one walk, then the map where groups were last seen, then one edge search.
+  Guaranteed progress goes first; the gate never falls through to a conversation.
+- **quest pins from the quest graph** (`_quest_target_npcs`): the client paints a
+  marker over quest NPCs but exposes no field for it (no `questIndicator` /
+  `hasQuest` anywhere in the served bundle). The graph names the NPC in a
+  talk/go-to-NPC objective's `parameter0`, so a pinned NPC is asked before a
+  nearer bystander, and the `why` says which objective named it.
+- **the ready set is a plan, not a queue**: free claims first (validation works
+  from anywhere), then objectives whose map is here or adjacent, then the
+  nearest. The live run had walked 145490434 <-> 145490946 because each step
+  obeyed a different entry and its travel contradicted the previous one.
+- **a crossing alone no longer reopens a retired quest**: `_situation_sig` no
+  longer includes the map. That entry made the loop retire 4262 on 145490432,
+  walk to 145490946 for its sibling, and reopen 4262 just because the map had
+  changed.
+- the ready loop now logs its own travel reasons (`[planner] objective ...`), the
+  one decision path that used to be invisible in the daemon log.
+
+**Live evidence of the new planner:** `[planner] ... fight.join {'group_id': -34472}
+-- level gate 3841/14074: the character is level 8 and only a fight moves it`,
+then `level 9` on the next two joins; after the gate closed, the ready set
+travelled 145489921 -> 145489920 -> 145490432, tapped the aqueduct element
+(513208, skill 136137092) and spoke to NPC 3950 — the chain's own step.
+
+**Where the chain stops (new, measured):** quest 4262 "Personae Non Gratae in
+Albuera", step 4954, objective 13948 "Recover the first page of the aqueduct
+blueprints" (free-form, map 145490432, `parameter0` 704145 = a text id). The map
+lists one interactive (513208); using it answers ok but the objective does not
+complete, and no NPC on the map moves it. The run then retires both quests and
+ends ("goals exhausted") instead of churning — which is the intended failure
+behaviour, but the step itself is unsolved. Also seen: the ThinkingLayer's
+`free-form step; ask a map NPC` heuristic forced talks on the wrong map, and one
+`nav.goto {map_id}` was refused with "the right exit leads to 145490945, not
+145490946" — a stale map read, refused by the page rather than acted on blind.
+
 ### P0 — diagnose and finish the live loop
 
 1. **Explain the long "policy had no action to take" wait** seen at the end of the
@@ -1986,8 +3181,8 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
    last step/dialog/wait rows,
    the quest gate, and the tutorial hold. This is the immediate live blocker and is
    not yet in `KNOWN_GAPS.md`.
-2. **Run one full session with page build `2026-10-27s`** (full app restart, not a
-   reload). Acceptance: `session_report` shows the `q` build, `accept:` rows when a
+2. **Run one full session with page build `2026-10-29aw`** (full app restart, not a
+   reload). Acceptance: `session_report` shows the `aw` build, `accept:` rows when a
    dialog offers a quest, `objectives +N` with N > 0, no `INACTIVITY`, no manual
    intervention, and `keep_alive.present` true.
 3. **Prove one complete live fight** (G7): `fight.join` attacks one group, placement/
@@ -2062,6 +3257,238 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
 - Rewriting the client form or the relay for microbenchmarks.
 - A warm tunnel pool.
 - Unattended buying or account creation.
+
+### P-1e — training-pipeline audit: the labels, not the model, were the problem (2026-10-29, night)
+
+The audit asked one question: can anything here learn a better tool choice than
+`QuestPlanner`? Measured answers, in code and in `docs/KNOWN_GAPS.md` G39:
+
+- **The sim label recipe has no headroom.** `tools/bench_quest_policies.py` on 10
+  held-out seeds (400 steps): rule 79.90 objectives, learned 80.50 (5W/5T/0L),
+  **oracle 79.80 (3W/1T/6L)**. The oracle *is* the fork-argmax label; it loses to the
+  teacher. The old `policy_faceoff` was scoring on corpus seeds.
+- **The derived dataset was two days stale** because only `auto_live` rebuilt it for
+  its own logs. `tools/refresh_live_dataset.py` rebuilds from every trajectory
+  (deterministic, 9,687 rows / 457 segments). `BrainDaemon._ingest_live` now runs it
+  when a run's thread ends (one job, 60 s debounce; active at the next daemon start).
+- **The `moved` label credited reads.** 195 reads carried `moved`; 173 sat right
+  after a `quest.advance`. The builder now attributes a change first seen in a run of
+  reads to the acting step (`label_version` 2): 170 move- and 6 progress-credits moved
+  back, action move rate 16.26% -> 19.47%, progress 71 -> 77.
+- **Global live AUC is phase, not action.** The 42-feature row describes the objective
+  and the run; the action enters only as a one-hot. Phase-only within-segment accuracy
+  on progress goes 0.902 (val) -> 0.297 (test) - it inverts. Action-only looks strong
+  (0.901/0.897 tool-discordant) but that is action-vs-read, which is 1.000 by
+  construction once a read cannot own an outcome.
+- **Among actions, tool order is not identified.** Rates fitted on train, scored on
+  held-out segments: moved 0.708 val / 0.355 test; progress 0.560 / 0.860 on 150/57
+  pairs. The rates come from 21-46 rows per tool. The log is observational - one
+  action per state, no counterfactual - so more rows cannot identify a better tool.
+  The simulator had counterfactuals and does not transfer (live move AUC 0.46 vs 0.64
+  for a live-trained head).
+
+- **`progress` was 6x too generous; the strict label is `advance`.** Of the 77
+  progress rows only **11 complete an objective** (the rest are "became claimable"
+  or "quest accepted"); the test split holds **zero** advancement events. The builder
+  now emits `advance` beside `progress`.
+- **The corpus is worth ~600 independent rows, not 9,393.** ICC by segment 0.241 /
+  0.287 / 0.082 -> n_eff 604 / 513 / 1,580; the minimum relative change visible at
+  80% power is **45.6% (moved), 192% (progress), 289% (advance)**.
+- **Off-policy questions are not identifiable here.** Cross-fitted propensities
+  (out-of-fold tool accuracy 0.423) give ESS **19-44 rows (0.2-0.5%)** for uniform and
+  no-read targets, single weights up to 125,000. An unrandomized corpus prices an
+  off-policy question at ~0.4% of its rows; a 50/50 randomized arm gives ~50%.
+- **The alternative supply exists.** On 420 recorded live turns, 351 (84%) have a
+  distinct second plan (retire the chosen quest, ask again); 56% of derived rows hold
+  >=2 ready objectives and 3,090 read-steps had two objectives waiting.
+- **`fork()` was dropping seven attributes** (`_interactive_tries` et al), so any
+  counterfactual that reached a free-form/tap/equip/spawn-wait branch crashed; every
+  simulator label came from forks that avoided them. Fixed and guarded.
+- **The exploration arm is built, tagged, priced, and off.** `agent/explore.py`
+  computes the planner's second plan at every offered state *before* the coin, so
+  each row carries `has_alternative` and the exact `p_explore`; epsilon outside
+  (0, 0.5] is refused. Tags ride `ToolCall.meta -> executor -> recorder ->
+  transitions`. Simulator: 197 objectives / 70 quests at epsilon 0-0.5, 0 stalls,
+  0 explorations (one ready objective per state) - so the sim cannot price it.
+  `tools/explore_report.py` is the pre-registered read (randomized-only comparison,
+  segment-clustered CI, propensity audit, balance, IPW) and, with no data, prints the
+  sample-size table priced at the measured **5.8 s/step**: progress base 1.46%,
+  **epsilon 0.2 -> +/-1pp in 3,445 steps (~5.6 h), epsilon 0.05 -> 11,605 (~18.7 h)**.
+  The live run is the user's call.
+- **The 44 MB knowledge store is legacy for live quests (G40).** Measured: 1,976
+  quests, ids 18..2546, all `dofusdb_cache`; none of the five live quests; 2 of 3
+  sampled live objective ids exist under *other* quests (the G30 collision);
+  `verified_live` 0. No-AI licence, so no re-sync and no training. It stays a
+  fallback plus collision evidence. `tools/knowledge_index.py` is the live
+  authority: 57 objectives / 9 quests from four client sources, 0 conflicts, text
+  78.9%, map 45.6%, 217 step objectives with no catalogue owner, `field_sources`
+  per field, `--check` reproducible, atomic writes; an independent recount matches
+  it 57/57 with 0 capture mismatches. Deferred step binding fixes a file-order
+  dependency (10,843/19,527 in-pass vs 19,310). The daemon's post-run ingest now
+  rebuilds the index after the dataset, so a new session's objectives are indexed
+  before the next run asks for one. Runtime order: snapshot catalogue -> client
+  index -> store.
+
+- **Every live-outcome number was cross-validated across the same days (G41).** The
+  hash split puts all 8 days, 6 characters and every phase in train, val and test;
+  `data/transitions_temporal` cuts the same 9,687 rows by segment start time (test =
+  10-28/10-29, 1,060 actions). Moved AUC on test: hash `both` **0.830**, temporal
+  `both` **0.634**, `phase_only` **0.375**, `action_only` **0.724**, and a state-free
+  **tool-rate floor 0.723**. The state features memorise phases and invert out of
+  time; only the tool identity travels. The builder now emits `at` + character
+  {id, level, breed} and the manifest carries characters/levels/days/span; `--split
+  temporal` cuts by segment start order; the probe prints the tool-rate floor on
+  every fold; the daemon's post-run ingest rebuilds both datasets before the index.
+  Corpus census: 6 characters, levels 1..22 (median 3), 8 days, 20 instance-days,
+  8.05 h; strict `advance` = 0 in temporal train, 8 val, 3 test. The next learned
+  scorer must beat 0.723 on the temporal fold before it is wired anywhere.
+
+- **The outcome label counted walking (G42).** `moved` = any watched key changed; over
+  2,848 `quest.advance` calls, 636 moved but **318 changed only `cell`** and only 59
+  touched quest state. The builder now derives a per-tool `claim`/`claim_met` from the
+  args and the returned snapshot (nav.goto at:<map> or one step, fight.join in_fight,
+  quest.advance quest state, tap.interactive an effect, inv.equip inventory, farm.start
+  farm_state, reads none). Claims met: nav.goto 13.1% (moved 16.2), quest.advance 2.1%
+  (22.3), fight.join 4.8% (52.4 — 1 of 21 entered a fight), tap.interactive 4.3% (67.4),
+  inv.equip 4.9% (0.0), farm.start 0%, safe.stop 0%. The probe reports `claim_met` as a
+  third target on the judgeable rows: temporal test phase 0.641 / action 0.724 / both
+  0.714 / tool rate 0.723 (hash: both 0.865) — the target no longer inverts out of time,
+  but still does not beat the floor. Two live questions stand: `fight.join` ok 21 times,
+  `in_fight` once; `inv.equip` ok 41 times, inventory never changes.
+
+- **The after-state was the pre-action snapshot (G43).** Over 2,139 `nav.goto` calls the
+  directive snapshot showed the move 5 times; the next step's observation showed it 449.
+  The builder now uses the next observation as the after-state (snapshot only for the last
+  step of a segment): moved 1,030 -> **1,863**, progress 77 -> **130**, strict advance 11 ->
+  **51**, claims met 345 -> 788, nav.goto claim 13.1% -> 32.2%. Folds now hold events
+  (hash test 23 advances, temporal 13/24/14). Re-probed: moved both 0.789 vs floor 0.727
+  but within-segment 0.646 vs 0.637; progress floor 0.774 still wins; claim_met
+  action_only 0.877 = floor, both 0.757.
+- **Context features do not predict success inside a tool (G44).** The 24-feature mechanism
+  block scored 0.856 on claim_met before the repair; the decomposition showed `args_only`
+  0.891, `state_only` 0.724, and inside `nav.goto` state-only **0.468**. A lookup on (tool,
+  argument kinds) scored 0.902 - the signal is call shape, a rule, not a model. After the
+  after-state fix, mechanism_only fell to **0.434** on the temporal fold. Nothing wired;
+  `test_mechanism_features` pins the vector's contract (no tool identity inside).
+
+- **Travel success is set by the map/period, not by the call form (G45, corrected).**
+  Corpus aggregate: direction 25.0% moved, map-targeted 82.0% — but split by the temporal
+  folds it is a Simpson's paradox: train direction 255/1,494 (17.1%) and map **0/12**;
+  val 27.4% / 81.2%; test 81.9% / 85.2%. Map calls concentrate in the later period where
+  movement worked at all. The real finding is the fallback rate: in train the planner
+  emitted 1,494 direction hops against 12 map-targeted ones (planner.py:1321 fires when
+  its route's hop map is not among the live exits). Travel is 62% of action time, so this
+  is the largest throughput lever measured. Instrumented as `nav_form` and
+  `nav_form_by_split`; the earlier "map beats direction by 20 points" gate assertion
+  encoded the confound and was replaced.
+- **The loop decides on a carried state (G47).** 4,153 of 4,344 steps (95.6%) acted on a
+  carried observation, median 707 ms old (p90 1.77 s); rows now carry `obs_age_ms` /
+  `obs_source`. Age is not a predictor (temporal test AUC 0.428 nav.goto, 0.485
+  quest.advance), so staleness does not explain away G41/G44.
+
+- **Planner reasons were thrown away, and decisions cannot be replayed offline (G46).**
+  `why` went to stderr only; `ToolCall.why` now rides `record_meta()` into the recorder and
+  the transition row (args untouched), and context exits keep `direction`. Replaying a
+  fresh `QuestPlanner` on 300 recorded nav observations reproduces only 2: the rest become
+  `quest.advance`, because retired quests and attempt counters decide travel. Offline
+  counterfactuals are not reproducible, not merely unidentifiable — the epsilon arm stays
+  the only source. Existing rows carry `why: null`; coverage starts with the next run.
+
+- **An identical retry almost never works (G48).** After a `nav.goto` claim miss, the
+  same request re-issued 1,330 times met **2.3%** (3% with no read between, 1% with a
+  read); changing the direction met 38%, changing the map 78%. The control after a *met*
+  call is 77%/93%, so the gap is specific to retries, and the map never moved during an
+  identical retry - these are not late arrivals. The row now carries `repeat_streak`
+  (same tool **and** same args, canonical JSON), which predicts failure at **AUC 0.851**
+  inside `nav.goto` on the temporal test fold (0.720 inside `quest.advance`; hash test
+  0.920/0.708). The pooled `claim_met` model still does not transfer: the val fold's
+  0.736 vs floor 0.528 becomes 0.556 vs floor **0.877** on test, because the test period
+  is 78% nav-met / 6% quest-met - tool identity is the only thing that transfers there.
+
+- **No learned head beats the counter (G48).** `--within-tool` fits one head per tool and
+  compares it to the two streaks with a *paired* segment bootstrap: temporal `nav.goto`
+  delta -0.135 (-0.503, 0.151) on test (0.888 streaks vs 0.753 context), `quest.advance`
+  -0.014 on val but +0.116 (0.040, 0.180) on test - a sign flip between folds, so not
+  evidence. The counter is the shippable artifact.
+- **`quest.advance`'s claim counted a talk as a failure, and was fixed (G49).** A talk
+  (`npc_id`, no reply) promised a quest-state change and met it 0.8% of the time (13/1,639),
+  although 401 of 1,546 talks issued outside a dialog **opened one** by the next
+  observation. The claim is now per form - talk -> `in_dialog`, reply -> quest state,
+  accept -> active - and `quest.advance` met goes 93/2,848 (3.3%) to 344/2,039 hash train,
+  85/463 hash test (18.4%), 133/408 temporal test (32.6%). Changing args never helped this
+  tool (2% either way, 1,223 tries), so the nav retry lever does not generalise; the quest
+  failure was a label defect plus a state gate. Inside `quest.advance` the counter is now
+  0.780 and the mechanism model 0.800 (133 positives), context delta +0.020 (0.006, 0.067)
+  on test, +0.099 (-0.060, 0.166) on val - small and consistent. Pooled it is still the
+  floor's game (0.750 floor vs 0.740 mechanism_only), so nothing is promoted.
+
+- **A reply's claim counted the wrong event (G50).** The page publishes the dialog node
+  (`message` + reply ids) whenever a dialog is open; the corpus recorded only open/closed,
+  so replies were scored on quest-state change (6.7% met). Against the node identity, 119
+  of 160 judgeable replies (74%) moved the node or closed the dialog. The reply claim is
+  now "the node changed" (unknown when there is no before-node); replies are met 146/157 in
+  hash train and 104/128 on temporal test (81%). The lesson: with the mixed G49 label the
+  mechanism model scored 0.800 inside quest.advance, with the mechanical label it scores
+  0.652 and the counter 0.769 - the more honest the mechanics label, the less state predicts
+  it, because a node move is decided by the dialog script. Keep `claim_met` (mechanics) and
+  `advance` (progress, still only ~51 events) separate.
+
+- **The counter is a gate; the state-change policy is not (G51, G52).** On the temporal test
+  fold `repeat_streak >= 2` vetoes 11-18% of calls that would have met ~2-3% of the time and
+  keeps 99%+ of the successes (paired delta CI 0.658..0.719 for quests, 0.0..0.574 for nav).
+  `miss_streak` must not gate quests: the calls it would veto met 65-77% (CI -0.29..-0.06),
+  because a talk miss is followed by a reply that usually works. The natural richer policy -
+  retry only after the state changed - looks decisive on train (nav 26/28 = 90% vs 0.3%) and
+  **fails out of time** (13% vs 16%, quests 19% vs 26%); it is a 28-row artifact. The hazard
+  is a step at the second consecutive miss, not a smooth decay, and the raw counter is not a
+  clock (train has 21/37 = 57% at exactly 3, because the counter persists across state
+  changes). Fit the step; do not fit a line through the counter.
+
+- **Progress, not claims, is the binding constraint (G53).** The `repeat_streak >= 2` gate
+  loses 0 of 11 advances and 0 of 27 progress events on the temporal test fold (hash: 3 of
+  39, all train). Over 4,943 judgeable actions: 1,385 claims met (280/1,000), 126 progress
+  (25.5/1,000), 51 advance (**10.3/1,000**). Action time is 7.8 h over a 157.8 h span - a
+  ~5% of wall time inside segments, and 100 advance events need ~9.7k actions = 15.4 h
+  of action time = ~4 days wall-clock. The 5% is a lower bound, not a duty cycle: segments
+  split on 120 s silences, so every long hold becomes a new segment and the corpus cannot
+  separate offline from waiting (0.0 h of within-segment waiting). Later content is 7x
+  denser than the tutorial (25 vs 3.5 advances per 1,000 quest calls), so the fix is
+  advance-dense content, not more tutorial hours or a bigger model.
+
+- **The gate replicates across four rolling-origin cuts (G54).** Train on the past, score
+  the next 15% of segments, at 40/55/70/85% of the timeline: every cut has kept-met above
+  vetoed-met and AUC(fail) above chance (nav 0.655-0.939, quest 0.592-0.973) across base
+  rates from 1% to 80%. The weakest is the 70% cut (19 and 9 vetoed calls), thin not
+  negative. `repeat_streak >= 2` is a rule, not one period's luck; what the loop does
+  instead of a refused call is still unpriced. What the loop does next after 2,707
+  high-streak failures: repeats the same rule 55% of the time (0.4% met), reads 28%, and
+  switches to a different action 17% of the time (**76% met**) - the replacement exists and
+  works; the loop just rarely takes it. A read is not a recovery: read-then-same-rule meets
+  0.2% (worse than repeating directly), read-then-different 30%. The gate must force a
+  re-plan, not an idle wait.
+
+- **A forest ranks better, the counter still wins the veto (G56).** Temporal fold, per tool:
+  forest AUC 0.930 on nav vs the rule's 0.760, but at 15% veto it keeps 98.5% of successes
+  against the rule's 99.8% at 11%; boosting (AUC 0.888) is the worst veto (93.5%). On quests
+  every model lands on 99.1%. AUC and the operating point are different objectives - the
+  forest is a candidate ranker for choosing among kept calls, not a better veto. A first
+  run of this comparison was invalid (reads counted as failures); the corrected numbers are
+  in G56.
+
+Gates: 1,410 checks / 0 failed; `tools/sync_kaggle_toolkit.py --write` run after the
+edits. New guards: `test_dataset_split_integrity`, `test_temporal_split_plan` (start
+order, undated segments, one-segment case), `test_claim_labels` (each tool's promise,
+walking is not a quest advance, a read makes no claim, manifest `claim_pct < moved_pct`),
+`test_live_within_segment_eval` (tool-rate floor), `test_ingest_after_run`,
+`test_ope_estimators`, `test_fork_carries_the_planner_state`, `test_knowledge_index`
+(ordering, manifest, provenance, atomic write), plus the lag case in
+`test_live_transitions` and hermetic index paths in the two knowledge tests.
+
+The next correct move is **identification, not capacity**: either bounded live
+exploration (teacher plus a legal alternative on a small, safety-gated fraction of
+steps) or a hand-built candidate prior, evaluated only on within-segment
+tool-discordant pairs. Until one exists, the pipeline can calibrate the teacher but not
+beat it; the game-side wall is still quest 4262 objective 13948 on dofus-05.
 
 ---
 
@@ -2150,7 +3577,53 @@ own history: prove the loop, fix the first hard stop, then train on real outcome
 
 ## 24. Final honest summary
 
-The project has solved the hard *plumbing* problems:
+**State at the 2026-10-28 evening snapshot** (the paragraph below it is the
+2026-10-25 version, kept because its warnings still apply):
+
+What is now proven live:
+- one clean end-to-end fight: `started_by: fight.join`, `fight_id 124`, `won: true`,
+  with the server's own `GameFightEndMessage` in the outcome row, and a regression
+  gate that fails without such a row;
+- quest 4262 advanced through objectives 13948 and 13950 (both `done: true` in the
+  client's own step list), leaving 13952 "Talk to Roki" current;
+- the client's interactive-element list, optional challenges, quest step graph and
+  dialog replies are captured in the observation, and the page's claim refusals are
+  consistent with the planner. The battle log reader existed but read only the client's
+  own message stack, which is already empty when the end message arrives (both recorded
+  outcomes have `battle_log: []`); build `2026-10-28w` copies every incoming
+  `Game(Action)?Fight*` message into a 400-row ring so the numbers survive the end —
+  live proof is pending the next fight;
+- the trained move head is executed live (approach/retreat/hold) and the trained
+  critic ranks legal realizations when its inputs are complete;
+- `agent.regression`: **1,024 checks, 0 failed**, delegating JS, Go, bundle and the
+  combat suites; the Kaggle mirror is drift-checked.
+
+Honest scorecard (0–10, measured, not aspirational):
+
+| Capability | Score | Why |
+|---|---|---|
+| Client shim, relay, host, bridge | 9 | Survives updates, one egress, per-instance addressing, reset button; bridge now fast-fails on a wedged page |
+| Quest automation | 5 | Claims/talk/fight objectives complete live; the free-form interactive route is wired but not yet exercised; no full quest finished unattended yet |
+| Combat (tutorial mobs) | 6 | Solver mechanics (cells, LoS, push/pull/teleport, AP/MP) work; move head now executed; one live fight proven — no boss test |
+| Combat (bosses/strategy) | 3 | A real move policy and the critic exist; zero boss data, zero kiting benchmarks |
+| Learned command parser | 4 | 93.9% tool / 69.8% call offline, shadow-only, adapter not promoted |
+| Data and observability | 7 | Battle log, challenges, damage-calibration harness, quest/dialog/keep-alive instruments all wired; the live rows are not there yet |
+| Always-on fleet | 3 | 40-instance scaling and multi-instance play unproven; guest bans remain the risk |
+
+**The dream model** is not a bigger network. It is one always-on per-instance brain
+that sees the client's own state (quest graph and dialogs, battle log and challenges,
+map interactives, inventory/market), chooses among the 25 tools, lets the solver own
+legality and the learned critic own plan choice, and improves from the outcome rows it
+writes. Every input that model needs is now captured; what it lacks is volume of lived
+outcomes and promotion gates for the learned heads. The gap is data and verification,
+not architecture or capacity.
+
+**Next correct move:** one live session on the current page build (which now carries
+every capture fix), run the quest chain to completion and 3–5 fights, then read
+`tools/damage_calibration.py` and the outcome rows; only then is another training run
+worth compute.
+
+The project has also solved the hard *plumbing* problems:
 
 - a real client that survives updates and stays disguised;
 - a relay that caches, routes, pins one egress, and fails closed;
@@ -2162,9 +3635,10 @@ The project has solved the hard *plumbing* problems:
 
 It has not yet solved the hard *decision* problem:
 
-- zero completed quests in the latest four logs;
-- no proven live fight;
-- no live equip;
+- no quest finished end-to-end unattended yet (objectives complete; the last
+  step of the chain has not been carried to "quest finished");
+- one fight proven, but no boss and no sustained fight sample;
+- no live equip or purchase yet;
 - a learned parser that wins offline but has never acted;
 - a foresight model that matches the teacher inside the simulator and loses to chance
   in the world;

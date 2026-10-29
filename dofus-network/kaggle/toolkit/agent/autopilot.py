@@ -88,11 +88,13 @@ LISTING_TOOLS = {"hdv.list", "inv.sell"}
 #
 # `quest.advance` walks to the NPC and talks in the walk callback; `nav.goto` asks the
 # client's pathfinder and the map changes on the next server round trip; `fight.join`
-# walks then attacks. All of them answer ok immediately, so observing in the same
-# instant scores them `noop` — the cell has not moved yet because the walk just started.
-# That is what a live session showed: 30 steps of `quest.advance ok / noop`, the loop
-# cycling retry -> recover forever while the character was actually walking.
-SETTLE_TOOLS = {"quest.advance", "nav.goto", "fight.join", "farm.start"}
+# walks then attacks; `tap.interactive` walks to the element and only then sends the
+# use. All of them answer ok immediately, so observing in the same instant scores them
+# `noop` — the cell has not moved yet because the walk just started. That is what a
+# live session showed: 30 steps of `quest.advance ok / noop`, the loop cycling retry ->
+# recover forever while the character was actually walking.
+SETTLE_TOOLS = {"quest.advance", "nav.goto", "fight.join", "farm.start",
+                "tap.interactive"}
 
 # Tools that can start a fight. Both go through the estimator before the client
 # sees them, so an unattended fight only begins with a passing estimate.
@@ -158,6 +160,17 @@ WAIT_POLL_S = 0.35
 # retire a goal. Same wall-clock cost, one step row per ~15 s instead of per 0.374 s.
 MAX_CONSECUTIVE_WAITS = 40
 
+# Whole wait windows that may end with no actionable candidate before the run ends.
+# Live 2026-10-29: a 467-pass wait (172 s, ~11 windows) where every escalation was
+# gate-refused, so the loop could neither act nor stop. Four windows is ~56 s of
+# nothing -- long enough for a respawn, short enough that the session is not spent
+# staring at it. A real step resets the count.
+DEAD_WINDOW_LIMIT = 4
+
+# Quests one run may retire because whole windows of waiting found no action
+# for them. Bounded so a broken plan cannot empty the log in one session.
+RETIRE_LIMIT = 3
+
 
 # How many candidates the wait escalation is allowed to skip while looking for one
 # that is an action. Measured, not guessed: the thinking layer's fallback candidate is
@@ -178,6 +191,14 @@ TUTORIAL_HOLD_S = 180
 # try-again. One is noise (the client can be mid-animation); two identical sends with
 # no answer is a server that is not responding to this NPC action.
 DEAD_TALK_TRIES = 2
+
+# Crossings the page sent and the server ignored before the run gives up on the map.
+# A ChangeMapMessage the server refuses is silent, so the only witness is "the map
+# did not change". Twelve rotations cover every edge a map reports (four, tried
+# three times); past that the exit is scripted and currently unavailable, and each
+# repeated request is anti-bot signal with no upside (live 2026-10-29: the Albuera
+# solo area took ~100 refused crossings in two minutes before this bound existed).
+NAV_DECLINE_LIMIT = 12
 
 
 def fell_out_of_world(before: Any, after: Any) -> Optional[str]:
@@ -262,6 +283,9 @@ class Step:
     # The stacked planner's proposal and policy baseline for this call, when one
     # ran. Without it a live row cannot tell a model decision from an if-chain.
     ensemble: Optional[Dict[str, Any]] = None
+    # What a refused call's own answer said. The refusal sentence names the
+    # symptom; these fields name the cause, and they only exist in the response.
+    evidence: Optional[Dict[str, Any]] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -336,6 +360,11 @@ class Autopilot:
         self.preflight = preflight
         self.world_poll_s = 3.0
         self.world_report_s = 30.0
+        # A session that ends back at the login screen is a state the loop can
+        # leave by itself (live 2026-10-29: it waited 90+ minutes instead). The
+        # press is bounded and spaced; the page's own guard refuses it inside a
+        # "Server busy" cooldown, so this can never become a login stampede.
+        self._world_login = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 20.0}
         self.settle_s = settle_s
         self.think_s = max(0.0, float(think_s))
         self._think_until = 0.0
@@ -392,6 +421,14 @@ class Autopilot:
         # Waits that were never dispatched as steps: see WAIT_POLL_S.
         self._waits = 0
         self._consecutive_waits = 0
+        # Whole wait windows that ended with nothing actionable at all. Live
+        # 2026-10-29: 467 passes (172 s) of "the policy had no action to take",
+        # because every 40-pass window ended in a farm.start the quest gate
+        # refuses. A run that survives that is a run that never ends; the count
+        # turns it into a bounded, visible stop.
+        self._dead_windows = 0
+        # Quests retired by the dead-window path this run; bounded per run.
+        self._retired = 0
         self._forced_reason = ""
         # Dialog attempts and whether the conversation moved: see _record_dialog.
         self._dialogs = 0
@@ -434,6 +471,11 @@ class Autopilot:
         self._fight_arm_at = 0.0
         self._fight_wait_since: Optional[float] = None
         self._fight_wait_report = 0.0
+        # The tutorial's challenge step waits for a real touchend on the
+        # challenge slot; the page's combat casts never produce one. One press
+        # per fight, bounded, only while the scenario's hint points there.
+        self._hint_taps = 0
+        self._hint_tap_at = 0.0
         # A farm order is a standing state, not a per-step action. Re-issuing
         # farm.start reset the page's session (kills/kamas back to zero) and the
         # controller's snapshot recovery in between kept the loop busy without
@@ -483,6 +525,9 @@ class Autopilot:
         self._identity: Optional[Dict[str, Any]] = None
         self._identity_drift: Optional[Dict[str, Any]] = None
         self._recent: List[str] = []
+        # Crossings sent that the map never answered, since the last real map
+        # change. See NAV_DECLINE_LIMIT.
+        self._crossing_declines: int = 0
         # Consecutive no-op outcomes per action tool. Read-only recoveries do
         # not reset it: farm.start -> state.snapshot -> farm.start used to run
         # forever because every snapshot cleared the exact-repeat streak.
@@ -582,6 +627,11 @@ class Autopilot:
         # and a reason written for a directive no longer labels anything.
         self._consecutive_waits = 0
         self._forced_reason = ""
+        if step.tool not in READ_ONLY_TOOLS and step.tool not in LISTING_TOOLS:
+            # A real action is progress the dead-window count was asking for; the
+            # overflow read dispatched at the bound is not, or the cycle it exists
+            # to surface would reset its own counter.
+            self._dead_windows = 0
         self._step_total += 1
         self._verdict_counts[step.verdict] = (
             self._verdict_counts.get(step.verdict, 0) + 1)
@@ -1040,12 +1090,16 @@ class Autopilot:
         return self.fights.assess_call(call.tool, dict(call.args or {}), observation)
 
     def _track_fight(self, before: Optional[Dict[str, Any]],
-                     after: Optional[Dict[str, Any]]):
+                     after: Optional[Dict[str, Any]],
+                     tool: Optional[str] = None):
         """Write the estimate when a fight starts, and the outcome when it ends.
 
         These two rows are the calibration set: the estimate is a falsifiable
         claim, and the HP before/after is the evidence. A fight that starts
         without an estimate (the session began mid-fight) writes nothing.
+
+        `tool` is the call that produced the snapshot in which the fight became
+        visible. It is what lets the outcome row name the join that started it.
         """
         if not isinstance(after, dict):
             return None, None
@@ -1054,7 +1108,8 @@ class Autopilot:
         if now and not was and self.fight_log.pending is None:
             estimate = self.fights.last_estimate
             if isinstance(estimate, dict) and estimate.get("features"):
-                self.fight_log.start(estimate, before, session=self.session)
+                self.fight_log.start(estimate, before, session=self.session,
+                                     started_by=tool)
                 return estimate, None
             return None, None
         # A fight can also end between two steps, so the resolution is driven
@@ -1210,6 +1265,8 @@ class Autopilot:
         if self._fight_wait_since is None:
             self._fight_wait_since = now
             self._fight_wait_report = now
+            self._hint_taps = 0
+            self._hint_tap_at = 0.0
             print("[autopilot] in a fight; waiting out the turns instead of "
                   "sending world actions")
             # One more chance for a brain that was not up at startup (crashed, or was
@@ -1232,6 +1289,27 @@ class Autopilot:
                       + ("on" if armed else "not yet")
                       + ("" if getattr(result, "ok", False)
                          else " (" + str(getattr(result, "error", ""))[:80] + ")"))
+        # The tutorial's challenge step ends on TAP_ANYWHERE, a touchend the page's
+        # combat casts never produce (they call fightManager.castSpell). Only the
+        # scenario's own hint says which fight this is; the press is bounded and
+        # retried a few times in case the slot is not on screen yet.
+        tutorial = observation.get("tutorial") if isinstance(observation, dict) else None
+        hint = tutorial.get("hint_target") if isinstance(tutorial, dict) else None
+        if (hint == "challenge" and not self.dry_run
+                and self._hint_taps < 5 and now - self._hint_tap_at >= 3.0):
+            executor = getattr(self.runtime, "executor", None)
+            if executor is not None:
+                self._hint_taps += 1
+                self._hint_tap_at = now
+                result = executor.execute(
+                    "ui.tap", {"client_target": "challenge"},
+                    instance=getattr(self.runtime, "instance", None),
+                    goal=goal, source="live", observation=observation,
+                    observation_age_ms=self._obs_age_ms,
+                    observation_source=self._obs_source)
+                print("[autopilot] tutorial hint points at the challenge slot; press -> "
+                      + ("ok" if getattr(result, "ok", False)
+                         else "failed (" + str(getattr(result, "error", ""))[:80] + ")"))
         if now - self._fight_wait_report >= 30.0:
             self._fight_wait_report = now
             print(f"[autopilot] fight wait {now - self._fight_wait_since:.0f}s; "
@@ -1345,6 +1423,11 @@ class Autopilot:
         A loop that dies without clearing its lock would block the idle trainer
         forever, so the release is in a `finally`, not on the happy path.
         """
+        if not self._acquire_run_lock():
+            # Fail closed and loud: two loops on one client double every directive
+            # and every recorded row (measured 2026-10-28).
+            print("[autopilot] another loop already drives this instance; standing down")
+            return self.summary("another driver holds the instance lock")
         self._write_lock()
         try:
             return self._run()
@@ -1488,6 +1571,20 @@ class Autopilot:
                                         error="policy returned no call")
                     if decision.action in ("replan", "abort"):
                         self._apply_decision(decision, goal, None)
+                    # An objective the policy cannot express is the same dead end as
+                    # one it can only wait on: the operator retires it and takes the
+                    # next. Ending here threw away a live session whose map had no
+                    # exits and two other objectives ready (live 2026-10-29,
+                    # dofus-05: "no action for goal ... moving on"). Bounded by
+                    # RETIRE_LIMIT so a broken log cannot empty itself.
+                    if self._retired < RETIRE_LIMIT:
+                        qid = self._retire_stuck_objective(before)
+                        if qid is not None:
+                            self._retired += 1
+                            print("[autopilot] the policy cannot express quest %s; "
+                                  "retiring it for this run and taking the next "
+                                  "objective" % qid)
+                            continue
                     print(f"[autopilot] no action for goal {goal!r}; moving on")
                     if not self._hinted:
                         self._hinted = True
@@ -1606,7 +1703,9 @@ class Autopilot:
                     call.tool, call.args, instance=self.runtime.instance,
                     goal=goal, source="live", observation=before,
                     observation_age_ms=self._obs_age_ms,
-                    observation_source=self._obs_source)
+                    observation_source=self._obs_source,
+                    meta=call.record_meta() if hasattr(call, "record_meta")
+                    else getattr(call, "meta", None))
                 # Stop the clock before observing. `observe()` can cost seconds when
                 # it has to ask a dead bridge, and counting that as the action's
                 # latency made every step look slow for the wrong reason.
@@ -1695,7 +1794,7 @@ class Autopilot:
                             break
                         continue
 
-                fight_estimate, fight_outcome = self._track_fight(before, after)
+                fight_estimate, fight_outcome = self._track_fight(before, after, tool=call.tool)
                 self._record_interventions(after)
                 self._record_dialog(call, before, after, result)
 
@@ -1787,6 +1886,7 @@ class Autopilot:
                     fight_estimate=fight_estimate,
                     fight_outcome=fight_outcome,
                     ensemble=ensemble,
+                    evidence=(None if step_ok else _failure_evidence(result)),
                     note=note,
                 )
                 self._emit(step)
@@ -1818,7 +1918,8 @@ class Autopilot:
 
                 decision = self.controller.on_step(v, call.tool, step_ok, step_error,
                                                    before, after,
-                                                   detail=getattr(result, "data", None))
+                                                   detail=getattr(result, "data", None),
+                                                   args=dict(call.args))
                 self._pending = decision
                 self.controller.save()
                 self._emit_decision(decision, call, result, after,
@@ -1900,11 +2001,29 @@ class Autopilot:
                     self._hold_world = None
                     if track_action:
                         self._action_noops.pop(key, None)
+                    # A real crossing (by any tool: a walk, a dialog teleport, a
+                    # scripted step) restarts the decline count: the next dead map
+                    # deserves its own budget.
+                    _prev_map = flatten(before or {}).get("map_id")
+                    _new_map = flatten(after or {}).get("map_id")
+                    if (_prev_map is not None and _new_map is not None
+                            and _prev_map != _new_map):
+                        self._crossing_declines = 0
                 else:
                     if track_action:
                         self._action_noops[key] = self._action_noops.get(key, 0) + 1
                     self._recent.append(key)
                     del self._recent[:-32]
+                    if call.tool == "nav.goto" and verdict == "noop":
+                        self._crossing_declines += 1
+                    if self._crossing_declines >= NAV_DECLINE_LIMIT:
+                        here = flatten(after or {}) \
+                            if after is not None else flatten(before or {})
+                        print("[autopilot] %d crossings were sent and the map never "
+                              "changed (map %s); this exit is scripted and not "
+                              "available -- ending the run instead of re-asking"
+                              % (self._crossing_declines, here.get("map_id")))
+                        break
                     if (call.tool == "nav.goto" and verdict == "noop"
                             and _standing_on_exit(call.args, after)):
                         # The client is on the portal cell and the map did not change:
@@ -2021,6 +2140,47 @@ class Autopilot:
         except Exception:  # noqa: BLE001
             pass
 
+    def _acquire_run_lock(self) -> bool:
+        """Become the only loop driving this instance, or stand down.
+
+        The old lock was a plain file write: two loops (the host's own
+        `run_autopilot` and the brain daemon's per-instance thread) each wrote it,
+        each considered itself the owner, and both drove the same client. The live
+        evidence is fight 900 on 2026-10-28: two `fight_outcome` rows for one fight,
+        127 ms apart, one per writer. An OS advisory lock is what makes "one
+        instance, one driver" true across processes, and a lock left by a dead
+        process is not held, so a crashed loop does not wedge the slot.
+        """
+        name = str(getattr(self.runtime, "instance", None) or "default")
+        safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
+        path = self.log_path.parent / ("autopilot.%s.lock" % safe)
+        handle = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handle = open(path, "a+")
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps({"session": self.session, "pid": os.getpid(),
+                                     "instance": name, "started": time.time()}))
+            handle.flush()
+        except OSError:
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            return False
+        self._lock_handle = handle
+        self._lock_path = path
+        return True
+
     def _write_lock(self) -> None:
         """Mark that a loop owns the account.
 
@@ -2034,14 +2194,33 @@ class Autopilot:
             lock.write_text(json.dumps({"session": self.session,
                                         "pid": os.getpid(),
                                         "started": time.time()}), encoding="utf-8")
-            self._lock_path = lock
+            self._lock_path_global = lock
         except OSError:
-            self._lock_path = None
+            self._lock_path_global = None
 
     def _clear_lock(self) -> None:
+        handle = getattr(self, "_lock_handle", None)
+        if handle is not None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+            try:
+                handle.close()
+            except OSError:
+                pass
+            self._lock_handle = None
         try:
             if getattr(self, "_lock_path", None) is not None:
                 self._lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            if getattr(self, "_lock_path_global", None) is not None:
+                self._lock_path_global.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -2130,26 +2309,84 @@ class Autopilot:
         project spent a night debugging.
 
         Being at the login screen when the AI is switched on is a wait, not an
-        end: the human signs in when they can, which can take minutes. There is
-        no deadline here. The wait ends when a map appears, when the operator
-        stops the run, or when the client stops answering — and the last two are
-        reported as such instead of looking like a finished session.
+        end, and the wait presses the guest login itself a bounded number of times
+        (live 2026-10-29: a session that ended back at the guest screen parked the
+        loop for 90+ minutes because `session.login` is not a policy tool). The
+        page's own guard is still the authority: inside a "Server busy" cooldown it
+        refuses the press, so this cannot become a login stampede. There is no
+        deadline here; the wait ends when a map appears, when the operator stops
+        the run, or when the client stops answering.
         """
         if self.dry_run:
             return True
         waiting_since = time.time()
         last_report = waiting_since
         announced = False
+        self._last_world_screen = None
+        self._last_login_cooldown = None
+        login = getattr(self, "_world_login", None)
+        if not isinstance(login, dict):
+            login = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 20.0}
+        # Character selection is a separate screen with a separate action: the
+        # client holds the last character but no map, and entering the world is a
+        # CharacterSelectionMessage, not the guest form. A fall-out that lands
+        # there used to wait out the whole budget (live 2026-10-29: 751.8 s,
+        # recovered: false) because only the guest form was ever pressed.
+        enter = getattr(self, "_world_enter", None)
+        if not isinstance(enter, dict):
+            enter = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 20.0}
+        # The budgets belong to one wait: a session that falls out twice gets a
+        # fresh (still bounded) pair, otherwise the second dropout could never be
+        # answered. `_recover_world` calls this once per fall-out, so resetting on
+        # a returned world is per-fall-out, not per-loop-iteration.
+        login["tries"] = 0
+        login["next_at"] = 0.0
+        enter["tries"] = 0
+        enter["next_at"] = 0.0
+        self._world_login = login
+        self._world_enter = enter
         while True:
             reason = self._should_stop()
             if reason:
-                print("[autopilot] stopping while waiting for the world: " + reason)
+                print("[autopilot] stopping while waiting for the world: %s (last screen: %s)"
+                      % (reason, self._screen_text(getattr(self, "_last_world_screen", None))))
                 return False
             # A recovery wait must not trust the snapshot from before the kick:
             # it can still say in_world=true for a session that is already gone.
             obs = self.observe(max_age_ms=-1.0 if fresh else OBS_FRESH_MS)
+            screen = self._world_screen(obs)
+            self._last_world_screen = screen
             if not self._check_identity(obs):
                 print("[autopilot] stopping: " + str(self._should_stop()))
+                return False
+            # A permanent ban is not a wait and not a retry: the page refuses every
+            # pressed login for good, and each press is another auth attempt. Only a
+            # per-slot reset (a fresh guest) changes the answer, so say that and end
+            # instead of parking the loop in front of a popup that cannot change.
+            if self._login_banned(obs):
+                block = obs.get("login") if isinstance(obs, dict) else None
+                text = block.get("text") if isinstance(block, dict) else None
+                print("[autopilot] the login screen reports a permanent ban (%s); "
+                      "ending the run -- reset this slot for a fresh guest"
+                      % str(text or "no text")[:160])
+                return False
+            cooldown = obs.get("login_cooldown") if isinstance(obs, dict) else None
+            if isinstance(cooldown, dict):
+                self._last_login_cooldown = cooldown
+            # An escalated cooldown is a slot lockout, not a slow login. The page
+            # backs off 10 min at the first refused guest press and an hour from
+            # the second on (live 2026-10-29: "Server busy", 3527 s left), and a
+            # silent "still waiting for the world" line for that hour is the
+            # "server busy keeps coming back" report. Name it and end; the daemon
+            # status and the recovery row carry the reason.
+            lockout = self._login_lockout(obs)
+            if lockout:
+                print("[autopilot] the guest login is locked out (%s; %.0f min left "
+                      "after %s refused attempts); ending the run -- wait out the "
+                      "cooldown or reset this slot for a fresh guest"
+                      % (str(lockout.get("reason") or "no reason")[:120],
+                         float(lockout.get("remaining_s") or 0) / 60.0,
+                         lockout.get("fails")))
                 return False
             pos = obs.get("position") if isinstance(obs, dict) else None
             map_id = pos.get("map_id") if isinstance(pos, dict) else None
@@ -2165,16 +2402,144 @@ class Autopilot:
                       "the world; stopping")
                 return False
             now = time.time()
+            character = obs.get("character") if isinstance(obs, dict) else None
+            at_login = (isinstance(obs, dict) and obs.get("in_world") is False
+                        and not (isinstance(character, dict) and character.get("name")))
+            # The same halt on the character-selection screen: `in_world` is false
+            # but the client still holds the last character, so `at_login` is false
+            # and no press happens. The client's own play action there is
+            # `selectCharacter(id)`, which sends exactly this message.
+            at_selection = (isinstance(obs, dict) and obs.get("in_world") is False
+                            and isinstance(character, dict)
+                            and bool(character.get("name")))
+            if at_selection and enter["tries"] < enter["max"] and now >= enter["next_at"]:
+                enter["tries"] += 1
+                enter["next_at"] = now + enter["spacing"]
+                selected = character.get("id")
+                bound = getattr(self, "_identity", None)
+                if isinstance(bound, dict) and bound.get("id"):
+                    selected = bound.get("id")
+                args = {"target": "character"}
+                try:
+                    if selected is not None and int(selected) > 0:
+                        args["character_id"] = int(selected)
+                except (TypeError, ValueError):
+                    pass
+                print("[autopilot] at character selection; entering the world as %s "
+                      "(%d/%d)" % (selected, enter["tries"], enter["max"]))
+                try:
+                    press = self.runtime.executor.recovery_call(
+                        "session.login", args,
+                        instance=getattr(self.runtime, "instance", None))
+                    print("[autopilot] enter-world press -> ok=%s %s"
+                          % (press.ok, str(press.error or "")[:160]))
+                except Exception as exc:  # noqa: BLE001 - a press must not end the wait
+                    print("[autopilot] enter-world press failed: %s" % exc)
+            if login["tries"] < login["max"] and now >= login["next_at"] and at_login:
+                login["tries"] += 1
+                login["next_at"] = now + login["spacing"]
+                print("[autopilot] at the login screen; pressing a guarded guest "
+                      "login (%d/%d)" % (login["tries"], login["max"]))
+                try:
+                    press = self.runtime.executor.recovery_call(
+                        "session.login", {"target": "guest"},
+                        instance=getattr(self.runtime, "instance", None))
+                    print("[autopilot] login press -> ok=%s %s"
+                          % (press.ok, str(press.error or "")[:160]))
+                except Exception as exc:  # noqa: BLE001 - a press must not end the wait
+                    print("[autopilot] login press failed: %s" % exc)
             if not announced:
                 print("[autopilot] the character is not in the world yet (login "
-                      "screen or loading); waiting until a map appears")
+                      "screen or loading); waiting until a map appears [%s]"
+                      % self._screen_text(screen))
                 announced = True
                 last_report = now
             elif now - last_report >= self.world_report_s:
-                print("[autopilot] still waiting for the world (%ds); log in and "
-                      "stand on a map" % int(now - waiting_since))
+                print("[autopilot] still waiting for the world (%ds, %s; login %d/%d, "
+                      "enter %d/%d); log in and stand on a map"
+                      % (int(now - waiting_since), self._screen_text(screen),
+                         login["tries"], login["max"], enter["tries"], enter["max"]))
                 last_report = now
             time.sleep(self.world_poll_s)
+
+    @staticmethod
+    def _world_screen(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Name the screen the world wait is looking at.
+
+        The 2026-10-29 rescue that waited 751.8 s left only the elapsed time
+        behind: its console lived in the daemon process, so the persisted
+        recovery row could not say whether the client was at the login form,
+        at character selection, or carrying a snapshot with no world in it.
+        These fields are the evidence that question needed.
+        """
+        if not isinstance(obs, dict) or not obs:
+            return {"state": "no_snapshot"}
+        character = obs.get("character") if isinstance(obs.get("character"), dict) else {}
+        position = obs.get("position") if isinstance(obs.get("position"), dict) else {}
+        login = obs.get("login") if isinstance(obs.get("login"), dict) else None
+        map_id = position.get("map_id")
+        if obs.get("in_world") is not False and map_id not in (None, 0):
+            state = "in_world"
+        elif obs.get("in_world") is False and character.get("name"):
+            state = "character_selection"
+        elif obs.get("in_world") is False:
+            state = "login"
+        else:
+            state = "unknown"
+        screen = {"state": state, "connected": obs.get("connected"),
+                  "map_id": map_id, "character": character.get("name")}
+        if login and login.get("text"):
+            screen["login"] = str(login["text"])[:80]
+        return screen
+
+    @staticmethod
+    def _screen_text(screen: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(screen, dict) or not screen:
+            return "no screen recorded"
+        parts = [str(screen.get("state") or "?")]
+        for key in ("connected", "map_id", "character", "login"):
+            if screen.get(key) is not None:
+                parts.append("%s=%s" % (key, screen[key]))
+        return " ".join(parts)
+
+    @staticmethod
+    def _login_banned(obs: Optional[Dict[str, Any]]) -> bool:
+        """Whether the page's login screen is refusing this account for good.
+
+        The page publishes `login` from the client's own popup text ("Your account
+        has been permanently banned"); an absent or malformed block is "not
+        banned", because guessing a ban would end a healthy session.
+        """
+        if not isinstance(obs, dict):
+            return False
+        block = obs.get("login")
+        return bool(isinstance(block, dict) and block.get("banned"))
+
+    @staticmethod
+    def _login_lockout(obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """The page's login cooldown once it has escalated past a slow server.
+
+        The page's backoff is 10 min after the first refused guest press, then
+        60 min, then 3 h. One refusal is worth waiting out inside the run; from
+        the second on the slot stays shut for an hour and only a per-slot reset
+        (a fresh guest) or waiting changes the answer, so the wait ends with the
+        reason instead of parking silently.
+        """
+        if not isinstance(obs, dict):
+            return None
+        cool = obs.get("login_cooldown")
+        if not isinstance(cool, dict):
+            return None
+        try:
+            remaining = float(cool.get("remaining_s") or 0)
+            fails = int(cool.get("fails") or 0)
+        except (TypeError, ValueError):
+            return None
+        if remaining < 1800 and fails < 2:
+            return None
+        return {"reason": cool.get("reason"),
+                "remaining_s": remaining,
+                "fails": fails}
 
     @staticmethod
     def _farm_allowed(goal: str, obs: Optional[Dict[str, Any]]) -> bool:
@@ -2259,6 +2624,7 @@ class Autopilot:
               % (lead, f" (reason: {reason})" if reason else ""))
         started = time.time()
         self._prepared_obs = None
+        self._last_world_screen = None
         # With no window the snapshot cannot answer anything, so the presence check
         # comes first; for a kick or a reload the page exists and answers, and only
         # the world is missing.
@@ -2276,9 +2642,13 @@ class Autopilot:
             "reason": (str(reason or "")[:120] or None),
             "recovered": bool(recovered),
             "waited_s": waited,
+            "screen": getattr(self, "_last_world_screen", None),
+            "login_cooldown": getattr(self, "_last_login_cooldown", None),
             "at": time.time(),
         }) + b"\n")
         if not recovered:
+            print("[autopilot] the world did not come back after %.1f s (last screen: %s)"
+                  % (waited, self._screen_text(getattr(self, "_last_world_screen", None))))
             return False
         print("[autopilot] the world is back after %.1f s; resuming" % waited)
         self._recent.clear()
@@ -2413,9 +2783,43 @@ class Autopilot:
                 candidate = self.thinking.propose(goal, before, self.steps[-8:], None)
                 if candidate is None:
                     break
-                if candidate.tool not in idle and candidate.tool != "-":
-                    thought = candidate
-                    break
+                if candidate.tool in idle or candidate.tool == "-":
+                    continue
+                # The escalation is not exempt from the goal gate. Live
+                # 2026-10-29: every escalation inside a 467-pass wait proposed
+                # farm.start, the quest gate refused it, and the cycle repeated
+                # ~11 times because the refusal only reset the wait counter.
+                # Skipping it lets the next candidate (a walk) be tried instead.
+                if candidate.tool == "farm.start" and not self._farm_allowed(goal, before):
+                    continue
+                thought = candidate
+                break
+            if thought is None:
+                self._dead_windows += 1
+                if self._dead_windows >= DEAD_WINDOW_LIMIT:
+                    # Ending the run throws away a session that is still alive: the
+                    # character stood on a map with no exits, its NPCs already asked
+                    # and two other objectives waiting (live 2026-10-29, dofus-05).
+                    # Retiring the objective the run cannot move is what the operator
+                    # does next, and the planner has `skip` for it. Bounded, so a
+                    # broken plan cannot retire the whole log in one run.
+                    if self._retired < RETIRE_LIMIT:
+                        qid = self._retire_stuck_objective(before)
+                        if qid is not None:
+                            self._retired += 1
+                            self._dead_windows = 0
+                            self._consecutive_waits = 0
+                            print("[autopilot] %d full wait windows had no action for "
+                                  "quest %s; retiring it for this run and taking the "
+                                  "next objective" % (DEAD_WINDOW_LIMIT, qid))
+                            return True
+                    print("[autopilot] %d full wait windows ended with nothing to do "
+                          "(%d passes, %s); ending the run -- the step needs a human "
+                          "or a new plan" % (self._dead_windows, self._consecutive_waits,
+                                             reason))
+                    return False
+            else:
+                self._dead_windows = 0
         self._append_log_line(_fast_dumps({
             "kind": "wait",
             "session": self.session,
@@ -2457,6 +2861,31 @@ class Autopilot:
                 self._consecutive_waits = 0
             return recovered
         return True
+
+    def _retire_stuck_objective(self, obs: Any) -> Optional[int]:
+        """Retire the quest whose objective this run cannot move.
+
+        The planner's `skip` is the same primitive the operator's "retire" path
+        uses; the autopilot only calls it after whole windows of no action, so a
+        slow step cannot retire a healthy quest. None when there is nothing to
+        name or no policy that can skip.
+        """
+        policy = getattr(self.runtime, "policy", None)
+        skip = getattr(policy, "skip", None)
+        if skip is None or not isinstance(obs, dict):
+            return None
+        obj = obs.get("current_objective")
+        if not isinstance(obj, dict):
+            return None
+        try:
+            qid = int(obj.get("quest_id"))
+        except (TypeError, ValueError):
+            return None
+        try:
+            skip(qid)
+        except Exception:  # noqa: BLE001 - a policy that cannot skip is not a crash
+            return None
+        return qid
 
     def _record_dialog(self, call: Any, before: Any, after: Any,
                        result: Any = None) -> None:
@@ -2753,6 +3182,41 @@ def _accepts_detail(fn: Any) -> bool:
         return False
 
 
+_EVIDENCE_KEYS = (
+    "reason", "via", "slot", "possible_positions", "type_id", "type_category",
+    "has_template", "instance_position", "bag_has_instance", "usable",
+    "messages", "equipped_before", "equipped_after", "presets", "remove",
+    "object_uid", "gid", "item", "target", "monster", "quantity",
+)
+
+
+def _failure_evidence(result: Any) -> Optional[Dict[str, Any]]:
+    """The refused call's own answer, kept on the step row.
+
+    Live 2026-10-29: 76 refused `inv.equip` rows carried the same sentence
+    ("equipItem sent nothing ... pass slot") and none of the fields that say why
+    -- which positions the item type allows, whether its template loaded, whether
+    the bag held the instance. Those fields exist only in that response, so a
+    refusal without them costs another live session to diagnose.
+    """
+    data = getattr(result, "data", None)
+    for _ in range(3):
+        if not isinstance(data, dict):
+            return None
+        inner = None
+        for key in ("response", "result", "data", "value"):
+            if key in data and isinstance(data[key], dict):
+                inner = data[key]
+                break
+        if inner is None:
+            break
+        data = inner
+    if not isinstance(data, dict):
+        return None
+    out = {key: data[key] for key in _EVIDENCE_KEYS if key in data}
+    return out or None
+
+
 def _summarise(result: Any) -> str:
     """A short, human-readable trace of what a tool returned.
 
@@ -2939,9 +3403,27 @@ def _load_goals(args: argparse.Namespace) -> List[str]:
 
 
 def _build_policy(args: argparse.Namespace):
+    policy = _base_policy(args)
+    epsilon = float(getattr(args, "explore_objectives", 0.0) or 0.0)
+    if epsilon > 0.0:
+        # Off by default. A run has to ask for it, because every explored step is a
+        # step the teacher would have spent elsewhere.
+        from agent.explore import ExplorationPolicy
+
+        policy = ExplorationPolicy(policy, epsilon=epsilon,
+                                   seed=getattr(args, "explore_seed", None))
+        print(f"[autopilot] policy: exploration epsilon {epsilon}")
+    return policy
+
+
+def _base_policy(args: argparse.Namespace):
     if args.policy == "rule":
         return RulePolicy()
-    if args.policy == "planner":
+    # "auto" is what /brain/start and the panel send when nobody chose a policy.
+    # It used to fall through to the rule policy, so a quest goal never reached the
+    # quest planner and the loop answered "no action for goal" (live 2026-10-29).
+    # The learned planner falls back to the deterministic planner without a model.
+    if args.policy in ("planner", "auto"):
         from agent.planner_nn import NNPlanner
 
         # The learned planner: same interface, tool choice comes from the student
@@ -2986,6 +3468,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ensemble", choices=("off", "shadow", "act"), default="act",
                         help="planner only: stack the tool policy with foresight; "
                              "act requires the artifact's held-out gate")
+    parser.add_argument("--explore-objectives", type=float, default=0.0,
+                        help="epsilon for bounded objective-order exploration; 0 = off "
+                             "(every step follows the teacher). Distinct from "
+                             "--explore, which randomizes repair decisions.")
+    parser.add_argument("--explore-seed", type=int, default=None,
+                        help="seed for the objective-exploration coin")
     parser.add_argument("--level-hint", type=int, default=60,
                         help="character level, for the planner's curriculum")
     parser.add_argument("--model-dir", default=str(REPO_ROOT / "models" / "encoder30_v15"))

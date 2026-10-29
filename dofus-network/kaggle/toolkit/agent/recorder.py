@@ -347,6 +347,8 @@ class TrajectoryRecorder:
         observation_age_ms: Optional[float] = None,
         observation_source: str = "call",
         source: str = "live",
+        explored: bool = False,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Append one executed step.
 
@@ -380,6 +382,8 @@ class TrajectoryRecorder:
             "error": error,
             "latency_ms": round(latency_ms, 2) if latency_ms is not None else None,
             "result": result,
+            "explored": bool(explored),
+            "meta": meta if isinstance(meta, dict) and meta else None,
         })
 
     def decision(

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -53,6 +54,26 @@ from agent.schema import TOOL_SCHEMA
 from agent.tool_dataset import SYSTEM_PROMPT, SYSTEM_PROMPT_COMPACT
 
 logger = logging.getLogger("dofus.agent.serve")
+
+# Distinct from a crash: the host reads it and attaches to the running daemon.
+EXIT_PORT_TAKEN = 3
+
+
+def service_present(host: str, port: int) -> bool:
+    """Whether something already answers on this address.
+
+    HTTPServer sets SO_REUSEADDR, which on Windows is close to SO_REUSEPORT:
+    a second daemon binds an occupied port without an error and from then on
+    the two answer an arbitrary share of the requests. Measured 2026-10-29:
+    pids 17476 and 9996 both held :8895, each with its own instance table, so
+    a stop or a status read could land on the daemon that knew nothing.
+    """
+    probe_host = "127.0.0.1" if host in ("0.0.0.0", "", "::") else host
+    try:
+        with socket.create_connection((probe_host, port), timeout=0.6):
+            return True
+    except OSError:
+        return False
 
 
 class AgentHTTPServer(ThreadingHTTPServer):
@@ -259,6 +280,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     args = build_parser().parse_args(argv)
+
+    if service_present(args.host, args.port):
+        logger.error(
+            "another dofus agent service already answers on %s:%s; "
+            "refusing to start a second control plane on the same port",
+            args.host, args.port)
+        return EXIT_PORT_TAKEN
 
     recorder = TrajectoryRecorder(root=args.recorder_dir, instance=args.instance)
     executor = ToolExecutor(

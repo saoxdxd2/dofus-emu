@@ -1,6 +1,6 @@
 {
  "version": 1,
- "note": "Capability registry: actions are DATA, not code. The encoder's action head is derived from these descriptions, so adding a capability means appending an entry and re-encoding it — no retraining, no new class id.",
+ "note": "Capability registry: actions are DATA, not code. The encoder's action head is derived from these descriptions, so adding a capability means appending an entry and re-encoding it â€” no retraining, no new class id.",
  "languages": [
   "en",
   "fr",
@@ -710,7 +710,7 @@
   {
    "id": "inv.equip",
    "verb": "inv",
-   "description": "Equip an item. The proven path applies a saved inventory preset; direct object UID equip is refused until the client path is captured.",
+   "description": "Equip or remove an item. A saved preset uses InventoryPresetUseMessage; object_uid uses the client's own inventory.equipItem path and reports which gate stopped it when it sends nothing. slot forces the client's ObjectSetPositionMessage for an item whose type blocks equipItem; remove (or slot -1) sends the same message with position -1, which is the only way to free a slot, since an occupied slot does not swap.",
    "backend": "directive",
    "directive": "INV_EQUIP",
    "returns": "preset/object, post-state and the available presets",
@@ -727,12 +727,17 @@
     },
     "object_uid": {
      "type": "int",
-     "doc": "Inventory object UID. Refused when no proven direct-equip path exists.",
+     "doc": "Inventory object UID; equips through the client's inventory.equipItem path.",
      "required": false
     },
     "slot": {
      "type": "str",
-     "doc": "Equipment slot name, when the client exposes it.",
+     "doc": "Slot position ('weapon' or 0-16) sent via ObjectSetPositionMessage when equipItem sends nothing; -1 removes.",
+     "required": false
+    },
+    "remove": {
+     "type": "bool",
+     "doc": "Send ObjectSetPositionMessage with position -1; alias of slot -1.",
      "required": false
     },
     "name": {
@@ -815,6 +820,79 @@
      "type": "str",
      "doc": "Reserved for a future named lookup; the page does not invent names it cannot read.",
      "required": false
+    }
+   }
+  },
+  {
+   "id": "ui.tap",
+   "verb": "ui",
+   "description": "Press the game's own UI: a menu-bar icon by name (Spell, Book, Map, Bag, Carac), any visible control by CSS selector, or a control the tutorial's hint/condition drives by object path (client_target: challenge, spell_upgrade_confirm, spell_plus, charac_update, world, and the later tutorials' controls: contextual_menu:N, npc_menu:N, trade_slot, trade_validate, craft_slot, craft_recipe, craft_merge, craft_drag, shop_category:N, shop_item:N, sell_info, bestiary_monster, bestiary_drop, close:NAME). The tutorial's interface steps are completed by this press; their objectives are server-counted and a claim on one ends the connection.",
+   "backend": "directive",
+   "directive": "UI_TAP",
+   "returns": "pressed selector, open windows before and after, and whether the press changed the open-window set",
+   "params": {
+    "menu": {
+     "type": "str",
+     "doc": "Menu icon name, e.g. Spell, Book, Map, Bag, Carac.",
+     "required": false
+    },
+    "selector": {
+     "type": "str",
+     "doc": "CSS selector for any other visible control, e.g. .shopBtn.",
+     "required": false
+    },
+    "client_target": {
+     "type": "str",
+     "doc": "Client-object control the tutorial points at: challenge, spell_upgrade_confirm, spell_plus, charac_update (spends unspent stat points, then fires the characteristics condition), world (a touchend on the game body for a TAP_ANYWHERE step), the later tutorials' controls (contextual_menu:N, npc_menu:N, trade_slot, trade_validate, craft_slot, craft_recipe, craft_merge, craft_drag, shop_category:N, shop_item:N, sell_info, bestiary_monster, bestiary_drop) or close:NAME (closes a window the step ends on closing).",
+     "required": false
+    },
+    "close_first": {
+     "type": "str",
+     "doc": "Window name to close before pressing, so the press produces a real opening.",
+     "required": false
+    },
+    "index": {
+     "type": "int",
+     "doc": "Which visible match to press, 0-based.",
+     "required": false,
+     "default": 0
+    },
+    "cycle": {
+     "type": "bool",
+     "doc": "Press again after the window opens, so an open-and-close step is given back.",
+     "required": false,
+     "default": false
+    },
+    "cycle_ms": {
+     "type": "int",
+     "doc": "Delay before the second press.",
+     "required": false,
+     "default": 1200
+    }
+   }
+  },
+  {
+   "id": "ui.icons",
+   "verb": "ui",
+   "description": "List the menu-bar icons the client shows right now (key, disabled flag, position) and the open windows. Read-only.",
+   "backend": "directive",
+   "directive": "UI_ICONS",
+   "returns": "icons list and open window names",
+   "params": {}
+  },
+  {
+   "id": "shop.buy",
+   "verb": "shop",
+   "description": "Buy the first article of the tutorial's shop window with the client's own hard-price button. The tutorial enables a fake shop whose purchase is free and whose button makes the client validate the quest objective itself; outside that mode the same button starts a real-currency purchase, so the page refuses and says so.",
+   "backend": "directive",
+   "directive": "SHOP_BUY",
+   "returns": "article id, the button pressed, open windows before/after",
+   "params": {
+    "which": {
+     "type": "str",
+     "doc": "Which article to buy; 'first' is the tutorial's pack.",
+     "required": false,
+     "default": "first"
     }
    }
   }

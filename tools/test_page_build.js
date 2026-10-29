@@ -20,7 +20,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'mobile-disgui
 const constant = src.match(/var AGENT_BUILD = '([^']+)';/);
 check('the page declares one build constant', !!constant, 'AGENT_BUILD not found');
 check('the build constant is this generation',
-    !!constant && constant[1] === '2026-10-27s', constant && constant[1]);
+    !!constant && constant[1] === '2026-10-29bg', constant && constant[1]);
 
 const assigns = src.match(/__agentBuild\s*=\s*[^;]+;/g) || [];
 check('__agentBuild is assigned exactly once, from the constant',

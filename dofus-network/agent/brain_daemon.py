@@ -25,12 +25,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
+import subprocess
+import sys
 import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from agent.autopilot import COMMAND_SHADOW_MODEL, Autopilot, _build_policy
 from agent.bridge import state_dir
@@ -41,6 +44,12 @@ from agent.runtime import AgentRuntime
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOG_DIR = state_dir()
 DEFAULT_RECORDER_DIR = REPO_ROOT / "trajectories"
+
+# The dataset the next training run reads is rebuilt when a run ends. Measured
+# 2026-10-29: the derived set was two days behind the logs because only
+# tools/auto_live.py rebuilt it, and only for the sessions it launched itself.
+INGEST_ON_STOP = True
+INGEST_MIN_INTERVAL_S = 60.0
 
 
 class _DaemonAutopilot(Autopilot):
@@ -143,6 +152,66 @@ class BrainDaemon:
         self._instances: Dict[str, BrainInstance] = {}
         self._lock = threading.RLock()
         self._lock_path = self.log_dir / "brain.lock"
+        self._ingest_lock = threading.Lock()
+        self._ingest_last = 0.0
+        self._ingest_thread: Optional[threading.Thread] = None
+
+    # -- live ingest ---------------------------------------------------------
+
+    def _ingest_commands(self) -> List[Tuple[str, List[str]]]:
+        """One job, ordered: the derived dataset, then the client knowledge index.
+
+        The index is what `knowledge_context` prefers over the downloaded store, so
+        a session that captured new objectives must rebuild it before the next run
+        asks for one. The rebuild is atomic and readers pick the new file up by
+        mtime, so a run in another instance keeps reading a whole index throughout.
+        """
+        return [
+            ("dataset", [sys.executable,
+                         str(REPO_ROOT / "tools" / "refresh_live_dataset.py"), "--json"]),
+            # The same rows cut by time: train ends where the last days begin, so a
+            # model can be scored on a fold a live run would actually face.
+            ("temporal", [sys.executable,
+                          str(REPO_ROOT / "tools" / "refresh_live_dataset.py"),
+                          "--out", str(REPO_ROOT / "data" / "transitions_temporal"),
+                          "--split", "temporal", "--json"]),
+            ("index", [sys.executable,
+                       str(REPO_ROOT / "tools" / "knowledge_index.py"), "--write"]),
+        ]
+
+    def _ingest_live(self) -> bool:
+        """Rebuild the live-outcome dataset after a run: one job, debounced.
+
+        Called from the runner's `finally`, which runs after the recorder has
+        written the last row, so the finished session is included. The ingest is
+        a separate process: the builder reads every trajectory (100 MB+) and the
+        daemon must not block its HTTP loop on it.
+        """
+        if not INGEST_ON_STOP:
+            return False
+        with self._ingest_lock:
+            if self._ingest_thread is not None and self._ingest_thread.is_alive():
+                return False
+            if time.time() - self._ingest_last < INGEST_MIN_INTERVAL_S:
+                return False
+            self._ingest_last = time.time()
+            thread = threading.Thread(target=self._ingest_live_job, daemon=True,
+                                      name="live-ingest")
+            self._ingest_thread = thread
+        thread.start()
+        return True
+
+    def _ingest_live_job(self) -> None:
+        for label, command in self._ingest_commands():
+            try:
+                proc = subprocess.run(command, capture_output=True,
+                                      text=True, timeout=1800, encoding="utf-8",
+                                      errors="replace")
+                if proc.returncode != 0:
+                    logging.warning("live ingest %s failed (%d): %s", label,
+                                    proc.returncode, (proc.stderr or "")[-300:])
+            except Exception as exc:  # noqa: BLE001 - an ingest must never kill the daemon
+                logging.warning("live ingest %s raised: %s", label, exc)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -173,6 +242,8 @@ class BrainDaemon:
             policy=str(config.get("policy") or self.default_policy),
             level_hint=int(config.get("level_hint") or 60),
             ensemble=str(config.get("ensemble") or "act"),
+            explore_objectives=float(config.get("explore_objectives") or 0.0),
+            explore_seed=config.get("explore_seed"),
             model_dir=str(config.get("model_dir")
                           or (REPO_ROOT / "models" / "encoder30_v15")),
         )
@@ -215,7 +286,7 @@ class BrainDaemon:
             dry_run=bool(config.get("dry_run")),
             verifier_model=Path(verifier) if verifier else None,
             veto_threshold=float(config.get("veto_threshold") or 0.0),
-            explore=float(config.get("explore") or 0.0),
+            explore_objectives=float(config.get("explore_objectives") or 0.0),
             fight_boards=bool(config.get("fight_boards", True)),
             brain=str(config.get("brain") or "auto"),
             command_shadow=str(config.get("command_shadow") or "off"),
@@ -297,6 +368,7 @@ class BrainDaemon:
                     item.state = "stopped"
                 item.finished_at = time.time()
                 self._write_daemon_lock()
+            self._ingest_live()
 
     def stop(self, instance: Optional[str] = None, stop_all: bool = False,
              why: str = "stopped by the host") -> Dict[str, Any]:

@@ -1,8 +1,8 @@
-instance: dofus-05
-log     : C:\Users\sao\AppData\Local\DofusFarm\autopilot.dofus-05.jsonl
-last step line: {"index": 35, "goal": "do all the quests", "tool": "quest.advance", "args": {"npc_id": 3888, "quest_id": 3841}, "ok": true, "error": null, "latency_ms": 23.6541
-idle form  : AI stopped - last step 36
-running form: AI running - step 36 - quest.advance noop (observed)
+instance: (farm-wide)
+log     : C:\Users\sao\AppData\Local\DofusFarm\autopilot.jsonl
+last step line: {"index": 7, "goal": "do all the quests", "tool": "quest.advance", "args": {"npc_id": 3888, "quest_id": 3841}, "ok": true, "error": null, "latency_ms": 30.35909
+idle form  : AI stopped - last step 8
+running form: AI running - step 8 - quest.advance noop (observed)
 no log     : AI idle
 first step : AI running - waiting for the first step
 RESULT: ok

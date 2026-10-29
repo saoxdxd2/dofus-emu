@@ -70,6 +70,8 @@ namespace DofusFarm.UI
 
         private static readonly SolidBrush BrushBtnDeleteBg = new SolidBrush(Color.FromArgb(45, 26, 34));
 
+        private static readonly SolidBrush BrushBtnResetBg = new SolidBrush(Color.FromArgb(56, 38, 18));
+
 
 
         private static readonly Pen PenBtnDefault = new Pen(Color.FromArgb(55, 62, 82), 1f);
@@ -81,6 +83,8 @@ namespace DofusFarm.UI
         private static readonly Pen PenBtnEditClone = new Pen(Color.FromArgb(71, 85, 105), 1f);
 
         private static readonly Pen PenBtnDelete = new Pen(Color.FromArgb(127, 29, 29), 1f);
+
+        private static readonly Pen PenBtnReset = new Pen(Color.FromArgb(180, 83, 9), 1f);
 
 
 
@@ -342,6 +346,49 @@ namespace DofusFarm.UI
 
             TryStartSingletonSentinel();
 
+            StartLaunchRequestPoller();
+
+        }
+
+        private System.Windows.Forms.Timer _launchRequestTimer;
+
+        // A second `DofusFarm.exe --launch <name>` forwards the name through this
+        // file (see Program.WriteLaunchRequest) instead of having it dropped by the
+        // single-instance mutex. One small file, polled once a second, is cheaper
+        // than a second IPC channel and cannot race the mutex.
+        private void StartLaunchRequestPoller()
+        {
+            try
+            {
+                string dir = Path.Combine(Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData), "DofusFarm");
+                string path = Path.Combine(dir, "launch_request.txt");
+                _launchRequestTimer = new System.Windows.Forms.Timer();
+                _launchRequestTimer.Interval = 1000;
+                _launchRequestTimer.Tick += delegate
+                {
+                    try
+                    {
+                        if (!File.Exists(path)) return;
+                        string name = File.ReadAllText(path).Trim();
+                        try { File.Delete(path); } catch { }
+                        if (string.IsNullOrEmpty(name)) return;
+                        if (name.StartsWith("reset:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            Log("[CLI] forwarded reset request: " + name.Substring(6));
+                            ResetInstanceFromCommandLine(name.Substring(6));
+                        }
+                        else
+                        {
+                            Log("[CLI] forwarded launch request: " + name);
+                            LaunchInstanceFromCommandLine(name);
+                        }
+                    }
+                    catch { }
+                };
+                _launchRequestTimer.Start();
+            }
+            catch { }
         }
 
 
@@ -746,6 +793,8 @@ namespace DofusFarm.UI
 
                 CreateBtnCol("Clone", "CLONE", "Clone", 66),
 
+                CreateBtnCol("Reset", "RESET", "Reset", 66),
+
                 CreateBtnCol("Delete", "DELETE", "Delete", 72)
 
             );
@@ -768,6 +817,13 @@ namespace DofusFarm.UI
             _rowMenu.Items.Add("🔄 Reset to Auto-Random (Default)", null, delegate { ResetSelectedInstanceProxy(); });
 
             _rowMenu.Items.Add("Clone Instance...", null, delegate { TriggerSelectedRowAction("Clone"); });
+
+            _rowMenu.Items.Add("♻ Reset Instance (fresh guest)...", null, delegate
+            {
+                if (_grid.SelectedRows.Count == 0) return;
+                var selected = _grid.SelectedRows[0].Tag as InstanceModel;
+                if (selected != null) PromptAndResetInstance(selected);
+            });
 
             _rowMenu.Items.Add(new ToolStripSeparator());
 
@@ -1038,6 +1094,18 @@ namespace DofusFarm.UI
             _pageInstances.Controls.Add(_toolbarPanel);
 
             _aiPanel = new AiPanel(baseDir, GetInstanceIdFromSlot, delegate { return _grid.Rows.Count; }, Log);
+            // A loop without a client is not a slower loop, it is a loop aimed at
+            // whatever the bridge's fallback picks. Auto with one window open must
+            // start one loop, not one per configured slot.
+            _aiPanel.ClientIsOpen = delegate(string instanceId)
+            {
+                if (_webViewBackend == null) return true;
+                var state = _webViewBackend.GetState(instanceId);
+                if (state == ClientInstanceState.Starting
+                    || state == ClientInstanceState.Running) return true;
+                var form = _webViewBackend.GetForm(instanceId);
+                return form != null && !form.IsDisposed;
+            };
             // Shortcuts must work while the game has focus, so they are registered
             // with the OS rather than handled as ordinary keys.
             try { RegisterGlobalShortcuts(); } catch (Exception ex) { Log("[AI] shortcut registration failed: " + ex.Message); }
@@ -1327,7 +1395,7 @@ namespace DofusFarm.UI
 
             string colName = _grid.Columns[e.ColumnIndex].Name;
 
-            if (colName == "Action" || colName == "Edit" || colName == "Clone" || colName == "Delete")
+            if (colName == "Action" || colName == "Edit" || colName == "Clone" || colName == "Reset" || colName == "Delete")
 
             {
 
@@ -1395,7 +1463,7 @@ namespace DofusFarm.UI
 
             string colName = _grid.Columns[e.ColumnIndex].Name;
 
-            if (colName != "Status" && colName != "Action" && colName != "Edit" && colName != "Clone" && colName != "Delete") return;
+            if (colName != "Status" && colName != "Action" && colName != "Edit" && colName != "Clone" && colName != "Reset" && colName != "Delete") return;
 
 
 
@@ -1468,6 +1536,12 @@ namespace DofusFarm.UI
                 case "Clone":
 
                     bg = BrushBtnEditCloneBg; pen = PenBtnEditClone; fg = ColAmberText; btnText = "Clone";
+
+                    break;
+
+                case "Reset":
+
+                    bg = BrushBtnResetBg; pen = PenBtnReset; fg = ColAmberText; btnText = "Reset";
 
                     break;
 
@@ -1730,6 +1804,84 @@ namespace DofusFarm.UI
 
 
 
+        /// <summary>
+        /// Start one configured client from the command line. Same path as the grid's
+        /// Launch cell, so proxy wiring, layout and the AI autostart behave identically;
+        /// the only difference is that nobody has to click an owner-drawn cell.
+        /// </summary>
+        /// <summary>
+        /// The Reset button without its dialog, for a caller that already asked the
+        /// operator. The profile is wiped and the slot relaunched only when the wipe
+        /// is provably complete; a partial wipe must never start a "fresh" guest on
+        /// top of old state.
+        /// </summary>
+        public void ResetInstanceFromCommandLine(string name)
+        {
+            try
+            {
+                InstanceModel inst = _engine.GetInstances().FirstOrDefault(
+                    x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+                if (inst == null)
+                {
+                    Log("[CLI] no instance named " + name + "; nothing to reset");
+                    return;
+                }
+                if (!TryBeginOp(inst.Name)) return;
+                if (_aiPanel != null) _aiPanel.StopInstance(inst.Name, "instance reset");
+                string slot = inst.Name;
+                Log("[CLI] reset " + slot + ": wiping the profile for a fresh guest");
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    try
+                    {
+                        bool relaunch = ResetInstanceProfile(inst);
+                        Thread.Sleep(400);
+                        if (relaunch && !_isClosing)
+                        {
+                            StartWebView2Instance(inst, GetSelectedRam(), GetSelectedCores());
+                            Log(string.Format("[RESET] {0}: relaunched on an empty profile - a new guest will register at the login screen", slot));
+                        }
+                        else if (!relaunch)
+                        {
+                            Log(string.Format("[RESET] {0}: the profile could not be provably removed; not relaunching", slot));
+                        }
+                        RefreshGrid(true);
+                    }
+                    catch (Exception ex) { Log(string.Format("[RESET] {0}: {1}", slot, ex.Message)); }
+                    finally { EndOp(slot); }
+                });
+            }
+            catch (Exception ex)
+            {
+                Log("[CLI] reset of " + name + " failed: " + ex.Message);
+            }
+        }
+
+        public void LaunchInstanceFromCommandLine(string name)
+        {
+            try
+            {
+                InstanceModel inst = _engine.GetInstances().FirstOrDefault(
+                    x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+                if (inst == null)
+                {
+                    Log("[CLI] no instance named " + name + "; nothing to launch");
+                    return;
+                }
+                if (inst.IsRunning)
+                {
+                    Log("[CLI] " + name + " is already running; nothing to do");
+                    return;
+                }
+                Log("[CLI] launching " + name);
+                StartWebView2Instance(inst, GetSelectedRam(), GetSelectedCores());
+            }
+            catch (Exception ex)
+            {
+                Log("[CLI] launch of " + name + " failed: " + ex.Message);
+            }
+        }
+
         private void StartWebView2Instance(InstanceModel inst, int ram, int cores,
             int layoutCount = 0, int layoutIndex = -1)
         {
@@ -1761,7 +1913,30 @@ namespace DofusFarm.UI
                 if (!RuntimeSettings.Current.AutoAi || _aiPanel == null) return;
                 if (string.IsNullOrEmpty(instanceName)) return;
                 if (_aiPanel.IsRunningFor(instanceName)) return;
-                _aiPanel.StartInstance(instanceName, true);
+                // The client window registers a beat after LaunchInstance returns.
+                // Starting the loop before that is refused as "no client window",
+                // and the launch then looks like the AI never started at all:
+                // every --launch ended at the login screen with no loop. Wait for
+                // the window, bounded, on a worker so the UI thread is free.
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    for (int i = 0; i < 20; i++)
+                    {
+                        if (_isClosing) return;
+                        if (_aiPanel == null || _aiPanel.IsRunningFor(instanceName)) return;
+                        if (_aiPanel.HasClientWindow(instanceName))
+                        {
+                            SafeInvoke(delegate
+                            {
+                                try { _aiPanel.StartInstance(instanceName, true); }
+                                catch (Exception ex) { Log("[AI] auto-start failed: " + ex.Message); }
+                            });
+                            return;
+                        }
+                        Thread.Sleep(1000);
+                    }
+                    Log("[AI] " + instanceName + ": client window never registered; AI not started");
+                });
             }
             catch (Exception ex) { Log("[AI] auto-start failed: " + ex.Message); }
         }
@@ -2183,7 +2358,7 @@ namespace DofusFarm.UI
 
                                     isRunning ? "Stop" : "Launch",
 
-                                    "Edit", "Clone", "Delete");
+                                    "Edit", "Clone", "Reset", "Delete");
 
 
 
@@ -2689,6 +2864,182 @@ namespace DofusFarm.UI
 
 
 
+        // A banned guest cannot be recovered - the account is gone at the server.
+        // Reset is about the *profile*: stop the client, delete every byte of this
+        // slot's WebView2 profile, and let the client register a brand-new guest.
+        // Nothing from the old profile is kept or copied into the new one, the
+        // same way the installer starts every slot from an empty directory.
+        private void PromptAndResetInstance(InstanceModel inst)
+
+        {
+
+            if (inst == null) return;
+
+            string profileDir = WebView2ProfileDir(inst.Name);
+
+            if (MessageBox.Show(string.Format(
+                    "Reset instance '{0}' ({1})?\n\nThis stops it and permanently deletes its WebView2 profile:\n{2}\n\nIt then relaunches into a brand-new guest account. Nothing from the old profile is carried over.",
+                    inst.CustomName ?? inst.Name, inst.Name, profileDir),
+
+                "Reset Instance (fresh guest)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+
+
+
+            if (!TryBeginOp(inst.Name)) return;
+
+            if (_aiPanel != null) _aiPanel.StopInstance(inst.Name, "instance reset");
+
+            string slot = inst.Name;
+
+            ThreadPool.QueueUserWorkItem(delegate
+
+            {
+
+                try
+
+                {
+
+                    if (_isClosing) return;
+
+                    bool relaunch = ResetInstanceProfile(inst);
+
+                    Thread.Sleep(400);
+
+                    if (relaunch && !_isClosing)
+
+                    {
+
+                        StartWebView2Instance(inst, GetSelectedRam(), GetSelectedCores());
+
+                        Log(string.Format("[RESET] {0}: relaunched on an empty profile - a new guest will register at the login screen", slot));
+
+                    }
+
+                    RefreshGrid(true);
+
+                }
+
+                catch (Exception ex) { Log(string.Format("[RESET] {0}: {1}", slot, ex.Message)); }
+
+                finally { EndOp(slot); }
+
+            });
+
+        }
+
+
+
+        private static string WebView2ProfileDir(string slot)
+
+        {
+
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+
+                "DofusFarm", "webview2_profiles", slot);
+
+        }
+
+
+
+        // Returns true only when the profile is provably gone. A failed wipe must
+        // not relaunch: that would start the "fresh" guest on top of old state.
+        private bool ResetInstanceProfile(InstanceModel inst)
+
+        {
+
+            WebView2ClientForm form = _webViewBackend != null ? _webViewBackend.GetForm(inst.Name) : null;
+
+            bool wvRunning = _webViewBackend != null && _webViewBackend.GetState(inst.Name) == ClientInstanceState.Running;
+
+            if (wvRunning || (form != null && !form.IsDisposed)) _webViewBackend.Stop(inst.Name);
+
+            else if (inst.IsRunning) _engine.StopInstance(inst.Serial, inst.Name);
+
+
+
+            // WebView2 keeps EBWebView locked until the browser process exits; Stop
+            // only queues the close, so a delete issued now races the shutdown.
+            if (form != null)
+
+            {
+
+                for (int i = 0; i < 200 && !form.IsDisposed; i++) Thread.Sleep(100);
+
+            }
+
+            FarmEngine.ReleaseAccount(inst.Name);
+
+
+
+            string dir = WebView2ProfileDir(inst.Name);
+
+            bool removed = false;
+
+            for (int attempt = 0; attempt < 30; attempt++)
+
+            {
+
+                try
+
+                {
+
+                    if (Directory.Exists(dir)) FarmEngine.ForceDeleteDirectory(dir);
+
+                    removed = !Directory.Exists(dir);
+
+                }
+
+                catch { removed = !Directory.Exists(dir); }
+
+                if (removed) break;
+
+                Thread.Sleep(500);
+
+            }
+
+            if (!removed)
+
+            {
+
+                Log(string.Format("[RESET] {0}: profile is still locked, refusing to relaunch on old data ({1})", inst.Name, dir));
+
+                return false;
+
+            }
+
+
+
+            try
+
+            {
+
+                Directory.CreateDirectory(dir);
+
+                // Same guard the account-collision path uses: even if accounts.txt
+                // holds a saved [GUEST] entry for this slot, nothing is seeded into
+                // the new profile - the client has to register a fresh guest.
+                File.WriteAllText(Path.Combine(dir, "force_fresh_identity.flag"), "1");
+
+            }
+
+            catch (Exception ex)
+
+            {
+
+                Log(string.Format("[RESET] {0}: could not prepare the empty profile: {1}", inst.Name, ex.Message));
+
+                return false;
+
+            }
+
+            Log(string.Format("[RESET] {0}: profile wiped ({1}); old guest identity and session are gone", inst.Name, dir));
+
+            return true;
+
+        }
+
+
+
         private void PromptAndDeleteAllInstances()
 
         {
@@ -3053,6 +3404,12 @@ namespace DofusFarm.UI
                         }
 
                     }
+
+                    break;
+
+                case "Reset":
+
+                    PromptAndResetInstance(inst);
 
                     break;
 

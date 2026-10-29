@@ -110,6 +110,11 @@ def _log_decision(payload: Dict[str, Any], decision: Dict[str, Any]) -> None:
             "fight_id": payload.get("fight_id"),
             "round": payload.get("round"),
             "my_id": payload.get("my_id"),
+            # The optional challenges the fight was started with. They are not
+            # scored here -- the reward for one lives in the outcome row -- but a
+            # decision row without them cannot be used later to learn a policy
+            # that respects one.
+            "challenges": payload.get("challenges") or [],
             "decision": decision,
         }
         line = dumps_bytes(record) + b"\n"

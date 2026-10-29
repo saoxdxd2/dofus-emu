@@ -1,4 +1,4 @@
-"""Deterministic constraint corpus for the 25 tools.
+"""Deterministic constraint corpus for the tool vocabulary.
 
 This is a test corpus, not training data. Each row is a legal tool call paired with
 a real handler/guard refusal and the controller outcome it must produce. It makes
@@ -100,8 +100,8 @@ CASES: List[Dict[str, Any]] = [
           "wrong_target", _WRONG),
     _case("inv.sell", "iron sword is not in inventory",
           "wrong_target", _WRONG),
-    _case("inv.equip", "inv.equip needs a saved preset id; "
-                       "direct object_uid equip is not proven",
+    _case("inv.equip", "equipItem sent nothing and the item is not usable; "
+                       "pass slot to send ObjectSetPositionMessage directly",
           "invalid_assumption", _BAD_ASSUMPTION),
     _case("hdv.scan", "hdv.scan needs an item, a category type or an item type id",
           "invalid_assumption", _BAD_ASSUMPTION),
@@ -117,8 +117,21 @@ CASES: List[Dict[str, Any]] = [
           "invalid_assumption", _BAD_ASSUMPTION, note="rule refusal stays continue"),
     _case("tap.interactive", "no visible interactive element matches the "
                              "requested id/cell/skill", "wrong_target", _WRONG),
+    _case("shop.buy", None, "none", _SUCCESS, verdict="advanced", ok=True,
+          after={"map_id": 1, "cell": 2}, note="tutorial pack bought"),
+    _case("shop.buy", "the shop has no article to buy yet (the fake shop is still "
+                      "loading its list)", "stale_state", _WRONG),
+    _case("shop.buy", "the client does not have the tutorial fake shop enabled; "
+                      "this button would start a real-currency purchase",
+          "unavailable", _UNAVAILABLE),
+    _case("shop.buy", "the shop window is not open; open it first",
+          "invalid_assumption", _BAD_ASSUMPTION),
     _case("tap.interactive", "interactive element 4491 has no skillInstanceUid; "
                              "pass skill_uid", "invalid_assumption", _BAD_ASSUMPTION),
+    _case("ui.tap", 'no visible element matches ".menuIconSpell"',
+          "wrong_target", _WRONG),
+    _case("ui.icons", None, "none", _SUCCESS, verdict="advanced", ok=True,
+          after={"map_id": 1, "cell": 1}, note="menu icons listed"),
     _case("knowledge.remember", "invalid fact kind 'price_guess'",
           "invalid_assumption", _BAD_ASSUMPTION),
     _case("knowledge.forget", "fact npc:9999 not found",
@@ -161,6 +174,7 @@ TOOL_ENTITIES = {
     "inv.equip": "preset 12",
     "hdv.prices": "item 1234",
     "tap.interactive": "element 4491",
+    "shop.buy": "the tutorial pack",
 }
 
 # Each template is a real phrase family the controller has to place in one bucket.
@@ -190,7 +204,7 @@ _INVALID = [
     "{tool} needs max_price before it can buy",
     "{tool} needs an explicit price",
     "{tool} needs a saved preset",
-    "direct object_uid equip is not proven",
+    "equipItem sent nothing",
     "price is above max_price",
     "{tool} element has no skillInstanceUid",
     "hdv.scan needs an item or a type",

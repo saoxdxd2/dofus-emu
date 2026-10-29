@@ -375,6 +375,48 @@ def _summarise_session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def proofs(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """What the four owed live claims would look like in the rows.
+
+    Each claim is counted from the step that would prove it, and the argument that
+    makes the call a real use is counted separately (a preset or uid for equip, an
+    item for buy, a monster for the fight, a target for the login), so a zero reads
+    as "not done" instead of hiding behind a total.
+    """
+    equip: Counter = Counter()
+    buy: Counter = Counter()
+    fight: Counter = Counter()
+    logins: Counter = Counter()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        tool = str(row.get("tool") or "")
+        args = row.get("args") if isinstance(row.get("args"), dict) else {}
+        ok = row.get("ok") is not False
+        if tool == "inv.equip":
+            equip["ok" if ok else "refused"] += 1
+            if args.get("preset_id") is not None:
+                equip["presets"] += 1
+            elif args.get("object_uid") is not None:
+                equip["uids"] += 1
+            else:
+                equip["unaddressed"] += 1
+        elif tool == "hdv.buy":
+            buy["ok" if ok else "refused"] += 1
+            if args.get("item") is not None or args.get("gid") is not None:
+                buy["named_items"] += 1
+        elif tool == "fight.join":
+            fight["calls"] += 1
+            if ok:
+                fight["ok"] += 1
+            if args.get("monster") is not None:
+                fight["named"] += 1
+        elif tool == "session.login":
+            logins[str(args.get("target") or "?")] += 1
+    return {"equip": dict(equip), "buy": dict(buy), "fight": dict(fight),
+            "logins": dict(logins)}
+
+
 def summarise(path: Path, gap_s: float = 180.0) -> Dict[str, Any]:
     rows: List[Dict[str, Any]] = []
     with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -435,6 +477,7 @@ def summarise(path: Path, gap_s: float = 180.0) -> Dict[str, Any]:
         "recoveries": {k: v for k, v in decision_actions.items()
                        if k in RECOVERY_ACTIONS},
         "witnesses": witnesses(rows),
+        "proofs": proofs(rows),
         "per_session": summaries,
     }
 
@@ -466,6 +509,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                  report["recoveries"] or "{}"))
         for line in (report.get("witnesses") or {}).get("verdicts") or []:
             print("  " + line)
+        live = report.get("proofs") or {}
+        print("  proofs: equip %s, buy %s, fight %s, logins %s"
+              % (live.get("equip") or "{}", live.get("buy") or "{}",
+                 live.get("fight") or "{}", live.get("logins") or "{}"))
         if (report["objectives_completed"] == 0 and report["ready_steps"]
                 and report["objectives_measured"]):
             # The two readings that a total cannot tell apart: nothing was ever ready,

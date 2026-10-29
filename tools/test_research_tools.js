@@ -37,8 +37,10 @@ check('buy requires a bounded price',
 
 check('equip uses InventoryPresetUseMessage',
     src.indexOf("InventoryPresetUseMessage', { presetId: chosen.preset_id }") >= 0);
-check('equip refuses the unproven direct UID path',
-    src.indexOf('direct_object_uid_not_proven') >= 0);
+check('equip uses the client equipItem path for a direct UID',
+    src.indexOf('bag2.equipItem(directUid)') >= 0
+    && src.indexOf("'object_uid_invalid'") >= 0
+    && src.indexOf('sent nothing') >= 0);
 check('equip returns the available presets',
     src.indexOf('presets: rows') >= 0);
 

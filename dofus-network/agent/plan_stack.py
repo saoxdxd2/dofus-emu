@@ -12,7 +12,7 @@ keeps the parent and pushes a concrete child goal:
       └─ otherwise       -> navigate
 
 The stack is deliberately tiny and serialisable. It does not decide legality or
-invent prices; it only decomposes a goal into the existing 25 tools.
+invent prices; it only decomposes a goal into the existing tools.
 """
 
 from __future__ import annotations

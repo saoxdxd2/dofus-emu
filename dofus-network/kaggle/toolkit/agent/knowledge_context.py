@@ -29,6 +29,13 @@ DEFAULT_STORE = (
 OBSERVED_FILE = (
     Path(__file__).resolve().parents[1] / "data" / "knowledge" / "observed_quests.jsonl"
 )
+# The verified client index (`tools/knowledge_index.py --write`): the same rows with
+# their provenance and conflicts resolved, built from all four client sources instead
+# of the catalogue alone. It wins when present because it strictly dominates the
+# JSONL ingest: same keys, plus the text that only ready/current objectives carry.
+OBSERVED_INDEX_FILE = (
+    Path(__file__).resolve().parents[1] / "data" / "knowledge" / "client_index.json"
+)
 
 
 _STORE_CACHE: Dict[str, CanonicalStore] = {}
@@ -143,13 +150,41 @@ def _persisted_index(path: str, mtime_ns: int, size: int
     return rows
 
 
+@lru_cache(maxsize=4)
+def _json_index(path: str, mtime_ns: int, size: int
+                ) -> Dict[Tuple[int, int], Dict[str, Any]]:
+    """(quest, objective) -> verified row, from `client_index.json`."""
+    rows: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    block = payload.get("rows") if isinstance(payload, dict) else None
+    if not isinstance(block, dict):
+        return {}
+    for row in block.values():
+        if not isinstance(row, dict):
+            continue
+        try:
+            key = (int(row.get("quest_id")), int(row.get("objective_id")))
+        except (TypeError, ValueError):
+            continue
+        rows[key] = row
+    return rows
+
+
 def load_observed_index(path: Optional[Path] = None
                         ) -> Dict[Tuple[int, int], Dict[str, Any]]:
-    target = Path(path) if path is not None else OBSERVED_FILE
+    if path is None:
+        target = OBSERVED_INDEX_FILE if OBSERVED_INDEX_FILE.is_file() else OBSERVED_FILE
+    else:
+        target = Path(path)
     try:
         stat = target.stat()
     except OSError:
         return {}
+    if target.suffix == ".json":
+        return _json_index(str(target), stat.st_mtime_ns, stat.st_size)
     return _persisted_index(str(target), stat.st_mtime_ns, stat.st_size)
 
 

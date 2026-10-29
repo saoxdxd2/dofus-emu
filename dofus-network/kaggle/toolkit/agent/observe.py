@@ -22,6 +22,7 @@ anything that already reads them keeps working.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 
@@ -32,6 +33,42 @@ def _dig(source: Any, *path: str) -> Any:
             return None
         cur = cur.get(part)
     return cur
+
+
+# Argument names whose values are credentials, not diagnostics. The page also
+# filters these at the ring, but a client running an older page build still
+# sends the ticket, and every snapshot is written to the trajectory corpus.
+_SECRET_ARG = re.compile(r"^(ticket|password|pass|secret|token|salt|apikey|api_key|key)$",
+                         re.IGNORECASE)
+
+
+def redact_packet_secrets(obs: Any) -> Any:
+    """Replace credential-shaped packet arguments in a snapshot, in place.
+
+    The map-transition rings record packet arguments so a refused map change
+    can name the map it asked for. The login handshake's
+    ``AuthenticationTicketMessage`` carries the live session ticket under
+    ``ticket``, so the persisted observation used to contain a credential.
+    The rings keep their shape and their dates; only the values go.
+    """
+    if not isinstance(obs, dict):
+        return obs
+    block = obs.get("map")
+    transition = block.get("transition") if isinstance(block, dict) else None
+    if not isinstance(transition, dict):
+        return obs
+    for side in ("outgoing", "incoming"):
+        rows = transition.get(side)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            args = row.get("args") if isinstance(row, dict) else None
+            if not isinstance(args, dict):
+                continue
+            for key in list(args):
+                if _SECRET_ARG.match(str(key)):
+                    args.pop(key, None)
+    return obs
 
 
 def flatten(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:

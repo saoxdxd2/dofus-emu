@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import random
 import re
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -36,7 +37,8 @@ from agent.features import (CRAFT_TYPES, DELIVER_TYPES,  # noqa: E402
                             KILL_TYPES, MAP_TYPES, OBJECTIVE_TYPES,
                             ObsTracker, TALK_TYPES,
                             _params, declares_monster_target, direction_hint,
-                            known_map, required_map, travel_hops)
+                            known_map, required_map, route_distance,
+                            route_first_hop, travel_hops)
 from agent.verifier import READ_ONLY_TOOLS  # noqa: E402
 
 # Prompt routing. The panel pins the planner, so it must decide from the goal
@@ -184,6 +186,13 @@ def shared_quest_table() -> Dict[int, Dict[str, Any]]:
 CLAIM_FAILURE_LIMIT = 3
 CLAIM_ACTION_LIMIT = 10
 
+# How many crossings towards one objective's map may fail to come nearer before
+# travel to it is left alone for this situation. Counted outside the claim
+# counters because those reset on every scene change, and a crossing changes the
+# map. Larger than CLAIM_ACTION_LIMIT: a legitimate route can need many borders,
+# and only a leg that does not reduce the remaining distance is counted here.
+ROUTE_STEP_LIMIT = 12
+
 # How many ready objectives one plan step may look at. The client lists them in
 # its own quest order, which is not an order of actionability: a live session put
 # an un-actionable wrapper ("Complete the X quest", type 0 = kill) at index 0 in
@@ -192,12 +201,28 @@ CLAIM_ACTION_LIMIT = 10
 # 11.4 hours. Bounded, because a plan step should not price every ready entry.
 READY_SCAN_LIMIT = 8
 
+# A level gate is an objective that asks for a level, not a conversation
+# ("Reach level 10" on tutorial step 4978). The text is the client's own and the
+# verb anchors the match so a kill objective that mentions a monster's level is
+# not mistaken for a gate. English and French are the two languages the served
+# client has produced; an unknown language leaves the objective to the ordinary
+# planner instead of guessing.
+LEVEL_GATE_RE = re.compile(
+    r"\b(?:reach|attain|atteindre|atteignez|atteins)\b[^0-9]{0,40}?"
+    r"\b(?:level|niveau)\b\s*(\d+)",
+    re.IGNORECASE)
+
 # A quest the server will not activate is a quest this session cannot do. The
 # client answers a `QuestStartRequestMessage` as sent whether or not the server
 # accepts it, and a quest with unmet prerequisites never enters `quests_active`;
 # a live session re-sent quest 584 every step for its whole budget. Three start
 # attempts that the observation says never activated retire it for the session.
 START_ATTEMPT_LIMIT = 3
+
+# Passes a kill objective may wait for a group to respawn on its own map before
+# the planner walks out and searches. Passes, not seconds: the loop's wait
+# cadence is fixed (0.35 s), so 90 is about half a minute of standing still.
+SPAWN_WAIT_PASSES = 90
 
 
 def args_for_tool(tool: str, quest: Dict[str, Any], obj: Dict[str, Any],
@@ -516,12 +541,47 @@ class QuestPlanner:
         self._claim_quarantine: set = set()
         self._claim_actions: Dict[Tuple[int, int], int] = {}
         self._claim_map: Dict[Tuple[int, int], Any] = {}
+        # Travel towards an objective's map: {"target": map, "best": crossings,
+        # "steps": attempts}. Deliberately outside the claim counters, because
+        # those are wiped whenever the scene key changes — and a map crossing IS
+        # a scene change. Without a bound that survives it, a route that never
+        # gets nearer travels forever: a live session alternated two adjacent
+        # maps for nineteen minutes, every hop resetting the ordinary bound
+        # (dofus-02, 2026-10-29, objective 4264/13960, 145489920 <-> 145489921).
+        self._route_tries: Dict[Tuple[int, int], Dict[str, Any]] = {}
         # A scripted fight can be started by a map NPC even when no monster group
         # exists. Walk the NPCs on the current map when the objective is a fight and the map
         # reports no group -- each one asked at most once per (quest, objective, map), remembered
         # by identity because a count was wiped whenever the scene key moved and the rotation
         # started over on the nearest NPC.
         self._npc_asked: Dict[Tuple[int, int, int], set] = {}
+        # UI steps a tutorial has asked for, and how many times the press was made.
+        # A step that names a window ("Open the Spell Interface", "Open the World
+        # Map") cannot be claimed; it is a press on the client's menu. Pressing
+        # blindly forever would be the same stampede in a new shape, so each
+        # (quest, step, menu) is pressed a bounded number of times and then left
+        # to the tutorial hold.
+        self._ui_attempts: Dict[Tuple[int, int, str], int] = {}
+        # (map, element) pairs already used for a free-form objective. The
+        # objective names no element, so the only honest route is to try the map's
+        # elements one at a time; this is that memory, keyed by objective id.
+        self._interactive_tries: Dict[Any, set] = {}
+        # Level-gate search: which (quest, objective, map) already walked out an
+        # exit looking for a group, and the XP mark each gate last saw. A fight
+        # that moved the bar restarts the gate's action bound; a map with no
+        # group is looked over once, not every step.
+        self._gate_explores: set = set()
+        self._gate_xp_mark: Dict[Tuple[int, int], Any] = {}
+        # Where monster groups were last seen, by plan-step age. A gate needs XP
+        # and XP needs a group; when this map has none, walking back to the last
+        # map that had one is better than a blind edge search.
+        self._group_maps: Dict[Any, int] = {}
+        self._plan_seq = 0
+        # Items already offered to an "equip" objective, and how often. With no
+        # saved preset the inventory is the only source of object uids, and an item
+        # that cannot be equipped (the tutorial hammer has no possible position)
+        # would otherwise be offered forever.
+        self._equip_tries: Dict[Any, Dict[int, int]] = {}
         # The (key, tool) of the last claim/fallback action, so `note_result` can
         # attribute an outcome to the objective it was for instead of guessing.
         self._pending_claim: Optional[Tuple[Tuple[int, int], str]] = None
@@ -538,12 +598,39 @@ class QuestPlanner:
         # client to validate one answers `objective_server_counted` without
         # sending anything, so the claim attempt is pure waste — worse, on a
         # live session it was followed by a disconnect. The action the objective
-        # names (talk, walk, fight) is the only thing that can move it.
-        self._server_counted_types = {1, 4, 5, 6}
+        # names (talk, walk, fight, deliver) is the only thing that can move it.
+        # This must mirror the page's own refusal list (`SERVER_TYPES` in
+        # mobile-disguise.js): a type the page refuses is a step the planner must
+        # not spend, and the earlier four-type set spent one on every delivery
+        # and multi-fight objective.
+        # Type 0 (QuestObjectiveFreeForm) is in the set on live evidence: two
+        # claims of free-form wrappers on dofus-05 (2026-10-28, 3841/13537 at
+        # 23:59:22.352 and 4260/14078 at 00:04:31.942) were each followed ~0.3 s
+        # later by serverDisconnecting SERVER_GONE. The client's CAN_BE_FINISHED
+        # says the step is current, not that the server has counted the event, and
+        # a refused claim closes the socket. The action the step names (talk,
+        # enter, use the granted item) is what completes it.
+        self._server_counted_types = {0, 1, 2, 3, 4, 5, 6, 12, 14, 16, 17}
         # The map the character came from, so exploration does not immediately
         # walk back through the exit it just used. Without this, a target on an
         # unindexed map produces a two-map loop instead of a search.
         self._prev_map: Optional[int] = None
+        # Passes spent waiting for a group to respawn on the objective's own map,
+        # keyed by (quest, objective, monster). Live 2026-10-29: objective 14070 sat
+        # on map 145489920 with no group for 467 passes (172 s) because the branch
+        # believed a respawn was always imminent; every escalation that fired in
+        # that window proposed a farm the quest gate refuses. A group that has not
+        # come back across a whole window is not coming on its own, so the wait is
+        # bounded and turns into a search of the neighbouring maps.
+        self._spawn_waits: Dict[Any, int] = {}
+        # (quest, objective, map) triples the character has already stood on with
+        # nothing left to do there. Live 2026-10-29: quests 4262 and 4264 both held
+        # a ready "go back and see X" objective on adjacent maps; each visit found
+        # every NPC already asked, so the only available call was the walk to the
+        # other one, and steps 71-80 alternated between the two maps forever. A
+        # visit with no call is knowledge: the walk back would be the same visit.
+        self._exhausted_at: set = set()
+        self._tutorial_step_seen: Any = object()
 
     @property
     def quests(self) -> Dict[int, Dict[str, Any]]:
@@ -733,6 +820,55 @@ class QuestPlanner:
         return out
 
     @staticmethod
+    def _map_interactives(obs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The map's interactive elements, from the nested block or the flat key.
+
+        A free-form objective is performed through one of these; the element list is
+        what the client's own renderer reports (`isoEngine.mapRenderer.interactiveElements`),
+        not a table the planner invents.
+        """
+        if not isinstance(obs, dict):
+            return []
+        block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
+        raw = obs.get("interactives")
+        if not isinstance(raw, list):
+            raw = block.get("interactives")
+        out: List[Dict[str, Any]] = []
+        for entry in raw or []:
+            if not isinstance(entry, dict):
+                continue
+            elem_id = entry.get("elem_id", entry.get("element_id", entry.get("elemId")))
+            try:
+                elem_id = int(elem_id)
+            except (TypeError, ValueError):
+                continue
+            row = dict(entry)
+            row["elem_id"] = elem_id
+            out.append(row)
+        return out
+
+    def _npc_here(self, obj: Dict[str, Any], obs: Dict[str, Any]) -> bool:
+        """Whether a talk objective's NPC stands on the current map.
+
+        The objective's `map_id` is where the quest was given; the client also
+        reports the NPCs of the map the character is on. When they disagree, the
+        NPC that is visible is the one to talk to (live 2026-10-29: 4274/13926
+        named 145490435 while Great Jarl Ordyn stood on 146276352).
+        """
+        try:
+            if obj.get("type_id") not in TALK_TYPES:
+                return False
+            npc = _params(obj).get("parameter0")
+            if npc is None:
+                return False
+            for entry in self._map_npcs(obs):
+                if int(entry.get("npc_id")) == int(npc):
+                    return True
+        except (TypeError, ValueError):
+            return False
+        return False
+
+    @staticmethod
     def _cell_distance(a: Any, b: Any) -> int:
         """Dofus cell distance; raw cell ids are not row-major."""
         try:
@@ -748,8 +884,240 @@ class QuestPlanner:
         bx, by = point(second)
         return abs(ax - bx) + abs(ay - by)
 
+    def _free_form_calls(self, obj: Dict[str, Any],
+                         obs: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Perform a free-form objective by using an interactive element.
+
+        `QuestObjectiveFreeForm` names no target the client can read: its
+        `parameter0` is a text id (13948 -> 704145 on map 145490432, whose only
+        element is 513208), so matching it against element ids would be guesswork
+        dressed as data. What the game actually counts is the element's own skill,
+        and the objective's completion is the only verdict that matters. So offer
+        each visible element once, in the map's own order, and let the objective
+        state retire the ones that did not work; re-tapping the first element
+        forever is not a search.
+
+        The first claim is still sent before this: a client link can validate a
+        free-form objective outright, and when the server accepts it this route is
+        never reached.
+        """
+        rows = self._map_interactives(obs)
+        if not rows:
+            return []
+        # An element with no skill instance cannot be used: the page refuses the
+        # call ("has no skillInstanceUid") and the server never hears about it.
+        # Measured live on dofus-02 (2026-10-29): the tutorial map's only element
+        # reported `skill_uid: null, enabled_skills: []`, the ready scan took the
+        # tap as the direct action, the ten-action bound expired, and the step
+        # then waited forever while the NPC that starts the escort stood on the
+        # same map. Offering an unusable element also hides the NPC fallback
+        # behind it, so skip them here and let the free-form branch fall through.
+        usable = [row for row in rows if self._element_usable(row)]
+        if not usable:
+            return []
+        try:
+            here = obs.get("map_id")
+        except AttributeError:
+            here = None
+        tried = self._interactive_tries.setdefault(obj.get("id"), set())
+        pick = None
+        for row in usable:
+            key = (here, row["elem_id"])
+            if key in tried:
+                continue
+            # An element whose type the objective's parameter names is the better
+            # guess; a parameter that is a text id matches nothing and leaves the
+            # map order untouched.
+            pick = row
+            if self._element_named_by(obj, row):
+                break
+        if pick is None:
+            return []
+        tried.add((here, pick["elem_id"]))
+        args: Dict[str, Any] = {"element_id": int(pick["elem_id"])}
+        skill = pick.get("skill_uid")
+        skills = pick.get("enabled_skills")
+        if isinstance(skills, list) and skills:
+            skill = skills[0]
+        try:
+            if skill is not None:
+                args["skill_uid"] = int(skill)
+        except (TypeError, ValueError):
+            pass
+        return [{"tool": "tap.interactive", "args": args,
+                 "why": ("objective %s: free-form; use interactive %s"
+                         % (obj.get("type_id"), pick["elem_id"]))}]
+
+    @staticmethod
+    def _element_usable(row: Dict[str, Any]) -> bool:
+        """Whether the page can send a use for this element at all.
+
+        The client's own interactive entry carries the skill instance uid; when
+        both it and the enabled list are empty there is nothing to send, and the
+        page's refusal is a fact about the element, not about the plan.
+        """
+        try:
+            if row.get("skill_uid") is not None:
+                return True
+        except AttributeError:
+            return False
+        skills = row.get("enabled_skills")
+        return isinstance(skills, list) and bool(skills)
+
+    def _next_equip_uid(self, quest: Dict[str, Any], obj: Dict[str, Any],
+                        obs: Dict[str, Any]) -> Optional[int]:
+        """An inventory item to equip by object uid, or None when nothing is left.
+
+        An equip precondition has two shapes: a saved preset, and -- when the bag
+        holds no preset at all -- the items themselves. Live 2026-10-29: quest
+        4260's "Equip the Albueran recruit set, then talk to Ayin Spyr" had four
+        items and zero presets, so a preset-only branch answered `inv.list`
+        forever. Each uid is offered twice and then retired: the client refuses a
+        type with no possible position (the tutorial hammer), and that refusal is
+        the only equippability evidence the page publishes, so the bound is what
+        lets the objective move on to its talk half.
+        """
+        bag = obs.get("inventory") if isinstance(obs, dict) else None
+        if not isinstance(bag, dict):
+            return None
+        items = bag.get("items") or bag.get("objects") or []
+        if not isinstance(items, list) or not items:
+            return None
+        worn = set()
+        for row in bag.get("equipped") or []:
+            try:
+                worn.add(int(row.get("object_uid") or row.get("uid"))
+                         if isinstance(row, dict) else int(row))
+            except (TypeError, ValueError):
+                continue
+        key = (quest.get("id"), obj.get("id"))
+        tried = self._equip_tries.setdefault(key, {})
+        if len(self._equip_tries) > 64:
+            self._equip_tries.clear()
+            tried = self._equip_tries.setdefault(key, {})
+        best = None
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            try:
+                uid = int(row.get("object_uid") or row.get("uid"))
+            except (TypeError, ValueError):
+                continue
+            if uid <= 0 or uid in worn or tried.get(uid, 0) >= 2:
+                continue
+            # Least-tried first, so a refusal of one item does not cost the next
+            # step before the other items have been offered at all.
+            if best is None or tried.get(uid, 0) < tried.get(best, 0):
+                best = uid
+        if best is None:
+            return None
+        tried[best] = tried.get(best, 0) + 1
+        return best
+
+    @staticmethod
+    def _worn_slot_for(obs: Dict[str, Any], uid: Any) -> Optional[int]:
+        """The slot a copy of the same template already occupies, when visible.
+
+        The page publishes the bag as `{gid, qty, object_uid}` and what is worn as
+        `{slot, gid}`, so a second copy of a worn item names its own slot without
+        guessing a type table. Live 2026-10-29: 76 refused `inv.equip` calls came
+        from item types that declare no positions, and every refusal asked for a
+        slot; the worn copy's gid is the client's own answer for where that
+        template goes.
+        """
+        bag = obs.get("inventory") if isinstance(obs, dict) else None
+        if not isinstance(bag, dict):
+            return None
+        gid = None
+        for row in bag.get("items") or []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("object_uid") or row.get("uid")) == int(uid):
+                    gid = row.get("gid")
+                    break
+            except (TypeError, ValueError):
+                continue
+        if gid is None:
+            return None
+        for row in bag.get("equipped") or []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                if int(row.get("gid")) != int(gid):
+                    continue
+                slot = int(row.get("slot"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= slot <= 16:
+                return slot
+        return None
+
+    @staticmethod
+    def _element_named_by(obj: Dict[str, Any], row: Dict[str, Any]) -> bool:
+        """Whether the objective's parameter is this element's type."""
+        param = _params(obj).get("parameter0")
+        etype = row.get("element_type_id")
+        try:
+            return param is not None and etype is not None and int(param) == int(etype)
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _quest_target_npcs(obs: Dict[str, Any]) -> Dict[int, List[int]]:
+        """NPCs an open quest objective names, by template id.
+
+        The client's quest marker over an NPC is paint, not data: the served
+        bundle has no indicator field. The graph behind it does carry the fact --
+        a talk/go-to-NPC objective's `parameter0` is the NPC's template id -- so
+        this reads the source the paint is drawn from. Keys are npc ids, values
+        are the objective ids that name them.
+        """
+        out: Dict[int, List[int]] = {}
+
+        def add(item: Any) -> None:
+            if not isinstance(item, dict):
+                return
+            try:
+                type_id = int(item.get("type_id"))
+            except (TypeError, ValueError):
+                type_id = None
+            name = item.get("type")
+            looks_like_npc = type_id in TALK_TYPES or (
+                isinstance(name, str) and name.lower().startswith("questobjectivegoto"))
+            if not looks_like_npc:
+                return
+            try:
+                npc = int(_params(item).get("parameter0"))
+            except (TypeError, ValueError):
+                return
+            if npc <= 0:
+                return
+            try:
+                oid = int(item.get("id", item.get("objective_id")))
+            except (TypeError, ValueError):
+                oid = 0
+            bucket = out.setdefault(npc, [])
+            if oid and oid not in bucket:
+                bucket.append(oid)
+
+        for quest in obs.get("quests_catalog") or []:
+            if not isinstance(quest, dict):
+                continue
+            for step in quest.get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                for objective in step.get("objectives") or []:
+                    add(objective)
+        for item in obs.get("ready_objectives") or []:
+            add(item)
+        for item in obs.get("step_objectives") or []:
+            add(item)
+        return out
+
     def _npc_talk_calls(self, quest: Dict[str, Any], obj: Dict[str, Any],
-                        obs: Dict[str, Any], type_id: Any
+                        obs: Dict[str, Any], type_id: Any,
+                        why_fmt: Optional[str] = None
                         ) -> List[Dict[str, Any]]:
         """Ask a map NPC to open the scripted fight when no group is visible.
 
@@ -767,7 +1135,14 @@ class QuestPlanner:
             position = obs.get("position") if isinstance(obs.get("position"), dict) else {}
             block = obs.get("map") if isinstance(obs.get("map"), dict) else {}
             here = position.get("cell") or block.get("cell")
-        npcs.sort(key=lambda entry: self._cell_distance(here, entry.get("cell")))
+        # The client paints a quest marker over some NPCs and exposes no field for
+        # it; the quest graph names the same NPC in the objective's parameter. A
+        # pinned NPC is asked first, because "who does the quest want" outranks
+        # "who is nearest" -- the live loop questioned four bystanders about a
+        # level gate while the quest's own target stood further away.
+        pinned = self._quest_target_npcs(obs)
+        npcs.sort(key=lambda entry: (0 if int(entry["npc_id"]) in pinned else 1,
+                                     self._cell_distance(here, entry.get("cell"))))
         quest_id = quest.get("id")
         objective_id = obj.get("id", obj.get("objective_id"))
         try:
@@ -785,16 +1160,20 @@ class QuestPlanner:
             return []
         npc = candidates[0]
         asked.add(int(npc["npc_id"]))
+        why = (why_fmt or ("objective %s: no group on this map; ask NPC %d to "
+                           "start the fight")) % (type_id, int(npc["npc_id"]))
+        if int(npc["npc_id"]) in pinned:
+            why += (" (the quest graph names this NPC: %s)"
+                    % ",".join(str(q) for q in pinned[int(npc["npc_id"])][:3]))
         return [{
             "tool": "quest.advance",
             "args": {"quest_id": int(quest_id), "npc_id": int(npc["npc_id"])},
-            "why": ("objective %s: no group on this map; ask NPC %d to start "
-                    "the fight" % (type_id, int(npc["npc_id"]))),
+            "why": why,
         }]
 
-    @classmethod
-    def _travel_call(cls, obj: Dict[str, Any], need: int,
-                     obs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _travel_call(self, obj: Dict[str, Any], need: int,
+                     obs: Optional[Dict[str, Any]] = None,
+                     key: Optional[Tuple[Any, Any]] = None) -> Dict[str, Any]:
         """How to reach the objective's map, or the edge its text names.
 
         A destination the routing graph does not know is not a reason to send a
@@ -803,17 +1182,24 @@ class QuestPlanner:
         no quest id is involved, and the same rule covers every objective that
         phrases a border crossing this way.
 
-        When there is neither a route nor a named edge, the client still cannot
-        change map by being handed an id: it only crosses an exit of the map it
-        is on. A live session re-sent `nav.goto {map_id: 698953}` nine times and
-        the client answered "map 698953 is not adjacent". Walking an exit is the
-        only move that can discover where an unindexed destination actually is.
+        The client cannot change map by being handed an id: it only crosses an
+        exit of the map it is on. A live session re-sent `nav.goto {map_id:
+        698953}` nine times and the client answered "map 698953 is not adjacent".
+        A destination the map index can route is walked one indexed border at a
+        time; the rest is discovered by walking an exit. A route that keeps
+        failing to come nearer is dropped after `ROUTE_STEP_LIMIT` attempts --
+        otherwise a two-map bounce, where every crossing resets the ordinary
+        scene-bound counters, repeats until the run ends.
         """
         try:
             target = int(need)
         except (TypeError, ValueError):
             target = need
-        all_exits = cls._observed_exits(obs, include_blocked=True)
+        try:
+            here = int(obs.get("map_id")) if isinstance(obs, dict) and obs.get("map_id") else None
+        except (TypeError, ValueError):
+            here = None
+        all_exits = self._observed_exits(obs, include_blocked=True)
         adjacent = any(e["map_id"] == target and not e["blocked"] for e in all_exits)
         # An adjacent exit the tutorial forbids is, for this step, the same as no
         # exit at all. Treating it as adjacent is what produced `nav.goto` calls
@@ -821,7 +1207,7 @@ class QuestPlanner:
         blocked_target = any(e["map_id"] == target and e["blocked"] for e in all_exits)
         if blocked_target:
             hint = direction_hint(obj)
-            allowed_dirs = {e["direction"] for e in cls._observed_exits(obs)}
+            allowed_dirs = {e["direction"] for e in self._observed_exits(obs)}
             if hint and hint in allowed_dirs:
                 return {
                     "tool": "nav.goto",
@@ -840,9 +1226,121 @@ class QuestPlanner:
                 "why": ("objective %s: the tutorial forbids the crossing to map %s; "
                         "waiting for the step" % (obj.get("type_id"), target)),
             }
-        if not known_map(target) and not adjacent:
+        # Travel that never comes nearer is a loop, not a route: each crossing
+        # changes the scene key, which wipes the claim counters, so only this
+        # memory can expire it. The tutorial-blocked case above is exempt -- a
+        # scripted gate lifts on its own step, and wandering meanwhile undoes
+        # scripted progress.
+        if here is not None and target != here:
+            state = self._note_route(key, obj, target, here)
+            if state["steps"] >= ROUTE_STEP_LIMIT:
+                explore = self._explore_call(obj, obs, avoid=self._prev_map)
+                if explore is not None:
+                    return explore
+                return {
+                    "tool": "state.snapshot",
+                    "args": {},
+                    "why": ("objective %s: %d travel attempts never came nearer to "
+                            "map %s; exploring instead"
+                            % (obj.get("type_id"), state["steps"], target)),
+                }
+        if not adjacent and here is not None and target != here:
+            exits = self._observed_exits(obs)
+            block = obs.get("map") if isinstance(obs, dict) else None
+            reported_exits = isinstance(block, dict) and isinstance(block.get("exits"), list)
+            neighbours = block.get("neighbours") if isinstance(block, dict) else None
+            # A house door is a painted cell, not a border. When a transition from
+            # this map has been seen before, the page remembers which cell performed
+            # it; asking for the target map makes the page walk onto that cell, and
+            # the server does the rest. This is how entering and leaving a house
+            # repeats instead of parking the session on the first visit.
+            doors = block.get("doors") if isinstance(block, dict) else None
+            if isinstance(doors, list):
+                for door in doors:
+                    if not isinstance(door, dict):
+                        continue
+                    if door.get("to_map") == target and door.get("cell") is not None:
+                        return {
+                            "tool": "nav.goto",
+                            "args": {"map_id": target},
+                            "why": ("objective %s: map %s remembers a door cell %s "
+                                    "that leads to %s; stepping on it is the transition"
+                                    % (obj.get("type_id"), here, door.get("cell"), target)),
+                        }
+            if reported_exits and not exits and isinstance(neighbours, dict) and neighbours:
+                # The client knows this map's edges but reports no crossable
+                # border: an interior whose way out is a door, and the snapshot
+                # lists no element for it. Waiting for the door is what parked a
+                # live session on house map 146276352 for every remaining step
+                # (2026-10-29). The page can ask the server for the neighbour
+                # directly -- the same ChangeMapMessage a tapped door sends -- so
+                # the honest plan is one request per neighbour, not a read.
+                hint = direction_hint(obj)
+                wanted = hint if hint in neighbours else None
+                if wanted is None:
+                    order = ("left", "right", "top", "bottom")
+                    usable = [d for d in order if d in neighbours]
+                    # Rotate: a refused request costs one step, and trying the
+                    # same wall four times teaches nothing. The objective's own
+                    # attempt counter is the rotation slot.
+                    tries = self._claim_actions.get(key, 0) if key is not None else 0
+                    if usable:
+                        wanted = usable[tries % len(usable)]
+                if wanted is not None:
+                    try:
+                        near = int(neighbours[wanted])
+                    except (TypeError, ValueError):
+                        near = None
+                    if near is not None:
+                        return {
+                            "tool": "nav.goto",
+                            "args": {"map_id": near, "direction": wanted},
+                            "why": ("objective %s: map %s publishes no crossable "
+                                    "border; ask the server for the %s neighbour %s"
+                                    % (obj.get("type_id"), here, wanted, near)),
+                        }
+                return {
+                    "tool": "state.snapshot",
+                    "args": {},
+                    "why": ("objective %s: map %s reports no crossable border and "
+                            "names no neighbour" % (obj.get("type_id"), here)),
+                }
+            route = route_first_hop(here, target)
+            if route is not None:
+                hop_map, hop_dir, hops = route
+                live = next((e for e in exits if e["map_id"] == hop_map), None)
+                if live is not None:
+                    return {
+                        "tool": "nav.goto",
+                        "args": {"map_id": hop_map},
+                        "why": ("objective %s: map %s is %d crossing(s) away; "
+                                "the %s exit to %s is the first"
+                                % (obj.get("type_id"), target, hops,
+                                   live["direction"], hop_map)),
+                    }
+                if hop_dir and any(e["direction"] == hop_dir for e in exits):
+                    return {
+                        "tool": "nav.goto",
+                        "args": {"direction": hop_dir},
+                        "why": ("objective %s: the route to map %s starts with the "
+                                "%s edge (-> %s), %d crossing(s) out"
+                                % (obj.get("type_id"), target, hop_dir, hop_map, hops)),
+                    }
+                if not reported_exits:
+                    # The snapshot carries no exit block at all, so there is nothing
+                    # to match the hop against. The index's first hop is still a
+                    # better request than the destination itself: the destination
+                    # is several crossings out and can only be refused, while the
+                    # hop is the border the route says comes first.
+                    return {
+                        "tool": "nav.goto",
+                        "args": {"map_id": hop_map},
+                        "why": ("objective %s: map %s is %d crossing(s) away; "
+                                "walk the first crossing to %s"
+                                % (obj.get("type_id"), target, hops, hop_map)),
+                    }
             hint = direction_hint(obj)
-            allowed_dirs = {e["direction"] for e in cls._observed_exits(obs)}
+            allowed_dirs = {e["direction"] for e in exits}
             if hint and hint in allowed_dirs:
                 return {
                     "tool": "nav.goto",
@@ -850,14 +1348,51 @@ class QuestPlanner:
                     "why": ("objective %s: cross the %s edge (target map %s is not "
                             "reachable from here)" % (obj.get("type_id"), hint, target)),
                 }
-            explore = cls._explore_call(obj, obs)
+            explore = self._explore_call(obj, obs, avoid=self._prev_map)
             if explore is not None:
                 return explore
+            # No usable crossing is reported (an empty or absent exit block). Keep
+            # the destination as the request: only a live client can adjudicate it,
+            # and a refusal is counted where it happens (`note_result`). With a
+            # populated exit block this branch is unreachable -- explore answers.
         return {
             "tool": "nav.goto",
             "args": {"map_id": target},
             "why": "objective %s: go to map %s" % (obj.get("type_id"), target),
         }
+
+    def _note_route(self, key: Optional[Tuple[Any, Any]], obj: Dict[str, Any],
+                    target: Any, here: Any) -> Dict[str, Any]:
+        """Count a travel attempt towards an objective's map, reset on progress.
+
+        `steps` counts decisions that did not reduce the remaining crossings.
+        Arriving nearer clears it, so a long route never expires; a bounce
+        between two maps keeps incrementing because going back is not progress.
+        The entry is keyed by the objective rather than the scene, because a
+        crossing replaces the scene -- which is exactly why the claim counters
+        cannot bound this.
+        """
+        if key is None:
+            key = (obj.get("id"), target)
+        state = self._route_tries.get(key)
+        if not isinstance(state, dict) or state.get("target") != target:
+            state = {"target": target, "best": None, "steps": 0}
+            if len(self._route_tries) > 256:
+                self._route_tries.clear()
+            self._route_tries[key] = state
+        dist = route_distance(here, target)
+        if dist is None:
+            # The index does not hold both ends, so there is no distance to say
+            # whether a crossing helped. Those destinations are the explore
+            # branch's job, not this bound's: counting them here retired every
+            # synthetic-map objective the offline teacher used to finish.
+            return state
+        if state.get("best") is None or dist < state["best"]:
+            state["best"] = dist
+            state["steps"] = 0
+        else:
+            state["steps"] += 1
+        return state
 
     def _dialog_call(self, obs: Dict[str, Any], goal: str) -> Optional[Any]:
         from agent.runtime import ToolCall
@@ -1023,18 +1558,112 @@ class QuestPlanner:
                 return None
         return None
 
+    # The client's menu-bar surfaces and the words a step uses for the same thing.
+    # This names a window, never a quest: every fresh character walks the same
+    # onboarding, and each of its UI steps says which surface it wants. A menu key
+    # is the client's own (`menuIconSpell`, `menuIconBook`, ...); the shop is the
+    # floating button the client shows on the map instead of a menu entry.
+    _UI_SURFACES = (
+        ("world map", {"menu": "Map"}),
+        ("quest book", {"menu": "Book"}),
+        ("spell", {"menu": "Spell"}),
+        ("inventory", {"menu": "Bag"}),
+        ("characteristic", {"menu": "Carac"}),
+        # The bundle maps this button to open("market", {tabId: "shop"}), and the
+        # tutorial's shop step ends on SHOP_LOADED — fired when the shop opens and
+        # its articles arrive. A market window left open from an earlier step makes
+        # the press a no-op, so the page closes it first (live 2026-10-29: press
+        # matched with open_before ["market > shop"] and changed:false).
+        ("shop", {"selector": ".shopBtn", "close_first": "market"}),
+        # Step 4980 opens the Help window the same way: its executeStart calls
+        # pointToMenuIcon("Help") and its endingCondition is WINDOW_OPENED with
+        # windowId "help"; the step after it ends on that window's close, which the
+        # cycle gives back.
+        ("help", {"menu": "Help"}),
+    )
+
+    # A step can name the window it waits for in its own endingCondition
+    # (`WINDOW_OPENED && "characUpdate" === t.windowId`). This is the control that
+    # opens that window: the characteristic upgrade window comes from the "+" cell
+    # of a characteristic row (`.upgradeButton`, DOM class from the bundle).
+    _WINDOW_CONTROLS = {
+        "characUpdate": {"selector": ".upgradeButton", "index": 0},
+    }
+
+    @classmethod
+    def _ui_surface(cls, text: str) -> Optional[Dict[str, Any]]:
+        low = (text or "").lower()
+        if not low:
+            return None
+        for word, args in cls._UI_SURFACES:
+            if word in low:
+                return dict(args)
+        return None
+
+    def _ui_step(self, obs: Dict[str, Any],
+                 qid: int) -> Optional[Tuple[str, Dict[str, Any], int]]:
+        """The surface a step asks the player to open, and the step it belongs to.
+
+        The step's own name and description are the client's text ("Open the
+        Spell interface from the menu"), read from the quest catalogue the page
+        publishes. The ready objective's text is the fallback for a build where
+        the catalogue has not been captured.
+        """
+        step_id = 0
+        try:
+            step_id = int((obs.get("quest_steps") or {}).get(str(qid)) or 0)
+        except (TypeError, ValueError):
+            step_id = 0
+        names: List[str] = []
+        parts: List[str] = []
+        for quest in (obs.get("quests_catalog") or []):
+            try:
+                if int(quest.get("id") or 0) != qid:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            for step in (quest.get("steps") or []):
+                try:
+                    if step_id and int(step.get("id") or 0) != step_id:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                names.append(str(step.get("name") or ""))
+                parts.append(str(step.get("name") or ""))
+                parts.append(str(step.get("description") or ""))
+        if not parts:
+            for item in (obs.get("ready_objectives") or []):
+                try:
+                    if int(item.get("quest_id")) != qid:
+                        continue
+                except (KeyError, TypeError, ValueError):
+                    continue
+                parts.append(str(item.get("text") or ""))
+        # The step's name is the client's own label for the action ("Open the Help
+        # Interface"); its description is prose and can mention any word ("ask him
+        # to help you"), so a named step is matched on its name alone. Only a step
+        # with no name at all falls back to the full text.
+        named = [name for name in names if name.strip()]
+        args = self._ui_surface(" ".join(named) if named else " ".join(parts))
+        if args is None:
+            return None
+        key = str(args.get("menu") or args.get("selector") or "")
+        return key, args, step_id
+
     def _tutorial_call(self, obs: Dict[str, Any], goal: str) -> Optional[Any]:
         """The tutorial's next action, when it dictates one.
 
-        Three shapes, all read from the step itself:
+        Four shapes, all read from the step itself:
           * a dialog is open -> answer it (the reply advances the step)
+          * a step points at a client control -> tap it by client_target
           * one NPC is tappable -> walk to it and talk
           * a set of cells is tappable -> walk to one of them
+          * a window is named -> press that menu key (ui.tap)
 
         `unblocked_cells == []` is a real gate ("stay where you are"), not "no
         restriction", and `[0, ...]` ids other than 0 mean nothing is tappable. When
-        the step demands a UI action the tool set does not have, this returns None
-        and the caller waits instead of starting an unrelated quest.
+        the step demands an action none of these can express, this returns None and
+        the caller waits instead of starting an unrelated quest.
         """
         from agent.runtime import ToolCall
 
@@ -1057,6 +1686,104 @@ class QuestPlanner:
             # is now reserved for a start request, which the page refuses here.
             return ToolCall("quest.advance", {"quest_id": qid, "reply": 0}, goal)
 
+        # The step's own hint names the control it waits for. The tutorial's
+        # challenge sub-step starts with pointToChallenge and ends on TAP_ANYWHERE
+        # (a touchend the scenario listens for); combat casts go through
+        # fightManager.castSpell, which never produces that event, so the step
+        # only advances when a real press lands on the challenge slot.
+        hint = tutorial.get("hint_target")
+        if isinstance(hint, str) and hint:
+            # `step_id` is the scenario's array index and the only identity a
+            # sub-step has: `step_checkpoint` is -1 on every sub-step, so keying
+            # on it alone shares one press budget across unrelated steps.
+            key = (qid, tutorial.get("step_id"), tutorial.get("special_step_id"),
+                   "hint", hint)
+            if self._ui_attempts.get(key, 0) < 4:
+                self._ui_attempts[key] = self._ui_attempts.get(key, 0) + 1
+                if len(self._ui_attempts) > 32:
+                    self._ui_attempts.clear()
+                    self._ui_attempts[key] = 1
+                self.current_quest = qid
+                self.current_objective = None
+                return ToolCall("ui.tap", {"client_target": hint}, goal)
+            # The hint press is only the tutorial's pointer: the step itself ends
+            # on any touchend, so a spent hint falls through to the world tap.
+            if not tutorial.get("tap_anywhere"):
+                return None
+
+        # A step that highlights a map element (`playInteractiveElementTap(514876)`)
+        # is waiting for that element to be used; isoEngine.useInteractive both
+        # walks there and sends InteractiveUseRequestMessage, and the step ends on
+        # the INTERACTIVE_USED that comes back (or on the crafting window it opens).
+        interactive = tutorial.get("interactive_hint")
+        try:
+            interactive = int(interactive) if interactive is not None else None
+        except (TypeError, ValueError):
+            interactive = None
+        if interactive is not None and interactive > 0:
+            key = (qid, tutorial.get("step_id"), tutorial.get("special_step_id"),
+                   "interactive", interactive)
+            if self._ui_attempts.get(key, 0) < 4:
+                self._ui_attempts[key] = self._ui_attempts.get(key, 0) + 1
+                if len(self._ui_attempts) > 32:
+                    self._ui_attempts.clear()
+                    self._ui_attempts[key] = 1
+                self.current_quest = qid
+                self.current_objective = None
+                return ToolCall("tap.interactive", {"element_id": interactive}, goal)
+            # Fall through: the generic npc/cell paths may still reach the element.
+
+        # A step whose own endingCondition references TAP_ANYWHERE advances on a
+        # real touchend on the game body. The shop chain's post-load step is one:
+        # it *rewinds* if the market window closes, so the world tap must run
+        # before the shop surface's close-first press can fire.
+        if tutorial.get("tap_anywhere"):
+            key = (qid, tutorial.get("step_id"), tutorial.get("special_step_id"),
+                   "tap")
+            if self._ui_attempts.get(key, 0) < 3:
+                self._ui_attempts[key] = self._ui_attempts.get(key, 0) + 1
+                if len(self._ui_attempts) > 32:
+                    self._ui_attempts.clear()
+                    self._ui_attempts[key] = 1
+                self.current_quest = qid
+                self.current_objective = None
+                return ToolCall("ui.tap", {"client_target": "world"}, goal)
+            return None
+
+        # The step's own executeStart can name the menu it points at
+        # (`pointToMenuIcon("Carac")`). That is the client's own label, so it
+        # outranks matching the step's English name against a surface table.
+        menu_hint = tutorial.get("menu_hint")
+        if isinstance(menu_hint, str) and menu_hint:
+            key = (qid, tutorial.get("step_id"), tutorial.get("special_step_id"),
+                   "menu", menu_hint)
+            if self._ui_attempts.get(key, 0) < 2:
+                self._ui_attempts[key] = self._ui_attempts.get(key, 0) + 1
+                if len(self._ui_attempts) > 32:
+                    self._ui_attempts.clear()
+                    self._ui_attempts[key] = 1
+                self.current_quest = qid
+                self.current_objective = None
+                return ToolCall("ui.tap", {"menu": menu_hint, "cycle": True}, goal)
+            return None
+
+        open_window = tutorial.get("open_window")
+        if isinstance(open_window, str) and open_window:
+            control = self._WINDOW_CONTROLS.get(open_window)
+            if control is not None:
+                key = (qid, tutorial.get("step_id"),
+                       tutorial.get("special_step_id"), "window", open_window)
+                if self._ui_attempts.get(key, 0) < 3:
+                    self._ui_attempts[key] = self._ui_attempts.get(key, 0) + 1
+                    if len(self._ui_attempts) > 32:
+                        self._ui_attempts.clear()
+                        self._ui_attempts[key] = 1
+                    self.current_quest = qid
+                    self.current_objective = None
+                    return ToolCall("ui.tap", dict(control), goal)
+                # Fall through: the generic surface press may reopen the window
+                # the control lives in.
+
         npc = tutorial.get("unblocked_npc_id")
         if npc is not None:
             try:
@@ -1064,12 +1791,26 @@ class QuestPlanner:
             except (TypeError, ValueError):
                 npc = None
         if npc is not None and npc > 0:
-            args: Dict[str, Any] = {"npc_id": npc}
-            if qid is not None:
-                args["quest_id"] = qid
-            self.current_quest = qid
-            self.current_objective = None
-            return ToolCall("quest.advance", args, goal)
+            # A talk that does not advance is not retryable: the client walks and
+            # opens the dialogue in one call, so a repeat asks the same NPC the
+            # same question. Live sessions re-sent this for entire budgets (277
+            # executed no-op talks in one dofus-05 session, 272 in dofus-03, both
+            # step 1 "Parler a Jin Spyr"). Bounded like the hint and window
+            # controls; afterwards the step's other gates and the ready objective
+            # get their turn, and finally the caller waits on the step.
+            key = (qid, tutorial.get("step_id"), tutorial.get("special_step_id"),
+                   "npc", npc)
+            if self._ui_attempts.get(key, 0) < 4:
+                self._ui_attempts[key] = self._ui_attempts.get(key, 0) + 1
+                if len(self._ui_attempts) > 32:
+                    self._ui_attempts.clear()
+                    self._ui_attempts[key] = 1
+                args: Dict[str, Any] = {"npc_id": npc}
+                if qid is not None:
+                    args["quest_id"] = qid
+                self.current_quest = qid
+                self.current_objective = None
+                return ToolCall("quest.advance", args, goal)
 
         cells = tutorial.get("unblocked_cells")
         if isinstance(cells, list):
@@ -1091,6 +1832,401 @@ class QuestPlanner:
                 self.current_quest = qid
                 self.current_objective = None
                 return ToolCall("nav.goto", {"cell": pick}, goal)
+
+        # A step that asks for a window ("Open the Spell Interface", "Open the
+        # World Map", "Do the quest book tutorial") is completed by pressing the
+        # client's own menu button. Its objective is server-counted, so a claim
+        # on it ends the connection; a press is the event the step waits for.
+        if qid is not None:
+            ui = self._ui_step(obs, qid)
+            if ui is not None:
+                key, args, step_id = ui
+                opens = [str(row).split(" > ")[0]
+                         for row in (obs.get("open_windows") or [])]
+                close_first = args.get("close_first")
+                close_names = ([close_first] if isinstance(close_first, str)
+                               else list(close_first or []))
+                window_open = bool(close_names) and any(
+                    str(w) in opens for w in close_names)
+                if window_open:
+                    # The client's shop step ends on the fake-shop *purchase*: the
+                    # article's hard-price button makes the client emit
+                    # FAKE_SHOP_BUY and the scenario validates the objective itself.
+                    # Pressing the floating button again would close and reopen the
+                    # window and restart the load, so the action is the article.
+                    buy = (qid, step_id, "shop.buy")
+                    if self._ui_attempts.get(buy, 0) < 4:
+                        self._ui_attempts[buy] = self._ui_attempts.get(buy, 0) + 1
+                        if len(self._ui_attempts) > 32:
+                            self._ui_attempts.clear()
+                            self._ui_attempts[buy] = 1
+                        self.current_quest = qid
+                        self.current_objective = None
+                        return ToolCall("shop.buy", {"which": "first"}, goal)
+                    return None
+                attempt = (qid, step_id, key)
+                limit = 2
+                if self._ui_attempts.get(attempt, 0) < limit:
+                    self._ui_attempts[attempt] = self._ui_attempts.get(attempt, 0) + 1
+                    if len(self._ui_attempts) > 32:
+                        self._ui_attempts.clear()
+                        self._ui_attempts[attempt] = 1
+                    self.current_quest = qid
+                    self.current_objective = None
+                    press = dict(args)
+                    if not press.get("close_first"):
+                        # A step that completes on the close is given its press back;
+                        # one that completes on the open must not be closed again.
+                        press["cycle"] = True
+                    return ToolCall("ui.tap", press, goal)
+        return None
+
+    # -- objectives read together ------------------------------------------
+
+    @staticmethod
+    def _level_gate_target(obj: Dict[str, Any]) -> Optional[int]:
+        """The level a free-form objective demands, when it is a bare gate.
+
+        Only `QuestObjectiveFreeForm` (type 0) with no monster target can be a
+        gate: a kill objective's text can mention a level and must not be turned
+        into "grind until level N".
+        """
+        if not isinstance(obj, dict):
+            return None
+        if declares_monster_target(obj) is not False:
+            return None
+        try:
+            if int(obj.get("type_id")) != 0:
+                return None
+        except (TypeError, ValueError):
+            return None
+        match = LEVEL_GATE_RE.search(str(obj.get("text") or ""))
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _kill_objective_target(obj: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
+        """(monster id, map id) a kill objective names, or (None, None)."""
+        if not isinstance(obj, dict):
+            return None, None
+        if declares_monster_target(obj) is False:
+            return None, None
+        try:
+            if int(obj.get("type_id")) not in KILL_TYPES:
+                return None, None
+        except (TypeError, ValueError):
+            return None, None
+        try:
+            monster = int(_params(obj).get("parameter0"))
+        except (TypeError, ValueError):
+            return None, None
+        try:
+            need = int(obj.get("map_id")) if obj.get("map_id") else None
+        except (TypeError, ValueError):
+            need = None
+        return monster, need
+
+    def _open_objectives(self, obs: Dict[str, Any]) -> List[Tuple[int, int, Dict[str, Any]]]:
+        """Every objective the snapshot names, ready or currently tracked.
+
+        One pass over the whole set, so an action can be priced by the number of
+        objectives it advances instead of by which entry the client happened to
+        list first.
+        """
+        out: List[Tuple[int, int, Dict[str, Any]]] = []
+        seen = set()
+
+        def add(qid: Any, oid: Any, item: Any) -> None:
+            try:
+                key = (int(qid), int(oid))
+            except (TypeError, ValueError):
+                return
+            if key in seen:
+                return
+            seen.add(key)
+            obj = self._lookup_objective(key[0], key[1],
+                                         item if isinstance(item, dict) else {})
+            if isinstance(obj, dict):
+                out.append((key[0], key[1], obj))
+
+        for item in obs.get("ready_objectives") or []:
+            if isinstance(item, dict):
+                add(item.get("quest_id"), item.get("objective_id"), item)
+        tracker = obs.get("current_objective") or {}
+        if isinstance(tracker, dict) and tracker.get("quest_id") is not None:
+            oid = tracker.get("objective_id")
+            row = None
+            for entry in list(obs.get("step_objectives") or []) \
+                    + list(catalog_objectives(obs, tracker.get("quest_id"))):
+                if isinstance(entry, dict) and str(entry.get("id")) == str(oid):
+                    row = entry
+                    break
+            add(tracker.get("quest_id"), oid, row or {})
+        return out
+
+    @staticmethod
+    def _map_groups(obs: Dict[str, Any]) -> List[Dict[str, Any]]:
+        block = obs.get("map") if isinstance(obs, dict) else None
+        raw = None
+        if isinstance(block, dict) and isinstance(block.get("groups"), list):
+            raw = block["groups"]
+        elif isinstance(obs, dict) and isinstance(obs.get("groups"), list):
+            raw = obs["groups"]
+        if raw is None:
+            return []
+        return [row for row in raw if isinstance(row, dict)]
+
+    @staticmethod
+    def _group_members(group: Dict[str, Any]) -> int:
+        try:
+            return max(1, int(group.get("member_count")
+                              or len(group.get("members") or []) or 1))
+        except (TypeError, ValueError):
+            return 1
+
+    @staticmethod
+    def _group_has(group: Dict[str, Any], monster: int) -> bool:
+        for raw in group.get("monster_ids") or []:
+            try:
+                if int(raw) == monster:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        for member in group.get("members") or []:
+            if not isinstance(member, dict):
+                continue
+            try:
+                if int(member.get("monster_id")) == monster:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    @staticmethod
+    def _group_allowed(group: Dict[str, Any], estimates: Any) -> bool:
+        """Whether this group may be attacked.
+
+        The brain's own estimator is the authority when it has spoken for the
+        group; without one, a group of at most two is the envelope every
+        tutorial fight on this account has been accepted in, and anything larger
+        stays for the estimator rather than being walked into blind.
+        """
+        gid = group.get("group_id")
+        if isinstance(estimates, list) and estimates:
+            for row in estimates:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    if row.get("group_id") is not None and int(row["group_id"]) == int(gid):
+                        return bool(row.get("allowed"))
+                except (TypeError, ValueError):
+                    continue
+        return QuestPlanner._group_members(group) <= 2
+
+    @staticmethod
+    def _travel_allowed(obs: Dict[str, Any]) -> bool:
+        tutorial = obs.get("tutorial")
+        if not isinstance(tutorial, dict) or not tutorial.get("active"):
+            return True
+        gates = tutorial.get("can_change_map")
+        if isinstance(gates, dict) and gates:
+            return any(bool(value) for value in gates.values())
+        return True
+
+    def _note_claim(self, key: Tuple[int, int], tool: str,
+                    here: Any) -> None:
+        self._claim_actions[key] = self._claim_actions.get(key, 0) + 1
+        self._claim_map[key] = here
+        self._pending_claim = (key, tool)
+
+    def _note_gate_action(self, gate: Tuple[int, int], tool: str,
+                          obs: Dict[str, Any]) -> None:
+        """Count a gate action, forgiving the ones that earned XP.
+
+        The bound exists to stop actions that change nothing; a fight that moved
+        the XP bar is not one of them, so the count restarts when XP moved.
+        """
+        key = (gate[0], gate[1])
+        xp = obs.get("xp")
+        if xp is not None and self._gate_xp_mark.get(key) not in (None, xp):
+            self._claim_actions[key] = 0
+        if xp is not None:
+            self._gate_xp_mark[key] = xp
+        self._note_claim(key, tool, obs.get("map_id"))
+
+    def _combined_objective_call(self, obs: Dict[str, Any],
+                                 goal: str) -> Optional[Dict[str, Any]]:
+        """One action that serves as many open objectives as possible.
+
+        Live 2026-10-29 (dofus-05): the tutorial's step 4978 says "Reach level 10"
+        and the loop answered it by talking to NPCs -- 54 waits and five dialog
+        stalls walking three maps. A level gate is not a conversation; XP is the
+        only thing that moves it. And because the planner read one ready entry at
+        a time, it never noticed that the same fight also serves "Defeat 1
+        Brytnee Spyr" on the same map. This pass reads every open objective,
+        scores the actions by how many of them they advance, and takes the best.
+        It only speaks while a gate is open; everything else stays with the
+        single-objective machinery that owns the claim and retire rules.
+        """
+        try:
+            level = int(obs.get("level") or 0)
+        except (TypeError, ValueError):
+            level = 0
+        here = obs.get("map_id")
+        self._plan_seq += 1
+        entries = self._open_objectives(obs)
+
+        gate: Optional[Tuple[int, int, Dict[str, Any]]] = None
+        gate_target = 0
+        for qid, oid, obj in entries:
+            target = self._level_gate_target(obj)
+            if target is None or level >= target:
+                continue
+            gate, gate_target = (qid, oid, obj), target
+            break
+        if gate is None:
+            return None
+        key = (gate[0], gate[1])
+        if self._claim_failures.get(key, 0) >= CLAIM_FAILURE_LIMIT:
+            return None
+        tutorial = self._tutorial(obs)
+        if gate[0] in self._skipped and not (
+                tutorial is not None
+                and self._tutorial_quest(obs, tutorial) == gate[0]):
+            return None
+
+        kill: Optional[Tuple[int, int, Dict[str, Any], int, Optional[int]]] = None
+        for qid, oid, obj in entries:
+            if (qid, oid) == key or qid in self._skipped:
+                continue
+            monster, need = self._kill_objective_target(obj)
+            if monster is None:
+                continue
+            kill = (qid, oid, obj, monster, need)
+            break
+
+        groups = self._map_groups(obs)
+        estimates = obs.get("fight_estimates")
+        usable = [g for g in groups if self._group_allowed(g, estimates)]
+        if here is not None:
+            if usable:
+                self._group_maps[here] = self._plan_seq
+            else:
+                # A map with no group this pass may attack -- empty, or holding
+                # only groups the estimator refused -- is not a place to come
+                # back to. Keeping that memory walked the live loop back and
+                # forth between two maps whose only groups were too big.
+                self._group_maps.pop(here, None)
+
+        def rank(group: Dict[str, Any]) -> Tuple[int, int]:
+            return (0 if group in usable else 1, self._group_members(group))
+
+        def finish(call: Dict[str, Any]) -> Dict[str, Any]:
+            self._log_plan({"id": gate[1], "text": gate[2].get("text")}, call)
+            return call
+
+        # 1. The single best action: a group holding a kill objective's monster.
+        if kill is not None and (kill[4] is None or kill[4] == here):
+            matching = [g for g in usable if self._group_has(g, kill[3])]
+            if matching:
+                pick = min(matching, key=rank)
+                try:
+                    gid = int(pick.get("group_id"))
+                except (TypeError, ValueError):
+                    gid = None
+                if gid is not None:
+                    self._note_claim((kill[0], kill[1]), "fight.join", here)
+                    self._note_gate_action(gate, "fight.join", obs)
+                    return finish({"tool": "fight.join", "args": {"group_id": gid},
+                                   "why": ("level gate %d/%d is open at level %d and "
+                                           "objective %d/%d names monster %d, which "
+                                           "this group holds: one fight advances both"
+                                           % (gate[0], gate[1], level, kill[0], kill[1],
+                                              kill[3]))})
+
+        # 2. A group this pass may attack is XP in hand. A conversation cannot
+        #    move a level gate, and the trip toward a kill objective only pays
+        #    once a fight happens there; guaranteed progress goes first.
+        if usable:
+            pick = min(usable, key=rank)
+            try:
+                gid = int(pick.get("group_id"))
+            except (TypeError, ValueError):
+                gid = None
+            if gid is not None:
+                self._note_gate_action(gate, "fight.join", obs)
+                return finish({"tool": "fight.join", "args": {"group_id": gid},
+                               "why": ("level gate %d/%d: the character is level %d "
+                                       "and only a fight moves it; this map's smallest "
+                                       "allowed group" % (gate[0], gate[1], level))})
+
+        # 3. Nothing to fight here, and both objectives live one map away: a
+        #    single trip serves them.
+        if kill is not None and kill[4] is not None and kill[4] != here \
+                and self._travel_allowed(obs):
+            call = self._travel_call(kill[2], int(kill[4]), obs,
+                                     key=(kill[0], kill[1]))
+            if isinstance(call, dict) and call.get("tool"):
+                if call["tool"] == "nav.goto":
+                    self._note_claim((kill[0], kill[1]), "nav.goto", here)
+                    self._note_gate_action(gate, "nav.goto", obs)
+                call["why"] = ("level gate %d/%d and objective %d/%d both need map %s; "
+                               "one trip, then the fight pays both"
+                               % (gate[0], gate[1], kill[0], kill[1], kill[4]))
+                return finish(call)
+
+        # 4. No group here: walk back to where groups were last seen. A blind
+        #    edge search is the fallback, once per map; a tutorial that forbids
+        #    crossing makes both pointless.
+        if not self._travel_allowed(obs):
+            if self._claim_actions.get(key, 0) < CLAIM_ACTION_LIMIT:
+                self._note_gate_action(gate, "state.snapshot", obs)
+                return finish({"tool": "state.snapshot", "args": {},
+                               "why": ("level gate %d/%d: no group on this map and "
+                                       "the step forbids crossing; waiting"
+                                       % (gate[0], gate[1]))})
+            return None
+        recent = None
+        candidates = [(map_id, seq) for map_id, seq in self._group_maps.items()
+                      if map_id is not None and map_id != here]
+        candidates.sort(key=lambda row: row[1], reverse=True)
+        if len(candidates) > 1 and self._prev_map is not None:
+            # The map we just left is the least promising destination: it was
+            # checked and had no group, which is why the memory was dropped.
+            candidates = [row for row in candidates
+                          if row[0] != self._prev_map] or candidates
+        if candidates:
+            recent = candidates[0][0]
+        if recent is not None:
+            call = self._travel_call(gate[2], int(recent), obs, key=key)
+            if isinstance(call, dict) and call.get("tool") == "nav.goto":
+                self._note_gate_action(gate, "nav.goto", obs)
+                call["why"] = ("level gate %d/%d: map %s is where groups were last "
+                               "seen; go back and fight there"
+                               % (gate[0], gate[1], recent))
+                return finish(call)
+        explore_key = (gate[0], gate[1], here)
+        if explore_key not in self._gate_explores:
+            self._gate_explores.add(explore_key)
+            if len(self._gate_explores) > 64:
+                self._gate_explores.clear()
+                self._gate_explores.add(explore_key)
+            explore = self._explore_call(gate[2], obs, avoid=self._prev_map)
+            if isinstance(explore, dict) and explore.get("tool"):
+                self._note_gate_action(gate, explore["tool"], obs)
+                explore["why"] = ("level gate %d/%d: no group on this map and no "
+                                  "map is known to have one; look for one"
+                                  % (gate[0], gate[1]))
+                return finish(explore)
+        if self._claim_actions.get(key, 0) < CLAIM_ACTION_LIMIT:
+            self._note_gate_action(gate, "state.snapshot", obs)
+            return finish({"tool": "state.snapshot", "args": {},
+                           "why": ("level gate %d/%d: no group found and no edge "
+                                   "left to try; waiting" % (gate[0], gate[1]))})
         return None
 
     # -- retirement that can be undone -------------------------------------
@@ -1123,11 +2259,17 @@ class QuestPlanner:
             tracker = {}
         tutorial = cls._tutorial(obs) or {}
         gate = tutorial.get("can_change_map") or {}
+        # The map is deliberately not part of the signature. It was, and a live
+        # session (2026-10-29) retired quest 4262 on map 145490432, walked to
+        # 145490946 for its sibling, and the crossing alone "changed the
+        # situation" and reopened 4262 -- so the next step walked back. A quest
+        # retired for having nothing to do on a map is a question about the map
+        # visit (`_exhausted_at` answers it); it is not a different quest on the
+        # next crossing.
         return (
             cls._tracker_step(obs, quest_id),
             tracker.get("step"),
             tracker.get("objective_id"),
-            obs.get("map_id"),
             bool(tutorial),
             tuple(sorted((str(k), bool(v)) for k, v in gate.items())),
         )
@@ -1149,15 +2291,32 @@ class QuestPlanner:
         """
         tutorial = self._tutorial(obs)
         if tutorial is not None:
-            # A scripted step invalidates earlier stall verdicts about the quests
-            # it drives.
-            for key in (obs.get("quests_active") or {}):
-                try:
-                    qid = int(key)
-                except (TypeError, ValueError):
-                    continue
-                self._skipped.discard(qid)
-                self._skip_sigs.pop(qid, None)
+            # A retired quest is reopened only when its situation changed -- the
+            # per-quest signature below already carries the tutorial step, the
+            # tracker's step, the map and the gate. Reopening every active quest
+            # just because a step is running defeated the loop's own retirement:
+            # the live run retired the stuck tutorial quest and the very next
+            # step put it back, so four wait windows later nothing had moved.
+            #
+            # A new scripted step is a new situation for the maps too: an
+            # objective that had nothing to do earlier may have been waiting for
+            # exactly this step. (Only the step clears it -- a map change must
+            # not, because that is the record that stops the walk-back loop.)
+            step = tutorial.get("step_id")
+            if step != getattr(self, "_tutorial_step_seen", "unset"):
+                self._tutorial_step_seen = step
+                if getattr(self, "_exhausted_at", None):
+                    self._exhausted_at.clear()
+                # A scripted gate can block the very crossing a route needed, so
+                # the new step deserves a fresh travel budget as well.
+                self._route_tries.clear()
+        elif getattr(self, "_tutorial_step_seen", None) is not None:
+            # The scenario is over: what had nothing to do under its gates is a
+            # fresh question now that the gates are gone.
+            self._tutorial_step_seen = None
+            if getattr(self, "_exhausted_at", None):
+                self._exhausted_at.clear()
+            self._route_tries.clear()
         for qid, sig in list(self._skip_sigs.items()):
             if qid not in self._skipped:
                 self._skip_sigs.pop(qid, None)
@@ -1234,8 +2393,18 @@ class QuestPlanner:
                 if preset is not None:
                     return [{"tool": "inv.equip", "args": {"preset_id": int(preset)},
                              "why": "objective asks to equip; apply the saved preset"}]
-                return [{"tool": "inv.list", "args": {},
-                         "why": "objective asks to equip; read presets first"}]
+                uid = self._next_equip_uid(quest, obj, obs)
+                if uid is not None:
+                    args: Dict[str, Any] = {"object_uid": uid}
+                    slot = self._worn_slot_for(obs, uid)
+                    if slot is not None:
+                        args["slot"] = slot
+                    return [{"tool": "inv.equip", "args": args,
+                             "why": "objective asks to equip; no preset, so equip "
+                                    "an item that is not on yet"}]
+                # No preset and nothing left to offer: fall through to the rest of
+                # the objective (the live text is "Equip ..., then talk to ..."),
+                # not to another inv.list read, which never changes anything.
             if child["kind"] == "explore" and t in KILL_TYPES:
                 direction = child_args.get("direction")
                 if direction:
@@ -1255,8 +2424,21 @@ class QuestPlanner:
                 need = None
         if not need:          # 0 is the KB's "no map", not a destination
             need = None
+        travel_key = None
+        if need is not None:
+            try:
+                travel_key = (int(quest.get("id")), int(obj.get("id")))
+            except (TypeError, ValueError, AttributeError):
+                travel_key = None
+            # The ready scan records a map it stood on with nothing to do for this
+            # objective; the active-quest path plans the same objective and used to
+            # walk back there anyway. Live 2026-10-29: quests 4262 and 4264 bounced
+            # 145489920 <-> 145489921 for twenty steps for exactly this reason.
+            if travel_key is not None and (travel_key[0], travel_key[1], int(need)) \
+                    in getattr(self, "_exhausted_at", ()):
+                return []
         if need is not None and here != need:
-            travel = [self._travel_call(obj, need, obs)]
+            travel = [self._travel_call(obj, need, obs, key=travel_key)]
 
         if t in MAP_TYPES:
             if need is not None:
@@ -1271,16 +2453,23 @@ class QuestPlanner:
             npc = p.get("parameter0")
             if npc is None:
                 return []
-            calls = list(travel)
+            # The objective's map is where the quest was given, not necessarily
+            # where the NPC stands. Live 2026-10-29: 4274/13926 named map
+            # 145490435 while Great Jarl Ordyn (3892) was on 146276352, the house
+            # the previous step had just entered; nav.goto there answered "not
+            # adjacent" and the loop waited. A target that is visible on this map
+            # is talked to here.
+            visible = self._npc_here(obj, obs)
+            calls = [] if visible else list(travel)
             # If the agent has discovered where this NPC is, travel first. The KB
             # has no npc -> map table; the store fills that gap at runtime.
             target = None
-            if self.store is not None:
+            if not visible and self.store is not None:
                 try:
                     target = self.store.get("npc_map", "npc:%d" % int(npc))
                 except Exception:  # noqa: BLE001
                     target = None
-            if target and not travel and here != target:
+            if target and not calls and here != target:
                 calls.append({"tool": "nav.goto", "args": {"map_id": int(target)},
                               "why": "travelled to npc %d (learned fact)" % int(npc)})
             calls.append({"tool": "quest.advance",
@@ -1293,13 +2482,48 @@ class QuestPlanner:
                 # `type_id` 0 was decoded as "monster" from the objective text, and the
                 # client's parameter table says otherwise: this class declares only a
                 # text parameter, so there is no group to hunt and no fight order to
-                # send. Travelling is still honest when the objective names a place;
-                # otherwise this objective asks for nothing, and the ready scan moves to
-                # the entry behind it that can be acted on.
+                # send. A free-form objective is performed through the map's own
+                # interactive element; travelling is still honest when the objective
+                # names a place, and the ready scan moves to the entry behind it that
+                # can be acted on.
+                free = [] if travel else self._free_form_calls(obj, obs)
+                if free:
+                    return list(travel) + free
+                if not travel:
+                    # A free-form step can name a person, not an element: "Go to
+                    # Albuera with Ayin Spyr" is an escort that starts in an NPC
+                    # dialogue, and with every interactive tried once the loop sat
+                    # on state.snapshot forever (dofus-05, 2026-10-28). Asking each
+                    # map NPC once is the same generic move the fight objectives use.
+                    npc_calls = self._npc_talk_calls(
+                        quest, obj, obs, t,
+                        why_fmt="objective %s: free-form; ask NPC %d")
+                    if npc_calls:
+                        return npc_calls
+                    # Everything this map offers has been tried: its elements are
+                    # retired in `_interactive_tries`, its NPCs in `_npc_asked`. A
+                    # different map carries different elements and NPCs, so walking
+                    # is the only world-changing action left. Returning nothing here
+                    # is the live 2026-10-29 stall: objective 14070 (free-form, no
+                    # map) planned no call, the policy read the state every pass, and
+                    # the run waited 467 passes with nothing to dispatch. The visit
+                    # is retired for this objective so the search cannot bounce
+                    # between two exhausted maps -- which is also the moment the
+                    # autopilot's dead-window bound ends the run instead of spinning.
+                    try:
+                        self._exhausted_at.add((int(quest.get("id")),
+                                                int(obj.get("id")), int(here)))
+                    except (TypeError, ValueError, AttributeError):
+                        pass
+                    explore = self._explore_call(obj, obs, avoid=self._prev_map)
+                    if explore is not None:
+                        return [explore]
                 return list(travel)
             monster = p.get("parameter0")
             calls = list(travel)
             visible = self._visible_target(obs, monster)
+            spawn_key = (quest.get("id") if isinstance(quest, dict) else None,
+                         obj.get("id"), monster)
             if visible is False:
                 npc_calls = self._npc_talk_calls(quest, obj, obs, t)
                 if npc_calls:
@@ -1307,11 +2531,29 @@ class QuestPlanner:
                 if obj.get("map_id"):
                     # The objective names the map it must happen on. Groups
                     # respawn there; walking away would only require walking
-                    # back, so wait for the spawn instead.
-                    return calls + [{
-                        "tool": "state.snapshot", "args": {},
-                        "why": ("objective %d: waiting for a group on map %s"
-                                % (t, obj.get("map_id")))}]
+                    # back, so wait for the spawn instead -- but only for one
+                    # window. Live 2026-10-29: 467 passes (172 s) on map
+                    # 145489920 with no group, and every escalation inside the
+                    # wait proposed a farm the quest gate refuses, so the run
+                    # could not leave the map. Past the window, search.
+                    waits = getattr(self, "_spawn_waits", None)
+                    if not isinstance(waits, dict):
+                        waits = {}
+                        self._spawn_waits = waits
+                    n = waits.get(spawn_key, 0) + 1
+                    if len(waits) > 64:
+                        waits.clear()
+                        n = 1
+                    if n <= SPAWN_WAIT_PASSES:
+                        waits[spawn_key] = n
+                        return calls + [{
+                            "tool": "state.snapshot", "args": {},
+                            "why": ("objective %d: waiting for a group on map %s "
+                                    "(%d/%d)" % (t, obj.get("map_id"), n,
+                                                 SPAWN_WAIT_PASSES))}]
+                    # The search below is the answer; the next visit to this map
+                    # gets its own window rather than bouncing straight out.
+                    waits.pop(spawn_key, None)
                 # `fight.join` can only attack a group the map reports. The
                 # objective names the monster, so go and find it; the farm loop
                 # is a standing order, not a quest action.
@@ -1322,6 +2564,7 @@ class QuestPlanner:
                     "tool": "state.snapshot", "args": {},
                     "why": ("objective %d: target %s is not on this map and "
                             "there is no exit to search" % (t, monster))}]
+            getattr(self, "_spawn_waits", {}).pop(spawn_key, None)
             calls.append({"tool": "fight.join",
                           "args": {"monster": monster} if monster else {},
                           "why": "objective %d: fight" % t})
@@ -1557,6 +2800,7 @@ class QuestPlanner:
             return None
         self.current_quest = quest_id
         self.current_objective = obj.get("id")
+        self._log_plan(obj, calls[0])
         return ToolCall(calls[0]["tool"], dict(calls[0]["args"]), goal)
 
     def _plan_quest(self, quest_id: int, step_idx: int,
@@ -1575,7 +2819,22 @@ class QuestPlanner:
         first = calls[0]
         self.current_quest = quest_id
         self.current_objective = obj.get("id")
+        self._log_plan(obj, first)
         return ToolCall(first["tool"], dict(first["args"]), goal)
+
+    @staticmethod
+    def _log_plan(obj: Dict[str, Any], call: Dict[str, Any]) -> None:
+        """Say which objective asked for a call and why.
+
+        The step rows carry the call but not the plan's own reason, so a live
+        answer to "who asked for this walk?" needs this line in the daemon log.
+        """
+        # stderr, not stdout: the sim harness and the corpus tools read JSON off
+        # stdout, and one extra line there is a broken capture, not a log.
+        print("[planner] objective %s (%s): %s %s -- %s"
+              % (obj.get("id"), str(obj.get("text") or "")[:40],
+                 call.get("tool"), call.get("args"), call.get("why") or ""),
+              file=sys.stderr)
 
     def note_result(self, tool: str, ok: bool, note: str, obs: Dict[str, Any],
                     detail: Any = None) -> None:
@@ -1700,6 +2959,7 @@ class QuestPlanner:
         twin._claim_failures = dict(self._claim_failures)
         twin._claim_actions = dict(self._claim_actions)
         twin._claim_map = dict(self._claim_map)
+        twin._route_tries = {key: dict(value) for key, value in self._route_tries.items()}
         twin._pending_claim = None       # a fork starts before its first action
         twin._start_failures = dict(self._start_failures)
         twin._start_waits = set(self._start_waits)
@@ -1716,8 +2976,29 @@ class QuestPlanner:
         # parent's scene: a fork that forgot it would re-ask a dead page.
         twin._dialog_asks = dict(self._dialog_asks)
         twin._dialog_exhausted = set(self._dialog_exhausted)
+        # The gate's own memory is world knowledge (where groups were, which
+        # edges were walked), not scene state: a fork that lost it would search
+        # again from a map the parent had already searched.
+        twin._gate_explores = set(self._gate_explores)
+        twin._gate_xp_mark = dict(self._gate_xp_mark)
+        twin._group_maps = dict(self._group_maps)
+        twin._plan_seq = self._plan_seq
         twin._npc_asked = {key: set(value)
                            for key, value in self._npc_asked.items()}
+        # These seven were added after `fork()` was written and were never copied.
+        # A fork that reached a free-form objective, a UI tap, an equip retry or a
+        # spawn wait raised AttributeError, so the counterfactual corpus could only
+        # ever score the branches that happened to avoid them. Measured 2026-10-29:
+        # `set(vars(parent)) - set(vars(fork))` was exactly these names.
+        twin._interactive_tries = {key: set(value)
+                                   for key, value in self._interactive_tries.items()}
+        twin._equip_tries = {key: dict(value)
+                             for key, value in self._equip_tries.items()}
+        twin._ui_attempts = dict(self._ui_attempts)
+        twin._spawn_waits = dict(self._spawn_waits)
+        twin._exhausted_at = set(getattr(self, "_exhausted_at", ()))
+        twin._tutorial_step_seen = getattr(self, "_tutorial_step_seen", None)
+        twin._rule_policy = getattr(self, "_rule_policy", None)
         # The twin is about to observe its own world for the first time. Inheriting
         # the parent's scene key would make its first observation look unchanged,
         # so the transient claim/retry state (which belongs to the parent's scene)
@@ -1902,6 +3183,14 @@ class QuestPlanner:
         # A changed tutorial step or map is a new situation; a quest given up on
         # under the old one deserves a fresh attempt.
         self._reopen(obs)
+        # A tutorial whose own quest the loop retired no longer holds the plan:
+        # the scenario keeps reporting its stuck step forever, and waiting on it
+        # forever is what starved every other ready objective (live 2026-10-29,
+        # map with no exits and no monster group, four dead wait windows).
+        if tutorial is not None:
+            held = self._tutorial_quest(obs, tutorial)
+            if held is not None and held in self._skipped:
+                tutorial = None
 
         # The tutorial first. If it dictates an action, do that before anything
         # read from the quest graph. The scenario knows which crossing and which tap
@@ -1912,6 +3201,15 @@ class QuestPlanner:
         guided = self._tutorial_call(obs, goal)
         if guided is not None:
             return guided
+
+        # The scripted step said nothing. Read every open objective together
+        # before the single-objective scan: a level gate is only moved by XP, and
+        # one fight can serve it and a kill objective at the same time. Live
+        # 2026-10-29: without this the gate was "answered" by talking to NPCs for
+        # 54 steps across three maps.
+        combined = self._combined_objective_call(obs, goal)
+        if combined is not None:
+            return ToolCall(combined["tool"], dict(combined.get("args") or {}), goal)
 
         # 0. Claim anything the game says is already done.
         #
@@ -1939,13 +3237,44 @@ class QuestPlanner:
                 self._claim_failures.pop(key, None)
                 self._claim_actions.pop(key, None)
                 self._claim_map.pop(key, None)
+                self._route_tries.pop(key, None)
 
         # A ready entry whose planned call names no target is a detour — a read, or
         # "walk out an exit and look for the group". Another ready objective may
         # name an NPC or a map it can act on right now, so the detour is kept as the
         # fallback and returned only if the scan finds nothing better.
+        ready_rows = list(obs.get("ready_objectives") or [])
+        if len(ready_rows) > 1 and here is not None:
+            # Read the ready set as one plan, not as a queue. The client's order is
+            # arbitrary, and acting on it literally walked dofus-05 back and forth
+            # between two maps (2026-10-29): one ready objective wanted the map the
+            # character had just left while the next wanted the one it had just
+            # reached. Free claims still go first -- validation works from
+            # anywhere -- then objectives whose place is here, then the nearest
+            # place. Ties keep the client's order so nothing reorders silently.
+            def _ready_rank(pair: Tuple[int, Any]) -> Tuple[int, int, int]:
+                index, item = pair
+                if not isinstance(item, dict):
+                    return (3, 0, index)
+                try:
+                    row_key = (int(item["quest_id"]), int(item["objective_id"]))
+                except (KeyError, TypeError, ValueError):
+                    return (3, 0, index)
+                if self._claim_attempts.get(row_key, 0) == 0:
+                    return (-1, 0, index)
+                need = required_map(item)
+                if need is None or need == here:
+                    return (0, 0, index)
+                adjacent = {row["map_id"] for row in self._observed_exits(obs)}
+                if need in adjacent:
+                    return (0, 1, index)
+                hops = travel_hops(here, need)
+                return (1, hops, index)
+
+            ready_rows = [item for _, item in
+                          sorted(enumerate(ready_rows), key=_ready_rank)]
         detour: Optional[Tuple[Any, ...]] = None
-        for item in (obs.get("ready_objectives") or [])[:READY_SCAN_LIMIT]:
+        for item in ready_rows[:READY_SCAN_LIMIT]:
             try:
                 quest_id = int(item["quest_id"])
                 objective_id = int(item["objective_id"])
@@ -1961,11 +3290,14 @@ class QuestPlanner:
                 continue
             key = (quest_id, objective_id)
             here = obs.get("map_id")
+            need = required_map(obj)
 
             # A change of map is progress even while the objective stays ready:
             # walking to a kill or an NPC can take several crossings. Reset only the
             # action bound here — failures are reset by `note_result`, which is the
-            # only thing that knows whether the directive was accepted.
+            # only thing that knows whether the directive was accepted. This counter
+            # lives inside one scene (the scene key includes the map), so travel
+            # that has to survive crossings is bounded by `_route_tries` instead.
             if key in self._claim_map and here is not None and here != self._claim_map[key]:
                 self._claim_actions[key] = 0
             failures = self._claim_failures.get(key, 0)
@@ -1984,14 +3316,21 @@ class QuestPlanner:
             # A ready objective still has to happen where it happens. Status 2 is the
             # client's opinion that the conditions are met; the server is the one that
             # decides, and being on the wrong map is a precondition it will not waive.
-            need = required_map(obj)
-            if need and here != need:
+            if need and here != need and not self._npc_here(obj, obs):
+                if (quest_id, objective_id, int(need)) in getattr(self, "_exhausted_at", ()):
+                    # Already stood on that map for this objective and nothing
+                    # there could act; the walk back is the same visit again.
+                    continue
                 self.current_quest = quest_id
                 self.current_objective = objective_id
-                call = self._travel_call(obj, need, obs)
+                call = self._travel_call(obj, need, obs, key=key)
                 self._claim_actions[key] = actions + 1
                 self._claim_map[key] = here
                 self._pending_claim = (key, call["tool"])
+                # The ready loop is where most travel is decided and it was the
+                # one path that never said why. A live bounce between two maps
+                # could only be read from its steps, not its reasons.
+                self._log_plan(obj, call)
                 return ToolCall(call["tool"], dict(call["args"]), goal)
 
             attempts = self._claim_attempts.get(key, 0)
@@ -2039,6 +3378,13 @@ class QuestPlanner:
                 return ToolCall(first["tool"], dict(first["args"]), goal)
             # The objective's own type translates to nothing we can do (an area or
             # a craft with no recipe). Retire only this case immediately.
+            if need and here == need:
+                # Standing where the objective says it happens, with no action
+                # left for it here: a later walk back to this map is the same
+                # visit. Recorded per map, so a different objective is unaffected.
+                if getattr(self, "_exhausted_at", None) is None:
+                    self._exhausted_at = set()
+                self._exhausted_at.add((quest_id, objective_id, int(need)))
             if tutorial is not None:
                 continue
             self._skipped.add(quest_id)

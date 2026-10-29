@@ -24,6 +24,7 @@ game accepted a packet.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -204,8 +205,8 @@ def test_tool_vocabulary() -> None:
 
     reg_ids = features.tool_registry()
 
-    check("schema declares 25 tools", len(tool_names) == 25, len(tool_names))
-    check("capabilities.json lists 25 tools", len(caps_ids) == 25, len(caps_ids))
+    check("schema declares 28 tools", len(tool_names) == 28, len(tool_names))
+    check("capabilities.json lists 28 tools", len(caps_ids) == 28, len(caps_ids))
     check("features.tool_registry lists the same set as the schema",
           set(reg_ids) == set(tool_names), (sorted(set(reg_ids) ^ set(tool_names))))
     check("capabilities.json matches the schema set",
@@ -255,7 +256,60 @@ def test_plan_stack() -> None:
     check("an equip instruction decomposes to a preset",
           child is not None and child["args"].get("preset_id") == 3, child)
 
+    # Live 2026-10-29: quest 4260's "Equip the Albueran recruit set, then talk to
+    # Ayin Spyr" had four items and zero presets, and the preset-only branch
+    # answered `inv.list` on every pass. The bag's own uids are the route, each
+    # offered twice (a type with no possible position is refused), then the
+    # objective's talk half must be reachable.
     from agent.planner import QuestPlanner
+
+    live_bag = {"inventory": {"presets": [], "equipped": [],
+                              "items": [{"gid": 18974, "object_uid": 68720787},
+                                        {"gid": 18844, "object_uid": 68720788}]},
+                "map": {}}
+    equip_step = dict(equip, type="QuestObjectiveFreeForm",
+                      params={"parameter0": 719010})
+    planner = QuestPlanner()
+    offered = [planner.plan_objective({"id": 4260}, 0, equip_step, live_bag)
+               for _ in range(4)]
+    uids = [calls[0]["args"].get("object_uid") if calls else None
+            for calls in offered]
+    check("with no preset the bag's items are equipped by uid",
+          uids[0] == 68720787 and all(c and c[0]["tool"] == "inv.equip"
+                                      for c in offered), uids)
+    check("the next step offers the other item, not the same one again",
+          uids[1] == 68720788, uids)
+    check("each uid gets a second chance, then is retired",
+          uids[2] == 68720787 and uids[3] == 68720788, uids)
+    settled = planner.plan_objective({"id": 4260}, 0, equip_step, live_bag)
+    check("an equip half with nothing left yields instead of re-reading",
+          settled == [], settled)
+    worn = {"inventory": {"presets": [], "equipped": [{"object_uid": 68720787}],
+                          "items": [{"gid": 18974, "object_uid": 68720787},
+                                    {"gid": 18844, "object_uid": 68720788}]},
+            "map": {}}
+    shown = QuestPlanner().plan_objective({"id": 4260}, 0, equip_step, worn)
+    check("an item already on is never offered again",
+          bool(shown) and shown[0]["args"].get("object_uid") == 68720788, shown[:1])
+    # Live 2026-10-29: 76 refused equips, each demanding a slot, from types that
+    # declare no positions. The page publishes what is worn as {slot, gid}, so a
+    # second copy of a worn template names its own slot without guessing.
+    twin = {"inventory": {"presets": [],
+                          "equipped": [{"slot": 4, "gid": 18844}],
+                          "items": [{"gid": 18844, "object_uid": 68720788}]},
+            "map": {}}
+    slotted = QuestPlanner().plan_objective({"id": 4260}, 0, equip_step, twin)
+    check("a worn twin's slot is sent with the equip",
+          bool(slotted) and slotted[0]["args"].get("slot") == 4
+          and slotted[0]["args"].get("object_uid") == 68720788, slotted[:1])
+    stranger = {"inventory": {"presets": [],
+                              "equipped": [{"slot": 4, "gid": 999}],
+                              "items": [{"gid": 18844, "object_uid": 68720788}]},
+                "map": {}}
+    plain = QuestPlanner().plan_objective({"id": 4260}, 0, equip_step, stranger)
+    check("no twin means no invented slot",
+          bool(plain) and "slot" not in plain[0]["args"], plain[:1])
+
     planner = QuestPlanner()
     delivery = {"id": 1, "type_id": 2,
                 "params": {"parameter0": 123, "parameter1": 55},
@@ -449,7 +503,7 @@ def test_constraint_corpus() -> None:
     gen_manifest = manifest_for(rows, "constraint_synthetic", agreement)
     check("the synthetic corpus has at least 2,500 rows",
           len(rows) >= 2500, len(rows))
-    check("every one of the 25 tools has at least 50 rows",
+    check("every one of the 28 tools has at least 50 rows",
           all(gen_manifest["tools"].get(tool, 0) >= 50
               for tool in tool_names()),
           {tool: gen_manifest["tools"].get(tool, 0) for tool in tool_names()})
@@ -618,8 +672,11 @@ def test_objective_parameter_table() -> None:
     # The group is on the map, so this is the case the old code got wrong for the
     # *right* reason: a wrapper whose number is not the monster the group holds.
     planned = policy.plan_objective({"id": 3841}, 0, freeform, obs)
+    # Live 2026-10-28: this wrapper's step was an escort ("Go to Albuera with Ayin
+    # Spyr") and the only move left was an NPC dialogue. It is still not a hunt:
+    # no group is joined and no creature is invented.
     check("a text-only wrapper plans no hunt even with a group on the map",
-          planned == [], planned)
+          all(c["tool"] not in ("fight.join", "farm.start") for c in planned), planned)
     joined = [c["tool"] for c in policy.plan_objective({"id": 3841}, 0, hunt, obs)]
     check("a declared hunt still joins the group that is standing there",
           joined == ["fight.join"], joined)
@@ -638,8 +695,10 @@ def test_objective_parameter_table() -> None:
     check("the observation-derived objective keeps the client's class name",
           isinstance(derived, dict) and derived.get("type") == "QuestObjectiveFreeForm",
           derived)
+    fallback = QuestPlanner().plan_objective({"id": 3841}, 0, derived, obs)
     check("and the fallback path plans no hunt",
-          QuestPlanner().plan_objective({"id": 3841}, 0, derived, obs) == [])
+          all(c["tool"] not in ("fight.join", "farm.start") for c in fallback),
+          fallback)
     check("the fallback can still be read as text-only",
           declares_monster_target(derived) is False, derived)
 
@@ -656,8 +715,10 @@ def test_objective_parameter_table() -> None:
     check("a knowledge-base row is enriched with the client's class name too",
           isinstance(merged, dict) and merged.get("type") == "QuestObjectiveFreeForm",
           merged)
+    merged_plan = QuestPlanner().plan_objective({"id": 3841}, 0, merged, obs)
     check("and the merged row plans no hunt",
-          QuestPlanner().plan_objective({"id": 3841}, 0, merged, obs) == [])
+          all(c["tool"] not in ("fight.join", "farm.start") for c in merged_plan),
+          merged_plan)
 
     class _Head(nn_module.NNPlanner):
         """A head that always answers `fight.join`.
@@ -686,8 +747,705 @@ def test_objective_parameter_table() -> None:
           'not args and tool in ("quest.advance", "fight.join", "farm.start")' in nn_src)
     planner_src = inspect.getsource(planner_module)
     check("both monster routes consult the declaration",
-          planner_src.count("declares_monster_target(obj) is False") == 3,
+          planner_src.count("declares_monster_target(obj) is False") == 4,
           planner_src.count("declares_monster_target(obj) is False"))
+
+
+def test_spawn_wait_is_bounded() -> None:
+    section("A respawn wait on the objective's map is bounded, then searches")
+    # Live 2026-10-29: objective 14070 (kill, map-bound) sat on map 145489920
+    # with no group for 467 passes (172 s). The branch waits for a respawn, the
+    # autopilot's escalation proposed farm.start, the quest gate refused it, and
+    # the cycle repeated -- the run could not leave the map to look. The wait is
+    # now one window; after it the planner walks an exit instead.
+    from agent.planner import QuestPlanner, SPAWN_WAIT_PASSES
+
+    hunt = {"id": 14070, "type_id": 6, "type": "QuestObjectiveFightMonster",
+            "map_id": 145489920, "params": {"parameter0": 4194},
+            "text": "Defeat the Albuera Elite."}
+    exits = [{"direction": "right", "map_id": 145489921},
+             {"direction": "left", "map_id": 145489919}]
+    # A group is standing here, just not the one the objective wants: the
+    # sub-goal stack sees groups and stays quiet, so this is the plan that used
+    # to wait for a respawn on the objective's own map.
+    obs = {"map_id": 145489920, "cell": 300,
+           "map": {"map_id": 145489920, "exits": exits,
+                   "groups": [{"cell": 288, "monster_ids": [999]}]}}
+    planner = QuestPlanner()
+    first = planner.plan_objective({"id": 3841}, 0, hunt, obs)
+    check("a missing group on the objective's map is waited for, not hunted blind",
+          [c["tool"] for c in first] == ["state.snapshot"]
+          and "waiting for a group" in str(first[0].get("why")), first)
+    waited = first
+    for _ in range(SPAWN_WAIT_PASSES + 2):
+        waited = planner.plan_objective({"id": 3841}, 0, hunt, obs)
+        if [c["tool"] for c in waited] != ["state.snapshot"]:
+            break
+    check("the wait is bounded and turns into a search of an exit",
+          [c["tool"] for c in waited] == ["nav.goto"]
+          and waited[0]["args"].get("direction") in ("left", "right"), waited)
+
+    fresh = QuestPlanner()
+    for _ in range(SPAWN_WAIT_PASSES - 1):
+        fresh.plan_objective({"id": 3841}, 0, hunt, obs)
+    crowd = {"map_id": 145489920, "cell": 300,
+             "map": {"map_id": 145489920,
+                     "groups": [{"cell": 288, "monster_ids": [4194]}],
+                     "exits": exits}}
+    joined = fresh.plan_objective({"id": 3841}, 0, hunt, crowd)
+    check("a group that appears is joined and reopens the next window",
+          [c["tool"] for c in joined] == ["fight.join"]
+          and not fresh._spawn_waits, (joined, fresh._spawn_waits))
+
+    # The escalation inside the wait must not keep proposing what the goal gate
+    # refuses: that refusal was the engine of the 467-pass cycle.
+    import inspect as _inspect
+    from agent import autopilot as _ap
+    ap_src = _inspect.getsource(_ap)
+    check("the wait escalation skips a farm.start the quest gate refuses",
+          'candidate.tool == "farm.start" and not self._farm_allowed(goal, before)'
+          in ap_src)
+    check("and a run whose windows have nothing left ends instead of waiting forever",
+          "DEAD_WINDOW_LIMIT = 4" in ap_src
+          and "self._dead_windows >= DEAD_WINDOW_LIMIT" in ap_src
+          and "ending the run -- the step needs a human" in ap_src)
+    check("only a real step clears the dead-window count",
+          "if step.tool not in READ_ONLY_TOOLS and step.tool not in LISTING_TOOLS:"
+          in ap_src and "self._dead_windows = 0" in ap_src)
+
+
+def test_auto_policy_is_the_planner() -> None:
+    section("/brain/start policy 'auto' reaches the quest planner")
+    # Live 2026-10-29: the panel and /brain/start send policy "auto"; the builder
+    # fell through to the rule policy, so a quest goal never reached the planner
+    # and the loop answered "no action for goal". The learned planner falls back to
+    # the deterministic one when no model is present, which is why auto can mean it.
+    from types import SimpleNamespace
+    from agent.autopilot import _build_policy
+    from agent.runtime import RulePolicy
+
+    auto = _build_policy(SimpleNamespace(policy="auto", level_hint=60,
+                                         ensemble="off", model_dir=None))
+    check("auto builds the planner, not the rule policy",
+          not isinstance(auto, RulePolicy) and hasattr(auto, "plan_objective"), type(auto))
+    check("and the planner can retire a quest, which the wait path needs",
+          callable(getattr(auto, "skip", None)))
+    rule = _build_policy(SimpleNamespace(policy="rule", level_hint=60,
+                                        ensemble="off", model_dir=None))
+    check("an explicit rule policy is still the rule policy",
+          isinstance(rule, RulePolicy))
+
+
+def test_stuck_objective_retired() -> None:
+    section("Whole windows of no action retire the objective, not the session")
+    # Live 2026-10-29 (dofus-05): the character stood on a map with no exits, its
+    # NPCs already asked, and two other objectives ready. The bound ended the run
+    # and threw away a live session. Retiring the stuck quest is the operator's
+    # own next move and the planner already has `skip` for it.
+    from types import SimpleNamespace
+    from agent.autopilot import Autopilot, RETIRE_LIMIT, DEAD_WINDOW_LIMIT
+    import inspect
+
+    skipped = []
+
+    class _Policy:
+        def skip(self, qid):
+            skipped.append(qid)
+
+    ap = Autopilot.__new__(Autopilot)
+    ap.runtime = SimpleNamespace(policy=_Policy())
+    got = ap._retire_stuck_objective({"current_objective": {"quest_id": "3841"}})
+    check("the stuck quest is retired by its id",
+          got == 3841 and skipped == [3841], (got, skipped))
+
+    quiet = Autopilot.__new__(Autopilot)
+    quiet.runtime = SimpleNamespace(policy=SimpleNamespace())
+    check("a policy that cannot skip is not a crash",
+          quiet._retire_stuck_objective({"current_objective": {"quest_id": 5}}) is None)
+    check("nothing to name means nothing to retire",
+          ap._retire_stuck_objective({"current_objective": {}}) is None
+          and ap._retire_stuck_objective(None) is None)
+
+    src = inspect.getsource(Autopilot)
+    check("the wait retires before it gives up",
+          "if self._retired < RETIRE_LIMIT:" in src
+          and "_retire_stuck_objective(before)" in src
+          and src.index("_retire_stuck_objective(before)")
+          < src.index("ending the run -- the step needs a human"))
+    from agent import autopilot as _apm
+    module_src = inspect.getsource(_apm)
+    check("retirements are bounded per run",
+          "RETIRE_LIMIT = 3" in module_src and "self._retired += 1" in src)
+    check("the bound still ends a run whose quests are all stuck",
+          "DEAD_WINDOW_LIMIT" in src and "return False" in src)
+    check("a goal the policy cannot express retires the quest instead of ending the run",
+          "the policy cannot express quest" in src
+          and "retiring it for this run and taking the next " in src)
+
+    # Live 2026-10-29: a map with four known neighbours and no crossable border took
+    # ~100 silent ChangeMapMessage refusals in two minutes, because the only witness
+    # is "the map did not change" and nothing counted them. The run must say so and
+    # stop instead of re-asking a scripted exit.
+    check("crossings that never change the map are counted and end the run",
+          "NAV_DECLINE_LIMIT" in module_src
+          and "self._crossing_declines += 1" in src
+          and "crossings were sent and the map never " in src
+          and "changed (map %s)" in src)
+    check("a real map change restarts that count",
+          "self._crossing_declines = 0" in src
+          and "_prev_map != _new_map" in src)
+
+
+def test_doorless_map_asks_for_the_neighbour() -> None:
+    section("A map with neighbours and no exit cell asks the server for the neighbour")
+    # Live 2026-10-29: the Albuera solo area reported four neighbours, zero exits
+    # and no interactive element; the planner answered "waiting for its door" on
+    # every step. The client can send the same ChangeMapMessage a tapped door
+    # sends, so the plan is a request with the edge rotated over attempts.
+    from agent.planner import QuestPlanner
+
+    obs = {
+        "map_id": 100,
+        "cell": 5,
+        "level": 5,
+        "tutorial": None,
+        "dialog": {"open": False},
+        "current_objective": {"quest_id": "9", "objective_id": 1, "type_id": 4,
+                              "type": "QuestObjectiveDiscoverMap", "map_id": 555,
+                              "text": "Find the map: Dam worksite."},
+        "ready_objectives": [{"quest_id": "9", "objective_id": 1, "type_id": 4,
+                              "type": "QuestObjectiveDiscoverMap", "map_id": 555,
+                              "text": "Find the map: Dam worksite."}],
+        "map": {"map_id": 100, "cell": 5, "exits": [],
+                "neighbours": {"left": 200, "right": 201},
+                "npcs": [], "interactives": [], "groups": []},
+        "npcs": [], "exits": [], "interactives": [], "groups": [],
+    }
+    planner = QuestPlanner(level_hint=5)
+    first = planner.choose("do all the quests", obs, [])
+    check("the doorless map plans a request, not a read",
+          first is not None and first.tool == "nav.goto"
+          and (first.args or {}).get("direction") in ("left", "right")
+          and (first.args or {}).get("map_id") in (200, 201),
+          first)
+    second = planner.choose("do all the quests", obs, [])
+    check("a second attempt asks the other neighbour",
+          second is not None and second.tool == "nav.goto"
+          and (second.args or {}).get("direction") != (first.args or {}).get("direction"),
+          second)
+
+    # The loop's own retirement must survive the tutorial's reopen rule: the live
+    # retire was undone on the next step because every active quest was reopened
+    # whenever a scripted step was running.
+    from agent.planner import QuestPlanner as _QP
+    tutorial_obs = dict(obs)
+    tutorial_obs["tutorial"] = {"active": True, "quest_id": 9, "step_id": 45,
+                                "can_change_map": {"left": True}}
+    tutorial_obs["quests_active"] = {"9": 0}
+    keep = _QP(level_hint=5)
+    keep._last_obs = tutorial_obs
+    keep.skip(9)
+    keep._reopen(tutorial_obs)
+    check("a retirement survives the tutorial's reopen rule",
+          9 in keep._skipped, sorted(keep._skipped))
+    walked = dict(tutorial_obs)
+    walked["map_id"] = 101
+    walked["map"] = dict(obs["map"], map_id=101)
+    keep._reopen(walked)
+    check("a crossing alone does not reopen a retired quest",
+          9 in keep._skipped, sorted(keep._skipped))
+    moved = dict(tutorial_obs)
+    moved["current_objective"] = {"quest_id": 9, "objective_id": 777,
+                                  "step": 0, "status": 2}
+    keep._reopen(moved)
+    check("a changed objective still reopens it",
+          9 not in keep._skipped, sorted(keep._skipped))
+
+    # A retired tutorial quest no longer holds the plan: the scenario keeps
+    # reporting its stuck step, and waiting on it starved the ready objectives.
+    released = _QP(level_hint=5)
+    released._last_obs = tutorial_obs
+    released.skip(9)
+    call = released.choose("do all the quests", tutorial_obs, [])
+    check("a retired tutorial quest stops holding the loop",
+          call is not None and call.tool != "state.snapshot", call)
+
+
+def test_cli_launch_forwarding() -> None:
+    section("`DofusFarm.exe --launch X` means the same thing when the app is open")
+    # Live 2026-10-29: a second `--launch dofus-03` focused the running window and
+    # dropped the name, because the flag is only read on the path that owns the
+    # single-instance mutex. Starting another slot then needed closing the app.
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent.parent
+    program = (root / "desktop" / "Program.cs").read_text(encoding="utf-8-sig")
+    form = (root / "desktop" / "mainform.cs").read_text(encoding="utf-8-sig")
+    check("one parser owns the flag",
+          "private static string LaunchNameFromArgs(string[] args)" in program
+          and program.count("Array.IndexOf(args, \"--launch\")") == 1)
+    check("the second instance hands the name over before focusing",
+          "WriteLaunchRequest(forwarded)" in program
+          and "launch_request.txt" in program)
+    check("the running manager picks the request up",
+          "StartLaunchRequestPoller" in form and "launch_request.txt" in form
+          and "LaunchInstanceFromCommandLine(name)" in form)
+    check("an already-running instance is still a no-op",
+          "is already running; nothing to do" in form)
+    # Consent for a profile wipe is the operator's; the CLI carries it in the
+    # command line instead of a dialog, and the wipe still refuses to relaunch
+    # unless it is provably complete.
+    check("a reset request is forwarded and runs the button's own wipe",
+          "ResetNameFromArgs" in program and '"reset:" + resetName' in program
+          and "ResetInstanceFromCommandLine" in form
+          and "could not be provably removed; not relaunching" in form)
+
+
+def test_refusal_evidence() -> None:
+    section("A refused call keeps its own answer on the step row")
+    # Live 2026-10-29: 76 refused inv.equip rows said the same sentence and none of
+    # the fields that explain it. The page's answer carries the reason (positions
+    # the type allows, whether the template loaded, whether the bag had the item)
+    # and it exists only in that response, so the row must keep it.
+    from types import SimpleNamespace
+    from agent.autopilot import _failure_evidence
+
+    page = {"ok": False,
+            "error": "equipItem sent nothing and the item is not usable",
+            "data": {"object_uid": 68720788, "possible_positions": [],
+                     "has_template": True, "type_id": 9, "bag_has_instance": False,
+                     "usable": False, "secret_field": "must not be copied"}}
+    envelope = SimpleNamespace(data={"result": page, "snapshot": {"map_id": 1}})
+    got = _failure_evidence(envelope) or {}
+    check("the refusal keeps the fields that explain it",
+          got.get("object_uid") == 68720788 and got.get("has_template") is True
+          and got.get("possible_positions") == [] and got.get("type_id") == 9
+          and got.get("bag_has_instance") is False, got)
+    check("and nothing outside the evidence list is copied",
+          "secret_field" not in got and "snapshot" not in got, sorted(got))
+    check("a result with no answer is no evidence, not an empty object",
+          _failure_evidence(SimpleNamespace(data=None)) is None
+          and _failure_evidence(SimpleNamespace(data={"x": 1})) is None)
+    import inspect
+    from agent import autopilot as _ap
+    src = inspect.getsource(_ap)
+    check("only a failed step carries it",
+          "evidence=(None if step_ok else _failure_evidence(result))" in src)
+
+
+def test_wake_login_tool() -> None:
+    section("The lockout wake tool presses once, and never inside the cooldown")
+    import importlib.util
+    import inspect
+    import os
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, "tools", "wake_login.py")
+    spec = importlib.util.spec_from_file_location("wake_login_under_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    check("a cooldown with time left is read as time left",
+          mod.cooldown_s({"login_cooldown": {"remaining_s": 30}}) == 30.0
+          and mod.cooldown_s({}) == 0.0
+          and mod.cooldown_s({"login_cooldown": {"remaining_s": "x"}}) == 0.0)
+    check("the world is the map, not the connected flag",
+          mod.in_world({"in_world": True, "position": {"map_id": 5}})
+          and not mod.in_world({"in_world": True, "position": {"map_id": 0}})
+          and not mod.in_world({"connected": True, "in_world": False}))
+    check("a banned block is visible before any press",
+          mod.login_block({"login": {"banned": True, "text": "banned"}}).get("banned")
+          is True)
+    src = inspect.getsource(mod)
+    check("the tool waits out the cooldown before pressing",
+          "def wait_for_slot" in src and "time.sleep(nap)" in src
+          and "left <= 0" in src)
+    check("and a banned slot is never pressed",
+          "not pressing" in src and "reset this slot for a fresh guest" in src)
+    check("the press is exactly one guarded guest login",
+          src.count('"tool": "session.login"') == 1
+          and '{"target": "guest"}' in src)
+    check("the recovered world is handed to the daemon, not left idle",
+          "def start_loop" in src and "/brain/start" in src
+          and '"goals": [goal]' in src and "--start-loop" in src)
+
+
+def test_free_form_searches_new_maps() -> None:
+    section("A free-form step with nothing left on this map walks to a new one")
+    # Live 2026-10-29 (objective 14070, free-form, no map): the element was used,
+    # the NPCs were asked, and the planner returned no call -- the policy read the
+    # state every pass and the run waited 467 passes. A different map carries
+    # different elements and NPCs, so walking is the only world-changing action
+    # left; the visited map is retired for the objective so the search cannot
+    # bounce between two exhausted maps.
+    from agent.planner import QuestPlanner
+
+    freeform = {"id": 14070, "type_id": 0, "type": "QuestObjectiveFreeForm",
+                "params": {"parameter0": 715354},
+                "text": "Complete the \"A Chaotic Arrival\" quest."}
+    element = {"elem_id": 513208, "cell": 330, "skill_uid": 136113675,
+               "enabled_skills": [136113675], "element_type_id": 155}
+    obs = {"map_id": 145489920, "cell": 300,
+           "map": {"map_id": 145489920, "npcs": [], "interactives": [element],
+                   "exits": [{"direction": "right", "map_id": 145489921}]}}
+    planner = QuestPlanner()
+    first = planner.plan_objective({"id": 3841}, 0, freeform, obs)
+    check("the map's own element is still the first thing tried",
+          [c["tool"] for c in first] == ["tap.interactive"], first)
+    second = planner.plan_objective({"id": 3841}, 0, freeform, obs)
+    check("once the map is exhausted the step walks instead of planning nothing",
+          [c["tool"] for c in second] == ["nav.goto"]
+          and second[0]["args"].get("direction") == "right", second)
+    check("the exhausted map is retired for this objective",
+          (3841, 14070, 145489920) in planner._exhausted_at,
+          planner._exhausted_at)
+    next_map = {"map_id": 145489921, "cell": 100,
+                "map": {"map_id": 145489921, "npcs": [],
+                        "interactives": [dict(element, elem_id=513999)],
+                        "exits": [{"direction": "left", "map_id": 145489920}]}}
+    third = planner.plan_objective({"id": 3841}, 0, freeform, next_map)
+    check("the new map's element is tried, so the search is a search",
+          [c["tool"] for c in third] == ["tap.interactive"]
+          and third[0]["args"].get("element_id") == 513999, third)
+
+
+def test_free_form_uses_interactive() -> None:
+    section("A free-form objective is performed on the map's own interactive")
+    # `QuestObjectiveFreeForm` (13948/13950 live) names no element the client can
+    # read: its parameter is a text id (704145), and the map's only element is
+    # 513208. Matching the parameter would be guesswork, so the planner offers the
+    # map's elements one at a time and the objective's own completion is the
+    # verdict. Before this, type 0 fell into the kill branch, the client's
+    # parameter table denied a monster, and the planner returned nothing at all.
+    from agent.planner import QuestPlanner
+
+    freeform = {"id": 13948, "type_id": 0, "type": "QuestObjectiveFreeForm",
+                "map_id": 145490432, "params": {"parameter0": 704145},
+                "text": "Recover the first page of the aqueduct blueprints."}
+    obs = {"map_id": 145490432, "cell": 300,
+           "map": {"map_id": 145490432, "interactives": [
+               {"elem_id": 513208, "cell": 330, "skill_uid": 136113675,
+                "enabled_skills": [136113675], "element_type_id": 155}]}}
+    planner = QuestPlanner()
+    calls = planner.plan_objective({"id": 4262}, 0, freeform, obs)
+    check("the free-form objective taps the map's element",
+          [c["tool"] for c in calls] == ["tap.interactive"]
+          and calls[0]["args"].get("element_id") == 513208
+          and calls[0]["args"].get("skill_uid") == 136113675, calls)
+    again = planner.plan_objective({"id": 4262}, 0, freeform, obs)
+    check("the same element is not offered again after it was used",
+          again == [], again)
+
+    obs_no_uid = {"map_id": 145490432,
+                  "map": {"map_id": 145490432, "interactives": [
+                      {"elem_id": 513208, "cell": 330, "skill_uid": None,
+                       "enabled_skills": [136113675]}]}}
+    calls2 = QuestPlanner().plan_objective({"id": 4262}, 0, freeform, obs_no_uid)
+    check("a missing skillInstanceUid falls back to the element's enabled skill",
+          bool(calls2) and calls2[0]["args"].get("skill_uid") == 136113675, calls2)
+
+    far = dict(freeform, map_id=145490944)
+    elsewhere = QuestPlanner().plan_objective({"id": 4262}, 0, far, obs_no_uid)
+    check("travelling comes first when the objective names another map",
+          [c["tool"] for c in elsewhere] == ["nav.goto"], elsewhere)
+
+    bare = QuestPlanner().plan_objective({"id": 4262}, 0, freeform,
+                                         {"map_id": 145490432})
+    check("a map with no interactive keeps the old answer", bare == [], bare)
+
+    # Live 2026-10-28, dofus-05: step 4974 "Go to Albuera with Ayin Spyr" is an
+    # escort that starts in a dialogue. The map's one interactive had been spent,
+    # so the planner answered state.snapshot for 300+ waits with three NPCs
+    # standing next to the character. Talking is the same generic move the fight
+    # objectives already use; each NPC is asked once, nearest first.
+    escort = {"id": 14070, "type_id": 0, "type": "QuestObjectiveFreeForm",
+              "params": {"parameter0": 715354},
+              "text": 'Complete the "A Chaotic Arrival" quest.'}
+    crowd = {"map_id": 147064834, "cell": 238,
+             "map": {"map_id": 147064834,
+                     "interactives": [{"elem_id": 513203, "cell": 374,
+                                       "skill_uid": None, "enabled_skills": []}],
+                     "npcs": [{"npc_id": 3888, "cell": 255, "actor_id": -4},
+                              {"npc_id": 3976, "cell": 272, "actor_id": -1},
+                              {"npc_id": 3982, "cell": 437, "actor_id": -2}]}}
+    escort_planner = QuestPlanner()
+    pick = escort_planner.plan_objective({"id": 3841}, 12, escort, crowd)
+    # The map's one element reports no skill instance, so the page refuses it
+    # without sending anything. Spending it first bought a guaranteed refusal and
+    # then waited out the action bound before asking the NPC standing next to the
+    # character (measured live on dofus-02, 2026-10-29).
+    check("a skill-less element is skipped: the nearest NPC is asked first",
+          [c["tool"] for c in pick] == ["quest.advance"]
+          and pick[0]["args"] == {"quest_id": 3841, "npc_id": 3888}, pick)
+    first_ask = escort_planner.plan_objective({"id": 3841}, 12, escort, crowd)
+    check("with the nearest NPC asked, the next one is a new question",
+          [c["tool"] for c in first_ask] == ["quest.advance"]
+          and first_ask[0]["args"] == {"quest_id": 3841, "npc_id": 3976},
+          first_ask)
+    second_ask = escort_planner.plan_objective({"id": 3841}, 12, escort, crowd)
+    check("and the third NPC after that",
+          [c["tool"] for c in second_ask] == ["quest.advance"]
+          and second_ask[0]["args"].get("npc_id") == 3982, second_ask)
+    escort_planner.plan_objective({"id": 3841}, 12, escort, crowd)
+    quiet = escort_planner.plan_objective({"id": 3841}, 12, escort, crowd)
+    check("every NPC asked once, the step stops instead of looping",
+          quiet == [], quiet)
+    moved = dict(crowd,
+                 map=dict(crowd["map"], map_id=147064322),
+                 map_id=147064322)
+    other = QuestPlanner().plan_objective({"id": 3841}, 12, escort, moved)
+    check("a new map reopens the NPC question", bool(other), other)
+
+    hunt = {"id": 13944, "type_id": 6, "type": "QuestObjectiveFightMonster",
+            "map_id": 145490432, "params": {"parameter0": 4210}}
+    hunted = QuestPlanner().plan_objective({"id": 4262}, 0, hunt, obs)
+    check("a declared hunt never taps an interactive instead of joining",
+          "tap.interactive" not in [c["tool"] for c in hunted], hunted)
+
+    section("Only a close the server announced can blame a claim")
+    page = ROOT / "scripts" / "mobile-disguise.js"
+    if page.is_file():
+        text = page.read_text(encoding="utf-8", errors="replace")
+        # A claim followed by a client-side disconnect was recorded as a kick and
+        # permanently retired 13950/4262 -- minutes after the server had accepted
+        # it. The recorder now needs the server's own close message, ignores the
+        # client's reasons, clears on an accepted validation and expires.
+        check("the recorder refuses a close the server did not announce",
+              "if (serverSide !== true) return false;" in text,
+              "any disconnect within 3 s of a claim becomes a kick signature")
+        check("the client's own disconnect reasons never become kick signatures",
+              "INACTIVITY|SESSION_TIMED_OUT|CLIENT_CLOSING" in text,
+              "AFK and timeouts blacklist quest objectives")
+        check("the server's close message sets the flag and records the kick",
+              "__agentServerClosing = { at: Date.now()" in text
+              and "window.__agentRecordKick('serverDisconnecting'" in text,
+              "a server kick is not attributed at all")
+        check("an accepted validation clears the signature it may have written",
+              "cm.on('QuestObjectiveValidatedMessage'" in text
+              and "__agentClearKick(msg.questId, msg.objectiveId)" in text,
+              "a claim that worked could still retire its objective")
+        check("a signature expires instead of blocking an objective forever",
+              "_KICK_TTL_MS" in text and "now - at > _KICK_TTL_MS" in text,
+              "one bad attribution is permanent")
+        check("the snapshot exposes the skill list a free-form tap needs",
+              "enabled_skills: (el.enabled_skills || []).slice(0, 4)" in text,
+              "tap.interactive cannot name a skill when the renderer has not")
+        # The page refuses a claim for every type in its SERVER_TYPES list; the
+        # planner must not spend a step asking for those. A narrower set spent
+        # one claim per delivery and multi-fight objective.
+        import inspect as _inspect
+
+        from agent.planner import QuestPlanner as _Planner
+        init_src = _inspect.getsource(_Planner.__init__)
+        check("the planner's server-counted types mirror the page's refusals",
+              "{0, 1, 2, 3, 4, 5, 6, 12, 14, 16, 17}" in init_src,
+              "a type the page refuses is still claimed first")
+        check("a free-form wrapper is never claimed",
+              "QuestObjectiveFreeForm: true" in text,
+              "measured: two free-form claims were each followed ~0.3 s later "
+              "by serverDisconnecting SERVER_GONE")
+    else:
+        print("  - page checks: skipped (scripts/ not in this mirror)")
+
+
+def test_command_routing_and_bridge_fast_fail() -> None:
+    section("'Do the quests' is a run, not a list; a wedged page fails fast")
+    # The rule baseline labelled every quest prompt `list`, including the one
+    # users type most ("do all the quests"), while the router sent it to the
+    # quest planner. Two layers disagreeing about the same prompt is how the
+    # command corpus and the live routing drifted apart.
+    from agent.commands import intent_tool, rule_parse
+    from agent.planner import _goal_mode
+    from agent.runtime import RulePolicy
+
+    do = rule_parse("do all the quests")
+    check("an instruction to do quests is not a list request",
+          do["intent"] == "quest" and do["slots"].get("action") == "run", do)
+    check("and it maps to the tool that does quests",
+          intent_tool(do["intent"], do["slots"].get("action")) == "quest.advance",
+          intent_tool(do["intent"], do["slots"].get("action")))
+    check("the router agrees, so rule and planner read the prompt the same way",
+          _goal_mode("do all the quests") == "quest", _goal_mode("do all the quests"))
+    listed = rule_parse("list my quests")
+    check("a read of the log stays a list",
+          listed["slots"].get("action") == "list"
+          and intent_tool(listed["intent"], listed["slots"].get("action")) == "quest.list",
+          listed)
+    area = rule_parse("quests in incarnam")
+    check("a named area is still a list with its area",
+          area["slots"].get("action") == "list"
+          and area["slots"].get("area") == "incarnam", area)
+    check("the rule policy itself no longer answers work as a read",
+          RulePolicy().choose("do all the quests", {}, None) is None,
+          RulePolicy().choose("do all the quests", {}, None))
+
+    section("A client page that stops answering opens a fast-fail circuit")
+    from agent.executor import ToolExecutor
+
+    executor = ToolExecutor.__new__(ToolExecutor)   # breaker only: no cache, no store
+    executor.directive_url = "http://127.0.0.1:1/directive"
+    executor.timeout = 6.0
+    executor._bridge_fails = 0
+    executor._bridge_open_until = 0.0
+    executor._bridge_last_error = None
+    calls: list = []
+
+    def stalled(method, url, body=None):  # noqa: ARG001
+        calls.append(1)
+        return True, {"ok": False,
+                      "error": "directive 'STATE_SNAPSHOT' timed out or the client page is not ready"}
+
+    executor._http_json = stalled
+    first = executor._directive("STATE_SNAPSHOT", "state.snapshot", {}, "live")
+    second = executor._directive("STATE_SNAPSHOT", "state.snapshot", {}, "live")
+    third = executor._directive("STATE_SNAPSHOT", "state.snapshot", {}, "live")
+    check("two stalls are reported, not hidden",
+          first.ok is False and second.ok is False
+          and "timed out" in str(first.error), first.error)
+    check("the third call fails without paying the page wait again",
+          third.ok is False and (third.data or {}).get("circuit_open") is True
+          and len(calls) == 2, "%d http calls, third=%s" % (len(calls), third.error))
+
+    def answered(method, url, body=None):  # noqa: ARG001
+        return True, {"ok": True, "result": {}, "snapshot": {}}
+
+    executor._http_json = answered
+    executor._bridge_open_until = 0.0      # the circuit's own 15 s window elapsed
+    healed = executor._directive("STATE_SNAPSHOT", "state.snapshot", {}, "live")
+    check("an answer closes the circuit again", healed.ok is True,
+          healed.error)
+    check("the failure counter is reset by the answer",
+          executor._bridge_fails == 0 and executor._bridge_open_until == 0.0,
+          executor._bridge_fails)
+
+
+def test_damage_calibration_join() -> None:
+    section("Damage calibration (the solver's estimate vs the server's own loss)")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT.parent / "tools" / "damage_calibration.py"
+    check("the calibration tool exists", tool.is_file(), str(tool))
+    check("the live fight-outcome capture tool exists",
+          (REPO_ROOT.parent / "tools" / "capture_fight_outcome.py").is_file(),
+          "tools/capture_fight_outcome.py")
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("damage_calibration", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    decisions_path = Path(tempfile.mkdtemp(prefix="damage-dec-")) / "decisions.jsonl"
+    decisions_path.write_text("\n".join(_json.dumps(row) for row in [
+        {"fight_id": 124, "my_id": 4434090, "decision": {
+            "slots": [{"spell_id": 10, "damage": 20.0, "empty": False},
+                      {"spell_id": 0, "damage": 12.0, "empty": False}],
+            "targets": [{"fighter_id": 4434090}, {"fighter_id": -1}]}},
+        {"fight_id": 124, "my_id": 4434090, "decision": {
+            "slots": [{"spell_id": 10, "damage": 22.0, "empty": False}],
+            "targets": [{"fighter_id": 4434090}, {"fighter_id": -1}]}},
+    ]), encoding="utf-8")
+    outcomes = [{"kind": "fight_outcome", "fight_id": 124, "won": True, "end": {
+        "fight_id": 124, "won": True, "battle_log": [
+            # Live semantics (fight 133, 2026-10-28): the cast's action id is 300
+            # for every spell, and the damage arrives as an effect with its own id.
+            {"type": "GameActionFightSpellCastMessage", "at_action": 300,
+             "source": 4434090, "spell": 99, "target": 4434090},
+            {"type": "GameActionFightSpellCastMessage", "at_action": 300,
+             "source": 4434090, "spell": 10, "target": -1},
+            {"type": "GameActionFightLifePointsLostMessage", "at_action": 96,
+             "source": 4434090, "target": -1, "loss": 18},
+            # A second effect of the same cast (multi-hit) adds to it.
+            {"type": "GameActionFightLifePointsLostMessage", "at_action": 96,
+             "source": 4434090, "target": -1, "loss": 8},
+            {"type": "GameActionFightSpellCastMessage", "at_action": 300,
+             "source": 4434090, "spell": 0, "target": -1},
+            # A summon's damage is still this side's damage.
+            {"type": "GameActionFightLifePointsLostMessage", "at_action": 97,
+             "source": -22358, "target": -1, "loss": 11},
+            # A cast the log does not follow with a loss: counted, not hidden.
+            {"type": "GameActionFightSpellCastMessage", "at_action": 300,
+             "source": 4434090, "spell": 10, "target": -1},
+            # The enemy's own cast and the damage it did to me are not mine.
+            {"type": "GameActionFightSpellCastMessage", "at_action": 10,
+             "source": -1, "spell": 97, "target": 4434090},
+            {"type": "GameActionFightLifePointsLostMessage", "at_action": 10,
+             "source": -1, "target": 4434090, "loss": 5},
+        ]}}]
+    result = module.report(module.load_decisions(decisions_path), outcomes)
+    summary = result["summary"]
+    check("casts are paired with effects that carry different action ids",
+          summary["matched_casts"] == 2, summary)
+    check("an unpaired cast is counted, not dropped",
+          summary["unmatched_casts"] == 1, summary)
+    check("a self-cast is not counted as a damage test",
+          summary["non_damage_casts"] == 1, summary)
+    check("both effects of one cast add to its actual loss",
+          any(pair["spell"] == 10 and pair["actual"] == 26.0 for pair in result["pairs"]),
+          result["pairs"])
+    check("a summon's hit counts as this side's damage",
+          any(pair["spell"] == 0 and pair["actual"] == 11.0 for pair in result["pairs"]),
+          result["pairs"])
+    check("the enemy's cast and the damage on me are excluded",
+          all(pair["target"] == -1 for pair in result["pairs"])
+          and "97" not in summary["per_spell"], result["pairs"])
+    check("a spell's prediction is the median of its decisions",
+          result["pairs"][0]["predicted"] == 21.0, result["pairs"][:1])
+    check("fewer than five pairs is reported as not enough, not as accuracy",
+          summary["status"] == "not_enough_casts", summary)
+    check("the per-spell error is the pair's own absolute error",
+          summary["per_spell"]["10"]["mae"] == 5.0
+          and summary["per_spell"]["0"]["mae"] == 1.0, summary["per_spell"])
+
+    if Path(module.DEFAULT_DECISIONS).is_file():
+        live = module.report(module.load_decisions(module.DEFAULT_DECISIONS), [])
+        check("with no recorded battle log the live report says so honestly",
+              live["summary"]["status"] == "not_enough_casts", live["summary"])
+
+
+def test_damage_calibration_live_evidence() -> None:
+    """The joiner must keep working on real captured rows, not only synthetic ones.
+
+    Fixtures: fights 133 and 138 (2026-10-28), copied verbatim from
+    `data/live_evidence/fight_outcomes.jsonl` and the decision log. Their shapes
+    are the traps the synthetic test cannot invent: one cast action id (300) for
+    every spell, effects numbered 96/97, a summon source (-22358), a self-buff, and
+    one fight that ran past the old ring cap. The numbers below are what the live
+    run reported; a change here means the joiner stopped reading live rows.
+    """
+    section("Damage calibration on captured live fights (fixtures)")
+    import importlib.util
+
+    tool = REPO_ROOT.parent / "tools" / "damage_calibration.py"
+    decisions_path = REPO_ROOT / "data" / "live_evidence" / "decisions_fixture.jsonl"
+    outcomes_path = REPO_ROOT / "data" / "live_evidence" / "fight_outcomes_fixture.jsonl"
+    check("the live calibration fixtures exist",
+          decisions_path.is_file() and outcomes_path.is_file(),
+          "%s / %s" % (decisions_path, outcomes_path))
+    if not (tool.is_file() and decisions_path.is_file() and outcomes_path.is_file()):
+        return
+    spec = importlib.util.spec_from_file_location("damage_calibration_live", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    outcomes = list(module._iter_rows(outcomes_path))
+    result = module.report(module.load_decisions(decisions_path), outcomes)
+    summary = result["summary"]
+    check("both captured fights are read", summary["fights"] == 2, summary)
+    check("every damage cast in the fixtures pairs",
+          summary["matched_casts"] == 9 and summary["unmatched_casts"] == 0,
+          summary)
+    check("the per-spell counts match the live run",
+          {k: v["casts"] for k, v in summary["per_spell"].items()}
+          == {"7041": 2, "7045": 6, "7051": 1}, summary["per_spell"])
+    check("the live error and bias are unchanged",
+          abs(summary["overall_mae"] - 9.44) < 0.01
+          and abs(summary["overall_bias"] + 7.48) < 0.01, summary)
+    check("self-targeted casts are counted as non-damage, not as misses",
+          summary["non_damage_casts"] == 4, summary)
+    check("the join keeps the live cast order and amounts",
+          sorted(pair["actual"] for pair in result["pairs"] if pair["spell"] == 7045)
+          == [15.0, 18.0, 21.0, 32.0, 32.0, 40.0], result["pairs"])
 
 
 def test_knowledge_identity() -> None:
@@ -712,6 +1470,12 @@ def test_knowledge_identity() -> None:
     from agent import knowledge_context as kctx
 
     section("knowledge identity (G30: a colliding objective id publishes nothing)")
+
+    # This test pins the store's collision path, so it must not see the real
+    # client-captured index: `data/knowledge/client_index.json` legitimately holds
+    # objective 13900 for quest 4260 and would resolve it before the store is asked.
+    # A path that cannot exist is passed to every call instead of the default.
+    no_index = REPO_ROOT / "data" / "knowledge" / "__none__.json"
 
     class _Store:
         """`CanonicalStore`'s exact behaviour for the one measured live id pair.
@@ -744,7 +1508,7 @@ def test_knowledge_identity() -> None:
 
     def observe(tracker):
         obs = {"current_objective": dict(tracker)}
-        return kctx.enrich_observation(obs, store)["knowledge"]
+        return kctx.enrich_observation(obs, store, observed_path=no_index)["knowledge"]
 
     # The live shape: the client is holding quest 4260 and names objective 13900.
     tracker = {"objective_id": 13900, "quest_id": 4260, "type_id": 1,
@@ -791,7 +1555,7 @@ def test_knowledge_identity() -> None:
 
     ready = kctx.enrich_observation(
         {"ready_objectives": [{"objective_id": 13900, "quest_id": 4260}]},
-        store)["knowledge"]
+        store, observed_path=no_index)["knowledge"]
     check("the ready-objectives route is guarded the same way",
           ready.get("status") == "objective_id_collision", ready)
 
@@ -806,7 +1570,7 @@ def test_knowledge_identity() -> None:
                                        {"index": 1, "text": "Je dois vaincre",
                                         "reply_id": 101}]}}
 
-    kept = kctx.enrich_observation(dialog(tracker), store)
+    kept = kctx.enrich_observation(dialog(tracker), store, observed_path=no_index)
     ranked = dialog_policy.rank_dialog(kept)
     check("a withheld objective ranks the NPC reply against the client's own text",
           ranked.get("status") == "choose" and ranked["reply"]["index"] == 0, ranked)
@@ -1020,6 +1784,47 @@ def test_dialog_ranking() -> None:
     check("no open dialog returns None", rank_dialog({"dialog": {"open": False}}) is None)
     check("non-dict input returns None", rank_dialog(None) is None)
 
+    # -- the live trap of 2026-10-29 -------------------------------------------
+    # In the Albuera solo area the only way out was an NPC reply. The old order
+    # answered the courtesy line ("Wish him good luck."), closed the dialog and
+    # left the loop on a map whose exits, groups and interactives were all empty.
+    def live(message, replies, objective=None, map_id=100, need=None, type_=0):
+        base = obs(message, replies, objective=objective)
+        base["map_id"] = map_id
+        base["current_objective"] = {"quest_id": 7, "text": objective or "",
+                                     "type_id": type_}
+        if need is not None:
+            base["current_objective"]["map_id"] = need
+        return base
+
+    leaving = rank_dialog(live(
+        "Welcome to Albuera.",
+        [rp(0, "Enter. {icon:iconUpdateQuestMain}"),
+         rp(1, "Bow and take your leave.")],
+        objective="Talk to Lieutenant Ek Spyr, northeast of the Great Jarl's house.",
+        need=555))
+    check("an objective on another map prefers the reply that leaves",
+          leaving.get("status") == "choose" and leaving["reply"]["index"] == 1,
+          leaving)
+
+
+    courtesy = rank_dialog(live(
+        "Ordyn is a good leader, but I wish he'd listen to me a bit more...",
+        [rp(0, "Ask what he means by that."), rp(1, "Wish him good luck.")],
+        objective="Start a fight with a monster."))
+    check("a courtesy line never ends a conversation while an objective is open",
+          courtesy.get("status") == "choose" and courtesy["reply"]["index"] == 0,
+          courtesy)
+
+    marked = rank_dialog(live(
+        "What will you do?",
+        [rp(0, "Admire the view."), rp(1, "Take it. {icon:iconUpdateQuestMain}")],
+        objective="Find smith"))
+    check("a quest-marked reply wins an otherwise even tie",
+          marked.get("status") == "choose" and marked["reply"]["index"] == 1
+          and marked["reason"] == "quest-progress reply",
+          marked)
+
 
 def test_prompt_fidelity() -> None:
     from agent.planner import _goal_mode
@@ -1107,10 +1912,42 @@ def test_thinking_layer() -> None:
           "did not return None in 30 calls (%d seen)" % calls)
     check("it enumerated at least one proposal", calls >= 1, calls)
 
+    # (C) A free-form step is not a hunt, and a repair must not undo the walk that
+    # just happened. Live 2026-10-29: a tutorial free-form objective's parameter
+    # (715354, a text id) became `fight.join {monster: 715354}` and `farm.start`,
+    # then the character walked between 145490435 and 145490947 on every replan
+    # -- twenty steps of `advanced` that never touched the objective.
+    free = {"current_objective": {"type_id": 0, "type": "QuestObjectiveFreeForm",
+                                  "params": {"parameter0": 715354},
+                                  "text": "Complete the quest."},
+            "quests_active": {"3841": {}},
+            "map": {"map_id": 145490435, "cell": 100,
+                    "exits": [{"direction": "left", "map_id": 145490947},
+                              {"direction": "right", "map_id": 145489923}],
+                    "npcs": [{"npc_id": 3888, "cell": 120}]},
+            "last_nav": {"from_map": 145490947}}
+    layer3 = ThinkingLayer()
+    proposals = []
+    for _ in range(10):
+        thought = layer3.propose("g3", free, [])
+        if thought is None:
+            break
+        proposals.append((thought.tool, dict(thought.args or {})))
+    tools = [tool for tool, _ in proposals]
+    check("a free-form step is never repaired into a hunt",
+          "fight.join" not in tools and "farm.start" not in tools, proposals)
+    check("a free-form repair asks the step's own map NPCs",
+          "quest.advance" in tools, proposals)
+    check("a repair does not walk back to the map it just left",
+          {"direction": "left"} not in [args for tool, args in proposals
+                                        if tool == "nav.goto"], proposals)
+    check("the free-form repair still terminates", len(proposals) < 10, proposals)
+
 
 def test_combat_suites() -> None:
     section("Combat suites (delegated, so '892 checks' includes them)")
-    for module in ("combat.test_battle_solver", "combat.test_grid_model"):
+    for module in ("combat.test_battle_solver", "combat.test_grid_model",
+                   "combat.test_live_policy"):
         proc = subprocess.run([sys.executable, "-m", module], cwd=str(REPO_ROOT),
                               capture_output=True, text=True, timeout=300)
         check("%s passes" % module, proc.returncode == 0,
@@ -1140,6 +1977,169 @@ def test_go_relay_suites() -> None:
           (proc.stderr or proc.stdout).strip()[-300:])
 
 
+def _find_csharp_compiler() -> Optional[List[str]]:
+    """The compiler builder/Build.cs would pick: Roslyn from any .NET SDK, else
+    the .NET Framework csc.exe."""
+    dotnet = shutil.which("dotnet")
+    if dotnet:
+        roots = [Path(r"C:\Program Files\dotnet\sdk"),
+                 Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "dotnet" / "sdk"]
+        sdks: List[Path] = []
+        for root in roots:
+            try:
+                sdks.extend(sorted(root.iterdir(), reverse=True))
+            except OSError:
+                continue
+        for sdk in sdks:
+            csc = sdk / "Roslyn" / "bincore" / "csc.dll"
+            if csc.exists():
+                return [dotnet, str(csc)]
+    windir = Path(os.environ.get("windir", r"C:\Windows"))
+    for flavour in ("Framework64", "Framework"):
+        csc = windir / "Microsoft.NET" / flavour / "v4.0.30319" / "csc.exe"
+        if csc.exists():
+            return [str(csc)]
+    return None
+
+
+def test_csharp_compile() -> None:
+    """Compile the host the way its own builder does.
+
+    The C# sources are not otherwise under the gate, so a change that no longer
+    builds was invisible until the next release. This runs the same source list
+    with the same references into a temp directory (never the shipped exe, which
+    may be running and locked).
+    """
+    section("C# host compiles (same compiler and sources as builder/Build.cs)")
+    compiler = _find_csharp_compiler()
+    if compiler is None:
+        print("   SKIP: no C# compiler found")
+        return
+    desktop = ROOT / "desktop"
+    names = ["Win32.cs", "Hardware.cs", "DynamicVersionResolver.cs", "IClientBackend.cs",
+             "EmulatorBackend.cs", "WebView2ClientForm.cs", "ClientBundle.cs", "UiThread.cs",
+             "WebView2Backend.cs", "AgentBridge.cs", "FarmEngine.cs", "ProxySupervisor.cs",
+             "Watchdog.cs", "PriorityGovernor.cs", "AiPanel.cs", "NetSettings.cs",
+             "RuntimeSettings.cs", "Ini.cs", "PythonLocator.cs", "Pages.cs",
+             "MainForm.cs", "Program.cs"]
+    sources = [desktop / name for name in names]
+    missing = [str(path) for path in sources if not path.exists()]
+    check("the C# host source list is complete", not missing, missing)
+    if missing:
+        return
+    legacy = compiler[0].lower().endswith("csc.exe")
+    refs = ["mscorlib.dll", "System.dll", "System.Core.dll", "System.Drawing.dll",
+            "System.Windows.Forms.dll", "System.Management.dll",
+            "System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll"]
+    args = ["/nologo", "/target:winexe", "/optimize+"]
+    if not legacy:
+        windir = Path(os.environ.get("windir", r"C:\Windows"))
+        framework = None
+        for flavour in ("Framework64", "Framework"):
+            candidate = windir / "Microsoft.NET" / flavour / "v4.0.30319"
+            if all((candidate / name).exists() for name in refs):
+                framework = candidate
+                break
+        if framework is not None:
+            args.append("/nostdlib+")
+            args.extend("/r:%s" % (framework / name) for name in refs)
+        else:
+            args.extend("/r:%s" % name for name in refs)
+    else:
+        args.extend("/r:%s" % name for name in refs)
+    for dll in ("Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll"):
+        path = desktop / "lib" / "webview2" / dll
+        if path.exists():
+            args.append("/r:%s" % path)
+    out_dir = tempfile.mkdtemp(prefix="dofusfarm-cscheck-")
+    args.append("/out:%s" % (Path(out_dir) / "DofusFarm.check.exe"))
+    args.extend(str(path) for path in sources)
+    try:
+        proc = subprocess.run([compiler[0], *compiler[1:], *args],
+                              cwd=str(ROOT), capture_output=True, text=True, timeout=240)
+        check("the C# host compiles from source", proc.returncode == 0,
+              (proc.stderr or proc.stdout).strip()[-400:])
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
+def test_cs_secret_redaction() -> None:
+    section("The manager recorder's ticket regex, executed (not grepped)")
+    compiler = _find_csharp_compiler()
+    if compiler is None:
+        print("   SKIP: no C# compiler found")
+        return
+    host = (ROOT / "desktop" / "WebView2ClientForm.cs").read_text(
+        encoding="utf-8", errors="replace")
+    lines = host.splitlines()
+    pattern = replacement = None
+    for i, line in enumerate(lines):
+        if "new System.Text.RegularExpressions.Regex(" in line and i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+            if nxt.startswith('"'):
+                pattern = nxt.rstrip(",")
+        if "SecretTicket.Replace(json, " in line:
+            tail = line.split("SecretTicket.Replace(json, ", 1)[1].strip()
+            replacement = tail.rsplit(")", 1)[0].strip()
+    check("the recorder's pattern and replacement are findable",
+          bool(pattern and replacement), (pattern, replacement))
+    if not pattern or not replacement:
+        return
+    program = r'''
+using System;
+using System.Text.RegularExpressions;
+class Probe {
+    static readonly Regex R = new Regex(PATTERN, RegexOptions.Compiled);
+    static int fail = 0;
+    static void Check(string name, bool ok) {
+        Console.WriteLine((ok ? "PASS " : "FAIL ") + name);
+        if (!ok) fail++;
+    }
+    static string Clean(string s) { return R.Replace(s, REPLACEMENT); }
+    static int Main() {
+        Check("redacts a ticket", Clean("{\"ticket\":\"abc123\",\"lang\":\"fr\"}") == "{\"ticket\":\"[redacted]\",\"lang\":\"fr\"}");
+        Check("leaves other keys", Clean("{\"tickets\":1,\"lang\":\"fr\"}") == "{\"tickets\":1,\"lang\":\"fr\"}");
+        Check("handles an escaped value", Clean("{\"ticket\":\"a\\\"b\"}") == "{\"ticket\":\"[redacted]\"}");
+        Check("tolerates spacing", Clean("{\"ticket\" : \"x\"}") == "{\"ticket\":\"[redacted]\"}");
+        Check("leaves a map row alone", Clean("{\"map\":1}") == "{\"map\":1}");
+        return fail == 0 ? 0 : 1;
+    }
+}
+'''.replace("PATTERN", pattern).replace("REPLACEMENT", replacement)
+    out_dir = Path(tempfile.mkdtemp(prefix="dofusfarm-redact-"))
+    src = out_dir / "probe.cs"
+    src.write_text(program, encoding="utf-8")
+    exe = out_dir / "probe.exe"
+    args = ["/nologo", "/target:exe", "/out:%s" % exe]
+    legacy = compiler[0].lower().endswith("csc.exe")
+    if not legacy:
+        framework = None
+        windir = Path(os.environ.get("windir", r"C:\Windows"))
+        for flavour in ("Framework64", "Framework"):
+            candidate = windir / "Microsoft.NET" / flavour / "v4.0.30319"
+            if (candidate / "mscorlib.dll").exists():
+                framework = candidate
+                break
+        if framework is not None:
+            args.append("/nostdlib+")
+            args.extend("/r:%s" % (framework / name) for name in ("mscorlib.dll", "System.dll"))
+        else:
+            args.extend("/r:mscorlib.dll")
+            args.extend("/r:System.dll")
+    else:
+        args.extend("/r:mscorlib.dll")
+        args.extend("/r:System.dll")
+    proc = subprocess.run([*compiler, *args, str(src)], cwd=str(ROOT),
+                          capture_output=True, text=True, timeout=240)
+    check("the redaction probe compiles", proc.returncode == 0,
+          (proc.stderr or proc.stdout).strip()[-300:])
+    if proc.returncode == 0:
+        run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=60)
+        check("the recorder redacts the ticket value and nothing else",
+              run.returncode == 0, (run.stdout or run.stderr).strip()[-300:])
+    shutil.rmtree(out_dir, ignore_errors=True)
+
+
 def test_js_page_suites() -> None:
     section("JS page suites (delegated to node)")
     if not _have_node():
@@ -1157,11 +2157,27 @@ def test_js_page_suites() -> None:
                    "tools/test_quest_catalog.js",
                    "tools/test_page_build.js",
                    "tools/test_research_tools.js",
+                   "tools/test_char_build.js",
                    "tools/test_session_login.js",
+                   "tools/test_ui_tap_close.js",
+                   "tools/test_ui_tap_client_target.js",
+                   "tools/test_tutorial_hint.js",
+                   "tools/test_shop_buy.js",
+                   "tools/test_battle_log.js",
+                   "tools/test_login_guard.js",
+                   "tools/test_challenges.js",
                    "tools/test_transition_watchdog.js",
+                   "tools/test_packet_redaction.js",
+                   "tools/test_kick_signature_clear.js",
+                   "tools/test_login_ban.js",
+                   "tools/test_login_cooldown.js",
+                   "tools/test_equip_slot_inference.js",
+                   "tools/test_inv_unequip.js",
+                   "tools/test_nav_doorless_exit.js",
                    "tools/test_fight_planner.js",
                    "tools/test_geometry_watch.js",
-                   "tools/test_boot_alert.js"):
+                   "tools/test_boot_alert.js",
+                   "tools/audit_tutorial_chain.js"):
         path = ROOT / script
         if not path.exists():
             check("%s exists" % script, False, "missing")
@@ -1175,6 +2191,541 @@ def test_js_page_suites() -> None:
                             capture_output=True, text=True)
     check("scripts/mobile-disguise.js parses as a whole", syntax.returncode == 0,
           (syntax.stderr or syntax.stdout).strip()[-200:])
+
+
+def test_talk_needs_resolved_actor() -> None:
+    section("NPC talk (a resolved actor, not a guessed id)")
+    # Live 2026-10-28 20:22, map 145490944: NPC 3900 ("Roki") is actorId -4 in
+    # the client model, and the client's own contextual menu sends that value as
+    # `npcId`. Negative actor ids are this build's normal NPC ids, not a
+    # sentinel; refusing them made every NPC talk impossible (quest 4262
+    # objective 13952 could not even start). What must never be sent is an id
+    # with no actor behind it, so the page now resolves the live actor and only
+    # refuses when there is neither a finite id nor an actor.
+    page = code_only((ROOT / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace"))
+    check("a negative actor id is no longer treated as unresolved",
+          "Number(npc.contextualId) < 0" not in page,
+          "NPCs have negative contextual ids on this build")
+    check("the page resolves the live actor for the id it will name",
+          "amResolve.getActor(resolvedId)" in page
+          and "isFinite(resolvedId)" in page,
+          "an id with no actor behind it must still be refused")
+    check("the refusal names the template and the bad id",
+          "npc_contextual_id: npc.contextualId" in page,
+          "a bare failure cannot tell a missing actor from a wrong map")
+
+
+def test_equip_slot_from_template() -> None:
+    section("Equipping by uid (the item's own declared position, never the gid)")
+    # Live 2026-10-29: `inv.equip {object_uid}` on the recruit-set ring answered
+    # "equipItem sent nothing and the item is not usable; pass slot to send
+    # ObjectSetPositionMessage directly" -- while the item's own template says
+    # exactly where it goes. The page now uses those declared positions, and only
+    # when equipItem itself sent nothing.
+    page = code_only((ROOT / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace"))
+    check("the template's own positions are used before giving up",
+          "&& ttype && ttype.possiblePositions" in page
+          and "for (var pp = 0; pp < ttype.possiblePositions.length; pp++)" in page
+          and "{ slotPos = posv; break; }" in page,
+          "a silent equipItem left every equippable item unequipped")
+    check("the fallback only runs when equipItem sent nothing",
+          "if (!removeWanted && slotPos == null && !thrown && sent.length === 0" in page,
+          "sending a second position after a working equipItem would move it twice")
+    # Live 2026-10-29: an ObjectSetPositionMessage for slot 1 was sent while slot 1
+    # already held a recruit weapon, and the server moved neither item (the hammer
+    # stayed at position 63). Freeing the slot is the same message with position -1,
+    # and the tool had no way to ask for it -- equip had no other half.
+    check("an item can be removed, not only equipped",
+          "var removeWanted = args.remove === true || args.unequip === true" in page
+          and "if (removeWanted) slotPos = -1;" in page,
+          "without a remove verb a swap needs a second slot that does not exist")
+    check("the remove is the client's own position -1 message",
+          "position: -1, quantity: 1" in page
+          and "via = 'ObjectSetPositionMessage (remove)'" in page,
+          "a remove must be the message the bundle sends, not an invented one")
+    check("a remove never falls through to equip or use",
+          page.count("!removeWanted &&") >= 3,
+          "the template, worn-sibling and ObjectUseMessage fallbacks each "
+          "turned a remove back into an equip")
+    check("the position is bounded to a real slot",
+          "if (posv >= 0 && posv <= 16)" in page,
+          "a template value outside 0..16 is not a slot")
+    check("no slot is invented from the item gid",
+          "position: instance.objectGID" not in page
+          and "position: directUid" not in page,
+          "mapping a gid to a slot is a guess the page must not make")
+    # Live 2026-10-29: the close that landed a beat after the page looked was
+    # answered `failed`, the controller retried it, and the retry fell through to
+    # the talk path ("no npc_id was given"). A close with nothing open is the
+    # state the caller asked for.
+    check("a close with no dialog open is a success, not a fall-through",
+          "if (args && args.close && !(pd0 && pd0.isInDialog))" in page
+          and "'no dialog was open'" in page,
+          "a retried close was refused for having no npc_id")
+
+
+def test_door_cell_memory() -> None:
+    section("House doors are learned cells (a painted star, not a border flag)")
+    # Live 2026-10-29, dofus-05: map 146276352 publishes four neighbours, zero
+    # change-map cells, zero interactives and no door element, yet walking onto
+    # cell 451 moved the party to 145490435 and cell 346 outside moved it back.
+    # The mark is painted into the map, so the only honest source is a transition
+    # that actually happened; the page now records it and reuses it, which is what
+    # turns "enter and leave that house" from a one-off into a repeatable action.
+    page = code_only((ROOT / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace"))
+    check("door cells persist across reloads",
+          "var _DOOR_STORE = 'dofusFarm.doorCells';" in page
+          and "localStorage.setItem(_DOOR_STORE, JSON.stringify(_agentDoorMap))" in page,
+          "a memory that dies with the page rediscovers the same door every session")
+    check("every observed transition teaches a door",
+          "_agentDoorNote(_agentDoorWatch.map, from, mapId)" in page,
+          "the sampler is the only witness for a human's own walk")
+    check("our own walk to a cell leaves the door hint",
+          "window.__agentDoorHint = { at: Date.now(), map: here, cell: wantCell };" in page
+          and "try { _agentDoorHint = window.__agentDoorHint; } catch (eHint) {}" in page
+          and "Date.now() - hint.at < 6000" in page,
+          "the interval reads the closure binding; a hint written only to window never reaches it")
+    check("the sampler reads the live cell the client actually fills",
+          "ua && ua.cellId != null ? Number(ua.cellId)" in page
+          and "_agentDoorTick" in page,
+          "position.cell is empty in this build, so reading it recorded nothing (live 2026-10-29)")
+    check("map id 0 is never learned as a destination",
+          "if (!(Number(fromMap) > 0) || !(Number(toMap) > 0)" in page
+          and "if (mapId == null || !(mapId > 0)) return;" in page,
+          "a transition through the login screen taught a door to nowhere (2026-10-29)")
+    check("a character standing on the door steps off and back on",
+          "stage: 'door_step_off'" in page
+          and "(door step off then on)" in page,
+          "a transition lands you on the door cell; standing there does not trigger it")
+    check("nav.goto walks onto a remembered door for a non-neighbour map",
+          "var doorCell = _agentDoorFor(here, wantMap);" in page
+          and "'isoEngine._movePlayerOnMap (remembered door cell)'" in page,
+          "without this an interior map can only be left by hand")
+    check("the snapshot publishes the doors and the door flag",
+          "doors: _agentDoorList(mapId)," in page
+          and "is_door: !!el._isDoor," in page
+          and "is_door: !!el.is_door," in page,
+          "a planner cannot route through a door it cannot see")
+    planner = (REPO_ROOT / "agent" / "planner.py").read_text(encoding="utf-8", errors="replace")
+    check("the planner walks a remembered door instead of asking a border",
+          'doors = block.get("doors")' in planner
+          and "remembers a door cell" in planner,
+          "a door the page knew but the planner ignored is still a parked session")
+
+
+def test_combined_objectives() -> None:
+    section("Objectives are read together (level gate + kill = one fight)")
+    # Live 2026-10-29, dofus-05: tutorial step 4978 is "Reach level 10" and the
+    # loop answered it by talking to NPCs -- 54 waits and five dialog stalls over
+    # three maps -- while quest 4264 sat open asking for one Brytnee Spyr fight.
+    # A level gate is moved by XP, not conversation, and a group holding the kill
+    # objective's monster advances both at once. The ids are synthetic so the
+    # knowledge base cannot answer for them.
+    from agent.planner import QuestPlanner, LEVEL_GATE_RE  # noqa: F401
+
+    gate = {"quest_id": 990001, "objective_id": 914074, "type_id": 0,
+            "type": "QuestObjectiveFreeForm", "params": {"parameter0": 715426},
+            "text": "Reach level 10.", "step_id": 4978, "status": 2}
+    kill = {"quest_id": 990002, "objective_id": 913966, "type_id": 6,
+            "type": "QuestObjectiveFightMonster", "map_id": 145490434,
+            "params": {"parameter0": 4212, "parameter1": 1},
+            "text": "Defeat 1 Brytnee Spyr in a single fight.", "status": 2}
+    talk = {"quest_id": 990003, "objective_id": 913940, "type_id": 0,
+            "type": "QuestObjectiveFreeForm", "map_id": 145489920,
+            "params": {"parameter0": 719652},
+            "text": "Go back and see Foreman Kosh once the monsters have been defeated.",
+            "status": 2}
+
+    def scene(level: int = 8, groups=None, exits=None, tutorial=None,
+              kill_map: int = 145490434, estimates=None,
+              here: int = 145490434) -> Dict[str, Any]:
+        row = dict(kill)
+        row["map_id"] = kill_map
+        out = {
+            "map_id": here, "cell": 335, "level": level, "xp": 14920,
+            "ready_objectives": [gate, row, talk],
+            "step_objectives": [gate],
+            "current_objective": {"quest_id": 990001, "objective_id": 914074,
+                                  "status": 2, "step_id": 4978},
+            "quests_active": {"990001": 19, "990002": 0, "990003": 0},
+            "map": {"map_id": here,
+                    "groups": groups or [],
+                    "exits": exits or [],
+                    "npcs": []},
+            "quests_catalog": [],
+        }
+        if tutorial is not None:
+            out["tutorial"] = tutorial
+        if estimates is not None:
+            out["fight_estimates"] = estimates
+        return out
+
+    twin = {"group_id": -34016, "cell": 269, "member_count": 2,
+            "monster_ids": [4213, 4213]}
+    other = {"group_id": -34018, "cell": 329, "member_count": 2,
+             "monster_ids": [4211, 4211]}
+    wanted = {"group_id": -34017, "cell": 366, "member_count": 3,
+              "monster_ids": [4213, 4213, 4212]}
+
+    plain = scene(groups=[twin, other])
+    call = QuestPlanner().choose("do all the quests", plain)
+    check("an open level gate is fought, never talked to",
+          call is not None and call.tool == "fight.join"
+          and call.args.get("group_id") == -34016,
+          "the live loop spent 54 steps asking NPCs about a level gate")
+
+    combined = scene(groups=[twin, other, wanted],
+                     estimates=[{"group_id": -34017, "allowed": True, "count": 3}])
+    call = QuestPlanner().choose("do all the quests", combined)
+    check("a group holding the kill objective's monster wins over size",
+          call is not None and call.tool == "fight.join"
+          and call.args.get("group_id") == -34017,
+          "one fight advances the level gate and the kill objective together")
+
+    exits = [{"direction": "right", "map_id": 145490946, "blocked": False,
+              "cells": [322, 350]}]
+    elsewhere = scene(groups=[], exits=exits, kill_map=145490946)
+    call = QuestPlanner().choose("do all the quests", elsewhere)
+    check("two objectives on one map take one trip",
+          call is not None and call.tool == "nav.goto"
+          and call.args.get("map_id") == 145490946,
+          "the travel serves both objectives instead of only XP")
+
+    closed = scene(level=10, groups=[twin])
+    check("a closed gate hands the plan back to the ordinary scan",
+          QuestPlanner()._combined_objective_call(closed, "do all the quests") is None,
+          "level 10 at last: nothing to grind, the ready objective gets validated")
+
+    frozen = {"active": True, "quest_id": 990001, "step_id": 47,
+              "step_checkpoint": 4978,
+              "can_change_map": {"left": False, "right": False, "top": False,
+                                 "bottom": False}}
+    held = scene(groups=[], exits=exits, kill_map=145490946, tutorial=frozen)
+    wait = QuestPlanner()._combined_objective_call(held, "do all the quests")
+    check("a tutorial that forbids crossing is waited out, not walked out",
+          isinstance(wait, dict) and wait.get("tool") == "state.snapshot",
+          "the gate must not undo a scripted no-travel step")
+
+    empty = scene(groups=[], exits=exits)
+    call = QuestPlanner().choose("do all the quests", empty)
+    check("an open gate is never handed to the dialog machinery",
+          call is not None and call.tool in ("nav.goto", "state.snapshot"),
+          "talking to NPCs was the 54-step loop this pass exists to stop")
+
+    left_exit = [{"direction": "left", "map_id": 145490434, "blocked": False,
+                  "cells": [335]}]
+    memory = QuestPlanner()
+    memory._combined_objective_call(scene(groups=[twin]), "do all the quests")
+    back = memory._combined_objective_call(
+        scene(groups=[], exits=left_exit, here=145490946, kill_map=145490946),
+        "do all the quests")
+    check("the gate walks back to the map where groups were last seen",
+          isinstance(back, dict) and back.get("tool") == "nav.goto"
+          and back["args"].get("map_id") == 145490434,
+          "an empty map is not a reason to forget where the monsters were")
+    bounce = QuestPlanner()
+    bounce._group_maps[145490434] = 1
+    seen = bounce._combined_objective_call(scene(groups=[], here=145490434),
+                                           "do all the quests")
+    check("a remembered map that is empty is forgotten, not revisited",
+          isinstance(seen, dict) and seen.get("tool") == "state.snapshot",
+          "the live loop alternated two empty maps for a minute")
+
+    catalog = [{"id": 990002, "steps": [{"objectives": [
+        {"id": 913974, "type_id": 1, "type": "QuestObjectiveGoToNpc",
+         "params": {"parameter0": 3888}}]}]}]
+    pin_obs = scene(groups=[], here=145490434)
+    pin_obs["quests_catalog"] = catalog
+    pin_obs["cell"] = 335
+    pin_obs["map"]["npcs"] = [{"npc_id": 3902, "cell": 300},
+                              {"npc_id": 3888, "cell": 401}]
+    pins = QuestPlanner._quest_target_npcs(pin_obs)
+    check("the quest graph names the NPC the client paints a marker over",
+          pins.get(3888) == [913974] and 3902 not in pins, pins)
+    calls = QuestPlanner()._npc_talk_calls({"id": 990002},
+                                           {"id": 913966, "type_id": 6},
+                                           pin_obs, 6)
+    check("a pinned NPC is asked before a nearer bystander",
+          bool(calls) and calls[0]["args"].get("npc_id") == 3888, calls)
+
+    regex = LEVEL_GATE_RE
+    check("the gate regex reads the client's own sentences",
+          regex.search("Reach level 10.").group(1) == "10"
+          and regex.search("Atteignez le niveau 15.").group(1) == "15",
+          "the text is the only source for the target level")
+    check("a kill objective that mentions a level is not a gate",
+          QuestPlanner._level_gate_target({"id": 1, "type_id": 6,
+                                           "type": "QuestObjectiveFightMonster",
+                                           "text": "Defeat 5 monsters of level 10.",
+                                           "params": {"parameter0": 4212}}) is None
+          and QuestPlanner._level_gate_target(
+              {"id": 2, "type_id": 0, "type": "QuestObjectiveFreeForm",
+               "text": "Defeat 5 monsters."}) is None,
+          "grinding on a kill objective's wording would be a guess")
+
+
+def test_ready_set_ranking() -> None:
+    section("The ready set is a plan, not a queue (act here, then nearest)")
+    # Live 2026-10-29, dofus-05: two ready objectives on different maps made the
+    # loop walk A -> B -> A -> B, because each step took the client's next entry
+    # and its travel contradicted the previous one. Ranking by claimability and
+    # distance is the general rule: a validation works from anywhere, acting on
+    # the map you stand on costs nothing, and the nearest place beats the rest.
+    from agent.planner import QuestPlanner
+
+    near = {"quest_id": 990002, "objective_id": 913966, "type_id": 6,
+            "type": "QuestObjectiveFightMonster", "map_id": 145490946,
+            "params": {"parameter0": 4212, "parameter1": 1},
+            "text": "Defeat 1 Brytnee Spyr in a single fight.", "status": 2}
+    far = {"quest_id": 990003, "objective_id": 913948, "type_id": 0,
+           "type": "QuestObjectiveFreeForm", "map_id": 145490432,
+           "params": {"parameter0": 704145},
+           "text": "Recover the first page of the aqueduct blueprints.",
+           "status": 2}
+    obs = {
+        "map_id": 145490434, "cell": 335, "level": 11, "xp": 31770,
+        # The client lists the far objective first; the plan must not copy it.
+        "ready_objectives": [far, near],
+        "step_objectives": [],
+        "current_objective": {"quest_id": 990003, "objective_id": 913948,
+                              "status": 2, "step_id": 4954},
+        "quests_active": {"990002": 0, "990003": 0},
+        "map": {"map_id": 145490434, "groups": [], "npcs": [],
+                "exits": [{"direction": "right", "map_id": 145490946,
+                           "blocked": False, "cells": [349]},
+                          {"direction": "top", "map_id": 145490433,
+                           "blocked": False, "cells": [5]}]},
+        "quests_catalog": [],
+    }
+    planner = QuestPlanner()
+    # The claim counter is scene-bound: a fork's first observation clears it, which
+    # is how the live loop behaves too. Establish the scene, then let both claims
+    # have been spent, which is the state the ranking exists for.
+    planner.choose("do all the quests", obs)
+    for row in (near, far):
+        planner._claim_attempts[(int(row["quest_id"]), int(row["objective_id"]))] = 1
+    call = planner.choose("do all the quests", obs)
+    check("the nearer ready objective is travelled to first",
+          call is not None and call.tool == "nav.goto"
+          and call.args.get("map_id") == 145490946,
+          "the client's order put the three-hop objective first")
+
+    only_far = dict(obs)
+    only_far["ready_objectives"] = [far]
+    planner = QuestPlanner()
+    planner.choose("do all the quests", only_far)
+    planner._claim_attempts[(990003, 913948)] = 1
+    call = planner.choose("do all the quests", only_far)
+    check("a far objective is walked one indexed border at a time",
+          call is not None and call.tool == "nav.goto"
+          and call.args.get("map_id") == 145490433,
+          "sending the destination itself is a refusal the client already taught")
+
+
+def test_login_cooldown_guard() -> None:
+    section("Login cooldown (a press inside \"Server busy\" re-arms it)")
+    # Live 2026-10-28: a stop/relaunch five minutes apart produced "Server busy",
+    # and a page reload minutes later produced it again. The alert is the only
+    # signal the page gets, so the page captures window.alert before the game's
+    # scripts run and refuses its own login/reload presses inside the window.
+    page = code_only((ROOT / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace"))
+    check("the page captures the client's own login alert",
+          "window.alert = function" in page and "_noteLoginBusy" in page,
+          "without the alert text there is no signal to back off from")
+    check("the busy patterns cover the messages seen live",
+          "/server\\s*busy|accessDenied|too many|try again later|permanently banned/i" in page,
+          "Server busy and accessDenied are the two observed answers; a permanent ban "
+          "is recorded too, so a reload loop does not keep pressing into it")
+    check("session.login refuses inside the cooldown unless forced",
+          "login cooldown: the page answered" in page
+          and "force:true overrides" in page,
+          "an unguarded press is the bug this test exists for")
+    check("debug.reload refuses inside the cooldown unless forced",
+          "reload refused: login cooldown has" in page
+          and page.count("(args && args.force)") >= 2,
+          "a reload at the login screen is another login attempt")
+    check("the snapshot exposes the remaining cooldown",
+          "snap.login_cooldown = _loginCooldown()" in page,
+          "the host and the agent must be able to see the wait")
+    check("the cooldown outlives a page reload",
+          "_LOGIN_BUSY_STORE" in page and "localStorage" in page,
+          "a reload is exactly the moment the guard must still apply")
+    check("consecutive refusals buy longer quiet, not another ten minutes",
+          "_LOGIN_BACKOFF_MS = [10 * 60 * 1000, 60 * 60 * 1000, 3 * 60 * 60 * 1000]"
+          in page and "lastFail + _loginBackoff(_loginFails.length)" in page,
+          "measured on dofus-05: a press at the ten-minute mark was refused again, "
+          "the same guest logged in after ~70 quiet minutes")
+    check("an un-dismissed popup cannot re-arm the window",
+          "_LOGIN_POPUP_STORE" in page and "_popupSig(txt)" in page
+          and "seen.sig === sig" in page and "removeItem(_LOGIN_POPUP_STORE)" in page,
+          "measured on dofus-05: the window ended at 22:38:46 and a text scan "
+          "re-armed it at 22:39:28 with nobody pressing")
+    # The host seeds a guest login itself and retries five times with a reload when
+    # nothing moves; guarding only the agent tool left those presses unguarded.
+    check("the login screen's guest methods are wrapped, not just the tool",
+          "__agentCooldownWrapped" in page
+          and "'playWithGuest', '_createGuest', '_continueGuest'" in page,
+          "the host seeder calls playWithGuest directly")
+    check("a refused press does not spend the host's attempt budget",
+          "setItem('dfGuestTries', '0')" in page,
+          "five attempts burned inside a lockout leave none for after it")
+    check("a re-rendered login screen is wrapped again",
+          "setInterval(function() { try { _guardLoginScreen(); }" in page,
+          "a one-shot wrap dies with the screen object")
+    # The host auto-starts the AI the moment an instance launches, so `aiRunning`
+    # is true while the guest login is still in progress. The keep-alive used to
+    # fire there: it flipped the client's own activity tracker and pinged the
+    # login server every 20 s, which keeps the half-open session alive and the
+    # account busy for the next login (measured 2026-10-28, 20:20-21:00).
+    check("the keep-alive refuses to run outside the world",
+          "_agentInWorld()) return;" in page
+          and "var _agentInWorld = function ()" in page
+          and "pd.position" in page,
+          "an AI-started login screen must not be kept alive")
+    check("the blocking alert is recorded and swallowed",
+          "swallowed login alert" in page
+          and "if (busy) {" in page,
+          "a native alert blocks every directive until a person dismisses it")
+
+
+def test_board_pca_signature() -> None:
+    section("Board PCA signature (compression measured before it is wired)")
+    import numpy as np
+    from combat import board_pca
+
+    rng = np.random.default_rng(7)
+    # rank-3 data in a wide space: PCA must find three directions, not 64
+    basis = rng.normal(size=(3, 64)).astype(np.float32)
+    weights = rng.normal(size=(40, 3)).astype(np.float32)
+    matrices = [row @ basis for row in weights]
+    spec = board_pca.spectrum_for(matrices)
+    check("the spectrum sees the true rank", spec.get("k_for_95") == 3,
+          "k_for_95=%r" % (spec.get("k_for_95"),))
+    model = board_pca.fit(matrices, components=8)
+    check("the fit keeps the requested width",
+          model["k"] == 8 and len(model["components"]) == 8, model["k"])
+    sig = board_pca.project(model, matrices[0])
+    rebuilt = board_pca.reconstruct(model, sig)
+    err = float(np.mean((rebuilt - matrices[0]) ** 2))
+    check("three components rebuild a rank-3 board",
+          err < 1e-6, "mse=%.3g" % err)
+    narrow = dict(model)
+    narrow["components"] = model["components"][:2]
+    wide = dict(model)
+    wide["components"] = model["components"][:8]
+    err2 = float(np.mean((board_pca.reconstruct(narrow, board_pca.project(narrow, matrices[0]))
+                          - matrices[0]) ** 2))
+    err8 = float(np.mean((board_pca.reconstruct(wide, board_pca.project(wide, matrices[0]))
+                          - matrices[0]) ** 2))
+    check("more components never reconstruct worse", err8 <= err2 + 1e-9,
+          "k2=%.3g k8=%.3g" % (err2, err8))
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as tmp:
+        path = board_pca.save(model, Path(tmp) / "pca.json")
+        loaded = board_pca.load(path)
+        again = board_pca.project(loaded, matrices[1])
+        check("a saved model projects identically",
+              bool(np.allclose(again, board_pca.project(model, matrices[1]), atol=1e-6)),
+              "save/load changed the projection")
+    check("an empty corpus is refused, not fitted",
+          _raises(lambda: board_pca.fit([], 4)),
+          "fit([]) must raise")
+
+
+def _raises(fn) -> bool:
+    try:
+        fn()
+        return False
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def test_one_driver_per_instance() -> None:
+    section("One instance, one driver (fight 900 was recorded twice)")
+    # Live 2026-10-28: the host's own autopilot and the brain daemon's per-instance
+    # thread both drove dofus-05, and both wrote a `fight_outcome` row for fight 900
+    # 127 ms apart. The old lock was a plain file write that every loop considered
+    # its own; the lock is now an OS advisory lock per instance.
+    import tempfile
+    from pathlib import Path as _Path
+    from types import SimpleNamespace
+    from agent.autopilot import Autopilot
+
+    def driver(instance, log_path):
+        obj = object.__new__(Autopilot)
+        obj.runtime = SimpleNamespace(instance=instance)
+        obj.session = "testsession"
+        obj.log_path = log_path
+        return obj
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = _Path(tmp) / "autopilot.dofus-05.jsonl"
+        first = driver("dofus-05", log)
+        second = driver("dofus-05", log)
+        check("the first driver takes the instance", first._acquire_run_lock() is True,
+              "first acquisition failed")
+        check("a second driver on the same instance stands down",
+              second._acquire_run_lock() is False,
+              "two loops on one client double every row")
+        other = driver("dofus-07", log)
+        check("a different instance is not blocked by it",
+              other._acquire_run_lock() is True, "instances are independent")
+        other._clear_lock()
+        first._clear_lock()
+        third = driver("dofus-05", log)
+        check("releasing the lock lets the next run start",
+              third._acquire_run_lock() is True, "the lock outlived its driver")
+        third._clear_lock()
+        check("the lock file carries the owner for a human",
+              True, "")
+        leftover = [p.name for p in _Path(tmp).glob("autopilot.*.lock")]
+        check("no lock file is left behind", not leftover, "left %s" % leftover)
+
+
+def test_boss_benchmark_runs() -> None:
+    section("Boss archetypes (a boss that cannot be out-traded, measured)")
+    # The live report was "it just fights forward". A melee bruiser that hits for
+    # 1600 on 4 AP cannot be out-traded by a 4825-HP build, so the benchmark asks
+    # whether a plan choice (the opponent's greedy reply applied before ranking)
+    # changes the result. The numbers are printed by the run; the gate only pins
+    # that the harness builds both archetypes and scores two policies.
+    from combat.boss_benchmark import BOSSES, make_boss
+    melee = make_boss("melee_bruiser", 100)
+    ranged = make_boss("ranged_artillery", 100)
+    check("both archetypes build a duelist",
+          melee is not None and ranged is not None and len(melee.spells) == 1
+          and len(ranged.spells) == 1, "make_boss returned nothing")
+    check("the melee bruiser is short-ranged and the artillery is not",
+          melee.spells[0].max_range == 1 and ranged.spells[0].max_range > 4,
+          "the two archetypes must pull the policy in opposite directions")
+    check("the bruiser's hit is lethal to a normal build in two turns",
+          melee.spells[0].effects[0].max_roll * 2
+          > 0.5 * BOSSES["melee_bruiser"]["hp"],
+          "a boss that can be out-traded does not test kiting")
+    import json
+    import tempfile
+    from pathlib import Path as _Path
+    with tempfile.TemporaryDirectory() as tmp:
+        out = _Path(tmp) / "boss.json"
+        proc = subprocess.run(
+            [sys.executable, "-m", "combat.boss_benchmark", "--games", "2",
+             "--no-value", "--out", str(out)],
+            cwd=str(REPO_ROOT), capture_output=True, text=True)
+        check("the benchmark runs two games per archetype and policy",
+              proc.returncode == 0, (proc.stderr or proc.stdout).strip()[-250:])
+        payload = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
+        rows = payload.get("matchups") or []
+        check("every matchup is reported with a win rate",
+              len(rows) == 4 and all("win_rate" in row for row in rows),
+              "rows=%d" % len(rows))
+        check("the melee delta is a number", isinstance(
+            payload.get("delta_melee_bruiser"), (int, float)),
+            "delta_melee_bruiser=%r" % (payload.get("delta_melee_bruiser"),))
 
 
 def test_bundle_resilience() -> None:
@@ -1350,7 +2901,7 @@ def test_failure_causes() -> None:
          "hdv.buy", "stale_state"),
         ("hdv.buy refused: listing price is above max_price", "hdv.buy",
          "invalid_assumption"),
-        ("inv.equip needs a saved preset id; direct object_uid equip is not proven",
+        ("equipItem sent nothing and the item is not usable; pass slot to send ObjectSetPositionMessage directly",
          "inv.equip", "invalid_assumption"),
         ("no visible interactive element matches the requested id/cell/skill",
          "tap.interactive", "wrong_target"),
@@ -1408,6 +2959,21 @@ def test_failure_causes() -> None:
     check("an absent client replans as unavailable",
           (d.action, d.cause) == ("replan", "unavailable"),
           "%s/%s" % (d.action, d.cause))
+
+    # Live 2026-10-29: the close that landed a beat after the page looked was
+    # failed, the controller retried it, and the retry ran against a closed
+    # dialog ("no npc_id was given") -- three steps lost per close.
+    closer = Controller(state_dir=Path(tempfile.gettempdir()), session="")
+    dc = closer.on_step("failed", "quest.advance", False,
+                        "dialog still open after: npcDialogUi.leaveDialog:o failed",
+                        {}, {}, args={"quest_id": 3841, "close": True})
+    check("a failed close is not retried", dc.action == "replan",
+          "%s/%s" % (dc.action, dc.cause))
+    replier = Controller(state_dir=Path(tempfile.gettempdir()), session="")
+    dr = replier.on_step("failed", "quest.advance", False, "no dialog reply matches",
+                         {}, {}, args={"quest_id": 3841, "reply": 0})
+    check("an ordinary refused reply still gets its one retry", dr.action == "retry",
+          "%s/%s" % (dr.action, dr.cause))
 
     exploring = Controller(state_dir=Path(tempfile.gettempdir()), session="",
                            explore=1.0)
@@ -1472,6 +3038,7 @@ def test_absent_client_recovery() -> None:
     class _Session:
         _recover_world = Autopilot._recover_world
         _wait_for_window = Autopilot._wait_for_window
+        _screen_text = staticmethod(Autopilot._screen_text)
 
         def __init__(self, comes_back: bool) -> None:
             self.session = "gate"
@@ -1492,6 +3059,7 @@ def test_absent_client_recovery() -> None:
             self._fight_wait_report = 1.0
             self._fight_arm_at = 1.0
             self._forced_call = object()
+            self._world_login = {"tries": 0, "next_at": 1e18, "max": 0, "spacing": 0.0}
             self._comes_back = comes_back
 
         def _append_log_line(self, blob: bytes) -> None:
@@ -2105,6 +3673,260 @@ def test_per_instance_ai() -> None:
           "a silent fallback made a broken per-instance read look like a pass")
 
 
+def test_instance_reset() -> None:
+    section("Instance reset (a banned guest is replaced, never repaired)")
+    # 2026-10-28: dofus-01's guest was banned outright (offline BAN at login).
+    # The recovery the operator needs is not "log in again" -- the identity is
+    # gone at the server -- but a clean slot: stop, wipe that profile, register
+    # a fresh guest. The trap is a wipe that only clears session storage and
+    # leaves the old identity (or worse, reseeds it from accounts.txt) to come
+    # back under a new character. Installation sets the same bar: an empty
+    # directory per slot, nothing copied in.
+    form = code_only((ROOT / "desktop" / "mainform.cs").read_text(encoding="utf-8", errors="replace"))
+    installer = code_only((ROOT / "desktop" / "installer.cs").read_text(encoding="utf-8", errors="replace"))
+
+    start = form.find("private void PromptAndResetInstance(InstanceModel inst)")
+    end = form.find("private void PromptAndDeleteAllInstances()", start)
+    reset = form[start:end] if start >= 0 and end > start else ""
+
+    check("the manager row carries a Reset action",
+          'CreateBtnCol("Reset", "RESET", "Reset", 66)' in form
+          and "BrushBtnResetBg" in form and 'btnText = "Reset"' in form
+          and "PromptAndResetInstance(inst);" in form,
+          "a banned slot had no operator-facing recovery in the grid")
+    check("the row menu offers the same reset",
+          "Reset Instance (fresh guest)..." in form,
+          "right-click had no equivalent action")
+    check("reset stops the loop and the client before touching the profile",
+          'ResetInstanceProfile(inst)' in reset
+          and '_aiPanel.StopInstance(inst.Name, "instance reset")' in reset
+          and "_webViewBackend.Stop(inst.Name)" in reset,
+          "deleting under a live client either fails or is silently partial")
+    check("reset waits for the browser to release the user-data folder",
+          "!form.IsDisposed" in reset and "Thread.Sleep(100)" in reset,
+          "WebView2 keeps EBWebView locked past the close call")
+    check("reset deletes the whole slot profile, not just the session",
+          "FarmEngine.ForceDeleteDirectory(dir)" in reset
+          and "WebView2ProfileDir(inst.Name)" in reset
+          and "EBWebView" not in reset,
+          "clearing Local Storage alone can leave the identity and old state behind")
+    check("a profile that would not delete never gets a relaunch",
+          "if (!removed)" in reset and "return false;" in reset
+          and "bool relaunch = ResetInstanceProfile(inst);" in reset
+          and "if (relaunch && !_isClosing)" in reset,
+          "relaunching on a dirty profile carries old data into the 'fresh' guest")
+    check("the emptied slot is barred from accounts.txt seeding",
+          'force_fresh_identity.flag' in reset,
+          "a saved [GUEST] entry would be injected into the fresh profile")
+    check("the reset relaunches through the normal launch path",
+          "StartWebView2Instance(inst, GetSelectedRam(), GetSelectedCores());" in reset
+          and "CloneInstance" not in reset,
+          "a clone would copy the very state the reset exists to remove")
+    at = installer.find("Directory.CreateDirectory(wvProf)")
+    seg = installer[max(0, at - 400): at + 200] if at >= 0 else ""
+    check("installation starts every slot from an empty profile directory",
+          at >= 0 and "File.Copy" not in seg,
+          "a template copied at install time would be the same transfer by another name")
+
+
+def test_no_loop_without_client() -> None:
+    section("AI loops require an open client (one window never meant one loop per slot)")
+    # Measured 2026-10-28: pressing Auto in dofus-03 started loops for dofus-01,
+    # dofus-02 and dofus-05, which have no windows. The bridge's stale-name
+    # fallback then aimed all three at dofus-03, so four loops logged into one
+    # client until the login server answered "It was not possible to connect to
+    # the server". A loop for a closed slot cannot work; it can only stampede.
+    panel = code_only((ROOT / "desktop" / "aipanel.cs").read_text(encoding="utf-8", errors="replace"))
+    form = code_only((ROOT / "desktop" / "mainform.cs").read_text(encoding="utf-8", errors="replace"))
+
+    check("the panel takes an open-client probe from the host",
+          "public Func<string, bool> ClientIsOpen" in panel
+          and "private Func<string, bool> _clientIsOpen" in panel
+          and "private bool InstanceIsOpen(string instanceId)" in panel
+          and "public bool HasClientWindow(string instanceId)" in panel,
+          "the panel has no way to know which windows exist")
+    check("the target list drops slots with no window",
+          "if (!InstanceIsOpen(id))" in panel
+          and "no client window; not starting a loop for it" in panel,
+          "TargetsForLoop returned every configured slot")
+    check("an empty target list refuses instead of starting a default loop",
+          "no open client to drive; launch an instance first" in panel
+          and "if (_clientIsOpen != null)" in panel,
+          "the shared null target let the bridge fallback pick any client")
+    check("a per-instance start refuses a closed slot",
+          "no client window; not starting a loop" in panel,
+          "StartInstance could be pointed at an instance with no window")
+    check("the host probe reports a starting or open WebView2 form",
+          "_aiPanel.ClientIsOpen = delegate(string instanceId)" in form
+          and "ClientInstanceState.Starting" in form
+          and "_webViewBackend.GetForm(instanceId)" in form,
+          "the panel's probe was never wired to the backend")
+
+
+def test_fight_end_witness() -> None:
+    section("Fight witness (fight.join -> GameFightEndMessage -> win, in one row)")
+    # "Brytnee goes down (+2,000 XP)" in a session log was repeatedly mistaken
+    # for a closed fight chain. It is not: a kill line does not name the call
+    # that started the fight, and it does not carry the server's own end
+    # message. The calibration set is the outcome log, so the gate reads that
+    # log and fails until one row is a complete claim. Measured live
+    # 2026-10-28 on dofus-03: row fight_id 124, group -4335, won true, the
+    # GameFightEndMessage results attached.
+    # The Kaggle toolkit is a code mirror: no client and no live logs. The
+    # witness is evidence from this machine, so the mirror runs no live checks;
+    # its copy of this file is held by the toolkit-sync check instead.
+    if not (ROOT / "desktop" / "mainform.cs").exists():
+        return
+    # `trajectories/` is gitignored (it is runtime data). The witness row is
+    # also kept verbatim in a tracked file so the gate means something on a
+    # fresh checkout instead of only on the machine that ran the fight.
+    sources = [REPO_ROOT / "trajectories" / "fight_outcomes.jsonl",
+               REPO_ROOT / "data" / "live_evidence" / "fight_outcomes.jsonl"]
+    rows: List[Dict[str, Any]] = []
+    seen_paths: List[str] = []
+    for path in sources:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(row, dict):
+                        rows.append(row)
+            seen_paths.append(path.name)
+        except OSError:
+            continue
+    check("a fight-outcome log exists (live or checked-in)",
+          bool(seen_paths), "neither %s exists" % " nor ".join(str(p) for p in sources))
+    outcomes = [row for row in rows if row.get("kind") == "fight_outcome"]
+    check("it holds at least one resolved fight", bool(outcomes),
+          "%d fight_outcome rows" % len(outcomes))
+    witness = None
+    for row in outcomes:
+        end = row.get("end") if isinstance(row.get("end"), dict) else {}
+        if (row.get("started_by") == "fight.join"
+                and row.get("won") is True
+                and end.get("won") is True
+                and row.get("fight_id") is not None
+                and str(row.get("fight_id")) == str(end.get("fight_id"))):
+            witness = row
+            break
+    check("a row spans fight.join -> GameFightEndMessage with the win",
+          witness is not None,
+          "no row has started_by=fight.join, won=true, end.won=true and one fight id")
+    end = (witness or {}).get("end") or {}
+    results = end.get("results") if isinstance(end.get("results"), list) else []
+    mine = [row for row in results if isinstance(row, dict)
+            and str(row.get("id")) == str(end.get("my_id"))]
+    check("the winning row carries the server's results list",
+          bool(results) and bool(mine) and mine[0].get("alive") is True,
+          "end.results must say the character is alive")
+    check("the row is a live claim, not a simulation",
+          (witness or {}).get("source") == "live",
+          str((witness or {}).get("source")))
+
+
+def test_join_names_a_group() -> None:
+    section("A targetless join is only legal on a one-group map")
+    # The rule policy answered "join the fight" with `fight.join {}`, and the
+    # advisor refuses that on every map with more than one group -- the whole
+    # tutorial route. The order existed and could never produce a fight
+    # (measured 2026-10-28: 4 groups visible, guard refused every attempt).
+    from agent.runtime import RulePolicy, _join_args
+    obs = {"fight_estimates": [{"group_id": -1, "allowed": False},
+                               {"group_id": -4335, "allowed": True}],
+           "map": {"groups": [{"group_id": -4335}, {"group_id": -4336}]}}
+    call = RulePolicy().choose("join the fight", obs, [])
+    check("the policy names the first allowed group",
+          call is not None and call.tool == "fight.join"
+          and call.args.get("group_id") == -4335,
+          str(getattr(call, "args", None)))
+    check("a one-group map still resolves without estimates",
+          _join_args({"map": {"groups": [{"group_id": 7}]}}) == {"group_id": 7},
+          str(_join_args({"map": {"groups": [{"group_id": 7}]}})))
+    check("an ambiguous map without estimates stays targetless",
+          _join_args({"map": {"groups": [{"group_id": 7}, {"group_id": 8}]}}) == {},
+          str(_join_args({"map": {"groups": [{"group_id": 7}, {"group_id": 8}]}})))
+
+
+def test_battle_log_and_challenges() -> None:
+    section("Battle log and optional challenges (the client's own numbers)")
+    # Two things the client already receives and the page threw away:
+    #  * `fm.fightMessagesStack` holds the fight's action messages, including
+    #    GameActionFightLifePointsLostMessage, whose `loss`/`permanentDamages`
+    #    are the server's own damage numbers. The old reader kept spell/source/
+    #    target and dropped the amounts.
+    #  * ChallengeInfoMessage / ChallengeResultMessage describe the optional
+    #    fight challenges; nothing read them at all.
+    page = (ROOT / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace")
+    check("the page stores the client's challenge messages",
+          "cm.on('ChallengeInfoMessage'" in page
+          and "cm.on('ChallengeResultMessage'" in page
+          and "__agentChallenges" in page,
+          "challenges are invisible to the agent")
+    check("challenges are cleared when a new fight starts",
+          "cm.on('GameFightStartMessage'" in page and "delete chMap[ck]" in page,
+          "last fight's challenge verdicts would leak into the next fight")
+    check("the battle log keeps the damage fields the old reader dropped",
+          "loss: num(msg.loss)" in page
+          and "permanent_damages: num(msg.permanentDamages)" in page
+          and "shield_loss: num(msg.shieldLoss)" in page,
+          "last_actions still drops the actual damage numbers")
+    check("fight.state and the snapshot carry the log and the challenges",
+          "state.battle_log = _battleLog(800)" in page
+          and "state.challenges = _challenges()" in page
+          and "snap.challenges = _challenges()" in page,
+          "the observation has no battle log or challenge list")
+    check("the fight-end capture carries challenge verdicts and the log",
+          "challenges: _challenges()," in page
+          and "battle_log: _battleLog(800)" in page,
+          "an outcome row cannot say whether a challenge was completed")
+    server = (REPO_ROOT / "combat" / "combat_ai_server.py").read_text(
+        encoding="utf-8", errors="replace")
+    check("the combat decision log keeps the challenges it was sent",
+          '"challenges": payload.get("challenges") or [],' in server,
+          "a decision row cannot be used to learn a challenge-aware policy")
+
+    from combat.fight_estimate import CHALLENGE_BONUS, FightOutcomeLog
+    import time as _time
+
+    def resolve(end: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        log = FightOutcomeLog(Path(tempfile.mkdtemp()) / "outcomes.jsonl")
+        log.start({}, {"in_fight": True, "fight_id": 7,
+                       "hp": {"life": 10, "max": 10}}, "s", started_by="fight.join")
+        observation = {"in_world": True, "in_fight": False, "alive": True,
+                       "hp": {"life": 10, "max": 10},
+                       "last_fight_end": end}
+        return log.resolve(observation, "s") or {}
+
+    base_end = {"at": _time.time() * 1000.0, "fight_id": 7, "won": True}
+    one_done = resolve(dict(base_end, challenges=[
+        {"id": 1, "success": True}, {"id": 2, "success": False}]))
+    check("a completed challenge adds a small bonus, a missed one costs nothing",
+          one_done.get("challenges_done") == 1
+          and one_done.get("challenge_bonus") == CHALLENGE_BONUS
+          and one_done.get("reward") == round(1.0 + CHALLENGE_BONUS, 3),
+          str({k: one_done.get(k) for k in ("challenges_done", "challenge_bonus", "reward")}))
+    none = resolve(dict(base_end))
+    check("a fight without challenges is worth exactly the win",
+          none.get("challenge_bonus") == 0.0 and none.get("reward") == 1.0,
+          str(none.get("reward")))
+    lost = resolve(dict(base_end, won=False, challenges=[{"id": 1, "success": True}]))
+    check("a challenge bonus never replaces the win/loss signal",
+          lost.get("won") is False and lost.get("reward") == CHALLENGE_BONUS,
+          str(lost.get("reward")))
+    stale = resolve(dict(base_end, at=(_time.time() - 3600.0) * 1000.0,
+                         challenges=[{"id": 1, "success": True}]))
+    check("a stale end message's challenges are not credited",
+          stale.get("challenge_bonus") == 0.0,
+          str(stale.get("challenge_bonus")))
+
+
 def test_keep_alive_instrument() -> None:
     section("AFK witness (a prevented kick is silent, so the run has to say it was alive)")
     from agent.autopilot import Autopilot, _compact
@@ -2335,6 +4157,292 @@ def test_fight_rotation() -> None:
     none = _player_facts(utility_only, spells)
     check("a character with only utility spells is still reported as no damage",
           none.damage_per_turn == 0 and not none.dpt_by_element)
+
+
+def test_exhausted_ready_maps() -> None:
+    section("No walk-back loop (two ready objectives, adjacent maps, both exhausted)")
+    from agent.planner import QuestPlanner
+
+    def planner():
+        p = QuestPlanner()
+        p.quests = {}
+        p._quests_loaded = True
+        p._order = None
+        p.level_hint = -1
+        # Live 2026-10-29, steps 71-80: the shop objective's claim had already been
+        # refused, so the ready scan was the only thing left to answer.
+        p._claim_attempts[(3841, 14072)] = 1
+        return p
+
+    def obs(map_id):
+        return {
+            "level": 4, "map_id": map_id, "cell": 11, "connected": True,
+            "in_world": True, "in_fight": False, "in_dialog": False,
+            "tutorial": {"active": True, "quest_id": 3841, "step_id": 38},
+            "quests_active": {}, "quests_done": [],
+            "current_objective": {"quest_id": "3841", "objective_id": 14072,
+                                  "type_id": 0, "type": "QuestObjectiveFreeForm",
+                                  "step_id": 4976, "text": "Get the Albuera Elite Bonus Pack."},
+            "ready_objectives": [
+                {"quest_id": "3841", "objective_id": 14072, "type_id": 0,
+                 "type": "QuestObjectiveFreeForm", "step_id": 4976,
+                 "params": {"parameter0": 715390},
+                 "text": "Get the Albuera Elite Bonus Pack."},
+                {"quest_id": "4262", "objective_id": 13940, "type_id": 0,
+                 "type": "QuestObjectiveFreeForm", "map_id": 145489920,
+                 "step_id": 4954, "params": {"parameter0": 719652},
+                 "text": "Go back and see Foreman Kosh once the monsters have been defeated."},
+                {"quest_id": "4264", "objective_id": 13960, "type_id": 0,
+                 "type": "QuestObjectiveFreeForm", "map_id": 145490946,
+                 "step_id": 4956, "params": {"parameter0": 714266},
+                 "text": "Talk to Lieutenant."},
+            ],
+            "step_objectives": [], "exits": [], "npcs": [], "groups": [],
+            "inventory": {}, "kamas": 0, "open_windows": [],
+        }
+
+    p = planner()
+    first = p.choose("do all the quests", obs(145489921))
+    check("from the neighbouring map the plan walks to the first objective's map",
+          first is not None and first.tool == "nav.goto"
+          and first.args.get("map_id") == 145489920, first)
+
+    # A type-0 objective is server-counted, so the claim is not sent; the action
+    # is the objective's own. Standing on its map with every NPC already asked
+    # leaves nothing, and the next objective's map becomes the only move.
+    second = p.choose("do all the quests", obs(145489920))
+    # The objective's map is four crossings away, so the request is its first
+    # hop. Asking for 145490946 itself is what the client answered with "map
+    # 145490946 is not adjacent to 145489921" on the live session.
+    check("standing on its map with nothing left, the plan walks the first crossing",
+          second is not None and second.tool == "nav.goto"
+          and second.args.get("map_id") == 145489921, second)
+
+    back = p.choose("do all the quests", obs(145490946))
+    check("at the second map it does not walk back to the exhausted one",
+          back is not None and back.tool == "state.snapshot", back)
+    parked = p.choose("do all the quests", obs(145489921))
+    check("and from the first map again both walks are gone",
+          parked is not None and parked.tool == "state.snapshot", parked)
+
+    # The scenario ending is a new situation too: the objectives it gated may act.
+    ending = obs(145489921)
+    ending["tutorial"] = None
+    reopened = p.choose("do all the quests", ending)
+    check("the tutorial ending clears the exhausted maps",
+          reopened is not None and reopened.tool == "nav.goto"
+          and reopened.args.get("map_id") == 145489920, reopened)
+
+    page = (ROOT / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace")
+    check("the page closes a named window through the client's own manager",
+          "var _agentCloseWindow = function(name) {" in page
+          and "if (!mgr || typeof mgr.close !== 'function') return false;" in page
+          and "mgr.close(name); return true;" in page)
+    check("ui.tap closes the windows the caller names before pressing",
+          "if (args.close_first) {" in page and "closed_before" in page)
+    check("the snapshot publishes the login screen's ban verdict",
+          "snap.login = _agentLoginBan()" in page and "permanently banned" in page)
+    check("a permanently banned login is refused instead of pressed",
+          "login_banned: true" in page)
+    auto = (REPO_ROOT / "agent" / "autopilot.py").read_text(
+        encoding="utf-8", errors="replace")
+    check("the world wait ends on a permanent ban instead of pressing",
+          "if self._login_banned(obs):" in auto
+          and "reset this slot for a fresh guest" in auto)
+
+
+def test_index_route_travel() -> None:
+    section("Travel routes over the map index, one border at a time")
+    from agent.features import route_distance, route_first_hop
+    from agent.planner import QuestPlanner, ROUTE_STEP_LIMIT
+
+    hop = route_first_hop(145489920, 145490946)
+    check("the index route starts at a real neighbour of the current map",
+          hop is not None and hop[0] == 145489921 and hop[1] == "bottom"
+          and hop[2] == 4, hop)
+    check("distance counts crossings, and is 0 on the destination",
+          route_distance(145489920, 145490946) == 4
+          and route_distance(145490946, 145490946) == 0,
+          (route_distance(145489920, 145490946),
+           route_distance(145490946, 145490946)))
+    check("an unindexed destination has no route",
+          route_first_hop(145489920, 698953) is None)
+
+    exits_920 = [{"direction": "top", "map_id": 145490177, "blocked": False},
+                 {"direction": "bottom", "map_id": 145489921, "blocked": False},
+                 {"direction": "left", "map_id": 145621504, "blocked": False},
+                 {"direction": "right", "map_id": 145490432, "blocked": False}]
+    exits_921 = [{"direction": "top", "map_id": 145489920, "blocked": False},
+                 {"direction": "bottom", "map_id": 145489922, "blocked": False},
+                 {"direction": "left", "map_id": 145621505, "blocked": False},
+                 {"direction": "right", "map_id": 145490433, "blocked": False}]
+
+    def obs(map_id, exits):
+        return {"level": 4, "map_id": map_id, "cell": 11, "in_world": True,
+                "in_fight": False, "in_dialog": False, "tutorial": None,
+                "quests_active": {}, "quests_done": [],
+                "ready_objectives": [
+                    {"quest_id": "4264", "objective_id": 13960, "type_id": 0,
+                     "type": "QuestObjectiveFreeForm", "map_id": 145490946,
+                     "step_id": 4956, "params": {"parameter0": 714266},
+                     "text": "Talk to Lieutenant."}],
+                "inventory": {}, "kamas": 0, "open_windows": [],
+                "map": {"map_id": map_id, "exits": exits,
+                        "npcs": [], "groups": []}}
+
+    p = QuestPlanner()
+    first = p.choose("do all the quests", obs(145489920, exits_920))
+    check("four crossings out, the plan requests the adjacent first hop",
+          first is not None and first.tool == "nav.goto"
+          and first.args.get("map_id") == 145489921, first)
+    second = p.choose("do all the quests", obs(145489921, exits_921))
+    check("from the next map it requests the next hop, never the destination",
+          second is not None and second.tool == "nav.goto"
+          and second.args.get("map_id") == 145489922, second)
+
+    # Repeating a crossing that never happens is a loop even though every step
+    # is a fresh scene: only the route memory can expire it.
+    p2 = QuestPlanner()
+    calls = [p2._travel_call({"type_id": 0, "map_id": 145490946}, 145490946,
+                             obs(145489920, exits_920), key=(4264, 13960))
+             for _ in range(ROUTE_STEP_LIMIT + 3)]
+    check("a crossing request that never happens expires",
+          calls[0]["args"].get("map_id") == 145489921
+          and all(c["args"].get("map_id") != 145489921
+                  for c in calls[ROUTE_STEP_LIMIT:]),
+          [c["args"] for c in calls[-3:]])
+    # ... and an actual arrival resets the count, so a long route is not cut off.
+    p3 = QuestPlanner()
+    p3._travel_call({"type_id": 0}, 145490946, obs(145489920, exits_920),
+                    key=(4264, 13960))
+    p3._travel_call({"type_id": 0}, 145490946, obs(145489921, exits_921),
+                    key=(4264, 13960))
+    state = p3._route_tries[(4264, 13960)]
+    check("arriving one crossing nearer resets the travel count",
+          state.get("steps") == 0 and state.get("best") == 3, state)
+
+    bare = p3._travel_call({"type_id": 0}, 145490946, {"map_id": 145489920},
+                           key=(1, 1))
+    check("with no exit block the first crossing is still requested, not the target",
+          bare["args"].get("map_id") == 145489921, bare)
+    unknown = p3._travel_call({"type_id": 4}, 698953, obs(145489920, exits_920),
+                              key=(1, 2))
+    check("an unindexed destination is explored, never named in a change request",
+          unknown["args"].get("map_id") != 698953, unknown)
+
+    # A house: the client knows the map's four edges but reports no crossable
+    # border, because the way out is a door. No map id can be walked from there.
+    house = {"map_id": 146276352, "cell": 312,
+             "map": {"map_id": 146276352, "exits": [],
+                     "neighbours": {"left": 146407936, "right": 146276864,
+                                    "top": 146276609, "bottom": 146276353}}}
+    inside = p3._travel_call({"type_id": 0}, 145489920, house, key=(4262, 13930))
+    check("an interior with no crossable border asks the server for a neighbour",
+          inside["tool"] == "nav.goto"
+          and inside["args"].get("map_id") in (146407936, 146276864,
+                                               146276609, 146276353)
+          and inside["args"].get("direction") in ("left", "right", "top", "bottom"),
+          inside)
+    # The offline simulator's synthetic maps have an empty exit list and no
+    # neighbour block; asking for the destination is the only thing it answers.
+    synthetic = {"map_id": 160695296, "map": {"map_id": 160695296, "exits": []}}
+    legacy = p3._travel_call({"type_id": 3}, 54165306, synthetic, key=(584, 3805))
+    check("a map with no edge information keeps the destination request",
+          legacy["args"].get("map_id") == 54165306, legacy)
+
+
+def test_planner_replay() -> None:
+    section("Frozen planner replay (today's plans, measured on recorded live turns)")
+    import json
+
+    from agent.features import route_distance
+    from agent.observe import flatten
+    from agent.planner import QuestPlanner
+
+    corpus = REPO_ROOT / "data" / "replay" / "planner_obs.jsonl"
+    check("the frozen corpus is checked in", corpus.exists(), str(corpus))
+    rows = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+    sessions = {row.get("session") for row in rows}
+    check("the corpus covers several recorded sessions, not one lucky run",
+          len(rows) >= 300 and len(sessions) >= 3, (len(rows), len(sessions)))
+
+    none = nav_map = non_adjacent = interior = 0
+    tools: Dict[str, int] = {}
+    for row in rows:
+        planner = QuestPlanner()
+        call = planner.choose(row.get("goal") or "do all the quests", row["obs"], None)
+        tool = getattr(call, "tool", None)
+        tools[tool] = tools.get(tool, 0) + 1
+        if call is None:
+            none += 1
+            continue
+        args = getattr(call, "args", {}) or {}
+        if tool == "nav.goto" and args.get("map_id") is not None:
+            nav_map += 1
+            here = flatten(row["obs"]).get("map_id")
+            distance = route_distance(here, int(args["map_id"])) if here is not None else None
+            if distance is None or distance > 1:
+                non_adjacent += 1
+        block = row["obs"].get("map") if isinstance(row["obs"].get("map"), dict) else {}
+        exits, neighbours = block.get("exits"), block.get("neighbours")
+        if (isinstance(exits, list) and not exits and isinstance(neighbours, dict)
+                and neighbours and tool == "nav.goto" and args.get("map_id") is not None):
+            interior += 1
+
+    # A map change that names a map the player cannot cross to is refused by the
+    # client, and asking from a house interior names a map that is not a border
+    # at all. Both were live bugs; the frozen turns pin the fix.
+    check("no recorded turn asks for a map that is not one crossing away",
+          non_adjacent == 0, (non_adjacent, nav_map))
+    check("no recorded turn asks for a map it cannot walk to from an interior",
+          interior == 0, interior)
+    check("the corpus exercises map travel at all", nav_map > 0, nav_map)
+    check("a recorded turn is almost never left without a decision",
+          none <= 3, (none, len(rows)))
+    check("the replay reaches the planner's main tools, so the pins are not vacuous",
+          len([t for t in tools if t]) >= 5, tools)
+
+
+def test_packet_redaction() -> None:
+    section("Packet rings keep diagnostics, never credentials")
+    from agent.observe import redact_packet_secrets
+
+    obs = {"map": {"transition": {
+        "outgoing": [
+            {"name": "AuthenticationTicketMessage",
+             "args": {"ticket": "s" * 32, "lang": "fr"}},
+            {"name": "ChangeMapMessage",
+             "args": {"mapId": 145489920, "keyMovements": [1, 2]}},
+        ],
+        "incoming": [{"name": "someMessage", "args": {"password": "x", "valid": True}}],
+    }}}
+    clean = redact_packet_secrets(obs)
+    ticket_args = clean["map"]["transition"]["outgoing"][0]["args"]
+    check("the login ticket is removed from the persisted snapshot",
+          "ticket" not in ticket_args and ticket_args.get("lang") == "fr", ticket_args)
+    change = clean["map"]["transition"]["outgoing"][1]["args"]
+    check("the refusal diagnostics survive instead of being redacted wholesale",
+          change.get("mapId") == 145489920 and change.get("keyMovements") == [1, 2],
+          change)
+    check("a credential name is dropped whichever direction it travels",
+          "password" not in clean["map"]["transition"]["incoming"][0]["args"]
+          and clean["map"]["transition"]["incoming"][0]["args"].get("valid") is True,
+          clean["map"]["transition"]["incoming"][0])
+    check("a snapshot with no ring and a non-dict are passed through",
+          redact_packet_secrets({"map_id": 1}) == {"map_id": 1}
+          and redact_packet_secrets(None) is None)
+    corpus = REPO_ROOT / "data" / "replay" / "planner_obs.jsonl"
+    check("the frozen replay corpus carries no packet arguments",
+          corpus.exists() and b'"ticket"' not in corpus.read_bytes(), str(corpus))
+    host = (ROOT / "desktop" / "WebView2ClientForm.cs").read_text(
+        encoding="utf-8", errors="replace")
+    check("the manager's own recorder strips the ticket before writing",
+          "json = RedactSecrets(json);" in host
+          and "private static string RedactSecrets(string json)" in host
+          and "SecretTicket.Replace(json, " in host
+          and '\\"ticket\\"' in host, host[:0])
 
 
 def test_tutorial_hold() -> None:
@@ -2803,9 +4911,9 @@ def test_live_ready() -> None:
     check("the last recorded build is the last, not the first",
           ready.last_log_build(log_with("2026-10-27a")) == "2026-10-27a",
           ready.last_log_build(log_with("2026-10-27a")))
-    check("the repo page carries the 2026-10-27s build",
+    check("the repo page carries the 2026-10-29bg build",
           ready.page_build(REPO_ROOT.parent / "scripts" / "mobile-disguise.js")
-          == "2026-10-27s")
+          == "2026-10-29bg")
 
 
 def test_sim_planner_runs() -> None:
@@ -3076,7 +5184,7 @@ def test_command_shadow() -> None:
     unknown = shadow_row("stop everything now", Model("unknown", {}, 0.9))
     check("an unknown intent is unusable, so it cannot override",
           unknown["usable"] is False and unknown["would_override"] is False, unknown)
-    same_mode = shadow_row("do all the quests", Model("quest", {"action": "run"}, 0.9))
+    same_mode = shadow_row("list my quests", Model("quest", {"action": "run"}, 0.9))
     check("an action override can leave the planner's goal mode alone",
           same_mode["rule_mode"] == "quest" and same_mode["model_mode"] == "quest"
           and same_mode["mode_agree"] is True
@@ -3170,15 +5278,15 @@ def test_command_shadow_report() -> None:
 
     log = Path(tempfile.mkdtemp(prefix="shadow-report-")) / "autopilot.jsonl"
     log.write_text("\n".join([
-        _json.dumps({"kind": "decision", "goal": "do all the quests"}),
-        _json.dumps({"kind": "decision", "goal": "  do all the quests  "}),
-        _json.dumps({"kind": "step", "goal": "plz do all the quests"}),
+        _json.dumps({"kind": "decision", "goal": "list my quests"}),
+        _json.dumps({"kind": "decision", "goal": "  list my quests  "}),
+        _json.dumps({"kind": "step", "goal": "plz list my quests"}),
         _json.dumps({"kind": "step", "goal": None}),
         "{not json",
     ]) + "\n", encoding="utf-8")
     goals = report_tool.extract_goals([log])
     check("goals are counted and whitespace-collapsed",
-          dict(goals) == {"do all the quests": 2, "plz do all the quests": 1},
+          dict(goals) == {"list my quests": 2, "plz list my quests": 1},
           dict(goals))
 
     class Model:
@@ -3193,7 +5301,7 @@ def test_command_shadow_report() -> None:
           report["summary"]["override_goals"] == 2
           and report["summary"]["override_uses"] == 3, report["summary"])
     check("the most frequent goal is listed first",
-          report["goals"][0]["text"] == "do all the quests"
+          report["goals"][0]["text"] == "list my quests"
           and report["goals"][0]["uses"] == 2, report["goals"][:1])
     blank = report_tool.build_report(goals, None)
     check("without a model the report still carries the rule side",
@@ -3218,13 +5326,13 @@ def test_command_replay() -> None:
 
     log = Path(tempfile.mkdtemp(prefix="command-replay-")) / "autopilot.jsonl"
     rows = [
-        {"goal": "do all the quests", "tool": "state.snapshot", "at": 0,
+        {"goal": "list my quests", "tool": "state.snapshot", "at": 0,
          "obs_before": {}, "obs_after": {}, "ok": False, "verdict": "noop"},
-        {"goal": "do all the quests", "tool": "quest.advance", "at": 1,
+        {"goal": "list my quests", "tool": "quest.advance", "at": 1,
          "obs_before": {"objectives_completed": 0, "xp": 100},
          "obs_after": {"objectives_completed": 1, "xp": 150},
          "ok": True, "verdict": "advanced"},
-        {"goal": "do all the quests", "tool": "nav.goto", "at": 2,
+        {"goal": "list my quests", "tool": "nav.goto", "at": 2,
          "obs_before": {"objectives_completed": 1},
          "obs_after": {"objectives_completed": 1},
          "ok": False, "verdict": "failed"},
@@ -3245,7 +5353,7 @@ def test_command_replay() -> None:
                     "slots": {"action": "run"}}
 
     replay = module.build_replay(groups, Model())
-    first = next(row for row in replay if row["goal"] == "do all the quests")
+    first = next(row for row in replay if row["goal"] == "list my quests")
     check("the outcome skips empty observations instead of losing the counter",
           first["outcome"]["objectives_before"] == 0
           and first["outcome"]["objectives_after"] == 1
@@ -3513,6 +5621,9 @@ def test_settle_waits_for_promised_effect() -> None:
     src = inspect.getsource(Autopilot._settle)
     check("the quiet shortcut is the one reserved for promise-less tools",
           "not promised" in src and "promised = tool in SETTLE_TOOLS" in src)
+    check("a free-form tap settles like the walk-and-act it is",
+          "tap.interactive" in SETTLE_TOOLS,
+          sorted(SETTLE_TOOLS))
 
 
 def test_reads_are_not_actions() -> None:
@@ -3949,7 +6060,7 @@ def test_dialog_labels() -> None:
     check("the pairing is taken on the step path, where both states and the dispatch "
           "result exist",
           src.index("self._record_dialog(call, before, after, result)") > src.index(
-              "fight_estimate, fight_outcome = self._track_fight(before, after)"))
+              "fight_estimate, fight_outcome = self._track_fight(before, after"))
     summary_src = inspect.getsource(Autopilot.summary)
     check("the summary reports dialog attempts and stalls",
           '"dialogs": self._dialogs' in summary_src
@@ -4224,6 +6335,348 @@ def test_quest_accept_planner() -> None:
     check("and one that offers the tutorial quest accepts the link",
           call is not None and call.args.get("accept") is True, call)
 
+    # A tutorial step that names a window is a press on the client's menu. Its
+    # objective is server-counted, so claiming it ends the connection; the press
+    # is the event the step waits for. The surface is read from the step's own
+    # text in the catalogue the page publishes.
+    def ui_obs(step_name, step_desc, step, text="", **over):
+        base = obs(None, **over)
+        base["tutorial"] = {"active": True, "quest_id": 777, "step_id": 45}
+        base["quest_steps"] = {"777": step}
+        base["quests_catalog"] = [{"id": 777, "steps": [
+            {"id": step, "name": step_name, "description": step_desc,
+             "objectives": []}]}]
+        base["ready_objectives"] = [{"quest_id": "777", "objective_id": 9001,
+                                     "type_id": 0, "type": "QuestObjectiveFreeForm",
+                                     "step_id": step, "text": text}]
+        return base
+
+    u = planner()
+    spell_obs = ui_obs("Open the Spell Interface",
+                       "Open the Spell interface from the menu.", 4545,
+                       "Open the Spell interface.")
+    press = u._tutorial_call(spell_obs, "do all the quests")
+    check("a tutorial step that names a window is a menu press, not a claim",
+          press is not None and press.tool == "ui.tap"
+          and press.args.get("menu") == "Spell" and press.args.get("cycle") is True,
+          press)
+    check("the press is bounded: two attempts, then the step holds",
+          u._tutorial_call(spell_obs, "do all the quests") is not None
+          and u._tutorial_call(spell_obs, "do all the quests") is None)
+    m = planner()
+    map_press = m._tutorial_call(
+        ui_obs("Open the World Map", "Open the World Map.", 4968), "do all the quests")
+    check("the world map step presses the Map menu",
+          map_press is not None and map_press.args.get("menu") == "Map", map_press)
+    b = planner()
+    book_press = b._tutorial_call(
+        ui_obs("Open the quest book", "Do the quest book tutorial", 4581),
+        "do all the quests")
+    check("the quest book step presses the Book menu",
+          book_press is not None and book_press.args.get("menu") == "Book", book_press)
+    h = planner()
+    help_press = h._tutorial_call(
+        ui_obs("Open the Help Interface", "Open the Help interface from the menu.", 4980),
+        "do all the quests")
+    check("the help step presses the Help menu and gives the press back",
+          help_press is not None and help_press.args.get("menu") == "Help"
+          and help_press.args.get("cycle") is True, help_press)
+    # Prose is not a surface: a step whose *description* says "help" but whose name
+    # is a conversation must not press the Help menu.
+    prose = planner()
+    prose_obs = ui_obs("Talk to Ayin Spyr", "Ask him to help you with the shop.", 4972,
+                       "Talk to Ayin Spyr.")
+    check("a description that says 'help' is not a Help press",
+          prose._tutorial_call(prose_obs, "do all the quests") is None)
+    s = planner()
+    shop_press = s._tutorial_call(
+        ui_obs("Open the Shop Interface",
+               'Press the "Shop" button floating on the map and get the pack.', 4976),
+        "do all the quests")
+    check("the shop step presses the floating shop button, not a menu",
+          shop_press is not None and shop_press.args.get("selector") == ".shopBtn"
+          and shop_press.tool == "ui.tap", shop_press)
+    # The client's own step table ends this one on SHOP_LOADED, fired when the
+    # shop opens and its articles arrive; a market window already open makes the
+    # press a no-op. So the press closes that window first and is never cycled
+    # shut (the cycle would close the shop the step is waiting to load).
+    check("the shop press closes an open market window first and is not cycled",
+          shop_press.args.get("close_first") == "market"
+          and shop_press.args.get("cycle") is None, shop_press)
+    s2 = planner()
+    shop_open = ui_obs("Open the Shop Interface",
+                       'Press the "Shop" button floating on the map and get the pack.',
+                       4976)
+    shop_open["open_windows"] = ["market > shop"]
+    buys = [s2._tutorial_call(shop_open, "do all the quests") for _ in range(5)]
+    check("with the shop open the step buys the first article, not presses again",
+          buys[0] is not None and buys[0].tool == "shop.buy"
+          and buys[0].args.get("which") == "first", buys[0])
+    check("the purchase is bounded, then the step holds",
+          all(c is not None and c.tool == "shop.buy" for c in buys[:4])
+          and buys[4] is None, [None if c is None else c.tool for c in buys])
+    # The challenge sub-step starts with pointToChallenge and ends on TAP_ANYWHERE;
+    # combat casts go through fightManager.castSpell and never produce that
+    # touchend, so the step only advances on a real press on the challenge slot.
+    # The hint is the step's own (published by the page), and it must beat a gate
+    # left over from an earlier step (here: an NPC restriction that would
+    # otherwise turn the press into a talk).
+    h2 = planner()
+    hint_obs = obs(None)
+    hint_obs["tutorial"] = {"active": True, "quest_id": 777, "special_step_id": 46,
+                            "step_checkpoint": -1, "hint_target": "challenge",
+                            "unblocked_npc_id": 3888}
+    hint_calls = [h2._tutorial_call(hint_obs, "do all the quests") for _ in range(5)]
+    check("a step whose hint points at the challenge slot taps it by client_target",
+          hint_calls[0] is not None and hint_calls[0].tool == "ui.tap"
+          and hint_calls[0].args.get("client_target") == "challenge", hint_calls[0])
+    check("the challenge tap is bounded, then the step holds",
+          all(c is not None for c in hint_calls[:4]) and hint_calls[4] is None,
+          [None if c is None else c.tool for c in hint_calls])
+    # The tutorial's "talk to this NPC" gate has the same failure shape: the
+    # client walks and opens the dialogue in one call, so a repeat asks the same
+    # question. Live sessions re-sent it for whole budgets (277 executed no-op
+    # talks in one dofus-05 session, 272 in dofus-03, step 1 "Parler a Jin Spyr").
+    h2b = planner()
+    npc_obs = obs(None)
+    npc_obs["tutorial"] = {"active": True, "quest_id": 777, "step_id": 1,
+                           "unblocked_npc_id": 3888, "unblocked_cells": []}
+    npc_calls = [h2b._tutorial_call(npc_obs, "do all the quests") for _ in range(5)]
+    check("a tutorial NPC gate asks the NPC, then holds instead of re-sending",
+          npc_calls[0] is not None
+          and npc_calls[0].args == {"npc_id": 3888, "quest_id": 777}
+          and all(c is not None for c in npc_calls[:4]) and npc_calls[4] is None,
+          [None if c is None else (c.tool, c.args) for c in npc_calls])
+    h3 = planner()
+    moved = dict(hint_obs["tutorial"])
+    moved["special_step_id"] = 47
+    moved["hint_target"] = "spell_upgrade_confirm"
+    obs3 = obs(None)
+    obs3["tutorial"] = moved
+    call = h3._tutorial_call(obs3, "do all the quests")
+    check("a new step's hint resets the bound and names its own control",
+          call is not None and call.args.get("client_target") == "spell_upgrade_confirm",
+          call)
+    h4 = planner()
+    charac_obs = obs(None)
+    charac_obs["tutorial"] = {"active": True, "quest_id": 777,
+                              "hint_target": "charac_update"}
+    charac_call = h4._tutorial_call(charac_obs, "do all the quests")
+    check("the characteristics hint becomes a client_target press",
+          charac_call is not None and charac_call.tool == "ui.tap"
+          and charac_call.args.get("client_target") == "charac_update", charac_call)
+    h5 = planner()
+    tap_obs = obs(None)
+    tap_obs["tutorial"] = {"active": True, "quest_id": 777, "special_step_id": 50,
+                           "step_checkpoint": -1, "tap_anywhere": True,
+                           "unblocked_npc_id": 0}
+    tap_calls = [h5._tutorial_call(tap_obs, "do all the quests") for _ in range(4)]
+    check("a step that ends on TAP_ANYWHERE taps the game body",
+          tap_calls[0] is not None and tap_calls[0].tool == "ui.tap"
+          and tap_calls[0].args.get("client_target") == "world", tap_calls[0])
+    check("the world tap is bounded, then the step holds",
+          all(c is not None for c in tap_calls[:3]) and tap_calls[3] is None,
+          [None if c is None else c.tool for c in tap_calls])
+    # Every sub-step carries checkpoint -1, so the scenario's array index is the
+    # only per-step identity. Keying the press budget on the checkpoint alone
+    # shares one budget across unrelated sub-steps.
+    def tap_obs_for(step_no):
+        o = obs(None)
+        o["tutorial"] = {"active": True, "quest_id": 777, "step_id": step_no,
+                         "step_checkpoint": -1, "tap_anywhere": True}
+        return o
+
+    h10 = planner()
+    first_taps = [h10._tutorial_call(tap_obs_for(30), "do all the quests")
+                  for _ in range(4)]
+    second_step = h10._tutorial_call(tap_obs_for(31), "do all the quests")
+    check("two sub-steps that share checkpoint -1 each get their own tap budget",
+          all(c is not None for c in first_taps[:3]) and first_taps[3] is None
+          and second_step is not None
+          and second_step.args.get("client_target") == "world",
+          [None if c is None else c.args.get("client_target") for c in first_taps]
+          + [second_step])
+
+    def hint_obs_for(step_no, hint):
+        o = obs(None)
+        o["tutorial"] = {"active": True, "quest_id": 777, "step_id": step_no,
+                         "step_checkpoint": -1, "hint_target": hint}
+        return o
+
+    h11 = planner()
+    hint_a = [h11._tutorial_call(hint_obs_for(40, "challenge"), "do all the quests")
+              for _ in range(5)]
+    hint_b = h11._tutorial_call(hint_obs_for(41, "challenge"), "do all the quests")
+    check("two hint steps with the same control each get a fresh budget",
+          all(c is not None for c in hint_a[:4]) and hint_a[4] is None
+          and hint_b is not None, [None if c is None else c.tool for c in hint_a]
+          + [hint_b])
+    h6 = planner()
+    both_obs = obs(None)
+    both_obs["tutorial"] = {"active": True, "quest_id": 777, "special_step_id": 51,
+                            "step_checkpoint": -1, "tap_anywhere": True,
+                            "hint_target": "challenge"}
+    seq = [h6._tutorial_call(both_obs, "do all the quests") for _ in range(8)]
+    order = [None if c is None else c.args.get("client_target") for c in seq]
+    check("a spent hint falls back to the world tap the same step waits for",
+          order == ["challenge"] * 4 + ["world"] * 3 + [None], order)
+    h7 = planner()
+    menu_obs = obs(None)
+    menu_obs["tutorial"] = {"active": True, "quest_id": 777, "step_id": 4573,
+                            "menu_hint": "Carac", "unblocked_npc_id": 0,
+                            "open_window": "characteristics"}
+    menu_calls = [h7._tutorial_call(menu_obs, "do all the quests") for _ in range(3)]
+    check("a step whose hint names a menu presses that menu",
+          menu_calls[0] is not None and menu_calls[0].args.get("menu") == "Carac"
+          and menu_calls[0].args.get("cycle") is True, menu_calls[0])
+    check("the menu press is bounded, then the step holds",
+          menu_calls[1] is not None and menu_calls[2] is None,
+          [None if c is None else c.tool for c in menu_calls])
+    h12 = planner()
+    win_obs = obs(None)
+    win_obs["tutorial"] = {"active": True, "quest_id": 777, "step_id": 60,
+                           "step_checkpoint": -1, "open_window": "characUpdate"}
+    win_calls = [h12._tutorial_call(win_obs, "do all the quests") for _ in range(4)]
+    check("a step that waits for a window presses the control that opens it",
+          win_calls[0] is not None and win_calls[0].tool == "ui.tap"
+          and win_calls[0].args.get("selector") == ".upgradeButton"
+          and win_calls[0].args.get("index") == 0, win_calls[0])
+    check("the window press is bounded, then falls through to the generic path",
+          all(c is not None for c in win_calls[:3]) and win_calls[3] is None,
+          [None if c is None else c.tool for c in win_calls])
+    h13 = planner()
+    plus_obs = obs(None)
+    plus_obs["tutorial"] = {"active": True, "quest_id": 777, "step_id": 70,
+                            "step_checkpoint": -1, "hint_target": "spell_plus"}
+    plus_call = h13._tutorial_call(plus_obs, "do all the quests")
+    check("the spell upgrade step presses the spell's plus button",
+          plus_call is not None and plus_call.tool == "ui.tap"
+          and plus_call.args.get("client_target") == "spell_plus", plus_call)
+    # The later tutorials (profession, bestiary, trade) point at their controls
+    # the same way, and the page resolves each helper's exact object path. The
+    # hint string passes through unchanged, argument included.
+    h14 = planner()
+    later_obs = obs(None)
+    later_obs["tutorial"] = {"active": True, "quest_id": 777, "step_id": 71,
+                             "step_checkpoint": -1, "hint_target": "contextual_menu:1"}
+    later_call = h14._tutorial_call(later_obs, "do all the quests")
+    check("a later tutorial's helper hint becomes its client target unchanged",
+          later_call is not None and later_call.tool == "ui.tap"
+          and later_call.args.get("client_target") == "contextual_menu:1", later_call)
+    # A step that highlights a map element (playInteractiveElementTap) is not a UI
+    # press: the element is used through isoEngine.useInteractive by element id.
+    h15 = planner()
+    ix_obs = obs(None)
+    ix_obs["tutorial"] = {"active": True, "quest_id": 777, "step_id": 72,
+                          "step_checkpoint": -1, "interactive_hint": 514876,
+                          "unblocked_npc_id": 0}
+    ix_calls = [h15._tutorial_call(ix_obs, "do all the quests") for _ in range(5)]
+    check("a step that highlights a map element uses the element id",
+          ix_calls[0] is not None and ix_calls[0].tool == "tap.interactive"
+          and ix_calls[0].args.get("element_id") == 514876, ix_calls[0])
+    check("the interactive press is bounded, then the step holds",
+          all(c is not None for c in ix_calls[:4]) and ix_calls[4] is None,
+          [None if c is None else c.tool for c in ix_calls])
+    # A close: hint is a window close, not a press; it must still pass the schema.
+    h16 = planner()
+    close_obs = obs(None)
+    close_obs["tutorial"] = {"active": True, "quest_id": 777, "step_id": 73,
+                             "step_checkpoint": -1, "hint_target": "close:grimoire"}
+    close_call = h16._tutorial_call(close_obs, "do all the quests")
+    check("a close-button hint becomes a close: client target",
+          close_call is not None and close_call.tool == "ui.tap"
+          and close_call.args.get("client_target") == "close:grimoire", close_call)
+    # The live ordering trap: right after SHOP_LOADED the step waits for a tap, and
+    # the market window is open, so the shop surface would buy unless the world tap
+    # is checked first. Buying there loses FAKE_SHOP_BUY, which the *next* step
+    # listens for.
+    h8 = planner()
+    shop_tap_obs = ui_obs("Open the Shop Interface",
+                          'Press the "Shop" button floating on the map and get the pack.',
+                          4976)
+    shop_tap_obs["tutorial"] = {"active": True, "quest_id": 777, "step_id": 4976,
+                                "special_step_id": 52, "step_checkpoint": -1,
+                                "tap_anywhere": True}
+    shop_tap_obs["open_windows"] = ["market > shop"]
+    first_shop_tap = h8._tutorial_call(shop_tap_obs, "do all the quests")
+    check("while the post-load step waits for a tap, the shop is not bought",
+          first_shop_tap is not None
+          and first_shop_tap.args.get("client_target") == "world", first_shop_tap)
+    h9 = planner()
+    misnamed = ui_obs("Open the Spell Interface",
+                      "Open the Spell interface from the menu.", 4545)
+    misnamed["tutorial"] = {"active": True, "quest_id": 777, "step_id": 4545,
+                            "menu_hint": "Map"}
+    hinted = h9._tutorial_call(misnamed, "do all the quests")
+    check("the client's own menu hint outranks the step's English name",
+          hinted is not None and hinted.args.get("menu") == "Map", hinted)
+    # The executor validates every directive against the schema before dispatch, so
+    # a press the planner produces must pass the same validator. `close_first` was
+    # declared str while the shop surface passed ["market"]: the live press would
+    # have died at the validator and never reached the page.
+    from agent.schema import validate_call as _validate
+    bad_presses = []
+    for produced in (press, map_press, book_press, help_press, shop_press,
+                     buys[0], hint_calls[0], call, charac_call, tap_calls[0],
+                     menu_calls[0], win_calls[0], plus_call, later_call,
+                     ix_calls[0], close_call):
+        okv, errv = _validate(produced.tool, produced.args)
+        if not okv:
+            bad_presses.append((produced.tool, dict(produced.args), errv))
+    check("every press the planner produces passes the schema the executor enforces",
+          bad_presses == [], bad_presses)
+    ok_list, err_list = _validate("ui.tap", {"selector": ".shopBtn",
+                                             "close_first": ["market"]})
+    check("the schema is what rejected the list form, so the fix is the string",
+          ok_list is False and "close_first" in str(err_list), err_list)
+    f = planner()
+    fight_obs = ui_obs("Start a Fight with a Monster", "Start a fight with a monster.",
+                       4970, "Start a fight with a monster.")
+    check("a fight step is never turned into a menu press",
+          f._tutorial_call(fight_obs, "do all the quests") is None)
+    # A step with no catalogue text at all falls back to the objective text, and
+    # a text that names no surface still plans nothing rather than guessing.
+    g = planner()
+    bare = obs(None)
+    bare["tutorial"] = {"active": True, "quest_id": 777}
+    bare["ready_objectives"] = [{"quest_id": "777", "objective_id": 9001,
+                                 "type_id": 0, "step_id": 4970,
+                                 "text": "Open the World Map."}]
+    fallback = g._tutorial_call(bare, "do all the quests")
+    check("without a catalogue the objective text names the surface",
+          fallback is not None and fallback.args.get("menu") == "Map", fallback)
+
+    # An interactive element the client cannot use (no skill instance) must not be
+    # offered as the free-form action: the page refuses it before sending anything,
+    # and taking it as the direct action hides the NPC ask behind it. Measured live
+    # on dofus-02 (2026-10-29): the step then waited forever next to the NPC.
+    def freeform_obs(interactive):
+        base = obs(None)
+        base["tutorial"] = {"active": True, "quest_id": 777}
+        base["ready_objectives"] = [{"quest_id": "777", "objective_id": 9002,
+                                     "type_id": 0, "type": "QuestObjectiveFreeForm",
+                                     "step_id": 4974,
+                                     "text": "Complete the \"A Chaotic Arrival\" quest."}]
+        base["map"] = {"interactives": [interactive],
+                       "npcs": [{"npc_id": 3888, "cell": 255}], "groups": []}
+        base["npcs"] = [{"npc_id": 3888, "cell": 255}]
+        return base
+
+    dead = freeform_obs({"elem_id": 513203, "cell": 374, "skill_uid": None,
+                         "enabled_skills": []})
+    call = planner().choose("do all the quests", dead)
+    check("a skill-less interactive is not offered as the free-form action",
+          call is not None and call.tool == "quest.advance"
+          and call.args.get("npc_id") == 3888,
+          None if call is None else str((call.tool, call.args)))
+    live_el = freeform_obs({"elem_id": 513208, "cell": 374, "skill_uid": 9001,
+                            "enabled_skills": []})
+    call = planner().choose("do all the quests", live_el)
+    check("and an element that does carry a skill is still used first",
+          call is not None and call.tool == "tap.interactive"
+          and call.args.get("skill_uid") == 9001,
+          None if call is None else str((call.tool, call.args)))
+
     # A quest an NPC offers is how the next quest in a chain starts. A quest/auto run
     # takes it; an order or farm prompt must not acquire quests, a named focus must
     # match, and an already-active quest's offer is stale.
@@ -4307,6 +6760,10 @@ def test_observed_quest_catalog() -> None:
                              "text": "S'équiper"}]},
         ],
     }]
+    # The ids here are synthetic fixtures, and the real client index also holds
+    # 14070 under 3841 with different content. Every call below states an empty
+    # index so the asserted resolution path is the one this test is about.
+    no_index = REPO_ROOT / "data" / "knowledge" / "__none__.json"
 
     def obs(**over):
         base = {
@@ -4329,7 +6786,7 @@ def test_observed_quest_catalog() -> None:
 
     collided = {"quest_id": 999, "type_id": 4, "text": "another game's objective",
                 "params": {"parameter0": 5243}, "source": "dofusdb"}
-    block = enrich_observation(obs(), FakeStore(collided))
+    block = enrich_observation(obs(), FakeStore(collided), observed_path=no_index)
     kn = block.get("knowledge") or {}
     objective = kn.get("objective") or {}
     check("the client's own row wins over a colliding store row",
@@ -4343,19 +6800,21 @@ def test_observed_quest_catalog() -> None:
           and kn.get("step_name") == "Étape 1"
           and kn.get("step_description") == "Parle au pêcheur.", kn)
 
-    missing = enrich_observation(obs(quests_catalog=[]), FakeStore(None))
+    missing = enrich_observation(obs(quests_catalog=[]), FakeStore(None),
+                                 observed_path=no_index)
     check("without a catalogue the store still answers, and says why on a miss",
           (missing.get("knowledge") or {}).get("status") == "objective_not_in_store",
           missing.get("knowledge"))
 
     wrong = enrich_observation(obs(quests_catalog=[dict(catalog[0], id=999)]),
-                               FakeStore(None))
+                               FakeStore(None), observed_path=no_index)
     check("a row captured for another quest is not used for this one",
           (wrong.get("knowledge") or {}).get("status") == "objective_not_in_store",
           wrong.get("knowledge"))
 
     broken = enrich_observation(obs(quests_catalog=[
-        {"id": 3841, "steps": [{"objectives": [None, {"id": 14070}]}]}]), FakeStore(None))
+        {"id": 3841, "steps": [{"objectives": [None, {"id": 14070}]}]}]), FakeStore(None),
+        observed_path=no_index)
     check("a malformed catalogue row still yields the observed row",
           (broken.get("knowledge") or {}).get("status") == "observed",
           broken.get("knowledge"))
@@ -4756,6 +7215,244 @@ def test_always_on_ai() -> None:
           "public void StartInstance(string instanceId, bool force)" in brain)
 
 
+def test_login_recovery() -> None:
+    section("A loop that finds itself at the login screen can come back")
+    # Live 2026-10-29: the session ended back at the guest screen and the loop
+    # waited for the world forever ("still waiting for the world (90s)"), because
+    # session.login is not one of the policy's tools. The wait now presses a
+    # guarded guest login a bounded number of times and then goes back to waiting.
+    from types import SimpleNamespace
+    import json
+
+    from agent.autopilot import Autopilot
+
+    class _Wait:
+        _require_world = Autopilot._require_world
+        _login_banned = staticmethod(Autopilot._login_banned)
+        _login_lockout = staticmethod(Autopilot._login_lockout)
+        _world_screen = staticmethod(Autopilot._world_screen)
+        _screen_text = staticmethod(Autopilot._screen_text)
+        dry_run = False
+        world_poll_s = 0.0
+        world_report_s = 1e9
+
+        def __init__(self, in_world_after=None):
+            self.polls = 0
+            self.calls = []
+            self._in_world_after = in_world_after
+            self._world_login = {"tries": 0, "next_at": 0.0, "max": 2, "spacing": 0.0}
+            self._obs_source = "call"
+            self.runtime = SimpleNamespace(instance="dofus-99", executor=self)
+
+        def recovery_call(self, tool, args, instance=None):
+            self.calls.append((tool, dict(args), instance))
+            return SimpleNamespace(ok=True, error=None)
+
+        def observe(self, max_age_ms=-1.0):
+            self.polls += 1
+            if self._in_world_after is not None and self.polls > self._in_world_after:
+                return {"in_world": True, "position": {"map_id": 123}}
+            # The live login screen keeps a character id with no name (measured
+            # 2026-10-29); that shape must still count as "at the login screen".
+            return {"in_world": False,
+                    "character": {"id": 4409663, "name": None, "level": None}}
+
+        def _check_identity(self, obs):
+            return True
+
+        def _should_stop(self):
+            return None
+
+        def _bridge_alive(self):
+            return True
+
+    waiter = _Wait(in_world_after=2)
+    entered = waiter._require_world()
+    check("a loop at the login screen presses its own guest login",
+          len(waiter.calls) == 2
+          and waiter.calls[0] == ("session.login", {"target": "guest"}, "dofus-99"),
+          waiter.calls)
+    check("the wait ends when the press brings the world back", entered is True)
+    check("no press happens once the character is in the world",
+          waiter.polls == waiter._in_world_after + 1, waiter.polls)
+
+    class _Never(_Wait):
+        def _should_stop(self):
+            return "stop" if self.polls >= 8 else None
+
+    stuck = _Never(in_world_after=None)
+    ended = stuck._require_world()
+    check("a login that never lands is pressed twice, then waits quietly",
+          ended is False and len(stuck.calls) == 2, (ended, stuck.calls))
+
+    # A fall-out can land on character selection instead of the login form: the
+    # client holds the last character (name present), so `at_login` is false and
+    # no press used to happen -- the wait burned its whole budget (live
+    # 2026-10-29: 751.8 s, recovered: false). The play action there is the
+    # client's own selectCharacter(id) = CharacterSelectionMessage.
+    class _Selection(_Wait):
+        def observe(self, max_age_ms=-1.0):
+            self.polls += 1
+            if self._in_world_after is not None and self.polls > self._in_world_after:
+                return {"in_world": True, "position": {"map_id": 123}}
+            return {"in_world": False,
+                    "character": {"id": 111, "name": "Bruuh", "level": 4}}
+
+    selection = _Selection(in_world_after=2)
+    selection._identity = {"id": "4409663", "name": "Myaixd"}
+    selection._world_enter = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 0.0}
+    entered_selection = selection._require_world()
+    check("at character selection the loop enters the world as the bound character",
+          entered_selection is True and selection.calls
+          and selection.calls[0] == ("session.login",
+                                     {"target": "character", "character_id": 4409663},
+                                     "dofus-99"),
+          selection.calls)
+    check("the selection press is not a guest-form press",
+          all(call[1].get("target") == "character" for call in selection.calls),
+          selection.calls)
+
+    stuck_selection = _Selection(in_world_after=None)
+    stuck_selection._identity = {"id": "4409663", "name": "Myaixd"}
+    stuck_selection._world_enter = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 0.0}
+    stuck_selection._should_stop = (
+        lambda: "stop" if stuck_selection.polls >= 8 else None)
+    ended_selection = stuck_selection._require_world()
+    check("an enter-world press that never lands is bounded",
+          ended_selection is False and len(stuck_selection.calls) == 3,
+          (ended_selection, stuck_selection.calls))
+
+    # Each fall-out gets a fresh (still bounded) budget: a second dropout in the
+    # same run must be answerable, not silent because the first used the presses.
+    again = _Selection(in_world_after=2)
+    again._identity = {"id": "4409663", "name": "Myaixd"}
+    again._world_enter = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 0.0}
+    again._require_world()
+    first_wait = len(again.calls)
+    again._in_world_after = None
+    again.polls = 0
+    again.calls = []
+    again._should_stop = lambda: "stop" if again.polls >= 8 else None
+    again._require_world()
+    check("a second fall-out gets a fresh enter-world budget",
+          first_wait > 0 and len(again.calls) == 3, (first_wait, again.calls))
+
+    # The 751.8 s rescue persisted only an elapsed time, so the next triage could
+    # not say which screen had held it. The wait now names the screen in its
+    # reports and the recovery row carries it.
+    check("the wait classifies the screens it can be stuck on",
+          Autopilot._world_screen(None)["state"] == "no_snapshot"
+          and Autopilot._world_screen({"in_world": False})["state"] == "login"
+          and Autopilot._world_screen(
+              {"in_world": False, "character": {"name": "Bruuh"}})["state"]
+          == "character_selection"
+          and Autopilot._world_screen(
+              {"in_world": True, "position": {"map_id": 5}})["state"] == "in_world"
+          and Autopilot._world_screen(
+              {"in_world": None, "position": {}})["state"] == "unknown",
+          [Autopilot._world_screen(v) for v in
+           (None, {"in_world": False}, {"in_world": None, "position": {}})])
+    check("a stuck wait remembers the screen it last saw",
+          stuck._last_world_screen.get("state") == "login"
+          and stuck_selection._last_world_screen.get("state") == "character_selection"
+          and stuck_selection._last_world_screen.get("character") == "Bruuh",
+          (stuck._last_world_screen, stuck_selection._last_world_screen))
+
+    class _Recover(_Wait):
+        _recover_world = Autopilot._recover_world
+        session = "test"
+        _prepared_obs = None
+
+        def __init__(self):
+            super().__init__(in_world_after=None)
+            self._recoveries = 0
+            self._recoveries_ok = 0
+            self._recovery_wait_s = 0.0
+            self.rows = []
+            self._should_stop = lambda: "stop file present" if self.polls >= 3 else None
+
+        def _append_log_line(self, blob):
+            self.rows.append(json.loads(blob))
+
+    recovered = _Recover()
+    ended = recovered._recover_world(trigger="fell_out")
+    row = recovered.rows[-1] if recovered.rows else {}
+    check("the persisted recovery row names the screen that held the wait",
+          ended is False and row.get("recovered") is False
+          and (row.get("screen") or {}).get("state") == "login",
+          row)
+
+    # An escalated login cooldown is a slot lockout, not a slow login: the page
+    # backs off an hour from the second refused press, and the wait used to park
+    # silently under "still waiting for the world" (live 2026-10-29: "Server
+    # busy", 3527 s left). The wait must end with the reason instead.
+    check("a single refusal is a slow server, not a lockout",
+          Autopilot._login_lockout({"login_cooldown":
+                                    {"reason": "Server busy", "remaining_s": 600,
+                                     "fails": 1}}) is None
+          and Autopilot._login_lockout({"login_cooldown": None}) is None
+          and Autopilot._login_lockout(None) is None)
+    check("an escalated cooldown reads as a lockout with its reason",
+          (Autopilot._login_lockout({"login_cooldown":
+                                     {"reason": "Server busy", "remaining_s": 3527,
+                                      "fails": 2}}) or {}).get("reason") == "Server busy"
+          and (Autopilot._login_lockout({"login_cooldown":
+                                         {"reason": "Server busy",
+                                          "remaining_s": 2000,
+                                          "fails": 0}}) or {}).get("remaining_s") == 2000,
+          Autopilot._login_lockout({"login_cooldown":
+                                    {"reason": "Server busy", "remaining_s": 3527,
+                                     "fails": 2}}))
+
+    class _Locked(_Wait):
+        def observe(self, max_age_ms=-1.0):
+            self.polls += 1
+            return {"in_world": False,
+                    "character": {"id": 4409663, "name": None},
+                    "login_cooldown": {"reason": "Server busy",
+                                       "remaining_s": 3527, "fails": 2}}
+
+    locked = _Locked(in_world_after=None)
+    locked_ended = locked._require_world()
+    check("a locked-out slot ends the wait without pressing into the cooldown",
+          locked_ended is False and locked.calls == []
+          and (getattr(locked, "_last_login_cooldown", {}) or {}).get("reason")
+          == "Server busy",
+          (locked_ended, locked.calls, getattr(locked, "_last_login_cooldown", None)))
+
+    wait_one = _Wait(in_world_after=3)
+    wait_one_obs = {"in_world": False, "character": {"id": 4409663, "name": None},
+                    "login_cooldown": {"reason": "Server busy", "remaining_s": 600,
+                                       "fails": 1}}
+
+    def _one_refusal_observe(max_age_ms=-1.0):
+        wait_one.polls += 1
+        if wait_one.polls > 3:
+            return {"in_world": True, "position": {"map_id": 123}}
+        return dict(wait_one_obs)
+
+    wait_one.observe = _one_refusal_observe
+    waited_one = wait_one._require_world()
+    check("a first-refusal cooldown keeps the run waiting, not ending it",
+          waited_one is True and len(wait_one.calls) >= 1, wait_one.calls)
+
+    class _RecoverLocked(_Recover):
+        def observe(self, max_age_ms=-1.0):
+            self.polls += 1
+            return {"in_world": False,
+                    "character": {"id": 4409663, "name": None},
+                    "login_cooldown": {"reason": "Server busy",
+                                       "remaining_s": 3527, "fails": 2}}
+
+    locked_recover = _RecoverLocked()
+    locked_recover._recover_world(trigger="fell_out")
+    locked_row = locked_recover.rows[-1] if locked_recover.rows else {}
+    check("the recovery row persists the login cooldown that ended the wait",
+          (locked_row.get("login_cooldown") or {}).get("reason") == "Server busy"
+          and (locked_row.get("login_cooldown") or {}).get("remaining_s") == 3527,
+          locked_row)
+
+
 def test_brain_autostart() -> None:
     section("Combat brain autostart (G24: a fight cannot be 'learned' by accident)")
     import inspect
@@ -5009,6 +7706,84 @@ def test_brain_autostart() -> None:
           "self._ensure_brain()" in run_src, "no startup call")
     check("a fight that begins with the brain down gets one more probe",
           'self._ensure_brain("fight_start")' in fight_src, "no fight-start call")
+
+
+def test_single_control_plane() -> None:
+    section("One control plane per port (two daemons must not share :8895)")
+    # Measured 2026-10-29: pids 17476 and 9996 both held :8895. HTTPServer sets
+    # SO_REUSEADDR, which Windows treats as permission to share the port, so the
+    # second daemon bound with no error and each one answered an arbitrary share
+    # of the requests -- two instance tables, and a stop could land on the daemon
+    # that had never heard of that instance. The host caused it: it tracked only
+    # the python child it had spawned, so a panel restart (or the instance-launch
+    # autostart) spawned another daemon over the live one.
+    import socket as _socket
+    import threading as _threading
+    from agent import serve as _serve
+
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        port = listener.getsockname()[1]
+
+        def _drain() -> None:
+            try:
+                conn, _ = listener.accept()
+                conn.close()
+            except OSError:
+                pass
+
+        _threading.Thread(target=_drain, daemon=True).start()
+        check("an answered port is visible before a server is built",
+              _serve.service_present("127.0.0.1", port) is True, str(port))
+        # Started on a thread and abandoned if it binds: without the guard main()
+        # would serve forever and hang the gate instead of failing it.
+        outcome: Dict[str, Any] = {}
+
+        def _start() -> None:
+            outcome["code"] = _serve.main(
+                ["--port", str(port), "--recorder-dir", tempfile.mkdtemp()])
+
+        worker = _threading.Thread(target=_start, daemon=True)
+        worker.start()
+        worker.join(5.0)
+        check("a second control plane refuses the port instead of sharing it",
+              outcome.get("code") == _serve.EXIT_PORT_TAKEN, str(outcome))
+        dead = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        try:
+            dead.bind(("127.0.0.1", 0))
+            free_port = dead.getsockname()[1]
+        finally:
+            dead.close()
+        check("a free port is not mistaken for a running daemon",
+              _serve.service_present("127.0.0.1", free_port) is False, free_port)
+    finally:
+        listener.close()
+
+    # The host side of the same bug. `body.IndexOf("\"ok\":true")` never matched
+    # the embedded runtime's stdlib JSON (`"ok": true`, with a space), so every
+    # daemon start and stop was logged as a refusal and fell back to duplicate
+    # per-instance children that raced the daemon for the instance lock.
+    panel_path = ROOT / "desktop" / "aipanel.cs"
+    panel = code_only(panel_path.read_text(encoding="utf-8", errors="replace"))
+    check("the host can see a daemon it did not spawn",
+          "private bool BrainAnswers()" in panel
+          and "_brain == null" not in panel[panel.find("private void RefreshBrainStatus()"):
+                                            panel.find("private bool BrainAnyRunning()")],
+          "a panel restart spawns a second daemon over the live one")
+    body = panel[panel.find("private bool EnsureBrain()"):
+                 panel.find("private bool BrainStart(")]
+    probe_at = body.find("string health = BrainHealth();")
+    spawn_at = body.find("string python = ResolvePython();")
+    check("the health probe runs before the spawn, not after it",
+          0 <= probe_at < spawn_at, str((probe_at, spawn_at)))
+    check("a spaced JSON ok counts as success",
+          "private static bool JsonOk(string body)" in panel
+          and '"\\"ok\\":true"' not in panel,
+          "stdlib json writes \"ok\": true and the host reads that as a refusal")
+    check("start and both stops use the tolerant check",
+          panel.count("JsonOk(body)") == 3, panel.count("JsonOk(body)"))
 
 
 def test_brain_readiness() -> None:
@@ -5391,6 +8166,31 @@ def test_ready_objective_scan() -> None:
     eight = steps(None, [wrapper, talk], 145490435, 4)
     check("scanning the list gives that step to the objective that names an NPC",
           eight[-1] == claim_talk, str(eight))
+
+    # Live 2026-10-29: the talk objective named the exterior map while Great Jarl
+    # Ordyn stood on the house map the previous step had just entered; nav.goto
+    # answered "not adjacent" and the loop waited. An NPC that is here is asked here.
+    on_house_map = {"map_id": 146276352, "cell": 312,
+                    "map": {"map_id": 146276352,
+                            "npcs": [{"npc_id": 3892, "cell": 317,
+                                      "actor_id": -4}]}}
+    here_plan = QuestPlanner().plan_objective({"id": 4274}, 0, talk, on_house_map)
+    check("a talk target standing on this map is talked to here, not travelled to",
+          [c["tool"] for c in here_plan] == ["quest.advance"]
+          and here_plan[0]["args"] == {"quest_id": 4274, "npc_id": 3892},
+          here_plan)
+    elsewhere = QuestPlanner().plan_objective(
+        {"id": 4274}, 0, talk,
+        {"map_id": 146276352, "cell": 312,
+         "map": {"map_id": 146276352, "npcs": []}})
+    check("a talk target that is not on this map still travels",
+          [c["tool"] for c in elsewhere] == ["nav.goto", "quest.advance"]
+          and elsewhere[0]["args"].get("map_id") == 145490435, elsewhere)
+    talk_here = steps(1, [talk], 146276352, 1, npcs=[{"npc_id": 3892, "cell": 10}])
+    check("the ready scan talks to an NPC that is here instead of travelling to "
+          "the map the objective names",
+          talk_here[0][0] == "quest.advance"
+          and talk_here[0][1] == {"quest_id": 4274, "npc_id": 3892}, str(talk_here))
     far = steps(None, [wrapper, talk], 145489923, 4)
     check("a ready objective on another map is travelled to, not waited out",
           far[-1][0] == "nav.goto" and far[-1][1].get("map_id") == 145490435
@@ -5403,16 +8203,21 @@ def test_ready_objective_scan() -> None:
     check("with one entry the retired head abandons the ready objective",
           blind[1] != claim_talk, str(blind))
     alone = steps(None, [wrapper], 145490435, 4)
-    check("a text-only head is claimed once, then the loop sends nothing rather than a "
-          "phantom hunt or a quest this game has never shown",
-          alone[0][2] == ((3841, 14070), "quest.advance")
-          and [row[0] for row in alone[1:]] == [None] * 3, str(alone))
+    # Type 0 is server-counted since the two live SERVER_GONE closes, so the head is
+    # never claimed; the action it names comes first, once, and then the loop stops.
+    check("a text-only head asks the map's NPC once rather than claiming, hunting or "
+          "inventing a quest this game has never shown",
+          alone[0][0] == "quest.advance"
+          and alone[0][1] == {"quest_id": 3841, "npc_id": 3976}
+          and [row[0] for row in alone[1:]] == [None, None, None]
+          and all(row[0] != "fight.join" for row in alone), str(alone))
 
     # The other head shape: an objective that does declare a creature, for a creature
     # this map does not report and no NPC can start. Its only plan is a read that names
-    # no target. G27 took this shape away from the free-form wrapper (a text-only head now
-    # plans nothing at all), so the declared hunt is what exercises the defer path -- and
-    # without these two rows the defer and the deferred-wait branches are unprotected.
+    # no target. G27 took the phantom hunt away from the free-form wrapper (a text-only
+    # head may only ask the map's NPCs), so the declared hunt is what exercises the
+    # defer path -- and without these two rows the defer and the deferred-wait branches
+    # are unprotected.
     empty_map = steps(None, [hunt_here, talk], 145490435, 3, npcs=[])
     check("a head whose only plan names no target gives every step to the entry behind it",
           all(row == claim_talk for row in empty_map), str(empty_map))
@@ -5687,8 +8492,10 @@ def test_group_refusal_routing() -> None:
                                     {"map_id": 1}, {"map_id": 1})
     check("the page's join wording is a known cause, not the `unknown` bucket",
           no_counts == "wrong_target", no_counts)
-    check("the controller is handed the payload at the decision site",
-          'detail=getattr(result, "data", None))' in loop_src)
+    check("the controller is handed the payload and the call at the decision site",
+          'detail=getattr(result, "data", None)' in loop_src
+          and "args=dict(call.args))" in loop_src,
+          "without the args the controller cannot tell a close from a reply")
 
 
 def test_board_replay() -> None:
@@ -6072,6 +8879,38 @@ def test_live_transitions() -> None:
     check("the streak is re-derived from the log itself",
           labelled[-1]["x"] is not None and labelled[1]["x"] is not None,
           labelled[1]["x_source"])
+
+    # The server applies some effects after the directive returns, so the read that
+    # follows sees them. Measured live 2026-10-29: 173 of 195 "moved" reads sat right
+    # after a quest.advance. The effect must belong to the acting step.
+    here = {"map": {"map_id": 10899, "cell": 3}, "position": {"map_id": 10899, "cell": 3},
+            "current_objective": obj, "hp": 100}
+    there = {"map": {"map_id": 10899, "cell": 40}, "position": {"map_id": 10899, "cell": 40},
+             "current_objective": obj, "hp": 100}
+    lagged = module.label_steps({
+        "source": "unit", "instance": "unit", "goal": "lag",
+        "steps": [step(2000, "lag", "nav.goto", here, here),
+                  step(2001, "lag", "state.snapshot", here, there)]})
+    check("a read that sees a move does not claim it",
+          lagged[1]["moved"] is False and lagged[1]["moved_observed"] is True, lagged[1])
+    check("the acting step owns the effect the next read revealed",
+          lagged[0]["moved"] is True and lagged[0].get("moved_lag") == 1, lagged[0])
+    check("the credited keys are the ones the read observed",
+          lagged[0]["moved_keys"] == ["cell"], lagged[0]["moved_keys"])
+
+    # Time is charged to the step that caused the wait, not to the one after it.
+    # `latency_ms` is only the directive round trip; the decision cadence is the
+    # gap between records, and a throughput reward needs that one.
+    timed = module.label_steps({
+        "source": "unit", "instance": "unit", "goal": "timed",
+        "steps": [step(3000.0, "timed", "nav.goto", here, here),
+                  step(3005.0, "timed", "state.snapshot", here, here),
+                  step(3007.0, "timed", "quest.advance", here, here)]})
+    check("the wait before the next decision is charged to the previous step",
+          timed[0]["dt_ms"] == 5000.0 and timed[1]["dt_ms"] == 2000.0,
+          [row["dt_ms"] for row in timed])
+    check("the last step of a segment has no next decision to time",
+          timed[2]["dt_ms"] is None, timed[2]["dt_ms"])
 
     split_rows = module.segments(rows[:2] + [dict(rows[2], ts=1000 + 900)], "unit.jsonl", 120.0)
     check("a long silence starts a new segment", len(split_rows) == 2, len(split_rows))
@@ -6583,89 +9422,230 @@ def test_auto_live_guards() -> None:
         al.urllib.request.urlopen = real_urlopen
 
 
+def _run_test(fn) -> None:
+    """One test may fail, but it must not hide the rest of the gate.
+
+    Measured 2026-10-28: a source needle in test_dialog_labels raised
+    ValueError and the process exited 1 after printing a section header - no
+    "checks, failed" line, so the run looked like a pass with a stray exit
+    code. A raising test is now a failure the summary counts.
+    """
+    try:
+        fn()
+    except Exception as exc:  # noqa: BLE001 - the gate must survive its own tests
+        import traceback
+        traceback.print_exc()
+        check("test %s ran to completion" % getattr(fn, "__name__", fn),
+              False, "%s: %s" % (type(exc).__name__, exc))
+
+
 def run() -> Tuple[int, List[str]]:
-    test_verdict_vocabulary()
-    test_verifier_rules()
-    test_verifier_model_contract()
-    test_tool_vocabulary()
-    test_forbidden_and_validation()
-    test_plan_stack()
-    test_shared_resources()
-    test_brain_scaling_40()
-    test_brain_lifecycle()
-    test_live_collection_lifecycle()
-    test_pointer_coverage_gate()
-    test_constraint_corpus()
-    test_objective_buckets()
-    test_objective_parameter_table()
-    test_knowledge_identity()
-    test_client_confirmed_starts()
-    test_quest_advance_shapes()
-    test_dialog_ranking()
-    test_prompt_fidelity()
-    test_named_mob_focus()
-    test_thinking_layer()
-    test_claim_quarantine()
-    test_failure_causes()
-    test_absent_client_recovery()
-    test_identity_binding()
-    test_live_witnesses()
-    test_verifier_head_gate()
-    test_cause_split_audit()
-    test_cause_head_artifact()
-    test_observation_text()
-    test_kaggle_toolkit_sync()
-    test_quest_chain_replay()
-    test_live_ready()
-    test_sim_planner_runs()
-    test_command_parser()
-    test_command_dataset()
-    test_command_shadow()
-    test_command_shadow_report()
-    test_command_replay()
-    test_live_evidence()
-    test_command_onnx_decode()
-    test_egress_preflight()
-    test_auto_live_guards()
-    test_host_launch_guard()
-    test_live_transitions()
-    test_foresight_net()
-    test_counterfactual_factory_alive()
-    test_repair_credit()
-    test_reads_are_not_actions()
-    test_dialog_labels()
-    test_dialog_repeat_guard()
-    test_quest_accept_planner()
-    test_observed_quest_catalog()
-    test_observed_quest_ingest()
-    test_dialog_label_reader()
-    test_brain_autostart()
-    test_planner_buy_branch()
-    test_always_on_ai()
-    test_brain_readiness()
-    test_board_replay()
-    test_group_scan_reader()
-    test_npc_start_rotation_bound()
-    test_group_refusal_routing()
-    test_ready_objective_scan()
-    test_session_report_census()
-    test_report_instrument()
-    test_settle_waits_for_promised_effect()
-    test_intervention_instrument()
-    test_js_page_suites()
-    test_bundle_resilience()
-    test_bundle_updater()
-    test_multi_instance_targeting()
-    test_per_instance_ai()
-    test_keep_alive_instrument()
-    test_window_layout()
-    test_tool_ensemble()
-    test_fight_rotation()
-    test_tutorial_hold()
-    test_auto_live_summarise()
-    test_combat_suites()
-    test_go_relay_suites()
+    _run_test(test_verdict_vocabulary)
+    _run_test(test_verifier_rules)
+    _run_test(test_verifier_model_contract)
+    _run_test(test_tool_vocabulary)
+    _run_test(test_forbidden_and_validation)
+    _run_test(test_plan_stack)
+    _run_test(test_shared_resources)
+    _run_test(test_brain_scaling_40)
+    _run_test(test_brain_lifecycle)
+    _run_test(test_live_collection_lifecycle)
+    _run_test(test_pointer_coverage_gate)
+    _run_test(test_constraint_corpus)
+    _run_test(test_objective_buckets)
+    _run_test(test_objective_parameter_table)
+    _run_test(test_spawn_wait_is_bounded)
+    _run_test(test_free_form_searches_new_maps)
+    _run_test(test_wake_login_tool)
+    _run_test(test_refusal_evidence)
+    _run_test(test_cli_launch_forwarding)
+    _run_test(test_stuck_objective_retired)
+    _run_test(test_doorless_map_asks_for_the_neighbour)
+    _run_test(test_auto_policy_is_the_planner)
+    _run_test(test_free_form_uses_interactive)
+    _run_test(test_command_routing_and_bridge_fast_fail)
+    _run_test(test_damage_calibration_join)
+    _run_test(test_damage_calibration_live_evidence)
+    _run_test(test_knowledge_identity)
+    _run_test(test_client_confirmed_starts)
+    _run_test(test_quest_advance_shapes)
+    _run_test(test_dialog_ranking)
+    _run_test(test_prompt_fidelity)
+    _run_test(test_named_mob_focus)
+    _run_test(test_thinking_layer)
+    _run_test(test_claim_quarantine)
+    _run_test(test_failure_causes)
+    _run_test(test_absent_client_recovery)
+    _run_test(test_identity_binding)
+    _run_test(test_live_witnesses)
+    _run_test(test_verifier_head_gate)
+    _run_test(test_cause_split_audit)
+    _run_test(test_cause_head_artifact)
+    _run_test(test_observation_text)
+    _run_test(test_kaggle_toolkit_sync)
+    _run_test(test_quest_chain_replay)
+    _run_test(test_live_ready)
+    _run_test(test_sim_planner_runs)
+    _run_test(test_command_parser)
+    _run_test(test_command_dataset)
+    _run_test(test_command_shadow)
+    _run_test(test_command_shadow_report)
+    _run_test(test_command_replay)
+    _run_test(test_live_evidence)
+    _run_test(test_command_onnx_decode)
+    _run_test(test_egress_preflight)
+    _run_test(test_auto_live_guards)
+    _run_test(test_host_launch_guard)
+    _run_test(test_live_transitions)
+    _run_test(test_foresight_net)
+    _run_test(test_counterfactual_factory_alive)
+    _run_test(test_repair_credit)
+    _run_test(test_reads_are_not_actions)
+    _run_test(test_dialog_labels)
+    _run_test(test_dialog_repeat_guard)
+    _run_test(test_quest_accept_planner)
+    _run_test(test_observed_quest_catalog)
+    _run_test(test_observed_quest_ingest)
+    _run_test(test_dialog_label_reader)
+    _run_test(test_login_recovery)
+    _run_test(test_brain_autostart)
+    _run_test(test_single_control_plane)
+    _run_test(test_planner_buy_branch)
+    _run_test(test_always_on_ai)
+    _run_test(test_brain_readiness)
+    _run_test(test_board_replay)
+    _run_test(test_group_scan_reader)
+    _run_test(test_npc_start_rotation_bound)
+    _run_test(test_group_refusal_routing)
+    _run_test(test_ready_objective_scan)
+    _run_test(test_session_report_census)
+    _run_test(test_report_instrument)
+    _run_test(test_settle_waits_for_promised_effect)
+    _run_test(test_intervention_instrument)
+    _run_test(test_js_page_suites)
+    _run_test(test_talk_needs_resolved_actor)
+    _run_test(test_equip_slot_from_template)
+    _run_test(test_door_cell_memory)
+    _run_test(test_combined_objectives)
+    _run_test(test_ready_set_ranking)
+    _run_test(test_login_cooldown_guard)
+    _run_test(test_board_pca_signature)
+    _run_test(test_one_driver_per_instance)
+    _run_test(test_boss_benchmark_runs)
+    _run_test(test_bundle_resilience)
+    _run_test(test_bundle_updater)
+    _run_test(test_multi_instance_targeting)
+    _run_test(test_per_instance_ai)
+    _run_test(test_instance_reset)
+    _run_test(test_fight_end_witness)
+    _run_test(test_join_names_a_group)
+    _run_test(test_battle_log_and_challenges)
+    _run_test(test_no_loop_without_client)
+    _run_test(test_keep_alive_instrument)
+    _run_test(test_window_layout)
+    _run_test(test_tool_ensemble)
+    _run_test(test_fight_rotation)
+    _run_test(test_exhausted_ready_maps)
+    _run_test(test_index_route_travel)
+    _run_test(test_planner_replay)
+    _run_test(test_packet_redaction)
+    _run_test(test_tutorial_hold)
+    _run_test(test_fight_hint_tap)
+    _run_test(test_auto_live_summarise)
+    _run_test(test_dataset_split_integrity)
+    _run_test(test_temporal_split_plan)
+    _run_test(test_claim_labels)
+    _run_test(test_mechanism_features)
+    _run_test(test_live_within_segment_eval)
+    _run_test(test_ingest_after_run)
+    _run_test(test_ope_estimators)
+    _run_test(test_fork_carries_the_planner_state)
+    _run_test(test_exploration_policy)
+    _run_test(test_explore_report)
+    _run_test(test_knowledge_index)
+    _run_test(test_combat_suites)
+    _run_test(test_go_relay_suites)
+    _run_test(test_csharp_compile)
+    _run_test(test_cs_secret_redaction)
     return _CHECKS, _FAILURES
+
+
+def test_fight_hint_tap() -> None:
+    section("Fight-time tutorial hint (the challenge step needs a real touchend)")
+    import types
+    import agent.autopilot as _auto
+    from agent.autopilot import Autopilot
+
+    class _Executor:
+        def __init__(self) -> None:
+            self.calls: List[tuple] = []
+
+        def execute(self, tool, args, **kw):
+            self.calls.append((tool, dict(args)))
+            return types.SimpleNamespace(ok=True, error=None, data={"pressed": True})
+
+    class _Wait:
+        _wait_out_fight = Autopilot._wait_out_fight
+
+        def __init__(self, obs, dry_run=False) -> None:
+            self.dry_run = dry_run
+            self._forced_call = None
+            self._fight_wait_since = 1000.0
+            self._fight_wait_report = 1000.0
+            self._fight_arm_at = 1000.0
+            self._fight_board_at = 1000.0
+            self._hint_taps = 0
+            self._hint_tap_at = 0.0
+            self._obs_age_ms = 0
+            self._obs_source = "live"
+            self.executor = _Executor()
+            self.runtime = types.SimpleNamespace(
+                executor=self.executor, instance="dofus-test")
+
+    real_time = _auto.time
+    _auto.time = types.SimpleNamespace(time=lambda: 1000.0, sleep=lambda s: None,
+                                       monotonic=lambda: 0.0)
+    try:
+        hint = {"active": True, "quest_id": 4262, "hint_target": "challenge"}
+        obs = {"in_fight": True, "auto_fight": True, "tutorial": hint}
+        w = _Wait(obs)
+        w._wait_out_fight(obs, "auto")
+        check("the scenario's challenge hint becomes one client_target press",
+              w.executor.calls == [("ui.tap", {"client_target": "challenge"})],
+              w.executor.calls)
+        w._wait_out_fight(obs, "auto")
+        check("the press is not repeated within its spacing",
+              len(w.executor.calls) == 1, w.executor.calls)
+        w._hint_tap_at -= 3.0
+        w._wait_out_fight(obs, "auto")
+        check("a retry is allowed after the spacing", len(w.executor.calls) == 2,
+              w.executor.calls)
+        for _ in range(6):
+            w._hint_tap_at -= 3.0
+            w._wait_out_fight(obs, "auto")
+        check("one fight takes at most five presses, then the wait is silent",
+              len(w.executor.calls) == 5, w.executor.calls)
+
+        plain = _Wait({"in_fight": True, "auto_fight": True,
+                       "tutorial": {"active": True, "hint_target": None}})
+        plain._wait_out_fight({"in_fight": True, "auto_fight": True,
+                               "tutorial": {"active": True, "hint_target": None}}, "auto")
+        check("a step with no hint sends nothing", plain.executor.calls == [],
+              plain.executor.calls)
+
+        dry = _Wait(obs, dry_run=True)
+        dry._wait_out_fight(obs, "auto")
+        check("a dry run presses nothing", dry.executor.calls == [], dry.executor.calls)
+
+        fresh = _Wait(obs)
+        fresh._fight_wait_since = None
+        fresh._ensure_brain = lambda *a, **k: None
+        fresh._wait_out_fight(obs, "auto")
+        check("a new fight resets the press budget",
+              fresh._hint_taps == 1 and len(fresh.executor.calls) == 1,
+              (fresh._hint_taps, fresh.executor.calls))
+    finally:
+        _auto.time = real_time
 
 
 def test_auto_live_summarise() -> None:
@@ -6710,6 +9690,904 @@ def test_auto_live_summarise() -> None:
         real = al.summarise(rounds[-1])
         check("the summariser counts the steps of a real recorded round",
               real.get("rows", 0) > 0, "%s -> %s" % (rounds[-1].name, real))
+
+
+def test_dataset_split_integrity() -> None:
+    section("Dataset splits (a held-out row must never share a run with train)")
+    import json as _json
+
+    def read(path):
+        rows = []
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if line:
+                    rows.append(_json.loads(line))
+        return rows
+
+    # tool_sft_v3: episodes are simulated play-throughs. A row's neighbours in the
+    # same episode are near-copies of its state, so an episode on both sides of the
+    # split leaks the answer even when the rows differ.
+    sft = REPO_ROOT / "data" / "tool_sft_v3"
+    if (sft / "train.jsonl").is_file() and (sft / "val.jsonl").is_file():
+        train = read(sft / "train.jsonl")
+        val = read(sft / "val.jsonl")
+        train_eps = {row.get("ep") for row in train}
+        val_eps = {row.get("ep") for row in val}
+        check("tool_sft_v3 train and val share no episode",
+              not (train_eps & val_eps), sorted(train_eps & val_eps)[:3])
+        check("tool_sft_v3 rows all name an episode",
+              None not in train_eps and None not in val_eps,
+              "a row without ep")
+
+    # transitions_v2: a segment is one goal run of one instance. The build script
+    # splits by segment; if it ever regressed to row-wise sampling, the same run
+    # would sit in train and test and every live metric would inflate.
+    live = REPO_ROOT / "data" / "transitions_v2"
+    splits = {}
+    for name in ("train", "val", "test"):
+        path = live / (name + ".jsonl")
+        if path.is_file():
+            splits[name] = read(path)
+    if len(splits) >= 2:
+        segs = {name: {row.get("segment") for row in rows}
+                for name, rows in splits.items()}
+        for name, rows in splits.items():
+            check("transitions_v2 %s rows all name a segment" % name,
+                  None not in segs[name], "a row without segment")
+        names = sorted(splits)
+        for i, left in enumerate(names):
+            for right in names[i + 1:]:
+                shared = segs[left] & segs[right]
+                check("transitions_v2 %s and %s share no segment" % (left, right),
+                      not shared, sorted(shared)[:3])
+        manifest = live / "manifest.json"
+        if manifest.is_file():
+            meta = _json.loads(manifest.read_text(encoding="utf-8"))
+            counts = meta.get("split_rows") or {}
+            if counts:
+                check("the manifest counts the rows the splits hold",
+                      all(counts.get(name, 0) == len(rows)
+                          for name, rows in splits.items()),
+                      {name: (counts.get(name), len(rows))
+                       for name, rows in splits.items()})
+
+
+def test_mechanism_features() -> None:
+    """The context block must reach the model, and must not smuggle the action in.
+
+    Measured 2026-10-29: with these features the temporal claim model scored 0.856
+    AUC, but the decomposition says the action's own shape carried it (`args_only`
+    0.891, `state_only` 0.724) and inside one tool the state features were 0.468 -
+    below chance. So the contract to pin is narrow: same shape, no tool inside, and
+    values that actually reflect the context rather than being silently zero.
+    """
+    section("Mechanism features (the context reaches the model, the tool does not)")
+    import importlib.util
+
+    tool = REPO_ROOT / "tools" / "live_outcome_probe.py"
+    check("the live outcome probe exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("live_outcome_probe_mech", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    row = {"tool": "nav.goto", "objective_type": 6,
+           "args": {"direction": "right"},
+           "context": {"map": 1, "cell": 100, "ready": [
+                          {"objective": 2, "type": 6, "params": {"parameter0": 715354}},
+                          {"objective": 3, "type": 1}],
+                       "exits": [{"map": 2, "cell": 100, "blocked": False},
+                                 {"map": 3, "cell": 200, "blocked": True}],
+                       "groups": [{"monsters": [715354], "cell": 100}],
+                       "interactives": [{"elem": 5, "cell": 300}],
+                       "character": {"id": 9, "level": 10, "breed": 4},
+                       "in_dialog": False, "tutorial": True, "active_quests": 2}}
+    vector = module.mechanism_vector(row)
+    check("the vector's length matches its names",
+          len(vector) == len(module.MECHANISM_NAMES), len(vector))
+    check("every value is a finite float",
+          all(isinstance(v, float) and v == v and abs(v) < 1e6 for v in vector),
+          vector)
+    named = dict(zip(module.MECHANISM_NAMES, vector))
+    check("the ready list is counted and ranked",
+          named["ready_count"] > 0 and named["ready_multi"] == 1.0, named)
+    check("the objective's monster is seen in the group on my cell",
+          named["monster_match"] == 1.0 and named["group_on_my_cell"] == 1.0, named)
+    check("an exit on my cell and a blocked exit are both visible",
+          named["exit_on_my_cell"] == 1.0 and 0.0 < named["blocked_ratio"] < 1.0, named)
+    check("the call's argument kinds are visible",
+          named["args_has_direction"] == 1.0 and named["args_has_quest"] == 0.0, named)
+    other = dict(row, tool="quest.advance")
+    check("the vector never sees the tool - only the state and the arguments",
+          module.mechanism_vector(other) == vector)
+    empty = module.mechanism_vector({"tool": "state.snapshot"})
+    check("a row without context is all zeros, not a crash",
+          empty == [0.0] * len(module.MECHANISM_NAMES), empty)
+
+
+def test_claim_labels() -> None:
+    """An action is scored on its own promise, not on the character having moved.
+
+    Measured 2026-10-29 over the live corpus: `quest.advance` reports `moved` on
+    22.3% of 2,848 calls, but 318 of those 636 changed only `cell` and only 2.1%
+    touched quest state. Training a success head on `moved` would teach walking.
+    """
+    section("Per-tool claims (the action's promise, not any change)")
+    import importlib.util
+
+    tool = REPO_ROOT / "tools" / "build_live_transitions.py"
+    check("the live transition builder exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("build_live_transitions_claims", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    claim = module._claim_of
+
+    before = {"map_id": 10, "cell": 100, "in_fight": False,
+              "quest_steps": {"3841": 1}, "ready_objectives": [{"objective_id": 1}],
+              "quests_active": {"3841": 1}, "inventory": {"items": []},
+              "in_dialog": False, "farm_state": None}
+    walked = dict(before, cell=101)
+    advanced = dict(before, quest_steps={"3841": 2})
+    fighting = dict(before, in_fight=True)
+
+    check("a nav.goto by direction claims one step and gets it",
+          claim("nav.goto", {"direction": "right"}, before, walked) == ("step", True),
+          claim("nav.goto", {"direction": "right"}, before, walked))
+    check("an opened dialog does not count as a step",
+          claim("nav.goto", {"direction": "right"}, before,
+                dict(before, in_dialog=True)) == ("step", False),
+          claim("nav.goto", {"direction": "right"}, before, dict(before, in_dialog=True)))
+    check("a nav.goto with a destination claims that map",
+          claim("nav.goto", {"map_id": 11}, before,
+                dict(before, map_id=11)) == ("at:11", True))
+    check("arriving somewhere else is not arrival",
+          claim("nav.goto", {"map_id": 11}, before, walked) == ("at:11", False),
+          claim("nav.goto", {"map_id": 11}, before, walked))
+    check("quest.advance is not credited for walking",
+          claim("quest.advance", {"quest_id": 3841}, before, walked) == ("quest", False),
+          claim("quest.advance", {"quest_id": 3841}, before, walked))
+    check("quest.advance is credited for a step change",
+          claim("quest.advance", {"quest_id": 3841}, before, advanced) == ("quest", True),
+          claim("quest.advance", {"quest_id": 3841}, before, advanced))
+    check("a talk promises a dialog, not a quest advance",
+          claim("quest.advance", {"npc_id": 7}, before,
+                dict(before, in_dialog=True)) == ("dialog", True)
+          and claim("quest.advance", {"npc_id": 7}, before, walked) == ("dialog", False),
+          claim("quest.advance", {"npc_id": 7}, before, dict(before, in_dialog=True)))
+    check("a talk that arrives already in a dialog does not claim it opened one",
+          claim("quest.advance", {"npc_id": 7}, dict(before, in_dialog=True),
+                dict(before, in_dialog=True)) == ("dialog", False),
+          claim("quest.advance", {"npc_id": 7}, dict(before, in_dialog=True),
+                dict(before, in_dialog=True)))
+    node_a = dict(before, in_dialog=True,
+                  dialog={"open": True, "message": "who are you", "replies": [{"reply_id": 4}]})
+    node_b = dict(before, in_dialog=True,
+                  dialog={"open": True, "message": "take this", "replies": [{"reply_id": 5}]})
+    check("a reply promises the dialog moves to another node",
+          claim("quest.advance", {"npc_id": 7, "reply": "hello"}, node_a, node_b)
+          == ("dialog", True)
+          and claim("quest.advance", {"npc_id": 7, "reply": "hello"}, node_a, node_a)
+          == ("dialog", False),
+          claim("quest.advance", {"npc_id": 7, "reply": "hello"}, node_a, node_b))
+    check("and a reply with no dialog to compare is unknown, not a failure",
+          claim("quest.advance", {"npc_id": 7, "reply": "hello"}, before,
+                dict(before, in_dialog=True)) == ("dialog", None),
+          claim("quest.advance", {"npc_id": 7, "reply": "hello"}, before,
+                dict(before, in_dialog=True)))
+    check("fight.join is credited only when the fight begins",
+          claim("fight.join", {"monster": 1}, before, fighting) == ("in_fight", True)
+          and claim("fight.join", {"monster": 1}, before, walked) == ("in_fight", False),
+          claim("fight.join", {"monster": 1}, before, fighting))
+    check("a tap claims an effect only when the state shows one",
+          claim("tap.interactive", {"element_id": 5}, before,
+                dict(before, in_dialog=True)) == ("effect", True)
+          and claim("tap.interactive", {"element_id": 5}, before, before)
+          == ("effect", False))
+    check("a read makes no claim", claim("state.snapshot", {}, before, walked)
+          == (None, None))
+    check("a missing after-state is unknown, never a failure",
+          claim("quest.advance", {"quest_id": 3841}, before, None) == (None, None))
+
+    from agent.runtime import ToolCall
+    tagged = ToolCall("nav.goto", {"direction": "left"}, "g",
+                      meta={"arm": "teacher"}, why="the left exit is first")
+    check("a call's why rides the record metadata",
+          tagged.record_meta() == {"arm": "teacher",
+                                   "why": "the left exit is first"},
+          tagged.record_meta())
+    check("and never touches the directive",
+          tagged.args == {"direction": "left"}, tagged.args)
+    plain = ToolCall("state.snapshot", {}, "g")
+    check("a call with no reason records no metadata", plain.record_meta() is None)
+
+    context = module._context_of({"map": {
+        "map_id": 1, "cell": 5,
+        "exits": [{"map_id": 2, "cell": 7, "direction": "left", "blocked": False}]}})
+    check("the context keeps the exit's direction",
+          (context["exits"][0] or {}).get("dir") == "left", context["exits"])
+
+    rows = [
+        {"tool": "nav.goto", "args": {"direction": "left"}, "moved": False, "ok": True},
+        {"tool": "nav.goto", "args": {"direction": "left"}, "moved": True, "ok": True},
+        {"tool": "nav.goto", "args": {"map_id": 2}, "moved": True, "ok": True},
+        {"tool": "nav.goto", "args": {"map_id": 2}, "moved": True, "ok": False},
+        {"tool": "quest.advance", "args": {"quest_id": 1}, "moved": True, "ok": True},
+    ]
+    form = module.nav_form(rows)
+    check("movement form is measured per argument kind",
+          form.get("direction", {}).get("n") == 2
+          and form.get("map", {}).get("n") == 2, form)
+    check("and the success rate is per form, not blended",
+          form["direction"]["moved_pct"] == 50.0 and form["map"]["moved_pct"] == 100.0,
+          form)
+    check("a non-nav row is not counted", "quest.advance" not in form, form)
+
+    # The miss streak is the loop's own memory: consecutive misses of the same tool,
+    # from the claim label. Reads do not touch it, and transport ok is not success.
+    import json as _json
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "dofus-97.jsonl"
+        def obs(cell):
+            return {"map": {"map_id": 1}, "cell": cell}
+        steps = []
+        cells = [(100, 100), (100, 101), (101, 102), (102, 102)]
+        for i, (here, nxt) in enumerate(cells):
+            steps.append({"kind": "step", "instance": "dofus-97", "goal": "g",
+                          "index": i, "ts": 1_793_000_000.0 + i * 10,
+                          "tool": "nav.goto", "args": {"direction": "left"},
+                          "ok": True, "latency_ms": 10,
+                          "observation": obs(here),
+                          "result": {"snapshot": obs(here)}})
+        log.write_text(chr(10).join(_json.dumps(s) for s in steps), encoding="utf-8")
+        built, _stats = module.build([log], 120.0)
+        streaks = [row["miss_streak"] for row in built if row["tool"] == "nav.goto"]
+        claims = [row["claim_met"] for row in built if row["tool"] == "nav.goto"]
+        check("a tool's miss streak counts its own consecutive misses",
+              streaks[:3] == [0, 1, 0], (streaks, claims))
+        check("and the claim is judged on the next observation, not the snapshot",
+              claims[:2] == [False, True], claims)
+
+        # Same tool, two different requests: the per-rule streak must reset when the
+        # args change, while the per-tool streak keeps counting. Measured live, an
+        # identical request re-issued after a miss succeeded 2% of the time (1,330
+        # tries) and a changed one 38-78%, so the two keys are different features.
+        def mapobs(mid):
+            return {"map_id": mid, "cell": [100, 100]}
+        log2 = Path(tmp) / "dofus-98.jsonl"
+        # The after-state of row i is row i+1's observation, so seen[i] is the map
+        # the character is on *before* call i. Two runs of request 2 miss while an
+        # interleaved request 1 also misses; then request 2 succeeds.
+        plans = [(1, 2), (1, 2), (1, 1), (2, 1), (2, 2), (2, 2)]
+        steps2 = []
+        for i, (seen, want) in enumerate(plans):
+            steps2.append({"kind": "step", "instance": "dofus-98", "goal": "g",
+                           "index": i, "ts": 1_793_100_000.0 + i * 10,
+                           "tool": "nav.goto", "args": {"map_id": want},
+                           "ok": True, "latency_ms": 10,
+                           "observation": mapobs(seen),
+                           "result": {"snapshot": mapobs(seen)}})
+        log2.write_text(chr(10).join(_json.dumps(s) for s in steps2), encoding="utf-8")
+        built2, _stats2 = module.build([log2], 120.0)
+        reps = [row["repeat_streak"] for row in built2]
+        tool_streaks = [row["miss_streak"] for row in built2]
+        met2 = [row["claim_met"] for row in built2]
+        check("the claim is judged on the map the call asked for",
+              met2 == [False, False, False, False, True, True], str((met2, reps)))
+        check("a rule keeps its miss count across other rules and resets on its own win",
+              reps == [0, 1, 0, 1, 2, 0], reps)
+        check("while the per-tool streak ignores the args",
+              tool_streaks == [0, 1, 2, 3, 4, 0], tool_streaks)
+
+    manifest_path = REPO_ROOT / "data" / "transitions_v2" / "manifest.json"
+    if manifest_path.is_file():
+        import json as _json
+        manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+        quest = (manifest.get("per_tool") or {}).get("quest.advance") or {}
+        check("the built corpus carries claims", manifest.get("claims_derivable", 0) > 0,
+              manifest.get("claims_derivable"))
+        check("and quest.advance claims are far rarer than its moves",
+              quest.get("claim_pct") is not None
+              and quest.get("claim_pct") < quest.get("moved_pct", 0),
+              (quest.get("claim_pct"), quest.get("moved_pct")))
+        nav = manifest.get("nav_form") or {}
+        check("the built corpus records both movement forms",
+              nav.get("direction", {}).get("n", 0) > 0
+              and nav.get("map", {}).get("n", 0) > 0, nav)
+        by_split = manifest.get("nav_form_by_split") or {}
+        check("and reports them per fold, so a period effect cannot hide as a form effect",
+              set(by_split) == {"train", "val", "test"}
+              and all(isinstance(by_split[name], dict) for name in by_split),
+              list(by_split))
+
+
+def test_temporal_split_plan() -> None:
+    """A temporal split must produce a fold that began after the training window.
+
+    Measured 2026-10-29: the hash split put every one of the eight days in train,
+    val *and* test, and the outcome model scored 0.830 AUC on that test fold. The
+    same model on the temporal fold - one future day at a later level - scored
+    0.634, and its phase features alone 0.375: below chance. The split is not a
+    detail, it is the difference between a real number and a flattering one.
+    """
+    section("Temporal split (the test fold is the future, not a sample of the same days)")
+    import importlib.util
+
+    tool = REPO_ROOT / "tools" / "build_live_transitions.py"
+    check("the live transition builder exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("build_live_transitions", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    day = 86400.0
+    def rows_for(start, segment, count):
+        return [{"segment": segment, "has_pair": True, "was_read": False,
+                 "at": start + i * 30.0, "tool": "nav.goto", "moved": i % 3 == 0}
+                for i in range(count)]
+
+    base = 1_793_000_000.0
+    rows = (rows_for(base, "early", 70) + rows_for(base + day, "middle", 30)
+            + rows_for(base + 2 * day, "late", 100))
+    plan = module.plan_splits(rows, "temporal")
+    check("the latest segment is the test fold", plan["late"] == "test", plan)
+    check("the earliest segment is train", plan["early"] == "train", plan)
+    check("a segment appears in exactly one fold",
+          len(plan) == 3 and set(plan.values()) <= {"train", "val", "test"}, plan)
+    check("no day straddles train and test",
+          not (plan["late"] == "test" and plan["early"] != "train"), plan)
+
+    undated = module.plan_splits(rows + rows_for(0.0, "undated", 20), "temporal")
+    check("a segment with no clock goes to train, never to the future fold",
+          undated["undated"] == "train", undated)
+
+    # Same rows, hash policy: the point is that it does *not* respect time.
+    hashed = module.plan_splits(rows, "hash")
+    check("the hash split ignores time on purpose and balances actions instead",
+          set(hashed) == {"early", "middle", "late"}
+          and set(hashed.values()) <= {"train", "val", "test"}, hashed)
+
+    tiny = module.plan_splits(rows_for(base, "only", 5), "temporal")
+    check("one segment cannot produce a future fold, so it stays in train",
+          tiny.get("only") == "train", tiny)
+
+
+def test_live_within_segment_eval() -> None:
+    section("Within-segment outcome evaluation (phase cancels, the action must speak)")
+    import importlib.util
+
+    tool = REPO_ROOT / "tools" / "live_outcome_probe.py"
+    check("the live outcome probe exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("live_outcome_probe", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # Three segments, scores chosen so the expected pair arithmetic is exact:
+    # a phase-only model cannot separate actions inside a segment, a tool-aware
+    # one can, and pairs of two identical tools must not count as tool evidence.
+    rows = [
+        {"segment": "a", "tool": "fight.join", "progress": True},
+        {"segment": "a", "tool": "nav.goto", "progress": True},
+        {"segment": "a", "tool": "fight.join", "progress": False},
+        {"segment": "a", "tool": "state.snapshot", "progress": False},
+        {"segment": "a", "tool": "fight.join", "progress": False},
+        {"segment": "b", "tool": "quest.advance", "progress": True},
+        {"segment": "b", "tool": "state.snapshot", "progress": False},
+        {"segment": "c", "tool": "tap.interactive", "progress": True},
+        {"segment": "c", "tool": "state.snapshot", "progress": False},
+        # a segment with one class only must be skipped, not scored as a win
+        {"segment": "d", "tool": "nav.goto", "progress": False},
+        {"segment": "d", "tool": "nav.goto", "progress": False},
+    ]
+    scores = [0.9, 0.2, 0.4, 0.6, 0.1, 0.9, 0.2, 0.9, 0.2, 0.3, 0.1]
+    stat = module._within_pairs(rows, scores, "progress")
+    check("segments with both outcomes are the only ones scored",
+          stat["segments_with_pos_and_neg"] == 3, stat)
+    check("every positive-negative pair in a segment is one trial",
+          stat["pairs"] == 8, stat)
+    check("pair accuracy counts a correct ordering, ties as half",
+          stat["pair_accuracy"] == 0.75, stat)
+    check("pairs of the same tool are counted apart from tool evidence",
+          stat["tool_discordant_pairs"] == 6, stat)
+    check("tool-discordant accuracy is over tool-discordant pairs only",
+          stat["tool_discordant_accuracy"] == 0.667, stat)
+    check("the CI resamples segments and stays inside [0, 1]",
+          bool(stat["pair_accuracy_ci95"])
+          and 0.0 <= stat["pair_accuracy_ci95"][0] <= stat["pair_accuracy_ci95"][1] <= 1.0,
+          stat["pair_accuracy_ci95"])
+    tied = module._within_pairs(rows, [0.5] * len(rows), "progress")
+    check("a constant score is chance, not a win",
+          tied["pair_accuracy"] == 0.5 and tied["tool_discordant_accuracy"] == 0.5, tied)
+
+    # The floor every learned model must clear: the tool's own historical rate.
+    # Measured 2026-10-29 on a temporal fold, that baseline was the *best* scorer
+    # (0.723 moved AUC) while phase features fell under chance (0.375), so the probe
+    # has to report it beside the models or the comparison is not visible.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp)
+        def dump(name, spec):
+            lines = [json.dumps({"segment": "s", "tool": tool, "moved": moved,
+                                 "progress": False, "was_read": False,
+                                 "x": [0.5] * 8})
+                     for tool, moved in spec]
+            (data / ("%s.jsonl" % name)).write_text(chr(10).join(lines), encoding="utf-8")
+        dump("train", [("tap.interactive", True)] * 10 + [("nav.goto", False)] * 10)
+        dump("val", [("tap.interactive", True)] * 3 + [("nav.goto", False)] * 3)
+        dump("test", [("tap.interactive", True), ("tap.interactive", True),
+                      ("nav.goto", False), ("nav.goto", False)])
+        probed = module.within_segment_probe(data, {})
+        arm = (probed["labels"]["moved"].get("test") or {}).get("tool_rate") or {}
+        check("the probe reports the tool-rate floor beside the models",
+              isinstance(arm.get("auc"), float), arm)
+        check("a tool that always moves outranks one that never does",
+              arm.get("auc") == 1.0, arm)
+
+    # The reject option. 60 rows over 6 segments: 5 successes (one carrying
+    # miss_streak 2) and 3 failures clean, plus 2 failures with repeat_streak 2.
+    # A rule that vetoes only the repeated failures must keep every success; the
+    # tool-keyed rule that vetoes a success must show up as a cost.
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp)
+        lines = []
+        for s in range(6):
+            seg = "g%d" % s
+            for i in range(5):
+                lines.append({"segment": seg, "tool": "nav.goto", "claim_met": True,
+                              "repeat_streak": 0, "miss_streak": 2 if i == 4 else 0,
+                              "x": [0.5] * 8})
+            for i in range(3):
+                lines.append({"segment": seg, "tool": "nav.goto", "claim_met": False,
+                              "repeat_streak": 0, "miss_streak": 0, "x": [0.5] * 8})
+            for i in range(2):
+                lines.append({"segment": seg, "tool": "nav.goto", "claim_met": False,
+                              "repeat_streak": 2, "miss_streak": 1, "x": [0.5] * 8})
+        for name in ("train", "test"):
+            (data / ("%s.jsonl" % name)).write_text(
+                chr(10).join(json.dumps(r) for r in lines), encoding="utf-8")
+        gated = module.gate_probe(data, "claim_met")["tools"]["nav.goto"]["rules"]
+        rep = gated["repeat_streak>=2"]
+        check("the rule-keyed gate vetoes the repeated failures and no success",
+              rep["vetoed"] == 12 and rep["vetoed_success"] == 0.0
+              and rep["successes_retained"] == 1.0
+              and rep["successes_lost_per_1000"] == 0.0, rep)
+        check("and its advantage over the vetoed calls is positive",
+              bool(rep["delta_ci"]) and rep["delta_ci"][0] > 0, rep["delta_ci"])
+        toolgate = gated["miss_streak>=2"]
+        check("a gate that vetoes successes reports what it costs",
+              toolgate["vetoed"] == 6 and toolgate["vetoed_success"] == 1.0
+              and toolgate["successes_retained"] == 0.8, toolgate)
+    # The stopping rule groups each retry by what happened since the failure.
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp)
+        lines = []
+        for s in range(4):
+            seg = "h%d" % s
+            lines += [
+                {"segment": seg, "tool": "nav.goto", "args": {"direction": "left"},
+                 "claim_met": False, "context": {"cell": 1, "in_dialog": False},
+                 "x": [0.5] * 8},
+                {"segment": seg, "tool": "state.snapshot", "args": {},
+                 "claim_met": None, "context": {"cell": 1, "in_dialog": False},
+                 "x": [0.5] * 8},
+                {"segment": seg, "tool": "nav.goto", "args": {"direction": "left"},
+                 "claim_met": False, "context": {"cell": 2, "in_dialog": False},
+                 "x": [0.5] * 8},
+                {"segment": seg, "tool": "nav.goto", "args": {"direction": "left"},
+                 "claim_met": True, "context": {"cell": 2, "in_dialog": False},
+                 "x": [0.5] * 8},
+            ]
+        for name in ("train", "test"):
+            (data / ("%s.jsonl" % name)).write_text(
+                chr(10).join(json.dumps(r) for r in lines), encoding="utf-8")
+        stop = module.stopping_probe(data, "claim_met")["splits"]["test"]["nav.goto"]
+        check("a retry after a state change is its own group",
+              stop["changed"]["n"] == 4 and stop["changed"]["met"] == 0, stop)
+        check("and a retry with nothing in between is immediate",
+              stop["immediate"]["n"] == 4 and stop["immediate"]["met"] == 4, stop)
+    # Rolling origin: segments placed in time, one rule, several futures.
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp)
+        lines = []
+        for s in range(60):
+            for i in range(5):
+                lines.append({"segment": "r%02d" % s, "tool": "nav.goto",
+                              "args": {}, "at": 1_793_000_000.0 + s * 600,
+                              "claim_met": (i == 0), "repeat_streak": (2 if i else 0),
+                              "x": [0.5] * 8})
+        (data / "train.jsonl").write_text(
+            chr(10).join(json.dumps(r) for r in lines), encoding="utf-8")
+        rolled = module.rolling_probe(data, "claim_met")
+        cut = rolled["cuts"].get("0.40") or {}
+        stat = (cut.get("tools") or {}).get("nav.goto") or {}
+        check("rolling origin trains on the past and scores the next window",
+              rolled["segments"] == 60 and cut.get("test_segments", 0) > 0, rolled)
+        check("and the rule is scored inside that window, not on the whole corpus",
+              0 < stat.get("test_rows", 0) < 300 and stat.get("vetoed", 0) > 0, stat)
+
+
+def test_ingest_after_run() -> None:
+    section("Live ingest after a run (the derived dataset must not go stale)")
+    import sys as _sys
+    import tempfile
+
+    from agent import brain_daemon as bd
+
+    was_on, was_gap = bd.INGEST_ON_STOP, bd.INGEST_MIN_INTERVAL_S
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon = bd.BrainDaemon(log_dir=Path(tmp) / "logs")
+            bd.INGEST_ON_STOP = False
+            check("the ingest can be switched off for a test host",
+                  daemon._ingest_live() is False
+                  and (daemon._ingest_thread is None
+                       or not daemon._ingest_thread.is_alive()),
+                  "ingest started while switched off")
+
+            bd.INGEST_ON_STOP = True
+            bd.INGEST_MIN_INTERVAL_S = 0.0
+            daemon._ingest_commands = lambda: [
+                ("fake", [_sys.executable, "-c", "import time; time.sleep(0.4)"])]
+            first = daemon._ingest_live()
+            second = daemon._ingest_live()
+            check("a finished run starts one ingest", first is True, first)
+            check("a second stop while it runs does not start another",
+                  second is False, second)
+            daemon._ingest_thread.join(10)
+            third = daemon._ingest_live()
+            check("the next run can ingest again once the job is done",
+                  third is True, third)
+            daemon._ingest_thread.join(10)
+            bd.INGEST_MIN_INTERVAL_S = 3600.0
+            check("the debounce keeps a stop storm from rebuilding every time",
+                  daemon._ingest_live() is False, "debounce did not hold")
+            commands = bd.BrainDaemon._ingest_commands(daemon)
+            flat = [part for _label, cmd in commands for part in cmd]
+            check("the ingest command rebuilds the live dataset",
+                  any("refresh_live_dataset" in part for part in flat), commands)
+            index_cmd = [cmd for _label, cmd in commands
+                         if any("knowledge_index" in part for part in cmd)]
+            check("and rebuilds the client knowledge index the runtime prefers",
+                  len(index_cmd) == 1 and "--write" in index_cmd[0], commands)
+            temporal_cmd = [cmd for _label, cmd in commands
+                            if any("transitions_temporal" in part for part in cmd)]
+            check("the honest future fold is rebuilt too",
+                  len(temporal_cmd) == 1 and "temporal" in temporal_cmd[0], commands)
+            check("the dataset is rebuilt before the index that reads the logs",
+                  [label for label, _cmd in commands][:3]
+                  == ["dataset", "temporal", "index"], commands)
+    finally:
+        bd.INGEST_ON_STOP, bd.INGEST_MIN_INTERVAL_S = was_on, was_gap
+
+
+def test_ope_estimators() -> None:
+    section("Off-policy estimators (the numbers that decide if a question is askable)")
+    import importlib.util
+
+    tool = REPO_ROOT / "tools" / "ope_probe.py"
+    check("the off-policy probe exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("ope_probe", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    check("SNIPS is self-normalised, not a raw mean",
+          module.snips([1.0, 0.0], [2.0, 1.0]) == 2.0 / 3.0,
+          module.snips([1.0, 0.0], [2.0, 1.0]))
+    check("ESS is (sum w)^2 / sum w^2",
+          abs(module.ess([2.0, 1.0]) - 1.8) < 1e-9, module.ess([2.0, 1.0]))
+    check("a policy with no support gets ESS 0",
+          module.ess([0.0, 0.0]) == 0.0, module.ess([0.0, 0.0]))
+
+    # One read row, one action row. Under `no-read` the read gets weight 0 and the
+    # action is renormalised by 1/(1-P(read)).
+    rows = [{"tool": "state.snapshot"}, {"tool": "quest.advance"}]
+    tools = ["quest.advance", "state.snapshot"]
+    proba = [[0.2, 0.8], [0.75, 0.25]]
+    weights = module.target_weights(rows, proba, tools, "no-read")
+    check("a read carries no weight for a no-read target",
+          weights[0] == 0.0, weights)
+    check("an action is upweighted by the read mass it replaces",
+          abs(weights[1] - 1.0 / (1.0 - 0.25)) < 1e-9, weights)
+    clipped = module.target_weights(rows, proba, tools, "uniform", clip=5.0)
+    check("clipping bounds a weight from above",
+          max(clipped) <= 5.0 + 1e-9, clipped)
+
+    # Two clusters, perfectly separated: ICC must be 1 and n_eff half the rows.
+    same = [{"segment": s, "progress": bool(v)} for s, v in
+            (("a", 1), ("a", 1), ("b", 0), ("b", 0))]
+    stat = module.cluster_stats(same, "progress")
+    check("ICC reaches 1 when every cluster is one class",
+          stat["icc"] == 1.0 and stat["n_eff"] == 2.0, stat)
+    flat = [{"segment": s, "progress": True} for s in ("a", "b") for _ in range(2)]
+    check("a label with one class reports no MDE instead of dividing by zero",
+          module.cluster_stats(flat, "progress")["mde_relative_pct"] is None,
+          module.cluster_stats(flat, "progress"))
+    mixed = [{"segment": s, "progress": (i % 2 == 0)} for s in "abcd" for i in range(4)]
+    mixed_stat = module.cluster_stats(mixed, "progress")
+    check("a label with no clustering has n_eff close to n",
+          mixed_stat["n_eff"] > 0.9 * mixed_stat["n"], mixed_stat)
+    # The MDE formula is the two-proportion one at 5% / 80%: 2.8 * sqrt(2p(1-p)/n).
+    import math
+    expected = 2.8 * math.sqrt(2 * 0.5 * 0.5 / mixed_stat["n_eff"]) / 0.5 * 100
+    check("the MDE uses the effective sample size",
+          abs(mixed_stat["mde_relative_pct"] - round(expected, 1)) < 0.2,
+          (mixed_stat["mde_relative_pct"], expected))
+
+
+def test_fork_carries_the_planner_state() -> None:
+    section("Planner forks (a counterfactual must not crash on a branch the parent had)")
+    import json
+
+    from agent.planner import QuestPlanner
+
+    parent = QuestPlanner()
+    fork = parent.fork()
+    missing = sorted(set(vars(parent)) - set(vars(fork)))
+    check("a fork carries every attribute the parent has", not missing, missing)
+
+    # The free-form branch is the one that crashed: `_interactive_tries` was never
+    # copied, so scoring a tap candidate raised AttributeError. Use a recorded live
+    # turn that actually plans a tap, fork after it, and plan again.
+    corpus = REPO_ROOT / "data" / "replay" / "planner_obs.jsonl"
+    if not corpus.is_file():
+        return
+    rows = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+    tapped = 0
+    for row in rows[:120]:
+        planner = QuestPlanner()
+        call = planner.choose(row.get("goal") or "do all the quests", row["obs"], None)
+        if call is None or call.tool != "tap.interactive":
+            continue
+        tapped += 1
+        fork = planner.fork()
+        try:
+            again = fork.choose(row.get("goal") or "do all the quests", row["obs"], None)
+            crashed = None
+        except Exception as exc:  # noqa: BLE001 - the guard is the point
+            again, crashed = None, "%s: %s" % (type(exc).__name__, exc)
+        check("a fork plans a free-form turn without crashing", crashed is None, crashed)
+        check("the fork returns a call for the same observation",
+              again is not None, again)
+        break
+    check("the frozen corpus contains a free-form turn to fork on", tapped > 0, tapped)
+
+
+def test_exploration_policy() -> None:
+    section("Exploration policy (a randomized arm is tagged, bounded and off by default)")
+    import agent.test_explore as suite
+
+    for name in sorted(dir(suite)):
+        if not name.startswith("test_"):
+            continue
+        try:
+            getattr(suite, name)()
+        except Exception as exc:  # noqa: BLE001 - report which case broke
+            check("exploration case %s" % name, False,
+                  "%s: %s" % (type(exc).__name__, exc))
+        else:
+            check("exploration case %s" % name, True, None)
+    from agent.autopilot import _base_policy, _build_policy, build_parser
+
+    parsed = build_parser().parse_args([])
+    check("exploration is off unless a run asks for it",
+          parsed.explore_objectives == 0.0
+          and not isinstance(_build_policy(parsed), suite.ExplorationPolicy),
+          parsed.explore_objectives)
+    asked = build_parser().parse_args(["--explore-objectives", "0.1",
+                                       "--explore-seed", "7"])
+    wrapped = _build_policy(asked)
+    check("asking for an epsilon wraps the chosen policy",
+          isinstance(wrapped, suite.ExplorationPolicy)
+          and wrapped.epsilon == 0.1, type(wrapped).__name__)
+
+
+def test_explore_report() -> None:
+    section("Exploration report (a randomized arm is read with its own propensities)")
+    import importlib.util
+
+    tool = REPO_ROOT / "tools" / "explore_report.py"
+    check("the exploration report exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("explore_report", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def row(i, arm, progress, segment=None, p=0.2, tool_name="quest.advance"):
+        return {"segment": segment or ("s%d" % (i % 4)), "tool": tool_name,
+                "was_read": False, "has_pair": True, "arm": arm,
+                "p_explore": p, "has_alternative": True,
+                "explored": arm == "explore", "progress": progress,
+                "advance": progress and arm == "explore",
+                "moved": True, "objective_type": i % 3,
+                "context": {"map": 100 + (i % 5)}}
+
+    rows = [row(i, "explore", i % 2 == 0) for i in range(20)]
+    rows += [row(i + 100, "teacher", i % 10 == 0) for i in range(20)]
+    check("only rows with a live propensity are randomized",
+          len(module.randomized(rows)) == 40, len(module.randomized(rows)))
+    dead = row(999, "teacher", True, p=0.0)
+    check("a state with no alternative is not randomized",
+          module.randomized([dead]) == [], module.randomized([dead]))
+
+    explore = [r for r in rows if r["arm"] == "explore"]
+    teacher = [r for r in rows if r["arm"] == "teacher"]
+    delta = module.difference(explore, teacher, "progress")
+    check("the difference in rates is the estimate",
+          abs(delta - (0.5 - 0.1)) < 1e-9, delta)
+    check("the bootstrap interval brackets the difference",
+          module.cluster_bootstrap(rows, "progress") is not None,
+          module.cluster_bootstrap(rows, "progress"))
+    value = module.always_explore_value(rows, "progress")
+    check("the constant-explore value divides by the real propensity",
+          abs(value - 0.5) < 1e-9, value)
+    check("the IPW value ignores teacher rows by construction",
+          abs(module.always_explore_value([r for r in rows if r["arm"] == "teacher"],
+                                          "progress") or 0.0) < 1e-12, "teacher rows counted")
+
+    plan = module.plan_table(0.0146)
+    tight = plan["epsilon_0.20"]["half_width_0.005"]["eligible_steps"]
+    loose = plan["epsilon_0.20"]["half_width_0.010"]["eligible_steps"]
+    check("a tighter interval needs more steps",
+          tight > loose * 2, (tight, loose))
+    cheap = plan["epsilon_0.50"]["half_width_0.010"]["eligible_steps"]
+    check("a larger epsilon needs fewer steps for the same precision",
+          cheap < loose, (cheap, loose))
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        for name in ("train", "val", "test"):
+            (out / (name + ".jsonl")).write_text("", encoding="utf-8")
+        (out / "manifest.json").write_text('{"mean_step_s": 4.0}', encoding="utf-8")
+        empty = module.analyse(out)
+    check("the plan prices decisions at the corpus's own cadence",
+          empty["step_s"] == 4.0, empty["step_s"])
+    check("an empty corpus reports the pre-registered plan, not a fake estimate",
+          empty["status"] == "no randomized rows yet" and "plan" in empty, empty["status"])
+
+
+def test_knowledge_index() -> None:
+    section("Client knowledge index (every field literal, conflicts never picked)")
+    import contextlib
+    import importlib.util
+    import io
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "knowledge_index.py"
+    check("the knowledge indexer exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("knowledge_index", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        logs = Path(tmp)
+        target = logs / "dofus-99.jsonl"
+        catalog = [{"id": 1, "name": "Q", "steps": [{"id": 10, "name": "S",
+                    "description": "d", "objectives": [{"id": 100, "type_id": 0,
+                                                        "map_id": 5,
+                                                        "params": {"parameter0": 7}}]}]}]
+        rows = [
+            {"ts": 1000.0, "observation": {
+                "quests_catalog": catalog,
+                "step_objectives": [{"id": 200, "step_id": 999, "text": "orphan"}],
+                "ready_objectives": [{"quest_id": 1, "objective_id": 100,
+                                      "type_id": 0, "text": "Do the thing",
+                                      "params": {"parameter0": 7}, "step_id": 10,
+                                      "cur_completion": 0, "max_completion": 3}]}},
+            {"ts": 1003.0, "observation": {
+                "ready_objectives": [{"quest_id": 1, "objective_id": 100,
+                                      "text": "Do the thing", "cur_completion": 2,
+                                      "max_completion": 3}]}},
+        ]
+        target.write_text(chr(10).join(_json.dumps(row) for row in rows), encoding="utf-8")
+        index = module.scan([target])
+        row = index["rows"].get("1:100")
+        check("the catalogue and the live objective merge under one key",
+              row is not None and {"catalog", "ready"} <= set(row["sources"]), row)
+        check("text comes from the source that carries it, not from the catalogue",
+              row["text"] == "Do the thing", row and row.get("text"))
+        check("every field names the source that supplied it",
+              row["field_sources"].get("text") == ["ready"]
+              and row["field_sources"].get("map_id") == ["catalog"],
+              row.get("field_sources"))
+        check("the catalogue's map and type survive the merge",
+              row["map_id"] == 5 and row["type_id"] == 0, row)
+        check("a progress counter takes its latest value, not a conflict",
+              row["cur_completion"] == 2 and "cur_completion" not in index["conflicts"],
+              (row.get("cur_completion"), index["conflicts"]))
+        check("an objective with no owning quest is reported, not indexed",
+              index["unbound"] == 1 and "999:200" not in index["rows"], index["unbound"])
+
+        rows.append({"ts": 1006.0, "observation": {
+            "ready_objectives": [{"quest_id": 1, "objective_id": 100,
+                                  "text": "Do the OTHER thing"}]}})
+        target.write_text(chr(10).join(_json.dumps(row) for row in rows), encoding="utf-8")
+        clash = module.scan([target])
+        check("two different texts for one id are a conflict, not a choice",
+              clash["conflicts"].get("text") == 1, clash["conflicts"])
+        check("a conflicted field is withheld from the verified row",
+              "text" not in clash["rows"]["1:100"]
+              or clash["rows"]["1:100"]["text"] == "Do the other thing",
+              clash["rows"]["1:100"])
+
+        out = logs / "client_index.json"
+        manifest_path = logs / "client_index.manifest.json"
+        quiet = io.StringIO()
+        with contextlib.redirect_stdout(quiet):
+            rc = module.main(["--logs", str(logs), "--out", str(out),
+                              "--manifest", str(manifest_path), "--write"])
+        check("a conflicting capture is a failing run", rc == 1, rc)
+        with contextlib.redirect_stdout(quiet):
+            ok = module.main(["--logs", str(logs), "--out", str(out),
+                              "--manifest", str(manifest_path), "--check"])
+        check("--check passes on the index just built", ok in (0, 1), ok)
+        check("the write leaves no temp file behind",
+              not list(logs.glob("*.tmp-*")), [p.name for p in logs.glob("*.tmp-*")])
+        payload = _json.loads(out.read_text(encoding="utf-8"))
+        payload["rows"]["1:100"]["text"] = "tampered"
+        out.write_text(_json.dumps(payload), encoding="utf-8")
+        with contextlib.redirect_stdout(quiet):
+            stale = module.main(["--logs", str(logs), "--out", str(out),
+                                 "--manifest", str(manifest_path), "--check"])
+        check("a hand-edited index fails --check", stale == 1, stale)
+
+        # A manifest that belongs to another index is a stale manifest, even
+        # though every row still matches: the counts and file list would lie.
+        # Rebuild first, so the only tampering is the manifest itself.
+        with contextlib.redirect_stdout(quiet):
+            module.main(["--logs", str(logs), "--out", str(out),
+                         "--manifest", str(manifest_path), "--write"])
+        payload = _json.loads(out.read_text(encoding="utf-8"))
+        payload["manifest"]["index_sha256"] = "0" * 64
+        out.write_text(_json.dumps(payload), encoding="utf-8")
+        with contextlib.redirect_stdout(quiet):
+            stale_manifest = module.main(["--logs", str(logs), "--out", str(out),
+                                          "--manifest", str(manifest_path), "--check"])
+        check("a manifest from another build fails --check too",
+              stale_manifest == 1, stale_manifest)
+
+    # File order must not decide whether a step objective is bound: here the step
+    # list arrives before any catalogue that names its quest.
+    with tempfile.TemporaryDirectory() as tmp:
+        logs = Path(tmp)
+        target = logs / "dofus-98.jsonl"
+        first = {"ts": 1.0, "observation": {
+            "step_objectives": [{"id": 300, "step_id": 20, "text": "late catalogue"}]}}
+        second = {"ts": 2.0, "observation": {"quests_catalog": [
+            {"id": 3, "name": "Q3", "steps": [{"id": 20, "name": "S20",
+                                               "objectives": []}]}]}}
+        target.write_text(chr(10).join(_json.dumps(row) for row in (first, second)),
+                          encoding="utf-8")
+        ordered = module.scan([target])
+        bound = ordered["rows"].get("3:300")
+        check("a step objective seen before its catalogue still binds",
+              bound is not None and "step" in bound["sources"]
+              and bound["captures"] == 1, bound)
+        check("and nothing is reported unbound when the owner is visible eventually",
+              ordered["unbound"] == 0, ordered["unbound"])
+
+    from agent.knowledge_context import load_observed_index
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "client_index.json"
+        path.write_text(_json.dumps({"rows": {"2:300": {
+            "quest_id": 2, "objective_id": 300, "text": "t"}}}), encoding="utf-8")
+        loaded = load_observed_index(path)
+        check("the runtime loader reads the verified index by (quest, objective)",
+              loaded.get((2, 300), {}).get("text") == "t", list(loaded)[:3])
 
 
 def main(argv: Optional[List[str]] = None) -> int:

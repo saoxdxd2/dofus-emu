@@ -49,6 +49,8 @@ class LivePolicy:
         self.solver = BattleSolver(beam_width=int(beam_width),
                                    max_actions=int(max_actions))
         self.plan_k = max(2, int(beam_width))
+        # Set per request from the observation contract; False until then.
+        self._value_ready = False
         # The state/masks/observation/value path is pure JAX. Compiling the
         # bundle once removes the per-turn eager dispatch overhead; the board
         # values still enter as traced arrays, so nothing about the instance is
@@ -101,11 +103,12 @@ class LivePolicy:
         names = {sid: spell.name for sid, spell in by_id.items()}
         slots = [{
             "slot": slot, "spell_id": int(row["id"]),
-            "name": names.get(row["id"], ""),
+            "name": "" if row.get("empty") else names.get(row["id"], ""),
             "ap": row["ap"], "rmin": row["rmin"], "rmax": row["rmax"],
             "damage": round(float(row["damage"]), 2),
             "heal": round(float(row["heal"]), 2),
             "element": int(row["element"]), "ally": bool(row["ally"]),
+            "empty": bool(row.get("empty", False)),
         } for slot, row in enumerate(chosen)]
         return slots, chosen
 
@@ -325,16 +328,143 @@ class LivePolicy:
                 return cell
         return None
 
+    def _move_dest(self, board: Board, target: Optional[Dict[str, Any]],
+                   move: int) -> Optional[int]:
+        """The reachable cell the policy's move direction asks for.
+
+        The trained actor moves every turn after casting: `0` toward the target,
+        `2` away from it, `1` holds. The encounter env applies that as a straight
+        change of distance; here it is a walk on the real cell graph, spending the
+        turn's MP. Only a strict improvement counts, so a wall that blocks the
+        direction leaves the character where it is instead of shuffling sideways.
+        Without this the move head was never executed live: every turn ended in a
+        pass once AP ran out, and the page's local heuristic walked forward.
+        """
+        if move not in (0, 2) or board.my_mp <= 0:
+            return None
+        cell = target.get("cell") if isinstance(target, dict) else None
+        try:
+            cell = int(cell)
+        except (TypeError, ValueError):
+            return None
+        occupied = frozenset(f.cell for f in board.fighters
+                             if f.alive and f.id != board.my_id)
+        here = board.cells.distance(board.my_cell, cell)
+        best: Optional[int] = None
+        best_distance: Optional[int] = None
+        for hop in board.cells.reachable(board.my_cell, board.my_mp, occupied):
+            if hop == board.my_cell:
+                continue
+            distance = board.cells.distance(hop, cell)
+            if move == 0:
+                if distance >= here:
+                    continue
+                if best_distance is None or distance < best_distance:
+                    best, best_distance = hop, distance
+            else:
+                if distance <= here:
+                    continue
+                if best_distance is None or distance > best_distance:
+                    best, best_distance = hop, distance
+        return best
+
+    @staticmethod
+    def _reference_target(board: Board,
+                          target: Optional[Dict[str, Any]]
+                          ) -> Optional[Dict[str, Any]]:
+        """The enemy the move direction is measured against.
+
+        A pass carries no enemy target (the actor slot points at itself), and the
+        env's distance is to the nearest enemy, so that is the reference then.
+        """
+        if isinstance(target, dict):
+            fighter_id = target.get("fighter_id")
+            try:
+                fighter_id = int(fighter_id)
+            except (TypeError, ValueError):
+                fighter_id = None
+            if fighter_id is not None and target.get("cell") is not None \
+                    and fighter_id != board.my_id and any(
+                        f.id == fighter_id and f.alive and f.team != "player"
+                        for f in board.fighters):
+                return target
+        nearest = None
+        nearest_distance = None
+        for fighter in board.fighters:
+            if not fighter.alive or fighter.id == board.my_id \
+                    or fighter.team == "player":
+                continue
+            distance = board.cells.distance(board.my_cell, fighter.cell)
+            if nearest_distance is None or distance < nearest_distance:
+                nearest, nearest_distance = fighter, distance
+        if nearest is None:
+            return None
+        return {"fighter_id": nearest.id, "cell": nearest.cell}
+
+    def _walk_action(self, board: Board, reference: Optional[Dict[str, Any]],
+                     move: int) -> Optional[Dict[str, Any]]:
+        dest = self._move_dest(board, reference, move)
+        if dest is None:
+            return None
+        path = self._path_to(board, board.my_cell, dest)
+        if len(path) <= 1:
+            return None
+        return {"type": "move", "cell": int(dest), "path": path}
+
+    def _value_choice(self, board: Board,
+                      plans: Sequence[TurnPlan]) -> Optional[TurnPlan]:
+        """The realization the trained critic expects to win.
+
+        Several plans can execute the actor's chosen spell and target from
+        different cells; `_move_score` only knows distance. The value head was
+        trained on fight outcomes, so when the observation is value-ready (the
+        enemy's own spells are loaded) it is the better judge. Not ready, or any
+        failure, returns None and the caller keeps the old choice -- the value
+        ranker is an upgrade, never a dependency.
+        """
+        if not getattr(self, "_value_ready", False) or len(plans) < 2:
+            return None
+        try:
+            from combat.plan_value import rank_plans
+
+            ranked = rank_plans(self.params, board, plans, self.cfg)
+        except Exception:  # noqa: BLE001 - a ranker failure must not cost the turn
+            return None
+        return ranked[0][1] if ranked else None
+
     def _realize(self, board: Board, spell_slot: int, target_slot: int,
                  move: int, slots: Sequence[Dict[str, Any]],
                  targets: Sequence[Dict[str, Any]]
                  ) -> Tuple[Optional[Dict[str, Any]], bool, str]:
+        reference = self._reference_target(
+            board, targets[target_slot] if 0 <= target_slot < len(targets) else None)
         if spell_slot == self.cfg.spells:
+            action = self._walk_action(board, reference, move)
+            if action is not None:
+                return (action, False,
+                        "policy_approach" if move == 0 else "policy_retreat")
+            # The actor chose a direction, not a pass; the walk is impossible
+            # from here (no MP, or every cell that way is blocked). Ending the
+            # turn standing still while a legal cast exists is the waste the
+            # recorded boards show (31 pass turns of 116 asked). The solver
+            # outranks the actor when the actor's own choice cannot execute,
+            # which is the same rule the spell path below already follows.
+            # A stub without a solver (binding tests) simply passes.
+            solver = getattr(self, "solver", None)
+            plans = solver.plan_candidates(board, self.plan_k) if solver else []
+            fallback = next((plan for plan in plans
+                             if plan.actions and plan.actions[0].kind != "pass"), None)
+            if fallback is not None:
+                return self._emit(board, fallback, True, "solver_fallback", "solver_move")
             return {"type": "pass"}, False, "policy_pass"
         if spell_slot < 0 or spell_slot >= len(slots):
             return None, True, "slot_out_of_range"
         slot = slots[spell_slot]
-        if int(slot["spell_id"]) <= 0:
+        # Padding and a real weapon share id 0; only the flag may answer this.
+        if slot.get("empty") or (
+                int(slot.get("spell_id") or 0) == 0
+                and float(slot.get("damage") or 0.0) <= 0
+                and float(slot.get("heal") or 0.0) <= 0):
             return None, True, "empty_spell_slot"
         if target_slot < 0 or target_slot >= len(targets):
             return None, True, "no_target"
@@ -346,6 +476,14 @@ class LivePolicy:
         direct = self._direct_cast(board, slot, target)
         if direct is not None:
             return direct, False, "policy_direct"
+
+        # The policy asked to back off and the chosen cast cannot land from here:
+        # retreating is what it chose, and walking toward a cast cell would invert
+        # that intent. The cast happens next turn from the safer cell.
+        if move == 2:
+            action = self._walk_action(board, reference, move)
+            if action is not None:
+                return action, False, "policy_retreat"
 
         move_cell = self._cast_cell(board, slot, target)
         if move_cell is not None:
@@ -367,13 +505,21 @@ class LivePolicy:
                     matching.append(plan)
                     break
         if matching:
-            return self._emit(
-                board, max(matching, key=lambda plan: self._move_score(
-                    board, plan, target, move)), False, "policy", "policy_move")
+            picked = self._value_choice(board, matching)
+            if picked is None:
+                picked = max(matching, key=lambda plan: self._move_score(
+                    board, plan, target, move))
+            return self._emit(board, picked, False, "policy", "policy_move")
 
         fallback = next((plan for plan in plans
                          if plan.actions and plan.actions[0].kind != "pass"), None)
         if fallback is None:
+            # No cast is legal this turn, but the actor still chose a direction:
+            # spend the MP instead of ending the turn standing still.
+            action = self._walk_action(board, reference, move)
+            if action is not None:
+                return (action, False,
+                        "policy_approach" if move == 0 else "policy_retreat")
             return {"type": "pass"}, True, "no_legal_plan"
         return self._emit(board, fallback, True, "solver_fallback", "solver_move")
 
@@ -472,6 +618,9 @@ class LivePolicy:
                 int(board.round or 0))
             move, spell_slot, target_slot, probability, value = self._choose(
                 logits, masks)
+            # The critic may only rank when its own inputs are complete (the
+            # enemy's spells are loaded); otherwise the solver's choice stands.
+            self._value_ready = bool(contract.get("value_ready"))
             action, fallback, reason = self._realize(
                 board, spell_slot, target_slot, move, slots, targets)
             base["policy"] = {

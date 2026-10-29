@@ -1,11 +1,4 @@
 rules: 23
-matched: 0, 1, 2, 3, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
-skipped: 6: needle missing
-skipped: 7: needle missing
-skipped: 8: needle missing
-skipped: 9: needle missing
-skipped: 10: needle missing
-skipped: 11: needle missing
-skipped: 12: needle missing
-patched 5365150 chars, live 5365150 chars
+matched: 0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+patched 5365280 chars, live 5365280 chars
 RESULT: IDENTICAL

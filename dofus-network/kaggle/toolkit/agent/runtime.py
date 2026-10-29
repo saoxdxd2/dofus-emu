@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from agent.executor import ToolExecutor, ToolResult
+from agent.observe import redact_packet_secrets
 from agent.recorder import TrajectoryRecorder
 from agent.schema import tool_names
 
@@ -30,6 +31,20 @@ class ToolCall:
     tool: str
     args: Dict[str, Any] = field(default_factory=dict)
     goal: Optional[str] = None
+    # Provenance of a call that the policy itself chose off-policy (exploration).
+    # It rides the call into the recorder; `args` is the directive and stays clean.
+    meta: Optional[Dict[str, Any]] = None
+    # The planner's own reason for this call. It was printed to stderr and dropped
+    # from the row, so no offline analysis could tell which branch fired - "why did
+    # the agent take 1,804 direction hops that fail 90% of the time" had no answer
+    # in the corpus. It rides the record metadata, never the directive.
+    why: Optional[str] = None
+
+    def record_meta(self) -> Optional[Dict[str, Any]]:
+        meta = dict(self.meta or {})
+        if self.why:
+            meta.setdefault("why", str(self.why)[:240])
+        return meta or None
 
 
 class Policy(Protocol):
@@ -72,6 +87,15 @@ _RE_SCAN = re.compile(r"(?:scan|price of|prix (?:de|du|d'|des)|precio de)\s+(.{2
 _RE_INVENTORY = re.compile(
     r"\b(inventory|inventaire|inventario|backpack|sac|bag|stuff)\b", re.IGNORECASE)
 _RE_QUEST = re.compile(r"\b(qu[eê]tes?|quests?|misi[oó]nes?)\b", re.IGNORECASE)
+# "list my quests" is a read; "do all the quests" is the quest planner's job.
+# The rule answered `quest.list` for both, so the layer used to *label* prompts
+# disagreed with the router on the prompt users type most ("do all the quests":
+# rule list, learned run). Only a read verb or the quest log itself is a list.
+_RE_QUEST_LIST = re.compile(
+    r"\b(?:list|show|see|view|display|what|which|open|check|read|my)\b"
+    r"[^!?.;\n]{0,40}\b(?:qu[eê]tes?|quests?|misi[oó]nes?|objecti(?:f|ve)s?)\b"
+    r"|\b(?:quest|quests|qu[eê]tes?)\s+(?:log|list|book|journal|panel)\b",
+    re.IGNORECASE)
 _RE_QUEST_ADVANCE = re.compile(
     r"\b(advance|continue|proceed|next step|prochaine étape|siguiente paso|"
     r"weiter|fortsetzen|étape suivante|avance|continua|continúa)\b", re.IGNORECASE)
@@ -92,6 +116,33 @@ _RE_FARM = re.compile(r"\b(farm|farmear|r[eé]colte[rz]?|gather|harvest|minar|co
 _RE_JOIN = re.compile(r"\b(join (?:the )?fight|join combat|join|rejoins|entra al combate|pelea)\b",
                       re.IGNORECASE)
 _RE_ALL_WORDS = re.compile(r"\b(all|tout|tous|toute|todo|toda|everything)\b", re.IGNORECASE)
+
+
+def _join_args(observation: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The group `fight.join` should name, from the observation's own estimates.
+
+    A targetless join only works on a map with exactly one group, and the
+    advisor's guard refuses it everywhere else -- which made the "join the
+    fight" order unusable on every multi-group map of the tutorial route
+    (measured 2026-10-28: 4 visible groups, guard refused, no fight ever
+    started). The autopilot annotates the observation with one estimate per
+    group, so the policy can name the first group the estimator allowed and
+    keep the guard's refusal for the case where nothing is allowed.
+    """
+    if not isinstance(observation, dict):
+        return {}
+    estimates = observation.get("fight_estimates")
+    if isinstance(estimates, list):
+        for row in estimates:
+            if not isinstance(row, dict) or not row.get("allowed"):
+                continue
+            group_id = row.get("group_id")
+            if group_id is not None:
+                return {"group_id": group_id}
+    groups = ((observation.get("map") or {}).get("groups") or [])
+    if len(groups) == 1 and isinstance(groups[0], dict) and groups[0].get("group_id") is not None:
+        return {"group_id": groups[0]["group_id"]}
+    return {}
 
 
 class RulePolicy:
@@ -163,7 +214,7 @@ class RulePolicy:
         engine_call = self._choose_with_engine(goal)
         if engine_call is not None:
             return engine_call
-        return self._choose_with_regex(goal)
+        return self._choose_with_regex(goal, observation)
 
     # -- engine-driven decisions --------------------------------------------
 
@@ -219,7 +270,8 @@ class RulePolicy:
 
     # -- regex decisions -----------------------------------------------------
 
-    def _choose_with_regex(self, goal: str) -> Optional[ToolCall]:
+    def _choose_with_regex(self, goal: str,
+                           observation: Optional[Dict[str, Any]] = None) -> Optional[ToolCall]:
         if _RE_STOP.search(goal):
             return ToolCall("safe.stop", {"reason": goal}, goal)
         if _RE_FOLLOW.search(goal):
@@ -275,13 +327,19 @@ class RulePolicy:
             match = _RE_QUEST_AREA.search(goal)
             if match:
                 args["area"] = match.group(1)
+            if not args and not _RE_QUEST_LIST.search(goal):
+                # Not a read of the quest log: this is an instruction to work on
+                # quests, which only the quest planner can do. `rule_parse` then
+                # answers intent=quest, action=run from the goal mode instead of
+                # labelling the prompt as a list request.
+                return None
             return ToolCall("quest.list", args, goal)
 
         if _RE_FARM.search(goal):
             return ToolCall("farm.start", {}, goal)
 
         if _RE_JOIN.search(goal):
-            return ToolCall("fight.join", {}, goal)
+            return ToolCall("fight.join", _join_args(observation), goal)
 
         return None
 
@@ -326,6 +384,7 @@ class AgentRuntime:
         source: str = "live",
     ) -> Dict[str, Any]:
         """Accept a pushed game-state snapshot and remember it as current."""
+        redact_packet_secrets(observation)
         self.last_observation = observation
         self.last_observation_ts = time.time()
         self.observations_seen += 1
@@ -351,6 +410,7 @@ class AgentRuntime:
         record: the next step records it as its own ``observation``, which is the
         same pairing and avoids writing every snapshot twice.
         """
+        redact_packet_secrets(observation)
         self.last_observation = observation
         self.last_observation_ts = time.time()
         self.observations_seen += 1

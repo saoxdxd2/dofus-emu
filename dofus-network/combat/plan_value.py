@@ -117,8 +117,12 @@ def _pick_player_spells(rows: List[Dict[str, Any]], plan: TurnPlan,
 
 
 def _empty_spell_row() -> Dict[str, Any]:
+    # `empty` is explicit because id 0 is a real spell id: the starting weapon
+    # (hammer, punch) is cast as spell 0. Without the flag the policy's choice
+    # of that weapon reads as "empty slot" downstream.
     return {"id": 0, "ap": 6.0, "rmin": 0.0, "rmax": 0.0,
-            "damage": 0.0, "heal": 0.0, "element": 0, "ally": False}
+            "damage": 0.0, "heal": 0.0, "element": 0, "ally": False,
+            "empty": True}
 
 
 def _enemy_rows(board: Board, fighter: Fighter, slots: int

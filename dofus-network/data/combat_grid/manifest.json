@@ -1,6 +1,13 @@
 {
- "boards": 156,
- "no_positive_ap": 156,
- "rows": 0,
- "verdict": "no actionable boards; the 30M grid core was not trained"
+ "actionable": 1,
+ "boards": 171,
+ "no_positive_ap": 158,
+ "not_my_turn": 6,
+ "notes": 1,
+ "pass_only": 6,
+ "rows": 1,
+ "test": 1,
+ "train": 0,
+ "val": 0,
+ "verdict": "actionable"
 }

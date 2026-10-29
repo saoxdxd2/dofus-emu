@@ -1,0 +1,3723 @@
+{
+ "manifest": {
+  "checked_at": "2026-10-29T22:39:26",
+  "conflicts": {},
+  "fields": {
+   "map_id": {
+    "pct": 45.6,
+    "present": 26,
+    "total": 57
+   },
+   "params": {
+    "pct": 89.5,
+    "present": 51,
+    "total": 57
+   },
+   "quest_name": {
+    "pct": 89.5,
+    "present": 51,
+    "total": 57
+   },
+   "step_id": {
+    "pct": 89.5,
+    "present": 51,
+    "total": 57
+   },
+   "text": {
+    "pct": 78.9,
+    "present": 45,
+    "total": 57
+   },
+   "type_id": {
+    "pct": 89.5,
+    "present": 51,
+    "total": 57
+   }
+  },
+  "index_sha256": "dad5a6e0188a542953c9bd76abf1e2b2ca642ebb77d353684379c54c50cdbed7",
+  "logs": [
+   {
+    "mtime": 1793261963,
+    "name": "dofus-01.jsonl",
+    "size": 32724800
+   },
+   {
+    "mtime": 1793261963,
+    "name": "dofus-02.20261029-022349-419629.jsonl",
+    "size": 67106196
+   },
+   {
+    "mtime": 1793281557,
+    "name": "dofus-02.jsonl",
+    "size": 4332084
+   },
+   {
+    "mtime": 1793275756,
+    "name": "dofus-03.jsonl",
+    "size": 23284765
+   },
+   {
+    "mtime": 1793293670,
+    "name": "dofus-05.20261029-170756-782023.jsonl",
+    "size": 67115153
+   },
+   {
+    "mtime": 1793296238,
+    "name": "dofus-05.jsonl",
+    "size": 40010049
+   },
+   {
+    "mtime": 1793000461,
+    "name": "default.20261026-074102-070180.jsonl",
+    "size": 67113652
+   },
+   {
+    "mtime": 1793211879,
+    "name": "default.jsonl",
+    "size": 50672846
+   }
+  ],
+  "quests": [
+   3841,
+   4260,
+   4262,
+   4264,
+   4266,
+   4274,
+   4278,
+   4604,
+   4644
+  ],
+  "rows": 57,
+  "sources": {
+   "catalog": 51,
+   "current": 33,
+   "ready": 48,
+   "step": 39
+  },
+  "unbound_step_objectives_seen": 217
+ },
+ "rows": {
+  "3841:13491": {
+   "captures": 6942,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792791189.141,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13491,
+   "params": {
+    "parameter0": 697965
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Click in the blue area to move there.",
+   "step_id": 4531,
+   "step_name": "Move About the Area",
+   "text": "[!] Bienvenue dans le tutoriel guidé ! Cliquez dans la zone bleue pour vous y déplacer..",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:13493": {
+   "captures": 12366,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792791193.237,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13493,
+   "params": {
+    "parameter0": 713562
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Now talk to Ayin Spyr.",
+   "step_id": 4533,
+   "step_name": "Talk to Ayin Sypr",
+   "text": "[!] Parler à Jin Spyr..",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:13495": {
+   "captures": 7219,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792791197.57,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13495,
+   "params": {
+    "parameter0": 698025
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Click on the right side of the screen to move to the next map.",
+   "step_id": 4535,
+   "step_name": "Move to the Next Map",
+   "text": "Find the map: [!] Cliquez sur le rebord droit de l'écran pour vous déplacer sur la prochaine carte..",
+   "type": "QuestObjectiveDiscoverMap",
+   "type_id": 4
+  },
+  "3841:13499": {
+   "captures": 13039,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792802636.865,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13499,
+   "params": {
+    "parameter0": 4192,
+    "parameter1": 1
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Win the fight against the aggressive Merkaptan.",
+   "step_id": 4539,
+   "step_name": "Win a Fight",
+   "text": "Defeat 1 Aggressive Merkaptan in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "3841:13505": {
+   "captures": 7027,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792820866.024,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13505,
+   "params": {
+    "parameter0": 698193
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Open the Spell interface from the menu.",
+   "step_id": 4545,
+   "step_name": "Open the Spell Interface",
+   "text": "[!] Ouvrez l'interface des sorts depuis le menu.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:13507": {
+   "captures": 7414,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792867760.483,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13507,
+   "params": {
+    "parameter0": 698229
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Open your inventory from the menu.",
+   "step_id": 4547,
+   "step_name": "Open the Inventory",
+   "text": "[!] Ouvrez votre inventaire depuis le menu.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:13531": {
+   "captures": 7087,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792939111.251,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13531,
+   "params": {
+    "parameter0": 698711
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Open the Characteristics interface from the menu.",
+   "step_id": 4573,
+   "step_name": "Open the Characteristics Interface",
+   "text": "Open the Characteristics interface from the menu..",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:13537": {
+   "captures": 12547,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793007293.077,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "objective_id": 13537,
+   "params": {
+    "parameter0": 713802
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Complete the \"The Onset of Problems\" quest",
+   "step_id": 4579,
+   "step_name": "Complete the \"The Onset of Problems\" quest",
+   "text": "Complete the \"The Onset of Problems\" quest.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:13539": {
+   "captures": 6988,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793110977.674,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "objective_id": 13539,
+   "params": {
+    "parameter0": 714276
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Do the quest book tutorial",
+   "step_id": 4581,
+   "step_name": "Open the quest book",
+   "text": "Complete the quest book tutorial by closing the quest book interface.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:13541": {
+   "captures": 8053,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792846358.253,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13541,
+   "params": {
+    "parameter0": 698953
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Move to the next map.",
+   "step_id": 4585,
+   "step_name": "Move to the Next Map",
+   "text": "Find the map: [!] Découvrir une carte.",
+   "type": "QuestObjectiveDiscoverMap",
+   "type_id": 4
+  },
+  "3841:13543": {
+   "captures": 11812,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792876561.56,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13543,
+   "params": {
+    "parameter0": 4194,
+    "parameter1": 1
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Win the fight against the Merkaptan leader.",
+   "step_id": 4587,
+   "step_name": "Win a Fight",
+   "text": "Defeat 1 Merkaptan Leader in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "3841:13922": {
+   "captures": 9685,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792861051.282,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13922,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Talk to Ayin Sypr to get the hammer.",
+   "step_id": 4948,
+   "step_name": "Talk to Ayin Sypr",
+   "text": "Talk to Ayin Spyr",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "3841:13924": {
+   "captures": 7477,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792820876.823,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 13924,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Talk to Ayin Spyr before going to the next map.",
+   "step_id": 4950,
+   "step_name": "Talk to Ayin Sypr",
+   "text": "Talk to Ayin Spyr",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "3841:14056": {
+   "captures": 7012,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792876556.672,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 14056,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Talk to Ayin Sypr.",
+   "step_id": 4966,
+   "step_name": "Talk to Ayin Sypr",
+   "text": "Talk to Ayin Spyr",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "3841:14058": {
+   "captures": 6979,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792876556.672,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 14058,
+   "params": {
+    "parameter0": 712152
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "ready",
+    "step"
+   ],
+   "step_description": "Talk to Ayin Sypr.",
+   "step_id": 4966,
+   "step_name": "Talk to Ayin Sypr",
+   "text": "Attack the monster.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:14060": {
+   "captures": 6913,
+   "field_sources": {
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1793110977.674,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "objective_id": 14060,
+   "params": {
+    "parameter0": 713846
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Open the World Map.",
+   "step_id": 4968,
+   "step_name": "Open the World Map",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:14062": {
+   "captures": 7345,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793110977.674,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "objective_id": 14062,
+   "params": {
+    "parameter0": 713882
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Start a fight with a monster.",
+   "step_id": 4970,
+   "step_name": "Start a Fight with a Monster",
+   "text": "Start a fight with a monster.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:14070": {
+   "captures": 22723,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792939113.41,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 14070,
+   "params": {
+    "parameter0": 715354
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Continue on your way with Ayin Spyr to his leader's house and then do what he tells you.",
+   "step_id": 4974,
+   "step_name": "Go to Albuera with Ayin Spyr",
+   "text": "Complete the \"A Chaotic Arrival\" quest.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:14072": {
+   "captures": 7552,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793007292.277,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "objective_id": 14072,
+   "params": {
+    "parameter0": 715390
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Press the \"Shop\" button floating on the map and get the Albueran Elite Bonus Pack for free.",
+   "step_id": 4976,
+   "step_name": "Open the Shop Interface",
+   "text": "Get the Albuera Elite Bonus Pack.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:14074": {
+   "captures": 8161,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793110977.674,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "objective_id": 14074,
+   "params": {
+    "parameter0": 715426
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Reach level 10 to follow the rest of the tutorial.",
+   "step_id": 4978,
+   "step_name": "Reach Level 10",
+   "text": "Reach level 10.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:14076": {
+   "captures": 6952,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793110977.674,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "objective_id": 14076,
+   "params": {
+    "parameter0": 715462
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Open the encyclopaedia and then close it.",
+   "step_id": 4980,
+   "step_name": "Open the Encyclopaedia",
+   "text": "Open the encyclopaedia and then close it.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "3841:14080": {
+   "captures": 6994,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1792939112.169,
+   "last_at": 1793295407.916,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl"
+   ],
+   "objective_id": 14080,
+   "params": {
+    "parameter0": 715624
+   },
+   "quest_id": 3841,
+   "quest_name": "Getting Started",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Start the \"A Chaotic Arrival\" quest with Ayin Spyr to continue.",
+   "step_id": 4982,
+   "step_name": "Start the \"A Chaotic Arrival\" Quest",
+   "text": "Start the \"A Chaotic Arrival\" quest by talking to Ayin Spyr.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4260:13900": {
+   "captures": 3190,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1792966970.81,
+   "last_at": 1793239935.597,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "default.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490435,
+   "objective_id": 13900,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 4260,
+   "quest_name": "A Chaotic Arrival",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "You wake up in Albuera after an accident since descending from the celestial island of Incarnam. Ayin Spyr has offered to take you to the leader of his village.",
+   "step_id": 4936,
+   "step_name": "A Chaotic Arrival",
+   "text": "Talk to Ayin Spyr",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4260:13902": {
+   "captures": 1955,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1793006949.651,
+   "last_at": 1793239935.597,
+   "logs": [
+    "default.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490435,
+   "objective_id": 13902,
+   "params": {
+    "parameter0": 719010
+   },
+   "quest_id": 4260,
+   "quest_name": "A Chaotic Arrival",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "You wake up in Albuera after an accident since descending from the celestial island of Incarnam. Ayin Spyr has offered to take you to the leader of his village.",
+   "step_id": 4936,
+   "step_name": "A Chaotic Arrival",
+   "text": "Equip the Albueran recruit set, then talk to Ayin Spyr.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4260:14078": {
+   "captures": 760,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1793007292.277,
+   "last_at": 1793239935.597,
+   "logs": [
+    "default.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490435,
+   "objective_id": 14078,
+   "params": {
+    "parameter0": 719012
+   },
+   "quest_id": 4260,
+   "quest_name": "A Chaotic Arrival",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "You wake up in Albuera after an accident since descending from the celestial island of Incarnam. Ayin Spyr has offered to take you to the leader of his village.",
+   "step_id": 4936,
+   "step_name": "A Chaotic Arrival",
+   "text": "Talk to Ayin Spyr to enter the Jarl's home.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4262:13930": {
+   "captures": 1798,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145489920,
+   "objective_id": 13930,
+   "params": {
+    "parameter0": 716836
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Find the map: Dam worksite.",
+   "type": "QuestObjectiveDiscoverMap",
+   "type_id": 4
+  },
+  "4262:13932": {
+   "captures": 1551,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145489920,
+   "objective_id": 13932,
+   "params": {
+    "parameter0": 3896
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Talk to Foreman Kosh",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4262:13934": {
+   "captures": 1518,
+   "completion_captures": {
+    "cur_completion": 2
+   },
+   "cur_completion": 0,
+   "field_sources": {
+    "cur_completion": [
+     "step"
+    ],
+    "max_completion": [
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "max_completion": 1,
+   "objective_id": 13934,
+   "params": {
+    "parameter0": 4211,
+    "parameter1": 1
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Defeat 1 Boorbear",
+   "type": "QuestObjectiveMultiFightMonster",
+   "type_id": 14
+  },
+  "4262:13936": {
+   "captures": 1518,
+   "completion_captures": {
+    "cur_completion": 2
+   },
+   "cur_completion": 0,
+   "field_sources": {
+    "cur_completion": [
+     "step"
+    ],
+    "max_completion": [
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "max_completion": 1,
+   "objective_id": 13936,
+   "params": {
+    "parameter0": 4213,
+    "parameter1": 1
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Defeat 1 Weaselraff",
+   "type": "QuestObjectiveMultiFightMonster",
+   "type_id": 14
+  },
+  "4262:13938": {
+   "captures": 1518,
+   "completion_captures": {
+    "cur_completion": 2
+   },
+   "cur_completion": 0,
+   "field_sources": {
+    "cur_completion": [
+     "step"
+    ],
+    "max_completion": [
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "max_completion": 1,
+   "objective_id": 13938,
+   "params": {
+    "parameter0": 4215,
+    "parameter1": 1
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Defeat 1 Harrizarre",
+   "type": "QuestObjectiveMultiFightMonster",
+   "type_id": 14
+  },
+  "4262:13940": {
+   "captures": 2007,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145489920,
+   "objective_id": 13940,
+   "params": {
+    "parameter0": 719652
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Go back and see Foreman Kosh once the monsters have been defeated.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4262:13942": {
+   "captures": 1519,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145489920,
+   "objective_id": 13942,
+   "params": {
+    "parameter0": 3898
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Talk to Aggressive Raccoon",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4262:13944": {
+   "captures": 1507,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145489920,
+   "objective_id": 13944,
+   "params": {
+    "parameter0": 4210,
+    "parameter1": 1
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Defeat 1 Aggressive Raccoon in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "4262:13946": {
+   "captures": 1510,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145489920,
+   "objective_id": 13946,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Talk to Ayin Spyr",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4262:13948": {
+   "captures": 2020,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490432,
+   "objective_id": 13948,
+   "params": {
+    "parameter0": 704145
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Recover the first page of the aqueduct blueprints.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4262:13950": {
+   "captures": 1304,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490944,
+   "objective_id": 13950,
+   "params": {
+    "parameter0": 704143
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Recover the last page of the aqueduct blueprints.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4262:13952": {
+   "captures": 1240,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490944,
+   "objective_id": 13952,
+   "params": {
+    "parameter0": 3900
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Talk to Roki",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4262:13954": {
+   "captures": 1179,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490944,
+   "objective_id": 13954,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Talk to Ayin Spyr",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4262:13956": {
+   "captures": 1194,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490944,
+   "objective_id": 13956,
+   "params": {
+    "parameter0": 707984
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Listen to Roki's answer.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4262:13958": {
+   "captures": 1140,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490435,
+   "objective_id": 13958,
+   "params": {
+    "parameter0": 727568
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4264:13960": {
+   "captures": 1445,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490946,
+   "objective_id": 13960,
+   "params": {
+    "parameter0": 714266
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog",
+    "ready",
+    "step"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "text": "Talk to Lieutenant Ek Spyr, northeast of the Great Jarl's house.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4264:13962": {
+   "captures": 1029,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490946,
+   "objective_id": 13962,
+   "params": {
+    "parameter0": 4214,
+    "parameter1": 1
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog",
+    "ready",
+    "step"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "text": "Defeat 1 Tran Spyr in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "4264:13964": {
+   "captures": 1038,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490946,
+   "objective_id": 13964,
+   "params": {
+    "parameter0": 708672
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog",
+    "ready",
+    "step"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "text": "Talk to Lieutenant Ek Spyr.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4264:13966": {
+   "captures": 1547,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490946,
+   "objective_id": 13966,
+   "params": {
+    "parameter0": 4212,
+    "parameter1": 1
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "text": "Defeat 1 Brytnee Spyr in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "4264:13968": {
+   "captures": 1015,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490946,
+   "objective_id": 13968,
+   "params": {
+    "parameter0": 3904
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4264:13970": {
+   "captures": 1041,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490946,
+   "objective_id": 13970,
+   "params": {
+    "parameter0": 4216,
+    "parameter1": 1
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "text": "Defeat 1 Ek Spyr in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "4264:13972": {
+   "captures": 1015,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490946,
+   "objective_id": 13972,
+   "params": {
+    "parameter0": 3904
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 9
+  },
+  "4264:13974": {
+   "captures": 1015,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490946,
+   "objective_id": 13974,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4264:13976": {
+   "captures": 1015,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1793296238.721,
+   "logs": [
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl",
+    "dofus-05.jsonl"
+   ],
+   "map_id": 145490435,
+   "objective_id": 13976,
+   "params": {
+    "parameter0": 727564
+   },
+   "quest_id": 4264,
+   "quest_name": "Mudding About: Getting Better in Albuera!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts.",
+   "step_id": 4956,
+   "step_name": "Mudding About: Getting Better in Albuera!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4266:7934": {
+   "captures": 8,
+   "field_sources": {},
+   "first_at": 1792780059.247,
+   "last_at": 1792780063.228,
+   "logs": [
+    "default.20261026-074102-070180.jsonl"
+   ],
+   "objective_id": 7934,
+   "quest_id": 4266,
+   "sources": [
+    "current",
+    "ready"
+   ]
+  },
+  "4266:7935": {
+   "captures": 4,
+   "field_sources": {},
+   "first_at": 1792780059.247,
+   "last_at": 1792780063.228,
+   "logs": [
+    "default.20261026-074102-070180.jsonl"
+   ],
+   "objective_id": 7935,
+   "quest_id": 4266,
+   "sources": [
+    "ready"
+   ]
+  },
+  "4274:13926": {
+   "captures": 1988,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1793007310.422,
+   "last_at": 1793240156.059,
+   "logs": [
+    "default.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490435,
+   "objective_id": 13926,
+   "params": {
+    "parameter0": 3892
+   },
+   "quest_id": 4274,
+   "quest_name": "The Onset of Problems",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "Ayin Spyr has introduced you to Great Jarl Ordyn, leader of Albuera. There is a lot he wants to ask of you...",
+   "step_id": 4952,
+   "step_name": "The Onset of Problems",
+   "text": "Talk to Great Jarl Ordyn",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4274:13928": {
+   "captures": 149,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1793232517.606,
+   "last_at": 1793240156.059,
+   "logs": [
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490435,
+   "objective_id": 13928,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 4274,
+   "quest_name": "The Onset of Problems",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "Ayin Spyr has introduced you to Great Jarl Ordyn, leader of Albuera. There is a lot he wants to ask of you...",
+   "step_id": 4952,
+   "step_name": "The Onset of Problems",
+   "text": "Talk to Ayin Spyr",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4278:13986": {
+   "captures": 132,
+   "field_sources": {},
+   "first_at": 1792734929.565,
+   "last_at": 1792779130.624,
+   "logs": [
+    "default.20261026-074102-070180.jsonl"
+   ],
+   "objective_id": 13986,
+   "quest_id": 4278,
+   "sources": [
+    "current",
+    "ready"
+   ]
+  },
+  "4278:14090": {
+   "captures": 4,
+   "field_sources": {},
+   "first_at": 1792780059.247,
+   "last_at": 1792780063.228,
+   "logs": [
+    "default.20261026-074102-070180.jsonl"
+   ],
+   "objective_id": 14090,
+   "quest_id": 4278,
+   "sources": [
+    "ready"
+   ]
+  },
+  "4604:14532": {
+   "captures": 70,
+   "field_sources": {},
+   "first_at": 1792734929.565,
+   "last_at": 1792780063.228,
+   "logs": [
+    "default.20261026-074102-070180.jsonl"
+   ],
+   "objective_id": 14532,
+   "quest_id": 4604,
+   "sources": [
+    "ready"
+   ]
+  },
+  "4644:15202": {
+   "captures": 4,
+   "field_sources": {},
+   "first_at": 1792780059.247,
+   "last_at": 1792780063.228,
+   "logs": [
+    "default.20261026-074102-070180.jsonl"
+   ],
+   "objective_id": 15202,
+   "quest_id": 4644,
+   "sources": [
+    "ready"
+   ]
+  }
+ }
+}

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -262,7 +263,66 @@ def required_map(obj: Dict[str, Any]) -> Optional[int]:
 
 # -- map index ---------------------------------------------------------------
 
-_KNOWN_MAPS: Optional[set] = None
+_NEIGHBOUR_FIELDS = (
+    ("top", "topNeighbourId"),
+    ("bottom", "bottomNeighbourId"),
+    ("left", "leftNeighbourId"),
+    ("right", "rightNeighbourId"),
+)
+
+_MAP_GRAPH: Optional[tuple] = None
+
+
+def map_graph():
+    """(ids, id -> {direction: neighbour}) from `data/maps/_index.json`.
+
+    One file answers two questions: whether a destination is something the agent
+    can reason about at all, and which crossing is the first step of a shortest
+    route. They are read together so both see the same snapshot -- and because a
+    planner that only knows membership sends `nav.goto` the raw destination id,
+    which the client refuses unless the map is adjacent: a live session asked for
+    map 145490946 from 145489920/145489921 for nineteen minutes, each hop
+    answering "not adjacent" (dofus-02, 2026-10-29, objective 4264/13960).
+    """
+    global _MAP_GRAPH
+    if _MAP_GRAPH is None:
+        ids: set = set()
+        edges: Dict[int, Dict[str, int]] = {}
+        path = REPO_ROOT / "data" / "maps" / "_index.json"
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+            except (OSError, ValueError):
+                raw = None
+            entries = []
+            if isinstance(raw, dict):
+                entries = list(raw.items())
+            elif isinstance(raw, list):
+                entries = [(entry.get("id"), entry) for entry in raw
+                           if isinstance(entry, dict)]
+            for key, entry in entries:
+                try:
+                    mid = int(key)
+                except (TypeError, ValueError):
+                    continue
+                ids.add(mid)
+                neighbours = entry.get("neighbours") if isinstance(entry, dict) else None
+                if not isinstance(neighbours, dict):
+                    continue
+                row: Dict[str, int] = {}
+                for direction, field in _NEIGHBOUR_FIELDS:
+                    try:
+                        dest = int(neighbours.get(field))
+                    except (TypeError, ValueError):
+                        continue
+                    # A self-edge is not a crossing, and 0/-1 mean "no border".
+                    if dest > 0 and dest != mid:
+                        row[direction] = dest
+                if row:
+                    edges[mid] = row
+        _MAP_GRAPH = (ids, edges)
+    return _MAP_GRAPH
 
 
 def known_map(map_id: Any) -> bool:
@@ -274,35 +334,64 @@ def known_map(map_id: Any) -> bool:
     may be a newer map -- it is treated as a detail-only objective and handed to
     the policy's edge/cell actions instead of a made-up transition.
     """
-    global _KNOWN_MAPS
     try:
         mid = int(map_id)
     except (TypeError, ValueError):
         return False
-    if _KNOWN_MAPS is None:
-        ids: set = set()
-        path = REPO_ROOT / "data" / "maps" / "_index.json"
-        if path.exists():
-            try:
-                with path.open("r", encoding="utf-8") as fh:
-                    raw = json.load(fh)
-                if isinstance(raw, dict):
-                    for key in raw:
-                        try:
-                            ids.add(int(key))
-                        except (TypeError, ValueError):
-                            continue
-                elif isinstance(raw, list):
-                    for entry in raw:
-                        if isinstance(entry, dict) and entry.get("id") is not None:
-                            try:
-                                ids.add(int(entry["id"]))
-                            except (TypeError, ValueError):
-                                continue
-            except (OSError, ValueError):
-                ids = set()
-        _KNOWN_MAPS = ids
-    return mid in _KNOWN_MAPS
+    return mid in map_graph()[0]
+
+
+def route_first_hop(here: Any, target: Any) -> Optional[Tuple[int, str, int]]:
+    """First crossing of a shortest indexed route: (map id, direction, crossings).
+
+    None when the index knows no route -- the destination may be newer than the
+    capture. The client only crosses an exit of the map it stands on, so a
+    destination that is not adjacent has to be walked one border at a time; the
+    hop is a hint and the caller still matches it against the exits the client
+    reports, because the live map, not this file, decides what can be crossed.
+    """
+    try:
+        here, target = int(here), int(target)
+    except (TypeError, ValueError):
+        return None
+    if here == target:
+        return None
+    ids, edges = map_graph()
+    if here not in ids or target not in ids:
+        return None
+    seen = {here: (0, None)}
+    queue = deque([here])
+    while queue:
+        node = queue.popleft()
+        hops, origin = seen[node]
+        for direction, dest in (edges.get(node) or {}).items():
+            if dest in seen:
+                continue
+            hop = (dest, direction) if node == here else origin
+            seen[dest] = (hops + 1, hop)
+            if dest == target:
+                return hop[0], hop[1], hops + 1
+            queue.append(dest)
+        if len(seen) > 20000:
+            break
+    return None
+
+
+def route_distance(here: Any, target: Any) -> Optional[int]:
+    """Crossings along the shortest indexed route; 0 on the target, None unknown.
+
+    Exact where `travel_hops` is a coarse area guess: the coarse count orders
+    objectives, but it cannot tell a crossing that came nearer from one that
+    wandered, and the travel bound needs exactly that distinction.
+    """
+    try:
+        here, target = int(here), int(target)
+    except (TypeError, ValueError):
+        return None
+    if here == target:
+        return 0
+    route = route_first_hop(here, target)
+    return None if route is None else route[2]
 
 
 # -- objective details -------------------------------------------------------

@@ -41,6 +41,47 @@ namespace DofusFarm
             catch { }
         }
 
+        /// <summary>The instance named by `--launch <name>`, or null.</summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern bool MoveFileEx(string existing, string replacement, int flags);
+
+        private static string LaunchNameFromArgs(string[] args)
+        {
+            if (args == null) return null;
+            int at = Array.IndexOf(args, "--launch");
+            if (at >= 0 && at + 1 < args.Length && !args[at + 1].StartsWith("--"))
+                return args[at + 1];
+            return null;
+        }
+
+        private static string ResetNameFromArgs(string[] args)
+        {
+            if (args == null) return null;
+            int at = Array.IndexOf(args, "--reset");
+            if (at >= 0 && at + 1 < args.Length && !args[at + 1].StartsWith("--"))
+                return args[at + 1];
+            return null;
+        }
+
+        // A second `DofusFarm.exe --launch dofus-03` used to focus the running window
+        // and drop the request: the flag is only read on the path that owns the
+        // mutex. A drop file hands the name over instead, so the CLI means the same
+        // thing whether or not the manager is already open.
+        private static void WriteLaunchRequest(string name)
+        {
+            try
+            {
+                string dir = Path.Combine(Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData), "DofusFarm");
+                Directory.CreateDirectory(dir);
+                string path = Path.Combine(dir, "launch_request.txt");
+                string temp = path + ".tmp";
+                File.WriteAllText(temp, name);
+                MoveFileEx(temp, path, 0x1);   // MOVEFILE_REPLACE_EXISTING
+            }
+            catch { }
+        }
+
         private static void FocusExistingInstance()
         {
             try
@@ -209,6 +250,12 @@ namespace DofusFarm
             _singleInstanceMutex = new Mutex(true, @"Global\DofusFarmManager_SingleInstance_Mutex_2026", out createdNew);
             if (!createdNew)
             {
+                string forwarded = null;
+                try { forwarded = LaunchNameFromArgs(args); } catch { }
+                string resetName = null;
+                try { resetName = ResetNameFromArgs(args); } catch { }
+                if (!string.IsNullOrEmpty(resetName)) forwarded = "reset:" + resetName;
+                if (!string.IsNullOrEmpty(forwarded)) WriteLaunchRequest(forwarded);
                 FocusExistingInstance();
                 return;
             }
@@ -257,6 +304,26 @@ namespace DofusFarm
                     + " (WebView2 requires STA)");
                 var mainForm = new MainForm();
                 UI.UiThread.SetMainForm(mainForm);
+                // Headless fleet hook: `--launch <instance>` opens one client through
+                // the same path the Launch button uses (including the AI autostart).
+                // Unattended runs and the tooling need this; before it, starting a
+                // client required a human click on an owner-drawn grid cell.
+                string launchName = LaunchNameFromArgs(args);
+                if (launchName != null)
+                {
+                    string wanted = launchName;
+                    mainForm.Shown += delegate
+                    {
+                        try
+                        {
+                            mainForm.BeginInvoke((Action)(delegate
+                            {
+                                mainForm.LaunchInstanceFromCommandLine(wanted);
+                            }));
+                        }
+                        catch { }
+                    };
+                }
                 Application.Run(mainForm);
             }
             finally

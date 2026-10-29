@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agent.bridge import directive_url as bridge_directive_url, opener_for
 from agent.jsonio import dumps_bytes, loads
+from agent.observe import redact_packet_secrets
 from agent.recorder import TrajectoryRecorder
 from agent.knowledge_store import KnowledgeStore
 from agent.schema import TOOLS_BY_NAME, validate_call
@@ -676,6 +677,14 @@ class ToolExecutor:
         self.sentinel_url = sentinel_url.rstrip("/")
         self.directive_url = directive_url or bridge_directive_url()
         self.timeout = float(timeout)
+        # A wedged page answers the TCP connect and then takes the full C# wait
+        # (10 s) for every directive, so a loop that keeps asking pays the stall
+        # again and again. Two consecutive stalls open this circuit for 15 s and
+        # every call in that window fails immediately; one probe afterwards
+        # closes it again. Normal calls never touch it.
+        self._bridge_fails = 0
+        self._bridge_open_until = 0.0
+        self._bridge_last_error = None
         self.recorder = recorder
         self.knowledge = _KnowledgeIndex(Path(cache_dir))
         # Discovered facts live here, not in the model and not in the cache. The
@@ -726,6 +735,28 @@ class ToolExecutor:
         except OSError as exc:
             return False, f"unreachable: {url} ({exc})"
 
+    def _note_bridge_answer(self, ok: bool, error: str) -> None:
+        """Count client-page stalls; two in a row open the fast-fail circuit.
+
+        Only failures that mean *no page answered* count. A routing mistake (a
+        stale instance name while other windows are alive) must not stop the
+        shared executor from serving the instances that are fine.
+        """
+        text = (error or "").lower()
+        transport = not ok and any(
+            marker in text for marker in
+            ("timed out", "not ready", "not reachable", "no client instance is running"))
+        if transport:
+            self._bridge_fails += 1
+            self._bridge_last_error = (error or "timeout")[:120]
+            if self._bridge_fails >= 2:
+                self._bridge_open_until = time.monotonic() + 15.0
+                self._bridge_fails = 0
+            return
+        self._bridge_fails = 0
+        self._bridge_open_until = 0.0
+        self._bridge_last_error = None
+
     # -- public API ----------------------------------------------------------
 
     def execute(
@@ -738,6 +769,7 @@ class ToolExecutor:
         observation: Optional[Dict[str, Any]] = None,
         observation_age_ms: Optional[float] = None,
         observation_source: str = "call",
+        meta: Optional[Dict[str, Any]] = None,
     ) -> ToolResult:
         started = time.perf_counter()
         ok, validated = validate_call(tool, args)
@@ -746,7 +778,7 @@ class ToolExecutor:
                 tool=tool, ok=False, error=str(validated), source=source,
                 latency_ms=(time.perf_counter() - started) * 1000.0)
             self._record(tool, args or {}, result, goal, observation,
-                         observation_age_ms, observation_source)
+                         observation_age_ms, observation_source, meta)
             return result
 
         try:
@@ -773,7 +805,7 @@ class ToolExecutor:
             if isinstance(snap, dict) and snap:
                 observation, observation_age_ms, observation_source = snap, 0.0, "call"
         self._record(tool, validated, result, goal, observation,
-                     observation_age_ms, observation_source)
+                     observation_age_ms, observation_source, meta)
         return result
 
     def snapshot(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -792,13 +824,13 @@ class ToolExecutor:
             return None
         snap = result.data.get("snapshot")
         if isinstance(snap, dict) and snap:
-            return snap
+            return redact_packet_secrets(snap)
         response = result.data.get("response")
         inner = response.get("result") if isinstance(response, dict) else None
         if isinstance(inner, dict):
             data = inner.get("data")
             if isinstance(data, dict) and data:
-                return data
+                return redact_packet_secrets(data)
         return None
 
     def fight_state(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -1102,9 +1134,14 @@ class ToolExecutor:
         observation: Optional[Dict[str, Any]],
         observation_age_ms: Optional[float] = None,
         observation_source: str = "call",
+        meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         if self.recorder is None:
             return
+        # The recorder is the persistence boundary for both the trajectory corpus
+        # and the autopilot rows built from it; a credential that reached the
+        # snapshot (an older page build sends the login ticket) stops here.
+        redact_packet_secrets(observation)
         self.recorder.step(
             tool=tool,
             args=args,
@@ -1117,6 +1154,8 @@ class ToolExecutor:
             observation_age_ms=observation_age_ms,
             observation_source=observation_source,
             source=result.source,
+            explored=bool(isinstance(meta, dict) and meta.get("explored")),
+            meta=meta,
         )
 
     def _route_nav(
@@ -1535,6 +1574,18 @@ class ToolExecutor:
             data={"target": target_name, "path": payload.get("path") if isinstance(payload, dict) else payload},
         )
 
+    def recovery_call(self, tool: str, args: Optional[Dict[str, Any]] = None,
+                      instance: Optional[str] = None) -> ToolResult:
+        """One directive the tool vocabulary does not contain.
+
+        Live 2026-10-29: a session that ended back at the login screen left the
+        loop waiting for the world forever, because `session.login` is not one of
+        the 27 policy tools. A recovery the policy must never *choose* still has
+        to reach the page, and the page's own login guard stays the authority on
+        whether a press is allowed.
+        """
+        return self._directive(tool, tool, dict(args or {}), "live", instance)
+
     # -- directive handler ---------------------------------------------------
 
     def _directive(self, directive: str, tool: str, args: Dict[str, Any], source: str,
@@ -1549,8 +1600,21 @@ class ToolExecutor:
         }
         if instance and instance != "default":
             payload["target_instance"] = instance
+        now = time.monotonic()
+        if now < self._bridge_open_until:
+            return ToolResult(
+                tool=tool, ok=False, source=source, directive=directive,
+                error=("directive bridge circuit open for %.0fs: the client page "
+                       "did not answer the last calls (%s); directive '%s' was NOT "
+                       "executed" % (self._bridge_open_until - now,
+                                     self._bridge_last_error or "timeout",
+                                     directive)),
+                data={"directive_payload": payload, "skipped": True,
+                      "circuit_open": True},
+            )
         ok, response = self._http_json("POST", self.directive_url, payload)
         if not ok:
+            self._note_bridge_answer(False, str(response))
             return ToolResult(
                 tool=tool, ok=False, source=source, directive=directive,
                 error=(f"directive bridge at {self.directive_url} not reachable "
@@ -1562,6 +1626,7 @@ class ToolExecutor:
         if isinstance(response, dict) and "ok" in response:
             bridge_ok = bool(response.get("ok"))
             bridge_error = response.get("error")
+        self._note_bridge_answer(bridge_ok, str(bridge_error or ""))
         result = ToolResult(
             tool=tool, ok=bridge_ok, source=source, directive=directive,
             data={"directive_payload": payload, "response": response},
