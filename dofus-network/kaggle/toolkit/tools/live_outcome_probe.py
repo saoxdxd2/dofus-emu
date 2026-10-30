@@ -20,6 +20,18 @@ not another end-to-end tool classifier.
 
     python tools/live_outcome_probe.py
     python tools/live_outcome_probe.py --data data/transitions_v2 --json
+    python tools/live_outcome_probe.py --calibration --data data/transitions_temporal
+
+`--calibration` prices the reject option *per call form*: it fits p(met | form,
+repeat-streak bucket) with a Beta prior on train only, picks a veto threshold on
+train, and scores it on the frozen fold against the loop's own counter
+(`repeat_streak_norm >= 2`) at that counter's veto budget. That comparison is the
+number the first learned worker has to beat, so it is measured before one exists.
+
+`--worker` then asks whether a state head has anything left to add: it fits the
+mechanism block (without the streaks) per form on train, reports how well it orders
+the calls the counter *keeps*, and prices a second veto layer of 5% and 10% on top of
+the counter with the paired segment CI and the bar in `_extension_ok`.
 
 It is deliberately sklearn-only and cheap (seconds); it is a measurement, not a
 training run. Every number is printed with its row count and positive count,
@@ -749,12 +761,16 @@ def stopping_probe(data: Path, target: str = "claim_met", rounds: int = 400,
 
 def rolling_probe(data: Path, target: str = "claim_met", horizon: float = 0.15,
                   cuts: Sequence[float] = (0.40, 0.55, 0.70, 0.85),
-                  seed: int = 0) -> Dict[str, Any]:
+                  seed: int = 0, models: bool = False) -> Dict[str, Any]:
     """Is the gate a rule or one period's luck? Rolling-origin validation.
 
     One temporal cut gives one future. This walks the cut through the segment start
     order: train on everything before the cut, score the next `horizon` of segments,
     and repeat. A rule that only works on the 10-28/10-29 period will show it here.
+
+    `models` adds the logistic and forest arms G56 measured on one fold, scored at the
+    same number of vetoes the rule takes on each cut. AUC says how well a model ranks;
+    this says what it would cost at the operating point the rule actually runs at.
     """
     rows = load_rows([data / ("%s.jsonl" % name)
                       for name in ("train", "val", "test")])
@@ -792,8 +808,492 @@ def rolling_probe(data: Path, target: str = "claim_met", horizon: float = 0.15,
                 "auc_failure": _r(auc(y, [-float(min(5, r.get("repeat_streak") or 0))
                                           for r in te])),
             }
+            if models:
+                entry["tools"][tool]["models"] = _rolling_models(tr, te, y, len(veto))
         out["cuts"]["%.2f" % q] = entry
     return out
+
+
+def _rolling_models(tr: List[Dict[str, Any]], te: List[Dict[str, Any]],
+                    y: List[int], veto_n: int) -> Dict[str, Any]:
+    """Each model at the rule's own veto count, plus its AUC on the same rows."""
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    x_tr = [mechanism_vector(r) for r in tr]
+    x_te = [mechanism_vector(r) for r in te]
+    y_tr = [1 if r.get("claim_met") else 0 for r in tr]
+    out: Dict[str, Any] = {}
+    if len(set(y_tr)) < 2:
+        return out
+    arms = {"logistic": _make_model(),
+            "forest": HistGradientBoostingClassifier(max_depth=3, max_iter=120,
+                                                     learning_rate=0.06, random_state=0)}
+    for name, model in arms.items():
+        try:
+            model.fit(x_tr, y_tr)
+            p = [float(v) for v in model.predict_proba(x_te)[:, 1]]
+        except Exception as exc:  # a degenerate cut must not kill the whole sweep
+            out[name] = {"error": "%s: %s" % (type(exc).__name__, exc)}
+            continue
+        order = sorted(range(len(p)), key=lambda i: p[i])
+        veto = set(order[:veto_n])
+        kept = [y[i] for i in range(len(y)) if i not in veto]
+        called = [y[i] for i in veto]
+        out[name] = {
+            "auc": _r(auc(y, p)),
+            "vetoed": len(called),
+            "vetoed_met": _r(sum(called) / len(called)) if called else None,
+            "kept_met": _r(sum(kept) / len(kept)) if kept else None,
+        }
+    return out
+
+
+def shadow_probe(data: Path, target: str = "claim_met") -> Dict[str, Any]:
+    """The live shadow gate: would-veto decisions, what they did, what came next.
+
+    `agent.gate.RuleGate` records `meta.gate = {rule, streak, would_veto}` on every
+    live decision without changing it. This reads those rows back: a would-veto call
+    that still met its promise is the cost of the gate; one that missed is the saving.
+    """
+    rows = load_rows([data / ("%s.jsonl" % name)
+                      for name in ("train", "val", "test")])
+    tagged = [r for r in rows if isinstance(r.get("gate"), dict)]
+    out: Dict[str, Any] = {"data": str(data), "decisions": len(rows),
+                           "tagged": len(tagged), "tools": {}}
+    by_seg: Dict[Any, List[Dict[str, Any]]] = {}
+    for r in rows:
+        by_seg.setdefault(r.get("segment"), []).append(r)
+    for rs in by_seg.values():
+        rs.sort(key=lambda r: r.get("t") or 0)
+    nxt = {}
+    for rs in by_seg.values():
+        for i, r in enumerate(rs[:-1]):
+            nxt[(r.get("segment"), r.get("t"))] = rs[i + 1]
+    for tool in sorted({str(r.get("tool")) for r in tagged}):
+        cell = [r for r in tagged if str(r.get("tool")) == tool]
+        veto = [r for r in cell if (r.get("gate") or {}).get("would_veto")]
+        entry: Dict[str, Any] = {"decisions": len(cell), "would_veto": len(veto)}
+        judged = [r for r in veto if r.get(target) is not None]
+        entry["vetoed_judged"] = len(judged)
+        entry["vetoed_met"] = sum(1 for r in judged if r[target])
+        rule_of = lambda r: (r["tool"], json.dumps(r.get("args") or {}, sort_keys=True))
+        same = other = 0
+        for r in veto:
+            n = nxt.get((r.get("segment"), r.get("t")))
+            if n is None:
+                continue
+            if rule_of(n) == rule_of(r):
+                same += 1
+            else:
+                other += 1
+        entry["next_same_rule"] = same
+        entry["next_other_rule"] = other
+        out["tools"][tool] = entry
+    return out
+
+
+# The pre-registered promotion bar for any gate that claims to beat the counter.
+# It is fixed here, before a worker exists, so the number cannot move after a result.
+PROMOTION_RETENTION = 0.95          # keep at least this share of the successes
+PROMOTION_MIN_COUNTER_VETOES = 10   # a budget smaller than this is not a comparison
+PROMOTION_DELTA_POINTS = 0.05       # a learned head must beat this count gate by this much
+
+CALIBRATION_BUCKETS = ("0", "1", "2", "3+")
+CALIBRATION_TAUS = tuple(round(0.02 * i, 2) for i in range(1, 50))
+CALIBRATION_ALPHA = 1.0   # Laplace on the global rate
+CALIBRATION_PRIOR = 8.0   # pseudo-rows shrinking a cell toward its form's rate
+
+
+def call_form(row: Dict[str, Any]) -> str:
+    """The call's shape, which is what its promise depends on.
+
+    `quest.advance` has three promises with three different difficulty levels: a talk
+    opens a dialog, a reply moves the node, an accept changes quest state. Pooling them
+    calibrates a mixture and no per-form threshold can be read off it.
+    """
+    tool = str(row.get("tool") or "")
+    args = row.get("args") if isinstance(row.get("args"), dict) else {}
+    if tool == "nav.goto":
+        if args.get("map_id", args.get("map")) is not None:
+            return "nav.goto:at"
+        if args.get("direction") or args.get("cell") is not None:
+            return "nav.goto:step"
+        return "nav.goto:other"
+    if tool == "quest.advance":
+        if args.get("accept"):
+            return "quest.accept"
+        if args.get("reply") is not None:
+            return "quest.reply"
+        if args.get("npc_id") is not None:
+            return "quest.talk"
+        return "quest.other"
+    return tool
+
+
+def streak_bucket(row: Dict[str, Any]) -> str:
+    """The loop's own memory, normalized over volatile args, as the live gate counts it.
+
+    `repeat_streak_norm` is the key `agent.gate.RuleGate` thresholds on; the exact
+    key counts taps on one element with different skill_uids as three fresh calls.
+    """
+    value = row.get("repeat_streak_norm")
+    if value is None:
+        value = row.get("repeat_streak")
+    try:
+        value = int(value or 0)
+    except (TypeError, ValueError):
+        value = 0
+    return "3+" if value >= 3 else str(max(0, value))
+
+
+def fit_calibration(rows: List[Dict[str, Any]], alpha: float = CALIBRATION_ALPHA,
+                    prior: float = CALIBRATION_PRIOR) -> Dict[str, Any]:
+    """p(met | form, bucket) with a Beta prior; fitted on the rows it is given.
+
+    A raw cell rate is 100% after one met call. The global rate is a Laplace estimate,
+    each form is shrunk toward it with `prior` pseudo-rows, and each bucket toward its
+    form the same way, so a bucket with two rows cannot claim certainty. The caller
+    fits this on train only; scoring it on the same rows would be a calibration of the
+    data, not of the rule.
+    """
+    judged = [r for r in rows if r.get("claim_met") is not None]
+    n_all = len(judged)
+    met_all = sum(1 for r in judged if r.get("claim_met"))
+    global_rate = (met_all + alpha) / (n_all + 2.0 * alpha)
+    forms: Dict[str, Any] = {}
+    for form in sorted({call_form(r) for r in judged}):
+        cell = [r for r in judged if call_form(r) == form]
+        met = sum(1 for r in cell if r.get("claim_met"))
+        rate = (met + prior * global_rate) / (len(cell) + prior)
+        buckets: Dict[str, Any] = {}
+        for bucket in CALIBRATION_BUCKETS:
+            sub = [r for r in cell if streak_bucket(r) == bucket]
+            hit = sum(1 for r in sub if r.get("claim_met"))
+            buckets[bucket] = {
+                "n": len(sub), "met": hit,
+                "p": (hit + prior * rate) / (len(sub) + prior),
+            }
+        forms[form] = {"n": len(cell), "met": met, "rate": rate, "buckets": buckets}
+    return {"global_rate": global_rate, "alpha": alpha, "prior": prior,
+            "train_rows": n_all, "train_positives": met_all, "forms": forms}
+
+
+def calibration_p(model: Dict[str, Any], row: Dict[str, Any]) -> float:
+    """The fitted probability for one call; unknown forms fall back to the global rate."""
+    entry = model["forms"].get(call_form(row))
+    if not entry:
+        return float(model["global_rate"])
+    bucket = entry["buckets"].get(streak_bucket(row))
+    return float(bucket["p"]) if bucket else float(entry["rate"])
+
+
+def _selective(y: List[int], flag: List[bool]) -> Dict[str, Any]:
+    kept = [y[i] for i in range(len(y)) if not flag[i]]
+    veto = [y[i] for i in range(len(y)) if flag[i]]
+    positives = sum(y)
+    negatives = len(y) - positives
+    return {
+        "vetoed": len(veto),
+        "coverage": round(len(kept) / len(y), 3) if y else None,
+        "vetoed_success": round(sum(veto) / len(veto), 3) if veto else None,
+        "kept_success": round(sum(kept) / len(kept), 3) if kept else None,
+        "successes_retained": round(sum(kept) / positives, 3) if positives else None,
+        "failures_vetoed": (round(sum(1 for v in veto if not v) / negatives, 3)
+                            if negatives else None),
+    }
+
+
+def select_threshold(rows: List[Dict[str, Any]], p: List[float], target: str = "claim_met",
+                     retention: float = PROMOTION_RETENTION) -> Optional[float]:
+    """On train only: the threshold with the best kept rate under a retention floor.
+
+    Higher tau vetoes more; the kept rate rises until a success is vetoed. Requiring a
+    share of the successes to survive is what stops the answer from being "veto
+    everything", which has a perfect vetoed rate and an empty coverage. Ties go to the
+    lower tau, i.e. to more coverage at the same rate.
+    """
+    y = [1 if r.get(target) else 0 for r in rows]
+    if not y or not 0 < sum(y) < len(y):
+        return None
+    best: Optional[Tuple[float, float]] = None
+    tau_best: Optional[float] = None
+    for tau in CALIBRATION_TAUS:
+        stat = _selective(y, [value < tau for value in p])
+        if stat["successes_retained"] is None or stat["successes_retained"] < retention:
+            continue
+        if stat["kept_success"] is None or not stat["vetoed"]:
+            continue
+        key = (stat["kept_success"], stat["coverage"] or 0.0)
+        if best is None or key > best:
+            best, tau_best = key, tau
+    return tau_best
+
+
+def _kept_delta_ci(rows: List[Dict[str, Any]], y: List[int], a: List[bool],
+                   b: List[bool], rounds: int = 400,
+                   seed: int = 0) -> Optional[Tuple[float, float]]:
+    """Paired segment bootstrap of kept_success(a) - kept_success(b).
+
+    The two gates select different rows, so comparing their kept rates needs the same
+    resampled segments on both sides; two separate intervals say nothing about which
+    gate is better on the same future.
+    """
+    by_seg: Dict[Any, List[int]] = {}
+    for i, row in enumerate(rows):
+        by_seg.setdefault(row.get("segment"), []).append(i)
+    segs = list(by_seg.values())
+    if len(segs) < 3:
+        return None
+    rng = random.Random(seed)
+    vals: List[float] = []
+    for _ in range(rounds):
+        idx = [i for seg in (rng.choice(segs) for _ in segs) for i in seg]
+        kept_a = [y[i] for i in idx if not a[i]]
+        kept_b = [y[i] for i in idx if not b[i]]
+        if not kept_a or not kept_b:
+            continue
+        vals.append(sum(kept_a) / len(kept_a) - sum(kept_b) / len(kept_b))
+    if len(vals) < 20:
+        return None
+    vals.sort()
+    return (round(vals[int(0.025 * len(vals))], 3),
+            round(vals[min(len(vals) - 1, int(0.975 * len(vals)))], 3))
+
+
+def _counter_flag(rows: List[Dict[str, Any]]) -> List[bool]:
+    """The loop's operating rule today: veto after two identical misses."""
+    return [float(r.get("repeat_streak_norm") or 0) >= 2 for r in rows]
+
+
+def _evaluate(rows: List[Dict[str, Any]], p: List[float], taus: Dict[str, Optional[float]],
+              target: str) -> Dict[str, Any]:
+    """Score chosen taus and the counter on the same rows, at matched veto budgets."""
+    y = [1 if r.get(target) else 0 for r in rows]
+    out: Dict[str, Any] = {"rows": len(rows), "positives": sum(y),
+                           "base": round(sum(y) / len(y), 3) if y else None}
+    counter = _counter_flag(rows)
+    out["counter"] = _selective(y, counter)
+    out["counter"]["rule"] = "repeat_streak_norm>=2"
+    budget = out["counter"]["vetoed"]
+    comparable = budget >= PROMOTION_MIN_COUNTER_VETOES and 0 < sum(y) < len(y)
+    for name, tau in taus.items():
+        if tau is None:
+            continue
+        flag = [value < tau for value in p]
+        stat = _selective(y, flag)
+        stat["tau"] = tau
+        stat["delta_vs_counter"] = _kept_delta_ci(rows, y, flag, counter)
+        out[name] = stat
+        if comparable:
+            # The counter's own budget, so the comparison is "which calls to drop",
+            # not "how many"; a gate that vetoes more looks better on any rate.
+            order = sorted(range(len(p)), key=lambda i: p[i])
+            head = set(order[:budget])
+            equal = [i in head for i in range(len(p))]
+            matched = _selective(y, equal)
+            matched["delta_vs_counter"] = _kept_delta_ci(rows, y, equal, counter)
+            out["%s_at_counter_budget" % name] = matched
+    if comparable:
+        counter_kept = out["counter"].get("kept_success")
+        out["promotion"] = {
+            "retention_floor": PROMOTION_RETENTION,
+            "min_delta_points": PROMOTION_DELTA_POINTS,
+            "counter_kept_success": counter_kept,
+            "counter_vetoes": budget,
+            "safe_beats_counter": _promotion_ok(out.get("safe_at_counter_budget"),
+                                                counter_kept),
+            "balanced_beats_counter": _promotion_ok(out.get("balanced_at_counter_budget"),
+                                                    counter_kept),
+        }
+    return out
+
+
+def _promotion_ok(stat: Optional[Dict[str, Any]],
+                  counter_kept: Optional[float]) -> bool:
+    """The pre-registered bar, all three parts of it.
+
+    `PROMOTION_DELTA_POINTS` was declared long before it was enforced: a bootstrap
+    interval that merely clears zero can clear it by half a point, which is not the
+    five points the plan asked for. So the comparison carries the point gain as well
+    as the interval, and a gate that ties or edges the counter is not promoted.
+    """
+    if not stat or counter_kept is None:
+        return False
+    ci = stat.get("delta_vs_counter")
+    points = (stat.get("kept_success") or 0.0) - counter_kept
+    return (bool(ci) and ci[0] > 0
+            and points >= PROMOTION_DELTA_POINTS
+            and (stat.get("successes_retained") or 0.0) >= PROMOTION_RETENTION)
+
+
+def calibration_probe(data: Path, target: str = "claim_met") -> Dict[str, Any]:
+    """Fit the per-form calibration on train; score it on the frozen test fold.
+
+    The output is both halves of the plan's calibration item: the curve (predicted vs
+    observed per bucket, with the weighted calibration error) and the threshold sweep's
+    chosen operating points, each compared with the counter at that counter's veto
+    budget so the comparison cannot be won by vetoing more calls.
+    """
+    splits = {name: load_rows([data / ("%s.jsonl" % name)]) for name in ("train", "test")}
+    train = [r for r in splits["train"] if r.get(target) is not None]
+    test = [r for r in splits["test"] if r.get(target) is not None]
+    if not train:
+        raise SystemExit("no judged training rows under %s" % data)
+    model = fit_calibration(train)
+    out: Dict[str, Any] = {"data": str(data), "target": target,
+                           "train_rows": len(train), "test_rows": len(test),
+                           "alpha": model["alpha"], "prior": model["prior"],
+                           "forms": {}}
+    p_train = [calibration_p(model, r) for r in train]
+    p_test = [calibration_p(model, r) for r in test]
+
+    def block(tr: List[Dict[str, Any]], te: List[Dict[str, Any]],
+              ptr: List[float], pte: List[float]) -> Dict[str, Any]:
+        taus = {"safe": select_threshold(tr, ptr, target, PROMOTION_RETENTION),
+                "balanced": select_threshold(tr, ptr, target, 0.90)}
+        entry: Dict[str, Any] = {"train_rows": len(tr),
+                                 "train_positives": sum(1 for r in tr if r[target]),
+                                 "test_rows": len(te),
+                                 "test_positives": sum(1 for r in te if r[target])}
+        if not te or not 0 < entry["test_positives"] < len(te):
+            entry["note"] = "no usable test rows"
+            return entry
+        y = [1 if r.get(target) else 0 for r in te]
+        entry.update(_evaluate(te, pte, taus, target))
+        return entry
+
+    out["pooled"] = block(train, test, p_train, p_test)
+    for form in sorted({call_form(r) for r in train}):
+        tr = [r for r in train if call_form(r) == form]
+        te = [r for r in test if call_form(r) == form]
+        entry = block(tr, te, [calibration_p(model, r) for r in tr],
+                      [calibration_p(model, r) for r in te])
+        curve = []
+        ece = 0.0
+        for bucket in CALIBRATION_BUCKETS:
+            sub = [r for r in te if streak_bucket(r) == bucket]
+            fitted = model["forms"][form]["buckets"][bucket]
+            observed = (round(sum(1 for r in sub if r[target]) / len(sub), 3)
+                        if sub else None)
+            curve.append({"bucket": bucket, "train_n": fitted["n"],
+                          "train_met": fitted["met"], "train_p": round(fitted["p"], 3),
+                          "test_n": len(sub), "test_observed": observed})
+            if sub and observed is not None and te:
+                ece += (len(sub) / len(te)) * abs(fitted["p"] - observed)
+        entry["curve"] = curve
+        entry["ece"] = round(ece, 3)
+        out["forms"][form] = entry
+    return out
+
+
+# The second layer's bar, also fixed before a worker exists. The counter already
+# spends the veto budget; anything added on top must remove calls that are almost all
+# failures, and the state score must show headroom among the calls the counter keeps.
+WORKER_MIN_TRAIN = 100
+WORKER_MIN_POSITIVES = 8
+WORKER_MIN_TEST = 40
+WORKER_EXTENSIONS = (0.05, 0.10)
+WORKER_EXTENSION_MAX_REMOVED_MET = 0.10
+WORKER_EXTENSION_MIN_REMOVED = 5
+WORKER_HEADROOM_MIN_AUC = 0.55
+
+
+def _state_columns() -> List[int]:
+    """The mechanism block without the two streak counters the rule already uses."""
+    streaks = {MECHANISM_NAMES.index("miss_streak"),
+               MECHANISM_NAMES.index("repeat_streak")}
+    return [i for i in range(len(MECHANISM_NAMES)) if i not in streaks]
+
+
+def _extension_ok(stat: Dict[str, Any], auc_kept: Optional[float]) -> bool:
+    if stat.get("removed_n", 0) < WORKER_EXTENSION_MIN_REMOVED:
+        return False
+    removed = stat.get("removed_met")
+    if removed is None or removed > WORKER_EXTENSION_MAX_REMOVED_MET:
+        return False
+    if auc_kept is None or auc_kept < WORKER_HEADROOM_MIN_AUC:
+        return False
+    ci = stat.get("delta_vs_counter")
+    return bool(ci) and ci[0] > 0
+
+
+def worker_probe(data: Path, target: str = "claim_met") -> Dict[str, Any]:
+    """Can state add a second veto layer on the calls the counter keeps?
+
+    The count calibration lost to the counter at equal budget (G66), so the only place
+    a learned head can earn its keep is *inside* the counter's kept set: either re-rank
+    the same budget or remove a few more calls. A worker that cannot order the kept
+    calls (AUC ~0.5) has no headroom no matter how it is trained, so that is printed
+    first. Each extension is priced as the success rate of the calls it removes plus a
+    paired segment bootstrap of the kept-success difference, against the same bar in
+    `_extension_ok` - fitted on train, scored on the frozen fold.
+    """
+    splits = {name: load_rows([data / ("%s.jsonl" % name)]) for name in ("train", "test")}
+    train = [r for r in splits["train"] if r.get(target) is not None]
+    test = [r for r in splits["test"] if r.get(target) is not None]
+    cols = _state_columns()
+    out: Dict[str, Any] = {"data": str(data), "target": target,
+                           "extensions": list(WORKER_EXTENSIONS), "forms": {}}
+    for form in sorted({call_form(r) for r in train}):
+        tr = [r for r in train if call_form(r) == form]
+        te = [r for r in test if call_form(r) == form]
+        entry: Dict[str, Any] = {
+            "train_rows": len(tr),
+            "train_positives": sum(1 for r in tr if r[target]),
+            "test_rows": len(te),
+            "test_positives": sum(1 for r in te if r[target]),
+        }
+        out["forms"][form] = entry
+        if (len(tr) < WORKER_MIN_TRAIN
+                or entry["train_positives"] < WORKER_MIN_POSITIVES):
+            entry["note"] = ("train has %d rows / %d positives; a worker needs %d / %d"
+                             % (len(tr), entry["train_positives"],
+                                WORKER_MIN_TRAIN, WORKER_MIN_POSITIVES))
+            continue
+        if len(te) < WORKER_MIN_TEST or not 0 < entry["test_positives"] < len(te):
+            entry["note"] = "test has %d rows / %d positives" % (
+                len(te), entry["test_positives"])
+            continue
+        model = _make_model()
+        model.fit([[mechanism_vector(r)[c] for c in cols] for r in tr],
+                  [1 if r[target] else 0 for r in tr])
+        p = [float(v) for v in model.predict_proba(
+            [[mechanism_vector(r)[c] for c in cols] for r in te])[:, 1]]
+        y = [1 if r[target] else 0 for r in te]
+        counter = _counter_flag(te)
+        kept = [i for i in range(len(te)) if not counter[i]]
+        entry["headroom"] = {
+            "auc_all": _r(auc(y, p)),
+            "auc_kept": _r(auc([y[i] for i in kept], [p[i] for i in kept])),
+            "kept_rows": len(kept),
+            "kept_positives": sum(y[i] for i in kept),
+        }
+        entry["counter"] = _selective(y, counter)
+        budget = sum(counter)
+        if budget >= WORKER_EXTENSION_MIN_REMOVED:
+            order = sorted(range(len(p)), key=lambda i: p[i])
+            head = set(order[:budget])
+            stat = _selective(y, [i in head for i in range(len(p))])
+            stat["delta_vs_counter"] = _kept_delta_ci(
+                te, y, [i in head for i in range(len(p))], counter)
+            entry["at_counter_budget"] = stat
+        # The extension names: the calls removed on top of the counter's vetoes.
+        order_kept = sorted(kept, key=lambda i: p[i])
+        for share in WORKER_EXTENSIONS:
+            k = max(1, int(share * len(kept)))
+            removed = set(order_kept[:k])
+            flag = [counter[i] or i in removed for i in range(len(te))]
+            stat = _selective(y, flag)
+            stat["removed_n"] = k
+            stat["removed_met"] = round(sum(y[i] for i in removed) / k, 3)
+            stat["delta_vs_counter"] = _kept_delta_ci(te, y, flag, counter)
+            stat["promotion"] = _extension_ok(stat, entry["headroom"]["auc_kept"])
+            entry["extension_%dpct" % int(round(share * 100))] = stat
+        entry["promotion"] = any(
+            (entry.get("extension_%dpct" % int(round(share * 100))) or {}).get("promotion")
+            for share in WORKER_EXTENSIONS)
+    return out
+
+
 
 
 def _r(value: Optional[float]) -> Optional[float]:
@@ -812,6 +1312,126 @@ def _top_coefficients(model: Any, tools: List[str]) -> List[Dict[str, Any]]:
     return [{"name": n, "weight": round(float(w), 3)} for n, w in ranked]
 
 
+def _segment_bootstrap(pairs: Dict[str, List[Any]], draws: int = 2000,
+                       seed: int = 7) -> Optional[Tuple[float, float]]:
+    """Paired 95% CI over segments, so one long session cannot carry a result alone."""
+    import random
+
+    segments = [s for s in pairs if pairs[s]]
+    if not segments:
+        return None
+
+    def contrast(draw: List[str]) -> Optional[float]:
+        same: List[bool] = []
+        diff: List[bool] = []
+        for seg in draw:
+            for cls, met in pairs[seg]:
+                (same if cls == "same" else diff).append(met)
+        if not same or not diff:
+            return None
+        return sum(diff) / len(diff) - sum(same) / len(same)
+
+    rng = random.Random(seed)
+    values = [v for v in (contrast([rng.choice(segments) for _ in segments])
+                          for _ in range(draws)) if v is not None]
+    if len(values) < 20:
+        return None
+    values.sort()
+    return values[int(0.025 * len(values))], values[int(0.975 * len(values))]
+
+
+def alternative_probe(data: Path, target: str = "claim_met",
+                      veto_at: int = 2) -> Dict[str, Any]:
+    """Price what the loop does *instead* of a call the streak gate would veto.
+
+    G51 made `repeat_streak_norm >= 2` the incumbent veto, but every plan said the
+    alternative was unpriced (G39/G46/G52/G55), so the veto could be measured but not
+    wired. G55 priced it on labels that G60 (call identity) and G65 (a refusal is a miss)
+    later invalidated, so this recomputes it on the current corpus: for each acting call
+    at the veto threshold, what was the next acting call in the same segment, was it the
+    same promise again or a different one, and did it meet.
+
+    Reads are excluded from the comparison because they make no promise. The advantage is
+    observational: the loop chose the alternative, it was not assigned. That is stated in
+    the verdict rather than hidden, because the causal version needs the randomized arm.
+    """
+    from agent.gate import RuleGate
+
+    out: Dict[str, Any] = {"data": str(data), "veto_at": veto_at, "folds": {}}
+    for fold in ("train", "val", "test"):
+        path = data / ("%s.jsonl" % fold)
+        rows = load_rows([path])
+        acting = [r for r in rows if r.get(target) is not None
+                  and not r.get("was_read") and r.get("claim")]
+        if not acting:
+            continue
+        by_segment: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            by_segment.setdefault(row.get("segment") or "", []).append(row)
+        for group in by_segment.values():
+            group.sort(key=lambda r: r.get("t") or 0)
+        position = {(r.get("segment"), r.get("t")): i
+                    for s, group in by_segment.items()
+                    for i, r in enumerate(group)}
+
+        vetoed = [r for r in acting if (r.get("repeat_streak_norm") or 0) >= veto_at]
+        met = [r for r in acting if r.get(target)]
+        met_vetoed = [r for r in vetoed if r.get(target)]
+        classes: Dict[str, List[bool]] = {"same": [], "different": []}
+        pairs: Dict[str, List[Any]] = {}
+        per_tool: Dict[str, Dict[str, int]] = {}
+        for row in vetoed:
+            index = position.get((row.get("segment"), row.get("t")))
+            group = by_segment.get(row.get("segment") or "", [])
+            tool = per_tool.setdefault(row.get("tool") or "?", {"vetoed": 0, "met": 0})
+            tool["vetoed"] += 1
+            tool["met"] += 1 if row.get(target) else 0
+            if index is None or index + 1 >= len(group):
+                continue
+            nxt = next((later for later in group[index + 1:]
+                        if not later.get("was_read") and later.get("claim")), None)
+            if nxt is None:
+                continue
+            cls = "same" if (RuleGate.key(nxt.get("tool"), nxt.get("args"))
+                             == RuleGate.key(row.get("tool"), row.get("args"))) \
+                  else "different"
+            met_next = bool(nxt.get(target))
+            classes[cls].append(met_next)
+            pairs.setdefault(row.get("segment") or "", []).append((cls, met_next))
+        out["folds"][fold] = {
+            "acting": len(acting), "met": len(met),
+            "vetoed": len(vetoed),
+            "vetoed_share": round(len(vetoed) / len(acting), 4),
+            "vetoed_refused": sum(1 for r in vetoed if r.get("refused")),
+            "vetoed_met": len(met_vetoed),
+            "vetoed_met_rate": round(len(met_vetoed) / len(vetoed), 4) if vetoed else None,
+            "successes_removed_by_veto": (round(len(met_vetoed) / len(met), 4)
+                                          if met else None),
+            "retention": (round(1 - len(met_vetoed) / len(met), 4) if met else None),
+            "next_after_veto": {
+                cls: {"n": len(vals), "met": sum(vals),
+                      "met_rate": round(sum(vals) / len(vals), 4) if vals else None}
+                for cls, vals in classes.items()},
+            "advantage_different_minus_same":
+                (round(sum(classes["different"]) / len(classes["different"])
+                       - sum(classes["same"]) / len(classes["same"]), 4)
+                 if classes["same"] and classes["different"] else None),
+            "paired_ci_95": _segment_bootstrap(pairs),
+            "per_tool": per_tool,
+        }
+    temporal = out["folds"].get("test") or {}
+    ci = temporal.get("paired_ci_95")
+    out["verdict"] = {
+        "alternative_priced": bool(temporal.get("next_after_veto", {}).get("different", {})
+                                   .get("n")),
+        "ci_excludes_zero": bool(ci and (ci[0] > 0.0 or ci[1] < 0.0)),
+        "reads_the_veto_with_this_note": (
+            "observational: the loop chose the alternative; only the randomized arm "
+            "(G39) makes it causal"),
+    }
+    return out
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -827,11 +1447,135 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="fit p(success | streak) and derive the stopping threshold")
     ap.add_argument("--rolling", action="store_true",
                     help="walk the time cut through the segments to test a rule's stability")
+    ap.add_argument("--rolling-models", action="store_true",
+                    help="--rolling plus logistic/forest arms at the rule's veto count")
+    ap.add_argument("--shadow", action="store_true",
+                    help="read the live gate's would-veto records (agent/gate.py)")
+    ap.add_argument("--calibration", action="store_true",
+                    help="per-form calibration curve and veto threshold on the frozen fold")
+    ap.add_argument("--worker", action="store_true",
+                    help="state headroom and second veto layer on the counter's kept calls")
+    ap.add_argument("--alternative", action="store_true",
+                    help="price what the loop does instead of a call the streak gate would veto")
     ap.add_argument("--target", default="claim_met",
                     help="label used by --within-tool / --gate / --stopping")
     args = ap.parse_args(argv)
-    if args.rolling:
-        result = rolling_probe(args.data, args.target)
+    if args.alternative:
+        result = alternative_probe(args.data, args.target)
+        if args.json:
+            print(json.dumps(result, indent=1))
+            return 0
+        print("data: %s  veto threshold repeat_streak_norm >= %d"
+              % (result["data"], result["veto_at"]))
+        for fold, entry in sorted(result["folds"].items()):
+            print("== %s  %d acting calls, %d met  (%d at the veto threshold, %.1f%%)"
+                  % (fold, entry["acting"], entry["met"], entry["vetoed"],
+                     100.0 * entry["vetoed_share"]))
+            print("   the vetoed calls that met: %d/%d (%s)   refused by rule: %d"
+                  % (entry["vetoed_met"], entry["vetoed"],
+                     entry["vetoed_met_rate"], entry["vetoed_refused"]))
+            print("   successes a wired veto would remove: %s  -> retention %s"
+                  % (entry["successes_removed_by_veto"], entry["retention"]))
+            for cls, stat in sorted(entry["next_after_veto"].items()):
+                print("   next acting call was %-9s n=%-4d met=%-3d (%s)"
+                      % (cls, stat["n"], stat["met"], stat["met_rate"]))
+            print("   different minus same: %s  95%% CI %s (segment bootstrap)"
+                  % (entry["advantage_different_minus_same"], entry["paired_ci_95"]))
+            for tool, stat in sorted(entry["per_tool"].items(),
+                                     key=lambda kv: -kv[1]["vetoed"])[:5]:
+                print("     %-16s vetoed %-4d met %d" % (tool, stat["vetoed"], stat["met"]))
+        print("verdict: %s" % result["verdict"])
+        return 0
+    if args.worker:
+        result = worker_probe(args.data, args.target)
+        if args.json:
+            print(json.dumps(result, indent=1))
+            return 0
+        print("data: %s  target: %s  extensions %s"
+              % (result["data"], result["target"], result["extensions"]))
+        for form, entry in sorted(result["forms"].items()):
+            print("== %s  train %d/%d met  test %d/%d met"
+                  % (form, entry["train_positives"], entry["train_rows"],
+                     entry["test_positives"], entry["test_rows"]))
+            if entry.get("note"):
+                print("   %s" % entry["note"])
+                continue
+            head = entry["headroom"]
+            print("   headroom   AUC all %s  kept %s  (%d kept rows, %d met)"
+                  % (head["auc_all"], head["auc_kept"], head["kept_rows"],
+                     head["kept_positives"]))
+            stat = entry["counter"]
+            print("   counter     veto %3d  kept met %-5s retained %-5s"
+                  % (stat["vetoed"], stat["kept_success"], stat["successes_retained"]))
+            stat = entry.get("at_counter_budget")
+            if stat:
+                print("   same budget veto %3d  kept met %-5s retained %-5s  CI %s"
+                      % (stat["vetoed"], stat["kept_success"],
+                         stat["successes_retained"], stat["delta_vs_counter"]))
+            for share in result["extensions"]:
+                stat = entry.get("extension_%dpct" % int(round(share * 100)))
+                if not stat:
+                    continue
+                print("   extension %2d%% +%d removed (met %-5s) kept met %-5s retained %-5s "
+                      "CI %s  promotion %s"
+                      % (int(round(share * 100)), stat["removed_n"], stat["removed_met"],
+                         stat["kept_success"], stat["successes_retained"],
+                         stat["delta_vs_counter"], stat["promotion"]))
+            print("   promotion: %s" % entry["promotion"])
+        return 0
+    if args.calibration:
+        result = calibration_probe(args.data, args.target)
+        if args.json:
+            print(json.dumps(result, indent=1))
+            return 0
+        print("data: %s  target: %s  train %d judged rows  test %d  alpha %.1f prior %.0f"
+              % (result["data"], result["target"], result["train_rows"],
+                 result["test_rows"], result["alpha"], result["prior"]))
+        blocks = [("pooled", result["pooled"])] + sorted(result["forms"].items())
+        for name, entry in blocks:
+            print("== %s" % name)
+            if entry.get("note"):
+                print("   %s" % entry["note"])
+                continue
+            print("   train %d/%d met  test %d/%d met  base %s  ece %s"
+                  % (entry["train_positives"], entry["train_rows"],
+                     entry["test_positives"], entry["test_rows"],
+                     entry.get("base"), entry.get("ece")))
+            for row in entry.get("curve") or []:
+                print("   streak %-2s train %3d/%3dm p %-5s | test %3d obs %s"
+                      % (row["bucket"], row["train_met"], row["train_n"], row["train_p"],
+                         row["test_n"], row["test_observed"]))
+            for arm in ("counter", "safe", "balanced",
+                        "safe_at_counter_budget", "balanced_at_counter_budget"):
+                stat = entry.get(arm)
+                if not stat:
+                    continue
+                print("   %-26s veto %3d (cover %s) vetoed met %-5s kept met %-5s "
+                      "succ kept %-5s fail veto %-5s CI %s"
+                      % (arm, stat["vetoed"], stat["coverage"], stat["vetoed_success"],
+                         stat["kept_success"], stat["successes_retained"],
+                         stat["failures_vetoed"], stat.get("delta_vs_counter")))
+            promo = entry.get("promotion") or {}
+            if promo:
+                print("   promotion (counter vetoes %d): safe %s balanced %s"
+                      % (promo["counter_vetoes"], promo["safe_beats_counter"],
+                         promo["balanced_beats_counter"]))
+        return 0
+    if args.shadow:
+        result = shadow_probe(args.data, args.target)
+        if args.json:
+            print(json.dumps(result, indent=1))
+            return 0
+        print("data: %s  decisions %d  tagged %d"
+              % (result["data"], result["decisions"], result["tagged"]))
+        for tool, stat in sorted(result["tools"].items()):
+            print("   %-13s decisions %4d  would-veto %4d  vetoed met %s/%s  next: same %d other %d"
+                  % (tool, stat["decisions"], stat["would_veto"],
+                     stat["vetoed_met"], stat["vetoed_judged"],
+                     stat["next_same_rule"], stat["next_other_rule"]))
+        return 0
+    if args.rolling or args.rolling_models:
+        result = rolling_probe(args.data, args.target, models=args.rolling_models)
         if args.json:
             print(json.dumps(result, indent=1))
             return 0
@@ -843,6 +1587,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("   %-13s rows %3d base %.2f | veto %3d vetoed met %s | kept met %s | AUC(fail) %s"
                       % (tool, stat["test_rows"], stat["base"], stat["vetoed"],
                          stat["vetoed_met"], stat["kept_met"], stat["auc_failure"]))
+                for name, arm in sorted((stat.get("models") or {}).items()):
+                    if "error" in arm:
+                        print("      %-8s %s" % (name, arm["error"]))
+                        continue
+                    print("      %-8s AUC %.3f | veto %3d vetoed met %s | kept met %s"
+                          % (name, arm["auc"], arm["vetoed"], arm["vetoed_met"],
+                             arm["kept_met"]))
         return 0
     if args.stopping:
         result = stopping_probe(args.data, args.target)

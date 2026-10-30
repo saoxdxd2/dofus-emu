@@ -1,0 +1,54 @@
+{
+ "bundle_chars": [
+  5365279
+ ],
+ "cs_files": [
+  26
+ ],
+ "cs_lines": [
+  24034
+ ],
+ "gaps_max": [
+  71
+ ],
+ "go_lines": [
+  4946
+ ],
+ "js_lines": [
+  19386
+ ],
+ "known_gaps_lines": [
+  6698
+ ],
+ "mutations": [
+  432
+ ],
+ "py_files": [
+  238
+ ],
+ "py_lines": [
+  95138,
+  95140
+ ],
+ "readme_lines": [
+  1058
+ ],
+ "resume_lines": [
+  4689
+ ],
+ "script_lines": [
+  24332
+ ],
+ "setup_bytes": [
+  224413696
+ ],
+ "tools": [
+  28
+ ],
+ "trajectory_files": [
+  32
+ ],
+ "trajectory_rows": [
+  237011
+ ]
+}

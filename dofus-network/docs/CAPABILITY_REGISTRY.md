@@ -6,9 +6,11 @@ The rule:
 > in a registry, and selected by a model that reads the description. Adding one is
 > a data change, not a code change and not a retraining run.
 
-> **Status note (2026-10-27).** The live schema is **25 tools**, not the 16
-> described below — `CURRENT.md` §7 lists them. The `hdv.buy` example further down
-> is now a shipped research capability; the 25-tool vocabulary also includes
+> **Status note (2026-10-30).** The live schema is **28 tools**, not the 16
+> described below — `CURRENT.md` §7 lists them (it said 25 until 2026-10-30, when
+> `ui.tap`, `ui.icons` and `shop.buy` from the tutorial work were finally counted). The
+> `hdv.buy` example further down
+> is now a shipped research capability; the 28-tool vocabulary also includes
 > `inv.equip`, `hdv.prices` and `tap.interactive`. The mechanism the example
 > demonstrates (a tool added as data, widening the head without retraining the
 > trunk) is still exactly right.

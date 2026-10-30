@@ -1,8 +1,10 @@
 # DofusFarm — Full Project Resume
 
-**Snapshot date:** 2026-10-27 (late session)
+**Snapshot date:** 2026-10-30 (source page build `2026-10-30a`; full-tree re-verification
+pass — every countable claim in §3–§5, §7–§12, §13–§18 and §22 was re-measured today)
 **Repository:** `C:\Users\sao\Documents\dofus-emu`
-**HEAD at snapshot:** `0990695` (plus an uncommitted working tree — see §14)
+**HEAD at snapshot:** `c875cde` (plus an uncommitted working tree — see §14)
+**Newest live rows:** 2026-10-29 18:50:38 UTC (step) / 19:04:57 UTC (capture), slot dofus-05
 **Purpose of this file:** one document that explains what the project is, how every
 piece works, what is proven, what is only offline, what is broken, and what to do
 next. It is written so a new session (human or agent) can resume without reading
@@ -24,21 +26,52 @@ the game with a Python agent. The agent is a hybrid:
 - a learned command parser that is **shadow-only** (84.6% vs 53.8% exact on held-out
   phrasings, but it does not act),
 - a learned tool policy / foresight ensemble that is **opt-in** (`--policy planner`),
-- a combat solver + learned PPO actor that is **wired but has never taken a proven
-  live turn**.
+- a combat solver plus a learned move head that is **executed live** (approach /
+  retreat / hold) and a learned critic that ranks legal realizations when its inputs
+  are complete.
 
-The current measured reality on the live server (2026-10-27, four instances):
+The current measured reality on the live server (runs through 2026-10-29 18:50 UTC;
+re-measured 2026-10-30, four slots with rows — 01, 02, 03, 05):
 
-- the client logs in, stays connected (AFK keep-alive now pins the client's own
-  inactivity timer), captures its full quest catalogue, and **does** complete some
-  tutorial objectives;
-- across the latest four per-instance logs: **10 objectives total** (dofus-01 +1,
-  dofus-02 +8, dofus-03 0, dofus-05 +1), **0 quests completed**, 17/8/3/3 manual
-  interventions, and recover/replan dominates the step budget;
-- the most recent run tail is a long **wait** ("the policy had no action to take",
-  28–384 consecutive passes; three instances above 280), not a crash;
-- the first end-to-end fight, the first equip, and the first live shadow-parser
-  session are still unproven.
+- the client logs in, stays connected (AFK keep-alive pins the client's own
+  inactivity timer), captures its full quest catalogue, **finished the tutorial**, and
+  completes objectives in the 4260/4262/4264 chains;
+- **fights are no longer unproven**: `trajectories/fight_outcomes.jsonl` holds 22
+  outcome rows, 9 with `won: true`, over distinct `fight_id` 124, 900, 1356, 1358,
+  1359, 1482 — the newest (1482) is `started_by: "quest.advance"` at 2026-10-29
+  17:37:33 UTC. dofus-05's autopilot log independently counts 52 fight calls, 23 named,
+  10 ok.
+- **equip is half-proven**: dofus-02's autopilot log shows `equip {refused: 76,
+  uids: 41, unaddressed: 41, ok: 6}` — six real `inv.equip` successes, and the
+  refusals are now read from the client's own error text (G64) instead of guessed.
+- **no quest is proven finished end-to-end**: no `QuestCompletedMessage` row exists in
+  any capture. `tools/session_report.py`'s `quests completed` column is a delta of the
+  page's cumulative counter and the two log views disagree (+1/+5/+1 in the
+  trajectory logs, +0 in the autopilot logs). Treat the counter as a hint, not proof.
+- the most recent run ended on a **manual stop file**, not a kick: `brain_console.log`
+  records `stopping: stop file present (AUTOPILOT_STOP.dofus-05)` with
+  `{'advanced': 69, 'failed': 19, 'noop': 9}`; the host window closed at 22:38:02.
+  Two permanent guest bans (`ui.popup.accessDenied`) are recorded earlier in the same
+  log — the account-level risk is still the fleet's real ceiling.
+- **no learned worker ships, and nothing actually vetoes yet.** The measured incumbent is
+  the rule `repeat_streak_norm >= 2`, and four attempts to beat it failed their own
+  pre-registered bars on 2026-10-29/30: the world-model encoder (G57), the frozen forest
+  (G59), per-form count calibration at equal veto budget (G66), and a state-block second
+  layer (G67). `agent/gate.py` runs that counter **shadow-only** in the live loop — each
+  decision records what it would have refused, and the planner still owns the decision —
+  because the replacement action is still unpriced (G39/G46/G52/G55). **The shadow has
+  produced zero rows so far:** `agent/gate.py` landed 2026-10-30 and the newest logs
+  (2026-10-29, 593 rows on dofus-05 + 454 on dofus-02) contain no `"gate"` key at all. Its
+  wiring is now proven offline rather than at the live run
+  (`test_gate_shadow_reaches_the_trajectory`, 10 checks), which corrected two things this
+  document had loosely implied: the annotation lands in the **trajectory** rows the recorder
+  writes (`recorder.py:386` persists `meta`) and **not** in the loop's own step rows, because
+  `Step` has no `meta` field (`autopilot.py:258-292`) — so the `autopilot.dofus-XX.jsonl`
+  view will never show it; and the gate's `VETO_AT = 2` is the loop's own no-progress call
+  **one repeat earlier** than the mechanism already in the code (`streak >= 3` /
+  `_recent[-3:]`, `autopilot.py:2078`), which is what makes it a replacement candidate rather
+  than a new idea. The binding constraint is the volume of lived outcomes,
+  not capacity.
 
 The project's own rule is the right summary: **the harness is not an AI. The harness
 supplies data and tools; the AI makes decisions.** Today the decision layer is mostly
@@ -67,42 +100,101 @@ Five things run in one process tree:
 
 ## 2. Where it stands right now
 
-### 2.1 Last measured live state (2026-10-27; last rows written ~20:01)
+### 2.1 Last measured live state (rows through 2026-10-29 18:50 UTC; re-measured 2026-10-30)
 
-Four clients were running and all four have in-world sessions in the logs.
-`tools/session_report.py` over each per-instance log (timestamps inside the report
-are UTC):
+Four slots have in-world rows — 01, 02, 03, 05. Slots 04/06 stop at 2026-10-27 11:42 and
+07–13 at 2026-10-22, so this is a four-client fleet, not a larger one.
 
-| instance | sessions | wall | steps | ok/fail | objectives | quests completed | maps | manual interventions | recoveries (retry/recover/replan) |
+`tools/session_report.py` gives two views of the same fleet because the counters live in
+different files. The **autopilot view** (`%LOCALAPPDATA%\DofusFarm\autopilot.dofus-0X.jsonl`)
+is the one that carries manual interventions and recoveries:
+
+| instance | sessions | wall | steps | ok/fail | objective delta | quests completed | maps | manual | recoveries (retry/recover/replan) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| dofus-01 (Brruh) | 8 | 137.1 min | 829 | 792/37 | **+1** | 0 | 8 | 17 | 52/449/228 |
-| dofus-02 (Myaixd) | 6 | 151.9 min | 858 | 837/21 | **+8** | 0 | 7 | 8 | 16/282/139 |
-| dofus-03 (Bruuh) | 5 | 105.1 min | 463 | 453/10 | **0** | 0 | 5 | 3 | 20/278/145 |
-| dofus-05 (Bruih) | 4 | 100.1 min | 423 | 414/9 | **+1** | 0 | 4 | 3 | 17/251/130 |
+| dofus-01 | 11 | 138.7 min | 848 | 802/46 | ±16 | 0 | 12 | **25** | 58/453/228 |
+| dofus-02 | 12 | 212.6 min | 1,455 | 1,302/153 | ±11 | 0 | 22 | 16 | 62/321/214 |
+| dofus-03 | 14 | 115.5 min | 523 | 474/49 | ±19 | 0 | 13 | 13 | 30/286/160 |
+| dofus-05 | 21 | 201.6 min | 1,177 | 1,025/152 | ±6 | 0 | 37 | **140** | 80/325/199 |
+
+The **trajectory view** (`dofus-network/trajectories/dofus-0X.jsonl`, the brain's own step
+log) is the one that carries the proof counters:
+
+| instance | sessions | wall | steps | ok/fail | objective delta | quests completed | maps | proofs (equip / buy / fight) |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| dofus-01 | 27 | 105.9 min | 891 | 889/2 | ±11 | **+1** | 29 | fight 2 calls / 2 ok (1 named) |
+| dofus-02 | 4 | 32.9 min | 35 | 33/2 | ±14 | +0 | 2 | none |
+| dofus-03 | 32 | 98.0 min | 556 | 550/6 | ±19 | **+5** | 30 | fight 2 / 2 ok |
+| dofus-05 | 2 | 32.7 min | 300 | 300/0 | ±19 | **+1** | 12 | fight 4 / 4 ok |
+
+How to read those two tables honestly:
+
+- **`objective delta` is signed and is not "objectives completed by the agent".** It is the
+  change in the page's cumulative `objectives_completed` counter across session boundaries,
+  and a new chain resets that counter — hence `−11`, `−19` rows at level 8→13. The G53 work
+  (the counter's own history) is the reason the project stopped trusting it. The hard proof
+  is `tools/quest_witness.py` (attributed objective validations) and
+  `trajectories/fight_outcomes.jsonl`.
+- **`quests completed` disagrees between the views** (+1/+5/+1 vs +0) because the autopilot
+  rows do not all carry the counter. Neither view is a completion *proof*: no
+  `QuestCompletedMessage` exists in any capture (quest traffic is 111
+  `QuestObjectiveValidatedMessage`, 72 `QuestStepValidatedMessage`, 6 `QuestsUpdatedMessage`).
+- **The equip refusals are real and now explained.** dofus-02's autopilot view prints
+  `equip {refused: 76, uids: 41, unaddressed: 41, ok: 6}` — six executed equips, and the
+  76 refusals are the tutorial-gate/"already worn"/quest-object cases G62 settled offline.
+- **Recover/replan still dominates the budget**: 1,385 recover + 801 replan + 230 retry rows
+  against 4,003 steps across the four autopilot logs. Manual intervention is the other honest
+  number — 194 in total, 140 of them on dofus-05. Full Auto is not yet zero-intervention.
 
 Other readouts from the same logs:
 
-- **Page build:** `2026-10-27l` dominates (686/701/393/389 rows), with older `h`/`g`
-  rows. The current source is `2026-10-27s`; those logs **predate** the latest page
-  fixes, so they do not test them.
-- **Knowledge / quest catalogue:** 1,663 / 1,717 / 926 / 839 observed objectives;
-  **0 not in store, 0 collisions**. The client catalogue held 834 / 868 / 473 / 425
-  quests and 18,348 / 19,096 / 10,406 / 9,350 objectives. This is G29's capture
-  working live.
-- **Identity:** bound 12 / 10 / 10 / 9, drift 0. Character names are stable per slot.
-- **Accept rows:** none yet — "no explicit accept rows and no dialog carried
-  start_quest". G33's accept fix is newer than these page builds.
-- **Command shadow:** not requested in any of these runs ("no status/row").
-- **Run tail:** the last rows are waits, not errors:
-  `{"kind":"wait", ..., "reason":"the policy had no action to take", "consecutive":28..384}`.
-  The per-instance stop files were written at 20:01; the root `AUTOPILOT_STOP` at
-  22:32. Diagnosing this long wait is an open live item.
+- **Page build:** the newest source stamp is `2026-10-30a`
+  (`scripts/mobile-disguise.js` line 31). The logs above ran `2026-10-29bf` (593 rows on
+  dofus-05, 343 on its autopilot log), `2026-10-29aw/ax/ay` and `2026-10-28ah/x`, so the
+  interactive-use walk-first fix (G69) is **not yet exercised live**.
+  `tools/live_ready.py` now says the same thing (`last client recorded 2026-10-29bf`);
+  until today it read **only** `trajectories/default.jsonl` — the pre-daemon single log —
+  and therefore claimed the last client was on `2026-10-27s`, three builds and a day behind
+  the instance log that actually spoke. Fixed as part of this pass: with no `--log` named,
+  it reads the newest `*.jsonl` in that directory by mtime, and a named log is still read
+  as itself.
+- **Protocol footprint, measurable for the first time:** the 13
+  `trajectories/play_dofus-*.jsonl` captures now report instead of crashing — **306
+  sessions / 3,025.4 min (50.4 h)** of connection time against the 668.4 min (11.1 h) of
+  driven autopilot wall time in the table above. By slot: dofus-05 140 sessions /
+  1,054.1 min, dofus-03 59 / 1,151.8, dofus-02 49 / 397.8, dofus-01 38 / 415.1, dofus-06
+  9 / 1.0, dofus-04 4 / 1.0, and slots 07–13 one session each of ≤3.1 min. Every one
+  reports `steps 0`, which is honest — they are wire captures, not loop logs. The gap
+  between 50.4 h connected and 11.1 h driven *is* the idle share the AFK keep-alive and
+  guest-ban work has always been about, and it was invisible until today.
+- **Knowledge / quest catalogue:** dofus-05 captured 1,522 quests / 21,624 objectives and
+  dofus-01 1,750 / 38,320 into the client index, with **0 not in store and 0 collisions** on
+  every slot. This is G29/G40's capture working live.
+- **Identity:** the trajectory logs report `no bound/drift rows` (those step rows predate
+  the guard), but the autopilot logs do carry it: dofus-01 **bound 15 / drift 0**
+  (`Brruh, Bruuh`), dofus-02 **bound 23 / drift 1** (`Myaixd, Bruuh`), dofus-05
+  **bound 38 / drift 0** (`Bruih`). One drift event on one slot is the live number G9's
+  fail-closed binding has to explain, and the relogin proof is still owed.
+- **Accept rows:** none in these logs, and `command_shadow` was never requested
+  (`--command-shadow` absent from every run), so the parser still has no live shadow row.
+- **Run tail / stop reason:** the last rows are a manual stop, not a wait and not a kick —
+  `stopping: stop file present (AUTOPILOT_STOP.dofus-05)`, `done: … {'advanced': 69,
+  'failed': 19, 'noop': 9}` (console log mtime 2026-10-29 18:12:45 local); root
+  `AUTOPILOT_STOP` reads `window closed at 22:38:02`. The 2026-10-27 "policy had no action
+  to take" tail that this section used to report is explained: G61/G63 showed the loop was
+  bouncing the same map pair (216 of 229 changes were A→B→A on dofus-02) and G63 added the
+  three-return park. Diagnosing it is closed; *proving* the fix live is not.
+- **Instrument fixed during this pass:** `tools/session_report.py` used to raise
+  `OSError: [Errno 22]` on `play_*.jsonl`, because protocol captures stamp `at` in epoch
+  **milliseconds** and the reporter passed the raw value to `datetime.fromtimestamp`.
+  `_ts()` now normalizes anything above `1e11`, so the captures holding the only successful
+  interactive uses are reportable: `play_dofus-03.jsonl` reads **59 sessions / 1,151.8 min
+  wall** and correctly says `steps 0` — it is a wire capture, not a loop log.
 
 ### 2.2 What is proven live
 
 - The page loads, the client logs in, and the game runs.
-- Directives reach the client and come back (the bridge is alive; port from
-  `bridge_port.txt`, currently 8893).
+- Directives reach the client and come back (the bridge is alive; the real port is read
+  from `%LOCALAPPDATA%\DofusFarm\bridge_port.txt`, currently **8896**).
 - `quest.advance` has produced verified progress (`advanced`), and a later six-step
   run advanced a quest through the NPC reply, changed maps, and moved a character
   from **level 1 / 3 objectives to level 2 / 6 objectives** with `present: true`
@@ -117,6 +209,30 @@ Other readouts from the same logs:
   open clients; comma lists and single ids behave as documented (§11.2).
 - The asset cache serves ~99% of requests from disk (268 hits / 4 misses measured).
 - The egress pin holds for a session; a session is one address.
+- **A fight is proven end-to-end, six times over.** `trajectories/fight_outcomes.jsonl`
+  holds 22 outcome rows, 9 with `won: true`, over distinct `fight_id` 124, 900, 1356,
+  1358, 1359, 1482. `124` carries the server's own `GameFightEndMessage` with
+  `started_by: fight.join`; **1482** (2026-10-29 17:37:33 UTC) is
+  `started_by: quest.advance` — the quest loop walked into a fight and won it. The
+  regression gate fails without such a row, so this proof is pinned, not folklore (G7).
+- **The interactive-use mechanic behind the stuck quest objectives is proven.**
+  `tools/quest_witness.py` over every capture reports `events 216,975 / accepted uses 39
+  / validations 111 / attributed 3`, and the three attributed rows are 4262/**13948**
+  (`use 513208 skill 184 from cell 345`, element at 330, distance 1, **+67 ms**) and
+  4262/**13950** ×2 (`use 513212 … from cell 299`, element 285, **+255/+256 ms**) — each
+  validated within a second of the server's `InteractiveUsedMessage` ack. That is G69:
+  pages are earned by a use from an *adjacent* cell, never by a tap from across the map.
+- **The client's own refusal text is read, not guessed** (G64/G65): a `logError` hook
+  keeps the newest 5 refusal strings (200-char cap each), and a refused call is now
+  scored as a *miss* in the outcome labels (`label_version: 3`).
+- **The release build works again.** `builder/Build.exe` was a stale tracked binary that
+  predated `build.cs` and omitted four sources (every release failed with CS0246 while
+  the gate's C# compile passed). After recompiling it: release exits 0, 11 bundle
+  patches, `DofusFarm.exe` 565,248 B, `uninstall.exe` 17,920 B, `setup.exe` 214.0 MB
+  carrying a 213.8 MB standalone-WebView2 payload.
+- **The test gate is green: `python -m agent.regression` 1,540 checks / 0 failed, exit
+  0** (measured 2026-10-30 on this tree, after re-syncing the Kaggle mirror for
+  `tools/quest_witness.py` — the one failure was toolkit drift).
 
 ### 2.3 What is proven only offline
 
@@ -138,7 +254,8 @@ Other readouts from the same logs:
   under `--policy planner --ensemble act`.
 - **Combat**: solver, damage calculator, 50 solver tests, 1,980 spell levels
   validated, learned actor answers 18 of 64 own turns with a cast at p50 3.3 ms.
-  **No live fight has been proven.**
+  Those *numbers* are offline; the fights themselves are now proven live (§2.2) —
+  what is still unproven is damage calibration, because `fight_calibrator.json` is absent.
 - **Verifier**: rules are the authority. The neural head is gated off unless a
   `verifier_head.validation.json` contract with live/human labels, n ≥ 60 and
   `above_baseline: true` exists. No such contract exists, so normal launches run
@@ -146,25 +263,47 @@ Other readouts from the same logs:
 
 ### 2.4 What is not working / unproven
 
-- No complete live fight (`fight.join` → placement → turns → `GameFightEndMessage`).
-- No live-proven equip (G2): `inv.equip` now has a shipped preset path; direct-UID
-  equip and live proof are still owed. The first recorded quest chain dies on
-  "Go and equip your new items."
+- **No quest is finished end-to-end under agent control.** Objectives validate (111
+  captured validations, 3 attributed to an agent-visible cause), but zero
+  `QuestCompletedMessage` rows exist in any capture. The last step of the chain — the
+  claim/turn-in — is still the unproven one, and 4262/13952 "Talk to Roki" is where the
+  frontier sits.
+- **The fight sample is thin.** 9 won rows over 6 `fight_id`s, all from one session
+  (`7a871278`). No boss, no sustained multi-fight sample, and the battle-log ring added
+  in build `2026-10-28w` has still never been read out of a live end message — so the
+  damage numbers of a won fight are not yet in the corpus.
+- **Equip works only partly (G2/G62).** `inv.equip` has a shipped preset path and dofus-02
+  recorded `equip {refused: 76, uids: 41, unaddressed: 41, ok: 6}` — six real successes —
+  but direct-UID equip is refused by design until a live capture proves the path, and the
+  tutorial equip wall (`18974` is a `QUEST_OBJECT`, `possible_positions: []`) is settled
+  offline, not live.
+- **No learned worker ships.** Four routes were measured and rejected against their own
+  pre-registered bars: the world-model encoder (G57), the frozen forest ranker (G59),
+  per-form count calibration at equal veto budget (G66), and a state-block second layer
+  (G67). The incumbent `repeat_streak_norm >= 2` runs **shadow-only** in `agent/gate.py`:
+  it annotates every decision with the veto it would have made and refuses nothing,
+  because what the loop would do *instead* is still unpriced (G39/G46/G52/G55).
+- **`2026-10-30a` has never run.** The walk-first `isoEngine.useInteractive` route, the
+  3 s interactive settle, and the refusal-credit fix are all implemented and pinned by
+  offline suites (G65/G68/G69), but no live row exists on that build. That single session
+  is the highest-value missing evidence in the project.
 - No vision or image model (G4).
 - Network forecaster is dark: the Sentinel still imports torch, and
   `networkhealth_artifacts/model.pt` is absent (G5).
 - Live fight calibrator absent (`models/fight_calibrator.json`), so `p_win` is null
   and unattended fights are refused by design.
-- No live command-shadow session, so the parser cannot yet be promoted.
-- Identity-by-account binding is shipped and offline-verified, but a live relogin
-  proof is still owed (G9).
-- The last live run's long "no action" wait is unexplained in the current docs and
-  should be diagnosed first.
-- Test coverage is still split: `agent.regression` (**1,241 checks**, exit 0) + 27 JS suites +
+- No live command-shadow session, so the parser cannot yet be promoted: every log in §2.1
+  prints `command_shadow: no status/row`.
+- Identity-by-account binding is shipped and does bind live (15/23/38 bound rows), but
+  dofus-02 shows **1 drift** and a relogin proof is still owed (G9).
+- **No instrument gap left in the reporting path:** the `OSError: [Errno 22]` that stopped
+  `tools/session_report.py` from reading `play_*.jsonl` was fixed on 2026-10-30 (§2.1) and
+  pinned by new checks in `test_session_report_census`.
+- Test coverage is still split: `agent.regression` (**1,540 checks**, exit 0) + JS suites +
   Go relay tests + C# selftests. The combat suites, the simulator floor (119 quests /
-  148 objectives, no stall), the 40-instance daemon control plane and the checked-in
-  Kaggle mirror are now inside that gate; the C# bundle selftest and the full release
-  build remain outside it (G8).
+  148 objectives, no stall), the 40-instance daemon control plane, the C# host compile and
+  the checked-in Kaggle mirror are inside that gate; the C# bundle selftest and the full
+  release build remain outside it (G8).
 
 ---
 
@@ -200,6 +339,10 @@ Other readouts from the same logs:
   bin\warp\wireproxy    proxies.txt
 ```
 
+(The `+ mobile-disguise` box is labelled by its window, but the injection is done in
+`desktop/WebView2Backend.cs:121-125` — `WebView2ClientForm.cs` never mentions the file.
+Anyone looking for the attach point should open the backend, not the form.)
+
 ### 3.2 Ports
 
 | port | owner | purpose |
@@ -207,10 +350,10 @@ Other readouts from the same logs:
 | `8880 + slot` | relay | HTTP/CONNECT proxy the client is pointed at |
 | `8890` | Sentinel | health/telemetry HTTP service + `nav.goto` name→map |
 | `8891` | Combat AI | `POST /v1/combat/decide` (solver → ranker → live policy) |
-| `8893` (fallback) | directive bridge | `POST /directive` → client tool call; the real port is in `%LOCALAPPDATA%\DofusFarm\bridge_port.txt` (currently 8893; 8894 has been seen on a multi-slot box) |
+| `8893`…`8899` (fallback set) | directive bridge | `POST /directive` → client tool call; the real port is whatever `%LOCALAPPDATA%\DofusFarm\bridge_port.txt` says — **`8896` measured 2026-10-30**. `desktop/agentbridge.cs:39` walks `CANDIDATE_PORTS {8893…8899}` and writes the winner, so 8893 is only the first choice and may be taken by a stale relay or a second host run |
 | `8895` | Brain daemon / agent HTTP | `run_brain.py` → `agent.serve --brain` — one process, per-instance Autopilot threads, `/brain/*` and `/agent/*` |
 | `40000` | tunnel | local SOCKS5 (userspace WireGuard or system WARP) |
-| `5554, 5556, …` | legacy Android | emulator console ports (only with `--include-legacy-emulator`) |
+| `5554, 5556, …` | legacy Android | emulator console ports, derived as `5554 + 2*(slot-1)` (`farmengine.cs:1571`) — there is no literal `5556` in the source; only with `--include-legacy-emulator` |
 
 **8892 is retired** (old ModernBERT stance server). Nothing should dial it.
 
@@ -235,9 +378,9 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 
 ```
 /
-├─ DofusFarm.exe               host (built, 548 KB)
-├─ dofus-net-proxy.exe         relay (built, 8.15 MB)
-├─ setup.exe                   installer (105.7 MB on disk; payload 100.1 MiB, 513 entries)
+├─ DofusFarm.exe               host (built, 565,248 B = 552 KiB)
+├─ dofus-net-proxy.exe         relay (built, 8,152,064 B = 8.15 MB)
+├─ setup.exe                   installer (224,413,696 B = 214.0 MiB, rebuilt 2026-10-30; embeds the standalone-WebView2 payload)
 ├─ uninstall.exe
 ├─ compile.bat                 one-click build
 ├─ network.ini                 egress configuration
@@ -248,28 +391,28 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 ├─ no-client-update.flag       disables the bundle updater
 ├─ bundle-selftest.txt         last C# patch-equality result
 ├─ ai-status-selftest.txt      last AI-pill formatting result
-├─ asset_cache/                relay cache (assets, .meta, proxy.log) — 82 MB
+├─ asset_cache/                relay cache (assets, .meta, proxy.log) — 108,623,908 B = 103.6 MiB
 ├─ builder/                    Build.cs → Build.exe (the whole pipeline)
-├─ desktop/                    C# host sources — 22,148 lines
-│  ├─ mainform.cs              shell, grid, nav, launch paths (3,737)
-│  ├─ pages.cs                 Settings / Shortcuts / Logs (1,082)
-│  ├─ aipanel.cs               AI page + AiSettings (1,588)
+├─ desktop/                    C# host sources — 23,117 lines
+│  ├─ mainform.cs              shell, grid, nav, launch paths (4,132)
+│  ├─ pages.cs                 Settings / Shortcuts / Logs (1,094)
+│  ├─ aipanel.cs               AI page + AiSettings (2,061)
 │  ├─ farmengine.cs            instances, relays, tunnels, proxies (3,143)
 │  ├─ proxysupervisor.cs       egress selection + failover (878)
 │  ├─ netsettings.cs           network.ini model (290)
 │  ├─ clientbundle.cs          transactional updater + runtime patcher (548)
-│  ├─ WebView2ClientForm.cs    the client window (3,420)
-│  ├─ WebView2Backend.cs       instance lifecycle (596)
+│  ├─ WebView2ClientForm.cs    the client window (3,437)
+│  ├─ WebView2Backend.cs       instance lifecycle + the disguise injection (596)
 │  ├─ agentbridge.cs           directive HTTP bridge (624)
 │  ├─ prioritygovernor.cs      CPU/RAM arbitration (642)
 │  ├─ watchdog.cs              hang detection (282)
 │  ├─ hardware.cs              device profiles (218)
 │  ├─ installer.cs             setup.exe logic (2,746)
 │  ├─ uninstaller.cs           (530)
-│  └─ client/www/              the served client bundle (~15 MB)
+│  └─ client/www/              the served client bundle (14,907,452 B ≈ 14.2 MiB)
 ├─ scripts/
 │  ├─ dofus-net-proxy.go       the relay (3,471 lines)
-│  ├─ mobile-disguise.js       injected page agent (7,834 lines — the game adapter)
+│  ├─ mobile-disguise.js       injected page agent (11,254 lines — the game adapter)
 │  ├─ proxy_pool.js            verify/quarantine/scrape/write pool
 │  ├─ harvest_proxies.js       append-only candidate harvester
 │  └─ *.go, *.py               probes, proxy tools, data extraction
@@ -278,12 +421,12 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 │  ├─ make-patch-rules.py      extracts them → patch-rules.json/.txt
 │  ├─ apply-patch-rules.py     Python reference applier
 │  ├─ apply-map-resilience.js  map-transition watchdog
-│  ├─ test_*.js                27 page/JS suites (see §17)
+│  ├─ test_*.js                36 page/JS suites (see §17)
 │  └─ js-error-finder.js       bundle checker (currently red — G11)
 ├─ bin/warp/                   wireproxy, wgcf, warp-plus + configs
 ├─ bin/webview2/               Edge WebView2 bootstrapper
 ├─ runtimes/                   embedded Python 3.11 + win-x64/x86 helpers
-├─ dofus-network/              the brain — 76,699 Python lines (excluding toolkit mirror)
+├─ dofus-network/              the brain — 99,335 Python lines in 259 files (excluding the toolkit mirror)
 │  ├─ agent/                   loop, planner, verifier, controller, tools, recorder
 │  ├─ ai/                     training, serving, ONNX export, command model
 │  ├─ combat/                 damage math, solver, live policy, duels, encounter
@@ -294,10 +437,10 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 │  ├─ networkhealth/          RTT/loss forecaster + Sentinel
 │  ├─ sim/                    symbolic world + counterfactual corpora
 │  ├─ pipeline/               THX-01 training/serving path (legacy-ish)
-│  ├─ models/                 checkpoints + ONNX exports (~350 MB)
-│  ├─ data/                   corpora, cache, knowledge DB (~289 MB)
-│  ├─ trajectories/           25 JSONL logs (~257 MB)
-│  └─ docs/                   18 design/status documents
+│  ├─ models/                 checkpoints + ONNX exports (488,651,611 B = 466.0 MiB)
+│  ├─ data/                   corpora, cache, knowledge DB (347,640,557 B = 331.5 MiB)
+│  ├─ trajectories/           29 JSONL logs at the top level (32 counting nested dirs), 459,787,953 B = 438.5 MiB
+│  └─ docs/                   21 markdown documents (+9 JSON benchmark artefacts)
 ├─ client/www/                 older bundle tree (not served; see CLEANUP)
 ├─ dofus-emu-cleanup-2026-10-25/  historical cleanup snapshot
 ├─ kaggle/                     networkhealth + tpu_selfplay kernels
@@ -305,11 +448,23 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 └─ resume.md                   this document
 ```
 
-**Line counts:** C# 23,064 (desktop + builder), Go/JS 13,516, Python 76,699
-(excluding `kaggle/toolkit` mirror), docs ~10,500 in the core set.
+**Line counts, re-measured 2026-10-30:** C# **24,033** (desktop 23,117 + `builder/build.cs`
+916), Go/JS **24,332** (Go 4,946 + JS 19,386 across `scripts/` and `tools/`), Python
+**99,335** in 259 files, docs **12,721**. The 2026-10-27 snapshot of this document claimed
+23,064 / 13,516 / 76,699 / ~10,500 — every one of those was understated, the Python figure
+by 22,636 lines, and part of the rest is this day's own work: the shadow, alternative and
+promotion-bar tests plus the probe modes. Globs matter here: `dofus-network/kaggle/toolkit/` holds a further 82,360
+lines in 187 files and is deliberately excluded (it is a mirror), and `__pycache__` is
+excluded. The five files added by the 2026-10-29/30 programme are 1,021 lines
+(`agent/gate.py` 63, `agent/state_features.py` 153, `tools/state_encoder_probe.py` 368,
+`tools/train_veto_shadow.py` 202, `tools/quest_witness.py` 235), and the JS suite count is
+**36** (`tools/test_*.js`).
 
-**Disk:** data 289 MB, trajectories 257 MB, models ~350 MB, asset cache 82 MB,
-client 15 MB, installer 105.7 MB.
+**Disk, re-measured 2026-10-30:** data 331.5 MiB, trajectories 438.5 MiB, models 466.0 MiB,
+asset cache 103.6 MiB, client bundle 14.2 MiB, installer **224,413,696 B (214.0 MiB)**.
+The previous figures (289 / 257 / 350 / 82 / 15 MB and a 105.7 MB installer) are all stale —
+trajectories nearly doubled because the `play_*.jsonl` protocol captures keep growing, and
+the installer more than doubled when the payload started carrying a standalone WebView2.
 
 ---
 
@@ -323,7 +478,7 @@ the grid keeps its selection and the AI panel keeps its process handle.
 | page | contents |
 |---|---|
 | **Instances** | toolbar + instance grid |
-| **AI** | mode, target, policy, dry-run, goals, step budget, quick actions, live output |
+| **AI** | mode, targets, dry-run, goals, quick actions, live output. **There is no policy combo and no step-budget field**: `PinDecisions()` forces `Policy = "planner"` and `Steps = 0` (`desktop/aipanel.cs:66-70`, called at `:361`), so the GUI always runs Full Auto on the planner while the CLI still takes `--policy` / `--steps` |
 | **Settings** | login flags, network card, folders, AI reset |
 | **Shortcuts** | one row per action; press a key to rebind |
 | **Logs** | live tail of `DofusFarm.log` and `autopilot.jsonl` |
@@ -332,14 +487,20 @@ Pages refresh when opened (`ShowPage` → `ReloadState`), not on a hidden timer.
 
 ### 5.2 Instance model
 
-Each row has a name, slot, port, RAM/cores, optional per-instance proxy, and a phone
-profile. Slot *n* maps to:
+The grid is **12 columns** and none of them is a port
+(`mainform.cs:776-798`): STATUS, INSTANCE NAME, SLOT, HOST MEMORY, HOST CPU, DEVICE
+PROFILE, NETWORK, then the row actions Edit / Clone / Reset / Delete. Each row has a
+name, slot, memory/CPU, optional per-instance proxy, and a phone profile. The slot
+number *i* (1-based, so `dofus-01` is *i* = 1) maps to:
 
 ```
-relay port  = base_port (default 8880) + n
-sdk port    = 5554 + 2n          (legacy Android only)
+relay port  = base_port (default 8880) + slot
+sdk port    = 5554 + 2*(i-1)     (legacy Android only; there is no literal 5556)
 profile dir = %LOCALAPPDATA%\DofusFarm\webview2_profiles\<instance>
 ```
+
+(`farmengine.cs:1571`, `:2090-2092` derive the slot back as `(port-5554)/2`, and
+`netsettings.cs:51-53` owns the relay base port.)
 
 Accounts are claimed so two instances cannot use the same login.
 
@@ -350,35 +511,58 @@ work anywhere in the window. Defaults: `F5` start, `F6` stop, `F7` send order,
 `F8` toggle dry run, `F12` emergency stop. A key can only mean one thing; the editor
 refuses duplicates.
 
+Since 2026-10-28 they are **also registered system-wide** with `RegisterHotKey`
+(`mainform.cs:1011-1055`, `:1111`), so the keys work while the *game* window has focus,
+not only the manager. Registration can partially fail — the live log shows
+`[AI] shortcut emergency (F12) could not be registered` then
+`4 global shortcut(s) registered`: five actions, four bound. Read that line if an
+emergency stop appears to do nothing.
+
 ### 5.4 Live AI indicator
 
-Visible from every page: a nav pill updated once a second (`AI running - step 42 -
-hdv.list advanced (model)`, `AI idle`, `AI stopped - last step 42`) and a green AI
-nav button while the child process is alive. Green means the process exists; the text
-comes from the last `autopilot.jsonl` line, because a live process with a stalled loop
-and a dead process look identical from outside.
+Visible from every page: a nav pill updated once a second and a green AI nav button.
+The pill has **four** shapes, not three: `AI running - step 42 - hdv.list advanced
+(model)`, `AI idle`, `AI stopped - last step 42`, and **`AI running - waiting for the
+first step`** (`aipanel.cs:1859-1883`). Green now means *the daemon reports a running loop
+for some instance* — `IsRunning` is `BrainAnyRunning()` **or** the child process, so the
+process handle alone no longer decides the colour (`mainform.cs:1315-1327`). With several
+slots live the pill is an aggregate from `AggregateAiStatus()`:
+`N running: dofus-01: … | dofus-02: …`. The text still comes from the last
+`autopilot.<instance>.jsonl` line, and per-instance state is real
+(`IsRunningFor` / `RunningInstances` / `PushAiState` / `LiveStatusFor` / `StepLogFor`,
+`mainform.cs:1207-1300`, `aipanel.cs:1085-1145`) — each window's badge reflects that
+window's own loop, not a farm-wide flag.
 
 The AI page streams the loop's stdout line by line (`PYTHONUNBUFFERED=1`).
 
 ### 5.5 Logging
 
-- `DofusFarm.log` — one line per event, `[HH:mm:ss] message`; rotated at 10 MB.
+- `DofusFarm.log` — one line per event, `[HH:mm:ss] message`; rotated at **64 MB**
+  (`LogMaxBytes = 64L*1024*1024`, `mainform.cs:269`, enforced at `:2104` — it was 10 MB
+  when this document last said 10 MB).
 - `asset_cache/proxy.log` — relay log.
 - `%LOCALAPPDATA%\DofusFarm\autopilot.jsonl` — one JSON object per agent step.
 - `%LOCALAPPDATA%\DofusFarm\autopilot.<instance>.jsonl` — per-instance loop logs
   (two loops on one JSONL interleave two characters).
-- `%LOCALAPPDATA%\DofusFarm\verdicts_human.jsonl` — human corrections.
+- `%LOCALAPPDATA%\DofusFarm\verdicts_human.jsonl` — human corrections. **The host does not
+  write this**: no C# source touches it, it is `dofus-network/agent/verifier.py:46`.
 - Startup always logs one line answering "why is nothing loading":
-  `[NET] egress: auto: supervisor picks | relay 8880+slot | fail closed`.
+  `[NET] egress: auto: supervisor picks (see Settings > Test)  |  relay 8880+slot  |  fail closed`
+  (`netsettings.cs:257-264` builds it).
 
 ### 5.6 Process hygiene
 
 - Single instance via `Global\DofusFarmManager_SingleInstance_Mutex_2026`; a second
   launch focuses the first.
-- `--bundle-selftest` runs headless, writes `bundle-selftest.txt`, exits 0/1.
+- `--bundle-selftest` runs headless, writes `bundle-selftest.txt`, exits **0 (identical),
+  1 (mismatch), 2 (SKIP) or 3 (ERROR)** — `desktop/Program.cs:128-156`. Treating anything
+  but 0/1 as "the test failed" hides a skip; check the file's `RESULT:` line.
 - `--ai-status-selftest` runs headless, writes `ai-status-selftest.txt`.
-- `Activate()` retries because a minimized WebView2 reports no window; this was a
-  real click-verification bug.
+- `Activate()` is **one-shot** (`WindowState = Normal; BringToFront(); Activate(); Focus()`,
+  `WebView2Backend.cs:81-85`) — there is no retry loop anywhere in the host, so the
+  "minimized WebView2 reports no window" bug this document claimed was fixed with a retry
+  is not fixed by a retry. If a click verification fails again, the missing piece is a
+  wait-and-retry around activation, not a doc note.
 
 ### 5.7 Multi-instance addressing (2026-10-27)
 
@@ -389,9 +573,13 @@ answers per instance: one addressee keeps the old envelope; several get
 active; using dofus-01") is limited to a single addressee.
 
 `desktop/aipanel.cs` selects through a checklist (`TargetSlots`, persisted as
-`target_slots=1,3`; "All instances" is exclusive) and starts **one autopilot child
-per selected instance**, each with its own log. Idle training and the UI flip wait
-for the last child, not the first.
+`target_slots=1,3`; "All instances" is exclusive). The start path is now **the daemon
+first**: `aipanel.cs:345-352,1505-1543` drives one `run_brain.py` process on
+`BrainPort = 8895` through `/brain/start`, `/brain/stop`, `/brain/status`,
+`/brain/health`, and the per-instance `run_autopilot.py` child survives only as the
+**fallback** (`:882`, the comment at `:1426` explains why it is kept). Each instance still
+gets its own log, and idle training and the UI flip wait for the last child, not the
+first.
 
 Measured live: `target_instance=all` → 4 envelopes; `dofus-01,dofus-02` → 2;
 `target_slot=3` → the old single shape, unchanged.
@@ -1312,6 +1500,40 @@ measured against the raw one.
 
 ---
 
+### 5.10 Host behavior §5 omitted until 2026-10-30
+
+Things the sources do that a reader of the old §5 could not know:
+
+- **Always-on AI is the default.** `runtime.ini auto_ai=1` (default true,
+  `runtimesettings.cs:17-23`) makes every `StartWebView2Instance` also start that
+  instance's loop (`mainform.cs:1900`, comment `:1903-1906`). "I launched a client and it
+  began acting" is designed behavior, not a bug — and `runtime.ini` did not exist on this
+  machine at audit time, so the defaults were in force.
+- **A Runtime settings card** with 5 toggles plus a grid-refresh combo (8 checkboxes on
+  the Settings page in total, `pages.cs:165-183,217-262`), next to `refresh_ms`,
+  `watchdog`, `governor`, `telemetry`, `fight_boards`, `auto_ai`.
+- **Fail-closed is a launch gate, not a log line.** `ProxySupervisor` probes every
+  candidate (tunnel, configured upstream, `proxies.txt`), drops any whose exit IP equals
+  this machine's own, keeps a sticky pin, fails over and rebuilds live relays
+  (`proxysupervisor.cs:1-26,471,525,533`), and instances **refuse to start** when nothing
+  is healthy — the live log line is `[PROXY] no healthy egress (14 tested)`.
+- **Per-instance AI state** (`IsRunningFor`, `LiveStatusFor`, `StepLogFor`) as described in
+  §5.4, which is what makes the multi-instance pill an aggregate.
+- **Self-heal and arbitration:** `watchdog.cs` hang detection, `prioritygovernor.cs`
+  CPU/GPU priority, live memory telemetry on client windows, and `hardware.cs` gating the
+  device profile against the real machine (`mainform.cs:597`).
+- **Buttons with no §5 entry:** `Reload client` (picks up a rebuilt `mobile-disguise.js`
+  without a restart), the quick Focus toolbar, `Repair my network`, and the proxy-pool
+  actions (`pages.cs:322-331,333-341`).
+- **One stale string in the source, and it is not user-visible:** `aipanel.cs:493-499`
+  builds a hint label reading `"All 28 tools enabled; …"` (corrected 2026-10-30 — it said
+  25) and then sets `Visible = false`, never touching it again. So it misleads a reader of
+  the source, not the user. If a future pass wants the count to stay honest without a manual
+  edit, the label has to be made visible *and* fed from the registry — nothing in C# reads
+  `data/capabilities.json` today (`grep capabilities.json desktop/*.cs` is empty).
+
+---
+
 ## 6. The client and its disguise
 
 ### 6.1 What is served
@@ -1446,9 +1668,8 @@ The build-time JS engine and the runtime C# patcher read the same rules. Proof i
 
 ```
 rules: 23
-matched: 0, 1, 2, 3, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
-skipped: 6..12: needle missing
-patched 5365150 chars, live 5365150 chars
+matched: 0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+patched 5365280 chars, live 5365280 chars
 RESULT: IDENTICAL
 ```
 
@@ -1680,7 +1901,9 @@ action already in flight. Three timers fix that:
 
 - **`--think` (default 0.25 s)** — after any world-changing action, the next decision
   is not taken before then. Read-only/listing tools are exempt.
-- **`SETTLE_TOOLS`** (`{quest.advance, nav.goto, fight.join, farm.start}`) — after
+- **`SETTLE_TOOLS`** — **five** tools since the interactive work:
+  `{quest.advance, nav.goto, fight.join, farm.start, tap.interactive}`
+  (`agent/autopilot.py:97`) — after
   `ok`, `_settle()` re-observes every ~400 ms up to `settle_s` (default 3.0 s) and
   judges the first observation that differs.
 - **quiet window** — `quiet_s = min(0.8, max(0.4, think_s + 0.3))`: settled once the
@@ -1704,16 +1927,22 @@ sleep.
 - **encoder** — the 24.9M text encoder via `ai/encoder_serve.py`; `--model-dir`
   defaults to `models/encoder30_v15`.
 
-**Measured learned-vs-rule face-off (2026-10-27):** `policy_faceoff.py --seeds 30
---steps 300` (noise + travel cost): learned wins **21, ties 9, loses 0**, mean
-**66.10 vs 64.87 quests (+1.23, ~1.9%)**. At 600 steps / 20 seeds: wins 17, ties 3,
-loses 0 (+1.90 quests). Simulation-only; the shipped default remains `rule` until a
-live benchmark justifies switching. The learned planner is a distillation of the same
-teacher, so it cannot exceed it by much.
+**The learned-vs-rule face-off was measured, then withdrawn (2026-10-27 → 10-29).** The
+original number was `policy_faceoff.py --seeds 30 --steps 300`: learned wins **21, ties 9,
+loses 0**, mean **66.10 vs 64.87 quests**. That comparison is **invalid** —
+`KNOWN_GAPS.md` records that `policy_faceoff` scored on corpus seeds rather than a held-out
+world, so any win built on it is void. The honest replacement is
+`tools/bench_quest_policies.py`: rule **79.90** vs learned **80.50** quests (5W/5T/0L,
+p = 0.0625), and the oracle variant **loses** (79.80, 3W/1T/6L). So the learned planner is
+not a proven improvement: it is within noise on the corrected instrument, and it is a
+distillation of the same teacher, so it cannot exceed it by much. The shipped default
+remains `rule` at the CLI level pending a live benchmark.
 
-### 9.5 The 25 tools (research vocabulary)
+### 9.5 The 28 tools (research vocabulary)
 
-Runtime order is `data/capabilities.json`:
+Runtime order is `data/capabilities.json` — **28 entries**, and `agent/regression.py:208`
+asserts exactly that ("schema declares 28 tools" / "capabilities.json lists 28 tools"),
+as does the ≥50-rows-per-tool check on the constraint corpus (`regression.py:509`):
 
 ```
 knowledge.search  nav.goto    nav.follow   quest.list    quest.advance
@@ -1721,13 +1950,18 @@ farm.start        farm.stop   fight.join   fight.pass    inv.list
 inv.sell          hdv.scan    hdv.list     hdv.buy       hdv.prices
 inv.equip         tap.interactive          chat.say      state.snapshot
 safe.stop         knowledge.remember       knowledge.forget   fight.state
-fight.plan        fight.estimate
+fight.plan        fight.estimate           ui.tap        ui.icons    shop.buy
 ```
 
 The 2026-10-27 research unlock added `hdv.buy`, `inv.equip`, `hdv.prices` and
-`tap.interactive`; `FORBIDDEN_TOOLS` is now empty. The shipped 49K tool policy still
-has 21 output logits, so the four new tools are rule-planner-only until a new model is
-trained; the legal registry and the learned head are separate contracts.
+`tap.interactive`; `FORBIDDEN_TOOLS` is now empty. `ui.tap`, `ui.icons` and `shop.buy`
+arrived with the tutorial work (menu-bar presses, challenge/confirm controls, the
+tutorial's fake shop) and are documented **nowhere except this list and the gate** —
+`CURRENT.md` §7 and `CAPABILITY_REGISTRY.md` said 25 until 2026-10-30, which was true on
+2026-10-27; both now carry 28. The shipped
+49K tool policy still has 21 output logits, so the seven newest tools are
+rule-planner-only until a new model is trained; the legal registry and the learned head
+are separate contracts.
 
 Tool backends:
 
@@ -1736,7 +1970,7 @@ Tool backends:
 - **directive** — `nav.goto`, `nav.follow`, `farm.start`, `farm.stop`, `fight.join`,
   `fight.pass`, `inv.list`, `inv.sell`, `inv.equip`, `hdv.scan`, `hdv.list`,
   `hdv.buy`, `hdv.prices`, `tap.interactive`, `chat.say`, `state.snapshot`,
-  `safe.stop`, `fight.state`, `quest.advance`.
+  `safe.stop`, `fight.state`, `quest.advance`, `ui.tap`, `ui.icons`, `shop.buy`.
 
 `directive` means: the host posts JSON to `127.0.0.1:<bridge port>/directive`; the
 page's handler performs it and reports back. The bridge port is read from
@@ -1764,7 +1998,7 @@ calls. Key behaviors:
 **Knowledge stores — two deliberately separate things:**
 
 1. `knowledge.CanonicalStore` — static reference, built into
-   `data/knowledge/dofus_knowledge.sqlite` (43 MB): 1,976 quests, 2,225 steps, 15,543
+   `data/knowledge/dofus_knowledge.sqlite` (44,044,288 B = 42.0 MiB): 1,976 quests, 2,225 steps, 15,543
    objectives, 2,781 achievements, 9,173 achievement objectives, 2,000 monsters,
    6,472 NPCs, 21,554 items. All rows `source=dofusdb_cache`, `verified_live=0`.
 2. `agent.knowledge_store.KnowledgeStore` — mutable discovery log with provenance,
@@ -1809,8 +2043,11 @@ Measured (`models/command_encoder30/metrics_eval.json`):
 auto` logs one `command_shadow` row per goal with both parses, agreement, and whether
 the model would override; fail-open when torch/the artifact is absent. `--command-shadow`
 is default off. `tools/command_shadow_report.py` compares over recorded logs:
-7 real goals / 5,721 uses, 2 override goals (4,300 uses); the dominant "do all the
-quests" is rule `quest/list` vs model `quest/run` at 0.958. `tools/session_report.py`
+**5 override goals / 5,717 uses** (the recorded totals are 7 real goals / 5,721 uses) —
+this document used to say "2 override goals (4,300 uses)", which is the pre-adapter count
+and contradicts its own §9.7; the accepted adapter maps all 7 goals to the expected tool.
+The dominant "do all the quests" is rule `quest/list` vs model `quest/run` at 0.958.
+`tools/session_report.py`
 prints a shadow witness (rows, agreement, overrides). `tools/command_replay.py` pairs
 goals with executed steps: 71 groups / 5,721 steps.
 
@@ -1930,8 +2167,9 @@ episode 5-fold CV on `data/tool_sft_v3/val` (1,385–1,500 states/fold, 107 epis
 The tree is ahead of both bases in 3/5 folds: +0.00171 capture, +0.00546 top-1. It
 passes the activation gate and is used by `--policy planner --ensemble act`; `shadow`
 logs the choice, `off` disables it. The deterministic planner still fills arguments
-and owns every safety guard. **Caveat:** harness-outcome evidence only; the live
-transition corpus has 1,827 actions (14.0% moved, 1.5% progressed), so gate 2 is
+and owns every safety guard. **Caveat:** harness-outcome evidence only; and the live
+corpus it must eventually beat is now `data/transitions_v2` at **9,687 rows / 5,289
+actions / 30.33% move rate / 1,322 claims met** (`label_version: 3`), so gate 2 is
 unclaimed.
 
 ### 9.9 Verifier and controller (the second agent)
@@ -2011,8 +2249,9 @@ user).
 | `data/commands` | `tools/build_command_dataset.py` | 1,619 / 20 / 23 | intent, action, BIO slots | 26 held-out base phrasings; near-copies excluded |
 | `data/tool_sft` | `sim/tool_choice.py` | 25,023 / 2,782 (v1); v2/v3 variants | per-candidate gains/curves/margin/trivial | harness world |
 | `data/tool_sft_v3` | regenerated 2026-10-27 | 14 MB | same | low-level ladder still not the coverage gap |
-| `trajectories/*.jsonl` | live pages | 4,785 rows here; 73,081 wider | none until transitions | 4.5% move rate; `objectives_completed` was 0 |
-| `data/transitions/` | `tools/build_live_transitions.py` | 1,827 actions | moved/progress | 14.0% moved, 1.5% progressed |
+| `trajectories/*.jsonl` | live pages | **29 files / 236,961 rows** (re-counted 2026-10-30; the root `trajectories/` adds 3 files / 2,858 rows) | none until transitions | the 4.5% move rate and `objectives_completed = 0` were label bugs (G42/G43/G28) |
+| `data/transitions/` | `tools/build_live_transitions.py` | 5,510 rows (superseded) | moved/progress | 14.0% moved / 1.5% progressed was the **broken** label; see `transitions_v2` |
+| `data/transitions_v2/`, `data/transitions_temporal/` | the same builder, post-G43/G60/G65/G68 | **9,687 rows / 457 segments / 5,289 actions** | claims per form | 1,322 claims met, `label_version: 3`, 8.05 h span |
 | `data/auto_live/` | `tools/auto_live.py` | unattended session output | outcomes | new, uncommitted |
 | `data/command_adapters/user_goals.jsonl` | hand-labelled live prompts | 16 | intent/action | per-instance, may never enter base train |
 
@@ -2057,7 +2296,9 @@ credit for looking.
   not tool (tool saturates at ~0.94 while call still moves).
 
 **2026-10-28 constraint corpus / cause head (measured, not promoted).** The generator
-writes 2,600 rows (25 tools × 8 causes × 13 families) and the controller routes 100%
+writes 2,600 rows (25 tools × 8 causes × 13 families — the registry was 25 when that
+corpus was cut; it is 28 now and the gate requires ≥50 rows for each of the 28) and the
+controller routes 100%
 cause / 100% action. `ai/train_cause_head.py` was trained on 9 families/cause and
 validated on 2 unseen families/cause over five splits: the MLP alone has mean
 accuracy **0.81** / ECE **0.19**; the MLP + cosine-kNN ensemble has mean **0.855** /
@@ -2125,8 +2366,10 @@ is exposed but not enforced; team sides need live confirmation; crit chance and 
 
 `fight.plan` exposes the solver through the tool contract. `fight.state` is a
 zero-argument, read-only directive with the board fields the solver needs. Both are
-kept out of the verifier's width-locked `TOOL_ORDER` because that one-hot vector is
-33 features; appending a class would break the current ONNX head.
+kept out of the verifier's width-locked head because `agent/verifier.py:82`
+`TOOL_ORDER` is **16 entries** and the head's full input is 33 features / 4 classes
+(`advanced`, `noop`, `failed`, `blocked`) — appending a tool class would break the
+current ONNX head.
 
 ### 10.3 Live pipeline (`:8891`)
 
@@ -2156,15 +2399,24 @@ field, not an assumption.
 - With the missing max values supplied, all 64 of the model's own turns become
   actionable and the trained actor answers **18 of 64 with a cast** at p50 3.3 ms —
   inside the page's 4 s fetch budget. Offline measurement on real geometry.
-- **No live fight has been proven.** `executor.py` records `live_calibrated: false`;
-  `models/fight_calibrator.json` is absent; `fight.join`/`farm.start` were essentially
-  never reached in the recorded history because runs stalled on talk objectives.
+- **Live fights are now proven, calibration is not.** `executor.py` still records
+  `live_calibrated: false` and `models/fight_calibrator.json` is absent, so `p_win` is
+  null and unattended fights are refused by design. What changed on 2026-10-28/29 is the
+  proof itself: 9 `won: true` outcome rows over `fight_id` 124, 900, 1356, 1358, 1359,
+  1482, including one entered by `quest.advance` (§2.2). The battle-log ring
+  (`2026-10-28w`) has still never been read out of a live end message, so those wins
+  carry no damage sample.
 - **30M 560-cell grid scaffold:** `combat/grid_model.py` is **30,766,081 params**
   (560 cell tokens, 16 fighter tokens, 16 plan tokens) and its forward pass is finite;
-  `combat/test_grid_model.py` is 3/3. It is **not trained**: the 156 recorded boards
-  have 0 with positive AP, and `combat/grid_probe` refuses the pass-only corpus.
-  `combat/grid_dataset.py` is the tensor builder; training waits for one actionable
-  live fight on page build `2026-10-27s`.
+  `combat/test_grid_model.py` is 3/3. It **is now trained** — `models/combat_grid/model.pkl`
+  (123,068,683 B, `hidden` 768, 4 epochs) scores val top-1 **0.7857** on 28 rows and test
+  top-1 **0.60** on 40 rows (CE 2.3997). The earlier "not trained" line was true while the
+  156 recorded boards were all pass-only, and `combat/grid_probe` rightly refused them; the
+  distillation corpus `data/combat_grid_synth_v2` (1,872 boards → **1,318 actionable**,
+  554 pass-only, 1,114/84/120 split) came from live `fight_boards.jsonl`.
+  `combat/grid_dataset.py` is the tensor builder. It is **solver distillation on synthetic
+  labels, not live-verified** — `live: false` in that manifest — and `--ranker grid` is
+  opt-in and fails open.
 - **30M Kaggle synthetic run:** 30,766,081 params trained on 440 solver-labelled
   boards from the real maps (372/28/40), 4 epochs, GPU. Val top-1 **0.786**, test
   top-1 **0.60**, test CE 2.40; artifact `models/combat_grid/model.pkl` (117 MB).
@@ -2220,7 +2472,7 @@ Entry points:
 ```bash
 python -m advisor capture
 python -m advisor report
-python -m advisor selftest     # 122 checks, knowledge repo only
+python -m advisor selftest     # 91 `check(` sites, knowledge repo only
 ```
 
 It never spends points, equips, buys, or sells. Live validation on a logged-in
@@ -2251,9 +2503,14 @@ minutes by farming Boufton Pâlichon at 113 kamas/min*, with the rejection line
 
 ### 11.4 `networkhealth/` — RTT/loss forecaster
 
-Causal TCN `NetworkHealthTCN`, 52,816 params, 0.20 MB, per-horizon heads for log-RTT,
+Causal TCN `NetworkHealthTCN`, per-horizon heads for log-RTT,
 RTT variance, jitter, loss, degradation logit, plus one anomaly score shared across
-horizons.
+horizons. The default `ModelConfig` is now `hidden=96, levels=5, kernel_size=3,
+use_identity_mask=True` with `architecture` selectable between `"tcn"` and
+`"trm_moe"` (`num_experts=4, top_k=2`), which instantiates **144,016 params (0.576 MB)** —
+this document's "52,816 params, 0.20 MB" is the pre-identity-mask model. Either way the
+forecaster is **dark**: `networkhealth_artifacts/model.pt` does not exist, so nothing is
+served (§2.4, G5). `networkhealth/inference/` is a package, not `inference.py`.
 
 Pipeline: `collectors/` (RIPE Atlas), `clean.py` (schema/timestamp/plausibility,
 dedup, failure preservation), `features.py` (windowing, `TARGET_BLOCK`), `splits.py`
@@ -2324,13 +2581,64 @@ net -418. `farm.start` succeeded 78/78 with identical args
 This baseline predates every 2026-10-26 fix. It is a valid *before* picture and must
 not be compared against anything except a re-run of the same commands.
 
-### 12.2 Latest live sessions (after most fixes, page build `2026-10-27l`)
+### 12.2 Latest live sessions (four slots, rows through 2026-10-29)
 
-See §2.1 for the per-instance table. Totals across the four logs: 2,573 steps,
-2,496 ok, 77 failed, **10 objectives**, **0 quests completed**, 31 manual
-interventions, 105 retry / 1,260 recover / 642 replan. This is the newest honest
-picture; the page build predates `q`, so it does not test the newest accept/keep-alive
-changes.
+See §2.1 for both per-instance tables. Totals across the four **autopilot** logs:
+58 sessions, 668.4 min wall, **4,003 steps** (3,603 ok / 400 failed), **194 manual
+interventions**, and 230 retry / 1,385 recover / 801 replan — i.e. 55% of the step
+budget is still spent recovering or replanning, and one slot (dofus-05) accounts for
+140 of the 194 interventions. The newest page build those rows ran is `2026-10-29bf`;
+the source is `2026-10-30a`, which has not run yet, so these numbers do not test the
+interactive-use fix (§2.4).
+
+### 12.2b The outcome-label research programme (G41–G69, 2026-10-29/30)
+
+One corpus, rebuilt as each defect was found: `data/transitions_temporal` /
+`transitions_v2` at **9,687 rows / 457 segments / 5,289 actions / 1,322 claims met**,
+`label_version: 3`. The headline measurements, all from
+`python tools/live_outcome_probe.py`:
+
+| finding | number | consequence |
+|---|---|---|
+| labels validated on their own training days (G41) | hash-fold AUC 0.830 → temporal 0.634 | every earlier "the model learns" claim was leakage |
+| the label counted walking (G42) | 636 "moved" of 2,848 advance calls, **318 changed only the cell** | label redefined to a state change with direction |
+| the label read the *pre-action* snapshot (G43) | moved 1,030 → **1,863** (19.47% → 35.22%), claims 345 → 788 | observation pairing fixed; corpus rebuilt |
+| context features predict nothing inside a tool (G44) | mechanism block 0.856 vs tool-rate floor 0.723 was an illusion; `state_only` 0.724 | the "state" story was a tool-identity story |
+| travel is the weak primitive (G45) | direction form 185/1,804 map changes (10.4%) vs map form 268/338 (74.3%) | travel = adjacent hops, not free jumps |
+| the loop acted on stale state (G47) | 4,153 of 4,344 steps (95.6%) carried state; median age 707 ms | freshness rule, not a model |
+| repeating a failed call is the dominant failure (G48) | after 1 miss 22% repeat, after 2 → 0/18, ≥3 → 1/41 (2%); streak AUC 0.851 | the veto's signal |
+| `repeat_streak >= 2` is a shippable veto (G51/G54) | vetoes 11–18% of calls that meet ~2–3%, keeps **99%+** of successes; replicates across 4 rolling cuts (nav AUC 0.939/0.753/0.655/0.853) | shipped as `agent/gate.py`, **shadow-only** — it annotates, it does not refuse |
+| progress, not the gate, is the constraint (G53) | 100 quest advances = 9,692 actions ≈ 15.4 h of action time ≈ **four days** of sessions | the case for live volume |
+| a learned ranker is identical where it would ship (G56/G59) | forest 0.849 AUC vs rule 0.683 *ranked*, but at the shipping point both keep 99.4%; frozen forest on 10-29 nav tied 0.899 vs 0.899 and lost on quest (0.691 vs 0.664, CI −0.80..−0.10) | nothing shadowed |
+| the world-model encoder route is dead (G57) | encoder 0.571 vs hand-built 0.658; best combined 0.647, rule 0.778; bar was +0.03 | revisit at ≥40 test sessions |
+| per-form calibration is not a better picker (G66) | at the counter's 168 vetoes: keeps 0.611 vs 0.678, CI (−0.121, 0.012); its wins come from vetoing 1.5–3.7× more | equal-budget comparison is now mandatory |
+| the state block has no headroom on kept calls (G67) | `quest.talk` kept AUC **0.472**, `quest.reply` **0.398**; the 5%/10% layers remove calls that all met | no worker ships |
+| refused calls were credited as met (G65) | 945 refused steps, **63 labelled `claim_met: true`**; after the fix advance is 452/1,942 = 23.3% (was 26.3%) | `label_version: 3` |
+| the gate's call identity was volatile (G60) | 3 taps of element 513208 with different `skill_uid` = 3 rules, streak never reached 2 | normalized key in `agent/gate.py` |
+| the veto's alternative was never priced (G70) | temporal test: 168 candidates at streak ≥ 2, 10 met (5.95%), retention if wired **0.9832**; the next *different* call met 61/134 = **0.455**, the next *same* call 0/30 = **0.000**, difference **+0.455** CI (+0.304, +0.603). hash test: 280 candidates, retention **0.9688**; 46/72 = 0.639 vs 1/195 = 0.005, **+0.634** CI (+0.296, +0.872) | the veto is now costed on **both** sides; G55's 76 % was a label artifact, and causality still needs the epsilon arm |
+
+**One methodological correction that reaches back into this table.** The mutation driver
+ran `test_kaggle_toolkit_sync` *inside* every mutated section, and a mutation edits a
+mirrored source file — so mirror drift fails for every mutation and any batch reads "CAUGHT"
+no matter what the checks think. It is out of the snippet now (still in the gate; the driver
+`--check`s before and after). The exposure is bounded by where a mutation lands: the mirror
+covers `dofus-network/` only, so the `calib:` 7/7 and `worker:` 2/2 verdicts quoted in §21
+(targeting `tools/live_outcome_probe.py`) may have been witnessed by drift rather than by
+their own checks and need a re-run, while `use:` (into `scripts/mobile-disguise.js`) and the
+C# mutations named in §5 were never visible to the drift check and stand as recorded. The
+G70 batches were run
+after the fix: the threshold mutant is caught **by name** (6 failing checks, including
+`test_veto_alternative_priced`'s own labels), and one mutant — counting reads as acting
+calls — was legitimately **MISSED**, because the corpus already gives a read no `claim`, so
+the filter is redundant and the mutant is equivalent.
+
+The promotion bar the programme ended with (constants in the probe, prose in
+`docs/TRAINING_PLAN.md`): `PROMOTION_RETENTION = 0.95`,
+`PROMOTION_MIN_COUNTER_VETOES = 10`, `PROMOTION_DELTA_POINTS = 0.05`, ≥3 of 4 rolling
+cuts, and a form must have ≥400 met rows over ≥3 start periods — **and, since G71, the
+"five points" in that sentence is actually enforced**: `_promotion_ok` previously required
+only a positive bootstrap interval, so the point floor was decoration. **No form qualifies
+today**, which is the measured reason no learned worker is trained.
 
 ### 12.3 Encoder (text policy)
 
@@ -2360,10 +2668,19 @@ structural, not Touch-fidelity.
 - Official DB: 330 spells / 1,980 levels.
 - Solver: 50 tests, 1,980/1,980 levels convert.
 - Live policy over 64 recorded turn boards: 18 casts, p50 3.3 ms.
-- Live fight: **not proven**; calibrator absent; `live_calibrated: false`.
-- The root `trajectories/live_policy_decisions.jsonl` has 14 rows (latest fight 289,
-  round 0, my_id 4434089), but the baseline's first 8 rows did not come from the
-  page; treat the file as instrument data, not a win rate.
+- Live fight: **proven** (was "not proven" until 2026-10-28). `fight_outcomes.jsonl`
+  carries 22 rows, 9 `won: true`, over `fight_id` 124, 900, 1356, 1358, 1359, 1482 —
+  all inside one session (`7a871278`), and 1482 was entered by `quest.advance`. The
+  calibrator is still absent, so `live_calibrated: false` and unattended fights remain
+  refused by design.
+- The trained **move head executes live** (approach / retreat / hold) and the trained
+  critic ranks legal realizations when its inputs are complete; neither has a boss
+  benchmark, and the `2026-10-28w` battle-log ring has never been read out of a live end
+  message, so the damage numbers of a won fight are not yet in the corpus.
+- The root `trajectories/live_policy_decisions.jsonl` now has **810 rows** (last:
+  `fight_id 1482`, round 0, `my_id 4434148`), not the 14 this document used to report.
+  The baseline's first 8 rows did not come from the page, so treat the file as instrument
+  data, not a win rate — the win rate lives in `fight_outcomes.jsonl` (§12.5).
 
 ### 12.6 NetworkHealth
 
@@ -2372,15 +2689,21 @@ See §11.4. Best honest local number: log-MAE h1 0.1464 on this line, 12 series,
 
 ### 12.7 Knowledge / data size
 
-40.5 MB JSON → 3.0 MB disk / 5.3 MB RAM; SQLite spine 43 MB; observed quest catalogue
-9k–19k objectives per character; asset cache 99% hit rate.
+Compact knowledge artefact measured 2026-10-30: `data/kb/dofus_kb.npz` (250,560 B) +
+`data/kb/dofus_names.bin` (2,700,874 B) = **2,951,434 B ≈ 2.8 MiB**, which matches the
+"3.0 MB on disk" claim; the 5.3 MB RAM figure is a runtime measurement and was not
+re-taken. The **"40.5 MB JSON" source no longer exists as one file** — `data/cache/*.json`
+now totals 32,626,819 B with the largest members `items_full.json` (24.6 MB) and
+`quests_full.json` (8.0 MB), so quote that figure as historical. SQLite spine
+44,044,288 B; observed quest catalogue up to 21,624 objectives on one character (§2.1);
+asset cache 103.6 MiB with the ~99% hit rate measured on the 2026-10-27 run.
 
 ---
 
-## 13. Open gaps (G1–G34)
+## 13. Open gaps (G1–G71)
 
 This is the project's own gap register, condensed. The full evidence is in
-`dofus-network/docs/KNOWN_GAPS.md` (2,294 lines). Read the numbered entry before
+`dofus-network/docs/KNOWN_GAPS.md` (6,698 lines / ~299 KB). Read the numbered entry before
 touching the area.
 
 | # | gap | status |
@@ -2392,7 +2715,7 @@ touching the area.
 | G5 | Network-health forecaster dark | torch import + missing checkpoint; ONNX port + retrain owed |
 | G6 | Verifier head wired but unmeasured/circular | GUI auto-load gated on a live/human validation contract; no contract → rules-only |
 | G7 | Live combat unverified | open; fallback planner now behaviorally tested; brain auto-start wired |
-| G8 | Test gate was deleted; partially restored | `agent.regression` **1,241 checks, exit 0** (2026-10-29, build 2026-10-29bb); combat suites, sim floor, 40-instance daemon, C# compile and live toolkit drift are gated; C# selftest/release still outside |
+| G8 | Test gate was deleted; partially restored | `agent.regression` **1,540 checks, 0 failed, exit 0** (re-measured 2026-10-30 on build `2026-10-30a`, after the session_report, mutation-journal and preflight checks landed); combat suites, sim floor, 40-instance daemon, C# compile and live toolkit drift are gated; C# selftest/release still outside |
 | G9 | Identity keyed by slot, not account | fail-closed binding shipped 2026-10-27, offline-verified; live relogin proof owed |
 | G10 | `kaggle/toolkit/` drifts with no generator | generator + real-tree drift gate shipped 2026-10-28; dataset re-upload owed |
 | G11 | `js-error-finder.js` red (9 bundle checks) | checker vs runtime-patch mismatch |
@@ -2419,87 +2742,153 @@ touching the area.
 | G32 | Quest offer is a link in the NPC text; page deleted it | read half fixed; accept half G33 |
 | G33 | `quest.advance` cannot accept while a dialog is open | fixed 2026-10-27, offline-verified; live proof owed |
 | G34 | An ignored action looked retryable (119× talk, 120× crossing) | fixed 2026-10-27, measured live (receipts + tutorial hold; 45 steps, max 4–9 repeats) |
+| G35 | Cause-head validation leaked identical inputs | **gate-pass claim withdrawn** 2026-10-28: 50 of 400 val vectors identical to the fit/calibration inputs → 0.8343 against the 0.85 bar. Needs genuinely fresh rows |
+| G36 | Simulator reported an open quest dialog merely for standing on the start map | fixed, measured 2026-10-28 (teacher 119/148 max_repeat 1 → honest floor 82/177 max_repeat 13) |
+| G37 | Damage spells gated behind a state the planner never cast | fixed, **measured live** 2026-10-28 (enabler 7001, AP 1; gate `missing_state_1`; +2,000 XP) |
+| G38 | Level-ups never spent — base stats with 35 points banked | fixed, **measured live** 2026-10-28 (7045 rank 2→4, agility 35→40; rank 5 correctly refused) |
+| G39 | Pipeline scored itself against a teacher it could not beat | measured 2026-10-29 (val 0.8599 vs teacher agreement 0.857, lift +0.003; ICC 0.241, ESS 19–44 rows). The randomized arm is still unauthorised |
+| G40 | Downloaded knowledge store is legacy; the client index is the authority | measured 2026-10-29 (44.0 MB, 1,976 quests, ids stop at 2546; 0 of 3841/4260/4262/4264/4266 present). Do not re-sync it — the licence forbids AI use |
+| G41 | Live-outcome numbers were validated on the days they trained on | measured 2026-10-29 (hash AUC 0.830 → temporal 0.634). Temporal folds are now mandatory |
+| G42 | The outcome label counted walking | measured 2026-10-29 (636 "moved" of 2,848 advance; **318 changed only the cell**) |
+| G43 | The outcome label read the *pre-action* snapshot | measured/fixed 2026-10-29 (moved 1,030 → **1,863**; claims 345 → 788) |
+| G44 | Context features do not predict success inside a tool | measured 2026-10-29 (`state_only` 0.724 vs tool-rate floor 0.723; `(tool, arg-kind)` lookup 0.902) |
+| G45 | The travel primitive fails nine times out of ten | measured 2026-10-29 (direction 185/1,804 = 10.4% vs map 268/338 = 74.3%); live check owed |
+| G46 | The planner's reasons were thrown away and are not reconstructable offline | measured 2026-10-29 (9,687 rows carry `why: null`); coverage starts with the next live run |
+| G47 | The loop acted on state carried from the previous step | measured 2026-10-29 (**4,153 of 4,344 steps = 95.6% carried**, median age 707 ms) |
+| G48 | Re-issuing an identical request is the dominant failure mode | measured 2026-10-29 (22% repeat after one miss, 0/18 after two, 1/41 after three; streak AUC 0.851) |
+| G49 | `quest.advance`'s claim was too strong for a talk | measured 2026-10-29 (the `npc_id` form meets 13/1,639 = 0.8%) |
+| G50 | The reply's claim counted the wrong event | measured 2026-10-29 (119 of 160 judgeable replies changed the dialog node) |
+| G51 | Rule-keyed streak is a shippable veto; tool-keyed is not | shipped **shadow-only** 2026-10-29/30 (`agent/gate.py` records the would-be veto on every decision; acting on it needs the alternative priced first — G39/G55). **Zero shadow rows exist**: the newest logs (2026-10-29) predate the file, so 593 + 454 rows contain no `"gate"` key. The wiring is proven offline by `test_gate_shadow_reaches_the_trajectory` (10 checks): `VETO_AT = 2` annotates into `meta.gate`, the recorder persists it into the trajectory row, the loop's step rows structurally cannot carry it, and a read never builds a streak |
+| G52 | The retry decision is a step at the second miss | measured 2026-10-29 (immediate retry 1/711; changing the request 26/28 = 90%) |
+| G53 | The gate preserves progress; progress is the binding constraint | measured 2026-10-29 (100 advances = 9,692 actions ≈ 15.4 h ≈ **four days** of sessions) |
+| G54 | The gate replicates across four rolling-origin cuts | measured 2026-10-29 (nav AUC 0.939/0.753/0.655/0.853 over base rates 1%–80%) |
+| G55 | The loop already contains the replacement and takes it 17% of the time | measured 2026-10-29 (different action with no read → 349/459 = 76% met, vs 0.4% for the same rule) |
+| G56 | The forest ranks better than the counter; at the shipping point they are identical | measured 2026-10-29 (forest 0.849 vs rule 0.683 ranked; both 99.4% kept / 2.6% vetoed-met where it matters) |
+| G57 | The world-model encoder does not beat the hand-built features | measured, **route stopped** 2026-10-29 (encoder 0.571 vs hand-built 0.658; bar was +0.03). Revisit at ≥40 test sessions |
+| G58 | At the rule's veto count the forest keeps more nav successes in 3 of 4 cuts | measured 2026-10-29, **superseded the same day by G59** (it retrained inside each cut) |
+| G59 | The frozen veto model loses to the rule out of time, so nothing was shadowed | measured, **rejected** 2026-10-29 (nav 0.899 = 0.899; quest 0.691 vs 0.664, CI −0.80..−0.10). No model wired, no shadow added |
+| G60 | The gate counted interactive retries as new calls | fixed 2026-10-30 (normalized key drops `lang`/`skill_uid`/`cell`; `agent/gate.py`) |
+| G61 | Sessions bounce between two maps and no row says why | measured 2026-10-30 (dofus-02 216/229 map changes are A→B→A; 0 of 617 rows had `why`) |
+| G62 | The equip gate is the tutorial wall; the loop re-offered worn pieces | settled **offline** 2026-10-30 (`18974` is `QUEST_OBJECT:14`, `possible_positions: []`; `slot: 8..16` probe withdrawn). Ayin Spyr's answer is owed |
+| G63 | An objective may not return to the map it just left more than three times | shipped 2026-10-30 (three-return park; frozen replay 420 turns over 17 sessions passes unchanged) |
+| G64 | The client's own refusal text was never read | shipped 2026-10-30 (`logError` hook, newest 5 strings, 200-char cap; 16 checks) |
+| G65 | A refused call was credited as a met claim | fixed 2026-10-30 (945 refused steps, **63 wrongly `claim_met`**; `label_version: 3`; advance meets 23.3% not 26.3%). Live proof owed |
+| G66 | Per-form count calibration does not beat the counter at equal veto budget | measured 2026-10-30 (keeps 0.611 vs 0.678 at the same 168 vetoes, CI −0.121..0.012). Equal-budget comparison is now mandatory |
+| G67 | The state block has no out-of-time headroom on the kept calls | measured 2026-10-30 (`quest.talk` 0.472, `quest.reply` 0.398) — **no worker ships** |
+| G68 | The transition context dropped the element's skill instance and enabled list | fixed 2026-10-30 (all 9,687 rows had `skill: null`; rebuilt corpus labels identical) |
+| G69 | The aqueduct pages were earned by an interactive use the corpus could not see | measured 2026-10-30 (13948 validated 67 ms after the ack of `use 513208` from cell 345). Mechanic implemented; **a live run on `2026-10-30a` is what is owed** |
+| G70 | The veto's alternative was never priced, so it could not be wired | priced 2026-10-30 (`--alternative`, 10 checks): cost 1.68 % / 3.12 % of successes (retention 0.9832 / 0.9688); the alternative the loop already takes meets **45.5 % / 63.9 %** against **0.0 % / 0.5 %** for repeating, both CIs excluding zero. G55's 76 % was a label artifact. Observational, not causal — that still needs the epsilon arm |
+| G71 | `PROMOTION_DELTA_POINTS` was declared and read by nothing | fixed 2026-10-30: `_promotion_ok` now demands the point gain ≥ 0.05 alongside CI > 0 and retention ≥ 0.95, and `promotion` reports `min_delta_points` + `counter_kept_success`. Found because a mutation got away — and the *other* escaped mutant was **equivalent** (one-form fixture, so the Beta prior is invisible); fixed with a two-form fixture rather than another assert |
 
 **Unnumbered but real:**
 
-- The last live run's long "policy had no action to take" wait (28–384 passes; three
-  instances above 280).
-- Manual interventions are now instrumented (trusted input events only) but the latest
-  logs count 3–17 per instance; unattended Full Auto is not yet zero-intervention.
+- Manual interventions are instrumented (trusted input events only), and the newest logs
+  count **194 across four slots** — 140 of them on dofus-05. Unattended Full Auto is not
+  yet zero-intervention.
+- Recover/replan is still 2,186 of 4,003 steps (2,416 counting retries) — see §12.2. The
+  three-return park (G63) is the fix; its effect has not been measured live yet.
+- `tools/session_report.py` **no longer** refuses `play_*.jsonl`: the millisecond-epoch
+  crash was fixed on 2026-10-30 and is pinned by `test_session_report_census`. `quest_
+  witness.py` remains the tool that attributes an objective to the use that earned it.
 - `watchUpstream` flapping every 10 s is cosmetic (the flag is written, never read to
   gate a dial).
 - WARP showing `000` is expected on this line (UDP blocked), not a regression.
+- Guest bans remain the fleet's real ceiling: two permanent
+  `ui.popup.accessDenied` bans are recorded in `brain_console.log`.
 
 ---
 
 ## 14. Current uncommitted work (working tree at snapshot)
 
-`git status` shows **36 files changed, +23,967 / −45,064** versus HEAD `0990695`, plus
-untracked files. This is the newest work and is **not committed** (the project's rule:
-no commits or pushes unless the user asks).
+`git status` shows **42 files modified (+26,134 / −19,923)** versus HEAD `c875cde`, plus
+13 untracked paths. (The count moved from the 30 recorded earlier in the day because the
+fixes below also rewrite their `kaggle/toolkit/` mirrors — that is the invariant working as
+intended, not drift.) This is the newest work and is **not committed** (the project's rule:
+no commits or pushes unless the user asks). Since the previous snapshot of this document
+(HEAD `0990695`) four commits landed the 2026-10-27/28 work: `f690da0` (73 files,
++43,184/−45,064), `cbc0e31` (106 files, +13,422/−407), `5e84e79` (158 files,
++54,812/−265) and `c875cde` (137 files, +60,082/−736) — so the research-unlock, brain
+daemon, entity-pointer and command-parser work that this section used to list as
+uncommitted **is now committed**.
 
-**Modified (highlights):**
+**Modified — the 2026-10-29/30 outcome-label programme:**
 
-- 2026-10-27 research unlock: `dofus-network/data/capabilities.json` now has 25
-  tools; `agent/autopilot.py` has an empty `FORBIDDEN_TOOLS`; `agent/features.py`
-  freezes the 21-wide learned feature; `agent/schema.py`, `agent/verifier.py` and
-  `agent/regression.py` follow the new contract; `agent/serve.py` adds `/brain/*`;
-  `scripts/mobile-disguise.js` adds `hdv.buy`, `inv.equip` and `tap.interactive`;
-  `desktop/aipanel.cs` starts one brain daemon and keeps the child path as a
-  fallback. `agent/brain_daemon.py`, `run_brain.py`,
-  `docs/BRAIN_DAEMON.md` and `docs/ENTITY_POINTER_ARCHITECTURE.md` are new;
-  `combat/battle_solver.py` now stratifies plans into four buckets.
+- `dofus-network/tools/live_outcome_probe.py` — the whole G41–G69 measurement surface:
+  `--calibration` (equal-veto-budget comparison) and `--worker` (state-block headroom),
+  with the promotion constants `PROMOTION_RETENTION` / `PROMOTION_MIN_COUNTER_VETOES` /
+  `PROMOTION_DELTA_POINTS` pinned in the file.
+- `dofus-network/tools/build_live_transitions.py` — post-G43/G60/G65/G68 label rules:
+  after-state pairing, normalized call identity (imports `agent.gate.VOLATILE_ARGS`),
+  refused calls scored as misses (`label_version: 3`), element `skill_uid` /
+  `enabled_skills` / `type` / `door` carried into the context.
+- `dofus-network/data/transitions_temporal/*` and `data/transitions_v2/*` — the corpus
+  rebuilt on 2026-10-30: 9,687 rows / 457 segments / 5,289 actions / 1,322 claims met.
+- `dofus-network/agent/autopilot.py` — gate shadow wiring (`_meta["gate"]`), observation
+  age/source reporting, refusal payload in `note_result`, three-return park (G63).
+- `dofus-network/agent/planner.py` — travel as adjacent hops (G45), `why` publication
+  (G46/G61), the claim/plan changes behind G62/G63.
+- `dofus-network/agent/regression.py` — the new sections: `test_claim_calibration` (16
+  checks), `test_worker_headroom_layer` (14), the `use:` and `worker:` mutation entries.
+- `scripts/mobile-disguise.js` — page build `2026-10-30a`: `isoEngine.useInteractive`
+  (walks first), a 3 s interactive settle, the `logError` refusal capture (G64) and the
+  interactive element list with `skill_uid`/`enabled_skills` (G68).
+- `dofus-network/data/knowledge/client_index.json` + `client_index.manifest.json` — the
+  client-captured index, refreshed (the 44 MB DofusDB store stays untouched: its licence
+  forbids this use).
+- `builder/Build.exe` — the stale tracked builder recompiled from `build.cs`; the release
+  build exits 0 again (§2.2).
+- `dofus-network/docs/KNOWN_GAPS.md` (G35–G69 added) and `docs/TRAINING_PLAN.md` (the
+  pre-registered bar).
+- `dofus-network/kaggle/toolkit/**` + `TOOLKIT_MANIFEST.json` — the mirror, re-synced.
+  **This was the one failing check when this snapshot was taken:** `--check` reported
+  `tools/quest_witness.py` as drift, `--write` copied it, and the gate went back to
+  1,540/0. Run `python -m tools.sync_kaggle_toolkit --write` after every source edit.
+  The same check then caught a second, self-inflicted drift minutes later: an interrupted
+  `tools/mutate_cause_gate.py` run had left a real mutation in `agent/autopilot.py`
+  (`ok=None, error=None`) and a line-ending change in `agent/controller.py`; both were
+  restored from the mirror (§17).
+- `tools/test_inventory_equip.js` (32 checks), `tools/test_page_build.js`, `resume.md`.
 
-- `desktop/*.cs` — client backend, WebView2 form, bridge, AI panel, client updater,
-  main form, program, win32, farm engine.
-- `desktop/client/www/build/script.js` and `standalone.html` — 1.74.10 bundle and
-  shims.
-- `desktop/client/www/client_version.json` — new.
-- `dofus-network/agent/autopilot.py`, `executor.py`, `features.py`, `planner.py`,
-  `planner_nn.py`, `regression.py` — G34 hold, command/ensemble integration, fixes.
-- `dofus-network/combat/fight_estimate.py` — latest estimator work.
-- `dofus-network/sim/world.py`, `sim/tool_choice.py` — offer publication and harness
-  integrity fixes.
-- `dofus-network/data/tool_sft_v3/{train,val}.jsonl` — regenerated corpus.
-- `dofus-network/docs/CURRENT.md`, `KNOWN_GAPS.md` — latest status.
-- `dofus-network/tools/live_ready.py`, `mutate_cause_gate.py`.
-- `scripts/dofus-net-proxy.go`, `scripts/dofus_net_proxy_equiv_test.go` — pin fixes.
-- `scripts/mobile-disguise.js` — keep-alive capture, group scan, page build q, login,
-  quest accept, tutorial hold.
-- `tools/test_*.js` — new/updated gates.
-- `trajectories/live_policy_decisions.jsonl` — 6 more rows.
+**Modified in the same-day re-verification pass (2026-10-30b), after the audit of §3–§18:**
 
-**Untracked (new):**
+- `tools/session_report.py` — `_ts()` normalizes epoch-**millisecond** stamps so
+  `play_*.jsonl` reads instead of raising `OSError: [Errno 22]`; the docstring now states
+  what a wire capture does and does not report. Five new checks in
+  `test_session_report_census`.
+- `tools/live_ready.py` — `last_log_build` split into `_scan_build` plus a fan-out over the
+  newest log in the directory when no `--log` was named; the preflight's page-build verdict
+  moved from a false `2026-10-27s` to the true `2026-10-29bf`.
+- `tools/mutate_cause_gate.py` — a write-ahead journal (`.mutate-journal.json`), a
+  `--recover` mode, and a startup repair, so a hard-killed sweep no longer leaves broken
+  code in the tree; the duplicate mid-file `import os` removed while in there.
+- `agent/regression.py` — `test_mutation_journal_recovery` (6 checks) plus the new
+  millisecond and preflight checks; registered in `run()`.
+- `desktop/aipanel.cs` — the (never-displayed) hint string corrected from 25 to 28 tools.
+- `rules.md` — the new **Change policy** (clean the code you touch before adding to it) and
+  its own stale 25-tool vocabulary corrected to 28.
 
-- `dofus-network/agent/ensemble.py` — candidate-level stack.
-- `dofus-network/agent/foresight.py` — foresight runtime.
-- `dofus-network/agent/plan_stack.py` — 2 KB per-instance sub-goal stack.
-- `dofus-network/combat/grid_model.py` — 30,766,081-param 560-cell combat encoder.
-- `dofus-network/combat/grid_dataset.py`, `grid_probe.py`, `test_grid_model.py` — grid tensors and the actionable-board gate.
-- `dofus-network/ai/train_entity_pointer.py` — pointer-model training scaffold.
-- `dofus-network/tools/build_entity_pointer_dataset.py` — live observations → entity-pointer rows.
-- `dofus-network/data/entity_pointer/` — 4,017 paired rows (3,885/45/87), 325 moved, 4 progress.
-- `dofus-network/kaggle/entity_pointer/` — private dataset + GPU kernel (`thx-05-entity-pointer`, `dofus-entity-pointer-v1`).
-- `dofus-network/docs/BRAIN_DAEMON.md`, `ENTITY_POINTER_ARCHITECTURE.md`.
-- `dofus-network/ai/train_foresight.py`, `train_move_head.py`, `train_stacker.py`.
-- `dofus-network/ai/{pool_runner,pool_status,score_proxies,test_egress}.py` — restored
-  network tools.
-- `dofus-network/data/{auto_live,transitions}/` — unattended session data and live
-  transitions.
-- `dofus-network/docs/AI_ARCHITECTURE.md` — the new canonical AI map.
-- `dofus-network/kaggle/foresight/` — capacity-sweep kernel.
-- `dofus-network/tools/{auto_live,build_live_transitions,game_telemetry_scraper,host_control}.py`.
-- `tools/test_boot_alert.js`, `test_geometry_watch.js`, `test_session_login.js`.
-- `desktop/client/www/client_version.json`, `oauth-login.flag.paused`,
-  `dofus-net-proxy.exe~`.
+**Untracked (new files, none committed):**
 
-**Deleted:** `oauth-login.flag` (replaced by the paused marker).
+- `dofus-network/agent/gate.py` (63 lines) — `RuleGate`: the normalized call key
+  (`VOLATILE_ARGS` drops `lang`/`skill_uid`/`cell`, G60) and the `repeat_streak_norm`
+  counter, **shadow-only by construction** — it has no method that changes what is sent.
+- `dofus-network/agent/state_features.py` (153 lines) — the 24 relational features
+  (entity vectors with cells relative to the character, client's 14-per-row grid) used by
+  G57/G67.
+- `dofus-network/tools/state_encoder_probe.py` (368 lines) — the world-model encoder test
+  that produced G57's kill.
+- `dofus-network/tools/train_veto_shadow.py` (202 lines) — the frozen-model deployment
+  rehearsal behind G58/G59.
+- `dofus-network/tools/quest_witness.py` (235 lines) — attributes an objective validation
+  to the last interactive use on the same map (G69). Read-only over any capture.
+- `tools/test_client_errors.js` — executes the refusal-capture wrapper (G64).
+- `tools/test_interactive_use.js` (13 checks) — pins the walk-first use route (G69).
+- `_obs_05.json` — a single captured observation dump (2026-10-30 00:03), scratch.
+- `dofus-network/kaggle/toolkit/**` mirrors of the five Python files above.
 
 The last commits are the "golf" optimization pass and the command-model commit. The
-golf staging tree was deleted in `54ecd23`; only the encoder span-pruning merge
-survived. The ledger claims 7 files at −28.4% bytes / −25.5% lines, with the planner
-expected at −61%; a FLOP-doubling encoder pass was rejected. Do not resurrect the
-staging tree unless you intend to re-run its gates.
+golf staging tree was deleted in `54ecd23`; only the encoder span-pruning merge survived.
+Do not resurrect the staging tree unless you intend to re-run its gates.
 
 ---
 
@@ -2519,8 +2908,10 @@ staging tree unless you intend to re-run its gates.
 **Payload:** host, relay, client bundle, `bin/warp`, `bin/webview2`,
 `tools/patch-rules.txt`, `runtimes/python`, `dofus-network` (selected models, INT8
 command model, tool policy, encounter selfplay), `network.ini`, `proxies.txt`,
-`accounts.txt`. Current payload **100.1 MiB / 513 entries**; `setup.exe` on disk
-105.7 MB.
+`accounts.txt`. Current payload: the host, relay, client bundle, tools, runtimes and the
+selected models **plus a 213.8 MB standalone WebView2**, so `setup.exe` measured
+**224,413,696 B (214.0 MiB)** on 2026-10-30. The 100.1 MiB / 513-entry figure was the
+pre-rebuild non-standalone installer; do not quote it.
 
 **Excluded from the payload:** `networkhealth_artifacts/`, training corpora, model
 `encoder30_v15/model.pt` and fp32 `encoder.onnx`, fp32 command ONNX, verifier `.pt`,
@@ -2608,12 +2999,52 @@ That is the **Play-store check**, not the served bundle; `build/script.js` carri
 |---|---|
 | `DOFUS_FARM_HOME` | alternate install root for SDK/proxy lookup |
 | `ANDROID_SDK_ROOT` / `ANDROID_HOME` | legacy Android only |
+| `ANDROID_AVD_HOME` | legacy Android AVD location (`farmengine.cs:160,2004`) |
+| `DOFUS_MOD_WEBHOOK` | mod-webhook target (`WebView2ClientForm.cs:1759`) |
 | `LOCALAPPDATA` | profiles, logs, autopilot/human labels |
 
-### 16.5 Relay flags
+### 16.5 Relay flags — and the `network.ini` trap
 
-See §8.1. `dofus-net-proxy.exe -config network.ini` reads `port`, `host`, `upstream`,
-`dns`, `cache`, `quiet`, `log`, `allow_direct`, `referer`, `mods_dir` as defaults.
+**The host does not pass `-config` to the relay.** `grep -n "\-config" desktop/*.cs` is
+empty, so `dofus-net-proxy.exe` starts with explicit flags only, and
+`configArgValue(...)` returns `""` for an absent argument (`scripts/dofus-net-proxy.go:3250-3262`)
+— which means **`network.ini` is not read by the relay when the manager launches it**. The
+ini is the C# side's model (`netsettings.cs:147-156` parses the ten keys in §16.1) and the
+C# translates them into per-instance command lines. Editing `network.ini` by hand still
+works, because the C# re-reads it — but the key names differ between the two layers
+(`base_port` vs `-port`, `log_path` vs `-log`, `fail_closed` vs the absence of
+`-allow-direct`), so the old sentence here ("`dofus-net-proxy.exe -config network.ini`
+reads `port, host, upstream, dns, cache, quiet, log, allow_direct, referer, mods_dir` as
+defaults") is only true of a **manual** run.
+
+For a manual run the full flag set is: `-port -host -upstream -cdn-upstream -exit-proxy
+-config -dns -cache -quiet -log -allow-direct -token -serial -uuid -model -manufacturer
+-ua -gl-vendor -gl-renderer -texture-size -referer -assets-url -precache-maps
+-precache-workers -precache-neighbours -precache-radius -precache-tiles-depth
+-precache-workers -crawl -crawl-max -crawl-rate -crawl-tiles -mods-dir -login-host`
+(`dofus-net-proxy.go:3306-3339`). Note `-cdn-upstream` and `-exit-proxy` exist and were
+never documented here. The C# passes `-cache asset_cache` explicitly
+(`farmengine.cs:1292`), overriding the Go default `proxy_cache`.
+
+### 16.6 Files §16 did not document (added 2026-10-30)
+
+| file | where | what it actually is |
+|---|---|---|
+| `runtime.ini` | install root **or** `%LOCALAPPDATA%\DofusFarm\` — **absent on this machine, so defaults are in force** | `refresh_ms` (default 4000, clamped to 0 or 1000-60000), `watchdog`, `governor`, `telemetry`, `fight_boards`, `auto_ai` — the last five are 0/1 and `auto_ai=1` is why launching a client also starts its loop (`runtimesettings.cs:18-25,42-47,98-104`) |
+| `ai_goals.txt` | `%LOCALAPPDATA%\DofusFarm\` | the goals the AI page edits (`aipanel.cs:906`). There is **no** `goals.txt` at the repo root; the Python side takes `--goals-file` (`agent/autopilot.py:3490`) |
+| `AUTOPILOT_STOP` | **two places**: `%LOCALAPPDATA%\DofusFarm\AUTOPILOT_STOP[.<instance>]` and `REPO_ROOT\AUTOPILOT_STOP` | the panel writes the LOCALAPPDATA ones (`aipanel.cs:1075-1083`); the CLI default is the repo-root file (`agent/autopilot.py:78`). Both LOCALAPPDATA files exist right now (`AUTOPILOT_STOP` 25 B from 10-29 22:38, `AUTOPILOT_STOP.dofus-01` 27 B from 10-28); the panel clears a stale **root** file at launch (`aipanel.cs:897-904`) |
+| `bridge_port.txt` | `%LOCALAPPDATA%\DofusFarm\` | the only authority for the directive bridge port; contains **`8896`**. `agentbridge.cs:39` walks `{8893…8899}`, `agent/bridge.py:22` still defaults to 8893 |
+| `kick_signatures.json` | `dofus-network/data/safety/kick_signatures.json` (98 B) | the kick-pattern list; the host searches 4 candidate roots for it (`WebView2Backend.cs:179-182`) — it is not under `knowledge/` |
+| `app_version.json` | `%LOCALAPPDATA%\DofusFarm\` | the updater's cache; UTF-8 **BOM** (read it with `utf-8-sig`), versions 3.14.3 / 3014003 against bundle 1.74.10. `lastCheckedUtc` moves every launch — never quote it from a document |
+| flags | install root | `manual-login.flag`, `no-client-update.flag`, `oauth-login.flag` — **none present now**, only `oauth-login.flag.paused` (so OAuth is paused). `force_fresh_identity.flag` is **per-profile** (`webview2_profiles\<slot>\`), not a root file (`WebView2ClientForm.cs:611`, `mainform.cs:3021`) |
+| exploration | CLI only | there is no epsilon ini key: the randomized arm is `--explore-objectives` (`autopilot.py:3441,3506`) and it is off by default |
+
+And one correction to a widely repeated premise: **there is no max-instance constant in the
+code.** The "12/6/6" figure is `NORMAL_CAPS` for combat AP/MP/range
+(`combat/normal_build_duel.py:45`), not a fleet limit. The real operational limits are the
+governor's ≤4-core share (`prioritygovernor.cs:163`, 62-core ceiling at `:168`), 3 watchdog
+restarts per hour (`watchdog.cs:16`), `RETURN_LIMIT = 3` (G63, `planner.py:193`) and the
+page's 3-reload busy budget (`scripts/mobile-disguise.js:256`).
 
 ---
 
@@ -2665,30 +3096,80 @@ go test dofus-net-proxy.go dofus_net_proxy_equiv_test.go
 
 ```bat
 cd dofus-network
-python -m agent.regression       :: 1,241 checks, 0 failed (latest)
+python -m agent.regression       :: 1,540 checks, 0 failed (measured 2026-10-30)
 python -m agent.constraint_corpus --check  :: 39 hand cases, 28-tool preconditions and causes
 python -m agent.constraint_corpus --generate --out data/constraint_synthetic.jsonl
                                   :: 2,600 synthetic rows, 100% cause/action agreement
-python -m advisor selftest       :: 122 checks
+python -m advisor selftest       :: 91 check sites
 ```
 
 **Mutation driver (proves the checks are non-vacuous):**
 
 ```bat
 python tools/mutate_cause_gate.py
-:: 329 mutations; 349 anchors resolve exactly once; MUT_ONLY=<batch> for one batch
+:: 432 mutations (counted from MUTATIONS on 2026-10-30c; the driver also prints how many
+:: anchors resolve exactly once); MUT_ONLY=<batch> runs one batch
+
+**Do not interrupt a mutation run — and if you do, it now repairs itself.** The driver
+writes a real mutation into a source file, runs one gate section in a throwaway process,
+and restores the file in a `finally`; a hard kill skips that `finally`. That happened while
+this snapshot was written: the source `agent/autopilot.py` was left with
+`ok=None, error=None` at the decision site (mutation *"game-level outcome dropped at the
+step site"*) and `agent/controller.py` with different line endings, which the drift check
+caught as two extra failures. Both were restored byte-for-byte from `kaggle/toolkit/agent/`
+(the mirror still held the pre-mutation content).
+
+The fix is in the driver now: it journals the pre-mutation bytes to
+`dofus-network/.mutate-journal.json` **before** each write, deletes the journal after the
+restore, and replays it at startup — so the next start, or an explicit
+`python tools/mutate_cause_gate.py --recover`, repairs what a killed run left behind.
+`test_mutation_journal_recovery` (6 checks) pins it. After any interrupted run still do:
+`python -m tools.sync_kaggle_toolkit --check`, `git status`, and read the diff of every
+file the run touched before trusting the tree.
+
+**How to read a batch verdict (fixed 2026-10-30c).** The snippet used to run
+`test_kaggle_toolkit_sync` inside every mutation. A mutation edits a mirrored source file,
+so drift failed for *every* mutation and every batch printed "CAUGHT" regardless of the
+checks. It is out of the snippet now. Two consequences: earlier `calib:` 7/7, `worker:` 2/2
+verdicts are of unknown value and should be re-run; and a batch can now
+report **MISSED** legitimately — `alt: a read is counted as an acting call` is missed
+because the corpus already gives a read no `claim`, i.e. an equivalent mutant. A crash is
+also reported as caught, which says nothing about the checks; look for named failing checks.
+
+The exposure is bounded by where the mutation lands: the mirror covers `dofus-network/`
+only, so the batches whose targets are `agent/*.py` or `tools/*.py` (`PROBE`, `AUTO`,
+`CTRL`, `PLAN`, `SREPORT`, `REPORT`, `BRAIN`, `READINESS`) were contaminated, while
+mutations against `scripts/mobile-disguise.js` (`use:`) and the C# host — including §5's
+`guard removed` / `JsonOk reverted` pair and `test_page_build`-style checks — were **never**
+affected by the drift check and stand as recorded.
+
+**Re-audit result, same day.** With drift out of the snippet, `calib:` came back **5 of 7
+caught, not the 7 of 7 on record**: `a form is not shrunk toward the global rate` and
+`a tie with the counter is promoted` were MISSED. One was an equivalent mutant (a
+one-form fixture makes the Beta prior invisible — the check looked like it tested
+shrinkage and could not fail); the other was a genuine hole, because the point floor was
+declared and never read (G71). Both are fixed, and the batch is now **8 of 8 caught** with
+`restored: 0 failing checks`. `worker:` (2/2) and `use:` (2/2) were confirmed as recorded.
+A third outcome to watch: a mutation whose anchor no longer matches prints **SKIP**, counts
+as "no check noticed", and disappears from a filtered log — after editing a mutated file,
+re-check its anchors or you are measuring a mutant that never ran.
 ```
 
-**JS page suites (27 files):** `tools/test_boot_alert.js`, `test_battle_log.js`,
+**JS page suites (36 `tools/test_*.js` files):** `tools/test_boot_alert.js`, `test_battle_log.js`,
 `test_challenges.js`, `test_char_build.js`, `test_dialog_close.js`,
 `test_dialog_links.js`, `test_fight_budget.js`, `test_fight_planner.js`,
 `test_fight_state_fields.js`, `test_geometry_watch.js`, `test_group_scan.js`,
-`test_intervention_instrument.js`, `test_inventory_equip.js`, `test_keep_alive.js`,
+`test_intervention_instrument.js`, `test_inventory_equip.js` (32 checks), `test_keep_alive.js`,
 `test_login_guard.js`, `test_npc_actor.js`, `test_page_build.js`, `test_quest_accept.js`,
 `test_quest_catalog.js`, `test_quest_progress.js`, `test_research_tools.js`,
 `test_session_login.js`, `test_shop_buy.js`, `test_transition_watchdog.js`,
-`test_tutorial_hint.js`, `test_ui_tap_client_target.js`, `test_ui_tap_close.js`, plus `audit_tutorial_chain.js`;
-and `js-error-finder.js` and `auth-bypass-suite.js`.
+`test_tutorial_hint.js`, `test_ui_tap_client_target.js`, `test_ui_tap_close.js`, plus the
+nine added in the 2026-10-28/30 work: `test_interactive_use.js` (walk-first use route,
+13 checks — G69), `test_client_errors.js` (refusal capture — G64),
+`test_equip_slot_inference.js`, `test_inv_unequip.js`, `test_nav_doorless_exit.js`,
+`test_login_ban.js`, `test_login_cooldown.js`, `test_kick_signature_clear.js`,
+`test_packet_redaction.js`. Not `test_*.js` but also run by hand:
+`audit_tutorial_chain.js`, `js-error-finder.js` (red — G11) and `auth-bypass-suite.js`.
 `agent.regression` delegates several of them to `node`.
 
 **Live preflight:**
@@ -2700,8 +3181,11 @@ python tools/live_ready.py --check-installer
 ```
 
 `FAIL page build` means the last client recorded an older `agent_build` than the repo
-(currently `2026-10-29az`); restart the app fully, because a reload keeps the old
-injected page. `FAIL stop file` means a leftover `AUTOPILOT_STOP` would end the run on
+(currently `2026-10-30a`); restart the app fully, because a reload keeps the old
+injected page. "Last client" is now the newest `*.jsonl` in `trajectories/` by mtime —
+until 2026-10-30 the preflight read `default.jsonl` alone, which the per-instance daemon
+no longer writes, so it always reported a stale build; name one file with `--log` and it
+is read as itself. `FAIL stop file` means a leftover `AUTOPILOT_STOP` would end the run on
 its first step. `WARN installer` means `setup.exe` is older than the page;
 `WARN client`/`WARN brain` mean the app or combat brain is not up yet.
 
@@ -2771,9 +3255,15 @@ not a queued batch push.
 | `SOCKET_LOST` | malformed `appVersion` param | version param must be emitted last |
 | Relay port already in use | stale `dofus-net-proxy.exe` | the engine kills the one bound to that port on launch |
 | Two hosts fighting | single-instance mutex | the second launch focuses the first |
-| AI loop exits immediately | no goals / stop file present | type goals; delete `AUTOPILOT_STOP` |
-| Long waits "policy had no action" | planner returned None (tutorial hold, no startable quest, or exhausted objective) | inspect the last step/dialog rows; this is the newest open live symptom |
+| AI loop exits immediately | no goals, or a stop file is present | goals live in `%LOCALAPPDATA%\DofusFarm\ai_goals.txt`; **check both stop locations** — `AUTOPILOT_STOP[.<instance>]` under `%LOCALAPPDATA%\DofusFarm\` (the panel's) *and* `REPO_ROOT\AUTOPILOT_STOP` (the CLI's). Both LOCALAPPDATA files exist right now; the panel clears a stale root file at launch (`aipanel.cs:897-904,1075-1083`) |
+| Long waits "policy had no action" | *was* the newest open symptom; it is now explained and bounded | the loop was bouncing a map pair (G61: 216 of 229 changes were A→B→A) and the three-return park now stops it (G63). Read for `[planner] objective … parked after N immediate returns` instead. If a run still idles, the open question is what the loop should do *instead* (G39/G55), not why it waited |
 | `Server busy` after a network change | a page fetch kept a dead pin alive | see §8.4; page now reloads with a 3-reload budget |
+| Every directive fails while the UI looks normal | the bridge landed on a port other than 8893 | read `%LOCALAPPDATA%\DofusFarm\bridge_port.txt` (**8896** measured 2026-10-30); `agent/bridge.py:22` still *defaults* to 8893, so a hardcoded 8893 in any new tool is a bug |
+| The AI page says started but nothing moves, or the pill lies | the start path differs: brain daemon vs per-instance child fallback | check the AI console for `[ai] attached to the brain daemon on port` vs `fell back to per-instance children` (`aipanel.cs:342-346,992-998,1651`) |
+| Triage is reading yesterday's session | logs rotate at **64 MB** (`mainform.cs:269,2104`; `agent/recorder.py:141,272-292`) and a second rotation runs at startup (`Program.cs:271`) | open the newest `autopilot*.jsonl` / `*.log` **by mtime**, not by the fixed name; rotated siblings are named `dofus-05.20261029-170756-*.jsonl` |
+| `session_report.py` used to die with `OSError: [Errno 22]` on `play_*.jsonl` | it fed epoch **milliseconds** into `fromtimestamp` (`_ts` → `:346`); protocol captures use ms, step rows use seconds | **Fixed 2026-10-30** — `_ts` normalizes `>1e11` to seconds and `test_session_report_census` pins it. If you are on an older page build of this tool, `tools/quest_witness.py` still reads the captures directly |
+| The gate fails on "the checked-in Kaggle toolkit matches the harness" | a source edit was not mirrored (`test_kaggle_toolkit_sync`, `agent/regression.py:4611`) | `python -m tools.sync_kaggle_toolkit --check`, then `--write`. If a mutation run was interrupted, also `git status` and read each touched file's diff — the driver restores in a `finally` it never reached (§17) |
+| An objective stops being planned at all | the three-return park (`planner.py:193,3397-3403`, G63) | read the `parked after N immediate returns` line; it suppresses that walk for that objective, it does not drop the quest |
 
 ---
 
@@ -2806,6 +3296,30 @@ not a queued batch push.
   ledger claims 7 files at −28.4% bytes, planner expected −61%; a FLOP-doubling
   encoder pass was rejected; the staging tree was deleted after the encoder span-
   pruning merge. Only that merge survives.
+- **2026-10-28** — the first live fight proof (`fight_id 124`, `GameFightEndMessage` in
+  the outcome row, a gate that fails without it); interactives, optional challenges, the
+  quest step graph and dialog replies all captured into the observation; the tutorial UI
+  tools (`ui.tap`, `ui.icons`, `shop.buy`); the simulator's false "quest dialog open"
+  bug fixed (G36); state-gated spells and 35 unspent stat points fixed **live**
+  (G37/G38); and the cause-head's gate-pass claim **withdrawn** after an input-level
+  audit found 50 of 400 validation vectors identical to the fit inputs (G35).
+- **2026-10-29** — the outcome-label programme, one defect per entry, G40–G59: store vs
+  client-index authority (G40), day-leakage in every earlier number (G41), the label
+  that counted walking (G42), the label that read the pre-action snapshot (G43), context
+  features that turned out to be tool identity (G44), travel that fails 9/10 (G45),
+  `why: null` (G46), 95.6% stale observations (G47), the repeat-streak discovery (G48),
+  the claim rules for talk/reply (G49/G50), the veto and its four rolling cuts (G51/G54),
+  the volume arithmetic (G53), what the loop does instead (G55), and the forest/encoder
+  routes killed by their own bars (G56–G59).
+- **2026-10-29 night → 2026-10-30** — the tutorial finished live; house doors settled as
+  painted star cells; G60–G69: normalized call identity, the A→B→A map bounce and its
+  three-return park, the equip gate explained offline, the client's refusal text read,
+  refused-as-met corrected (`label_version: 3`), equal-budget calibration, the state
+  block's missing headroom, the dropped skill-instance context, and the interactive-use
+  attribution that finally explained the aqueduct pages. Page build **`2026-10-30a`**.
+  The stale tracked `builder/Build.exe` was found and recompiled, so the release build
+  exits 0 again — a failure that had been invisible because the gate compiled from
+  `build.cs` rather than running the shipped binary.
 
 ### 19.2 Decisions D1–D24 (the important ones)
 
@@ -2861,6 +3375,28 @@ not a queued batch push.
 - **Rewriting `WebView2ClientForm.cs`** — no feature upside, real risk.
 - **Automated account signup** — CAPTCHA + CloudFront, and the one thing that
   plausibly gets accounts banned. Real accounts in `accounts.txt`, one per slot.
+- **A learned state representation as the encoder route (G57, 2026-10-29)** — masked
+  world-model pretraining plus a tiny head: 0.571 against hand-built 0.658, best
+  combined 0.647, rule 0.778; the bar was +0.03 and no seed cleared it. A leaky
+  pretrain scored 0.806 and an honest one 0.50–0.61. Revisit at ≥40 test sessions, not
+  before.
+- **A frozen learned veto in place of the streak rule (G58/G59, 2026-10-29)** —
+  retraining inside each rolling cut flattered the forest; one frozen file scored out of
+  time ties on nav (0.899 vs 0.899, CI −0.17..0.17) and *loses* on quest (0.691 vs
+  0.664, vetoed-met 0.029 vs 0.143, CI −0.80..−0.10). Nothing was shadowed and nothing
+  was wired — that is the correct outcome, not an unfinished step.
+- **Per-form count calibration as the replacement (G66, 2026-10-30)** — at the
+  counter's own 168 vetoes it keeps 0.611 met against the counter's 0.678 (CI
+  −0.121..0.012); its apparent wins come from vetoing 1.5–3.7× more calls. The form
+  rates do not transfer (`nav.goto:at` 0/12 in train vs 238/336 in test; form-level ECE
+  0.676).
+- **A state-block second layer behind the counter (G67, 2026-10-30)** — the only place
+  left to win, and it has no headroom: kept-call AUC 0.472 (`quest.talk`) and 0.398
+  (`quest.reply`) out of time, and the 5%/10% extra-veto layers removed calls that had
+  **all** met.
+- **`inv.equip slot: 8..16` (G62, withdrawn)** — the client sets position 23 itself;
+  0–16 is the send window. Do not re-add the probe; the answer was that `18974` is a
+  `QUEST_OBJECT` with `possible_positions: []`.
 
 ---
 
@@ -2892,14 +3428,41 @@ not a queued batch push.
 15. **The model ranks legal candidates only.** Safety, legality, recovery, and
     knowledge stay in code/data.
 16. **No commits or pushes unless the user explicitly requests them.**
+17. **A gate is compared at the counter's own veto budget** (G66). A picker that looks
+    better by refusing 1.5–3.7× more calls is a different trade, not a better one —
+    `--calibration` enforces the equal count, and the constants are in the probe.
+18. **Folds are temporal, not hash-only** (G41). The same model scored 0.830 on the hash
+    cut and 0.634 out of time; a hash-only number is not evidence.
+19. **A refused call is always a miss** (G65). If the page said no before the wire saw
+    the request, it cannot be credited as a met claim — 63 such rows were removed.
+20. **A call's identity is its normalized argument set** (G60). `lang`, `skill_uid` and
+    `cell` never make the same promise into a new call; three re-taps of one element are
+    one streak of three.
+21. **After every source edit, `python -m tools.sync_kaggle_toolkit --write`** (G10).
+    Toolkit drift is the one gate failure that is always self-inflicted — it was the
+    *only* failure at this snapshot (`tools/quest_witness.py`).
+22. **No DofusDB re-syncs.** The 44 MB store's licence forbids AI use; the client index
+    is the live authority and is captured, not downloaded (G40).
+23. **Quest logic stays generic.** No per-quest hard-coding: generic actions plus the
+    map/NPC dialogue the client reports. A hand-coded quest is a regression of the
+    research goal, not a shortcut.
+24. **Clean the code you touch before you add to it** (added to `rules.md` 2026-10-30).
+    Inside the files a change touches, remove the stray mid-file import, the dead branch,
+    the stale number inside a string, the name that no longer fits. Not a repo-wide
+    refactor — the cleanup stops where the change does. It may not change behavior a test
+    pins; if it would, that is a separate change with its own evidence.
 
 ---
 
 ## 21. What to do next (ordered by unblocking power)
 
 This reconciles the three live plans (`docs/PLAN.md`, `AI_ARCHITECTURE.md`,
-`TRAINING_PLAN.md`). The order below is the one that avoids repeating the project's
-own history: prove the loop, fix the first hard stop, then train on real outcomes.
+`TRAINING_PLAN.md`). The subsections below are **chronological, newest last**
+(P-1 → P-1l); each records what shipped, what it measured, and what it left owed. They
+are no longer a priority order — the current ordering is **P-1j**'s last bullet and
+§24's "Next correct move", and they agree: one live session on `2026-10-30a`, read the
+proofs (including the first gate-shadow rows, of which there are currently zero), then let
+the outcome labels accumulate before training anything else.
 
 ### P-1 — shipped today, the loop is proven to its first hard stop (2026-10-29)
 
@@ -3490,6 +4053,447 @@ steps) or a hand-built candidate prior, evaluated only on within-segment
 tool-discordant pairs. Until one exists, the pipeline can calibrate the teacher but not
 beat it; the game-side wall is still quest 4262 objective 13948 on dofus-05.
 
+### P-1f — the representation route was tried and stopped by its own bar (2026-10-29, late)
+
+- **Phase 0 shipped, shadow-only.** `agent/gate.py` holds a `RuleGate` that counts
+  consecutive misses per identical rule (`tool|args`); the autopilot attaches
+  `_meta["gate"] = self._gate.shadow(...)` to every call, observes the verdict after it,
+  and clears on the same two session-reset paths as the no-op memory. The corpus row
+  carries `gate`, and `tools/live_outcome_probe.py --shadow` prices what the veto would
+  have done and whether the loop repeated the rule anyway. It sends nothing.
+- **Phase 1/2 merged.** The recorded observation already contains `map.npcs`,
+  `interactives`, `groups`, `exits` with cells, so no page change was needed.
+  `agent/state_features.py` turns it into a 20-value global vector and 12-value
+  entity rows relative to the character.
+- **G57: the encoder failed the kill criterion and is stopped.** Pre-registered bar:
+  beat hand-built features by >= 0.03 AUC on the temporal fold. Within the clean label
+  regime (10-28/29, first 60% -> last 40%): hand-built 0.658, world-model predicted
+  deltas 0.645, encoder+deltas 0.647 (3 seeds). Across days the encoder ties (+0.02) on
+  a vocabulary-shifted fold. At the operating point the counter vetoes 7.6% of successes
+  against 23-65% for every learned variant. Keep hand-built features + the counter.
+- **Two protocol traps found on the way.** (1) Pretraining the world model on the test
+  rows' own `(state, action) -> next state` pairs lifted the encoder to 0.806; masking
+  those 457 deltas dropped it to 0.50-0.61, so the lift was memorisation. (2) The
+  per-row "segment" id made both the cluster CI and the boundary cut no-ops; with real
+  ids the within-regime test is **8 sessions**, which cannot separate 0.61 from 0.66.
+  Claim-kind tables are now printed per split before any AUC (early days have no `at:`
+  claims and dialog means the opposite side of the G49/G50 fix).
+- **The binding constraint is still sessions, not architecture.** The next correct move
+  remains identification: bounded live exploration or a hand-built candidate prior, on
+  within-segment tool-discordant pairs. G57 adds that no representation-side trick
+  substitutes for it.
+
+Gates: 1,436 checks / 0 failed; `tools/sync_kaggle_toolkit.py --write` run after the
+edits. New guards: `test_rule_gate` (shadow semantics, reads do not reset, args are the
+rule), `test_gate_shadow` (the record survives the corpus build and the report),
+`test_state_features` (fixed widths, relative cells, nearest exit cell, zero-degrade,
+delta flags), `test_state_encoder_split` (temporal cut on a segment boundary, no
+overlap, held-out deltas masked from pretraining).
+
+- **G58: the forest at the rule's own veto count is a candidate ranker, not a replacement.**
+  G56 compared at a fixed 15% veto; `--rolling-models` scores both at the number of
+  vetoes the rule actually takes on each cut, with the counter as a model feature.
+  `nav.goto` successes kept, forest − rule: +12 at cut 0.40 (0.449 vs 0.275 kept-met),
+  +6 at 0.55, +3 at 0.70, **−3 at 0.85**; pair CIs touch 0 and the gains ride on 2-4
+  sessions. `quest.advance` shows nothing at any cut. The counter stays the veto; the
+  forest is a candidate to shadow (its score beside `gate.would_veto`), bar = kept-met
+  above the rule at matched veto across the next two live sessions. Not a change, a
+  request.
+
+- **G59: the deployment rehearsal reversed G58, so nothing is shadowed.** `tools/train_veto_shadow.py`
+  freezes one model on every day before a cut and scores the cut day only. Cut 10-29:
+  `nav.goto` kept-met 0.899 vs the rule's 0.899, `quest.advance` **0.664 vs 0.691** with
+  14.3% of its vetoes hitting successes against the rule's 2.9% (paired delta −0.40 per
+  session, CI −0.80..−0.10); pooled kept 0.740 vs 0.744. Train AUC 0.983 vs test 0.774
+  (rule alone 0.762), and lower capacity does not rescue it (d2x60 0.801, logistic 0.824,
+  both still below the rule at the operating point). The rule is correctly set on the new
+  day (nav 0→93%, 1→26%, 2→0%; quest 0→71%, 1→53%, 2→8%). So G58's +12/+6/+3 was an
+  artifact of retraining inside each cut; the frozen artifact under `models/veto_shadow/`
+  is evidence of the rejection, the loop loads nothing, and `test_veto_shadow_guard`
+  pins that. Any future veto model must pass the trainer's unseen-day test first.
+
+Gates: 1,439 checks / 0 failed; `tools/sync_kaggle_toolkit.py --write` run after the
+edits (184 sync, 8 pinned, 0 drift).
+
+### P-1g — the gate's rule identity dropped its volatile fields (2026-10-30)
+
+- **G60.** The three taps on element 513208 carried skill_uid 136137029/136137092/136137181
+  and the character's cell, so `tool|args` saw three rules and the streak never reached 2
+  on the tool that fails 44 of 46 judged calls. `RuleGate.key` now drops `lang`,
+  `skill_uid`, `cell`; the builder writes `repeat_streak_norm` beside the untouched
+  `repeat_streak`. On four rolling cuts the change is exactly additive: nav and quest
+  identical, taps +2 vetoes (3→4 at 0.70, 7→9 at 0.85) with no extra success taken.
+  `test_rule_gate` and `test_gate_shadow` pin both keys.
+- **The task now needs live evidence (G59).** The loop loads no learned veto; the frozen
+  model lost to the counter out of time, and the counter only improves by ignoring
+  volatile args. Everything else measured this pass says the same thing: the next gain
+  is a live session, not a model.
+- **Wall note.** dofus-05 ends on quest 4262 / objective 13948 "Recover the first page"
+  (item 704145, map 145490432); the map's only interactive returns ok with no effect and
+  the item is not in its 6-item inventory. dofus-03 completed 13948 on 10-28 right after
+  a claim on that map, so the claim path works once the condition holds; how the page is
+  acquired (interactive, group drop, or dialog) is the open question, and the inventory
+  now records gid/qty/object_uid so the next session can see it arrive.
+
+Gates: 1,444 checks / 0 failed; `tools/sync_kaggle_toolkit.py --write` run after the
+edits.
+
+- **G61: the live loop ping-pongs between two maps, and now says why.** On 10-29 dofus-02
+  made 229 map changes of which **216 were immediate A->B->A returns** (175 between
+  145489923/145490435) in a 12.6 h run; dofus-05 made 204 changes with 132 returns (101
+  between 145490434/145490946) in 17.8 h, alternating while holding ready objectives on
+  the two maps. Neither a stateful replay of the 519 live decisions (279/519 tool
+  agreement, diverges onto quest 4274) nor a clean two-map fixture (planner taps once,
+  travels, waits - no alternation) reproduced it, so the cause is not established. The
+  blocker to attribution was the corpus: **0 of 617 rows carried `why`**. `_log_plan`
+  now stores the deciding objective and reason, `choose` stamps it onto `ToolCall.why`,
+  and `record_meta()` already writes it to the row — `test_plan_reason_recorded` pins it.
+  The next session turns the 101/175 returns into attributable branch records.
+
+Gates: 1,447 checks / 0 failed; `tools/sync_kaggle_toolkit.py --write` run after the
+edits (1 fix before the sync, 0 after).
+
+- **G62: the bounce is the tutorial equip gate.** dofus-02 alternates between the map
+  holding the tutorial's interactive (145489923) and Ayin Spyr's map (145490435): tap ->
+  walk back -> talk -> "Go and equip your new items" -> repeat. The page reports each set
+  item's declared position: 18844 type 7 -> slot 1, 18846 type 16 -> 6, 18848 type 17 -> 7
+  (all equipped), and **18974 type 210 category 3 declares none** (`equipItem` silent; it
+  has never been worn in any session, and 18976's slot 23 was client-set, outside the
+  page's 0-16 window). A real bug surfaced: `equipped` carries `{slot, gid}` and no
+  object uid, so the planner's worn set was always empty and it re-offered worn pieces
+  (70331924-27 "already worn" at 01:41). Fixed by retiring a template when the worn count
+  covers every bag copy; `test_equip_skips_worn` covers worn/free/ambiguous and the twin
+  fixture now matches the client (the bag lists equipped copies). The page now also
+  publishes each worn row's `object_uid` (the live ObjectItem carries `objectUID`;
+  `test_inventory_equip.js` 32/32), so on the next build the skip is exact. The decisive
+  live probe is `inv.equip {object_uid, slot: 8}` (then 9..16) then re-talk to 3888.
+
+Gates: 1,450 checks / 0 failed; `tools/sync_kaggle_toolkit.py --write` run after the
+edits.
+
+- **G63: the planner bounds immediate returns.** The cause of the G61 bounce is still
+  unattributed, so the loop now bounds the *pattern*: a ready objective whose travel
+  target is the map the character just left counts a return, the first three are made,
+  and the next one parks that objective for the session with one log line. Parking
+  suppresses only the walk - the objective still acts when it is already on its map - and
+  the counter resets on a different destination or when it leaves the ready set.
+  `test_return_bound` covers walk/refuse/per-objective/no-false-park; `fork()` carries the
+  new state; the frozen replay still passes unchanged.
+
+Gates: 1,454 checks / 0 failed; `tools/sync_kaggle_toolkit.py --write` run after the
+edits.
+
+### P-1h — the equip question is settled offline; the client's refusals are now read (2026-10-30)
+
+- **G62 correction, from the client's own tables.** The served bundle assigns each item
+  type its `category` and `possiblePositions` from `superTypeId`; the category enum is
+  `{equipment:0, consumables:1, resources:2, quest:3, ...}` and `superTypeNotEquippable`
+  includes `QUEST_OBJECT:14`. The live row for gid 18974 is `type_id 210,
+  type_category 3, possible_positions [], usable false`: a quest object that is not
+  usable. `equipItem` sends nothing for it by design and the `ObjectUseMessage` fallback
+  is ruled out, so **G62's `slot: 8..16` probe is withdrawn** - a direct
+  `ObjectSetPositionMessage` has no semantics to learn from. The same trajectory pairs a
+  four-item bag with three worn rows (18844/1 weapon, 18846/6 hat, 18848/7 cape): every
+  warable item in the bag is on. If those three are the recruit set, 13902 only has its
+  talk half left; the client's own reply is what will say so. dofus-02's last run predates
+  G63, which is why it still read as a bounce.
+- **G64: the refusal text is captured.** The bundle routes TextInformationMessage to
+  `gui.chat.logError` (ERROR) or `logMsg`; the page now wraps `logError` once, keeps the
+  newest five messages (collapsed, 200 chars) and publishes `client_errors` only when
+  non-empty. `Autopilot._note_client_error` prints each new text once on a non-advance
+  verdict and resets on progress; it is a witness, not a decision - no counter, gate or
+  plan changes. `tools/test_client_errors.js` (16 checks) plus
+  `test_client_errors_reach_the_loop` pin the wrapper and the wiring.
+- **G65: a refused call was credited as a met claim (labels v3).** The bridge nests the
+  page's refusal at `result.response.result.ok=false`; the builder judged a call only by
+  the world diff, so 63 of 945 refused steps read `claim_met: true` because the world
+  moved for another reason. Now a refusal is a miss, carries the reason in `error` and a
+  new `refused` field, owns no `moved`/`progress`/`advance`, and `_attribute_lagged` never
+  hands it a later read's change. Datasets rebuilt (label_version 3): 621 refused train
+  rows at met 0 / moved 0 / progress 0; quest claim met 452/1,942 = 23.3% (was 26.3% with
+  the false credits). The rule re-measured: `repeat_streak>=2` vetoes 66% of quest calls
+  at 2% met, keeps 40.9% met and 97.2% of successes (nav: 47% veto, 2% met, 64.3% kept,
+  96.4% of successes); AUC(fail) 0.655-0.973 over four cuts. `test_refused_calls_are_not_credited`
+  pins it. **Correction:** dofus-03's "13948 completed right after a claim" on 10-28 was
+  this bug - every claim there was refused as `known_kick_signature`, and the objective
+  moved with no agent action (tutorial special step 1 ended between the two snapshots).
+  No validation claim has ever been shown to complete 13948; the world action is still
+  the open question, and the current build refuses the claim one step earlier with
+  `objective_server_counted`.
+
+Gates: see the run below; `tools/sync_kaggle_toolkit.py --write` run after the edits.
+
+---
+
+### P-1i — the first learned worker is pre-registered, and the count gate already wins (2026-10-30)
+
+- **New mode:** `python tools/live_outcome_probe.py --calibration --data data/transitions_temporal`.
+  It fits p(met | call form, normalized streak bucket) with a Beta prior on train only, chooses the
+  veto threshold on train, and scores the frozen fold at the counter's own number of vetoes - so no
+  gate can look better by vetoing more calls. Forms are the promise the call makes
+  (`nav.goto:step`/`:at`, `quest.talk`/`reply`/`accept`, `tap.interactive`, ...).
+- **Measured (both folds):** the calibrated count gate **does not beat `repeat_streak_norm>=2` at
+  equal budget**. Temporal: counter vetoes 168 (6% of them met), keeps 0.678 met and 98.3% of
+  successes; calibrated at the same 168 vetoes keeps 0.611 and 88.6%, paired CI (-0.121, 0.012).
+  Hash: 0.431 vs 0.434, CI (-0.038, 0.044). Its wins at its own threshold come from vetoing
+  1.5-3.7x more calls, which is a different trade, not a better picker.
+- **Why the counts do not transfer:** `nav.goto:at` is 0/12 met in temporal train and 238/336 in
+  test (form-level ECE 0.676); `nav.goto:step` is 17% met in train and 93% in test. `quest.reply`
+  is the one form where the calibrated score wins at its own threshold (kept 0.67 vs 0.55, CI
+  0.093..0.143; hash 0.61 vs 0.52, CI 0.062..0.119) but retains 0.896 and the counter's budget is
+  9-8 vetoes, below the pre-registered comparison floor of 10.
+- **The bar, now written down (`docs/TRAINING_PLAN.md`, constants in the probe):** one shared state
+  encoder + per-form outcome heads, and it may not replace anything unless, at the counter's veto
+  budget on the frozen temporal fold and >=3 of 4 rolling cuts, it keeps >=5 points more successes
+  with a paired segment CI excluding 0, retains >=95% of successes, and fails open to the rule.
+  A form is eligible only with >=400 met rows over >=3 start periods. No form qualifies today, so
+  **no worker is trained**; the binding constraint is live data, not capacity. Gate:
+  `test_claim_calibration` (16 checks), registered in `run()`.
+- **Follow-up, the only place left to win (`--worker`, G67).** The state block (24 relational
+  mechanism features, streaks excluded) was fitted per form on train and scored on the frozen fold.
+  Temporal: `quest.talk` kept AUC **0.472**, `quest.reply` **0.398**; `nav.goto:step` 0.645 but its
+  kept set is 175 rows with 165 met, so the 5%/10% extra-veto layers remove 8 and 17 calls that
+  **all met** (CI -0.056..0.0 and -0.094..0.0). Hash: `quest.talk` looks promotable (5% layer
+  removes 5 calls, 0 met, CI 0.004..0.052), but the temporal fold inverts it and the nav layers
+  remove half to three-quarters successes - the same within-period pattern as G57. **No worker
+  ships.** The bar for a second layer is fixed in `_extension_ok`; `test_worker_headroom_layer`
+  (14 checks) pins it and the two `worker:` mutations are in the driver.
+- **Live remains blocked:** `tools/live_ready.py` reports the egress upstream not listening, the app
+  not running and a stale page build, so the repeatable-4260/4262 session cannot start this pass.
+- **The release build was broken by a stale tracked builder.** `builder/Build.exe` (tracked, Oct 17)
+  predates `build.cs` (Oct 27) and its embedded source list omits `agentbridge.cs`/`aipanel.cs`/
+  `pages.cs`/`netsettings.cs`, so every build failed with CS0246 even though the gate's
+  `test_csharp_compile` (which reads `build.cs`) passed. Recompiled `build.cs` with the Framework
+  csc and replaced the tracked binary; the release build now exits 0 (11 bundle patches,
+  `DofusFarm.exe` 565,248 B, `uninstall.exe` 17,920 B, `setup.exe` 214.0 MB with a 213.8 MB
+  standalone-WebView2 payload) and `live_ready` reports the installer PASS. Egress and the app
+  remain the only live blockers.
+- **The 13948 tapes, read properly (G65 addendum + G68).** The transition context dropped every
+  element's `skill_uid` and `enabled_skills` (it read `skill_id`, which the page never writes), so
+  no row could say whether the page element offered a usable skill. Fixed and both datasets rebuilt
+  with identical labels (9,687 rows / 457 segments / 5,289 actions / 1,322 claims met; probe numbers
+  unchanged). The rebuilt rows show element 513208 at cell 330 carrying skill instance
+  136137181/136137092/136137029 while the character stood at 504/549 on every recorded tap - a
+  hand-built message from another cell is a silent refusal. The page now uses
+  `isoEngine.useInteractive` (walks first); `tools/test_interactive_use.js` (13 checks) pins that
+  route and its fallback, and 2 `use:` mutations are caught. The context now also keeps the
+  element's `type`/`door` (the old logs say `element_type_id: -1` for all five, so the kind was
+  never resolvable offline); the captured client cache shows map 145490432's midground layer
+  places 513208 at cell 330 as sprite gid 401228 - an ordinary map object, not a ground item.
+  Whether the use completes 13948 from cell 330 is still owed a live run: dofus-05's post-fix
+  attempt did not.
+- **G69 - the pages were earned, and the corpus could not see it.** The builder excludes
+  `play_*.jsonl`, and the only successful use lives there: dofus-03 (2026-10-28) walked from 517 to
+  cell **345** (adjacent to element 513208 at 330), sent `InteractiveUseRequestMessage
+  {elemId 513208, skillInstanceUid 136113675}` at 1793211230499, the server acked
+  `InteractiveUsedMessage {skillId 184}` at ...232719, and validated **13948** at ...232786 (67 ms
+  later). 13950 followed the same way 603 ms after using 513212 from cell 299 (adjacent to 285).
+  Every recorded agent tap was sent from a distant cell (504/549, or 299-328 without a skill), which
+  is why "nothing worked". The current page walks first via `isoEngine.useInteractive` and
+  `tap.interactive` settles for up to 3 s (the successful request-to-ack took 2.2 s), so the
+  mechanic is implemented; a live run on `2026-10-30a` is what is owed. No claim is involved.
+
+### P-1j — the summary was audited against the tree, and the tree disagreed (2026-10-30b)
+
+This document had been written from measurements for §0–§2 and §12–§14, but §3–§5, §7–§12
+and §16–§18 were still the 2026-10-27 reading. Re-measuring all of it produced corrections,
+four defects, and one new rule.
+
+- **§3–§4 (topology and size):** `bridge_port.txt` is **8896**, not the documented 8893,
+  and `agentbridge.cs:39` walks 8893–8899, so any hardcoded 8893 is a bug. The disguise is
+  injected in `WebView2Backend.cs`, not `WebView2ClientForm.cs`. Sizes were understated
+  across the board: Python 76,699 → **98,704** lines in 259 files (now 99,335 after this
+  day's own tests and probe modes), Go/JS 13,516 → 24,332,
+  `mobile-disguise.js` 7,834 → 11,254, trajectories 257 MB → **438.5 MiB** in 29 top-level
+  logs, models 466.0 MiB, asset cache 103.6 MiB, docs 21 files.
+- **§5 (host):** log rotation is **64 MB**, not 10; the AI page has **no policy combo and
+  no step-budget field** (`PinDecisions()` forces `planner` + `steps 0`); the grid has no
+  port column (12 columns, `mainform.cs:776-798`); `Activate()` has **no retry** (the doc
+  claimed a fix that does not exist); `--bundle-selftest` exits 0/1/2/3, not 0/1; the start
+  path is the **daemon**, the per-instance child is the fallback; `verdicts_human.jsonl` is
+  written by `agent/verifier.py`, not the host. New §5.10 records what the chapter had never
+  mentioned: system-wide `RegisterHotKey` shortcuts that can partially fail, `auto_ai=1` as
+  the default (launching a client starts its loop), fail-closed as a launch gate, per-instance
+  AI state, the watchdog/governor/hardware layers, and `Reload client`.
+- **§7/§9–§12:** the patch selftest now matches **23/23 rules with 0 skipped** at 5,365,280
+  chars (the doc described the 1.74.9 16/7 split); the learned-vs-rule **face-off was
+  withdrawn** by its own gap entry, so "21W/9T/0L, 66.10 vs 64.87" is now shown as invalid
+  with the honest 79.90 vs 80.50 (5W/5T/0L, p = 0.0625); `live_policy_decisions.jsonl` is
+  **810 rows** not 14; `SETTLE_TOOLS` is **5** not 4; the 30M grid model **is trained**
+  (val top-1 0.7857 / test 0.60 on 1,318 actionable distilled boards, `live: false`); the
+  NetworkHealth TCN is **144,016 params** not 52,816 and still has no checkpoint; the
+  verifier head is 16 tool slots inside 33 features; the corpora were restated to
+  9,687 rows / 5,289 actions / 1,322 claims; the SQLite spine is 44,044,288 B; and the
+  "40.5 MB JSON" source no longer exists as a file.
+- **§16 (the one that actually bites):** the host **never passes `-config`** to the relay,
+  so `network.ini` is not read by the launched proxy at all — only the C# model parses it
+  and re-emits per-instance flags; §16.6 now documents `runtime.ini` (absent, so `auto_ai=1`
+  etc. are defaults), `ai_goals.txt`, the **two** `AUTOPILOT_STOP` locations (both currently
+  present in LOCALAPPDATA), `bridge_port.txt`, `kick_signatures.json`, the BOM'd
+  `app_version.json`, the flag files, and `--explore-objectives`. The "12/6/6 instance caps"
+  premise was false: that is `NORMAL_CAPS` for combat AP/MP/range, and no max-instance
+  constant exists.
+- **§18:** two rows rewritten and six added, including the bridge-port, daemon-vs-child,
+  64 MB rotation, `session_report` and toolkit-drift cases.
+- **Four defects fixed, each with checks (gate 1,503 → 1,540, exit 0):** toolkit drift on
+  `tools/quest_witness.py`; `session_report.py` raising `OSError: [Errno 22]` on the
+  millisecond stamps of `play_*.jsonl` (§2.1's footprint numbers are its output);
+  `mutate_cause_gate.py` leaving a live mutation in `agent/autopilot.py` after a hard kill —
+  it now journals and self-repairs (`--recover`, `test_mutation_journal_recovery`); and
+  `live_ready.py` judging the page build from `default.jsonl`, which the per-instance daemon
+  no longer writes, so it reported `2026-10-27s` while a `2026-10-29bf` run was in the same
+  directory.
+- **The new rule came first, and paid for itself immediately:** `rules.md` now has a Change
+  policy (clean the code you touch before adding to it). Applying it removed a duplicate
+  mid-file `import os`, corrected `rules.md`'s own stale 25-tool vocabulary plus the same
+  count in `CURRENT.md` §7 and `CAPABILITY_REGISTRY.md`, and found that the "All 25 tools"
+  string in `aipanel.cs` sits on a label with `Visible = false` — dead source text, so the
+  §5 claim that users were reading a wrong number was itself wrong and has been corrected.
+- **`README.md` was in the same state, so it was corrected too** (2026-10-30b): installer
+  224,413,696 B rather than "≈288 MB"; bridge candidates 8893–8899 with `bridge_port.txt`
+  = **8896** instead of "seen at 8894"; **23 patch rules, 23 matched, 0 skipped** at
+  5,365,280 chars instead of the 13-rule/11-patch sample; **28 tools** with `ui.tap`,
+  `ui.icons` and `shop.buy` added to its table; gate **1,540** checks and `advisor` 91
+  instead of 276/122, with the C# compile, combat/data suites and mirror drift now inside
+  the gate; the AI page's missing policy/budget fields, the 12-column grid with **no port
+  column**, the pill's **four** shapes and daemon-driven colour, **64 MB** log rotation,
+  `verdicts_human.jsonl` attributed to `agent/verifier.py`, selftest exits 0/1/2/3,
+  `data/cache` at 32,626,819 B, `asset_cache` at 7,428 files / 103.6 MiB, trajectories at
+  29 files / 236,961 rows, `networkhealth_artifacts/` **absent** (that is G5), the TCN at
+  144,016 params, `inference/` as a package, the `-config` caveat, the `exit_proxy` key,
+  the missing-instance-ceiling truth, and its docs index (G1–G69, D1–D24, CURRENT's 28
+  tools). Its §14 troubleshooting gained the bridge-port and daemon-vs-child rows.
+- **The gate shadow's wiring was proven rather than hoped.** No log has ever carried
+  `agent/gate.py`, so the plan for the next live session rested on an untested assumption
+  that the annotation reaches a row. `test_gate_shadow_reaches_the_trajectory` (10 checks,
+  registered in `run()`) now drives the real `RuleGate`, the real `TrajectoryRecorder` and
+  the real `Autopilot._run()` against a capturing executor and establishes three things:
+  the streak behaves as measured (`0 → 1 → 2`, `would_veto` at two, cleared by one
+  `advanced`, never started by a read-only tool, and three re-taps of one element counting
+  as **one** streak because `VOLATILE_ARGS` drops `cell`/`skill_uid`/`lang` — G60); the
+  annotation reaches the **trajectory** row through `recorder.py:386` but structurally
+  cannot reach the loop's own step row, because `Step` (`autopilot.py:258-292`) has no
+  `meta` field — so §24's live checklist was pointed at the wrong file and now names the
+  right one; and `VETO_AT = 2` is the loop's existing no-progress judgment
+  (`streak >= 3` / `_recent[-3:]`, `autopilot.py:2078`) reached **one repeat earlier**,
+  per-call instead of per-rolling-three. The test's own run output showed the whole
+  sequence: three `noop` nav.gotos, then `no progress: nav.goto repeated 3x with no
+  change`, `REPLAN (plan_wrong)`, `abandoning 'push right'`.
+- **Still owed after this pass:** any run that carries a gate-shadow row (the newest logs
+  contain **zero** `"gate"` keys, so the shadow is proven in code and in no way in data),
+  a `2026-10-30a` live session, and `CURRENT.md`'s remaining pre-G41 numbers.
+
+### P-1k — the veto got its price, and the mutation driver lost a false witness (2026-10-30c)
+
+- **G70 measured.** `python tools/live_outcome_probe.py --alternative --data
+  data/transitions_temporal`. Cost of wiring the gate: 1.68 % of successes on the temporal
+  test fold (retention **0.9832**), 3.12 % on the hash fold (**0.9688**) — G51's "keeps 99 %+"
+  survives the corrected labels. Benefit side: when the loop is at streak ≥ 2 it already
+  changes the request most of the time, and the changed request meets
+  **45.5 %** (temporal) / **63.9 %** (hash), while repeating the same promise meets
+  **0.0 % / 0.5 %**; the paired segment CIs are (+0.304, +0.603) and (+0.296, +0.872), so
+  neither touches zero. G55's 76 % was a label artifact, which is the second time this
+  programme has had to re-price its own decision input.
+- **What that changes for the plan.** The veto no longer has an unmeasured side, so
+  "wire it" is now a proposal with numbers instead of a missing measurement. The probe
+  states the remaining limit in its own `verdict` block: the alternative was *chosen* by
+  the loop, not assigned, so the causal claim still needs the epsilon arm (G39). What the
+  arm is now worth can be bounded: ~18 % of the 168 candidates repeat, and their observed
+  payoff is zero.
+- **Pinned:** `test_veto_alternative_priced` (10 checks) registered in `run()` and in the
+  mutation driver's snippet; two `alt:` mutations, one caught by name, one honestly missed
+  as an equivalent mutant.
+- **Driver flaw found while doing it:** the mutation snippet ran the Kaggle-mirror drift
+  check, and since a mutation edits a mirrored file, drift fails for every mutation — so
+  "CAUGHT" was guaranteed and the batches proved nothing about the checks. Removed from the
+  snippet (still in the gate). The `calib:`/`worker:`/`use:` verdicts recorded in P-1g/h/i
+  are therefore of unknown value and should be re-run before being quoted.
+- **Also this pass:** `test_gate_shadow_reaches_the_trajectory` (10 checks) proved the
+  shadow's wiring offline — and corrected §24, which had pointed the live checklist at the
+  loop's step rows when only the recorder's **trajectory** rows can carry `meta`
+  (`Step` has no such field, `autopilot.py:258-292`).
+
+### P-1l — the mutation re-audit found the promotion bar was not enforcing its own rule (2026-10-30d)
+
+- Re-ran `calib:` / `worker:` / `use:` after removing the mirror-drift witness from the
+  mutation snippet (P-1k). **`calib:` was 5/7, not the 7/7 this document had recorded.**
+  `worker:` 2/2 and `use:` 2/2 confirmed.
+- **`calib: a tie with the counter is promoted` escaped for a real reason:**
+  `PROMOTION_DELTA_POINTS = 0.05` — "a learned head must beat this count gate by this
+  much" — was read by nothing. Any interval clearing zero promoted. Fixed in
+  `_promotion_ok(stat, counter_kept)`: the point gain must clear the floor too, and
+  `promotion` now reports `min_delta_points` and `counter_kept_success` so a reader can
+  see which part of the bar failed. Recorded as **G71**.
+- **`calib: a form is not shrunk toward the global rate` escaped for the opposite reason:**
+  an equivalent mutant. The fixture has one form, so the global rate *is* that form's
+  rate and the Beta prior changes no number — the check could not fail whatever the code
+  did. Fixed by making the mutant observable rather than by asserting harder: a second,
+  nearly-empty form (`fight.join`, one met row) pulls `1.0` to `(1 + 8·global)/(1+8) ≈ 0.57`.
+- Batch now **8/8 caught**, each named by its own check, with `restored: 0 failing checks`
+  and the tree verified unchanged afterwards. The tie mutant's anchor had to be rewritten
+  after the fix, which is its own lesson: an anchor that no longer matches prints SKIP,
+  counts as uncaught, and vanishes from a filtered log.
+- Consequence for the plan, not just the test suite: promotion got **harder**. Nothing in
+  G66/G67 changes — the calibrated score and the state block still lose — but a future
+  candidate now has to beat the counter by five points, which is what the pre-registration
+  always said.
+- **The same defect class, swept.** G71 is "a constant that states a policy and is read by
+  nothing", so every module-level `UPPER_CASE` constant in `dofus-network` was counted in one
+  token pass over 237 files: **exactly 6 have no read anywhere**. Each was then checked
+  rather than deleted — an unreferenced constant is not automatically a bug.
+  `agent/foresight.py`'s `DEPTH = 5` / `HIDDEN = 128` are **correct**: the shipped
+  `models/foresight_v1/foresight.json` reports `depth 5, hidden 128, feature_count 42,
+  params 31,865` and a 21-entry tool list, so the documentation-of-shape matches the
+  artifact (this is the check the TCN failed, where the doc carried 52,816 params for a
+  144,016-param model). `AREA_TYPES = {5}` in `agent/features.py` is not a missing bucket:
+  a type-5 "find the area" objective has no nameable destination, so
+  `QuestPlanner._explore_call` answers it structurally by walking an exit — now annotated
+  in place, because an unused entry in a list of buckets reads like a hole.
+  `networkhealth/training.py`'s `ARTIFACT_DIR` names the directory G5 says is absent and is
+  not a default (every writer takes an explicit `out_dir`) — annotated. The remaining three
+  (`advisor/spells.UNLIMITED`, `agent/tool_eval.GOLD_BY_ID`,
+  `pipeline/dofus_eval.VALID_NPC_OPTIONS`) are dead or legacy-derived and were left alone.
+  **One silent policy hole in the whole brain, found and closed; five explained.**
+
+### P-1m — the canonical running-system doc was corrected, not just indexed (2026-10-30e)
+
+- §22.1 called `dofus-network/docs/CURRENT.md` the map of the running system, and P-1j left
+  it holding pre-G41 numbers. A doc a new session is told to read first is not neutral when
+  it is stale, so every stale claim there was replaced with the measured one:
+  - **§4 face-off** — the "learned 5W/5T/0L" run that G57-style measurement retracted is now
+    labelled **Withdrawn (measured 2026-10-27, retracted 2026-10-29)** and states the two
+    numbers the retraction actually produced: rule retention **79.90**, learned **80.50**,
+    5W/5T/0L, `p = 0.0625`, and the oracle losing. The sentence that had presented it as
+    current fact is gone.
+  - **new §4.5 "The streak gate (`agent/gate.py`) — shadow-only, and now priced"** — what
+    `RuleGate` counts, why `VOLATILE_ARGS` drops `lang`/`skill_uid`/`cell`, that
+    `_meta["gate"]` lands only in recorder **trajectory** rows, that **zero** such rows
+    exist, that `VETO_AT = 2` is the loop's own `streak >= 3` bound one repeat earlier, and
+    the G70 price plus G71's now-enforced three-part bar.
+  - **§1 bridge port** — `CANDIDATE_PORTS` is `{8893…8899}`, `DEFAULT_PORT = 8893`
+    (`agent/bridge.py:22`), and the live `bridge_port.txt` says **8896**; the doc no longer
+    implies 8893 is the running port.
+  - **§4 release/blocker** — `setup.exe` **224,413,696 B = 214.0 MiB**, and the real
+    `live_ready` verdict instead of a claim of readiness: **FAIL egress** (no
+    `127.0.0.1:40000`, `fail_closed=1`), **WARN client** (host not running), **FAIL page
+    build** (last client log is `2026-10-29bf`, the build is `2026-10-30a`).
+  - **§6 combat** — rewritten to what the data supports: fights **are** won live (22 rows,
+    9 `won: true`, `fight_id` 124, 900, 1356, 1358, 1359, 1482); what remains unverified is
+    **calibration** and the battle-log read. Same section, the live gate now names the
+    current page build rather than the retired one.
+  - **§7** already carried all 28 tools from the earlier pass.
+- **The same pass cleaned prose it touched in `resume.md`**: §9's "CURRENT.md and
+  CAPABILITY_REGISTRY.md both still say 25" was false by then — `CAPABILITY_REGISTRY.md` has
+  carried a 28-tool status note since 2026-10-30 — so it now states which doc said what and
+  when, and §22.1's CURRENT.md row lists each correction instead of dismissing the file as
+  "pre-G41".
+- **What this closes from P-1j's owed list:** only the doc item. Still owed, and all of it
+  behind the same user-side gate: a `2026-10-30a` live session — the first gate-shadow row,
+  the first command-shadow row, the 4262 claim, the battle-log read.
+  The stale-count defect class is now closed for the three docs a new session reads first
+  (`resume.md`, `README.md`, `CURRENT.md`); `AI_ARCHITECTURE.md` and `TRAINING_PLAN.md`
+  remain dated snapshots and §22.1 labels them as such.
+
 ---
 
 ## 22. Documentation index and freshness
@@ -3498,13 +4502,13 @@ beat it; the game-side wall is still quest 4262 objective 13948 on dofus-05.
 
 | file | role | freshness |
 |---|---|---|
-| `dofus-network/docs/CURRENT.md` | running-system map: services/ports, 7-stage loop, pacing, policy modes, model inventory, combat pipeline, 25 tools | **current** (2026-10-27) |
+| `dofus-network/docs/CURRENT.md` | running-system map: services/ports, 7-stage loop, pacing, policy modes, model inventory, combat pipeline, tools | **current as of 2026-10-30e**: §7 lists all 28 tools; §1 carries the measured bridge port (8896, candidates 8893–8899); a new §4.5 documents the shadow-only streak gate with G70's price and G71's enforced bar; §4's learned-vs-rule face-off is marked withdrawn with the honest numbers; §6 says fights are won live while calibration and the battle-log read are not; the release/blocker line carries the real `live_ready` output; the grid gate names the current build. Remaining offline caveat: its model-inventory metrics still trace to the 2026-10-27 artifacts |
 | `dofus-network/docs/BRAIN_DAEMON.md` | one-process daemon: `/brain/*` API, per-instance threads, locks, host integration, remaining RSS/WebView2 work | **current** (2026-10-27) |
-| `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target 80M/40M/30M entity-pointer design, pointer action space, sub-goal stack, Kaggle training and gates | **design** (2026-10-27) |
-| `dofus-network/docs/AI_ARCHITECTURE.md` | canonical AI map: shipped/shadow/target, component inventory, gates, measured/rejected, build order | **current** (2026-10-27) |
-| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (G1–G34) | **current** (2026-10-27) |
+| `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target 80M/40M/30M entity-pointer design, pointer action space, sub-goal stack, Kaggle training and gates | **design** (2026-10-27); blocked on live data, not on design |
+| `dofus-network/docs/AI_ARCHITECTURE.md` | canonical AI map: shipped/shadow/target, component inventory, gates, measured/rejected, build order | **2026-10-28** — still says the first live fight is unproven and 1,024 checks; §2/§12/§13 here supersede both |
+| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G71**) | **current** (2026-10-30), 6,698 lines |
 | `dofus-network/docs/BASELINE.md` | live baseline before the 2026-10-26 fixes | **historical before-picture** |
-| `dofus-network/docs/TRAINING_PLAN.md` | training programme, budget, phases, gates | **current** |
+| `dofus-network/docs/TRAINING_PLAN.md` | training programme, budget, phases, gates | **current** (2026-10-30: carries the pre-registered promotion bar and both negative results) |
 | `dofus-network/docs/PLAN.md` | older living status/ordered work list | partly stale; status superseded by CURRENT/AI_ARCHITECTURE |
 | `dofus-network/docs/PROJECT_LOG.md` | decisions D1–D24 with falsifiers | current reasoning, not status |
 | `dofus-network/docs/ARCH_REASSESSMENT.md` | architectural argument | reasoning; status columns superseded |
@@ -3516,26 +4520,33 @@ beat it; the game-side wall is still quest 4262 objective 13948 on dofus-05.
 | `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, no token CoT | its `hdv.buy` example predates the 25-tool vocabulary |
 | `dofus-network/docs/EXPERIENCE_LEARNING.md` | outcomes → posteriors without a reward model | current |
 | `dofus-network/docs/LATENT_AND_ONLINE_LEARNING.md` | latent bus/online updates judgement | current decision, not shipped |
-| `dofus-network/docs/CAPABILITY_REGISTRY.md` | tools as data | **stale: says 16, schema is 21** |
-| `README.md` (root) | high-level overview, quick start, architecture | **partly stale** (see below) |
+| `dofus-network/docs/CAPABILITY_REGISTRY.md` | tools as data | **note corrected 2026-10-30 to 28 tools** (it said 25; its worked example still discusses the 16-object era by design) |
+| `rules.md` (root) | the owner's standing instruction file: capability policy, the "no moralizing disclaimers" rule, and (added 2026-10-30) the **change policy** — clean the code you touch before you add to it | **current** (2026-10-30). Its tool count was stale at 25 and now says 28 with the list; `data/capabilities.json` remains the authority and the gate asserts it |
+| `README.md` (root) | high-level overview, quick start, architecture | **corrected 2026-10-30b**: installer 224,413,696 B, bridge 8893–8899 (`bridge_port.txt` = 8896), 23 patch rules matched 23/23, 28 tools, gate 1,540 / advisor 91, pill's four shapes, 64 MB log rotation, no policy/budget field in the GUI, `-config` is never passed to the relay, `networkhealth_artifacts/` is gone. Its §1–§9 prose still describes the 2026-10-27 build in places it was not touched |
 | `STATUS.md` | 2026-10-23 reasoning + kick history | superseded in part |
 | `PLAN.md` (root) | 2026-10-23 next steps | historical |
 | `now.md` | long historical record, 2026-10-23 | historical |
 | `COMBAT_STATUS_AND_PLAN.md` | combat work + phases | historical; ordering caveat in its header |
 | `CLEANUP.md` | cleanup findings (duplicate scripts, dead copies) | historical |
-| `resume.md` | this document | **current snapshot** |
+| `resume.md` | this document | **snapshot 2026-10-30, re-verified against the tree.** §0, §2, §12–§14, §19–§20 and §22 were rewritten from measurements; the 2026-10-30b pass then re-measured §3 (ports), §4 (every size and line count), §5 (host claims, plus a new §5.10 of behavior the chapter had never documented), §7.3 (patch selftest), §9–§12 (corpus sizes, model widths, the withdrawn face-off, the trained grid model, the TCN, verifier width, SETTLE_TOOLS), §16 (including the `-config` trap) and §18 (six new rows). §6 and §8 were claim-checked and found accurate. What is **not** verified is stated where it appears: anything requiring a live session is labelled owed, and anything measured only by reading a doc is labelled as such |
 
 ### 22.2 Numbers that changed; do not quote the old ones
 
 | stale claim | current truth |
 |---|---|
-| 16 tools (`STATUS.md`, `CAPABILITY_REGISTRY.md`) | **25 tools** |
-| 18 tools (`now.md`, older command notes) | **25 tools** |
-| 11 patches (`README.md`) | **23 rules**; 16 matched, 7 skipped on the current bundle |
-| 276 checks (`README.md`) | **892 checks** in `agent.regression` (latest) |
-| 21 tools (older docs) | **25 tools** (2026-10-27 research unlock) |
-| 288 MB `setup.exe` (`README.md`) | **100.1 MiB payload / 105.7 MB on disk** |
+| 16 tools (`STATUS.md`) | **28 tools** |
+| 18 tools (`now.md`, older command notes) | **28 tools** |
+| 21 tools (older docs) | **28 tools** |
+| 25 tools (`CURRENT.md`, `CAPABILITY_REGISTRY.md`, this document — all corrected 2026-10-30) | **28 tools** — `ui.tap`, `ui.icons` and `shop.buy` were added with the tutorial work and never propagated to the prose; the gate has asserted 28 since (`regression.py:208`). `TRAINING_PLAN.md`'s "25 tools × 8 causes × 13 families" is a description of when that corpus was cut, not a registry claim |
+| 11 patches (`README.md`) | **23 rules, 23 matched, 0 skipped** — `bundle-selftest.txt` (re-read 2026-10-30) lists all 23 ids and `RESULT: IDENTICAL` at 5,365,280 chars. This document's earlier "16 matched, 7 skipped" was the 1.74.9 bundle |
+| 276 checks (`README.md`) | **1,540 checks / 0 failed** in `agent.regression` (measured 2026-10-30; `README.md` §15 corrected the same day) |
+| 892 / 1,024 / 1,241 / 1,486 / 1,503 / 1,514 / 1,517 / 1,527 / 1,537 checks (this document's own earlier snapshots, `AI_ARCHITECTURE.md`) | **1,540 checks** — the gate grows every session; quote the number you just ran |
 | 13 patch rules / 11 active | **23 rules** after 1.74.10 |
+| 288 MB `setup.exe` (`README.md`) | **224,413,696 B = 214.0 MiB** since the stale `builder/Build.exe` was recompiled; it carries a 213.8 MB standalone-WebView2 payload (the 100.1 MiB / 105.7 MB / 288 MB numbers were earlier builds — `README.md` now gives the measured byte count) |
+| G1–G34 (`KNOWN_GAPS.md`, this document until now) | **G1–G69**, 6,619 lines |
+| "10 objectives, 0 quests completed" as the live score (this document §0 until now) | the counter is a signed delta across session boundaries and the two log views disagree; the hard proofs are 9 won fight rows and 3 attributed objective validations (§2.1) |
+| "the first end-to-end fight is unproven" | proven six times over: `fight_id` 124, 900, 1356, 1358, 1359, 1482 |
+| "live fight: not proven" (`AI_ARCHITECTURE.md` §9.4 era) | see the row above; the *boss* fight is still unproven |
 | verifier auto-loads on every GUI launch | **gated** on a live/human validation contract; rules-only today |
 | "the client update broke everything" | updater is transactional and re-patches; 1.74.10 proven live |
 | "WARP works" | WARP's UDP is blocked on this line; `auto`/TCP proxy is the working path |
@@ -3577,51 +4588,73 @@ beat it; the game-side wall is still quest 4262 objective 13948 on dofus-05.
 
 ## 24. Final honest summary
 
-**State at the 2026-10-28 evening snapshot** (the paragraph below it is the
-2026-10-25 version, kept because its warnings still apply):
+**State at the 2026-10-30 snapshot** (this is the current one; everything below it in
+this section is history, kept because its warnings still apply):
 
-What is now proven live:
-- one clean end-to-end fight: `started_by: fight.join`, `fight_id 124`, `won: true`,
-  with the server's own `GameFightEndMessage` in the outcome row, and a regression
-  gate that fails without such a row;
-- quest 4262 advanced through objectives 13948 and 13950 (both `done: true` in the
-  client's own step list), leaving 13952 "Talk to Roki" current;
-- the client's interactive-element list, optional challenges, quest step graph and
-  dialog replies are captured in the observation, and the page's claim refusals are
-  consistent with the planner. The battle log reader existed but read only the client's
-  own message stack, which is already empty when the end message arrives (both recorded
-  outcomes have `battle_log: []`); build `2026-10-28w` copies every incoming
-  `Game(Action)?Fight*` message into a 400-row ring so the numbers survive the end —
-  live proof is pending the next fight;
-- the trained move head is executed live (approach/retreat/hold) and the trained
-  critic ranks legal realizations when its inputs are complete;
-- `agent.regression`: **1,024 checks, 0 failed**, delegating JS, Go, bundle and the
-  combat suites; the Kaggle mirror is drift-checked.
+What is measured now, with the number and where it came from:
+- **fights are won live**: 22 rows in `trajectories/fight_outcomes.jsonl`, 9 `won: true`
+  over `fight_id` 124, 900, 1356, 1358, 1359, 1482 — the last entered by
+  `quest.advance`, not by a hand-made `fight.join`;
+- **the stuck quest objectives have a cause and a fix**: `tools/quest_witness.py` reads
+  `events 216,975 / accepted uses 39 / validations 111 / attributed 3`, and the
+  attributed rows show 13948 validated **+67 ms** after an interactive use on the
+  adjacent cell, and 13950 ×2 **+255/+256 ms** after another. Every failed agent tap was
+  sent from a non-adjacent cell (G69);
+- **the training corpus is honest for the first time**: five label defects were found and
+  fixed in sequence (G41 leakage across days, G42 walking, G43 pre-action snapshot, G65
+  refused calls credited as met, G60 volatile call identity, G68 dropped skill instance),
+  ending at 9,687 rows / 1,322 claims met with `label_version: 3`;
+- **four routes to a learned veto were measured and all four failed their own bar**
+  (G57 encoder, G59 frozen forest, G66 count calibration at equal budget, G67 state
+  block). `agent/gate.py` shadows the incumbent counter and refuses nothing;
+- **the gate is green**: `python -m agent.regression` → **1,540 checks / 0 failed, exit
+  0** on this tree. Four defects were found and fixed while writing this snapshot: Kaggle
+  toolkit drift on `tools/quest_witness.py` (cured with `sync_kaggle_toolkit --write`), the
+  `session_report.py` millisecond crash that made every protocol capture unreadable, the
+  mutation driver leaving deliberately broken code after a hard kill (it now journals and
+  self-repairs via `--recover`), and `live_ready.py` reporting the page build from
+  `default.jsonl` — a log the per-instance daemon no longer writes — so it claimed a stale
+  client while a `2026-10-29bf` run sat in the directory. Each fix carried its own checks,
+  which is why the count moved 1,503 → 1,540;
+- **the release build works again** after the stale tracked `builder/Build.exe` was
+  recompiled: `setup.exe` 214.0 MB, `DofusFarm.exe` 565,248 B, exit 0;
+- **and the one thing that is not done**: page build `2026-10-30a` has never run. Every
+  fix in the two bullets above that concern the interactive use, the refusal credit and
+  the three-return park is offline-verified only. Four slots have live rows and the newest
+  of them is 2026-10-29 18:50 UTC.
 
 Honest scorecard (0–10, measured, not aspirational):
 
 | Capability | Score | Why |
 |---|---|---|
-| Client shim, relay, host, bridge | 9 | Survives updates, one egress, per-instance addressing, reset button; bridge now fast-fails on a wedged page |
-| Quest automation | 5 | Claims/talk/fight objectives complete live; the free-form interactive route is wired but not yet exercised; no full quest finished unattended yet |
-| Combat (tutorial mobs) | 6 | Solver mechanics (cells, LoS, push/pull/teleport, AP/MP) work; move head now executed; one live fight proven — no boss test |
+| Client shim, relay, host, bridge | 9 | Survives updates, one egress, per-instance addressing, reset button; bridge fast-fails on a wedged page; the release path exits 0 again as of 2026-10-30 |
+| Quest automation | 5 | Objectives validate live and the interactive mechanic is now attributed (G69), but `2026-10-30a` has never run and **no quest is finished end-to-end** — zero `QuestCompletedMessage` rows exist |
+| Combat (tutorial mobs) | 7 | Solver mechanics (cells, LoS, push/pull/teleport, AP/MP) work; move head executed live; **six won fight ids** — still no boss and the battle-log ring has never survived a live end message |
 | Combat (bosses/strategy) | 3 | A real move policy and the critic exist; zero boss data, zero kiting benchmarks |
-| Learned command parser | 4 | 93.9% tool / 69.8% call offline, shadow-only, adapter not promoted |
-| Data and observability | 7 | Battle log, challenges, damage-calibration harness, quest/dialog/keep-alive instruments all wired; the live rows are not there yet |
-| Always-on fleet | 3 | 40-instance scaling and multi-instance play unproven; guest bans remain the risk |
+| Learned command parser | 4 | 93.9% tool / 69.8% call offline, routed per-instance adapter accepted, **still shadow-only** — every log prints `command_shadow: no status/row` |
+| Learned decision replacement | 2 | Four measured rejections (G57/G59/G66/G67); the incumbent streak counter is correct on four rolling cuts but runs **shadow-only** and prices no alternative — and it has **zero recorded rows**, since every existing log predates `agent/gate.py` |
+| Data and observability | 8 | Five label defects found and fixed in one programme; refusal text, witness attribution, `proofs:` counters and per-instance recovery all in the reports. Docked one point because `session_report.py` still crashes on `play_*.jsonl` |
+| Always-on fleet | 3 | 194 manual interventions across four slots (140 on one), two permanent guest bans on record; 40-instance scaling unproven |
 
 **The dream model** is not a bigger network. It is one always-on per-instance brain
 that sees the client's own state (quest graph and dialogs, battle log and challenges,
-map interactives, inventory/market), chooses among the 25 tools, lets the solver own
+map interactives, inventory/market), chooses among the 28 tools, lets the solver own
 legality and the learned critic own plan choice, and improves from the outcome rows it
 writes. Every input that model needs is now captured; what it lacks is volume of lived
 outcomes and promotion gates for the learned heads. The gap is data and verification,
 not architecture or capacity.
 
-**Next correct move:** one live session on the current page build (which now carries
-every capture fix), run the quest chain to completion and 3–5 fights, then read
-`tools/damage_calibration.py` and the outcome rows; only then is another training run
-worth compute.
+**Next correct move (2026-10-30):** one live session on page build `2026-10-30a` — a full
+app restart, not a reload — that walks 4262 from 13948 through the claim, takes 3–5
+fights so the battle-log ring is read out of a real end message, and runs with
+`--command-shadow auto` so the parser gets its first live row. It must also produce the
+first gate-shadow evidence: check `trajectories/dofus-XX.jsonl` for
+`"meta": {"gate": ...}` — the loop's own `autopilot.*` step rows cannot carry it, because
+`Step` has no `meta` field (`autopilot.py:258-292`). Then
+`tools/quest_witness.py`, `tools/session_report.py` and `tools/damage_calibration.py` on
+the new capture. Only after that is another training run worth compute, and no second
+representation route should be attempted before the ≥40-test-session revisit bar G57
+set.
 
 The project has also solved the hard *plumbing* problems:
 
@@ -3635,17 +4668,22 @@ The project has also solved the hard *plumbing* problems:
 
 It has not yet solved the hard *decision* problem:
 
-- no quest finished end-to-end unattended yet (objectives complete; the last
-  step of the chain has not been carried to "quest finished");
-- one fight proven, but no boss and no sustained fight sample;
-- no live equip or purchase yet;
+- no quest finished end-to-end unattended, and the claim is now provable rather than
+  inferred: zero `QuestCompletedMessage` rows in any capture;
+- six won `fight_id`s, but all in one session, no boss, and no sustained fight sample;
+- six executed `inv.equip` calls and still no live purchase (`hdv.buy`);
 - a learned parser that wins offline but has never acted;
-- a foresight model that matches the teacher inside the simulator and loses to chance
-  in the world;
-- a large share of the step budget still spent on recover/replan and waits.
+- a correct out-of-time veto that only shadows: the loop still re-issues refused calls,
+  and nothing prices the action it would take instead (G39/G46/G52/G55);
+- 2,186 of 4,003 steps spent on recover/replan, and the three-return park (G63) that is
+  meant to cut that has never run live;
+- progress is a **volume** problem, measured: 100 quest advances ≈ 9,692 actions ≈ four
+  days of sessions (G53).
 
-The next correct move is not a bigger model. It is: **diagnose the current long wait,
-run one clean live session on the current page build, prove one fight and one equip,
-then let the parser shadow and the outcome labels accumulate.** The project's own
-architecture document says it best: capacity is not the bottleneck; coverage and real
-outcomes are. That is the sentence to carry into the next session.
+The next correct move is not a bigger model. It is: **run one clean live session on
+`2026-10-30a`, carry one quest to its claim, win a few fights with the battle log
+captured, take the first equip/purchase proof and the first command-shadow row, and let
+the outcome labels accumulate.** The measured reason no learned head is installed is not
+architecture or capacity — four routes were killed by their own bars in two days — it is
+that the corpus, though now honest, is still too small to beat a correct rule. That is
+the sentence to carry into the next session.

@@ -5,6 +5,10 @@ Reads either trajectory JSONL (observation/step rows) or the autopilot JSONL
 reports the numbers the goal is measured by: quest objectives completed, maps
 visited, failures, recoveries, farm output and step latency.
 
+It also reads the page's `play_*.jsonl` wire captures. Those carry no agent step
+rows, so they report sessions and wall time with `steps 0` — an honest empty, not a
+crash: their `at` stamps are epoch milliseconds while step rows are seconds.
+
 Usage:
     python -m tools.session_report [paths...] [--gap 180] [--json]
 
@@ -39,7 +43,12 @@ def _ts(row: Dict[str, Any]) -> Optional[float]:
     for key in ("ts", "at"):
         value = row.get(key)
         if isinstance(value, (int, float)):
-            return float(value)
+            # Protocol captures (`play_*.jsonl`) stamp `at` in epoch milliseconds and
+            # step rows use seconds. Handing a millisecond value to
+            # `datetime.fromtimestamp` raised OSError [Errno 22], which meant the one
+            # report that could summarise a capture crashed on every capture. Normalize.
+            seconds = float(value)
+            return seconds / 1000.0 if seconds > 1e11 else seconds
     iso = row.get("iso")
     if isinstance(iso, str):
         try:

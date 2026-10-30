@@ -70,7 +70,7 @@ def _tail_lines(path: Path, max_bytes: int = 400_000) -> List[str]:
     return data.decode("utf-8", errors="replace").splitlines()
 
 
-def last_log_build(path: Path = DEFAULT_LOG) -> Optional[str]:
+def _scan_build(path: Path) -> Optional[str]:
     for line in reversed(_tail_lines(path)):
         try:
             row = json.loads(line)
@@ -82,6 +82,36 @@ def last_log_build(path: Path = DEFAULT_LOG) -> Optional[str]:
             obs = row.get(key)
             if isinstance(obs, dict) and obs.get("agent_build"):
                 return str(obs["agent_build"])
+    return None
+
+
+def last_log_build(path: Optional[Path] = None) -> Optional[str]:
+    """The page build the newest client actually ran.
+
+    `default.jsonl` is the pre-daemon single log; the loops now write one log per
+    instance (`dofus-05.jsonl` and its rotated siblings). Reading only the default path
+    reported a build days old — `2026-10-27s` against a repo at `2026-10-30a` while a
+    client had run on `2026-10-29bf` hours earlier — so the preflight failed a client that
+    simply was not the one that last spoke. When nobody named a log, read the newest one
+    in the directory that carries a build. A log named by the caller (`--log`) stays
+    exactly that file: the caller asked about one log, and fan-out would answer a
+    different question.
+
+    The default is resolved at call time, not bound into the signature, so a caller that
+    swaps `DEFAULT_LOG` gets the new directory.
+    """
+    target = DEFAULT_LOG if path is None else path
+    if str(target) != str(DEFAULT_LOG):
+        return _scan_build(target)
+    try:
+        candidates: List[Path] = sorted(target.parent.glob("*.jsonl"),
+                                        key=_mtime, reverse=True)
+    except OSError:
+        candidates = []
+    for candidate in candidates:
+        build = _scan_build(candidate)
+        if build:
+            return build
     return None
 
 

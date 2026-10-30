@@ -41,6 +41,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from agent.features import (FEATURE_COUNT, objective_features,  # noqa: E402
                             objective_type)
+from agent.gate import VOLATILE_ARGS  # noqa: E402
 from agent.observe import flatten  # noqa: E402
 from agent.verifier import (READ_ONLY_TOOLS, STATE_KEYS, changed_keys)  # noqa: E402
 
@@ -91,6 +92,35 @@ def _after_obs(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if isinstance(snapshot, dict) and snapshot:
             return snapshot
     return None
+
+
+def _refusal(row: Dict[str, Any]) -> Optional[str]:
+    """The page's own refusal of this directive, if it answered without sending.
+
+    A directive can be transport-ok and still refused before any packet leaves
+    the page: the bridge wraps the page's `{ok: false, reason, error}` one level
+    down (`result.response.result`). The claim label judges a call by the
+    after-state, so a refused call was credited whenever the world moved for
+    another reason - measured 2026-10-30, 63 of 945 refused steps read as
+    `claim_met` (11 `objective_server_counted`, 59 `quest.advance` in all).
+    """
+    result = row.get("result")
+    if not isinstance(result, dict):
+        return None
+    body = result
+    response = result.get("response")
+    if isinstance(response, dict):
+        inner = response.get("result")
+        if isinstance(inner, dict):
+            body = inner
+    if body.get("ok") is not False:
+        return None
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    reason = data.get("reason")
+    text = body.get("error") or data.get("error")
+    if reason and text:
+        return "%s: %s" % (reason, text)
+    return str(reason or text or "refused")
 
 
 def _objective_of(before: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], int]:
@@ -208,10 +238,27 @@ def _context_of(obs: Any) -> Optional[Dict[str, Any]]:
         raw_elements = block.get("interactives")
     for entry in (raw_elements or [])[:12]:
         if isinstance(entry, dict):
+            # The page publishes the element's skill instance as `skill_uid` and its
+            # enabled list as `enabled_skills`; reading only `skill_id` wrote null for
+            # every element. Measured 2026-10-30: the corpus could not say whether the
+            # page element 513208 (quest 4262/13948) ever offered a usable skill,
+            # because both fields were dropped here while the observation had them.
+            skills = entry.get("enabled_skills")
+            skills = ([_int(s) for s in skills[:4] if _int(s) is not None]
+                      if isinstance(skills, list) else [])
             interactives.append({
                 "elem": _int(entry.get("elem_id", entry.get("element_id",
                                                              entry.get("elemId")))),
-                "skill": _int(entry.get("skill_id", entry.get("skillId"))),
+                "skill": _int(entry.get("skill_uid",
+                                        entry.get("skill_id",
+                                                  entry.get("skillId")))),
+                "skills": skills,
+                # The client's element type is the one field that says *what* the
+                # object is (a door, a resource, a page). 13948's element 513208 is a
+                # midground object (sprite gid 401228) on map 145490432 cell 330, and
+                # neither the type nor the enabled skills survived into the corpus.
+                "type": _int(entry.get("element_type_id", entry.get("type_id"))),
+                "door": bool(entry.get("is_door")),
                 "cell": _int(entry.get("cell"))})
         else:
             interactives.append({"elem": _int(entry)})
@@ -352,6 +399,7 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
     # `streak` counted `ok`, and a read answers ok, so it reset constantly.
     miss_by_tool: Dict[str, int] = {}
     miss_by_rule: Dict[str, int] = {}
+    miss_by_rule_norm: Dict[str, int] = {}
     for position, row in enumerate(rows):
         before = row.get("observation")
         if not isinstance(before, dict):
@@ -381,6 +429,9 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
             prev_out["dt_ms"] = round((stamp - prev_stamp) * 1000.0, 1)
         prev_out, prev_stamp = None, stamp
         error = row.get("error") if isinstance(row.get("error"), str) else None
+        refused = _refusal(row)
+        if refused and not error:
+            error = refused
         ctx = {"streak": streak, "last_ok": last_ok, "last_tool": last_tool,
                "last_note": error or last_note, "obs_kind": _obs_kind(row)}
         obj, quest_level = _objective_of(before or {})
@@ -403,10 +454,26 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
         changed = changed_keys(before, after) if (before and after) else []
         args = row.get("args") if isinstance(row.get("args"), dict) else {}
         claim, claim_met = _claim_of(tool, args, before, after)
+        if refused:
+            # The page answered without sending anything, so any movement in the
+            # after-state belongs to some other cause. A refused call is a miss:
+            # that is also what the retry counters must see.
+            claim_met = False
         rule = tool + "|" + json.dumps(args, sort_keys=True)
+        # The same call minus fields that change between retries of one intent
+        # (agent.gate.VOLATILE_ARGS). Kept beside the exact key: `repeat_streak` is
+        # the rule validated in G48-G59; this one exists so the shadow can price the
+        # normalized identity without rewriting the corpus the rule was measured on.
+        rule_norm = tool + "|" + json.dumps(
+            {k: v for k, v in args.items() if k not in VOLATILE_ARGS}, sort_keys=True)
         progress = sorted(set(changed) & set(PROGRESS_KEYS))
         advance = sorted(set(changed) & set(ADVANCE_KEYS))
         world = sorted(set(changed) & set(WORLD_KEYS))
+        if refused:
+            # Nothing was sent, so this call cannot own any diff: the state moved
+            # on its own or because of someone else. `changed` still records what
+            # differed; the causal flags do not.
+            progress, advance, world = [], [], []
         flat = flatten(after) if isinstance(after, dict) else {}
         out.append({
             "id": "%s#%d" % (segment_key(segment), position),
@@ -424,6 +491,9 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
             "args": row.get("args") if isinstance(row.get("args"), dict) else {},
             "ok": ok,
             "error": error,
+            # The page's own refusal, verbatim enough to tell "not sent" apart
+            # from "sent and did nothing". Additive: older readers ignore it.
+            "refused": refused,
             "latency_ms": row.get("latency_ms"),
             # How old the state behind this decision was. Measured 2026-10-29: 4,153
             # of 4,344 steps acted on a *carried* observation, median 707 ms old,
@@ -442,6 +512,11 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
             "claim_met": claim_met,
             "miss_streak": miss_by_tool.get(tool, 0),
             "repeat_streak": miss_by_rule.get(rule, 0),
+            "repeat_streak_norm": miss_by_rule_norm.get(rule_norm, 0),
+            # What the live repeat-streak gate would have done at this decision
+            # (agent/gate.py). Shadow only: the call was still sent.
+            "gate": (row.get("meta") or {}).get("gate")
+            if isinstance(row.get("meta"), dict) else None,
             "explored": bool(row.get("explored")),
             # The randomized arm's own paperwork. `p_explore` is the propensity the
             # policy actually used at this state (0 when no alternative existed), so
@@ -474,9 +549,11 @@ def label_steps(segment: Dict[str, Any]) -> List[Dict[str, Any]]:
         if claim_met is True:
             miss_by_tool[tool] = 0
             miss_by_rule[rule] = 0
+            miss_by_rule_norm[rule_norm] = 0
         elif claim_met is False:
             miss_by_tool[tool] = miss_by_tool.get(tool, 0) + 1
             miss_by_rule[rule] = miss_by_rule.get(rule, 0) + 1
+            miss_by_rule_norm[rule_norm] = miss_by_rule_norm.get(rule_norm, 0) + 1
         last_ok = ok
         last_tool = tool
         if after:
@@ -522,7 +599,9 @@ def _attribute_lagged(out: List[Dict[str, Any]]) -> None:
             row["moved"] = False
             row["progress"] = False
             row["advance"] = False
-        else:
+        elif not row.get("refused"):
+            # A refused call sends nothing, so it is not a candidate owner for a
+            # change a later read reveals (G65).
             last_action = index
 
 
@@ -733,9 +812,10 @@ def summarise(transitions: List[Dict[str, Any]]) -> Dict[str, Any]:
         return round(hits / t_h, 2) if t_h > 0 else None
     return {
         "rows": len(transitions),
-        "label_version": 2,
+        "label_version": 3,
         "label_rule": ("a change observed in a run of reads is credited to the last "
-                       "acting step; reads never claim a change"),
+                       "acting step; reads never claim a change; a directive the page "
+                       "refused before sending is always a miss (G65)"),
         "reads": sum(1 for r in usable if r["was_read"]),
         "reads_that_saw_a_change": sum(1 for r in usable if r["was_read"]
                                        and r.get("moved_observed")),

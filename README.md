@@ -52,8 +52,9 @@ Edge renders it, and a shim makes the browser look like an Android phone.
 
 ### Install (end user)
 
-1. Run `setup.exe` (≈288 MB). It unpacks the runtime, the client bundle, the
-   relay, the proxy binaries and the Python agent into the install folder.
+1. Run `setup.exe` (224,413,696 B = 214.0 MiB, measured 2026-10-30). It unpacks the
+   runtime, the client bundle, the relay, the proxy binaries, a standalone Edge
+   WebView2 payload and the Python agent into the install folder.
 2. Launch `DofusFarm.exe`.
 3. **Settings → Network**: leave the mode on **Auto**. Press **Test**; you want
    `active: …` and at least one healthy candidate.
@@ -112,10 +113,10 @@ back to the legacy C# 5 compiler otherwise.
 | 8880 + slot | relay | HTTP/CONNECT proxy the client is pointed at |
 | 8890 | Sentinel | health/telemetry HTTP service |
 | 8891 | Combat AI | `POST /v1/combat/decide` (solver → ranker → live policy) |
-| 8893 | directive bridge | `POST /directive` → client tool calls (fallback; the live port is read from `bridge_port.txt`, seen at 8894 on a multi-slot box) |
+| 8893…8899 | directive bridge | `POST /directive` → client tool calls. `desktop/agentbridge.cs:39` walks `CANDIDATE_PORTS {8893…8899}` and publishes the winner to `bridge_port.txt` — **read that file, never hardcode a port**; measured `8896` on this machine 2026-10-30 |
 | 8895 | agent HTTP | `python -m agent.serve` — stdlib front for the agent layer |
 | 40000 | tunnel | local SOCKS5 (userspace WireGuard or system WARP) |
-| 5554, 5556, … | legacy Android | emulator console ports (only with `--include-legacy-emulator`) |
+| 5554 + 2·(slot−1) | legacy Android | emulator console ports, derived in `farmengine.cs:1571` (only with `--include-legacy-emulator`) |
 
 (8892 was the old ModernBERT stance server — retired; combat moved to 8891. Full
 topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
@@ -128,7 +129,7 @@ topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
 /
 ├─ DofusFarm.exe              host (built)
 ├─ dofus-net-proxy.exe        relay (built from scripts/dofus-net-proxy.go)
-├─ setup.exe                  installer (payload ≈288 MB)
+├─ setup.exe                  installer (224,413,696 B = 214.0 MiB, measured 2026-10-30)
 ├─ uninstall.exe
 ├─ compile.bat                one-click build
 ├─ network.ini                egress configuration (see §13)
@@ -139,7 +140,7 @@ topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
 ├─ no-client-update.flag      disables the bundle updater
 ├─ asset_cache/               relay cache (assets, .meta, proxy.log)
 ├─ builder/                   Build.cs → Build.exe (the whole pipeline)
-├─ desktop/                   C# host sources (20.6k lines)
+├─ desktop/                   C# host sources (23,117 lines, measured 2026-10-30)
 │  ├─ mainform.cs             shell, grid, nav, launch paths
 │  ├─ pages.cs                Settings / Shortcuts / Logs pages
 │  ├─ aipanel.cs              AI page + AiSettings
@@ -147,8 +148,8 @@ topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
 │  ├─ proxysupervisor.cs      egress selection + failover
 │  ├─ netsettings.cs          network.ini model
 │  ├─ clientbundle.cs         transactional updater + runtime patcher
-│  ├─ WebView2ClientForm.cs   the client window (3.1k lines)
-│  ├─ WebView2Backend.cs      instance lifecycle
+│  ├─ WebView2ClientForm.cs   the client window (3,437 lines)
+│  ├─ WebView2Backend.cs      instance lifecycle + the disguise injection
 │  ├─ agentbridge.cs          directive HTTP bridge
 │  ├─ prioritygovernor.cs     CPU/RAM arbitration across instances
 │  ├─ watchdog.cs             hang detection
@@ -168,9 +169,9 @@ topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
 ├─ runtimes/                  embedded Python (3.11) + win-x64/x86 helpers
 ├─ dofus-network/             the brain (see §9)
 │  ├─ networkhealth/          RTT/loss forecaster + sentinel (port 8890)
-│  ├─ networkhealth_artifacts/  one full research run, 27 files, ~100 MB (not shipped)
+│  ├─ networkhealth_artifacts/  **absent on this machine (checked 2026-10-30)** — §9.5 describes the run that produced it, and G5 is that the forecaster is dark
 │  ├─ models/                 encoder, ONNX exports, verifier baseline
-│  ├─ trajectories/           play + synthetic + agent step logs
+│  ├─ trajectories/           play + synthetic + agent step logs — 29 files, 236,961 rows
 │  └─ docs/                   all design docs (see §17)
 └─ dofus-network/docs/        all design docs (see §17)
 ```
@@ -188,7 +189,7 @@ process handle.
 | page | what it holds |
 |---|---|
 | **Instances** | toolbar + instance grid. Nothing else competes for rows. |
-| **AI** | mode, target, policy, dry-run, goals, step budget, quick actions, output |
+| **AI** | mode, targets, dry-run, goals, quick actions, output. There is **no policy dropdown and no step-budget field** — `aipanel.cs:66-70` pins `Policy = "planner"` and `Steps = 0`, so the GUI always runs Full Auto on the planner; `--policy` / `--steps` are CLI-only |
 | **Settings** | login flags, network card, folders, AI reset |
 | **Shortcuts** | one row per action; press a key to rebind |
 | **Logs** | live tail of `DofusFarm.log` and `autopilot.jsonl` |
@@ -198,12 +199,14 @@ on a hidden timer — a hidden page polling the disk is pure waste.
 
 ### Instance model
 
-Each instance is a row with a name, a slot, a port, RAM/cores, an optional
-per-instance proxy, and a phone profile. Slot *n* maps to:
+The grid is 12 columns and **none of them is a port** (`mainform.cs:776-798`): STATUS,
+INSTANCE NAME, SLOT, HOST MEMORY, HOST CPU, DEVICE PROFILE, NETWORK, then Edit / Clone /
+Reset / Delete. Each instance carries a name, a slot, memory/CPU, an optional
+per-instance proxy, and a phone profile. Slot index *i* (1-based) maps to:
 
 ```
-relay port  = base_port (default 8880) + n
-sdk port    = 5554 + 2n          (legacy Android only)
+relay port  = base_port (default 8880) + slot
+sdk port    = 5554 + 2*(i-1)   (legacy Android only; the slot is derived back as (port-5554)/2)
 profile dir = %LOCALAPPDATA%\DofusFarm\webview2_profiles\<instance>
 ```
 
@@ -218,15 +221,19 @@ the editor refuses duplicates instead of silently shadowing.
 
 The AI state is visible from **every page**, not only from the AI page:
 
-* a pill in the nav strip, right-aligned, updated once a second:
-  `AI running - step 42 - hdv.list advanced (model)`, or `AI idle`, or
-  `AI stopped - last step 42`;
-* the nav button **AI** turns green while the loop is alive.
+* a pill in the nav strip, right-aligned, updated once a second. It has **four**
+  shapes: `AI running - step 42 - hdv.list advanced (model)`, `AI idle`,
+  `AI stopped - last step 42`, and `AI running - waiting for the first step`
+  (`aipanel.cs:1859-1883`). With several slots live it aggregates:
+  `N running: dofus-01: … | dofus-02: …`;
+* the nav button **AI** turns green while a loop is alive.
 
-It is green only when the child process is alive; the text comes from the last
-line of `autopilot.jsonl`, not from the process. That distinction matters: a live
-process with a stalled loop and a dead process look identical from the outside,
-and the log is the thing that actually advances.
+Green is no longer the child process alone: `IsRunning` is the **brain daemon's**
+per-instance state (`BrainAnyRunning()`) or the child fallback
+(`mainform.cs:1315-1327`), and each window's badge comes from that instance's own
+loop and log (`IsRunningFor` / `LiveStatusFor` / `StepLogFor`). The text still comes
+from the last line of the instance's `autopilot.<instance>.jsonl`, because a live
+process with a stalled loop and a dead process look identical from the outside.
 
 The AI page additionally streams the loop's stdout line by line
 (`OutputDataReceived`, `PYTHONUNBUFFERED=1`), so the reason for each step is
@@ -234,23 +241,28 @@ visible as it happens rather than at the end of the run.
 
 ### Logging
 
-* `DofusFarm.log` — one line per event, `[HH:mm:ss] message`. Rotated to `.1`
-  once past 10 MB at startup (guarded by the single-instance mutex).
+* `DofusFarm.log` — one line per event, `[HH:mm:ss] message`. Rotated at **64 MB**
+  (`LogMaxBytes = 64L*1024*1024`, `mainform.cs:269`, enforced at `:2104`); a second
+  rotation pass runs at startup (guarded by the single-instance mutex).
 * `asset_cache/proxy.log` — relay log (`-quiet` sends it here instead of stdout).
 * `%LOCALAPPDATA%\DofusFarm\autopilot.jsonl` — one JSON object per agent step.
-* `%LOCALAPPDATA%\DofusFarm\verdicts_human.jsonl` — human corrections.
+* `%LOCALAPPDATA%\DofusFarm\autopilot.<instance>.jsonl` — per-instance loop logs;
+  the brain daemon runs one thread per instance, so two loops share a process but not
+  a file.
 
 Startup always logs one line that answers "why is nothing loading":
 
 ```
-[NET] egress: auto: supervisor picks | relay 8880+slot | fail closed
+[NET] egress: auto: supervisor picks (see Settings > Test)  |  relay 8880+slot  |  fail closed
 ```
 
 ### Process hygiene
 
 * Single instance via `Global\DofusFarmManager_SingleInstance_Mutex_2026`; a
   second launch focuses the first window instead of starting a second host.
-* `--bundle-selftest` runs headless, writes `bundle-selftest.txt`, exits 0/1.
+* `--bundle-selftest` runs headless, writes `bundle-selftest.txt`, and exits
+  **0 (identical), 1 (mismatch), 2 (SKIP) or 3 (ERROR)** (`Program.cs:128-156`) —
+  reading only 0/1 hides a skip.
 
 ---
 
@@ -333,10 +345,11 @@ stale silently, and why "the update broke it again" was a recurring failure.
 
 ### The actual root cause
 
-`script.js` is **patched at build time** by `tools/patch-engine.js` (11 patches:
-touch input, map-transition watchdog, Adjust removal, WebGL fingerprint, logger
-silencing…). The old runtime updater replaced `script.js` with the server's **raw**
-copy — so the first time the server published a new build, every patch vanished.
+`script.js` is **patched at build time** by `tools/patch-engine.js`, which today
+carries **23 patch rules** (touch input, map-transition watchdog, Adjust removal, WebGL
+fingerprint, logger silencing, the recorder, the tool API, keep-alive capture, the
+interactive-use route…). The old runtime updater replaced `script.js` with the server's
+**raw** copy — so the first time the server published a new build, every patch vanished.
 Login failed or the page came up black, and nothing in the logs pointed at the
 cause.
 
@@ -378,11 +391,16 @@ Proof, not trust:
 
 ```bat
 DofusFarm.exe --bundle-selftest
-:: rules: 13
-:: matched: 0, 1, 2, 3, 6, 7, 8, 9, 10, 11
-:: skipped: 4: end marker missing …
+:: rules: 23
+:: matched: 0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 20 … 31
+:: patched 5365280 chars, live 5365280 chars
 :: RESULT: IDENTICAL
 ```
+
+That is the current file (`bundle-selftest.txt`, re-read 2026-10-30): **all 23 rules
+match and nothing is skipped**. The `rules: 13 / skipped: 4…` sample this section used to
+show was the 1.74.9 bundle; a "16 matched, 7 skipped" figure also circulated and is
+equally out of date.
 
 `IDENTICAL` means: applying the shipped rules to the unpatched backup reproduces
 the live patched bundle character for character. If a future client build moves
@@ -541,9 +559,13 @@ A level-1 character asking for a level-200 item gets a real answer: *buy it in
 
 ### 9.3 The knowledge base
 
-40.5 MB of JSON becomes **3.0 MB on disk / 5.3 MB in RAM** as compact typed
+A JSON extract (historically **40.5 MB**; re-measured 2026-10-30 the cache is
+`data/cache/*.json` totalling **32,626,819 B**, largest `items_full.json` at 24.6 MB)
+becomes **3.0 MB on disk / 5.3 MB in RAM** as compact typed
 arrays plus one UTF-8 name blob — 23× less memory than `json.load`, because the
-JSON route materialises a dict per record and a string object per field.
+JSON route materialises a dict per record and a string object per field. The disk figure
+is verified (`data/kb/dofus_kb.npz` 250,560 B + `data/kb/dofus_names.bin` 2,700,874 B =
+2,951,434 B); the RAM figure is a runtime measurement and has not been re-taken.
 
 ### 9.4 Everything else
 
@@ -561,9 +583,13 @@ JSON route materialises a dict per record and a string object per field.
 A second, much smaller model that answers a different question: **is the path to
 the server degrading?** Not "is the game slow" — the client cannot tell you that
 reliably — but "is this slot's route getting worse, and should the host fail
-over". It is a causal TCN (`networkhealth/model.py::NetworkHealthTCN`, 52,816
-parameters, 0.20 MB) with per-horizon heads for log-RTT, RTT variance, jitter,
-loss and a degradation logit, plus one anomaly score shared across horizons.
+over". It is a causal TCN (`networkhealth/model.py::NetworkHealthTCN`, default
+`ModelConfig` hidden 96 / levels 5 / kernel 3 → **144,016 parameters, 0.576 MB**;
+the 52,816 figure was the earlier mask-free build) with per-horizon heads for log-RTT,
+RTT variance, jitter, loss and a degradation logit, plus one anomaly score shared across
+horizons. `ModelConfig.architecture` now also accepts `"trm_moe"`
+(`networkhealth/trm_moe.py`, 4 experts / top-k 2) — untested, because there is no
+checkpoint to load.
 
 Runtime pieces:
 
@@ -575,17 +601,19 @@ Runtime pieces:
 | `networkhealth/splits.py` | time + series split with purge/gap, so no probe is on both sides |
 | `networkhealth/baselines.py` | persistence / moving average / EWMA / seasonal naive |
 | `networkhealth/training.py`, `evaluation.py` | train, evaluate, write the report |
-| `networkhealth/inference.py` | `MultiInstanceNetworkHealth` — one model, many slots |
+| `networkhealth/inference/` (a package) | `MultiInstanceNetworkHealth` — one model, many slots |
 | `networkhealth/bridge.py` | polls relays on 8880…8883, emits forecasts and failover alerts |
 | `networkhealth/sentinel.py` | the singleton service on `127.0.0.1:8890` |
 | `networkhealth/provenance.py` | sha256 of every input and output, environment fingerprint |
 
 #### `dofus-network/networkhealth_artifacts/`
 
-The **output of one full run** (2026-10-17), 27 files, ~100 MB. It is a research
-artifact, not runtime data: `builder/build.cs` deliberately excludes this
-directory from the installer payload. It is kept because every number in the
-report can be traced back through the manifests.
+**This directory does not exist on the current machine** (checked 2026-10-30:
+`ls dofus-network/networkhealth_artifacts` → not found). That is the whole of G5:
+the forecaster has no `model.pt` to load, so nothing is served and the Sentinel still
+imports torch. The table below documents what the one full run (2026-10-17) produced when
+it existed — 27 files, ~100 MB, deliberately excluded from the installer by
+`builder/build.cs`. Read it as the shape of a research run, not as files you will find.
 
 | file | what it is |
 |---|---|
@@ -642,28 +670,31 @@ Training runs offline on Kaggle; `--resume` continues from a checkpoint, and
 
 ## 10. The agent loop and the second agent
 
-### 10.1 Tools (25, research vocabulary)
+### 10.1 Tools (28, research vocabulary)
 
-Runtime order is `data/capabilities.json`. The 2026-10-27 research unlock added
-`hdv.buy`, `inv.equip`, `hdv.prices` and `tap.interactive`; the old
-`FORBIDDEN_TOOLS` set is empty. The shipped 49K policy still has 21 trained logits,
-so the four new tools are rule-only until the head is retrained.
+Runtime order is `data/capabilities.json` — **28 entries**, and
+`agent/regression.py:208` asserts that number. The 2026-10-27 research unlock added
+`hdv.buy`, `inv.equip`, `hdv.prices` and `tap.interactive`; the tutorial work then added
+`ui.tap`, `ui.icons` and `shop.buy`; the old `FORBIDDEN_TOOLS` set is empty. The shipped
+49K policy still has 21 trained logits, so the seven newest tools are rule-only until the
+head is retrained.
 
 | tool | backend | tool | backend |
 |---|---|---|---|
-| `knowledge.search` | local | `inv.sell` | directive |
-| `quest.list` | local | `inv.equip` | directive |
-| `knowledge.remember` | local | `hdv.scan` | directive |
-| `knowledge.forget` | local | `hdv.list` | directive |
-| `fight.plan` | local | `hdv.buy` | directive |
-| `fight.estimate` | local | `hdv.prices` | directive |
+| `knowledge.search` | local | `inv.equip` | directive |
+| `quest.list` | local | `hdv.scan` | directive |
+| `knowledge.remember` | local | `hdv.list` | directive |
+| `knowledge.forget` | local | `hdv.buy` | directive |
+| `fight.plan` | local | `hdv.prices` | directive |
+| `fight.estimate` | local | `tap.interactive` | directive |
 | `nav.goto` † | directive | `chat.say` | directive |
 | `nav.follow` | directive | `state.snapshot` | directive |
 | `farm.start` | directive | `safe.stop` | directive |
 | `farm.stop` | directive | `fight.state` | directive |
 | `fight.join` | directive | `quest.advance` | directive |
-| `fight.pass` | directive | `tap.interactive` | directive |
-| `inv.list` | directive | | |
+| `fight.pass` | directive | `ui.tap` | directive |
+| `inv.list` | directive | `ui.icons` | directive |
+| `inv.sell` | directive | `shop.buy` | directive |
 
 † `nav.goto` is a directive, but its name→map resolution is answered by the
 Sentinel on `127.0.0.1:8890`.
@@ -752,8 +783,8 @@ The loop has to run and fail first, and the labels fall out of it — every
 rule/model/human disagreement is a training sample.
 
 ```bash
-python -m agent.regression                         # 276 checks, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + dialog repeats + label reader + brain autostart + brain readiness + board replay; delegates node JS + bundle resilience --check + go relay suites)
-python -m advisor selftest                         # 122 checks, offline (knowledge repo only)
+python -m agent.regression                         # 1,540 checks / 0 failed, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + label reader + brain autostart + readiness + board replay + calibration/worker gates incl. the enforced promotion bar + the gate-shadow wiring + the priced alternative; delegates node JS suites, `go test` for the relay, the C# host compile and the Kaggle-mirror drift check)
+python -m advisor selftest                         # 91 check sites, offline (knowledge repo only)
 python -m agent.verifier --stats
 python -m agent.verifier --label 98106503 4 failed "the listing never appeared"
 python run_autopilot.py --goals-file goals.txt --steps 0
@@ -770,12 +801,12 @@ python run_autopilot.py --goals-file goals.txt --steps 0
 
 | path | content | volume |
 |---|---|---|
-| `dofus-network/trajectories/*.jsonl` | human play + synthetic tool calls | 14 files, 35,585 rows |
+| `dofus-network/trajectories/*.jsonl` | human play + agent steps + synthetic | **29 files / 236,961 rows**, measured 2026-10-30: 13 `play_*` wire captures (216,975 rows — the same event count `tools/quest_witness.py` reports), 6 `dofus-*` loop logs (10,798), 10 others (9,188) |
 | `%LOCALAPPDATA%\DofusFarm\autopilot.jsonl` | agent steps with labels | grows per run |
-| `%LOCALAPPDATA%\DofusFarm\verdicts_human.jsonl` | human corrections | one line per review |
+| `%LOCALAPPDATA%\DofusFarm\verdicts_human.jsonl` | human corrections | one line per review. Written by `agent/verifier.py:46`, **not** by the host |
 | `<install>/dofus-network/trajectories/play_<instance>.jsonl` | every human action in the client | per session, rotates at 64 MB |
-| `asset_cache/` | every static asset + `.meta` + `proxy.log` | ~9,700 files |
-| `dofus-network/data/cache/*.json` | DofusDB extract (items, monsters, quests) | 40.5 MB |
+| `asset_cache/` | every static asset + `.meta` + `proxy.log` | **7,428 files / 103.6 MiB**, measured 2026-10-30 |
+| `dofus-network/data/cache/*.json` | DofusDB extract (items, monsters, quests) | **32,626,819 B** (largest `items_full.json` 24.6 MB). Downloaded under a licence that forbids AI use — the live authority is the client-captured index, not this cache |
 | `dofus-network/models/` | checkpoints, ONNX exports, `verifier_head.{onnx,json,pt}` | 4 KB – 95 MB |
 | `dofus-network/data/verifier_sft/` | built verifier corpus (train/val + stats) | a few hundred KB |
 
@@ -791,15 +822,18 @@ created — because the policy has to learn from play, not from descriptions of 
 | step | what happens |
 |---|---|
 | 0 | compile the Go relay (skipped if `go` is absent; the shipped exe is reused) |
-| 0b | apply `patch-engine.js` to the client bundle (11 patches) |
+| 0b | apply `patch-engine.js` to the client bundle (23 rules) |
 | 0c | sync client shims into both distribution trees |
 | 1 | `DofusFarm.exe` (Roslyn if available, else legacy csc) |
 | 2 | `uninstall.exe` |
 | 3 | `setup.exe`: stage the payload, compile with the embedded zip as a resource |
 
-**Payload** (≈288 MB): host, relay, client bundle, `bin/warp`, `bin/webview2`,
-`tools/patch-rules.txt`, `runtimes/python`, `dofus-network` (models included),
-`network.ini`, `proxies.txt`, `accounts.txt`.
+**Payload** (`setup.exe` = 224,413,696 B): host, relay, client bundle, `bin/warp`,
+`bin/webview2`, `tools/patch-rules.txt`, `runtimes/python`, `dofus-network` (selected
+models: the INT8 command model, tool policy, encounter selfplay — not the fp32
+checkpoints), `network.ini`, `proxies.txt`, `accounts.txt`. Since 2026-10-30 it also
+carries a **213.8 MB standalone WebView2 runtime**, which is why the installer is bigger
+than the older 100 MB / 105.7 MB / 288 MB figures floating around the docs.
 
 The legacy Android path (SDK + system image, ≈950 MB) is **excluded** by default;
 `--include-legacy-emulator` puts it back. Nothing in the UI can select it — the
@@ -821,6 +855,19 @@ engine selector was removed.
 | `extra_args` | *(empty)* | raw flags appended to the relay command line |
 | `wireproxy_conf` | *(empty)* | blank = `bin\warp\wireproxy.conf` |
 | `log_path` | *(empty)* | blank = `<install>\asset_cache\proxy.log` |
+| `exit_proxy` | *(empty)* | a sticky exit you own (`socks5://…`) instead of the disposable pool; a candidate whose exit IP equals this machine's own is rejected |
+
+**How the relay actually gets its settings.** The host does **not** pass `-config`
+(`grep - '\-config' desktop/*.cs` is empty), so `dofus-net-proxy.exe` never reads
+`network.ini` itself: the C# parses the ini and emits explicit per-instance flags, and the
+key names differ between layers (`base_port` → `-port`, `log_path` → `-log`,
+`fail_closed` → the absence of `-allow-direct`). Editing `network.ini` still works because
+the C# re-reads it; `-config` only applies to a **manual** run.
+
+There is also no max-instance constant in the code — instance ceilings come from the
+governor's ≤4-core share (`prioritygovernor.cs:163`) and the watchdog's 3 restarts/hour
+(`watchdog.cs:16`). The "12/6/6" figure elsewhere is combat AP/MP/range caps
+(`combat/normal_build_duel.py:45`), not a fleet limit.
 
 ### `ai_settings.ini`
 
@@ -891,7 +938,9 @@ filled with a stale constant. `mobile-disguise.js` never invents a version.
 | `SOCKET_LOST` | malformed `appVersion` param | version param must be emitted last |
 | Relay port already in use | stale `dofus-net-proxy.exe` | the engine kills the one bound to that port on launch |
 | Two hosts fighting | single-instance mutex | the second launch focuses the first |
-| AI loop exits immediately | no goals / stop file present | type goals; delete `AUTOPILOT_STOP` |
+| AI loop exits immediately | no goals, or a stop file is present | goals live in `%LOCALAPPDATA%\DofusFarm\ai_goals.txt`; **check both stop locations** — `%LOCALAPPDATA%\DofusFarm\AUTOPILOT_STOP[.<instance>]` (what the panel writes) and `REPO_ROOT\AUTOPILOT_STOP` (the CLI default). Both LOCALAPPDATA files exist right now |
+| Every directive fails though the UI looks normal | the bridge landed on a port other than 8893 | read `%LOCALAPPDATA%\DofusFarm\bridge_port.txt` (**8896** measured); `agent/bridge.py` still *defaults* to 8893, so a hardcoded 8893 anywhere is a bug |
+| The pill says running but nothing moves | the brain daemon reports a loop that has not taken a step, or the child fallback is in use | look for `AI running - waiting for the first step`, and for `[ai] attached to the brain daemon` vs `fell back to per-instance children` in the AI console |
 
 ---
 
@@ -934,14 +983,16 @@ python -m advisor selftest
 > The previous three-command gate — `agent.smoke_verifier`, `agent.selftest`,
 > `networkhealth.selftest` — no longer exists; all three were removed 2026-10-25.
 > `agent.regression` rebuilds the loop/verifier contract (verdicts,
-> nested-alias changes, the claim-proof, the 25-tool vocabulary equality, dialog
+> nested-alias changes, the claim-proof, the **28**-tool vocabulary equality, dialog
 > question tie-break, prompt/named-mob fidelity, the verifier-model
 > guard, the recovery layer's no-repeat/terminate invariant, the failure-cause
-> labels, absent-client rescue, repair credit, idle waits, dialog outcome labels, the baseline report itself and the settle window) and
+> labels, absent-client rescue, repair credit, idle waits, dialog outcome labels, the settle
+> window, the baseline report itself, the claim-calibration and worker-headroom gates) and
 > delegates the JS
-> page suites to `node` **and the Go relay tests to `go`**; `advisor selftest` (122 checks)
-> covers the knowledge repository. Neither covers the C#
-> `--bundle-selftest`, the combat/data suites, or a live session — see
+> page suites to `node`, **the Go relay tests to `go`, the combat and data suites, the C#
+> host compile and the checked-in Kaggle mirror drift**; `advisor selftest` (91 checks)
+> covers the knowledge repository. What is still outside it: the C#
+> `--bundle-selftest` and a full release build, and any live session — see
 > `dofus-network/docs/KNOWN_GAPS.md` G8.
 
 ---
@@ -969,10 +1020,10 @@ python -m advisor selftest
 
 | file | what is in it |
 |---|---|
-| `dofus-network/docs/CURRENT.md` | **the running-system map** — services/ports, the 7-stage loop, think-token pacing, model inventory, combat pipeline, the 25 tools |
-| `dofus-network/docs/KNOWN_GAPS.md` | **honest limits** — no keep-alive (INACTIVITY), no equip tool, dialog text unread, no vision, forecaster dark, live fight unverified, tests gone |
-| `dofus-network/docs/PLAN.md` | the authoritative plan and phase list (single status source) |
-| `dofus-network/docs/PROJECT_LOG.md` | every decision (D1–D21) with the falsifier |
+| `dofus-network/docs/CURRENT.md` | **the running-system map** — services/ports, the 7-stage loop, think-token pacing, model inventory, combat pipeline, the 28 tools |
+| `dofus-network/docs/KNOWN_GAPS.md` | **honest limits, G1–G69** — keep-alive fixed live (G1), equip shipped and its tutorial wall explained (G2/G62), refusal text now read (G64), no vision (G4), forecaster dark (G5), live fight proven (G7), tests restored (G8) |
+| `dofus-network/docs/PLAN.md` | the older living plan — status superseded by `CURRENT.md` / `AI_ARCHITECTURE.md` / `resume.md` |
+| `dofus-network/docs/PROJECT_LOG.md` | every decision (D1–D24) with the falsifier |
 | `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, why no token CoT |
 | `dofus-network/docs/SECOND_AGENT.md` | the verifier: design and how it was meant to be tested (test gate removed — see KNOWN_GAPS G8) |
 | `dofus-network/docs/AGENT2_DESIGN.md` | earlier second-agent design (superseded by AGENT3_PLAN) |
@@ -980,7 +1031,7 @@ python -m advisor selftest
 | `dofus-network/docs/FAILURE_TO_SUPERVISION.md` | how kicks/refusals/regressions become labels, data and tests |
 | `dofus-network/docs/PROTOCOL_NOTES.md` | captured Dofus messages and field layouts |
 | `dofus-network/docs/PIPELINE.md` | data pipeline end to end |
-| `dofus-network/docs/CAPABILITY_REGISTRY.md` | the tools and their contracts as data (live count is 21) |
+| `dofus-network/docs/CAPABILITY_REGISTRY.md` | the tools and their contracts as data (live count is 28) |
 | `dofus-network/docs/EXPERIENCE_LEARNING.md` | experience/replay design |
 | `dofus-network/docs/LATENT_AND_ONLINE_LEARNING.md` | latent bus and online updates |
 | `dofus-network/docs/ARCH_REASSESSMENT.md` | the architectural argument (reasoning; status column superseded) |

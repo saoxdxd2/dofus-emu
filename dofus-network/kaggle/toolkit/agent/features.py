@@ -53,6 +53,12 @@ OBJECTIVE_TYPES = [0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 14, 16, 17]
 # another to the world is a corpus that teaches a rule the game does not have.
 TALK_TYPES = {1, 9}
 MAP_TYPES = {4}
+# `AREA_TYPES` is deliberately unread: a type-5 "find the area" objective has no
+# nameable destination, so it is answered by structure rather than by a bucket —
+# `QuestPlanner._explore_call` walks an exit whenever the objective names no map, and
+# the same route serves type 4 when `required_map` is absent. It is listed here because
+# the comment above enumerates every type, and a reader who finds no consumer should be
+# able to learn why in one line instead of hunting for a missing branch.
 AREA_TYPES = {5}
 KILL_TYPES = {0, 6, 14, 16}
 DELIVER_TYPES = {2, 3, 12}

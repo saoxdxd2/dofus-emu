@@ -30,6 +30,9 @@ from .features import (FEATURE_NAMES, HORIZONS, Normaliser, TARGET_BLOCK)
 from .provenance import hash_file
 from .splits import SplitConfig, build_split, describe_split
 
+# Not a default: every writer here takes an explicit `out_dir` from the caller, and the
+# directory this names does not exist on this machine (KNOWN_GAPS G5 — the forecaster has
+# no checkpoint to load). Kept as the historical location of the one full run.
 ARTIFACT_DIR = Path("networkhealth_artifacts")
 
 

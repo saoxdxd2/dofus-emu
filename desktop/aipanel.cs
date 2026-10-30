@@ -491,7 +491,7 @@ namespace DofusFarm.UI
             row3.Controls.Add(_lblState);
 
             var lblHint = new Label();
-            lblHint.Text = "All 25 tools enabled; schema, no-progress and recovery guards live in agent/autopilot.py.";
+            lblHint.Text = "All 28 tools enabled; schema, no-progress and recovery guards live in agent/autopilot.py.";
             lblHint.ForeColor = Color.FromArgb(100, 116, 139);
             lblHint.AutoSize = true;
             lblHint.Location = new Point(0, 27);

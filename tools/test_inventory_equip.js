@@ -49,7 +49,8 @@ function run(inv) {
 const FULL = {
     kamas: 5,
     objects: {11: {objectGID: 900, quantity: 2}},
-    equippedItems: {1: {objectGID: 500, quantity: 1}, 2: {objectGID: 501},
+    equippedItems: {1: {objectGID: 500, quantity: 1, objectUID: 9001},
+                    2: {objectGID: 501, objectUID: 9002},
                     10: {objectGID: 510}},
     presets: {7: {name: 'Farm', items: [1, 2, 3]}},
     itemSets: [{name: 'Set A', items: [1]}, {name: 'Set B', items: []}],
@@ -64,6 +65,11 @@ check('worn items are listed by slot, in numeric form',
     JSON.stringify(out.equipped));
 check('a worn item carries its object gid, which is how the loop learns what is already on',
     out.equipped[0].gid === 500, JSON.stringify(out.equipped[0]));
+check('a worn item names its own object uid, so a step never re-equips it (G62)',
+    out.equipped[0].object_uid === 9001 && out.equipped[1].object_uid === 9002,
+    JSON.stringify(out.equipped));
+check('an entry with no object uid says null rather than inventing one',
+    out.equipped[2].object_uid === null, JSON.stringify(out.equipped[2]));
 check('the verb\'s argument is readable: a preset id, its name and its size',
     out.presets.length === 1 && out.presets[0].preset_id === 7
     && out.presets[0].name === 'Farm' && out.presets[0].items === 3,

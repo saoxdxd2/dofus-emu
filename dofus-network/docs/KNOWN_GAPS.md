@@ -6094,3 +6094,605 @@ rule has one, G54) and its use for ranking alternatives - the decision the corpu
 observe. Until a model beats 99.8% kept at <=11% veto on `nav.goto` out of time, the rule
 remains the right thing to ship.
 
+
+## G57. A world-model encoder does not beat the hand-built features, and the first fold compared two vocabularies *(measured 2026-10-29)*
+
+**The plan and its kill criterion.** Phase 2 of the representation plan: freeze an encoder
+pretrained on the unlabelled task "given this state and call, which watched keys change
+next", then put the same small head on the scarce claim label. Pre-registered bar: the
+encoder must beat the hand-built features (global vector + pooled entity rows + action)
+by **>= 0.03 AUC** on the temporal fold, or the representation route stops.
+`tools/state_encoder_probe.py`.
+
+**First run measured vocabulary drift, not representation.** The five-day fold
+(10-23/26/27 -> 10-28/29) put the encoder at 0.316 against hand-built 0.688. The claim
+kinds explain it: every early-day `nav.goto` promised `step`, the `at:<map>` form first
+appears on 10-28, and `quest.advance/dialog` fails 937/964 times on the early days but
+succeeds 220/304 on the late ones - the builder's per-form fix (G49/G50) changed what the
+same claim *means*. No model can transfer a claim kind it has never seen. Claim-kind tables
+are now printed per split before any AUC is read.
+
+**Second protocol error: leaky pretraining.** With the test rows' own `(state, action) ->
+next state` pairs in the world-model loss, the encoder scored 0.806. Masking those 457
+deltas out (the claim label is derived from exactly those transitions) dropped it to
+0.50-0.61. The 0.806 was memorisation, not representation.
+
+**Third protocol error: the "segment" id was unique per row.** Both the segment-clustered
+CI and the segment-boundary cut were silently no-ops, so CIs were printed for the wrong
+cluster and the cut could split a session. With ids fixed, the honest fold sizes are
+**8 test sessions** for the within-regime fold - effective n is sessions, not rows.
+
+**Measured on the within-regime fold** (10-28/29, first 60% -> last 40%, 715/457 rows,
+29/8 segments, held-out deltas masked, 3 seeds):
+
+| features | AUC seed 0/1/2 (mean) | segment CI (seed 0) | at 15% veto: vetoed met | successes kept |
+|---|---|---|---|---|
+| hand-built + action | 0.658 / 0.658 / 0.658 (0.658) | 0.450..0.694 | 37.7% | 91.6% |
+| encoder embedding + action | 0.610 / 0.520 / 0.582 (0.571) | 0.353..0.747 | 43.5% | 90.3% |
+| world-model predicted deltas | 0.626 / 0.640 / 0.670 (0.645) | 0.405..0.774 | 36.2% | 91.9% |
+| encoder + deltas + action | 0.664 / 0.606 / 0.670 (0.647) | 0.347..0.821 | 36.2% | 91.9% |
+| **counter rule (`streak < 2`)** | **0.778** | **0.722..0.833** | **7.6%** at 20% veto | **97.7%** |
+
+Across days (37 test sessions, the contaminated fold) the encoder reaches 0.710-0.713
+against hand-built 0.688: +0.02, under the +0.03 bar even where the vocabulary is shifted
+in the encoder's favour.
+
+**Verdict.** The kill criterion is met: the learned representation does not beat the
+hand-built features (best mean 0.647 against 0.658, and no seed clears +0.03), and at
+the operating point every learned variant vetoes 23-65% of successful calls where the
+counter vetoes 7.6%. The route stops; keep the hand-built
+features and the counter. The world model *does* learn the dynamics (BCE 0.069 on the
+dense within-regime targets), so the failure is specifically that a transition-predictive
+embedding does not carry a claim-success signal out of time - the same conclusion as G39
+and G48, now with a representation-side test.
+
+**What would change the answer.** More sessions, not more architecture: 8 test sessions
+cannot separate 0.61 from 0.66. Revisit only when the within-regime fold has >= 40 test
+sessions, and only with the leak mask and segment ids intact.
+
+## G58. At the rule's own veto count the forest keeps more nav successes in three cuts out of four, by a handful of sessions *(measured 2026-10-29)*
+
+**The question G56 left open.** G56 compared a forest and the counter at a fixed 15% veto
+rate; the counter actually runs at 30-90% on `nav.goto` depending on the period, and a
+ranker that is better at 15% need not be better where the rule lives. `--rolling-models`
+trains both arms on every segment before each cut (the counter is one of the model's
+features, so this is the rule generalized, not a rival) and vetoes exactly as many rows
+as the rule does on that cut.
+
+**Measured, `nav.goto`, `claim_met`, four rolling cuts.**
+
+| cut | rows | rule veto | rule kept met | forest kept met | successes kept: forest − rule | segments carrying the delta |
+|---|---|---|---|---|---|---|
+| 0.40 | 877 | 808 | 0.275 | 0.449 | **+12** (pair CI 0.05..1.25) | 4 of 20 |
+| 0.55 | 106 | 60 | 0.283 | 0.413 | **+6** (CI 0.00..0.74) | 3 of 19 |
+| 0.70 | 69 | 19 | 0.380 | 0.440 | **+3** (CI 0.00..0.62) | 2 of 13 |
+| 0.85 | 505 | 56 | 0.895 | 0.889 | **−3** (CI −0.47..0.11) | 4 of 19 |
+
+`quest.advance` shows no difference at any cut (kept-met identical at 0.40/0.55, −0.004 at
+0.70, −0.004 at 0.85); the logistic arm is worse than the rule at the operating point in
+most cuts (0.85: vetoed met 0.20 vs 0.029).
+
+**What this is and is not.** It is the first evidence that a state-aware veto ranks
+`nav.goto` better than the counter where the counter vetoes most of the rows, and it is
+consistent in sign across the three early cuts. It is not shippable: the gain is 21
+successful calls pooled over 1,557 rows, comes from at most four sessions per cut, the
+interval touches zero at 0.55 and 0.70, and the newest cut reverses it. That is exactly
+the profile that a live shadow exists to test.
+
+**Decision.** The counter remains the veto. The forest is a candidate ranker to shadow,
+not to promote; the shadow has to record its score beside the rule's would-veto decision
+before any cut-over, and the bar is kept-met above the rule at matched veto on the next
+two live sessions. This is a request for the user's go-ahead, not a change.
+
+**Superseded the same day by G59:** a frozen model (which is what a shadow serves) does
+not reproduce the gain. The rolling arms retrained inside every cut; a model trained once
+and scored on the next day ties the rule on `nav.goto` and loses on `quest.advance`.
+
+**Reproduce.** `python tools/live_outcome_probe.py --rolling-models`.
+
+## G59. A frozen veto model loses to the rule out of time, so nothing is shadowed *(measured 2026-10-29)*
+
+**What G58 could not answer.** G58 retrained the forest inside each rolling cut, so every
+cut's model had seen that period's neighbours. A live shadow serves one frozen file. This
+is the deployment rehearsal `tools/train_veto_shadow.py` now runs: train on every judged
+row before a day, score that day only, veto exactly as many rows as the rule does.
+
+**Measured, cut 2026-10-29** (train 3,912 rows / 763 positives over days 10-23..28; test
+975 rows / 620 positives on 10-29):
+
+| tool | rule kept met | model kept met | rule vetoed-met | model vetoed-met | paired delta per session |
+|---|---|---|---|---|---|
+| nav.goto | 0.899 | 0.899 | 0.018 | 0.018 | 0.00 (CI −0.17..0.17) |
+| quest.advance | **0.691** | 0.664 | **0.029** | 0.143 | **−0.40** (CI −0.80..−0.10) |
+| all tools | 0.744 | 0.740 | 0.027 | 0.048 | −0.08 (CI −0.21..0.00) |
+
+Train AUC 0.983 against test 0.774, where the rule alone scores 0.762. Lower capacity does
+not rescue it: depth 2 / 60 iters test AUC 0.801 (quest kept 0.671), depth 2 / 30 with
+L2=1.0 0.805 (0.671), logistic C=0.1 0.824 (0.681) - all at or below the rule, and all
+spend the same 70 quest vetoes on 8-10 successful calls where the rule spends them on 2.
+
+**The rule is not the thing that drifted.** On 10-29, `repeat_streak` by value - nav:
+0→93%, 1→26%, 2→0%, 3→9%, 4+→0%; quest: 0→71%, 1→53%, 2→8%, 3→0%. The `>= 2`
+threshold is exactly where both tools collapse on the new day.
+
+**Verdict.** G58's +12/+6/+3 successes were an artifact of per-cut retraining; the frozen
+model reproduces none of it and costs quests. No model is wired into the loop, no shadow
+is added, and the counter remains the only veto. The harness stays: any future veto model
+must pass `tools/train_veto_shadow.py` - beat the rule at matched veto on unseen days -
+before it is discussed again. The artifact under `models/veto_shadow/` is evidence of the
+rejection, not a shippable model; its manifest carries the test numbers and the SHA.
+
+## G60. The gate counted interactive retries as new calls; volatile arguments are now ignored *(measured 2026-10-30)*
+
+**The defect the live logs showed.** On 2026-10-29 dofus-05 tapped the only interactive
+on map 145490432 (element 513208, cell 330) three times. Each attempt carries a fresh
+`skill_uid` (136137029 / 136137092 / 136137181) and the character's cell, so the gate's
+`tool|args` key saw **three different rules** and its streak never reached 2 - on the one
+tool that fails ~96% of the time (2 met of 46 judged taps).
+
+**Fix.** `agent.gate.RuleGate.key` drops `lang`, `skill_uid` and `cell` before hashing.
+`lang` is a renderer hint on every `nav.goto`; `cell` on an element tap is where the
+character stood, not what was asked for; `skill_uid` identifies the skill instance, not
+the intent. The builder now writes `repeat_streak_norm` beside `repeat_streak` so the
+validated exact-key rule (G48-G59) is untouched and the normalized one can be priced on
+the same rows.
+
+**Measured on the rebuilt corpus, four rolling cuts** (rows per cut 18-477):
+
+| tool | cut | exact veto (met) | normalized veto (met) | kept met exact → normalized |
+|---|---|---|---|---|
+| nav.goto | 0.40-0.85 | unchanged | unchanged | unchanged |
+| quest.advance | 0.40-0.85 | unchanged | unchanged | unchanged |
+| tap.interactive | 0.70 | 3 (0) | **4 (0)** | 0.067 → 0.071 |
+| tap.interactive | 0.85 | 7 (1) | **9 (1)** | 0.000 → 0.000 |
+
+So the normalization is exactly additive: it catches two more doomed taps and takes no
+extra success, and it leaves the other two tools identical at every cut.
+
+**Verified live-side shape.** The tap path is the client's own `isoEngine.useInteractive`
+(script record `via`), which orients and walks to the element before sending
+`InteractiveUseRequestMessage`; the observed 21-cell start distance is therefore normal,
+not the bug. The directive reports `ok` for the dispatch, and the claim label
+(`effect`: progress keys, dialog, or inventory-size change) correctly records 44 of 46
+taps as misses.
+
+**The wall this exposed (quest 4262 / step 4954 / objective 13948).** dofus-05 ends every
+session on "Recover the first page of the aqueduct blueprints" (free-form, parameter0
+704145, map 145490432); its inventory holds 6 items and 704145 is not one of them.
+dofus-03 completed the same objective on 2026-10-28 18:13:53, immediately after a
+`quest.advance {quest_id: 4262, objective_id: 13948}` on the objective's map, so the
+claim path works once the server-side condition holds. What is still unknown offline is
+how the page is acquired: the single interactive yields nothing on tap, the map spawns
+groups (73 observations), and nothing in the corpus shows the item entering an inventory.
+The next live session answers it directly: inventory now records `gid`/`qty`/`object_uid`,
+so a page that arrives after a fight is visible in the next observation.
+
+**Tests.** `test_rule_gate` pins the three taps as one rule, `lang` as irrelevant to a nav
+rule, and a different direction as a different rule; `test_gate_shadow` builds three taps
+with changing `skill_uid` and asserts `repeat_streak` stays `[0,0,0]` while
+`repeat_streak_norm` reaches `[0,1,2]`.
+
+## G61. The sessions are spent bouncing between two maps, and no row says why *(measured 2026-10-30)*
+
+**The measurement.** Counting map changes per instance on 2026-10-29, an A->B->A return
+(character back on the map it just left, one crossing later) dominates:
+
+| instance | run length | map changes | A->B->A | dominant pair |
+|---|---|---|---|---|
+| dofus-02 | 12.57 h | 229 | **216 (94%)** | 145489923 <-> 145490435: 175 |
+| dofus-05 | 17.84 h | 204 | **132 (65%)** | 145490434 <-> 145490946: 101 |
+
+On dofus-05 the loop was holding two ready objectives that live on different maps -
+4262/13948 (free-form page, map 145490432) and 4264/13966 (fight, map 145490946) - and
+the tail of the session is literally `145490946, 145490434, 145490946, 145490434 ...`
+twelve times, with `quest.advance {quest_id: 4262, npc_id: 3944/3952}` in between. The
+travel ranking that was added for this exact symptom (`_ready_rank`, free claim -> here ->
+nearest) does not prevent it.
+
+**Two attempts to reproduce, both negative.** (1) A stateful replay of dofus-05's 519
+live decisions through one `QuestPlanner` (feeding each recorded observation and verdict)
+agrees with the recorded tool on only 279/519 steps and diverges onto quest 4274 before
+the bounce window - the replay lacks the live planner's own notes, so it cannot be used
+as a reproduction. (2) A controlled two-map fixture (free-form objective with an
+interactive on A, fight objective with no group on B, adjacent) makes the planner tap
+once, travel to B, and wait with `state.snapshot` until the scan ends - it commits, it
+does not alternate. So the cause is **not established**; the planner, the settle/verify
+layer and the live notes are all still candidates.
+
+**Why it could not be attributed: no row carried a reason.** Of 617 dofus-02 rows on
+2026-10-29, **0** had `why` in their meta. `_log_plan` printed the deciding objective and
+reason to stderr only, so the corpus could show 175 crossings and never say who asked for
+them.
+
+**Instrument shipped.** `_log_plan` now stores `(tool, args, reason, objective id, text)`
+on the planner and the public `choose` wrapper stamps it onto `ToolCall.why` when the
+returned call is that same call; `record_meta()` already carries `why` into the step row,
+and the reason never enters the directive arguments. `test_plan_reason_recorded` drives
+the two-map fixture and asserts the travel call names the objective, the metadata
+carries it, and `args` stays clean.
+
+**What the next session answers.** Every planned walk will say "objective X (...): go to
+map Y" in the row. The 101/175 returns are then attributable to a branch, and the fix
+(commitment, a return bound, or a different detour) can be chosen from evidence instead
+of from a guess.
+
+## G62. The equip gate is the tutorial wall, and the loop re-offered worn pieces *(measured 2026-10-30)*
+
+**The chain behind G61's dofus-02 bounce.** The two maps it alternates between carry the
+tutorial's two halves: 145489923 holds the interactive the free-form step asks for, and
+145490435 holds Ayin Spyr (npc 3888, talked to 29 times on 10-29). The loop taps, walks
+back, talks, gets "Go and equip your new items" as the only reply, and repeats. So the
+bounce is the *symptom*; the gate is equipment.
+
+**What the page itself reports per set item** (from `inv.equip` results):
+
+| gid | type | category | possible_positions | outcome |
+|---|---|---|---|---|
+| 18844 | 7 | 0 | [1] | equipped at slot 1 |
+| 18846 | 16 | 0 | [6] | equipped at slot 6 |
+| 18848 | 17 | 0 | [7] | equipped at slot 7 |
+| 18974 | 210 | 3 | **[]** | `equipItem` sent nothing; page refuses: "not usable; pass slot" |
+
+All 41 equip calls were transport-ok; three pieces actually landed. Across every recorded
+session only 18844/1, 18846/6, 18848/7 and 18976/23 ever appear worn - **18974 has never
+been equipped anywhere**, and 18976's slot 23 was set by the client, outside the page's
+0-16 send window.
+
+**A real bug the log exposed.** `inventory.equipped` rows carry `{slot, gid}` with no
+object uid, but `_next_equip_uid` built its worn set from `object_uid`/`uid`, so the set
+was always empty and every step re-offered pieces already on (live 01:41: 70331924-70331927
+all answered "already worn" while the tutorial waited). The candidate is now retired by
+gid when the worn count covers every bag copy of that template; two copies with one worn
+stays ambiguous by design (the uid is not published), so both remain eligible rather than
+skipping the free one. `test_equip_skips_worn` covers the three cases, and the existing
+"worn twin's slot" fixture was corrected to the client's real shape (the bag lists
+equipped copies: the live snapshot had 4 items with 3 worn).
+
+**The page now names what is worn.** The live worn ObjectItem carries `objectUID` (it is
+one of `equipped_entry_keys`), but the snapshot published only `{slot, gid}`. Each worn row
+now carries `object_uid` when the client has one and `null` otherwise - never guessed.
+`test_inventory_equip.js` (32/32) asserts both, so the planner's uid skip is exact on the
+next page build and the gid rule only covers entries from older builds.
+
+**Settled offline: the fourth item is not equipment, and no slot probe can change that
+*(2026-10-30)*.** The served bundle carries the tables the client itself uses to decide
+this. `ItemTypes` rows are assigned `category = getCategory(superTypeId)` and
+`possiblePositions = getTypePositions(superTypeId)`; the category enum is
+`{equipment:0, consumables:1, resources:2, quest:3, ...}`, and
+`superTypeNotEquippable` contains `QUEST_OBJECT:14` among others. The live row is
+`type_id 210, type_category 3, possible_positions [], usable false` - i.e. a quest object
+that is not usable. `equipItem` therefore sends nothing (the client's own
+`defaultAction` never reaches `_equip` for it), and the fallback `ObjectUseMessage` path is
+ruled out by `usable: false`. **G62's suggested `slot: 8..16` probe is withdrawn**: the
+page's escape hatch sends `ObjectSetPositionMessage` directly, but the server has no
+position semantics for a quest object; there is nothing to learn from asking five times.
+
+**What the character actually holds.** The same trajectory's snapshot pairs a four-item bag
+with three worn rows: `{18848, 18844, 18846, 18974}` in the bag, and slot 1 = 18844
+(weapon), slot 6 = 18846 (hat), slot 7 = 18848 (cape) worn. Every warable item in the bag
+is on the body; 18974 is a quest token. So *if* the recruit set is those three templates,
+objective 4260/13902 ("Equip the Albueran recruit set, then talk to Ayin Spyr") has only
+its talk half left - and the equip loop's remaining refusal, if any, cannot be fixed by
+offering 18974 again. That "if" is the one thing the client's own text can settle: the
+bundle exposes each item's `itemSetIds`, and the live reply to the talk is what will say
+whether the server agrees the set is covered.
+
+**Why the last session still looked stuck.** dofus-02's 02:23 run ended in the G61 bounce
+between 145490435 and its neighbour with 13902 still ready - that run predates the G63
+return bound. With the bound in place, the next session spends at most three crossings
+undoing itself and then works the objective where it is; the client-error capture (G64)
+quotes Ayin's reply word for word, which is what will separate "the set is wrong" from
+"the talk is gated by the tutorial step".
+
+## G63. An objective may not walk the loop back to the map it just left more than three times *(measured 2026-10-30)*
+
+**Why a bound rather than a fix.** G61 measured the pathology - dofus-02 made 216 immediate
+A->B->A returns in 229 map changes, dofus-05 132 in 204 - and failed to establish its cause
+(a 519-step replay diverges; a clean two-map fixture commits and waits). Whatever the
+branch, these crossings are wasted: the character ends most sessions where it started.
+
+**The rule.** In the ready loop, when an objective's travel target is the map the
+character just came from (`need == _prev_map`), it counts a *return*. The first three are
+made as before; on the next one the objective is parked for the session and a single line
+says so:
+
+    [planner] objective 4264 (Defeat 1 Brytnee Spyr.) parked after 3 immediate returns to map 145490946
+
+Parking suppresses only the *walk back*. If the character is already on that objective's
+map it still acts, and the counter resets whenever a different destination is chosen or
+the objective leaves the ready set. If every ready objective is parked, the planner
+returns no call and the existing stall/thinking layer takes over - it is a bound on
+crossings, not a new scheduler.
+
+**Verified.** `test_return_bound` drives a single objective that wants the map the
+character just left: three `nav.goto` calls are issued, the fourth decision is not a walk
+back, the counter is per objective, and a destination that does not undo the last crossing
+is never parked. The fork test caught the new state and `fork()` now carries `_returns`
+and `_parked`. The frozen planner replay (420 recorded turns over 17 sessions) still
+passes unchanged, so normal travel does not trip the bound.
+
+**What it does not claim.** It does not stop the tutorial's equip->talk->tap cycle that
+G62 describes; that loop lives mostly on one map and is blocked by equipment, not travel.
+It only guarantees a session cannot spend its entire budget undoing its own crossings.
+
+## G64. The client's own refusal text was never read; the loop sees it now *(measured 2026-10-30)*
+
+**The miss.** The served bundle routes every `TextInformationMessage` to the chat:
+`msgType === TEXT_INFORMATION_ERROR` goes to `window.gui.chat.logError(text)` and every
+other type to `logMsg`. That is where the server states, in words, why an action was
+refused ("Go and equip your new items", "you cannot talk to this NPC here", an item the
+client will not place). The page captured none of it, so in every trajectory a refused
+action and an action that simply changed nothing were the same row: transport `ok`, claim
+`noop`, retried by the generic three-strike rule. G62's talk loop was diagnosed from a
+rendered quest reply only because that reply happened to be in the observation.
+
+**What is captured.** `_agentMakeErrorHook(store)` wraps `chat.logError` once (a marker on
+the wrapper stops a reload from stacking a second copy) and calls straight through with
+the original `this`, arguments and return value. Each message is whitespace-collapsed,
+trimmed, capped at 200 characters, and the store keeps the newest five with timestamps.
+`state.snapshot` installs the hook when it builds a snapshot and publishes
+`client_errors` only when the store is non-empty, so an observation that carries no
+refusal does not grow by a field.
+
+**What the loop does with it.** `Autopilot._note_client_error` runs on every non-advance
+verdict and prints the newest text once per distinct message; an `advanced` verdict resets
+the memory so the same refusal after real progress is reported again. Nothing reads the
+text as a decision yet - the counters, the gate and the planner behave exactly as before.
+
+**Verified.** `tools/test_client_errors.js` (16 checks: declaration, install, no double
+wrap, pass-through of `this`/arguments/return, trim and 200-char cap, five-row bound,
+silence without the field, and a client method that throws still throwing to its caller)
+and `test_client_errors_reach_the_loop` (first sighting printed, repeat suppressed, a new
+message printed, a page build without the field silent, and the no-advance branch wired).
+
+**What it does not claim.** It does not turn a refusal into progress or into a veto, and
+it cannot capture a refusal the client renders only as an NPC dialog line (the dialog is a
+separate channel; the tutorial's portrait text is still unread). The first live refusal
+decides whether a text is a claim of success ("already worn"), a reason to change the call,
+or noise.
+
+## G65. A refused call was credited as a met claim, and 13948's "completion" was never a claim *(measured 2026-10-30)*
+
+**The miss in the labels.** The bridge wraps the page's answer one level down:
+`result.response.result = {ok: false, reason, error}` means the directive was refused
+**before any packet left the page**. The transition builder judged a call only by the
+before/after world state, so a refused call was credited whenever the world moved for an
+unrelated reason. Measured over the corpus before the fix: **945 refused steps**
+(`quest.advance` 815 - `known_kick_signature` 313, `npc_id_required` 118, page settling/
+cooldown and dialog refusals the rest; `nav.goto` 66, `inv.equip` 38, `tap.interactive` 15,
+`fight.join` 6), of which **63 read `claim_met: true`** (59 `quest.advance`). The stale
+`repeat_streak` counters also reset on those false successes.
+
+**The fix** (`tools/build_live_transitions.py`, `label_version: 3`): `_refusal(row)` reads
+the nested envelope; a refused call is labelled `claim_met: false`, its `error` becomes the
+page's reason, a new `refused` field keeps the text, `moved`/`progress`/`advance` are zeroed
+(nothing was sent, so the call owns no diff - `changed` still records what differed), and
+`_attribute_lagged` refuses to hand a later read's revealed change to a refused step.
+`test_refused_calls_are_not_credited` pins the envelope read, the miss, the zeroed flags,
+the lag exclusion and the unchanged control case.
+
+**After the rebuild.** 9,687 rows; the 621 refused train rows now read met 0 / moved 0 /
+progress 0. `quest.advance` claim met is **452/1,942 = 23.3%** (was 26.3% with the false
+credits). The shipped rule re-measured on the temporal test fold, four rolling cuts:
+`repeat_streak >= 2` vetoes 66% of quest calls whose met rate is **2%** while keeping
+**40.9%** met and **97.2%** of successes; nav vetoes 47% at 2% met, keeps 64.3% met and
+96.4% of successes; AUC(fail) 0.655-0.973. Refusals strengthen the rule rather than
+weakening it, because they are genuine failures of the exact call.
+
+**Correcting the 13948 story.** The 2026-10-28 dofus-03 session was recorded as
+"13948 completed right after a claim", which implied the claim path works once the
+condition holds. It does not: every `quest.advance {4262, 13948}` in that session was
+refused with `reason: known_kick_signature` (no packet sent), and the objective moved
+13948 -> 13950 between 18:13:37 and 18:13:53 with **no agent action in between** (the
+character stood at cell 517; the client's tutorial special step 1 was active and then
+stopped). The runner's `claim met: true` on that step was exactly the bug above. So:
+- there is no evidence that a validation claim ever completed 13948;
+- its only recorded completion has no attributable cause (manual play or a server-side
+  event), so how the page is earned is still open;
+- on the current build the free-form claim is refused earlier, with
+  `objective_server_counted` ("perform the action instead"), so the loop never sends it -
+  the action is what remains to be found, and G64 will now record the client's own words
+  when the attempt is refused.
+- **2026-10-30: the recorded taps never stood on the element.** With the context fix in
+  G68, the corpus shows element 513208 at cell 330 carrying `skill_uid`
+  136137181/136137092/136137029 (an enabled list of one each) while the character stood at
+  cells 504/549 each time the tap was sent; a hand-built `InteractiveUseRequestMessage`
+  from another cell is a silent refusal. The page now routes taps through
+  `isoEngine.useInteractive`, which orients, walks to the element and then uses it, and
+  `tools/test_interactive_use.js` (13 checks) pins the route and its fallback. Whether the
+  use completes 13948 from cell 330 is still unproven **live on the current build** - but it is
+  no longer unknown: G69 finds the protocol record of exactly this use validating 13948 and 13950.
+
+## G66. A per-form count calibration does not beat the counter at equal veto budget *(measured 2026-10-30)*
+
+The gate is a counter (`repeat_streak_norm >= 2`), and the first learned worker was about to be
+built on top of the same numbers. So the count model was priced first:
+`python tools/live_outcome_probe.py --calibration` fits p(met | call form, streak bucket) with a
+Beta prior **on train only**, chooses the veto threshold on train (retention floors 0.95 and 0.90),
+and scores the frozen fold at **the counter's own number of vetoes**, so a gate cannot look better
+by vetoing more calls. A "form" is the promise the call makes (`nav.goto:step`, `nav.goto:at`,
+`quest.talk`, `quest.reply`, `quest.accept`, `tap.interactive`, ...), because a talk, a reply and an
+accept have different difficulty and pooling them calibrates a mixture.
+
+**Temporal fold** (3,644 judged train / 1,031 test, base 0.577): the counter vetoes 168 calls
+(16%), of which 6% met, keeping **0.678** met and **98.3%** of successes. The calibrated gate at the
+same 168 vetoes keeps **0.611** and 88.6%, paired segment CI **(-0.121, 0.012)**.
+**Hash fold** (`transitions_v2`, 3,568 / 709, base 0.271): 0.431 vs 0.434, CI (-0.038, 0.044). At
+its own threshold the calibrated gate "wins" only by vetoing 1.5-3.7x more calls, which is a
+different trade.
+
+**Why counts do not transfer.** `nav.goto:at` is 0/12 met in temporal train and 238/336 in test
+(form ECE 0.676); `nav.goto:step` is 17% met in train and 93% in test (ECE 0.184; hash 0.031). The
+one form where the calibrated score is genuinely better at its own threshold is `quest.reply`
+(temporal kept 0.67 vs 0.55, CI 0.093..0.143; hash 0.61 vs 0.52, CI 0.062..0.119), but it retains
+0.896 and its counter budget is 9 and 8 vetoes - below the pre-registered floor of 10.
+
+**What this decides.** The counter stays the operating rule; no worker is trained on this corpus.
+The promotion bar for the first learned worker (shared state encoder + per-form outcome heads) is
+now fixed in `docs/TRAINING_PLAN.md` and as constants in the probe (`PROMOTION_RETENTION = 0.95`,
+`PROMOTION_MIN_COUNTER_VETOES = 10`, `PROMOTION_DELTA_POINTS = 0.05`): at the counter's veto budget
+on the frozen fold and on >=3 of 4 rolling cuts, +5 points kept-success with a paired segment CI
+excluding 0, >=95% of successes retained, only for forms with >=400 met rows over >=3 start periods,
+and fail open to the rule. No form qualifies today: the binding constraint is live data.
+`test_claim_calibration` (16 checks) pins the form vocabulary, the shrinkage arithmetic, the
+train-only threshold, the equal-budget selection and that a tie is not a promotion.
+
+## G67. The state block has no out-of-time headroom on the calls the counter keeps *(measured 2026-10-30)*
+
+G66 closed the equal-budget question for a count calibration. The remaining place a learned head
+could earn its keep is inside the counter's kept set: re-rank the same budget or remove a few more
+calls. `python tools/live_outcome_probe.py --worker` fits the 24 relational mechanism features
+(streaks excluded) per call form on train, reports how well they order the calls the counter keeps,
+and prices a second veto layer of 5% and 10% on top of the counter with the paired segment CI. The
+bar is fixed in `_extension_ok` before any worker exists: removed set <=10% successes, >=5 removals,
+kept AUC >=0.55, paired CI excluding 0, fitted on train and scored on the frozen fold.
+
+**Temporal fold.** `quest.talk` kept AUC **0.472** (155 kept rows, 110 met) and `quest.reply`
+**0.398** (129 kept, 71 met): below chance. `nav.goto:step` kept AUC 0.645, but the counter keeps
+175 of 178 rows with 165 met, so the 5% and 10% extensions remove **8 and 17 calls that all met**
+(CI -0.056..0.0 and -0.094..0.0). `quest.other` shows kept AUC 0.707 on 43 kept rows with 2
+positives - below any evidence floor. Nothing is promoted.
+
+**Hash fold.** `quest.talk` looks promotable in period: the 5% extension removes 5 calls, 0 met,
+kept 0.443 -> 0.465, CI 0.004..0.052; 10% removes 10, 0 met, kept 0.49, CI 0.013..0.098. But the
+temporal fold inverts it (extensions remove 43-67% successes, kept AUC 0.472), and the nav forms
+remove half to three-quarters successes. A hash-only win is the exact pattern G41/G57 documented:
+the split shares days, so it measures interpolation, not generalisation.
+
+**Decision.** No worker ships. The state features do not order outcomes out of time, so more
+architecture cannot help; the levers left are live volume (per form >=400 met rows over >=3 start
+periods) and randomization that varies state within a form (the epsilon arm), not capacity.
+`test_worker_headroom_layer` (14 checks) pins the headroom and extension arithmetic, the minimum-
+evidence rule, and that a layer removing successes is never promoted.
+
+
+## G68. The transition context dropped every element's skill instance and enabled list *(measured 2026-10-30)*
+
+The page publishes `{elem_id, cell, skill_uid, enabled_skills, element_type_id, is_door, name}`
+for each interactive. `_context_of` in `tools/build_live_transitions.py` read `skill_id`/`skillId`
+(fields the page never writes) and ignored `enabled_skills`, so all 9,687 rows carried
+`skill: null` and no row could say whether the page element of 13948 offered a usable skill -
+the exact question the wall needed answered. Fixed: the context reads `skill_uid` (falling back
+to the old keys) and carries up to four `skills`. Both datasets were rebuilt with identical
+labels (9,687 rows / 457 segments / 5,289 actions / 1,322 claims met; label_version 3) and the
+calibration and worker numbers are unchanged, because the features count elements and cells, not
+skills. `test_live_transitions` pins the mapping. The rebuilt rows now show the page element's
+skill instance on the tapes that touched it (G65 addendum). The context also keeps the element's
+`type` and `door` flag now: the old logs carry `element_type_id: -1` for all five elements, so the
+kind of object was never resolvable offline; the captured client cache does settle what 513208 is -
+map 145490432's midground layer places it at cell 330 as sprite gid **401228**, an ordinary map
+object, not a ground item - but the element type must come from the current page, which publishes
+`element_type_id` from the renderer.
+
+## G69. The aqueduct pages were earned by an interactive use, and the corpus could not see it *(measured 2026-10-30)*
+
+G65 concluded that "no claim has ever been shown to complete 13948" and that the world action was
+open. The first half is true (every `QuestObjectiveValidationMessage` claim for 13948 was refused);
+the second half was a sampling artifact. The builder ingests `trajectories/dofus-*.jsonl` and
+`default*.jsonl` but deliberately **excludes `play_*.jsonl`**, which are protocol-event captures, and
+the only successful action is in one of them.
+
+**The protocol record (dofus-03, 2026-10-28).** After a walk from cell 517 to cell **345**
+(adjacent to the element at 330), the client sent
+`InteractiveUseRequestMessage {elemId: 513208, skillInstanceUid: 136113675}` at 1793211230499; the
+server acknowledged `InteractiveUsedMessage {elemId: 513208, skillId: 184}` at 1793211232719, and
+sent `QuestObjectiveValidatedMessage {questId: 4262, objectiveId: 13948}` at 1793211232786 - 67 ms
+after the ack. The same session validated **13950** at 1793211880637, 603 ms after using element
+513212 (cell 285) with skill instance 136113690 from cell **299** (adjacent to 285). dofus-05 used
+both elements on the same day (before quest 4262) and was acknowledged with the same skillId 184.
+These two uses are the only `InteractiveUseRequestMessage`s for 513208/513212 in any play log.
+
+**Why every agent attempt failed.** Every tap in the step corpus was sent from a distant cell:
+513208 (cell 330) from cells 504/549, and 513212 (cell 285) from 299-328 with no skill uid at all
+(locally refused with `skill_uid_required`). A hand-built `InteractiveUseRequestMessage` from afar
+is a silent refusal, which is what the corpus recorded as "no effect".
+
+**The current build already implements the winning mechanic.** `tap.interactive` routes through
+`isoEngine.useInteractive`, which orients, walks to the element and only then sends the use
+(`tools/test_interactive_use.js`, 13 checks), and `tap.interactive` is in the loop's `SETTLE_TOOLS`
+so the next decision waits up to `settle_s = 3.0` - the successful request-to-ack took 2.2 s. No
+claim is involved anywhere in the working path; the claims in the corpus were refused.
+
+**What remains** is not discovery but a live run on page build `2026-10-30a`: fresh guest, tutorial,
+4260/4262, and the loop should tap 513208 from an adjacent cell and settle. If it does not, G64 now
+records the client's own words and G68 records the element's type and skills, which is what the last
+attempt lacked.
+
+## G70. The veto's alternative is priced at last — and the old price was a label artifact
+*(measured 2026-10-30)*
+
+For two days every plan said the same thing about wiring `repeat_streak_norm >= 2`: the
+cost side was measured (G51/G54) but **the benefit side was unpriced** — "what would the
+loop do instead" (G39, G46, G52, G55). G55 did produce a number: a different action with
+no intervening read met **349/459 = 76%**. That number was measured before G60 fixed the
+call identity and before G65 made a refused call a miss, so the decision to leave the veto
+shadow-only rested on a price the programme had itself since invalidated.
+
+New mode: `python tools/live_outcome_probe.py --alternative --data
+data/transitions_temporal`. Only acting calls (a read makes no promise), call identity
+through `agent.gate.RuleGate.key` so `lang`/`skill_uid`/`cell` do not start a new streak,
+`refused` counted as a miss, the next acting call found **past** the reads the loop puts
+between decisions, and the contrast bootstrapped over segments.
+
+| fold | acting / met | candidates ≥2 | met among them | refused | retention if wired | next different | next same | difference, 95% CI |
+|---|---|---|---|---|---|---|---|---|
+| temporal test | 1,031 / 595 | 168 (16.3%) | 10 (5.95%) | 98 | **0.9832** | 61/134 = **0.455** | 0/30 = **0.000** | **+0.455** (+0.304, +0.603) |
+| hash test | 709 / 192 | 280 (39.5%) | 6 (2.14%) | 46 | **0.9688** | 46/72 = **0.639** | 1/195 = **0.005** | **+0.634** (+0.296, +0.872) |
+| temporal train | 3,644 / 667 | 2,603 (71.4%) | 33 (1.27%) | 472 | 0.9505 | 360/577 = 0.624 | 5/1,963 = 0.0025 | +0.621 (+0.505, +0.788) |
+
+Read this as three things:
+
+1. **The cost of the veto is 1.7–3.1 % of successes** on the frozen folds, which confirms
+   G51's "keeps 99 %+" claim on the corrected labels rather than contradicting it.
+2. **The alternative the loop already picks pays 45.5 % (temporal) / 63.9 % (hash), and
+   repeating the same promise pays 0.0 % / 0.5 %.** Both intervals exclude zero. G55's 76 %
+   was inflated: on v3 labels the same-class figure is 45.5 % on the fold that matters.
+3. **It is still observational.** The loop chose the alternative; nobody assigned it. The
+   probe prints that caveat in its own `verdict` block, because the causal version is
+   exactly the randomized arm G39 has been asking for. What changes is that the arm can now
+   be costed: the veto's marginal question is the 30 repeats per 168 candidates that would
+   have been refused, whose observed payoff is zero.
+
+Pinned by `test_veto_alternative_priced` (10 checks) and two `alt:` mutations. One mutation
+discipline note belongs in the record: `alt: count reads as acting calls` was **MISSED**,
+legitimately — the corpus already gives a read no `claim`, so that filter is redundant and
+the mutant is equivalent. The threshold mutant is caught by name (6 failing checks).
+
+**And a flaw in the mutation driver itself, found here.** The driver's section snippet ran
+`test_kaggle_toolkit_sync` *inside* every mutation. A mutation edits a mirrored source
+file, so mirror drift fails for **every** mutation, which means any batch reports "CAUGHT"
+whatever the checks think. It is removed from the snippet (it stays in the gate, and the
+driver `--check`s before and after). Consequence for the record: the earlier `calib:` 7/7,
+`worker:` 2/2 and `use:` 2/2 verdicts may have been witnessed by drift, and any of those
+claims that matters should be re-run before being quoted.
+
+## G71. The promotion bar's point floor was declared and never enforced
+*(measured 2026-10-30, found by a mutation that got away)*
+
+`PROMOTION_DELTA_POINTS = 0.05` — "a learned head must beat this count gate by this much"
+(`tools/live_outcome_probe.py:898`) — was **read by nothing**. `_promotion_ok` required only
+a bootstrap interval clearing zero plus the retention floor, so a gate that beat the counter
+by 0.4 of a point satisfied a bar written to demand five. Found while re-running the
+`calib:` mutation batch after the drift-witness fix (G70): `calib: a tie with the counter is
+promoted` came back **MISSED**, which is only possible because no check examined that
+boundary.
+
+Fixed: `_promotion_ok(stat, counter_kept)` now takes the counter's kept-success rate and
+requires the point gain `>= PROMOTION_DELTA_POINTS` alongside `ci[0] > 0` and
+`successes_retained >= 0.95`, and `promotion` reports `min_delta_points` and
+`counter_kept_success` so a reader can see which part of the bar failed. Two new checks in
+`test_claim_calibration` pin it: a +2-point gain is not promoted, a +6-point gain is, and a
+tie or an empty stat never is.
+
+**The other escaped mutant was not a test gap, and that is the more transferable lesson.**
+`calib: a form is not shrunk toward the global rate` was also MISSED — but the fixture has a
+single form, so the global rate *is* that form's rate and removing the Beta prior changes
+no number. The mutant is **equivalent**, and a check cannot catch a mutation that changes
+nothing. The check was not wrong, it was vacuous: it appeared to test shrinkage while
+testing arithmetic identity. Fixed by adding a second, nearly-empty form (`fight.join` with
+one met row) so the prior pulls `1.0` down to `(1 + 8·global)/(1 + 8) ≈ 0.57` and a
+removed prior becomes observable.
+
+Nothing about G66's or G67's conclusions changes: the calibrated score still does not beat
+the counter at equal budget, and the stricter floor makes promotion harder, not easier. What
+changes is that the bar now means what the plan said it meant.

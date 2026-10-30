@@ -12,6 +12,7 @@ not atomic, and a capture inside the window would record a mutated file.
 `MUT_ONLY="brain,dry run"` selects mutations by a substring of their label, so a new
 batch can be proven without re-running every older one.
 """
+import json
 import os
 import subprocess
 import sys
@@ -74,6 +75,7 @@ ONNX = ROOT / "agent" / "command_onnx.py"
 WORLD = ROOT / "sim" / "world.py"
 TRANS = ROOT / "tools" / "build_live_transitions.py"
 FORE = ROOT / "agent" / "foresight.py"
+PROBE = ROOT / "tools" / "live_outcome_probe.py"
 
 SNIPPET = ("import agent.regression as r\n"
            "r.test_failure_causes()\n"
@@ -82,7 +84,11 @@ SNIPPET = ("import agent.regression as r\n"
            "r.test_live_witnesses()\n"
            "r.test_verifier_head_gate()\n"
            "r.test_observation_text()\n"
-           "r.test_kaggle_toolkit_sync()\n"
+           # test_kaggle_toolkit_sync is deliberately NOT run inside a mutation sweep: a
+           # mutation edits a mirrored source file, so the drift check fails for every
+           # mutation and every batch reads "CAUGHT" no matter what the checks think. It
+           # is still in the gate (`run()`), and the driver takes its own `--check`
+           # before and after the sweep.
            "r.test_quest_chain_replay()\n"
            "r.test_live_ready()\n"
            "r.test_sim_planner_runs()\n"
@@ -107,6 +113,8 @@ SNIPPET = ("import agent.regression as r\n"
            "r.test_keep_alive_instrument()\n"
            "r.test_tutorial_hold()\n"
            "r.test_live_transitions()\n"
+           "r.test_claim_calibration()\n"
+           "r.test_worker_headroom_layer()\n"
            "r.test_foresight_net()\n"
            "r.test_counterfactual_factory_alive()\n"
            "r.test_repair_credit()\n"
@@ -130,6 +138,8 @@ SNIPPET = ("import agent.regression as r\n"
            "r.test_client_confirmed_starts()\n"
            "r.test_quest_advance_shapes()\n"
            "r.test_session_report_census()\n"
+           "r.test_gate_shadow_reaches_the_trajectory()\n"
+           "r.test_veto_alternative_priced()\n"
            "r.test_report_instrument()\n"
            "r.test_settle_waits_for_promised_effect()\n"
            "print('FAILURES=%d' % len(r._FAILURES))\n"
@@ -1577,7 +1587,91 @@ MUTATIONS = [
     ("keep-alive: a reloaded page never asks the host for its state", PAGE,
      "                window.chrome.webview.postMessage({ type: 'AI_REQUEST', action: 'state' });",
      "                // (no startup state ask)"),
+    # ---- the per-form calibration (2026-10-30): every number it prints has a check.
+    ("calib: the bucket counts the exact streak, not the normalized one", PROBE,
+     '    value = row.get("repeat_streak_norm")\n    if value is None:\n        value = row.get("repeat_streak")',
+     '    value = row.get("repeat_streak")\n    if value is None:\n        value = row.get("repeat_streak_norm")'),
+    ("calib: the bucket is not clamped at three", PROBE,
+     '    return "3+" if value >= 3 else str(max(0, value))',
+     '    return str(max(0, value))'),
+    ("calib: a form is not shrunk toward the global rate", PROBE,
+     '        rate = (met + prior * global_rate) / (len(cell) + prior)',
+     '        rate = (met + 0.0) / max(1, len(cell))'),
+    ("calib: an unseen bucket is not given its form's rate", PROBE,
+     '                "p": (hit + prior * rate) / (len(sub) + prior),',
+     '                "p": (hit + 0.0) / max(1, len(sub)),'),
+    ("calib: the equal-budget comparison vetoes by row order", PROBE,
+     '            order = sorted(range(len(p)), key=lambda i: p[i])',
+     '            order = list(range(len(p)))'),
+    ("calib: the counter is the exact streak again", PROBE,
+     '    return [float(r.get("repeat_streak_norm") or 0) >= 2 for r in rows]',
+     '    return [float(r.get("repeat_streak") or 0) >= 2 for r in rows]'),
+    ("calib: a tie with the counter is promoted", PROBE,
+     '    return (bool(ci) and ci[0] > 0\n'
+     '            and points >= PROMOTION_DELTA_POINTS\n',
+     '    return (bool(ci) and ci[0] >= 0\n'
+     '            and points >= PROMOTION_DELTA_POINTS\n'),
+    # The point floor was declared in the plan and read by nothing until G71; this is the
+    # mutant that proves it is enforced now.
+    ("calib: the point floor is dropped and any positive interval promotes", PROBE,
+     '            and points >= PROMOTION_DELTA_POINTS\n',
+     '            and points >= -1.0\n'),
+    # ---- the second layer: it may only remove the worst of the counter's kept calls.
+    ("worker: the extension removes the best kept calls, not the worst", PROBE,
+     '        order_kept = sorted(kept, key=lambda i: p[i])',
+     '        order_kept = sorted(kept, key=lambda i: -p[i])'),
+    ("worker: the extension also re-removes calls the counter already vetoed", PROBE,
+     '        kept = [i for i in range(len(te)) if not counter[i]]',
+     '        kept = list(range(len(te)))'),
+    # ---- the page's interactive tap: the client's own path walks to the element
+    # before using it. Recorded live 2026-10-29, sending the message from a distant
+    # cell produced nothing at all (element 513208, cell 330, taps from 504/549).
+    ("use: the client's walk-then-use path is bypassed", PAGE,
+     '                        ie.useInteractive(target.elemId, useSkill);',
+     '                        void 0;'),
+    ("use: the character's cell is no longer reported", PAGE,
+     '                    cell: target.cell, my_cell: myCell, via: via,',
+     '                    cell: target.cell, my_cell: null, via: via,'),
+    # ---- the priced alternative (G70). One honest mutant: raising the threshold changes
+    # who is a candidate, so a check must notice. A "count reads as acting calls" mutant
+    # was tried first and MISSED for a legitimate reason — the corpus already gives a read
+    # no `claim`, so that filter is redundant and the mutant is equivalent.
+    ("alt: the veto threshold is raised past the measured one", PROBE,
+     'def alternative_probe(data: Path, target: str = "claim_met",\n'
+     '                      veto_at: int = 2) -> Dict[str, Any]:',
+     'def alternative_probe(data: Path, target: str = "claim_met",\n'
+     '                      veto_at: int = 3) -> Dict[str, Any]:'),
+    ("alt: the lookahead stops at a read instead of the next acting call", PROBE,
+     '            nxt = next((later for later in group[index + 1:]\n'
+     '                        if not later.get("was_read") and later.get("claim")), None)',
+     '            nxt = group[index + 1] if index + 1 < len(group) else None'),
 ]
+
+
+JOURNAL = ROOT / ".mutate-journal.json"
+
+
+def _recover_journal() -> bool:
+    """Repair a file a killed run left deliberately broken.
+
+    The restore below lives in a `finally`, which covers an exception and Ctrl+C but not a
+    hard kill: a killed sweep left `ok=None, error=None` at a live decision site in
+    `agent/autopilot.py` on 2026-10-30, and only the Kaggle-mirror drift check caught it.
+    So the pre-mutation bytes are journaled *before* each write, and the next start
+    repairs the previous crash before it mutates anything else.
+    """
+    if not JOURNAL.exists():
+        return False
+    try:
+        entry = json.loads(JOURNAL.read_text(encoding="utf-8"))
+        target = Path(entry["path"])
+        target.write_text(entry["original"], encoding="utf-8")
+        print("RECOVERED %s from the interrupted run" % target.name)
+    except Exception as exc:                                  # noqa: BLE001
+        print("WARNING a journal exists but could not be applied: %s" % exc)
+    finally:
+        JOURNAL.unlink(missing_ok=True)
+    return True
 
 
 def run_sections():
@@ -1599,11 +1693,18 @@ if __name__ != "__main__":
     raise SystemExit("mutate_cause_gate.py mutates the working tree; run it as a program, "
                      "do not import it")
 
+if "--recover" in sys.argv:
+    # Repair-only mode: touch nothing else, run no gate section. This is what a caller
+    # uses after an interrupted sweep, and what the regression gate exercises.
+    _recover_journal()
+    raise SystemExit(0)
+
+_recover_journal()
+
 bad = []
 # `MUT_ONLY=substring` runs one batch of mutations. The driver writes broken code into
 # the working tree, so a targeted run is also the safe run while anything else is
 # looking at the tree; the full sweep is for a quiet one.
-import os
 only = [token.strip() for token in str(os.environ.get("MUT_ONLY") or "").split(",")
         if token.strip()]
 selected = [item for item in MUTATIONS
@@ -1615,11 +1716,14 @@ for name, path, old, new in selected:
         print("SKIP  %-52s anchor not found in %s" % (name, path.name))
         bad.append(name)
         continue
+    JOURNAL.write_text(json.dumps({"path": str(path), "original": original}),
+                       encoding="utf-8")
     try:
         path.write_text(original.replace(old, new, 1), encoding="utf-8")
         labels, code, out = run_sections()
     finally:
         path.write_text(original, encoding="utf-8")
+        JOURNAL.unlink(missing_ok=True)
     caught = bool(labels) or code != 0
     print("%s %-52s %d failing check(s)%s"
           % ("CAUGHT " if caught else "MISSED ", name, len(labels),

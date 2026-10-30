@@ -64,6 +64,7 @@ from agent.thinking import ThinkingLayer
 from agent.knowledge_context import enrich_observation, load_default_store
 from agent.controller import Controller, Decision
 from agent.verifier import READ_ONLY_TOOLS, Verdict, Verifier, changed_keys
+from agent.gate import RuleGate
 from agent.schema import TOOL_SCHEMA, validate_call
 from agent.recorder import _redact
 from agent.command_shadow import (DEFAULT_MODEL as COMMAND_SHADOW_MODEL,
@@ -381,6 +382,9 @@ class Autopilot:
         self._dead_talks: Dict[str, int] = {}
         # Map crossings the server declined while the character stood on the portal.
         self._dead_navs: Dict[str, int] = {}
+        # The last refusal text the page captured from the client's own error
+        # channel, so a repeated message is printed once instead of every turn.
+        self._last_client_error: Optional[str] = None
         self.controller = Controller(session=self.session, explore=explore,
                                      seed=explore_seed)
         self.controller.set_objective("; ".join(goals))
@@ -532,6 +536,10 @@ class Autopilot:
         # not reset it: farm.start -> state.snapshot -> farm.start used to run
         # forever because every snapshot cleared the exact-repeat streak.
         self._action_noops: Dict[str, int] = {}
+        # Shadow only: what the repeat-streak gate would veto on this decision.
+        # The counter is recorded with each call's meta and never blocks a call;
+        # the corpus says an identical retry after two misses meets ~2% (G48-G54).
+        self._gate = RuleGate()
         # Patience with a scripted step, timed once per action signature. See
         # _tutorial_hold: a wait must be spent as a wait, and it must end.
         self._hold_key: Optional[str] = None
@@ -1465,6 +1473,7 @@ class Autopilot:
             self._farm_wait = False
             self._farm_wait_since = None
             self._action_noops.clear()
+            self._gate.clear()
             # Shadow only: the model's parse is written beside the rule, and the
             # rule below still owns every decision.
             self._log_command_shadow(goal)
@@ -1699,13 +1708,16 @@ class Autopilot:
                     continue
 
                 started = time.perf_counter()
+                _meta = (call.record_meta() if hasattr(call, "record_meta")
+                         else getattr(call, "meta", None))
+                _meta = dict(_meta) if isinstance(_meta, dict) else {}
+                _meta["gate"] = self._gate.shadow(call.tool, call.args)
                 result = self.runtime.executor.execute(
                     call.tool, call.args, instance=self.runtime.instance,
                     goal=goal, source="live", observation=before,
                     observation_age_ms=self._obs_age_ms,
                     observation_source=self._obs_source,
-                    meta=call.record_meta() if hasattr(call, "record_meta")
-                    else getattr(call, "meta", None))
+                    meta=_meta or None)
                 # Stop the clock before observing. `observe()` can cost seconds when
                 # it has to ask a dead bridge, and counting that as the action's
                 # latency made every step look slow for the wrong reason.
@@ -1800,6 +1812,7 @@ class Autopilot:
 
                 v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
                 verdict = v.verdict
+                self._gate.observe(call.tool, call.args, verdict)
 
                 # Report the outcome back to the policy. `note_result` existed and was
                 # never called, so the planner's attempt history was always empty — it
@@ -1999,6 +2012,7 @@ class Autopilot:
                     self._recent.clear()
                     self._hold_key = None
                     self._hold_world = None
+                    self._last_client_error = None
                     if track_action:
                         self._action_noops.pop(key, None)
                     # A real crossing (by any tool: a walk, a dialog teleport, a
@@ -2010,6 +2024,7 @@ class Autopilot:
                             and _prev_map != _new_map):
                         self._crossing_declines = 0
                 else:
+                    self._note_client_error(after)
                     if track_action:
                         self._action_noops[key] = self._action_noops.get(key, 0) + 1
                     self._recent.append(key)
@@ -2653,6 +2668,7 @@ class Autopilot:
         print("[autopilot] the world is back after %.1f s; resuming" % waited)
         self._recent.clear()
         self._action_noops.clear()
+        self._gate.clear()
         self._stall_since = self._index
         self._farm_wait = False
         self._farm_wait_since = None
@@ -2695,6 +2711,24 @@ class Autopilot:
             return None
         skipper(qid)
         return qid
+
+    def _note_client_error(self, after: Any) -> None:
+        """Print a refusal the client itself reported, once per new message.
+
+        The page captures what the client writes to its error channel. Until it
+        did, a talk the server refused and a talk that simply changed nothing
+        looked identical: the loop retried both. This only speaks; the decision
+        stays with the planner until the texts have been read live.
+        """
+        rows = (after or {}).get("client_errors") if isinstance(after, dict) else None
+        if not isinstance(rows, list) or not rows:
+            return
+        newest = rows[-1] if isinstance(rows[-1], dict) else None
+        text = str((newest or {}).get("text") or "")
+        if not text or text == self._last_client_error:
+            return
+        self._last_client_error = text
+        print("[autopilot] the client reported: %s" % text)
 
     def _tutorial_hold(self, key: str, obs: Any) -> bool:
         """True while patience with one scripted step still has time left.

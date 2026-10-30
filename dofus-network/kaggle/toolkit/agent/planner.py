@@ -185,6 +185,12 @@ def shared_quest_table() -> Dict[int, Dict[str, Any]]:
 # action loop reaches the second bound).
 CLAIM_FAILURE_LIMIT = 3
 CLAIM_ACTION_LIMIT = 10
+# How many times one objective may walk the loop back to the map it just left
+# before it is parked for the session. Measured 2026-10-30: dofus-02 made 216
+# immediate A->B->A returns in 229 map changes and dofus-05 132 in 204, so the
+# crossing itself is the failure (G61); parking only suppresses the *walk*, never
+# an action on the objective's own map.
+RETURN_LIMIT = 3
 
 # How many crossings towards one objective's map may fail to come nearer before
 # travel to it is left alone for this situation. Counted outside the claim
@@ -526,6 +532,9 @@ class QuestPlanner:
         # re-sends the same message forever — which is exactly what a live session
         # did, for its whole budget, on objective 13493.
         self._claim_attempts: Dict[Tuple[int, int], int] = {}
+        # Immediate returns per objective (see RETURN_LIMIT).
+        self._returns: Dict[Tuple[int, int], int] = {}
+        self._parked: set = set()
         # Consecutive hard failures (the caller reports them through `note_result`)
         # and actions emitted since the map last changed. The fallback exists
         # because the guard refuses some validations; retiring on the first action
@@ -983,13 +992,44 @@ class QuestPlanner:
         items = bag.get("items") or bag.get("objects") or []
         if not isinstance(items, list) or not items:
             return None
-        worn = set()
+        # The page publishes what is worn as `{slot, gid}` - no object uid. Reading
+        # only uid/object_uid left the worn set empty, so every step re-offered the
+        # pieces already on (live 2026-10-29: 70331924-27 answered "already worn"
+        # while the tutorial waited). Match by gid when every copy of that template
+        # is worn; with two copies and one worn the uid is not visible, so both stay
+        # eligible rather than skipping the one that is actually free.
+        worn_uids = set()
+        worn_gids: Dict[int, int] = {}
         for row in bag.get("equipped") or []:
-            try:
-                worn.add(int(row.get("object_uid") or row.get("uid"))
-                         if isinstance(row, dict) else int(row))
-            except (TypeError, ValueError):
+            if not isinstance(row, dict):
                 continue
+            try:
+                uid_mark = row.get("object_uid", row.get("uid"))
+                if uid_mark is not None:
+                    worn_uids.add(int(uid_mark))
+            except (TypeError, ValueError):
+                pass
+            try:
+                worn_gids[int(row.get("gid"))] = worn_gids.get(int(row.get("gid")), 0) + 1
+            except (TypeError, ValueError):
+                pass
+        bag_gids: Dict[int, int] = {}
+        for row in items:
+            if isinstance(row, dict):
+                try:
+                    bag_gids[int(row.get("gid"))] = bag_gids.get(int(row.get("gid")), 0) + 1
+                except (TypeError, ValueError):
+                    pass
+
+        def _worn_out(row: Dict[str, Any]) -> bool:
+            if row.get("gid") is None:
+                return False
+            try:
+                gid = int(row.get("gid"))
+            except (TypeError, ValueError):
+                return False
+            return worn_gids.get(gid, 0) >= bag_gids.get(gid, 0) > 0
+
         key = (quest.get("id"), obj.get("id"))
         tried = self._equip_tries.setdefault(key, {})
         if len(self._equip_tries) > 64:
@@ -1003,7 +1043,7 @@ class QuestPlanner:
                 uid = int(row.get("object_uid") or row.get("uid"))
             except (TypeError, ValueError):
                 continue
-            if uid <= 0 or uid in worn or tried.get(uid, 0) >= 2:
+            if uid <= 0 or uid in worn_uids or _worn_out(row) or tried.get(uid, 0) >= 2:
                 continue
             # Least-tried first, so a refusal of one item does not cost the next
             # step before the other items have been offered at all.
@@ -2822,18 +2862,23 @@ class QuestPlanner:
         self._log_plan(obj, first)
         return ToolCall(first["tool"], dict(first["args"]), goal)
 
-    @staticmethod
-    def _log_plan(obj: Dict[str, Any], call: Dict[str, Any]) -> None:
-        """Say which objective asked for a call and why.
+    def _log_plan(self, obj: Dict[str, Any], call: Dict[str, Any]) -> None:
+        """Say which objective asked for a call, why, and keep it on the call.
 
-        The step rows carry the call but not the plan's own reason, so a live
-        answer to "who asked for this walk?" needs this line in the daemon log.
+        The line goes to the daemon log, and the same reason is stamped onto the
+        returned `ToolCall.why`, which `record_meta` already carries into the step
+        row. Measured 2026-10-30: 0 of 617 rows on dofus-02's 10-29 session had a
+        `why`, so the 175 crossings back and forth between two maps could not be
+        attributed to any branch offline.
         """
+        reason = str(call.get("why") or "")
+        self._last_plan = (str(call.get("tool") or ""), dict(call.get("args") or {}),
+                           reason, obj.get("id"), str(obj.get("text") or "")[:40])
         # stderr, not stdout: the sim harness and the corpus tools read JSON off
         # stdout, and one extra line there is a broken capture, not a log.
         print("[planner] objective %s (%s): %s %s -- %s"
               % (obj.get("id"), str(obj.get("text") or "")[:40],
-                 call.get("tool"), call.get("args"), call.get("why") or ""),
+                 call.get("tool"), call.get("args"), reason),
               file=sys.stderr)
 
     def note_result(self, tool: str, ok: bool, note: str, obs: Dict[str, Any],
@@ -2959,6 +3004,8 @@ class QuestPlanner:
         twin._claim_failures = dict(self._claim_failures)
         twin._claim_actions = dict(self._claim_actions)
         twin._claim_map = dict(self._claim_map)
+        twin._returns = dict(self._returns)
+        twin._parked = set(self._parked)
         twin._route_tries = {key: dict(value) for key, value in self._route_tries.items()}
         twin._pending_claim = None       # a fork starts before its first action
         twin._start_failures = dict(self._start_failures)
@@ -3123,6 +3170,24 @@ class QuestPlanner:
 
     def choose(self, goal: str, observation: Optional[Dict[str, Any]],
                tools: Optional[Sequence[str]] = None) -> Optional[Any]:
+        """Choose, and stamp the deciding branch's reason onto the call.
+
+        `ToolCall.why` rides `record_meta()` into the corpus; without it a live
+        bounce has no attributable cause. Only the branch that logged a plan reason
+        is stamped, and only when the returned call is that same call - a claim or a
+        read keeps whatever it set itself.
+        """
+        call = self._choose(goal, observation, tools)
+        last = getattr(self, "_last_plan", None)
+        if call is not None and last and not getattr(call, "why", None):
+            tool, args, reason, qid, text = last
+            if getattr(call, "tool", None) == tool and (getattr(call, "args", {}) or {}) == args:
+                call.why = ("objective %s (%s):%s%s"
+                            % (qid, text, " " if reason else "", reason))[:240]
+        return call
+
+    def _choose(self, goal: str, observation: Optional[Dict[str, Any]],
+                tools: Optional[Sequence[str]] = None) -> Optional[Any]:
         from agent.runtime import ToolCall
 
         # A new decision supersedes an action whose result nobody reported. Keeping
@@ -3130,6 +3195,7 @@ class QuestPlanner:
         # the wrong objective.
         self._pending_claim = None
         self._pending_start = None
+        self._last_plan = None
         self.current_objective = None
         self.last_dialog_decision = None
 
@@ -3238,6 +3304,8 @@ class QuestPlanner:
                 self._claim_actions.pop(key, None)
                 self._claim_map.pop(key, None)
                 self._route_tries.pop(key, None)
+                self._returns.pop(key, None)
+                self._parked.discard(key)
 
         # A ready entry whose planned call names no target is a detour — a read, or
         # "walk out an exit and look for the group". Another ready objective may
@@ -3321,6 +3389,22 @@ class QuestPlanner:
                     # Already stood on that map for this objective and nothing
                     # there could act; the walk back is the same visit again.
                     continue
+                if self._prev_map is not None and str(need) == str(self._prev_map):
+                    # The character is one crossing away from where it just was and
+                    # this objective wants it back: the return half of an A->B->A
+                    # bounce. Bound it; the objective still acts when it is here.
+                    spent = self._returns.get(key, 0)
+                    if spent >= RETURN_LIMIT:
+                        if key not in self._parked:
+                            self._parked.add(key)
+                            print("[planner] objective %s (%s) parked after %d immediate "
+                                  "returns to map %s"
+                                  % (quest_id, str(obj.get("text") or "")[:40],
+                                     spent, need), file=sys.stderr)
+                        continue
+                    self._returns[key] = spent + 1
+                else:
+                    self._returns[key] = 0
                 self.current_quest = quest_id
                 self.current_objective = objective_id
                 call = self._travel_call(obj, need, obs, key=key)

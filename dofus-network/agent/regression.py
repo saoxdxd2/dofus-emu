@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -293,10 +294,13 @@ def test_plan_stack() -> None:
           bool(shown) and shown[0]["args"].get("object_uid") == 68720788, shown[:1])
     # Live 2026-10-29: 76 refused equips, each demanding a slot, from types that
     # declare no positions. The page publishes what is worn as {slot, gid}, so a
-    # second copy of a worn template names its own slot without guessing.
+    # second copy of a worn template names its own slot without guessing. The bag
+    # lists equipped copies too (the live 01:39 snapshot had 4 items with 3 worn),
+    # so the twin is two bag rows of one gid and one worn.
     twin = {"inventory": {"presets": [],
                           "equipped": [{"slot": 4, "gid": 18844}],
-                          "items": [{"gid": 18844, "object_uid": 68720788}]},
+                          "items": [{"gid": 18844, "object_uid": 68720788},
+                                    {"gid": 18844, "object_uid": 1}]},
             "map": {}}
     slotted = QuestPlanner().plan_objective({"id": 4260}, 0, equip_step, twin)
     check("a worn twin's slot is sent with the equip",
@@ -2162,6 +2166,8 @@ def test_js_page_suites() -> None:
                    "tools/test_ui_tap_close.js",
                    "tools/test_ui_tap_client_target.js",
                    "tools/test_tutorial_hint.js",
+                   "tools/test_client_errors.js",
+                   "tools/test_interactive_use.js",
                    "tools/test_shop_buy.js",
                    "tools/test_battle_log.js",
                    "tools/test_login_guard.js",
@@ -3021,6 +3027,7 @@ def test_absent_client_recovery() -> None:
     import inspect
     import json as _json
     from agent.autopilot import ABSENT_CLIENT_MARKERS, Autopilot, client_absent
+    from agent.gate import RuleGate
     from agent import autopilot as _autopilot_module
 
     src_of_recover = inspect.getsource(Autopilot._recover_world)
@@ -3050,6 +3057,7 @@ def test_absent_client_recovery() -> None:
             self._recovery_wait_s = 0.0
             self._recent = ["x"]
             self._action_noops = {"a": 1}
+            self._gate = RuleGate()
             self._stall_since = 99
             self._index = 7
             self._farm_wait = True
@@ -4601,6 +4609,276 @@ def test_observation_text() -> None:
           _observation_text({"position": {"map_id": 7}}, 200) is not None)
 
 
+def test_mutation_journal_recovery() -> None:
+    """A killed mutation sweep must not leave deliberately broken code in the tree.
+
+    The driver restores in a `finally`, which a hard kill skips. On 2026-10-30 an
+    interrupted sweep left `ok=None, error=None` at a live decision site in
+    `agent/autopilot.py`; only the Kaggle-mirror drift check noticed. The fix journals the
+    pre-mutation bytes before each write and repairs them on the next start.
+    """
+    section("Mutation driver journal (an interrupted sweep repairs itself)")
+    driver = REPO_ROOT / "tools" / "mutate_cause_gate.py"
+    journal = REPO_ROOT / ".mutate-journal.json"
+    check("the mutation driver exists", driver.exists(), str(driver))
+    check("no sweep is in flight while this test runs", not journal.exists(), str(journal))
+    if journal.exists():
+        return
+
+    source = "print('the working tree, intact')\n"
+    broken = "print('deliberately broken by a mutation')\n"
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        victim = tmp / "victim.py"
+        victim.write_text(broken, encoding="utf-8")
+        journal.write_text(json.dumps({"path": str(victim), "original": source}),
+                           encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(driver), "--recover"], cwd=str(REPO_ROOT),
+                              capture_output=True, text=True, timeout=120)
+        check("--recover exits without running a gate section",
+              proc.returncode == 0 and "selected" not in proc.stdout,
+              (proc.stdout + proc.stderr)[-300:])
+        check("--recover restores the file the killed run left broken",
+              victim.read_text(encoding="utf-8") == source,
+              victim.read_text(encoding="utf-8")[:120])
+        check("--recover reports what it repaired",
+              "RECOVERED" in proc.stdout, proc.stdout[-200:])
+        check("the journal is consumed, so a second start changes nothing",
+              not journal.exists() and victim.read_text(encoding="utf-8") == source,
+              str(journal.exists()))
+        check("the sweep journals before it writes a mutation",
+              'JOURNAL.write_text(json.dumps' in driver.read_text(encoding="utf-8"),
+              "no journal write in the driver")
+    finally:
+        journal.unlink(missing_ok=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_veto_alternative_priced() -> None:
+    """G70: the thing that made the streak veto un-wireable was never priced.
+
+    `alternative_probe` answers "what does the loop do instead of a call the gate would
+    veto" on the current labels. These fixtures pin the arithmetic that makes the answer
+    trustworthy: reads carry no promise and must not be counted, a refusal is a miss, the
+    lookahead skips the reads to reach the next acting call, and the different-versus-same
+    contrast is computed over segments rather than rows.
+    """
+    import importlib.util
+
+    section("Pricing the alternative the veto forces (G70)")
+    tool_path = REPO_ROOT / "tools" / "live_outcome_probe.py"
+    check("the probe exists", tool_path.is_file(), str(tool_path))
+    spec = importlib.util.spec_from_file_location("alt_probe", str(tool_path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def row(t: int, tool: str, args: Dict[str, Any], met: bool, streak: int,
+            read: bool = False, refused: Any = None) -> Dict[str, Any]:
+        return {"segment": "seg", "t": t, "tool": tool, "args": args,
+                "claim": None if read else tool.split(".")[0],
+                "claim_met": False if read else met, "was_read": read,
+                "repeat_streak_norm": streak, "refused": refused,
+                # load_rows only accepts a row that carries its feature vector, so the
+                # fixtures have to as well.
+                "x": [0.0, 0.0, 0.0, 0.0, 0.0, float(streak), 0.0, 0.0]}
+
+    rows: List[Dict[str, Any]] = []
+    for i in range(6):        # switch away -> the alternative meets
+        seg = "switch-%d" % i
+        rows += [dict(r, segment=seg) for r in (
+            row(0, "quest.advance", {"objective_id": 100 + i}, False, 2),
+            row(1, "state.snapshot", {}, False, 2, read=True),
+            row(2, "nav.goto", {"map_id": 700 + i}, True, 0))]
+    for i in range(6):        # repeat the same promise -> it never meets
+        seg = "repeat-%d" % i
+        rows += [dict(r, segment=seg) for r in (
+            row(0, "quest.advance", {"objective_id": 200 + i}, False, 2,
+                refused=("known_kick_signature" if i == 0 else None)),
+            row(1, "quest.advance", {"objective_id": 200 + i}, False, 3))]
+
+    tmp = Path(tempfile.mkdtemp())
+    for name in ("train", "val"):
+        (tmp / ("%s.jsonl" % name)).write_text("", encoding="utf-8")
+    (tmp / "test.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                                    encoding="utf-8")
+    try:
+        result = module.alternative_probe(tmp)
+        fold = result["folds"]["test"]
+        check("reads are not acting calls and carry no promise",
+              fold["acting"] == 24 and fold["met"] == 6,
+              "%d acting / %d met" % (fold["acting"], fold["met"]))
+        check("only rows at the threshold are candidates, and a refusal is a miss",
+              fold["vetoed"] == 18 and fold["vetoed_met"] == 0
+              and fold["vetoed_refused"] == 1,
+              "%d vetoed, %d met, %d refused"
+              % (fold["vetoed"], fold["vetoed_met"], fold["vetoed_refused"]))
+        # 18, not 12: the six repeats that follow a vetoed call sit at streak 3 and are
+        # themselves veto candidates. The gate vetoes every call at or above the
+        # threshold, which is what a live loop would do.
+        check("a wired veto would remove no success at all here",
+              fold["successes_removed_by_veto"] == 0.0
+              and fold["retention"] == 1.0,
+              "%s / %s" % (fold["successes_removed_by_veto"], fold["retention"]))
+        check("the lookahead reaches the acting call past the read",
+              fold["next_after_veto"]["different"] == {"n": 6, "met": 6, "met_rate": 1.0},
+              fold["next_after_veto"]["different"])
+        check("and repeating the same promise is scored against itself",
+              fold["next_after_veto"]["same"] == {"n": 6, "met": 0, "met_rate": 0.0},
+              fold["next_after_veto"]["same"])
+        check("the contrast is the priced alternative",
+              fold["advantage_different_minus_same"] == 1.0,
+              fold["advantage_different_minus_same"])
+        ci = fold["paired_ci_95"]
+        check("segment bootstrap puts the whole interval above zero",
+              ci is not None and ci[0] > 0.0, ci)
+        check("the verdict marks it priced and says it is observational, not causal",
+              result["verdict"]["alternative_priced"] is True
+              and result["verdict"]["ci_excludes_zero"] is True
+              and "randomized arm" in result["verdict"]["reads_the_veto_with_this_note"],
+              result["verdict"])
+        check("an empty fold is reported as absent, not as a zero",
+              set(result["folds"]) == {"test"}, sorted(result["folds"]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_gate_shadow_reaches_the_trajectory() -> None:
+    """Prove offline that the veto shadow survives the wiring into a recorded row.
+
+    `agent/gate.py` is the incumbent every learned worker was measured against, and it
+    runs shadow-only so a live session can price the alternative it would force. No log
+    has ever carried it (the newest ones predate the file), so nothing proved the
+    annotation survives: the Autopilot assembles `_meta["gate"]`, the executor forwards
+    `meta`, and the recorder persists it. `Step.as_dict()` — the *autopilot* row — has no
+    meta field, so the shadow lands in the trajectory file, not the loop log. This drives
+    the real loop, the real gate and the real recorder to pin exactly that.
+    """
+    import agent.autopilot as _gm
+    from agent.autopilot import Autopilot
+    from agent.gate import RuleGate
+    from agent.recorder import TrajectoryRecorder
+    from agent.runtime import ToolCall
+
+    section("Gate shadow: from the loop into a recorded row")
+    args = {"direction": "right"}
+    gate = RuleGate()
+    check("a call that has never failed is not a veto",
+          gate.shadow("nav.goto", args) == {"rule": gate.key("nav.goto", args)[:160],
+                                           "streak": 0, "would_veto": False},
+          gate.shadow("nav.goto", args))
+    gate.observe("nav.goto", args, "noop")
+    gate.observe("nav.goto", args, "failed")
+    twice = gate.shadow("nav.goto", args)
+    check("two non-advances on the same normalized call would veto",
+          twice["streak"] == 2 and twice["would_veto"] is True, twice)
+    gate.observe("nav.goto", args, "advanced")
+    check("one advance clears the streak",
+          gate.shadow("nav.goto", args)["streak"] == 0, gate.shadow("nav.goto", args))
+    check("a read never builds a streak",
+          (gate.observe("state.snapshot", {}, "noop"),
+           gate.shadow("state.snapshot", {})["streak"] == 0)[1])
+
+    volatile = RuleGate()
+    for cell, uid, lang in ((504, 136137029, "fr"), (549, 136137092, "en"),
+                            (504, 136137181, "fr")):
+        tap = {"element_id": 513208, "cell": cell, "skill_uid": uid, "lang": lang}
+        volatile.observe("tap.interactive", tap, "failed")
+    check("three re-taps of one element are one streak of three, not three calls (G60)",
+          volatile.shadow("tap.interactive",
+                          {"element_id": 513208, "cell": 299,
+                           "skill_uid": 136113675, "lang": "de"})["streak"] == 3,
+          volatile.shadow("tap.interactive", {"element_id": 513208}))
+
+    tmp = Path(tempfile.mkdtemp())
+    recorder = TrajectoryRecorder(root=tmp, instance="unit")
+    for _ in range(3):
+        recorder.step(tool="nav.goto", args=args, ok=False,
+                      meta={"gate": volatile.shadow("tap.interactive",
+                                                   {"element_id": 513208})})
+    written = sorted(tmp.glob("*.jsonl"))
+    check("the recorder wrote a trajectory file", bool(written), str(tmp))
+    rows = [json.loads(line) for line in
+            (written[0].read_text(encoding="utf-8").splitlines() if written else [])
+            if line.strip()]
+    check("the recorded row keeps the gate annotation",
+          bool(rows) and rows[-1]["meta"]["gate"]["streak"] == 3
+          and rows[-1]["meta"]["gate"]["would_veto"] is True,
+          rows[-1]["meta"] if rows else "no rows")
+
+    class _Policy:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def choose(self, goal, obs, tools):      # noqa: ARG002 - shape, not behaviour
+            self.calls += 1
+            return ToolCall("nav.goto", dict(args), goal)
+
+    class _Result:
+        def __init__(self, data: Dict[str, Any]) -> None:
+            self.ok = True
+            self.error = None
+            self.data = data
+
+        def as_dict(self) -> Dict[str, Any]:
+            return {"data": self.data}
+
+    class _Executor:
+        """Captures what the loop hands down; changes nothing about the world."""
+
+        def __init__(self, obs: Dict[str, Any]) -> None:
+            self.obs = obs
+            self.metes: List[Dict[str, Any]] = []
+
+        def execute(self, tool, call_args, **kw):    # noqa: ARG002
+            self.metes.append(dict(kw.get("meta") or {}))
+            return _Result({"response": {"result": {"ok": True}},
+                            "snapshot": dict(self.obs)})
+
+    class _Runtime:
+        def __init__(self, obs: Dict[str, Any]) -> None:
+            self.policy = _Policy()
+            self.instance = "dofus-00"
+            self.obs = obs
+            self.executor = _Executor(obs)
+
+        def current_observation(self):
+            return dict(self.obs), 5.0, "cache"
+
+        def observe(self, obs, source="live"):       # noqa: ARG002
+            return None
+
+        def note_observation(self, obs):
+            return None
+
+    obs = {"in_world": True, "map_id": 10340, "cell": 300}
+    rt = _Runtime(dict(obs))
+    log = tmp / "autopilot.jsonl"
+    ap = Autopilot(runtime=rt, goals=["push right"], log_path=log,
+                   stop_file=tmp / "STOP", max_steps=3, dry_run=False,
+                   preflight=False, minutes=0, interval=0.0, steps_per_goal=3)
+    ap.controller.state_dir = tmp
+    real_sleep = _gm.time.sleep
+    _gm.time.sleep = lambda seconds: None
+    try:
+        ap._run()
+    finally:
+        _gm.time.sleep = real_sleep
+    seen = [m.get("gate") for m in rt.executor.metes if m.get("gate")]
+    check("the loop annotates every executed call with the gate's view",
+          len(seen) >= 2, [m for m in rt.executor.metes])
+    check("and the streak the shadow reports grows with the repeats it observes",
+          [s["streak"] for s in seen] == list(range(len(seen)))
+          and seen[-1]["would_veto"] is True,
+          seen)
+    step_rows = [json.loads(line) for line in
+                 log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    check("the loop's own step rows carry no meta, so the shadow lives in the "
+          "trajectory file (a reader looking in autopilot.jsonl would find nothing)",
+          all("meta" not in row for row in step_rows if row.get("kind") == "step"),
+          [sorted(row)[:6] for row in step_rows if row.get("kind") == "step"][:1])
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_kaggle_toolkit_sync() -> None:
     section("Kaggle toolkit (G10: an explicit copy/pin matrix)")
     import importlib.util
@@ -4911,9 +5189,36 @@ def test_live_ready() -> None:
     check("the last recorded build is the last, not the first",
           ready.last_log_build(log_with("2026-10-27a")) == "2026-10-27a",
           ready.last_log_build(log_with("2026-10-27a")))
-    check("the repo page carries the 2026-10-29bg build",
+    # The loops write one log per instance; `default.jsonl` is the pre-daemon single
+    # file. Reading only it made the preflight report a build days older than the client
+    # that last spoke (`2026-10-27s` against a `2026-10-29bf` run).
+    dir_pair = Path(tempfile.mkdtemp())
+    default_log = dir_pair / "default.jsonl"
+    default_log.write_text(json.dumps({"observation": {"agent_build": "2026-10-27s"}}) + "\n",
+                           encoding="utf-8")
+    instance_log = dir_pair / "dofus-09.jsonl"
+    instance_log.write_text(json.dumps({"observation": {"agent_build": "2026-10-29bf"}}) + "\n",
+                            encoding="utf-8")
+    os.utime(default_log, (now - 500, now - 500))
+    os.utime(instance_log, (now, now))
+    saved_default = ready.DEFAULT_LOG
+    try:
+        ready.DEFAULT_LOG = default_log
+        check("the newest log wins when no log was named",
+              ready.last_log_build() == "2026-10-29bf", str(ready.last_log_build()))
+        os.utime(default_log, (now + 50, now + 50))
+        check("and the newest is decided by mtime, not by file name",
+              ready.last_log_build() == "2026-10-27s", str(ready.last_log_build()))
+    finally:
+        ready.DEFAULT_LOG = saved_default
+    check("a log named by the caller is read as itself, never replaced by a sibling",
+          ready.last_log_build(instance_log) == "2026-10-29bf"
+          and ready.last_log_build(default_log) == "2026-10-27s",
+          f"{ready.last_log_build(instance_log)} / {ready.last_log_build(default_log)}")
+    shutil.rmtree(dir_pair, ignore_errors=True)
+    check("the repo page carries the 2026-10-30a build",
           ready.page_build(REPO_ROOT.parent / "scripts" / "mobile-disguise.js")
-          == "2026-10-29bg")
+          == "2026-10-30a")
 
 
 def test_sim_planner_runs() -> None:
@@ -8337,6 +8642,32 @@ def test_session_report_census() -> None:
           "carried a ready objective" in broken and '"?"' in broken,
           broken[-220:])
 
+    # G69's instrument gap: the protocol captures (`play_*.jsonl`) stamp `at` in epoch
+    # *milliseconds*, and `datetime.fromtimestamp` rejects that with OSError [Errno 22].
+    # The one report that could summarise a capture crashed on exactly the logs that hold
+    # a successful interactive use, so the evidence was readable only by hand.
+    check("a millisecond epoch reads as the same instant as its seconds form",
+          module._ts({"at": 1793211230499}) == module._ts({"at": 1793211230.499}),
+          str(module._ts({"at": 1793211230499})))
+
+    def ms_step(index: int, at: float) -> str:
+        return json.dumps({"kind": "step", "session": "p", "index": index,
+                           "tool": "state.snapshot", "ok": True, "at": at,
+                           "observation": {"ready_objectives": []}})
+
+    ms_out, ms_report = drive([ms_step(0, 1793211230499.0), ms_step(1, 1793211260499.0)])
+    first_ms = (ms_report["per_session"] or [{}])[0]
+    check("a capture stamped in milliseconds no longer crashes the reporter",
+          first_ms.get("minutes") == 0.5 and str(first_ms.get("start")).startswith("2026-"),
+          f"{first_ms.get('minutes')} {first_ms.get('start')}")
+    check("millisecond stamps group into one session window",
+          ms_report["sessions"] == 1 and ms_report["steps"] == 2,
+          f"{ms_report['sessions']} sessions / {ms_report['steps']} steps")
+    check("seconds epochs are left untouched by the normalization",
+          module._ts({"at": 1793211260.5}) == 1793211260.5
+          and module._ts({"ts": 12345.0}) == 12345.0,
+          str(module._ts({"at": 1793211260.5})))
+
     # G28: `objectives_completed` could not move (the page read a property the client only
     # assigns to finished quests), so the report also carries the number the client does grow.
     def qstep(at: float, finished, completed=0) -> str:
@@ -8809,6 +9140,25 @@ def test_live_transitions() -> None:
     spec = importlib.util.spec_from_file_location("build_live_transitions", tool)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+
+    # The page publishes an element's skill instance as `skill_uid` and its enabled
+    # list beside it; the context block used to read only `skill_id` and drop the
+    # list, so no row could say whether the page element had a usable skill - the
+    # open question for quest 4262/13948 (measured 2026-10-30).
+    ctx = module._context_of({"map_id": 145490432, "cell": 504, "map": {},
+                              "interactives": [{"elem_id": 513208, "cell": 330,
+                                                "skill_uid": 136137181,
+                                                "enabled_skills": [136137181, 136137092],
+                                                "element_type_id": 17,
+                                                "is_door": False}]})
+    check("the context keeps the element's skill instance and its enabled list",
+          bool(ctx["interactives"])
+          and ctx["interactives"][0].get("skill") == 136137181
+          and ctx["interactives"][0].get("skills") == [136137181, 136137092],
+          ctx["interactives"])
+    check("and what kind of object the element is",
+          ctx["interactives"][0].get("type") == 17
+          and ctx["interactives"][0].get("door") is False, ctx["interactives"])
 
     def step(ts, goal, tool_name, before, after, ok=True, error=None):
         return {"kind": "step", "ts": ts, "iso": "2026-10-27T00:00:00",
@@ -9482,6 +9832,9 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_cause_split_audit)
     _run_test(test_cause_head_artifact)
     _run_test(test_observation_text)
+    _run_test(test_mutation_journal_recovery)
+    _run_test(test_veto_alternative_priced)
+    _run_test(test_gate_shadow_reaches_the_trajectory)
     _run_test(test_kaggle_toolkit_sync)
     _run_test(test_quest_chain_replay)
     _run_test(test_live_ready)
@@ -9557,6 +9910,18 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_claim_labels)
     _run_test(test_mechanism_features)
     _run_test(test_live_within_segment_eval)
+    _run_test(test_claim_calibration)
+    _run_test(test_worker_headroom_layer)
+    _run_test(test_rule_gate)
+    _run_test(test_gate_shadow)
+    _run_test(test_state_features)
+    _run_test(test_state_encoder_split)
+    _run_test(test_veto_shadow_guard)
+    _run_test(test_plan_reason_recorded)
+    _run_test(test_equip_skips_worn)
+    _run_test(test_return_bound)
+    _run_test(test_client_errors_reach_the_loop)
+    _run_test(test_refused_calls_are_not_credited)
     _run_test(test_ingest_after_run)
     _run_test(test_ope_estimators)
     _run_test(test_fork_carries_the_planner_state)
@@ -10213,6 +10578,727 @@ def test_live_within_segment_eval() -> None:
               0 < stat.get("test_rows", 0) < 300 and stat.get("vetoed", 0) > 0, stat)
 
 
+def test_claim_calibration() -> None:
+    section("Per-form calibration: fitted on train, priced at the counter's budget")
+    import importlib.util
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "live_outcome_probe.py"
+    check("the calibration probe exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("live_outcome_probe_calibration", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    check("a destination nav and a direction nav are different forms",
+          module.call_form({"tool": "nav.goto", "args": {"map_id": 11}}) == "nav.goto:at"
+          and module.call_form({"tool": "nav.goto", "args": {"direction": "left"}})
+          == "nav.goto:step"
+          and module.call_form({"tool": "nav.goto", "args": {"cell": 3}}) == "nav.goto:step")
+    check("the three quest.advance promises are kept apart",
+          [module.call_form({"tool": "quest.advance", "args": a}) for a in
+           ({"accept": True}, {"reply": 4}, {"npc_id": 7}, {})]
+          == ["quest.accept", "quest.reply", "quest.talk", "quest.other"])
+    check("a single-form tool keeps its name",
+          module.call_form({"tool": "fight.join", "args": {}}) == "fight.join")
+    check("the bucket clamps the repeat streak at three",
+          [module.streak_bucket({"repeat_streak_norm": n}) for n in (0, 1, 2, 3, 9)]
+          == ["0", "1", "2", "3+", "3+"])
+    check("the counter is the normalized two-identical-miss rule, not the exact one",
+          module.streak_bucket({"repeat_streak_norm": 0, "repeat_streak": 5}) == "0"
+          and module._counter_flag([{"repeat_streak_norm": 0, "repeat_streak": 2}]) == [False]
+          and module._counter_flag([{"repeat_streak_norm": 2}]) == [True])
+
+    # Fit arithmetic on a cell whose numbers can be checked by hand: 12 met and 12
+    # missed in one form, streaks 0 and 1.
+    rows = [{"tool": "nav.goto", "args": {"direction": "left"}, "claim_met": True,
+             "repeat_streak_norm": 0} for _ in range(12)]
+    rows += [{"tool": "nav.goto", "args": {"direction": "left"}, "claim_met": False,
+              "repeat_streak_norm": 1} for _ in range(12)]
+    model = module.fit_calibration(rows)
+    global_rate = (12 + 1.0) / (24 + 2.0)
+    rate = (12 + 8.0 * global_rate) / (24 + 8.0)
+    entry = model["forms"]["nav.goto:step"]
+    check("the global rate is a Laplace estimate",
+          abs(model["global_rate"] - global_rate) < 1e-9, model["global_rate"])
+    check("a form is shrunk toward the global rate with eight pseudo-rows",
+          abs(entry["rate"] - rate) < 1e-9, entry["rate"])
+    check("a bucket with twelve of twelve is not certain",
+          abs(entry["buckets"]["0"]["p"] - (12 + 8.0 * rate) / 20.0) < 1e-9
+          and entry["buckets"]["0"]["p"] < 1.0, entry["buckets"]["0"])
+    check("an unseen bucket falls back to its form's rate",
+          abs(entry["buckets"]["3+"]["p"] - rate) < 1e-9, entry["buckets"]["3+"])
+    check("an unseen form falls back to the global rate",
+          abs(module.calibration_p(model, {"tool": "fight.join", "args": {},
+                                           "repeat_streak_norm": 0})
+              - global_rate) < 1e-9)
+
+    # Form shrinkage was already "checked" above without being testable: with one form
+    # the global rate *is* the form's rate, so removing the prior changed nothing and the
+    # mutant escaped as equivalent. A second, nearly-empty form makes the prior visible.
+    two = [{"tool": "nav.goto", "args": {"direction": "left"}, "claim_met": bool(i % 2),
+            "repeat_streak_norm": 0} for i in range(40)]
+    two += [{"tool": "fight.join", "args": {}, "claim_met": True,
+             "repeat_streak_norm": 0}]
+    two_model = module.fit_calibration(two)
+    two_global = (21 + 1.0) / (41 + 2.0)
+    shrunk = (1 + 8.0 * two_global) / (1 + 8.0)
+    check("a one-row form is pulled to the global rate instead of claiming certainty",
+          abs(two_model["forms"]["fight.join"]["rate"] - shrunk) < 1e-9
+          and two_model["forms"]["fight.join"]["rate"] < 0.6,
+          two_model["forms"]["fight.join"])
+
+    # The promotion bar had a floor nobody enforced: `PROMOTION_DELTA_POINTS` was
+    # declared and never read, so any interval clearing zero promoted a gate that beat
+    # the counter by half a point.
+    check("the bar needs the pre-registered point gain, not merely a positive interval",
+          module._promotion_ok({"delta_vs_counter": (0.001, 0.2),
+                                "kept_success": 0.68, "successes_retained": 0.99},
+                               0.66) is False
+          and module._promotion_ok({"delta_vs_counter": (0.001, 0.2),
+                                    "kept_success": 0.72, "successes_retained": 0.99},
+                                   0.66) is True)
+    check("a tie with the counter cannot pass the point floor either",
+          module._promotion_ok({"delta_vs_counter": (0.0, 0.2), "kept_success": 0.80,
+                                "successes_retained": 1.0}, 0.6) is False
+          and module._promotion_ok({}, 0.6) is False
+          and module._promotion_ok(None, 0.6) is False)
+
+    # The counter vetoes the form that is fine after two misses and keeps the form
+    # that is doomed at streak 0..1. A calibrated score can see the form; the point of
+    # the probe is to price that advantage at the counter's own veto budget, and to
+    # fit the threshold on train only (flipping test labels must not move a tau).
+    def cell(tool, args, met, streak, seg):
+        return {"segment": seg, "tool": tool, "args": args, "claim_met": met,
+                "repeat_streak_norm": streak, "x": [0.5] * 8}
+
+    def corpus(seg_prefix, flip_test=False):
+        train, test = [], []
+        for s in range(4):
+            seg = "%s%d" % (seg_prefix, s)
+            for _ in range(5):
+                train.append(cell("nav.goto", {"direction": "left"}, True, 0, seg))
+                train.append(cell("nav.goto", {"direction": "left"}, False, 1, seg))
+                train.append(cell("nav.goto", {"direction": "left"}, False, 2, seg))
+                train.append(cell("quest.advance", {"npc_id": 7}, False, 0, seg))
+                train.append(cell("quest.advance", {"npc_id": 7}, False, 1, seg))
+                train.append(cell("quest.advance", {"npc_id": 7}, True, 2, seg))
+                test.append(cell("nav.goto", {"direction": "left"}, True, 0, seg))
+                test.append(cell("nav.goto", {"direction": "left"}, False, 1, seg))
+                test.append(cell("nav.goto", {"direction": "left"}, False, 2, seg))
+                test.append(cell("quest.advance", {"npc_id": 7}, False, 0, seg))
+                test.append(cell("quest.advance", {"npc_id": 7}, False, 1, seg))
+                test.append(cell("quest.advance", {"npc_id": 7}, True, 2, seg))
+        if flip_test:
+            test = [dict(r, claim_met=not r["claim_met"]) for r in test]
+        return train, test
+
+    def run_corpus(train, test):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            for name, rows in (("train", train), ("test", test)):
+                (data / ("%s.jsonl" % name)).write_text(
+                    chr(10).join(json.dumps(r) for r in rows), encoding="utf-8")
+            return module.calibration_probe(data, "claim_met")["pooled"]
+
+    train, test = corpus("p")
+    good = run_corpus(train, test)
+    flipped = run_corpus(*corpus("p", flip_test=True))
+    check("the threshold is fitted on train only, so test labels cannot move it",
+          good["safe"]["tau"] is not None and flipped["safe"]["tau"] == good["safe"]["tau"],
+          (good.get("safe"), flipped.get("safe")))
+    check("the counter vetoes every streak-2 call, successes included",
+          good["counter"]["vetoed"] == 40 and good["counter"]["kept_success"] == 0.25,
+          good["counter"])
+    check("at the counter's budget the calibrated score vetoes only failures",
+          good["safe_at_counter_budget"]["vetoed"] == 40
+          and good["safe_at_counter_budget"]["vetoed_success"] == 0.0
+          and good["safe_at_counter_budget"]["kept_success"] == 0.5,
+          good["safe_at_counter_budget"])
+    check("and that qualifies under the pre-registered promotion bar",
+          good["promotion"]["safe_beats_counter"] is True, good["promotion"])
+
+    # A counter that already vetoes exactly the failures ties the calibrated score.
+    # A tie is not a promotion: the bar requires the paired interval to exclude zero.
+    rows = []
+    for s in range(4):
+        seg = "t%d" % s
+        for _ in range(5):
+            rows.append(cell("nav.goto", {"direction": "right"}, True, 0, seg))
+            rows.append(cell("nav.goto", {"direction": "right"}, False, 1, seg))
+            rows.append(cell("nav.goto", {"direction": "right"}, False, 2, seg))
+    tied = run_corpus(rows, rows)
+    check("a calibrated gate that ties the counter is not promoted",
+          tied["promotion"]["safe_beats_counter"] is False, tied["promotion"])
+
+
+def test_worker_headroom_layer() -> None:
+    section("A worker on the counter's kept calls: headroom first, then a priced layer")
+    import importlib.util
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "live_outcome_probe.py"
+    check("the worker probe exists", tool.is_file(), str(tool))
+    if not tool.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("live_outcome_probe_worker", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    cols = module._state_columns()
+    check("the worker's state block is the mechanism block without the streak counters",
+          len(cols) == len(module.MECHANISM_NAMES) - 2
+          and module.MECHANISM_NAMES.index("miss_streak") not in cols
+          and module.MECHANISM_NAMES.index("repeat_streak") not in cols, len(cols))
+
+    # 8 segments x 15 rows: 9 met at streak 0, 1 miss at streak 0 (the counter keeps
+    # it), 5 misses at streak 2 (the counter vetoes them). With a state signal the
+    # head orders the kept calls and the extra layer removes only failures; without
+    # one it removes successes and must not be promoted.
+    def row(seg, met, streak, ready):
+        return {"segment": seg, "tool": "nav.goto", "args": {"direction": "left"},
+                "claim_met": met, "repeat_streak_norm": streak,
+                "context": {"ready": [{"objective": i} for i in range(ready)]},
+                "x": [0.5] * 8}
+
+    def corpus(signal):
+        train, test = [], []
+        for s in range(8):
+            seg = "w%d" % s
+            for _ in range(9):
+                train.append(row(seg, True, 0, 2 if signal else 0))
+                test.append(row(seg, True, 0, 2 if signal else 0))
+            train.append(row(seg, False, 0, 0))
+            test.append(row(seg, False, 0, 0))
+            for _ in range(5):
+                train.append(row(seg, False, 2, 0))
+                test.append(row(seg, False, 2, 0))
+        # a form with no train rows must be skipped, not fitted
+        test.append(row("w0", True, 0, 0))
+        test[-1].update(tool="fight.join")
+        return train, test
+
+    def run(signal):
+        train, test = corpus(signal)
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            for name, rows in (("train", train), ("test", test)):
+                (data / ("%s.jsonl" % name)).write_text(
+                    chr(10).join(json.dumps(r) for r in rows), encoding="utf-8")
+            return module.worker_probe(data, "claim_met")
+
+    good_full = run(True)
+    good = good_full["forms"]["nav.goto:step"]
+    check("a form seen only in test is not fitted",
+          "fight.join" not in good_full["forms"], sorted(good_full["forms"]))
+    check("the fit only counts judged rows from train and test",
+          good["train_rows"] == 120 and good["train_positives"] == 72
+          and good["test_rows"] == 120 and good["test_positives"] == 72, good)
+    check("the counter vetoes the repeated misses and keeps the rest",
+          good["counter"]["vetoed"] == 40 and good["counter"]["kept_success"] == 0.9
+          and good["counter"]["successes_retained"] == 1.0, good["counter"])
+    check("headroom is measured on the calls the counter keeps",
+          good["headroom"]["auc_all"] == 1.0 and good["headroom"]["auc_kept"] == 1.0
+          and good["headroom"]["kept_rows"] == 80
+          and good["headroom"]["kept_positives"] == 72, good["headroom"])
+    check("a 5% extension removes four calls, all failures",
+          good["extension_5pct"]["removed_n"] == 4
+          and good["extension_5pct"]["removed_met"] == 0.0
+          and good["extension_5pct"]["kept_success"] == 0.947, good["extension_5pct"])
+    check("an extension below the minimum is reported but not judged",
+          good["extension_5pct"]["promotion"] is False, good["extension_5pct"])
+    check("a 10% extension removes every kept failure and keeps every success",
+          good["extension_10pct"]["removed_n"] == 8
+          and good["extension_10pct"]["removed_met"] == 0.0
+          and good["extension_10pct"]["kept_success"] == 1.0
+          and good["extension_10pct"]["successes_retained"] == 1.0, good["extension_10pct"])
+    check("its paired interval excludes zero and it qualifies",
+          good["extension_10pct"]["delta_vs_counter"] == (0.1, 0.1)
+          and good["extension_10pct"]["promotion"] is True, good["extension_10pct"])
+    check("the form as a whole is promoted only through that priced layer",
+          good["promotion"] is True, good)
+
+    blind = run(False)["forms"]["nav.goto:step"]
+    check("without a state signal the kept calls are at chance",
+          blind["headroom"]["auc_kept"] == 0.5, blind["headroom"])
+    check("and the extra layer removes successes instead of failures",
+          blind["extension_10pct"]["removed_met"] == 1.0
+          and blind["extension_10pct"]["kept_success"] == 0.889, blind["extension_10pct"])
+    check("a layer that removes successes is never promoted",
+          blind["extension_10pct"]["promotion"] is False and blind["promotion"] is False,
+          blind["promotion"])
+
+
+def test_rule_gate() -> None:
+    section("The repeat-streak gate is shadow-only (records the veto, sends nothing)")
+    from agent.gate import RuleGate
+
+    gate = RuleGate()
+    call = ("nav.goto", {"direction": "left"})
+    check("a fresh rule is not vetoed", gate.shadow(*call)["would_veto"] is False,
+          gate.shadow(*call))
+    gate.observe(*call, verdict="noop")
+    check("one miss is not enough to veto", gate.shadow(*call)["would_veto"] is False,
+          gate.shadow(*call))
+    gate.observe(*call, verdict="noop")
+    shadow = gate.shadow(*call)
+    check("two consecutive misses would veto the identical request",
+          shadow["would_veto"] is True and shadow["streak"] == 2, shadow)
+    check("the shadow record carries no action but its verdict",
+          set(shadow) == {"rule", "streak", "would_veto"}, shadow)
+
+    gate.observe(*call, verdict="advanced")
+    check("an advance resets that rule", gate.shadow(*call)["streak"] == 0,
+          gate.shadow(*call))
+
+    gate.observe(*call, verdict="failed")
+    gate.observe("state.snapshot", {}, verdict="advanced")
+    check("a read neither advances nor resets a rule",
+          gate.shadow(*call)["streak"] == 1, gate.shadow(*call))
+    gate.observe("nav.goto", {"direction": "right"}, verdict="noop")
+    check("different args are a different rule",
+          gate.shadow(*call)["streak"] == 1
+          and gate.shadow("nav.goto", {"direction": "right"})["streak"] == 1,
+          (gate.shadow(*call), gate.shadow("nav.goto", {"direction": "right"})))
+
+    gate.clear()
+    check("a session reset clears every counter", gate.shadow(*call)["streak"] == 0,
+          gate.shadow(*call))
+
+    # Measured 2026-10-29: three taps on element 513208 carried skill_uid
+    # 136137029/136137092/136137181, so an exact-args key counted three fresh calls
+    # and the loop's dominant retry never reached a streak. Volatile fields are not
+    # part of the intent.
+    tap_a = ("tap.interactive", {"element_id": 513208, "skill_uid": 136137029, "cell": 504})
+    tap_b = ("tap.interactive", {"element_id": 513208, "skill_uid": 136137092, "cell": 549})
+    gate.observe(*tap_a, verdict="noop")
+    gate.observe(*tap_b, verdict="noop")
+    check("taps that differ only in skill_uid/cell are one rule",
+          gate.shadow(*tap_a)["streak"] == 2 and gate.shadow(*tap_b)["would_veto"] is True,
+          (gate.shadow(*tap_a), gate.shadow(*tap_b)))
+    gate.observe("tap.interactive", {"element_id": 513208, "skill_uid": 9, "cell": 1},
+                 verdict="advanced")
+    check("an advance on the normalized rule resets all of them",
+          gate.shadow(*tap_b)["streak"] == 0, gate.shadow(*tap_b))
+    gate.observe("nav.goto", {"direction": "left", "lang": "fr"}, verdict="noop")
+    gate.observe("nav.goto", {"direction": "left", "lang": "en"}, verdict="noop")
+    check("lang is not part of a nav rule",
+          gate.shadow("nav.goto", {"direction": "left"})["streak"] == 2,
+          gate.shadow("nav.goto", {"direction": "left"}))
+    gate.observe("nav.goto", {"direction": "right", "lang": "fr"}, verdict="noop")
+    check("a different direction is still a different rule",
+          gate.shadow("nav.goto", {"direction": "right"})["streak"] == 1,
+          gate.shadow("nav.goto", {"direction": "right"}))
+
+    source = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8")
+    check("the loop records the gate beside the call it sent",
+          '_meta["gate"] = self._gate.shadow(call.tool, call.args)' in source
+          and "self._gate.observe(call.tool, call.args, verdict)" in source,
+          "autopilot gate wiring missing")
+
+
+def test_gate_shadow() -> None:
+    section("The gate's live record survives the corpus build and the report")
+    import importlib.util
+    import json as _json
+    import tempfile
+
+    tool = REPO_ROOT / "tools" / "build_live_transitions.py"
+    spec = importlib.util.spec_from_file_location("build_live_transitions_gate", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "dofus-99.jsonl"
+        gate = {"rule": 'nav.goto|{"direction": "left"}', "streak": 2, "would_veto": True}
+        steps = []
+        for i, cell in enumerate((2, 3)):
+            steps.append({"kind": "step", "instance": "dofus-99", "goal": "g",
+                          "index": i, "ts": 1_793_200_000.0 + i * 10,
+                          "tool": "nav.goto", "args": {"direction": "left"},
+                          "ok": True, "latency_ms": 5,
+                          "observation": {"map_id": 1, "cell": [i, 2]},
+                          "result": {"snapshot": {"map_id": 1, "cell": [i, 2]}},
+                          "meta": {"gate": gate if i == 0 else None}})
+        log.write_text(chr(10).join(_json.dumps(s) for s in steps), encoding="utf-8")
+        built, _stats = module.build([log], 120.0)
+        check("the shadow veto rides the corpus row",
+              built[0]["gate"]["would_veto"] is True and built[1]["gate"] is None, built)
+
+        # Three taps on one element that all miss: the exact key sees three calls,
+        # the normalized key sees one retry streak. This is the loop's real tap shape
+        # (element 513208, 2026-10-29).
+        tap_log = Path(tmp) / "dofus-98.jsonl"
+        taps = []
+        for i, skill in enumerate((111, 222, 333)):
+            taps.append({"kind": "step", "instance": "dofus-98", "goal": "g",
+                         "index": i, "ts": 1_793_200_000.0 + i * 10,
+                         "tool": "tap.interactive",
+                         "args": {"element_id": 513208, "skill_uid": skill, "cell": 504 + i},
+                         "ok": True, "latency_ms": 5,
+                         "observation": {"map_id": 1, "cell": [1, 2], "inventory_size": 9},
+                         "result": {"snapshot": {"map_id": 1, "cell": [1, 2],
+                                                 "inventory_size": 9}}})
+        tap_log.write_text(chr(10).join(_json.dumps(s) for s in taps), encoding="utf-8")
+        tap_rows, _stats = module.build([tap_log], 120.0)
+        check("the corpus keeps the exact and normalized retry counts apart",
+              [r["repeat_streak"] for r in tap_rows] == [0, 0, 0]
+              and [r["repeat_streak_norm"] for r in tap_rows] == [0, 1, 2],
+              [(r["repeat_streak"], r["repeat_streak_norm"]) for r in tap_rows])
+
+    probe_spec = importlib.util.spec_from_file_location(
+        "live_outcome_probe_shadow", REPO_ROOT / "tools" / "live_outcome_probe.py")
+    probe = importlib.util.module_from_spec(probe_spec)
+    probe_spec.loader.exec_module(probe)
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp)
+        rows = [
+            {"segment": "s1", "t": 0, "tool": "nav.goto", "args": {"direction": "left"},
+             "claim_met": False, "gate": {"would_veto": True}, "x": [0.5] * 8},
+            {"segment": "s1", "t": 1, "tool": "nav.goto", "args": {"direction": "left"},
+             "claim_met": True, "gate": {"would_veto": False}, "x": [0.5] * 8},
+        ]
+        (data / "test.jsonl").write_text(
+            chr(10).join(_json.dumps(r) for r in rows), encoding="utf-8")
+        out = probe.shadow_probe(data, "claim_met")
+        stat = out["tools"]["nav.goto"]
+        check("the report counts would-veto decisions and what they did",
+              out["tagged"] == 2 and stat["would_veto"] == 1
+              and stat["vetoed_judged"] == 1 and stat["vetoed_met"] == 0, out)
+        check("and whether the loop repeated the rule anyway",
+              stat["next_same_rule"] == 1 and stat["next_other_rule"] == 0, stat)
+
+
+def test_state_features() -> None:
+    section("Relational state features (entity rows are relative, fixed width)")
+    from agent.state_features import (ENTITY_DIM, GLOBAL_DIM, entity_vectors,
+                                      global_vector, world_delta)
+
+    obs = {
+        "map_id": 7, "cell": 100, "level": 40, "kamas": 5000, "in_dialog": False,
+        "hp": {"life": 50, "max": 100, "ap": 6, "mp": 3},
+        "inventory": [1, 2, 3],
+        "map": {
+            "npcs": [{"cell": 102, "npc_id": 10}],
+            "interactives": [{"cell": 128, "type_id": 3}],
+            "groups": [{"group_id": 5, "monsters": [{"cell": 96, "level": 20}]}],
+            "exits": [{"cells": [88, 200]}, {"cells": [], "blocked": True}],
+        },
+    }
+    rows = entity_vectors(obs)
+    check("every entity row has the encoder's fixed width",
+          rows and all(len(r) == ENTITY_DIM for r in rows), [len(r) for r in rows])
+    check("entities are emitted in the documented kind order",
+          [max(range(5), key=lambda k: r[k]) for r in rows] == [1, 2, 3, 4, 4], rows)
+    # Character on cell 100 = (2, 7). NPC on 102 = (4, 7): +2 x, same row, L1 2.
+    npc = rows[0]
+    check("coordinates are relative to the character and scaled",
+          abs(npc[5] - 0.2) < 1e-6 and abs(npc[6]) < 1e-6 and abs(npc[7] - 0.1) < 1e-6,
+          npc)
+    # Exit cells 88 = (4, 6) and 200 = (4, 14): from (2, 7) that is 3 vs 9.
+    check("an exit with many cells reduces to its nearest",
+          abs(rows[3][7] - 3 / 20.0) < 1e-6, rows[3])
+    check("an exit without cells still yields a row",
+          abs(rows[4][8] - 1.0) < 1e-6, rows[4])
+    check("the global vector has its documented width",
+          len(global_vector(obs)) == GLOBAL_DIM, len(global_vector(obs)))
+    check("an unreadable observation degrades to zeros, not an exception",
+          global_vector(None) == [0.0] * GLOBAL_DIM and entity_vectors(None) == [], "degraded")
+
+    before = {"map_id": 7, "cell": [1100, 20], "in_dialog": False,
+              "quest_steps": {"1": 0}, "inventory_size": 3}
+    after = {"map_id": 7, "cell": [1101, 20], "in_dialog": True,
+             "quest_steps": {"1": 0}, "inventory_size": 3}
+    delta = world_delta(before, after)
+    check("the world-model target flags exactly the changed watched keys",
+          len(delta) == 10 and delta == [0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+          delta)
+    check("the delta is symmetric in what it watches",
+          world_delta(after, after) == [0.0] * 10, world_delta(after, after))
+
+
+def test_state_encoder_split() -> None:
+    section("The encoder probe's split is temporal, segment-clustered and non-overlapping")
+    import importlib.util
+
+    tool = REPO_ROOT / "tools" / "state_encoder_probe.py"
+    spec = importlib.util.spec_from_file_location("state_encoder_probe_split", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # Two sessions on the older day, three on the newer one; the within fold keeps
+    # only the newer days and must cut on a segment boundary.
+    rows = []
+    for day, base in (("2026-10-28", 0.0), ("2026-10-29", 100_000.0)):
+        for s in range(8):
+            seg = "%s:%d" % (day, s)
+            for i in range(20):
+                rows.append({"day": day, "ts": base + 1000.0 * (s + 1) + i,
+                             "segment": seg, "claim_met": (i % 2 == 0),
+                             "split": "test" if day == "2026-10-29" else "train"})
+    data = {"rows": rows, "test_days": ["2026-10-28", "2026-10-29"]}
+
+    train, test, note = module.split_rows(data, "within")
+    check("the within fold holds out the latest time slice only",
+          train and test and max(r["ts"] for r in train) < min(r["ts"] for r in test), note)
+    check("no segment is split across the cut",
+          not ({r["segment"] for r in train} & {r["segment"] for r in test}), note)
+    check("the cut lands near the documented 60%",
+          0.4 <= len(train) / float(len(train) + len(test)) <= 0.8,
+          (len(train), len(test)))
+
+    old_train, old_test, note = module.split_rows(data, "days")
+    check("the across-days fold trains on the older days",
+          {r["day"] for r in old_train} == {"2026-10-28"}
+          and {r["day"] for r in old_test} == {"2026-10-29"}, note)
+    source = tool.read_text(encoding="utf-8")
+    check("the probe masks held-out world-model deltas out of pretraining",
+          "held = {id(r) for r in test}" in source and "held-out deltas masked" in source,
+          "pretraining mask missing")
+
+
+def test_plan_reason_recorded() -> None:
+    section("A planned walk carries its reason into the step row (G61)")
+    from agent.planner import QuestPlanner
+
+    A, B = 145490432, 145490946
+    free = {"quest_id": 9262, "objective_id": 913948, "type_id": 0,
+            "type": "QuestObjectiveFreeForm", "map_id": A,
+            "params": {"parameter0": 704145}, "text": "Recover the first page.",
+            "step_id": 4954}
+    fight = {"quest_id": 9264, "objective_id": 913966, "type_id": 6,
+             "type": "QuestObjectiveFightMonster", "map_id": B,
+             "params": {"parameter0": 4212, "parameter1": 1},
+             "text": "Defeat 1 Brytnee Spyr.", "step_id": 4956}
+
+    def scene(here: int) -> Dict[str, Any]:
+        other = B if here == A else A
+        return {"map_id": here, "cell": 330, "level": 20, "xp": 0,
+                "ready_objectives": [free, fight], "step_objectives": [free, fight],
+                "quests_active": {"9262": 0, "9264": 0},
+                "map": {"map_id": here, "cell": 330, "groups": [], "npcs": [],
+                        "exits": [{"map_id": other, "cell": 100}],
+                        "interactives": ([{"elem_id": 513208, "cell": 330,
+                                           "skill_uid": 111, "enabled_skills": [111]}]
+                                         if here == A else [])},
+                "quests_catalog": {"quests": [], "steps": [], "objectives": []}}
+
+    planner = QuestPlanner()
+    first = planner.choose("do all the quests", scene(A))
+    planner.note_result(first.tool, True, "", scene(A))
+    travel = planner.choose("do all the quests", scene(A))
+    check("the planned travel names the objective that asked for it",
+          travel is not None and travel.tool == "nav.goto"
+          and "objective 913966" in (travel.why or ""), getattr(travel, "why", None))
+    meta = travel.record_meta() or {}
+    check("and it reaches the corpus through the record metadata",
+          "objective 913966" in str(meta.get("why") or ""), meta)
+    check("the reason never enters the directive arguments",
+          not any(k in travel.args for k in ("why", "reason")), travel.args)
+
+
+def test_equip_skips_worn() -> None:
+    section("An equip step never re-offers a piece that is already worn (G62)")
+    from agent.planner import QuestPlanner
+
+    quest, obj = {"id": 9001}, {"id": 9002}
+    planner = QuestPlanner()
+    bag = {"items": [{"gid": 18844, "object_uid": 1, "qty": 1},
+                     {"gid": 18974, "object_uid": 2, "qty": 1}],
+           "equipped": [{"slot": 1, "gid": 18844}]}
+    uid = planner._next_equip_uid(quest, obj, {"inventory": bag})
+    check("the worn piece is skipped and the free one is offered",
+          uid == 2, (uid, bag["equipped"]))
+
+    planner2 = QuestPlanner()
+    all_worn = {"items": [{"gid": 18844, "object_uid": 1, "qty": 1}],
+                "equipped": [{"slot": 1, "gid": 18844}]}
+    check("nothing is left to equip when every copy is worn",
+          planner2._next_equip_uid({"id": 9003}, {"id": 9004},
+                                   {"inventory": all_worn}) is None, all_worn)
+
+    planner3 = QuestPlanner()
+    two = {"items": [{"gid": 77, "object_uid": 10, "qty": 1},
+                     {"gid": 77, "object_uid": 11, "qty": 1}],
+           "equipped": [{"slot": 2, "gid": 77}]}
+    check("with two copies and one worn, a free copy is still offered",
+          planner3._next_equip_uid({"id": 9005}, {"id": 9006},
+                                   {"inventory": two}) in (10, 11), two)
+
+
+def test_return_bound() -> None:
+    section("One objective cannot walk the loop back forever (G61)")
+    from agent.planner import QuestPlanner, RETURN_LIMIT
+
+    A, B = 145490432, 145490946
+    fight = {"quest_id": 9264, "objective_id": 913966, "type_id": 6,
+             "type": "QuestObjectiveFightMonster", "map_id": B,
+             "params": {"parameter0": 4212, "parameter1": 1},
+             "text": "Defeat 1 Brytnee Spyr.", "step_id": 4956}
+
+    def scene(here: int) -> Dict[str, Any]:
+        other = B if here == A else A
+        return {"map_id": here, "cell": 330, "level": 20, "xp": 0,
+                "ready_objectives": [fight], "step_objectives": [fight],
+                "quests_active": {"9264": 0},
+                "map": {"map_id": here, "cell": 330, "groups": [], "npcs": [],
+                        "exits": [{"map_id": other, "cell": 100}], "interactives": []},
+                "quests_catalog": {"quests": [], "steps": [], "objectives": []}}
+
+    planner = QuestPlanner()
+    # The character has just arrived at A from B, and the only ready objective
+    # wants B: every decision is the return half of an A->B->A bounce.
+    planner._prev_map = B
+    returned = []
+    for _ in range(RETURN_LIMIT + 1):
+        call = planner.choose("do all the quests", scene(A))
+        returned.append(None if call is None else (call.tool, dict(call.args)))
+    walks = [1 for c in returned[:RETURN_LIMIT]
+             if c and c[0] == "nav.goto" and c[1].get("map_id") == B]
+    check("the first returns are still made", len(walks) == RETURN_LIMIT, returned)
+    check("after the bound the loop stops walking back",
+          returned[RETURN_LIMIT] is None
+          or not (returned[RETURN_LIMIT][0] == "nav.goto"
+                  and returned[RETURN_LIMIT][1].get("map_id") == B), returned)
+    key = (9264, 913966)
+    check("the counter is kept per objective", planner._returns.get(key) == RETURN_LIMIT,
+          planner._returns)
+
+    fresh = QuestPlanner()
+    fresh._prev_map = A  # coming from somewhere else is not a return
+    call = fresh.choose("do all the quests", scene(A))
+    check("a walk that does not undo the last crossing is never parked",
+          call is not None and call.tool == "nav.goto"
+          and call.args.get("map_id") == B, None if call is None else (call.tool, call.args))
+
+
+def test_client_errors_reach_the_loop() -> None:
+    section("A refusal the client reports reaches the loop's own log (G64)")
+    import contextlib
+    import io as _io
+
+    from agent.autopilot import Autopilot
+
+    ap = Autopilot.__new__(Autopilot)
+    ap._last_client_error = None
+    obs = {"client_errors": [{"at": 1, "text": "Vous ne pouvez pas parler a ce PNJ."}]}
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        ap._note_client_error(obs)
+        ap._note_client_error(obs)
+    out = buf.getvalue()
+    check("the first sighting is printed in the server's own words",
+          "Vous ne pouvez pas parler a ce PNJ." in out, out)
+    check("a repeat does not fill the log", out.count("the client reported") == 1, out)
+    buf2 = _io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        ap._note_client_error({"client_errors": [{"text": "another refusal"}]})
+    check("a new message is printed again", "another refusal" in buf2.getvalue(),
+          buf2.getvalue())
+    buf3 = _io.StringIO()
+    with contextlib.redirect_stdout(buf3):
+        ap._note_client_error({})
+        ap._note_client_error({"client_errors": []})
+        ap._note_client_error({"client_errors": "not a list"})
+        ap._note_client_error(None)
+    check("a page build without the field is silent", buf3.getvalue() == "", buf3.getvalue())
+    src = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8")
+    check("the no-advance branch feeds the observation into the channel",
+          "_note_client_error(after)" in src, "the capture is never consulted")
+    page = (ROOT / "scripts" / "mobile-disguise.js").read_text(encoding="utf-8")
+    check("the page wraps the client's error channel, not a guess at it",
+          "chat.logError" in page and "__agentHooked" in page,
+          "the page does not capture the client error channel")
+
+
+def test_refused_calls_are_not_credited() -> None:
+    section("A page-refused call never reached the server, so it is a miss (G65)")
+    import importlib.util
+
+    tool = REPO_ROOT / "tools" / "build_live_transitions.py"
+    spec = importlib.util.spec_from_file_location("build_live_transitions_refusal", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def objective(oid: int) -> Dict[str, Any]:
+        return {"quest_id": "4262", "objective_id": oid, "type_id": 0,
+                "type": "QuestObjectiveFreeForm", "map_id": 145490432,
+                "params": {"parameter0": 704145}, "text": "page", "step_id": 4954}
+
+    def scene(oid: int) -> Dict[str, Any]:
+        ready = objective(oid)
+        return {"map_id": 145490432, "cell": 300, "in_dialog": False,
+                "quests_active": {"4262": 0}, "quest_steps": {"4262": 4954},
+                "ready_objectives": [ready], "current_objective": ready}
+
+    refusal_text = "a previous claim of objective 13948 of quest 4262 ended the connection"
+    refused_result = {"ok": True, "response": {"result": {
+        "ok": False, "data": {"reason": "known_kick_signature", "error": refusal_text},
+        "error": refusal_text}}}
+    sent_result = {"ok": True, "response": {"result": {"ok": True, "data": {}, "error": None}}}
+
+    def step(row_ts: float, tool_name: str, args: Dict[str, Any],
+             obs: Dict[str, Any], result: Any) -> Dict[str, Any]:
+        return {"kind": "step", "tool": tool_name, "args": args, "ok": True,
+                "ts": row_ts, "observation": obs, "result": result}
+
+    args = {"quest_id": 4262, "objective_id": 13948}
+    segment = {"source": "live", "goal": "do all the quests", "instance": "dofus-03",
+               "steps": [
+                   step(1000.0, "quest.advance", args, scene(13948), refused_result),
+                   step(1001.0, "state.snapshot", {}, scene(13950), sent_result),
+                   step(1002.0, "quest.advance", args, scene(13950), refused_result),
+                   step(1003.0, "state.snapshot", {}, scene(13950), sent_result),
+               ]}
+    rows = module.label_steps(segment)
+    first = rows[0]
+    check("the refusal is read from the bridge envelope",
+          first.get("refused") and "known_kick_signature" in first["refused"],
+          first.get("refused"))
+    check("the state moved, but the refused call is not credited",
+          first.get("claim_met") is False, first.get("claim_met"))
+    check("the refusal becomes the row's error, not a null",
+          refusal_text in str(first.get("error") or ""), first.get("error"))
+    check("nothing was sent, so the refused call owns no world change",
+          first.get("moved") is False and first.get("progress") is False
+          and first.get("advance") is False,
+          (first.get("moved"), first.get("progress"), first.get("advance")))
+    check("what differed is still recorded as a raw diff",
+          bool(first.get("changed")), first.get("changed"))
+    check("a change a later read reveals is not blamed on the refused call",
+          rows[1].get("progress") is False and rows[1].get("moved") is False,
+          (rows[1].get("progress"), rows[1].get("moved")))
+    check("a refused retry counts as a miss for the streak",
+          rows[2].get("repeat_streak") == 1, rows[2].get("repeat_streak"))
+
+    sent = {"source": "live", "goal": "do all the quests", "instance": "dofus-03",
+            "steps": [
+                step(2000.0, "quest.advance", args, scene(13948), sent_result),
+                step(2001.0, "state.snapshot", {}, scene(13950), sent_result),
+            ]}
+    ok_rows = module.label_steps(sent)
+    check("a sent claim whose state moved is still credited",
+          ok_rows[0].get("claim_met") is True and ok_rows[0].get("refused") is None,
+          (ok_rows[0].get("claim_met"), ok_rows[0].get("refused")))
+    check("a plain transport success is not read as a refusal",
+          module._refusal({"ok": True, "result": {"ok": True, "snapshot": {}}}) is None,
+          module._refusal({"ok": True, "result": {"ok": True, "snapshot": {}}}))
+
+
+def test_veto_shadow_guard() -> None:
+    section("No learned veto is wired into the loop (G58 lost out of time in G59)")
+    autopilot = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8")
+    check("the loop never loads a veto model",
+          "veto_shadow" not in autopilot and "joblib" not in autopilot,
+          "a learned veto reached the loop")
+    gate = (REPO_ROOT / "agent" / "gate.py").read_text(encoding="utf-8")
+    check("the gate has no model dependency",
+          not any(lib in gate for lib in ("sklearn", "joblib", "torch", "numpy")),
+          "gate grew a model dependency")
+    check("the trainer is where a candidate model must prove itself",
+          (REPO_ROOT / "tools" / "train_veto_shadow.py").exists(), "trainer missing")
+
+
 def test_ingest_after_run() -> None:
     section("Live ingest after a run (the derived dataset must not go stale)")
     import sys as _sys
@@ -10592,6 +11678,17 @@ def test_knowledge_index() -> None:
 
 def main(argv: Optional[List[str]] = None) -> int:
     checks, failures = run()
+    # The gate's own count is a countable claim in the prose. Recording it here means
+    # tools/doc_facts.py can check the docs against the last real run instead of against
+    # a number someone typed.
+    try:
+        (REPO_ROOT / "data" / "last_gate_run.json").write_text(json.dumps({
+            "checks": checks,
+            "failed": len(failures),
+            "at": time.time(),
+        }), encoding="utf-8")
+    except OSError:
+        pass
     print("\n%d checks, %d failed" % (checks, len(failures)))
     if failures:
         print("\nFAILURES:\n  " + "\n  ".join(failures))

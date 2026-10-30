@@ -28,7 +28,7 @@
     // injected page changes: a client that was not fully restarted keeps the previous
     // script, and a recorded observation is how that becomes visible instead of looking
     // like a fix that does not work.
-    var AGENT_BUILD = '2026-10-29bg';
+    var AGENT_BUILD = '2026-10-30a';
 
     // The client's inactivity countdown lives in ONE object -- the tracker whose
     // `_checkActivity` warns at 5 min idle and then calls
@@ -4236,6 +4236,18 @@
                 try {
                     snap.tutorial = _agentTutorial();
                 } catch (e) { snap.tutorial = null; }
+                // The client's own refusal channel. Everything the server
+                // answers in words -- a talk that opens nothing, an item the
+                // client will not place, an objective it will not validate --
+                // arrives as TextInformationMessage and is routed by the
+                // bundle's handler to gui.chat.logError (msgType ERROR) or
+                // gui.chat.logMsg. The page kept none of it, so a refused
+                // action and a silent one were indistinguishable in every log.
+                try { _agentHookClientErrors(window.gui && window.gui.chat); }
+                catch (eHook) {}
+                if (_agentClientErrors.length) {
+                    snap.client_errors = _agentClientErrors.slice(-5);
+                }
 
                 // Quest state. Without it the planner is blind: it cannot tell which
                 // quests are open, which objective is current, or which one is ready to
@@ -4630,7 +4642,13 @@
                             var slotNum = parseInt(slot, 10);
                             equipped.push({
                                 slot: isNaN(slotNum) ? String(slot) : slotNum,
-                                gid: worn && worn.objectGID != null ? Number(worn.objectGID) : null
+                                gid: worn && worn.objectGID != null ? Number(worn.objectGID) : null,
+                                // The live ObjectItem carries objectUID (it is one of
+                                // `equipped_entry_keys`), so what is worn can be named
+                                // exactly instead of inferred by gid. The planner's
+                                // worn set was empty without it (G62).
+                                object_uid: worn && worn.objectUID != null
+                                    ? Number(worn.objectUID) : null
                             });
                             if (equipped.length === 1) {
                                 try {
@@ -5650,6 +5668,41 @@
             }
             return out;
         };
+
+        // The client's own error channel, five messages deep.
+        //
+        // The served bundle routes TextInformationMessage to
+        // `window.gui.chat.logError` when msgType is TEXT_INFORMATION_ERROR and
+        // to `logMsg` otherwise. That is where the server's answer to a refused
+        // action appears -- an NPC that will not talk, an item it will not
+        // place, an objective it will not validate. Wrapping the chat's own
+        // method keeps the exact words and the exact moment; nothing in the
+        // loop reads it as a decision yet, it only stops a refusal from looking
+        // like a no-op. The wrapper calls straight through, and the marker on it
+        // keeps a reload from stacking a second copy.
+        var _agentClientErrors = [];
+        var _agentMakeErrorHook = function (store) {
+            return function (chat) {
+                if (!chat || typeof chat.logError !== 'function') return false;
+                if (chat.logError.__agentHooked) return false;
+                var orig = chat.logError;
+                var wrapped = function (text) {
+                    try {
+                        var msg = String(text == null ? '' : text)
+                            .replace(/\s+/g, ' ').trim();
+                        if (msg) {
+                            store.push({ at: Date.now(), text: msg.slice(0, 200) });
+                            while (store.length > 5) store.shift();
+                        }
+                    } catch (e) {}
+                    return orig.apply(chat, arguments);
+                };
+                wrapped.__agentHooked = true;
+                chat.logError = wrapped;
+                return true;
+            };
+        };
+        var _agentHookClientErrors = _agentMakeErrorHook(_agentClientErrors);
 
         // What the tutorial currently allows.
         //

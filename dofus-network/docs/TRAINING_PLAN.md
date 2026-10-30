@@ -106,6 +106,74 @@ p50/p95 with 12 instances sharing the core.
 9. **Continual learning** — live outcome buffer → periodic fine-tune → nightly held-out eval;
    knowledge stays in the pipeline so game content changes do not require retraining.
 
+## Pre-registered first worker, and the calibration it must beat (2026-10-30)
+
+**The worker.** One shared state encoder (the existing relational `mechanism_vector` block) feeding
+per-call-form outcome heads, where a form is the promise the call makes: `nav.goto:step`,
+`nav.goto:at`, `quest.talk`, `quest.reply`, `quest.accept`, `tap.interactive`, `inv.equip`,
+`fight.join`, `farm.start`, `safe.stop`. It predicts `claim_met` (label_version 3: a refused call is
+a miss) and only ever ranks legal actions; the rule still acts when the head is absent or unsure.
+
+**Why a count calibration had to be measured first.** The loop's gate is a counter:
+`repeat_streak_norm >= 2` vetoes the third identical attempt. A learned head is only worth building
+if it beats the best *count* gate at the same veto budget — the counter is cheap, interpretable and
+already shipping in shadow. `python tools/live_outcome_probe.py --calibration --data <fold>` fits
+p(met | form, streak bucket) with a Beta prior on train only, chooses the veto threshold on train,
+and scores on the frozen fold at the counter's own number of vetoes, so no gate can win by vetoing
+more calls. Constants: `PROMOTION_RETENTION = 0.95`, `PROMOTION_MIN_COUNTER_VETOES = 10`,
+`PROMOTION_DELTA_POINTS = 0.05` in the probe.
+
+**Measured 2026-10-30 on the rebuilt v3 corpus (frozen folds, segment-clustered paired CIs).**
+
+| fold | rows train/test | counter: vetoed, kept met, retained | calibrated at the counter's budget | delta CI |
+|---|---|---|---|---|
+| temporal | 3,644 / 1,031 (base 0.577) | 168 (16%), 0.678, 0.983 | kept 0.611, retained 0.886 | (−0.121, 0.012) |
+| hash (`transitions_v2`) | 3,568 / 709 (base 0.271) | 280 (40%), 0.434, 0.969 | kept 0.431, retained 0.964 | (−0.038, 0.044) |
+
+Per form on the temporal fold: `nav.goto:step` test is 165/178 met (93%) after 17% in train — the
+fold's nav mix shifted, and no train-fitted threshold is usable; its calibration ECE is 0.184
+(hash fold 0.031). `nav.goto:at` is 0/12 met in train and 238/336 in test (ECE 0.676): a form that
+did not exist when the gate was fitted. `quest.talk` counter vetoes 5 calls of which 2 met while the
+calibrated gate vetoes 25 of which 16 met — no gain. `quest.reply` is the one form where the
+calibrated gate is better at its own threshold (temporal kept 0.67 vs 0.55, CI 0.093..0.143, but
+retains 0.896 < 0.95; hash kept 0.61 vs 0.52, CI 0.062..0.119), yet its counter budget is 9 and 8
+vetoes, below the pre-registered comparison floor of 10.
+
+**Result: the count calibration does not beat the counter at equal budget on either fold.** Its
+apparent wins at its own threshold come from vetoing 1.5–3.7× more calls. The counter stays the
+operating rule; nothing new is promoted, and no worker is trained on this corpus.
+
+**Then the only place left to win: inside the counter's kept calls (`--worker`, measured 2026-10-30).**
+The state block (the 24 relational mechanism features, streaks excluded) was fitted per form on
+train and scored on the frozen fold. Headroom is AUC on the rows the rule keeps; the extension layer
+removes the 5% and 10% lowest-scored kept calls on top of the counter, and is judged by
+`_extension_ok`: removed set ≤10% successes, ≥5 removals, kept AUC ≥0.55, and a paired segment CI
+excluding 0. Temporal fold: `quest.talk` kept AUC **0.472**, `quest.reply` **0.398**,
+`nav.goto:step` 0.645 but its kept set is 175 rows with 165 met — the extensions remove calls that
+**100% met** (CI −0.056..0.0 and −0.094..0.0). `quest.other` shows 0.707 kept AUC on 43 kept rows
+with 2 positives, below any evidence floor. Hash fold: `quest.talk` looks promotable (5% extension
+removes 5 calls, 0 met, kept 0.443→0.465, CI 0.004..0.052; 10% removes 10, 0 met, CI 0.013..0.098),
+but the temporal fold inverts it and `nav.goto:at`/`:step` extensions remove half to three-quarters
+successes. **No form passes on the frozen fold and the rolling cuts, so no worker ships** — the same
+within-period pattern that killed the encoder route (G57). The state features simply do not order
+outcomes out of time; more architecture cannot fix a null signal. What would change the answer:
+live volume (per form ≥400 met rows across ≥3 start periods) and randomization strong enough to vary
+state within a form (the epsilon arm), not capacity.
+
+**The bar the worker must clear before it may replace anything** (on the frozen temporal fold,
+then on ≥3 of the 4 rolling-origin cuts, with the rule as fallback):
+1. at the counter's veto budget, kept success rate ≥ counter + 5 points, paired segment-clustered
+   95% CI excluding 0 — the same arithmetic `--calibration` reports as
+   `safe_at_counter_budget.delta_vs_counter`;
+2. successes retained ≥ 0.95 (a gate that buys rate by discarding wins is rejected);
+3. one head per form, and only forms with ≥400 `claim_met` rows over ≥3 distinct start periods are
+   eligible; today's folds do not meet that for any form, so the binding constraint is **live
+   data**, not capacity.
+4. fail open: absent artifact, unseen form, or a non-finite score means the rule acts.
+
+Re-run `--calibration` after every live session and after every dataset rebuild; the headline is
+`safe_at_counter_budget.delta_vs_counter`, not an AUC.
+
 ## Kaggle execution
 
 Use an interactive GPU notebook (T4×2/P100); the toolkit is synced by
