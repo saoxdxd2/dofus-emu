@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import hmac
 import os
 import sys
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
@@ -32,6 +34,7 @@ for _path in (REPO_ROOT, REPO_ROOT / "dofus-network"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+from agent.bridge import local_secret
 from agent.jsonio import dumps_bytes, loads
 
 # combat/live_policy.py used to be a JAX-only model, and the interpreter that ships inside
@@ -46,12 +49,13 @@ DEFAULT_CHECKPOINT = REPO_ROOT / "dofus-network" / "models" / "encounter_selfpla
 
 
 def _runtime_identity() -> Dict[str, object]:
-    """Who is answering `/health` -- token, interpreter, script, pid, checkpoint hash.
+    """Who is answering `/health` -- interpreter, script, pid, checkpoint hash.
 
-    `DOFUS_RUN_TOKEN` is written once per application session by `run_brain.py` and inherited by
-    every child it spawns, so a token match proves "this server belongs to the run that is asking".
-    A missing token means the server was started by hand or by an older build: the manager treats
-    that as foreign, because "I cannot tell" is not evidence of ownership.
+    The run token is deliberately not stored here. `/health` is reachable without
+    a token so the manager can probe liveness; it only adds the token back for a
+    caller that proved it belongs to this run. A missing token means the server
+    was started by hand or by an older build, and the manager treats that as
+    foreign because "I cannot tell" is not evidence of ownership.
     """
     import hashlib
     sha = None
@@ -60,15 +64,61 @@ def _runtime_identity() -> Dict[str, object]:
             sha = hashlib.sha256(DEFAULT_CHECKPOINT.read_bytes()).hexdigest()[:16]
     except OSError:
         sha = None
-    return {"token": os.environ.get("DOFUS_RUN_TOKEN", ""),
-            "pid": os.getpid(),
+    return {"pid": os.getpid(),
             "interpreter": sys.executable,
             "script": str(Path(__file__).resolve()),
             "started_at": round(time.time(), 3),
-            "checkpoint_sha": sha}
+            "checkpoint_sha": sha,
+            "token_present": bool(local_secret())}
 
 
 RUNTIME = _runtime_identity()
+
+# -- loopback control-plane guard -------------------------------------------
+# Same contract as agent/serve.py: bearer token for control, exact Origin/Host,
+# JSON content type. `/health` stays readable without a token (redacted), so a
+# stale/foreign process can still be detected before it is reaped.
+
+_ALLOWED_ORIGIN_HOSTS = {"dofus.local", "dofus.localhost", "127.0.0.1", "localhost", "::1"}
+_RATE_LOCK = threading.Lock()
+_RATE_TIMES: list[float] = []
+_RATE_MAX_PER_SECOND = 40
+
+
+def _origin_allowed(origin: str) -> bool:
+    if not origin:
+        return True
+    try:
+        parsed = urllib.parse.urlsplit(origin)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    return (parsed.hostname or "").lower() in _ALLOWED_ORIGIN_HOSTS
+
+
+def _host_allowed(host: str, port: int) -> bool:
+    if not host:
+        return True
+    host = host.strip().lower()
+    return host in {"127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port}
+
+
+def _bearer_matches(supplied: str, secret: str) -> bool:
+    if not secret:
+        return False
+    return hmac.compare_digest(supplied or "", "Bearer " + secret)
+
+
+def _rate_ok() -> bool:
+    now = time.monotonic()
+    with _RATE_LOCK:
+        while _RATE_TIMES and now - _RATE_TIMES[0] > 1.0:
+            _RATE_TIMES.pop(0)
+        if len(_RATE_TIMES) >= _RATE_MAX_PER_SECOND:
+            return False
+        _RATE_TIMES.append(now)
+        return True
 
 
 def _policy_backend() -> str:
@@ -212,22 +262,48 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
     # connection for every turn.
     protocol_version = "HTTP/1.1"
 
+    def _cors_origin(self) -> str:
+        origin = (self.headers.get("Origin") or "").strip()
+        return origin if origin and _origin_allowed(origin) else ""
+
+    def _authorized(self, require_token: bool = True) -> bool:
+        if not _host_allowed(self.headers.get("Host", ""), self.server.server_port):
+            return False
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin and not _origin_allowed(origin):
+            return False
+        if require_token:
+            return _bearer_matches(self.headers.get("Authorization", ""), local_secret())
+        return True
+
     def _reply(self, data: Dict[str, Any], status: int = 200) -> None:
         body = dumps_bytes(data)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        if not self._authorized(require_token=False):
+            self._reply({"ok": False, "error": "forbidden"}, 403)
+            return
+        self.send_response(204)
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -235,6 +311,9 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             checkpoint = str(POLICY.checkpoint) if POLICY is not None else None
             cfg = POLICY.cfg.__dict__ if POLICY is not None else None
+            identity = dict(RUNTIME)
+            if self._authorized(require_token=True):
+                identity["token"] = local_secret()
             self._reply({
                 "status": "ok" if POLICY is not None else "loading",
                 "model": "encounter_ppo_pbt_actor",
@@ -250,7 +329,8 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
                 # restarts earlier, on the dev interpreter instead of the shipped one. The run
                 # token, pid, interpreter and checkpoint hash are what let the manager tell its
                 # own brain from a leftover one -- and the leftover is the one that must die.
-                "identity": RUNTIME,
+                # The token is only included for a caller that already proved it belongs here.
+                "identity": identity,
             })
             return
         self._reply({"ok": False, "error": "not found"}, 404)
@@ -258,6 +338,19 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/v1/combat/decide":
             self._reply({"ok": False, "error": "not found"}, 404)
+            return
+        if not self._authorized():
+            self._reply({"ok": False, "action": None,
+                         "reason": "unauthorized"}, 401)
+            return
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self._reply({"ok": False, "action": None,
+                         "reason": "unsupported_media_type"}, 415)
+            return
+        if not _rate_ok():
+            self._reply({"ok": False, "action": None,
+                         "reason": "rate_limited"}, 429)
             return
         try:
             length = int(self.headers.get("Content-Length", 0) or 0)
@@ -275,9 +368,9 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise ValueError("request body must be a JSON object")
             self._reply(decide(payload))
-        except Exception as exc:  # noqa: BLE001 - the page falls back on error
+        except Exception:  # noqa: BLE001 - the page falls back on error
             self._reply({"ok": False, "action": None,
-                         "reason": f"bad_request:{type(exc).__name__}: {exc}"}, 400)
+                         "reason": "bad_request"}, 400)
 
     def log_message(self, format, *args):
         pass

@@ -1074,10 +1074,16 @@ namespace DofusFarm.Engine
                 // pending note -- a canary that can only ever be ignored.
                 string bootStamp = (ClientBundle.BundleStamp() ?? "")
                     .Replace("\\", "").Replace("\"", "");
+                // The page runs on https://dofus.local and calls loopback
+                // services cross-origin. It cannot read the secret file, so the
+                // host hands it the bearer value once per document. Only the
+                // shims and the fight brain use it; game traffic never sees it.
+                string localAuth = LocalSecret.Bearer
+                    .Replace("\\", "\\\\").Replace("\"", "\\\"");
                 string relayCfgScript = string.Format(
-                    "(function() {{ window.__DOFUS_CDN_RELAY = {{ enabled: {0}, port: {1}, referer: \"{2}\", cacheBase: \"{3}\" }}; window.__DOFUS_BOOT_STAMP = \"{4}\"; }})();",
+                    "(function() {{ window.__DOFUS_CDN_RELAY = {{ enabled: {0}, port: {1}, referer: \"{2}\", cacheBase: \"{3}\" }}; window.__DOFUS_BOOT_STAMP = \"{4}\"; window.__DOFUS_LOCAL_AUTH = \"{5}\"; }})();",
                     (_options.ProxyPort > 0) ? "true" : "false", _options.ProxyPort, CdnReferer, cacheBase,
-                    bootStamp);
+                    bootStamp, localAuth);
                 await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(relayCfgScript);
                 try
                 {
@@ -1827,6 +1833,10 @@ namespace DofusFarm.Engine
             using (var client = new System.Net.WebClient())
             {
                 client.Headers[System.Net.HttpRequestHeader.ContentType] = "application/json";
+                // Loopback services require this run's secret. A webhook URL is
+                // external and must never receive it.
+                if (LocalSecret.IsLoopbackUrl(url))
+                    client.Headers[System.Net.HttpRequestHeader.Authorization] = LocalSecret.Bearer;
                 return client.UploadString(url, "POST", payload);
             }
         }

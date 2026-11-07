@@ -104,6 +104,19 @@ DEFAULT_RECORDER_DIR = REPO_ROOT / "trajectories"
 INGEST_ON_STOP = True
 INGEST_MIN_INTERVAL_S = 60.0
 
+# How many completed instances the daemon keeps a record of. The heavy part of a
+# finished instance -- its Autopilot -- is released the moment its loop ends (see
+# `_release_pilot`), so what remains is a status row of a few hundred bytes. The cap
+# still matters because the table is keyed by instance name and this process is meant
+# to run for days: a host that starts a fresh name per session would otherwise keep a
+# row per session for the life of the daemon.
+MAX_FINISHED_RECORDS = 64
+
+# What a finished instance still reports after its pilot is gone. Copied out before
+# the pilot is dropped, so a stopped instance keeps answering "how many steps did it
+# take" instead of silently losing the field.
+_PILOT_COUNTERS = ("_step_total", "_waits", "_recoveries", "_dialog_stalls")
+
 
 class _DaemonAutopilot(Autopilot):
     """An Autopilot that does not own the shared ``autopilot.lock``.
@@ -155,7 +168,7 @@ class BrainInstance:
         self.goals = goals
         self.log_path = log_path
         self.stop_path = stop_path
-        self.pilot = pilot
+        self.pilot: Optional[Autopilot] = pilot
         self.thread: Optional[threading.Thread] = None
         self.state = "starting"
         self.error: Optional[str] = None
@@ -166,6 +179,9 @@ class BrainInstance:
         # `state: error, steps: 0` and nothing anywhere said why.
         self.traceback: Optional[str] = None
         self.summary: Optional[Dict[str, Any]] = None
+        # Survives the pilot being released: `status()` reads these once `pilot`
+        # is None, so a finished instance still reports what it did.
+        self.counters: Dict[str, Any] = {}
         self.started_at = time.time()
         self.finished_at: Optional[float] = None
 
@@ -185,9 +201,12 @@ class BrainInstance:
             "goals": self.goals,
         }
         pilot = self.pilot
-        for attr in ("_step_total", "_waits", "_recoveries", "_dialog_stalls"):
-            if hasattr(pilot, attr):
-                row[attr.lstrip("_")] = getattr(pilot, attr)
+        for attr in _PILOT_COUNTERS:
+            name = attr.lstrip("_")
+            if pilot is not None and hasattr(pilot, attr):
+                row[name] = getattr(pilot, attr)
+            elif name in self.counters:
+                row[name] = self.counters[name]
         last = _last_step_line(self.log_path)
         if last:
             row["last_step"] = last
@@ -381,6 +400,10 @@ class BrainDaemon:
                     self._instances[instance].state = "error"
                     self._instances[instance].error = "%s: %s" % (type(exc).__name__, exc)
                     self._instances[instance].traceback = traceback.format_exc()
+                    # Terminal from birth: without a finished_at this record would never
+                    # be eligible for pruning, so a pilot that cannot be built would
+                    # accumulate one row per attempted name for the daemon's lifetime.
+                    self._instances[instance].finished_at = time.time()
                     started.append(self._instances[instance].status())
                     continue
                 item = BrainInstance(
@@ -402,6 +425,45 @@ class BrainDaemon:
                 started.append(item.status())
             self._write_daemon_lock()
         return {"ok": True, "instances": started}
+
+    def _release_pilot(self, item: BrainInstance) -> None:
+        """Drop the Autopilot as soon as its loop has ended.
+
+        A finished instance used to keep its pilot -- controller, planner, recorder and
+        learning store -- alive inside `_instances` for the rest of the daemon's life,
+        because nothing ever removed the entry. Measured 2026-11-07: 40 completed runs
+        retained 41.9 MB of pilots, growing linearly, in a process meant to run for days.
+        The counters the status row still needs are copied out first, so a stopped
+        instance keeps reporting its step count.
+
+        Caller holds `_lock`.
+        """
+        pilot = item.pilot
+        if pilot is None:
+            return
+        for attr in _PILOT_COUNTERS:
+            if hasattr(pilot, attr):
+                item.counters[attr.lstrip("_")] = getattr(pilot, attr)
+        item.pilot = None
+
+    def _prune_finished(self) -> None:
+        """Keep the completed-instance table bounded, dropping the oldest rows first.
+
+        Only records whose loop has ended are eligible: an instance that is starting,
+        running or stopping is never removed, whatever the table size. The instance
+        that is finishing right now is still inside its own thread, so the table settles
+        at `MAX_FINISHED_RECORDS` plus that one row until the next completion.
+
+        Caller holds `_lock`.
+        """
+        finished = [(item.finished_at, name)
+                    for name, item in self._instances.items()
+                    if item.finished_at is not None and not item.alive()]
+        excess = len(finished) - MAX_FINISHED_RECORDS
+        if excess <= 0:
+            return
+        for _, name in sorted(finished)[:excess]:
+            self._instances.pop(name, None)
 
     def _run_instance(self, item: BrainInstance) -> None:
         with self._lock:
@@ -433,6 +495,10 @@ class BrainDaemon:
                 elif item.state == "stopping":
                     item.state = "stopped"
                 item.finished_at = time.time()
+                # Order matters: copy the counters out while the pilot is still here,
+                # then free it, then trim the table that was holding it.
+                self._release_pilot(item)
+                self._prune_finished()
                 self._write_daemon_lock()
             self._ingest_live()
 

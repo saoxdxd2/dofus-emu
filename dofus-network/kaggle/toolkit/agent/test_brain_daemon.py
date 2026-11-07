@@ -191,6 +191,65 @@ class BrainLifecycleTests(unittest.TestCase):
         self.assertEqual(item.state, "stopped")
         self.assertIsNone(item.summary)
 
+    def test_a_finished_instance_releases_its_pilot(self):
+        """The daemon is built to run for days, so a stopped instance must let go.
+
+        Nothing ever removed an entry from `_instances`, so every finished instance kept
+        its whole Autopilot -- controller, planner, recorder, learning store -- for the
+        life of the process. Measured 2026-11-07: 40 completed runs retained 41.9 MB,
+        growing linearly. The status row still has to answer "how many steps did it
+        take", so the counters are copied out before the pilot is dropped.
+        """
+        import gc
+        import weakref
+
+        self.start("one")
+        pilot = self.daemon._instances["one"].pilot
+        pilot._step_total = 7
+        ref = weakref.ref(pilot)
+
+        self.finish("one")
+
+        item = self.daemon._instances["one"]
+        self.assertIsNone(item.pilot, "a finished instance still holds its Autopilot")
+        self.assertEqual(item.status()["step_total"], 7,
+                         "the counters were dropped with the pilot")
+        del pilot
+        # This suite's own factory keeps every pilot in `self.pilots`; that reference
+        # has to go before collection can say anything about the daemon.
+        self.pilots.pop("one", None)
+        gc.collect()
+        self.assertIsNone(ref(), "the Autopilot outlived its instance")
+
+    def test_the_finished_table_stays_bounded(self):
+        """A fresh instance name per session must not accumulate a row per session."""
+        from unittest.mock import patch
+
+        with patch("agent.brain_daemon.MAX_FINISHED_RECORDS", 4):
+            for i in range(9):
+                name = "churn-%03d" % i
+                self.start(name)
+                self.finish(name)
+
+        self.assertLessEqual(len(self.daemon._instances), 5,
+                             "the completed-instance table grew without bound")
+        self.assertNotIn("churn-000", self.daemon._instances, "the oldest row was kept")
+        self.assertIn("churn-008", self.daemon._instances, "the newest row was evicted")
+
+    def test_pruning_never_removes_a_running_instance(self):
+        """Eviction is for records whose loop ended; a live instance is never a candidate."""
+        from unittest.mock import patch
+
+        self.start("keeper")
+        with patch("agent.brain_daemon.MAX_FINISHED_RECORDS", 2):
+            for i in range(6):
+                name = "temp-%03d" % i
+                self.start(name)
+                self.finish(name)
+
+        self.assertIn("keeper", self.daemon._instances, "a running instance was evicted")
+        self.assertTrue(self.daemon._instances["keeper"].alive())
+
     def test_http_dynamic_fleets_and_cooperative_stop(self):
         class Runtime:
             executor = None

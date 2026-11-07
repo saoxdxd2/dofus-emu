@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -1517,32 +1518,42 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isLocalRequestHost(r.Host) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/__cdn/"):
+			// Data plane: the page's <img> and XHR cannot attach a bearer.
+			// Exact Host + allowed Origin now, destination allowlist inside.
+			if !isLoopbackRequestHost(r.Host, p.port) || !isAllowedOrigin(r.Header.Get("Origin")) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
 			p.handleCDNRelay(w, r)
 			return
 		case r.URL.Path == "/__files" || r.URL.Path == "/__warm" || r.URL.Path == "/__delete":
+			// Admin routes: token required BEFORE dispatch. The old order
+			// served these unauthenticated, and /__warm was a full SSRF.
+			if !p.adminAuthorized(r) {
+				http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+				return
+			}
 			p.handleAssetStore(w, r)
 			return
 		}
 	}
-	if p.authToken != "" {
-		auth := cmp.Or(r.Header.Get("Proxy-Authorization"), r.Header.Get("Authorization"), r.Header.Get("X-Proxy-Token"))
-		if auth != p.authToken && auth != "Bearer "+p.authToken {
-			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
-			return
-		}
-	}
-	isLocal := r.Host == "" || strings.HasPrefix(r.Host, "127.0.0.1") || strings.HasPrefix(r.Host, "localhost")
+	isLocal := isLoopbackRequestHost(r.Host, p.port)
 	if r.Method == http.MethodGet && isLocal {
 		switch r.URL.Path {
-		case "/__health", "/__telemetry":
+		case "/__health", "/__telemetry", "/__audit":
+			if !p.adminAuthorized(r) {
+				http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+				return
+			}
+			if r.URL.Path == "/__audit" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(p.auditOutboundIP())
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			s := p.telemetry.snapshot()
 			_, _ = fmt.Fprintf(w, `{"status":"ok","port":%d,"model":"%s","rtt_ms":%.2f,"rtt_avg_ms":%.2f,"sent_bytes":%d,"recv_bytes":%d,"conns_total":%d,"conns_failed":%d,"conns_active":%d,"timestamp":%d}`,
 				p.port, p.model, s.lastRTTMs, s.avgRTTMs, s.bytesSent, s.bytesRecv, s.connsTotal, s.connsFailed, s.connsActive, time.Now().Unix())
-			return
-		case "/__audit":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(p.auditOutboundIP())
 			return
 		}
 	}
@@ -1555,10 +1566,20 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><head><title>Authorization Success</title></head><body><script>if(window.opener&&window.opener.__onDeepLinkCallback){window.opener.__onDeepLinkCallback(window.location.href);}window.location.href="dofustouch://authorized%s";</script><h2>Authorization Successful</h2><p>Redirecting back to Dofus Touch...</p></body></html>`, qs)
 		return
 	}
+	// Data plane. WebView2 cannot send Proxy-Authorization on CONNECT or an
+	// extra header on <img>, so the lock is the destination, not the token.
 	switch {
 	case r.Method == http.MethodConnect:
+		if !isAllowedDestination(r.Host) {
+			http.Error(w, "Destination not allowed", http.StatusForbidden)
+			return
+		}
 		p.handleConnect(w, r)
 	case strings.EqualFold(r.Header.Get("Upgrade"), "websocket"):
+		if !isAllowedDestination(r.Host) {
+			http.Error(w, "Destination not allowed", http.StatusForbidden)
+			return
+		}
 		p.handleWebSocket(w, r)
 	default:
 		p.handleHTTP(w, r)
@@ -1815,6 +1836,10 @@ func (p *ProxyServer) dialTunnel(host, defPort string) (net.Conn, error) {
 }
 
 func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
+	if !isAllowedDestination(r.Host) {
+		http.Error(w, "Destination not allowed", http.StatusForbidden)
+		return
+	}
 	dest := ensureHostPort(r.Host, "443")
 	destConn, err := p.dialTunnel(r.Host, "443")
 	if err != nil {
@@ -1984,6 +2009,173 @@ func isLocalRequestHost(host string) bool {
 	return h == "" || strings.HasPrefix(h, "127.0.0.1") || strings.HasPrefix(h, "localhost") || strings.HasPrefix(h, "[::1]")
 }
 
+// -- local control-plane guard ----------------------------------------------
+//
+// The relay has two planes and they need different locks:
+//
+//   * Admin routes (/__files, /__warm, /__delete, /__health, /__telemetry,
+//     /__audit) are called by this machine's own code, so they carry the
+//     per-run bearer token. The old dispatch ran /__files, /__warm and
+//     /__delete before the token check, which made them an unauthenticated
+//     local API -- and /__warm was a full SSRF (any URL with a cacheable
+//     extension reached the network).
+//
+//   * The proxy data plane (CONNECT, absolute-form HTTP, /__cdn/) is used by
+//     WebView2, which cannot attach Proxy-Authorization or an extra header to
+//     <img> requests. It is locked by a destination allowlist instead: the
+//     game only needs Ankama plus the OAuth providers, and a loopback-only
+//     bind keeps the rest of the network out.
+//
+// Both planes reject a Host that is not this listener (DNS rebinding) and an
+// Origin that is not an emulator origin.
+
+var extraAllowedHosts atomic.Value // map[string]struct{}
+
+func init() {
+	extraAllowedHosts.Store(map[string]struct{}{})
+}
+
+func setExtraAllowedHosts(raw string) {
+	hosts := map[string]struct{}{}
+	for _, part := range strings.Split(raw, ",") {
+		h := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(part, ".")))
+		if h != "" {
+			hosts[h] = struct{}{}
+		}
+	}
+	extraAllowedHosts.Store(hosts)
+}
+
+func isLoopbackBindHost(host string) bool {
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if host == "" {
+		return false // net/http treats "" as every interface
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func isLoopbackRequestHost(host string, port int) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == fmt.Sprintf("127.0.0.1:%d", port) ||
+		host == fmt.Sprintf("localhost:%d", port) ||
+		host == fmt.Sprintf("[::1]:%d", port)
+}
+
+func isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(strings.Trim(u.Hostname(), "[]"))
+	switch host {
+	case "127.0.0.1", "localhost", "::1", "dofus.local", "dofus.localhost":
+		return true
+	}
+	return false
+}
+
+func isAllowedDestinationHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
+	if host == "" {
+		return false
+	}
+	if host == "dofus.local" || host == "dofus.localhost" {
+		return true
+	}
+	// Ankama: the game socket, login, assets and web shop.
+	switch host {
+	case "ankama.com", "ankama-games.com", "dofus-touch.com":
+		return true
+	}
+	for _, suffix := range []string{
+		".ankama.com", ".ankama-games.com", ".dofus-touch.com",
+		// OAuth providers the login popup navigates to. Google sign-in is
+		// explicitly supported by the popup; the others are common Ankama
+		// Connect providers and cost nothing when unused.
+		".google.com", ".gstatic.com", ".googleusercontent.com", ".googleapis.com",
+		".apple.com", ".icloud.com", ".facebook.com", ".fbcdn.net",
+	} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	if hosts, _ := extraAllowedHosts.Load().(map[string]struct{}); hosts != nil {
+		if _, ok := hosts[host]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedDestination(dest string) bool {
+	return isAllowedDestinationHost(destinationHost(dest))
+}
+
+// isAllowedAssetURL is the /__warm and /__cdn/ target check. It is stricter
+// than isCacheAssetURL: that function only looks at the extension, so
+// http://127.0.0.1:8890/__warm?u=http://169.254.169.254/latest/meta-data.json
+// passed it and the relay fetched the URL for the caller.
+func isAllowedAssetURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil {
+		return false
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return false
+	}
+	return isCdnAssetHost(u.Hostname()) || isStaticAnkamaHost(u.Hostname())
+}
+
+func constantTimeTokenMatch(supplied, token string) bool {
+	if token == "" || supplied == "" {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(supplied), []byte("Bearer "+token)) == 1 {
+		return true
+	}
+	return subtle.ConstantTimeCompare([]byte(supplied), []byte(token)) == 1
+}
+
+func (p *ProxyServer) adminAuthorized(r *http.Request) bool {
+	if !isLoopbackRequestHost(r.Host, p.port) {
+		return false
+	}
+	if !isAllowedOrigin(r.Header.Get("Origin")) {
+		return false
+	}
+	supplied := cmp.Or(
+		r.Header.Get("Proxy-Authorization"),
+		r.Header.Get("Authorization"),
+		r.Header.Get("X-Proxy-Token"),
+	)
+	return constantTimeTokenMatch(supplied, p.authToken)
+}
+
+func readLocalSecret() string {
+	if v := strings.TrimSpace(os.Getenv("DOFUS_RUN_TOKEN")); v != "" {
+		return v
+	}
+	dir := os.Getenv("LOCALAPPDATA")
+	if dir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "DofusFarm", "local_secret"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func isCdnAssetHost(host string) bool {
 	if h, _, ok := strings.Cut(host, ":"); ok {
 		host = h
@@ -2041,18 +2233,15 @@ func setLongAssetCacheHeaders(h http.Header) {
 // sending credentials, and the game does send them: its map XHR sets withCredentials, so "*" made
 // Chromium discard a response the relay had already served with 200 OK. The page then reports
 // status 0 and the request never appears in the relay's log at all -- which is how the 2026-11-04
-// black screen hid: a "network failure" that no server could observe. Wildcards are only kept for
-// anonymous traffic; an Origin gets echoed, credentials are allowed, and Vary is set so a shared
-// cache can never hand one origin's answer to another.
+// black screen hid: a "network failure" that no server could observe. Only an emulator origin is
+// echoed; an anonymous or foreign request gets no CORS grant at all (and the upstream header, if
+// any, is left untouched by the caller).
 func setCORSHeaders(h http.Header, r *http.Request, methods string) {
 	origin := ""
 	if r != nil {
 		origin = strings.TrimSpace(r.Header.Get("Origin"))
 	}
-	if origin == "" {
-		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Allow-Headers", "*")
-		h.Set("Access-Control-Allow-Methods", methods)
+	if origin == "" || !isAllowedOrigin(origin) {
 		return
 	}
 	h.Set("Access-Control-Allow-Origin", origin)
@@ -2265,7 +2454,7 @@ func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(payload)
 	case "/__warm":
 		target := r.URL.Query().Get("u")
-		if !isCacheAssetURL(target) {
+		if !isCacheAssetURL(target) || !isAllowedAssetURL(target) {
 			http.Error(w, "Bad target", http.StatusBadRequest)
 			return
 		}
@@ -2289,7 +2478,7 @@ func (p *ProxyServer) handleAssetStore(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, `{"ok":true,"cached":%t}`, already)
 	case "/__delete":
 		needle := strings.Trim(r.URL.Query().Get("p"), "/")
-		if needle == "" {
+		if needle == "" || strings.Contains(needle, "..") {
 			http.Error(w, "Bad path", http.StatusBadRequest)
 			return
 		}
@@ -2637,6 +2826,10 @@ func (p *ProxyServer) handleCDNRelay(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		targetStr += "?" + r.URL.RawQuery
 	}
+	if !isAllowedAssetURL(targetStr) {
+		http.Error(w, "Host not allowed", http.StatusForbidden)
+		return
+	}
 	if p.applyModRules(w, r, targetStr) {
 		return
 	}
@@ -2703,7 +2896,7 @@ func (p *ProxyServer) warmAssetCache(ctx context.Context, target string) (bool, 
 }
 
 func (p *ProxyServer) warmAssetCacheDetail(ctx context.Context, target string) (bool, bool, int, string) {
-	if p.cacheDir == "" || !isCacheAssetURL(target) || isVolatileCacheURL(target) {
+	if p.cacheDir == "" || !isCacheAssetURL(target) || !isAllowedAssetURL(target) || isVolatileCacheURL(target) {
 		return false, false, 0, "not cacheable"
 	}
 	cacheFilePath := p.assetCachePath(target)
@@ -3192,11 +3385,15 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if (strings.HasSuffix(targetURL.Path, "/__disguise.js") || strings.HasSuffix(targetURL.Path, "/mobile-disguise.js")) && p.getDisguiseContent() != "" {
 		h := w.Header()
 		h.Set("Content-Type", "application/javascript; charset=utf-8")
-		h.Set("Access-Control-Allow-Origin", "*")
+		setCORSHeaders(h, r, "GET, OPTIONS")
 		h.Set("Cache-Control", "no-cache")
 		h.Set("Content-Length", strconv.Itoa(len(p.disguiseBytes)))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(p.disguiseBytes)
+		return
+	}
+	if !isAllowedDestinationHost(targetURL.Hostname()) {
+		http.Error(w, "Destination not allowed", http.StatusForbidden)
 		return
 	}
 	targetStr := targetURL.String()
@@ -3343,7 +3540,9 @@ func main() {
 	logPath := flag.String("log", defStr("log", ""), "Explicit log file (default: <cache>/proxy.log when -quiet is set)")
 	allowDirect := flag.Bool("allow-direct", defBool("allow_direct", false), "Fall back to a DIRECT connection when the upstream dies (EXPOSES THE REAL IP; off by default)")
 	configFlag := flag.String("config", cfgPath, "INI file with defaults for every flag (key=value, sections ignored)")
-	token := flag.String("token", "", "Optional local bearer authentication token")
+	token := flag.String("token", "", "Deprecated alias for -admin-token")
+	adminTokenFlag := flag.String("admin-token", "", "Bearer token for local admin routes (default: DOFUS_RUN_TOKEN or %LOCALAPPDATA%\\DofusFarm\\local_secret)")
+	allowHosts := flag.String("allow-hosts", defStr("allow_hosts", ""), "Extra comma-separated destination hosts the proxy may reach (OAuth/CDN)")
 	serial := flag.String("serial", "", "Hardware serial number to interpolate into disguise scripts")
 	uuid := flag.String("uuid", "", "Device UUID to interpolate into disguise scripts")
 	model := flag.String("model", "", "Device model name to interpolate into disguise scripts (e.g. SM-A515F)")
@@ -3368,6 +3567,20 @@ func main() {
 	loginHostFlag := flag.String("login-host", "", "Host that the client's virtual origin (dofus.local) is mapped to (default: the production login proxy)")
 	flag.Parse()
 	loginHost = cmp.Or(*loginHostFlag, loginHost)
+
+	// The relay is a loopback control plane. Binding it to 0.0.0.0 or a LAN
+	// address turns an admin API and a proxy into network services; refuse
+	// instead of relying on the firewall.
+	if !isLoopbackBindHost(*host) {
+		log.Fatalf("[FATAL] refusing to bind %q: the relay must listen on a loopback address (127.0.0.1, ::1 or localhost)", *host)
+	}
+	adminToken := cmp.Or(strings.TrimSpace(*adminTokenFlag), strings.TrimSpace(*token), readLocalSecret())
+	setExtraAllowedHosts(*allowHosts)
+	if adminToken == "" {
+		log.Printf("[SECURITY] no admin token available; /__files, /__warm, /__delete, /__health, /__telemetry and /__audit will refuse every request")
+	} else {
+		log.Printf("[SECURITY] admin routes require the per-run bearer token")
+	}
 
 	log.SetFlags(log.Ldate | log.Ltime)
 	if *configFlag != "" {
@@ -3405,7 +3618,7 @@ func main() {
 			}
 		}
 	}
-	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, *token, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize, *referer)
+	proxy := NewProxyServer(resolver, *upstream, *cacheDir, *quiet, *port, adminToken, *serial, *uuid, *model, *manufacturer, *ua, *glVendor, *glRenderer, *maxTextureSize, *referer)
 	proxy.hopIdxPath = hopIndexPath(*cacheDir)
 	proxy.loadHopIndex()
 	go func() {
@@ -3486,6 +3699,7 @@ func main() {
 		Handler:           proxy,
 		ReadHeaderTimeout: 30 * time.Second,
 		IdleTimeout:       300 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 	go func() {
 		log.Printf("[READY] Listening on http://%s:%d (Model: %s) ...", *host, *port, *model)

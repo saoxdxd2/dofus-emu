@@ -1290,6 +1290,12 @@ namespace DofusFarm.Engine {
                 if (File.Exists(ProxyExePath)) {
                     NetworkSettings net = NetworkSettings.For(AppBaseDir);
                     var sb = new StringBuilder().AppendFormat("-port {0} -cache \"{1}\" -quiet", port, Path.Combine(AppBaseDir, "asset_cache"));
+                    // Admin routes (/__files, /__warm, /__delete, /__health) are
+                    // authenticated with the same per-run secret as every other
+                    // loopback control plane. The proxy data plane stays usable
+                    // without it because WebView2 cannot attach proxy auth.
+                    string adminToken = LocalSecret.Value;
+                    if (!string.IsNullOrEmpty(adminToken)) sb.AppendFormat(" -admin-token \"{0}\"", adminToken);
                     if (!string.IsNullOrEmpty(normalizedUpstream)) {
                         // Custom means the operator pinned one upstream. Adding
                         // "resilience" hops from a dead pool here sent both game
@@ -2890,6 +2896,67 @@ namespace DofusFarm.Engine {
             lock (_telemetryLock) { _lastRttMs = ms; _rttSumMs += ms; _rttCount++; }
         }
 
+        // -- data-plane destination allowlist ---------------------------------
+        //
+        // The fallback proxy is still a proxy: without this, anything that can
+        // reach 127.0.0.1:<port> can use it to reach arbitrary hosts, including
+        // the machine's own services. The game only needs Ankama and the two
+        // virtual origins; everything else is refused before a socket is opened.
+
+        private static bool AllowedDestination(string host) {
+            if (string.IsNullOrEmpty(host)) return false;
+            host = host.Trim().TrimEnd('.').ToLowerInvariant();
+            if (host == "dofus.local" || host == "dofus.localhost") return true;
+            if (host == "ankama.com" || host == "ankama-games.com" || host == "dofus-touch.com") return true;
+            return host.EndsWith(".ankama.com", StringComparison.Ordinal)
+                || host.EndsWith(".ankama-games.com", StringComparison.Ordinal)
+                || host.EndsWith(".dofus-touch.com", StringComparison.Ordinal);
+        }
+
+        private static string HeaderValue(IList<string> headers, string name) {
+            string prefix = name + ":";
+            foreach (string h in headers) {
+                if (h.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return h.Substring(prefix.Length).Trim();
+            }
+            return "";
+        }
+
+        private static bool AllowedOrigin(string origin) {
+            if (string.IsNullOrEmpty(origin)) return true;
+            Uri uri;
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out uri)) return false;
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
+            string host = uri.DnsSafeHost.Trim('[', ']').ToLowerInvariant();
+            return host == "127.0.0.1" || host == "localhost" || host == "::1"
+                || host == "dofus.local" || host == "dofus.localhost";
+        }
+
+        private static string CorsHeaders(string origin) {
+            if (string.IsNullOrEmpty(origin) || !AllowedOrigin(origin)) return "";
+            return "Access-Control-Allow-Origin: " + origin + "\r\n"
+                + "Access-Control-Allow-Credentials: true\r\n"
+                + "Vary: Origin\r\n";
+        }
+
+        private static bool FixedTimeEquals(string a, string b) {
+            using (var sha = SHA256.Create()) {
+                byte[] ha = sha.ComputeHash(Encoding.UTF8.GetBytes(a ?? ""));
+                byte[] hb = sha.ComputeHash(Encoding.UTF8.GetBytes(b ?? ""));
+                int diff = 0;
+                for (int i = 0; i < ha.Length; i++) diff |= ha[i] ^ hb[i];
+                return diff == 0;
+            }
+        }
+
+        private static bool TokenOk(IList<string> headers) {
+            string secret = LocalSecret.Value;
+            if (string.IsNullOrEmpty(secret)) return false;
+            string supplied = HeaderValue(headers, "Authorization");
+            if (string.IsNullOrEmpty(supplied)) return false;
+            return FixedTimeEquals(supplied.Trim(), "Bearer " + secret)
+                || FixedTimeEquals(supplied.Trim(), secret);
+        }
+
         private TcpClient ConnectTarget(string host, int port) {
             if (_upstreamUri == null) {
                 var sw = Stopwatch.StartNew();
@@ -3058,8 +3125,46 @@ namespace DofusFarm.Engine {
                 string[] parts = reqLine.Split(' ');
                 if (parts.Length < 2) { client.Close(); return; }
                 string method = parts[0].ToUpperInvariant(), rawTarget = parts[1];
+                string origin = HeaderValue(headers, "Origin");
+                if (!AllowedOrigin(origin)) {
+                    byte[] forbidden = Encoding.ASCII.GetBytes("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    try { cStream.Write(forbidden, 0, forbidden.Length); } catch { }
+                    client.Close();
+                    return;
+                }
+                if (method == "OPTIONS") {
+                    byte[] preflight = Encoding.ASCII.GetBytes("HTTP/1.1 204 No Content\r\n"
+                        + CorsHeaders(origin)
+                        + "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+                        + "Access-Control-Allow-Headers: Authorization, Content-Type\r\n"
+                        + "Access-Control-Max-Age: 600\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    try { cStream.Write(preflight, 0, preflight.Length); } catch { }
+                    client.Close();
+                    return;
+                }
                 if (rawTarget.IndexOf("/__cdn/", StringComparison.Ordinal) >= 0 || rawTarget.EndsWith("/__cdn", StringComparison.Ordinal)) {
-                    byte[] notImpl = Encoding.ASCII.GetBytes("HTTP/1.1 501 Not Implemented\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    byte[] notImpl = Encoding.ASCII.GetBytes("HTTP/1.1 501 Not Implemented\r\n"
+                        + CorsHeaders(origin)
+                        + "Content-Length: 0\r\nConnection: close\r\n\r\n");
+                    try { cStream.Write(notImpl, 0, notImpl.Length); } catch { }
+                    client.Close();
+                    return;
+                }
+                bool isAdminRoute = rawTarget.IndexOf("/__files", StringComparison.Ordinal) >= 0
+                    || rawTarget.IndexOf("/__warm", StringComparison.Ordinal) >= 0
+                    || rawTarget.IndexOf("/__delete", StringComparison.Ordinal) >= 0;
+                if (isAdminRoute) {
+                    if (!TokenOk(headers)) {
+                        byte[] unauthorized = Encoding.ASCII.GetBytes("HTTP/1.1 401 Unauthorized\r\n"
+                            + CorsHeaders(origin)
+                            + "Content-Length: 0\r\nConnection: close\r\n\r\n");
+                        try { cStream.Write(unauthorized, 0, unauthorized.Length); } catch { }
+                        client.Close();
+                        return;
+                    }
+                    byte[] notImpl = Encoding.ASCII.GetBytes("HTTP/1.1 501 Not Implemented\r\n"
+                        + CorsHeaders(origin)
+                        + "Content-Length: 0\r\nConnection: close\r\n\r\n");
                     try { cStream.Write(notImpl, 0, notImpl.Length); } catch { }
                     client.Close();
                     return;
@@ -3069,8 +3174,9 @@ namespace DofusFarm.Engine {
                     string bodyText = isTelemetry ? BuildTelemetryJson() : (isHealth ? "{\"status\":\"ok\"}" : (_disguiseContent ?? ""));
                     byte[] bodyBytes = Encoding.UTF8.GetBytes(bodyText);
                     byte[] respHdr = Encoding.ASCII.GetBytes(string.Format(
-                        "HTTP/1.1 200 OK\r\nContent-Type: {0}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {1}\r\nConnection: close\r\n\r\n",
-                        (isTelemetry || isHealth) ? "application/json" : "application/javascript; charset=utf-8", bodyBytes.Length));
+                        "HTTP/1.1 200 OK\r\nContent-Type: {0}\r\n{1}Content-Length: {2}\r\nConnection: close\r\n\r\n",
+                        (isTelemetry || isHealth) ? "application/json" : "application/javascript; charset=utf-8",
+                        CorsHeaders(origin), bodyBytes.Length));
                     cStream.Write(respHdr, 0, respHdr.Length);
                     cStream.Write(bodyBytes, 0, bodyBytes.Length);
                     client.Close();
@@ -3080,6 +3186,12 @@ namespace DofusFarm.Engine {
                     string tHost = rawTarget;
                     int tPort = 443, colon = rawTarget.LastIndexOf(':');
                     if (colon > 0) { tHost = rawTarget.Substring(0, colon); int.TryParse(rawTarget.Substring(colon + 1), out tPort); }
+                    if (!AllowedDestination(tHost)) {
+                        byte[] forbidden = Encoding.ASCII.GetBytes("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        try { cStream.Write(forbidden, 0, forbidden.Length); } catch { }
+                        client.Close();
+                        return;
+                    }
                     TcpClient remote = ConnectTarget(tHost, tPort);
                     cStream.Write(ConnectOkBytes, 0, ConnectOkBytes.Length);
                     SpliceStreams(client, cr, remote, remote.GetStream());
@@ -3095,6 +3207,12 @@ namespace DofusFarm.Engine {
                 } else {
                     int cIdx = destHost.LastIndexOf(':');
                     if (cIdx > 0) { int.TryParse(destHost.Substring(cIdx + 1), out destPort); destHost = destHost.Substring(0, cIdx); }
+                }
+                if (!AllowedDestination(destHost)) {
+                    byte[] forbidden = Encoding.ASCII.GetBytes("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    try { cStream.Write(forbidden, 0, forbidden.Length); } catch { }
+                    client.Close();
+                    return;
                 }
                 TcpClient httpRemote = ConnectTarget(destHost, destPort);
                 NetworkStream httpRStream = httpRemote.GetStream();

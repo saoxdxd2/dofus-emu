@@ -117,6 +117,8 @@ func main() {
 	proxyCmd := exec.Command(proxyExePath,
 		"-port", fmt.Sprintf("%d", proxyPort),
 		"-cache", cacheDir,
+		"-admin-token", "benchmark",
+		"-allow-hosts", "127.0.0.1",
 		"-model", "SM-G998B",
 		"-manufacturer", "samsung",
 		"-ua", "Mozilla/5.0 (Linux; Android 12; SM-G998B Build/SP1A.210812.016) AppleWebKit/537.36",
@@ -170,7 +172,9 @@ func main() {
 	}
 
 	directClient := &http.Client{Timeout: 2 * time.Second}
-	healthResp, err := directClient.Get(fmt.Sprintf("http://127.0.0.1:%d/__health", proxyPort))
+	healthReq, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/__health", proxyPort), nil)
+	healthReq.Header.Set("Authorization", "Bearer benchmark")
+	healthResp, err := directClient.Do(healthReq)
 	if err != nil {
 		fmt.Printf("WARNING: Health endpoint error: %v\n", err)
 	} else {

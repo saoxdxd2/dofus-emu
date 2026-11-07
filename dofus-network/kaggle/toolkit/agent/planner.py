@@ -21,6 +21,7 @@ does not need to know which one it is talking to.
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import sys
@@ -47,9 +48,18 @@ from agent.verifier import READ_ONLY_TOOLS  # noqa: E402
 _RE_GOAL_QUEST = re.compile(
     r"\b(qu[eê]te?s?|quests?|objecti(?:f|ve)s?|missions?)\b", re.IGNORECASE)
 _RE_GOAL_FARM = re.compile(
-    r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|kamas?|mobs?|monsters?|"
-    r"monstres?|resources?|ressources?|r[eé]colte[rz]?|gather|harvest|minar|"
+    r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|mobs?|monsters?|"
+    r"monstres?|r[eé]colte[rz]?|gather|harvest|minar|"
     r"collecte[rz]?)\b", re.IGNORECASE)
+# What `_RE_GOAL_FARM` was before "kamas" and "resources" were removed: those two
+# words appear in sell and inventory orders ("sell all my resources"), and routing
+# them to the farm planner is what made the order layer look deaf. `DOFUS_GOAL_ROUTER=rules`
+# is documented as the escape hatch back to the old behaviour, so the old pattern is
+# kept here rather than in the history -- otherwise the switch is not an A/B.
+_RE_GOAL_FARM_LEGACY = re.compile(
+    r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|mobs?|monsters?|"
+    r"monstres?|r[eé]colte[rz]?|gather|harvest|minar|"
+    r"collecte[rz]?|kamas?|resources?|ressources?)\b", re.IGNORECASE)
 _AUTO_GOALS = frozenset({"auto", "full auto", "fullauto", "autopilot",
                          "autonome", "automatic", ""})
 # A user asking the bot to play is a Full Auto request, not an order with no
@@ -73,13 +83,20 @@ def _farm_target(goal: str) -> Optional[str]:
     return " ".join(words[:3]) or None
 
 
-def _goal_mode(goal: str) -> str:
+def _goal_mode(goal: str, legacy: bool = False) -> str:
+    """Which planner owns this goal.
+
+    ``legacy`` restores the pre-2026-11-07 farm pattern, which also matched "kamas"
+    and "resources". Only the rule router asks for it: the switch is documented as the
+    way back to the old behaviour, and a switch that leaves a different set of goals
+    on a different planner is not one.
+    """
     text = (goal or "").strip()
     if text.lower() in _AUTO_GOALS:
         return "auto"
     if _RE_GOAL_QUEST.search(text):
         return "quest"
-    if _RE_GOAL_FARM.search(text):
+    if (_RE_GOAL_FARM_LEGACY if legacy else _RE_GOAL_FARM).search(text):
         return "farm"
     if _RE_GOAL_AUTO_PLAY.search(text):
         return "auto"
@@ -533,6 +550,12 @@ class QuestPlanner:
         # Plain orders (sell, inventory, travel) are already parsed by the rule
         # policy; the planner only owns quests/farm/auto. Built lazily.
         self._rule_policy: Any = None
+        # The order path: model proposes, the game database corrects, the safety
+        # layer refuses what the tool cannot express. The rule policy stays inside
+        # that resolver as its fallback, so this can only be better than the rule
+        # path alone. DOFUS_GOAL_ROUTER=rules restores the old behaviour exactly.
+        self._goal_resolver: Any = None
+        self._goal_router: str = (os.environ.get("DOFUS_GOAL_ROUTER") or "tools").strip().lower()
         # What the last plan was made against. A claim/retry/start attempt from
         # another map, quest step, dialogue or group set is not evidence about
         # this one; the awareness layer resets those transients on change.
@@ -1296,7 +1319,7 @@ class QuestPlanner:
         return best
 
     @staticmethod
-    def _worn_slot_for(obs: Dict[str, Any], uid: Any) -> Optional[int]:
+    def _worn_slot_for(obs: Dict[str, Any], uid: Any) -> Optional[str]:
         """The slot a copy of the same template already occupies, when visible.
 
         The page publishes the bag as `{gid, qty, object_uid}` and what is worn as
@@ -1305,6 +1328,12 @@ class QuestPlanner:
         from item types that declare no positions, and every refusal asked for a
         slot; the worn copy's gid is the client's own answer for where that
         template goes.
+
+        Returns the wire form, not the number: `inv.equip.slot` is declared `str`
+        ("'weapon' or 0-16") and `validate_call` rejects an int, so a producer that
+        returned an int was refused at the executor no matter how right the slot
+        was. The conversion lives here, at the source, so a new caller cannot
+        reintroduce it by forgetting a `str()`.
         """
         bag = obs.get("inventory") if isinstance(obs, dict) else None
         if not isinstance(bag, dict):
@@ -1342,13 +1371,13 @@ class QuestPlanner:
             except (TypeError, ValueError):
                 continue
             if 0 <= slot <= 16:
-                return slot
+                return str(slot)
         # Nothing of this template is worn, so the worn-copy answer does not exist. The
         # template's own `possiblePositions` is the client's next answer, and it is the
         # one the equip handler falls back to; publishing it in the bag row (2026-11-06)
         # means the caller can pass the slot instead of hoping the fallback chain fires.
         if declared:
-            return declared[0]
+            return str(declared[0])
         return None
 
     @staticmethod
@@ -2510,6 +2539,8 @@ class QuestPlanner:
         equip_args: Dict[str, Any] = {"object_uid": uid}
         slot = self._worn_slot_for(obs, uid)
         if slot is not None:
+            # Already the wire form: `_worn_slot_for` returns the string the schema
+            # declares, so this assignment cannot reintroduce the int/int mismatch.
             equip_args["slot"] = slot
         self.current_quest = qid
         self.current_objective = None
@@ -3066,6 +3097,8 @@ class QuestPlanner:
                     args: Dict[str, Any] = {"object_uid": uid}
                     slot = self._worn_slot_for(obs, uid)
                     if slot is not None:
+                        # The helper hands back the schema's own wire form, so the
+                        # objective path and the bag path cannot drift apart.
                         args["slot"] = slot
                     return [{"tool": "inv.equip", "args": args,
                              "why": "objective asks to equip; no preset, so equip "
@@ -3322,7 +3355,7 @@ class QuestPlanner:
                 calls.append({
                     "tool": "hdv.buy",
                     "args": {"uid": listing["uid"], "gid": int(item),
-                             "quantity": quantity,
+                             "quantity": quantity, "price": listing["price"],
                              "max_price": listing["price"]},
                     "why": ("objective %d: item %s is cheaper on the market "
                             "(%d kamas) than farming it" % (t, item, listing["price"])),
@@ -3576,6 +3609,9 @@ class QuestPlanner:
         `detail` is the refusal's own payload when the caller has one. It says more than
         `note` does, and for a group refusal the difference is which repair is right.
         """
+        resolver = getattr(self, "_goal_resolver", None)
+        if resolver is not None:
+            resolver.note_result(tool, ok, note, flatten(obs), detail)
         self.tracker.record(tool, ok, note, obs)
         # A child goal pops only on a real advance, never on a read or a no-op.
         # Three failed attempts release it so the planner can choose a different
@@ -3747,6 +3783,11 @@ class QuestPlanner:
         twin._plan_none = dict(getattr(self, "_plan_none", {}))
         twin._tutorial_step_seen = getattr(self, "_tutorial_step_seen", None)
         twin._rule_policy = getattr(self, "_rule_policy", None)
+        # Fork pending sales and feedback state, but reuse read-only model/index
+        # artifacts so counterfactual outcomes cannot consume the real plan.
+        resolver = getattr(self, "_goal_resolver", None)
+        twin._goal_resolver = resolver.fork() if resolver is not None else None
+        twin._goal_router = getattr(self, "_goal_router", "tools")
         # The twin is about to observe its own world for the first time. Inheriting
         # the parent's scene key would make its first observation look unchanged,
         # so the transient claim/retry state (which belongs to the parent's scene)
@@ -3947,14 +3988,27 @@ class QuestPlanner:
         dialog = self._dialog_call(obs, goal)
         if dialog is not None:
             return dialog
-        mode = _goal_mode(goal)
+        mode = _goal_mode(goal, legacy=(self._goal_router == "rules"))
         if mode == "order":
             # The planner is the pinned policy, so simple orders must still reach
-            # the rule parser instead of being hijacked into the quest curriculum.
-            if self._rule_policy is None:
-                from agent.runtime import RulePolicy
-                self._rule_policy = RulePolicy()
-            return self._rule_policy.choose(goal, obs, tools)
+            # a parser instead of being hijacked into the quest curriculum.
+            if self._goal_router != "tools":
+                if self._rule_policy is None:
+                    from agent.runtime import RulePolicy
+                    self._rule_policy = RulePolicy()
+                return self._rule_policy.choose(goal, obs, tools)
+            if self._goal_resolver is None:
+                from agent.toolcall import load_default_resolver
+
+                self._goal_resolver, note = load_default_resolver()
+                # One line, once, so a run states which layer is acting: "the AI did
+                # nothing" and "the model was not installed" need opposite repairs.
+                print("[planner] goal router: " + note)
+            call = self._goal_resolver.resolve(goal, obs)
+            if call is None:
+                self.last_no_call = ("goal router: "
+                                     + (self._goal_resolver.last_reason or "no call"))
+            return call
         if mode == "farm":
             target = _farm_target(goal)
             if self._group_read_broken:

@@ -12,6 +12,7 @@ removed 2026-11-07, and the forecaster loads its checkpoint lazily.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
@@ -28,7 +29,11 @@ import urllib.parse
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+_DOFUS_NETWORK = Path(__file__).resolve().parent.parent
+if str(_DOFUS_NETWORK) not in sys.path:
+    sys.path.insert(0, str(_DOFUS_NETWORK))
 
+from agent.bridge import local_secret
 from networkhealth.inference import MultiInstanceNetworkHealth
 from data.game_data_extractor import GameDataRepository, SpellInfo
 from combat.damage_calculator import (
@@ -170,6 +175,54 @@ def _safe_target_stats(d: dict[str, Any] | None) -> TargetStats:
     return TargetStats(**{k: v for k, v in d.items() if k in valid})
 
 
+# -- loopback control-plane guard -------------------------------------------
+# The sentinel runs models on request, so an unauthenticated caller is both a
+# data-exposure and a CPU-exhaustion problem. Same bearer/Origin/Host contract
+# as the agent; liveness routes stay readable so a supervisor can probe them.
+
+_ALLOWED_ORIGIN_HOSTS = {"dofus.local", "dofus.localhost", "127.0.0.1", "localhost", "::1"}
+_MAX_BODY = 1 << 20
+
+
+def _origin_allowed(origin: str) -> bool:
+    if not origin:
+        return True
+    try:
+        parsed = urllib.parse.urlsplit(origin)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    return (parsed.hostname or "").lower() in _ALLOWED_ORIGIN_HOSTS
+
+
+def _host_allowed(host: str, port: int) -> bool:
+    if not host:
+        return True
+    host = host.strip().lower()
+    return host in {"127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port}
+
+
+def _bearer_matches(supplied: str, secret: str) -> bool:
+    if not secret:
+        return False
+    return hmac.compare_digest(supplied or "", "Bearer " + secret)
+
+
+def _query_int(qs: dict[str, list[str]], key: str, default: int) -> int:
+    try:
+        return int(qs.get(key, [str(default)])[0])
+    except (TypeError, ValueError):
+        raise ValueError("invalid_%s" % key)
+
+
+def _payload_int(req: dict[str, Any], key: str, default: int) -> int:
+    try:
+        return int(req.get(key, default))
+    except (TypeError, ValueError):
+        raise ValueError("invalid_%s" % key)
+
+
 class SentinelHTTPHandler(BaseHTTPRequestHandler):
     classifier = MessageClassifier()
     vision = SingletonVisionInspector.get_instance()
@@ -185,18 +238,56 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
         # Suppress noisy standard HTTP access logs
         pass
 
+    def _cors_origin(self) -> str:
+        origin = (self.headers.get("Origin") or "").strip()
+        return origin if origin and _origin_allowed(origin) else ""
+
+    def _authorized(self, require_token: bool = True) -> bool:
+        if not _host_allowed(self.headers.get("Host", ""), self.server.server_port):
+            return False
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin and not _origin_allowed(origin):
+            return False
+        if require_token:
+            return _bearer_matches(self.headers.get("Authorization", ""), local_secret())
+        return True
+
     def _send_json(self, status: int, data: dict[str, Any]) -> None:
         payload = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(payload)
+
+    def do_OPTIONS(self) -> None:
+        if not self._authorized(require_token=False):
+            self._send_json(403, {"error": "forbidden"})
+            return
+        self.send_response(204)
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         qs = urllib.parse.parse_qs(parsed.query)
+
+        if path not in ("/sentinel/status", "/status", "/health") and not self._authorized():
+            self._send_json(401, {"error": "unauthorized"})
+            return
 
         if path in ("/sentinel/status", "/status", "/health"):
             self._send_json(200, {
@@ -216,7 +307,11 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
 
         elif path == "/sentinel/combat/mob":
             query = qs.get("name", [""])[0] or qs.get("id", [""])[0]
-            grade_num = int(qs.get("grade", ["1"])[0])
+            try:
+                grade_num = _query_int(qs, "grade", 1)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             lang = qs.get("lang", ["fr"])[0]
 
             mob = self.repo.find_monster(query)
@@ -260,7 +355,11 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"status": "ok", "monsters": mobs_list})
 
         elif path == "/sentinel/combat/spells":
-            breed_id = int(qs.get("breed", ["8"])[0])
+            try:
+                breed_id = _query_int(qs, "breed", 8)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             lang = qs.get("lang", ["fr"])[0]
             spells = self.repo.get_breed_spells(breed_id)
             res_spells = []
@@ -325,12 +424,29 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not_found"})
 
     def do_POST(self) -> None:
-        content_len = int(self.headers.get("Content-Length", 0))
+        if not self._authorized():
+            self._send_json(401, {"error": "unauthorized"})
+            return
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self._send_json(415, {"error": "unsupported_media_type"})
+            return
+        try:
+            content_len = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_content_length"})
+            return
+        if content_len > _MAX_BODY:
+            self._send_json(413, {"error": "body_too_large"})
+            return
         body = self.rfile.read(content_len) if content_len > 0 else b"{}"
 
         try:
             req = json.loads(body.decode("utf-8"))
         except Exception:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+        if not isinstance(req, dict):
             self._send_json(400, {"error": "invalid_json"})
             return
 
@@ -359,7 +475,11 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             char_dict = req.get("character", {})
             target_dict = req.get("target", {})
             monster_query = req.get("monster")
-            grade_num = int(req.get("monster_grade", 1))
+            try:
+                grade_num = _payload_int(req, "monster_grade", 1)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
 
             spell = self.repo.find_spell(spell_id_or_name)
             if not spell:
@@ -400,7 +520,11 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             char_dict = req.get("character", {})
             spells_list = req.get("spells")
             monster_query = req.get("monster", "Bouftou")
-            grade_num = int(req.get("monster_grade", 1))
+            try:
+                grade_num = _payload_int(req, "monster_grade", 1)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
 
             char = _safe_char_stats(char_dict)
 
@@ -426,9 +550,17 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
         elif self.path == "/sentinel/combat/tactical_plan":
             char_dict = req.get("character", {})
             monster_query = req.get("monster", "Bouftou")
-            grade_num = int(req.get("monster_grade", 1))
-            dist = int(req.get("distance_cells", 3))
-            hp_pct = float(req.get("hp_percent", 1.0))
+            try:
+                grade_num = _payload_int(req, "monster_grade", 1)
+                dist = _payload_int(req, "distance_cells", 3)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            try:
+                hp_pct = float(req.get("hp_percent", 1.0))
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "invalid_hp_percent"})
+                return
 
             char = _safe_char_stats(char_dict)
             mob = self.repo.find_monster(monster_query)
@@ -496,7 +628,11 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
             query = req.get("query", "fer")
             near = req.get("near")
             near_tuple = tuple(near) if near else None
-            max_r = int(req.get("max_results", 8))
+            try:
+                max_r = _payload_int(req, "max_results", 8)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             spots = self.resource_graph.search_spots(query, near_pos=near_tuple, max_results=max_r)
             self._send_json(200, {
                 "status": "ok",
@@ -508,7 +644,11 @@ class SentinelHTTPHandler(BaseHTTPRequestHandler):
         elif self.path == "/sentinel/resources/farm_loop":
             res_q = req.get("resource", "blé")
             start = tuple(req.get("start", [4, -19]))
-            max_maps = int(req.get("max_maps", 6))
+            try:
+                max_maps = _payload_int(req, "max_maps", 6)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             loop = self.resource_graph.generate_farm_loop(res_q, start_coord=start, max_maps=max_maps)
             if loop:
                 self._send_json(200, {"status": "ok", "farm_loop": loop.to_dict()})

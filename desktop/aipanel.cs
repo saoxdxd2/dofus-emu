@@ -1409,6 +1409,7 @@ namespace DofusFarm.UI
                 using (var wc = new WebClient())
                 {
                     wc.Headers[HttpRequestHeader.ContentType] = "application/json";
+                    wc.Headers[HttpRequestHeader.Authorization] = LocalSecret.Bearer;
                     wc.Encoding = Encoding.UTF8;
                     string res = wc.UploadString(BridgeUrl(), "POST", payload);
                     Append("[ai] " + tool + " -> " + Shorten(res, 220));
@@ -1468,6 +1469,7 @@ namespace DofusFarm.UI
                 // Loopback must not be routed through a system HTTP proxy.
                 req.Proxy = null;
                 req.KeepAlive = false;
+                req.Headers[HttpRequestHeader.Authorization] = LocalSecret.Bearer;
                 if (json != null)
                 {
                     byte[] data = Encoding.UTF8.GetBytes(json);

@@ -22,6 +22,7 @@ import threading
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from array import array
@@ -31,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from agent.bridge import directive_url as bridge_directive_url, opener_for
+from agent.bridge import directive_url as bridge_directive_url, local_headers, opener_for
 from agent.jsonio import dumps_bytes, iter_array, loads
 from agent.observe import redact_packet_secrets
 from agent.recorder import TrajectoryRecorder
@@ -956,6 +957,15 @@ class ToolExecutor:
         if body is not None:
             data = dumps_bytes(body)
             headers["Content-Type"] = "application/json"
+        # Every loopback service now requires the run secret. Adding it here
+        # covers the bridge, the sentinel and the agent without changing any
+        # tool implementation.
+        try:
+            host = urllib.parse.urlsplit(url).hostname or ""
+        except ValueError:
+            host = ""
+        if host in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+            headers.update(local_headers())
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             # Loopback must not go through HTTP_PROXY. With a VPN or a local proxy

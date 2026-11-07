@@ -68,6 +68,7 @@
     try {
       var x = new XMLHttpRequest();
       x.open("GET", relayBase + "/__files", true);
+      if (window.__DOFUS_LOCAL_AUTH) x.setRequestHeader("Authorization", window.__DOFUS_LOCAL_AUTH);
       x.onload = function () {
         try {
           var list = JSON.parse(x.responseText);
@@ -85,6 +86,7 @@
     try {
       var x = new XMLHttpRequest();
       x.open("GET", relayBase + "/__warm?u=" + encodeURIComponent("https://" + rel), true);
+      if (window.__DOFUS_LOCAL_AUTH) x.setRequestHeader("Authorization", window.__DOFUS_LOCAL_AUTH);
       x.onload = function () {
         if (x.status === 200) onDone(null);
         else onDone(E.HTTP_REQUEST_ERROR);
@@ -146,6 +148,7 @@
     try {
       var x = new XMLHttpRequest();
       x.open("GET", relayBase + "/__delete?p=" + encodeURIComponent(rel), true);
+      if (window.__DOFUS_LOCAL_AUTH) x.setRequestHeader("Authorization", window.__DOFUS_LOCAL_AUTH);
       x.onload = function () {
         try {
           var res = JSON.parse(x.responseText);

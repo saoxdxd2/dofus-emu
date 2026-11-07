@@ -8134,3 +8134,65 @@ changes are JS-suite-verified but not live-verified. There is no bridge route fo
 for the friction itself -- re-read the file on navigation, with the cached copy as a fallback if the
 read fails -- is a `farmengine.cs` change and needs `compile.bat`, so it was not made unattended
 against a running client.
+
+## G107. Every finished instance kept its Autopilot for the life of the daemon *(measured 2026-11-07)*
+
+*(G104-G106 landed on `security/local-auth-hardening`; this entry follows them in the merged
+sequence.)*
+
+**Reproduction.** `BrainDaemon._instances` was written on start and never read down: the module had
+no `del`, no `pop` and no `clear` on that table. `stop()` and a normal loop exit both set a state and
+a `finished_at` and left the entry in place, and each entry holds `pilot` — the whole `Autopilot`,
+with its controller, planner, recorder and learning store.
+
+Measured with a stub pilot carrying a 1 MB payload per instance, forty completed runs:
+
+    before   rows=40  pilots_alive=40  retained=41.9 MB
+    after    rows=40  pilots_alive=0   retained= 0.0 MB
+
+The growth is linear in completed runs and the daemon is meant to run for days. A second, quieter
+half: the table is keyed by instance name, so a host that starts a fresh name per session grows a
+row per session even with the pilots released.
+
+**What was fixed.**
+
+| | before | after |
+|---|---|---|
+| `_release_pilot` | did not exist | copies `_step_total`, `_waits`, `_recoveries`, `_dialog_stalls` into `item.counters`, then sets `item.pilot = None` |
+| `_prune_finished` | did not exist | keeps `MAX_FINISHED_RECORDS` (64) completed rows, oldest `finished_at` first; never touches an instance that is starting, running or stopping |
+| `BrainInstance.status()` | read the pilot | falls back to the copied counters, so a stopped instance still answers "how many steps" |
+| the `_make_pilot` failure path | left `finished_at` unset | sets it, so an unbuildable pilot cannot accumulate one row per attempted name |
+
+The prune settles at the cap plus the one instance still unwinding inside its own thread; the next
+completion trims that row. Verified with 120 distinct instances: 65 rows kept, 0 pilots alive, the
+oldest evicted, the newest present.
+
+**Tests.** `test_a_finished_instance_releases_its_pilot`,
+`test_the_finished_table_stays_bounded` and `test_pruning_never_removes_a_running_instance` in
+`agent/test_brain_daemon.py`. Each fails against the old lifetime — checked by neutralising
+`_release_pilot` and `_prune_finished` at runtime, which produced 2 failures out of 2 — and passes
+afterwards. The gate carries the two source checks and their mutation anchors
+("a finished instance keeps its pilot for the daemon's lifetime", "the completed-instance table is
+never trimmed").
+
+**The rest of the audit, and why it stopped here.** Every other accumulator in the agent package was
+checked and is already bounded, so this was the only unbounded one:
+
+| structure | bound |
+|---|---|
+| `Autopilot.steps` | trimmed to `step_history` on every append |
+| `Autopilot.open_listings` | `deque(maxlen=512)` |
+| `Autopilot._recent` / `_refusals` | 32 / 3 |
+| `Controller._history` | trimmed at 500 to the last 300 |
+| `Planner._route_tries` / `_ui_attempts` / `_surface_labels` / `_crossings` / `_dialog_asks` | clear at 256 / 32 / 64 / 512 / 256 |
+| `Planner._menu_windows` / `_gate_xp_mark` / `_claim_map` | keyed by menu name and map/npc pair, so bounded by game content, not by time |
+| `ExperienceStore.pending` | flushed and cleared at `autosave_every` |
+| `TrajectoryRecorder` counters | keyed by tool name |
+| `knowledge_context`, `recorder` `lru_cache` | `maxsize` 4 / 4 / 2048 / 1024, all explicit |
+| host `aipanel.Append` | text box trimmed above 24,000 chars |
+
+**Unverified.** The numbers above come from a stubbed pilot; the per-instance cost in production is
+whatever a real `Autopilot` holds, which is larger, so 41.9 MB is a floor rather than a forecast. The
+daemon was not soak-tested against a live client for hours — that needs a farm run. And the HTTP
+lifecycle test in this suite currently returns 401 because `serve.py` is mid-change on the
+loopback-auth branch; that failure is the other feature, not this one.

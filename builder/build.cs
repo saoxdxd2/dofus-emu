@@ -81,6 +81,7 @@ namespace DofusBuild
                 Path.Combine(desktopDir, "Hardware.cs"),
                 Path.Combine(desktopDir, "DynamicVersionResolver.cs"),
                 Path.Combine(desktopDir, "IClientBackend.cs"),
+                Path.Combine(desktopDir, "LocalSecret.cs"),
                 Path.Combine(desktopDir, "EmulatorBackend.cs"),
                 Path.Combine(desktopDir, "WebView2ClientForm.cs"),
                 Path.Combine(desktopDir, "ClientBundle.cs"),

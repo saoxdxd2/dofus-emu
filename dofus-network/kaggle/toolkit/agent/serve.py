@@ -33,6 +33,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hmac
 import logging
 import os
 import socket
@@ -41,13 +42,14 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlsplit, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from agent.brain_daemon import BrainDaemon
+from agent.bridge import local_secret
 from agent.executor import ToolExecutor
 from agent.jsonio import dumps_bytes, loads
 from agent.recorder import TrajectoryRecorder
@@ -59,6 +61,44 @@ logger = logging.getLogger("dofus.agent.serve")
 
 # Distinct from a crash: the host reads it and attaches to the running daemon.
 EXIT_PORT_TAKEN = 3
+
+# -- loopback control-plane guard -------------------------------------------
+#
+# A web page can POST to 127.0.0.1 without a CORS preflight by sending
+# `Content-Type: text/plain`; the browser delivers the request and only hides
+# the response. The page cannot read the per-user secret file, so a bearer
+# token plus an exact Origin/Host check removes that whole class of drive-by
+# requests. There is no login: every legitimate caller runs as this user and
+# reads the same file (agent/bridge.py:local_headers()).
+
+_ALLOWED_ORIGIN_HOSTS = {"dofus.local", "dofus.localhost", "127.0.0.1", "localhost", "::1"}
+
+
+def _origin_allowed(origin: str) -> bool:
+    if not origin:
+        return True
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    return (parsed.hostname or "").lower() in _ALLOWED_ORIGIN_HOSTS
+
+
+def _host_allowed(host: str, port: int) -> bool:
+    """Reject DNS rebinding: a browser resolving evil.example to 127.0.0.1
+    still sends `Host: evil.example`, which is not one of these."""
+    if not host:
+        return True
+    host = host.strip().lower()
+    return host in {"127.0.0.1:%d" % port, "localhost:%d" % port, "[::1]:%d" % port}
+
+
+def _bearer_matches(supplied: str, secret: str) -> bool:
+    if not secret:
+        return False
+    return hmac.compare_digest(supplied or "", "Bearer " + secret)
 
 
 def service_present(host: str, port: int) -> bool:
@@ -179,11 +219,30 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - base signature
         logger.debug("%s - %s", self.address_string(), format % args)
 
+    def _cors_origin(self) -> Optional[str]:
+        origin = (self.headers.get("Origin") or "").strip()
+        return origin if origin and _origin_allowed(origin) else None
+
+    def _authorized(self, require_token: bool = True) -> bool:
+        if not _host_allowed(self.headers.get("Host", ""), self.server.server_port):
+            return False
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin and not _origin_allowed(origin):
+            return False
+        if require_token:
+            return _bearer_matches(self.headers.get("Authorization", ""), local_secret())
+        return True
+
     def _send_json(self, status: int, payload: Any) -> None:
         body = dumps_bytes(payload)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(body)
 
@@ -225,7 +284,28 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
 
     # -- routes --------------------------------------------------------------
 
+    def do_OPTIONS(self) -> None:  # noqa: N802 - base signature
+        # A preflight never carries the Authorization header, so it is answered
+        # without one -- but only for an allowed Origin/Host pair.
+        if not self._authorized(require_token=False):
+            self._send_fail(403, {"error": "forbidden"})
+            return
+        origin = self._cors_origin()
+        self.send_response(204)
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802 - base signature
+        if not self._authorized():
+            self._send_fail(401, {"error": "unauthorized"})
+            return
         path = urlparse(self.path).path
         if path == "/agent/health":
             self._send_json(200, {
@@ -272,8 +352,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             try:
                 from net.orchestrator import report_now
                 self._send_json(200, report_now(refresh=bool(self._query().get("refresh"))))
-            except Exception as exc:  # noqa: BLE001 - a missing probe is reported, never hidden
-                self._send_json(200, {"error": "%s: %s" % (type(exc).__name__, exc),
+            except Exception:  # noqa: BLE001 - a missing probe is reported, never hidden
+                logger.exception("network status probe failed")
+                self._send_json(200, {"error": "probe unavailable",
                                       "components": [], "problems": ["probe-unavailable"]})
         elif path == "/brain/status":
             if self.server.brain is None:
@@ -284,6 +365,16 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": f"unknown GET path {path}"})
 
     def do_POST(self) -> None:  # noqa: N802 - base signature
+        if not self._authorized():
+            self._send_fail(401, {"error": "unauthorized"})
+            return
+        # A JSON content type forces a CORS preflight in every browser. The
+        # token is the primary control; this is the second lock, so a page
+        # cannot reach the handler even if it somehow learns the token.
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self._send_fail(415, {"error": "Content-Type must be application/json"})
+            return
         path = urlparse(self.path).path
         payload = self._read_json()
         if payload is None:
@@ -294,10 +385,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
 
         try:
             self._dispatch_post(path, payload)
-        except Exception as exc:  # noqa: BLE001 - a handler bug is a 500, not a dropped socket
+        except Exception:  # noqa: BLE001 - a handler bug is a 500, not a dropped socket
             logger.exception("unhandled error serving POST %s", path)
-            self._send_fail(500, {"error": "internal error: %s: %s"
-                                  % (type(exc).__name__, exc)})
+            self._send_fail(500, {"error": "internal error"})
 
     def _dispatch_post(self, path: str, payload: Dict[str, Any]) -> None:
         if path == "/agent/execute":

@@ -2466,7 +2466,9 @@
                     }, 4000) : null;
                     fetch(url.replace(/\/$/, '') + '/v1/combat/decide', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: window.__DOFUS_LOCAL_AUTH
+                            ? { 'Content-Type': 'application/json', 'Authorization': window.__DOFUS_LOCAL_AUTH }
+                            : { 'Content-Type': 'application/json' },
                         body: JSON.stringify(state),
                         signal: controller ? controller.signal : undefined
                     }).then(function(response) {

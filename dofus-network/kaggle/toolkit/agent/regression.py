@@ -619,6 +619,20 @@ def test_brain_lifecycle() -> None:
           result.testsRun >= 8 and result.wasSuccessful(),
           {"tests": result.testsRun, "failures": result.failures, "errors": result.errors})
 
+    # A leak, not a crash: nothing ever removed a finished instance from the table, so
+    # every completed run kept its whole Autopilot for the life of the daemon. Measured
+    # 2026-11-07: 40 runs retained 41.9 MB, growing linearly in a process meant to run
+    # for days. Both halves are needed -- releasing the pilot without trimming the table
+    # still grows a row per instance name.
+    daemon_src = (REPO_ROOT / "agent" / "brain_daemon.py").read_text(encoding="utf-8")
+    check("a finished instance releases its pilot",
+          "self._release_pilot(item)" in daemon_src and "item.pilot = None" in daemon_src,
+          (daemon_src.count("_release_pilot"), daemon_src.count("item.pilot = None")))
+    check("and the completed-instance table stays bounded",
+          "MAX_FINISHED_RECORDS" in daemon_src and "self._prune_finished()" in daemon_src
+          and "self._instances.pop(name, None)" in daemon_src,
+          (daemon_src.count("MAX_FINISHED_RECORDS"), daemon_src.count("_prune_finished")))
+
 
 def test_brain_reports_stale_code() -> None:
     """A daemon that answers is not a daemon that runs the current code.

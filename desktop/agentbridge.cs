@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -174,9 +175,31 @@ namespace DofusFarm.Engine
             {
                 client.ReceiveTimeout = 10000;
                 string requestLine, body;
-                if (!ReadRequest(stream, out requestLine, out body))
+                Dictionary<string, string> headers;
+                if (!ReadRequest(stream, out requestLine, out headers, out body))
                 {
                     WriteResponse(stream, 400, "{\"ok\":false,\"error\":\"malformed request\"}");
+                    return;
+                }
+
+                // A page on any origin can open a TCP socket to 127.0.0.1 and
+                // send a request; the browser only hides the *response* unless
+                // CORS allows it. The token is what actually stops the request
+                // from reaching a client window. Host/Origin checks are the
+                // second lock (DNS rebinding sends the attacker's name here).
+                if (!HostAllowed(headers))
+                {
+                    WriteResponse(stream, 403, "{\"ok\":false,\"error\":\"forbidden host\"}");
+                    return;
+                }
+                if (!OriginAllowed(headers))
+                {
+                    WriteResponse(stream, 403, "{\"ok\":false,\"error\":\"forbidden origin\"}");
+                    return;
+                }
+                if (!TokenMatches(Header(headers, "Authorization")))
+                {
+                    WriteResponse(stream, 401, "{\"ok\":false,\"error\":\"unauthorized\"}");
                     return;
                 }
 
@@ -192,6 +215,16 @@ namespace DofusFarm.Engine
                 if (!(method == "POST" && path.StartsWith("/directive", StringComparison.OrdinalIgnoreCase)))
                 {
                     WriteResponse(stream, 404, "{\"ok\":false,\"error\":\"unknown route\"}");
+                    return;
+                }
+                // JSON content type forces a CORS preflight in a browser, so a
+                // drive-by form/text request cannot even reach the handler.
+                string ctype = Header(headers, "Content-Type");
+                int semi = ctype.IndexOf(';');
+                if (semi >= 0) ctype = ctype.Substring(0, semi);
+                if (!string.Equals(ctype.Trim(), "application/json", StringComparison.OrdinalIgnoreCase))
+                {
+                    WriteResponse(stream, 415, "{\"ok\":false,\"error\":\"Content-Type must be application/json\"}");
                     return;
                 }
 
@@ -435,9 +468,11 @@ namespace DofusFarm.Engine
 
         // -- minimal HTTP -------------------------------------------------------
 
-        private static bool ReadRequest(NetworkStream stream, out string requestLine, out string body)
+        private static bool ReadRequest(NetworkStream stream, out string requestLine,
+            out Dictionary<string, string> headers, out string body)
         {
             requestLine = null;
+            headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             body = "";
             // Read the header in blocks. This used to read one byte per socket
             // call, so a 300-byte directive header cost 300 loopback reads on
@@ -483,9 +518,11 @@ namespace DofusFarm.Engine
                 int colon = lines[i].IndexOf(':');
                 if (colon <= 0) continue;
                 string name = lines[i].Substring(0, colon).Trim();
+                string value = lines[i].Substring(colon + 1).Trim();
+                if (!headers.ContainsKey(name)) headers[name] = value;
                 if (string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase))
                 {
-                    int.TryParse(lines[i].Substring(colon + 1).Trim(), out contentLength);
+                    int.TryParse(value, out contentLength);
                 }
             }
 
@@ -504,6 +541,80 @@ namespace DofusFarm.Engine
                 body = Encoding.UTF8.GetString(bodyBuffer);
             }
             return true;
+        }
+
+        private static string Header(Dictionary<string, string> headers, string name)
+        {
+            string value;
+            return headers.TryGetValue(name, out value) ? value : "";
+        }
+
+        /// <summary>Only the loopback name this bridge actually bound may be used.</summary>
+        private bool HostAllowed(Dictionary<string, string> headers)
+        {
+            string host = Header(headers, "Host").Trim();
+            if (host.Length == 0) return false;
+            string name = host;
+            int port = -1;
+            if (host[0] == '[')
+            {
+                int close = host.IndexOf(']');
+                if (close > 0)
+                {
+                    name = host.Substring(1, close - 1);
+                    if (close + 1 < host.Length && host[close + 1] == ':')
+                        int.TryParse(host.Substring(close + 2), out port);
+                }
+            }
+            else
+            {
+                int colon = host.LastIndexOf(':');
+                if (colon > 0)
+                {
+                    name = host.Substring(0, colon);
+                    int.TryParse(host.Substring(colon + 1), out port);
+                }
+            }
+            if (port != _port) return false;
+            return name == "127.0.0.1"
+                || name.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                || name == "::1";
+        }
+
+        private static bool OriginAllowed(Dictionary<string, string> headers)
+        {
+            string origin = Header(headers, "Origin").Trim();
+            if (origin.Length == 0) return true;
+            Uri uri;
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out uri)) return false;
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
+            string host = uri.DnsSafeHost.Trim('[', ']');
+            return host == "127.0.0.1"
+                || host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                || host == "::1"
+                || host.Equals("dofus.local", StringComparison.OrdinalIgnoreCase)
+                || host.Equals("dofus.localhost", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TokenMatches(string supplied)
+        {
+            string secret = LocalSecret.Value;
+            if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(supplied)) return false;
+            string value = supplied.Trim();
+            return FixedTimeEquals(value, "Bearer " + secret) || FixedTimeEquals(value, secret);
+        }
+
+        /// <summary>Compare through SHA-256 so the time does not reveal the matching prefix.</summary>
+        private static bool FixedTimeEquals(string a, string b)
+        {
+            using (var sha = SHA256.Create())
+            {
+                byte[] ha = sha.ComputeHash(Encoding.UTF8.GetBytes(a ?? ""));
+                byte[] hb = sha.ComputeHash(Encoding.UTF8.GetBytes(b ?? ""));
+                int diff = 0;
+                for (int i = 0; i < ha.Length; i++) diff |= ha[i] ^ hb[i];
+                return diff == 0;
+            }
         }
 
         private static void WriteResponse(NetworkStream stream, int status, string json)
