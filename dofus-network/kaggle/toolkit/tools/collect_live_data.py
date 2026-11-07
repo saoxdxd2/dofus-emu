@@ -29,14 +29,23 @@ from typing import Any, Dict, List, Optional
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BRAIN = "http://127.0.0.1:8895"
 
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from agent.bridge import local_headers  # noqa: E402 - needs the path insert above
+
 
 def _local_opener() -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def _get(path: str, timeout: float = 1.5) -> Optional[Dict[str, Any]]:
+    # The agent service requires the run secret on every loopback read. Without it
+    # `_get("/brain/health")` returned None, which the caller reads as "no daemon"
+    # and turns into a start attempt against a daemon that was running all along.
     try:
-        with _local_opener().open(BRAIN + path, timeout=timeout) as response:
+        request = urllib.request.Request(BRAIN + path, headers=local_headers())
+        with _local_opener().open(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8", "replace"))
         return payload if isinstance(payload, dict) else None
     except Exception:
@@ -45,9 +54,10 @@ def _get(path: str, timeout: float = 1.5) -> Optional[Dict[str, Any]]:
 
 def _post(path: str, body: Dict[str, Any], timeout: float = 10.0) -> Optional[Dict[str, Any]]:
     data = json.dumps(body).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    headers.update(local_headers())
     request = urllib.request.Request(
-        BRAIN + path, data=data,
-        headers={"Content-Type": "application/json"}, method="POST")
+        BRAIN + path, data=data, headers=headers, method="POST")
     try:
         with _local_opener().open(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8", "replace"))

@@ -515,8 +515,11 @@ def test_plan_stack() -> None:
                                     {"gid": 18844, "object_uid": 1}]},
             "map": {}}
     slotted = QuestPlanner().plan_objective({"id": 4260}, 0, equip_step, twin)
+    # The wire form, not the number: `inv.equip.slot` is declared `str`, and a
+    # call carrying int 4 was refused at the executor however right the slot was.
+    # Comparing against 4 here would push the planner back into that refusal.
     check("a worn twin's slot is sent with the equip",
-          bool(slotted) and slotted[0]["args"].get("slot") == 4
+          bool(slotted) and slotted[0]["args"].get("slot") == "4"
           and slotted[0]["args"].get("object_uid") == 68720788, slotted[:1])
     stranger = {"inventory": {"presets": [],
                               "equipped": [{"slot": 4, "gid": 999}],
@@ -752,6 +755,71 @@ def test_data_janitor() -> None:
           result.testsRun >= 5 and result.wasSuccessful(),
           {"tests": result.testsRun, "failures": result.failures,
            "errors": result.errors})
+
+
+def test_market_log() -> None:
+    """The projection must not invent prices the recorder cut.
+
+    The corpus check is deliberately not run here: it costs ~4 s and its answer
+    is a property of the capture, not of this code. `tools.market_log --check`
+    prints it on demand. What is pinned is that a price row only ever comes from
+    a capture, and that a frame without its prices yields nothing.
+    """
+    import unittest
+    from tools import test_market_log as module
+
+    section("Market/action log projection (prices only where they survived)")
+    suite = unittest.defaultTestLoader.loadTestsFromModule(module)
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    check("market-log tests execute and pass",
+          result.testsRun >= 25 and result.wasSuccessful(),
+          {"tests": result.testsRun, "failures": result.failures,
+           "errors": result.errors})
+
+
+def test_world_state_schema() -> None:
+    """The world-state schema must stay closed as the client evolves.
+
+    The encoder classifies every key an observation carries as encoded,
+    ignored-for-a-stated-reason, or unknown. An unknown key means the client
+    started sending something nobody encodes, which is how a dataset thins out
+    for months without a symptom -- writing the module, the first audit found 26
+    top-level keys that had never been named.
+
+    The full pass is `python -m agent.world_state --coverage trajectories/*.jsonl`
+    (7 s over 11,461 observations), so the gate samples instead: a field the
+    client adds appears in most observations, and 120 rows per file is enough to
+    see it while keeping the gate fast.
+    """
+    import unittest
+    from tools import test_world_state as module
+
+    section("World state (closed schema, named blocks, no silent collapse)")
+    suite = unittest.defaultTestLoader.loadTestsFromModule(module)
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    check("world-state tests execute and pass",
+          result.testsRun >= 25 and result.wasSuccessful(),
+          {"tests": result.testsRun, "failures": result.failures,
+           "errors": result.errors})
+
+    from agent import world_state as ws
+
+    paths = sorted((REPO_ROOT / "trajectories").glob("dofus-*.jsonl"))
+    if not paths:
+        check("the world-state schema closes over the recorded corpus", True,
+              "no trajectories on this checkout")
+        return
+    sample = []
+    for path in paths:
+        for index, obs in enumerate(ws.iter_observations([str(path)])):
+            if index >= 120:
+                break
+            sample.append(obs)
+    report = ws.audit(sample)
+    check("the world-state schema closes over the recorded corpus",
+          not report["unknown"] and not report["unknown_entity"],
+          {"sampled": report["observations"], "unknown": report["unknown"],
+           "unknown_entity": report["unknown_entity"]})
 
 
 def test_session_close() -> None:
@@ -2435,6 +2503,39 @@ def _find_csharp_compiler() -> Optional[List[str]]:
     return None
 
 
+def _builder_host_sources(build_cs: Path) -> List[str]:
+    """The host's .cs files, read out of builder/Build.cs.
+
+    The builder is the authority on what DofusFarm.exe is made of; this gate only
+    borrows its answer. Parsing is deliberately narrow -- `Path.Combine(desktopDir,
+    "X.cs")` is the only shape the list uses -- so a reformat that changes the
+    shape returns an empty list and the gate says so instead of silently
+    compiling a subset.
+    """
+    try:
+        text = build_cs.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    # Only the host's list. Build.cs also compiles setup.exe and uninstall.exe
+    # from their own `Path.Combine(desktopDir, ...)` blocks, and taking those too
+    # produced `Duplicate 'AssemblyCompany' attribute` -- a gate failure that says
+    # nothing about the host.
+    start = text.find("var farmSources")
+    if start < 0:
+        return []
+    end = text.find("};", start)
+    if end < 0:
+        return []
+    names: List[str] = []
+    for match in re.finditer(
+            r'Path\.Combine\(\s*desktopDir\s*,\s*"([A-Za-z0-9_.]+\.cs)"\s*\)',
+            text[start:end]):
+        name = match.group(1)
+        if name not in names:
+            names.append(name)
+    return names
+
+
 def test_csharp_compile() -> None:
     """Compile the host the way its own builder does.
 
@@ -2450,16 +2551,18 @@ def test_csharp_compile() -> None:
         _delegation("C# host compile", False, ROOT / "desktop", "no C# compiler found")
         return
     desktop = ROOT / "desktop"
-    names = ["Win32.cs", "Hardware.cs", "DynamicVersionResolver.cs", "IClientBackend.cs",
-             "EmulatorBackend.cs", "WebView2ClientForm.cs", "ClientBundle.cs", "UiThread.cs",
-             "WebView2Backend.cs", "AgentBridge.cs", "FarmEngine.cs", "ProxySupervisor.cs",
-             "Watchdog.cs", "PriorityGovernor.cs", "AiPanel.cs", "NetSettings.cs",
-             "NetPill.cs", "BootState.cs",
-             "RuntimeSettings.cs", "Ini.cs", "PythonLocator.cs", "Pages.cs",
-             "MainForm.cs", "Program.cs"]
+    # The list comes from the builder, not from a copy kept here. It used to be a
+    # copy, and it fell behind: `LocalSecret.cs` was added to builder/Build.cs and
+    # this gate kept compiling without it, so the gate failed on a tree that
+    # builds. Reading the builder's own list makes that drift impossible.
+    names = _builder_host_sources(ROOT / "builder" / "Build.cs")
+    check("the builder's C# source list is readable", len(names) >= 20,
+          "%d source(s) parsed from builder/Build.cs" % len(names))
+    if len(names) < 20:
+        return
     sources = [desktop / name for name in names]
     missing = [str(path) for path in sources if not path.exists()]
-    check("the C# host source list is complete", not missing, missing)
+    check("every builder source file exists", not missing, missing)
     if missing:
         return
     legacy = compiler[0].lower().endswith("csc.exe")
@@ -16070,6 +16173,8 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_live_transitions)
     _run_test(test_session_report)
     _run_test(test_data_janitor)
+    _run_test(test_market_log)
+    _run_test(test_world_state_schema)
     _run_test(test_session_close)
     _run_test(test_session_close_hook)
     _run_test(test_the_close_fits_the_timeout_that_kills_it)

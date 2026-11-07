@@ -274,7 +274,16 @@ class _ServerMixin(unittest.TestCase):
     max_concurrent = None          # None keeps the shipped cap
 
     def setUp(self):
+        import os
+
         from agent import serve as serve_mod
+
+        # Every loopback call is authenticated now, so the suite must present a
+        # secret or it measures the 401 path instead of the behaviour it names.
+        # Pinned rather than read from the real file: a test run must not depend
+        # on (or touch) %LOCALAPPDATA%\DofusFarm\local_secret.
+        self._saved_secret = os.environ.get("DOFUS_RUN_TOKEN")
+        os.environ["DOFUS_RUN_TOKEN"] = "test-hardening-secret"
 
         self._saved_timeout = serve_mod.AgentRequestHandler.timeout
         serve_mod.AgentRequestHandler.timeout = self.handler_timeout
@@ -290,6 +299,8 @@ class _ServerMixin(unittest.TestCase):
         self.thread.start()
 
     def tearDown(self):
+        import os
+
         from agent import serve as serve_mod
 
         self.server.shutdown()
@@ -297,8 +308,70 @@ class _ServerMixin(unittest.TestCase):
         self.thread.join(timeout=5)
         serve_mod.AgentRequestHandler.timeout = self._saved_timeout
         serve_mod.AgentHTTPServer.max_concurrent_requests = self._saved_cap
+        if self._saved_secret is None:
+            os.environ.pop("DOFUS_RUN_TOKEN", None)
+        else:
+            os.environ["DOFUS_RUN_TOKEN"] = self._saved_secret
 
-    def _raw(self, payload: bytes, read_seconds: float = 2.0) -> bytes:
+    def _fix_host(self, payload: bytes) -> bytes:
+        """Address the request to this server.
+
+        The plane refuses a `Host` that is not its own authority, and it answers
+        that refusal with the same 401 as a missing token. The suite used
+        `Host: x` throughout, so once the authority check landed every raw test
+        was measuring the refusal, not the behaviour it named.
+        """
+        line, sep, rest = payload.partition(b"\r\n")
+        if not sep:
+            return payload
+        authority = b"Host: 127.0.0.1:" + str(self.port).encode() + b"\r\n"
+        if b"Host: x\r\n" in rest:
+            rest = rest.replace(b"Host: x\r\n", authority, 1)
+        elif b"Host:" not in rest:
+            rest = authority + rest
+        return line + b"\r\n" + rest
+
+    @staticmethod
+    def _add_bearer(payload: bytes) -> bytes:
+        """Insert the run's bearer after the request line."""
+        line, sep, rest = payload.partition(b"\r\n")
+        if not sep:
+            return payload
+        return (line + b"\r\n"
+                + b"Authorization: Bearer test-hardening-secret\r\n" + rest)
+
+    @staticmethod
+    def _fix_content_type(payload: bytes) -> bytes:
+        """Give a POST the JSON content type the plane insists on.
+
+        Behind the token, a non-JSON body is refused with 415. These tests are
+        about what the handler does with a body -- rejecting it, timing out on
+        it, refusing to read an oversized one -- so the type is normalized here
+        instead of being repeated in every payload.
+        """
+        line, sep, rest = payload.partition(b"\r\n")
+        if not sep or not line.startswith(b"POST "):
+            return payload
+        if b"Content-Type:" in rest:
+            return payload
+        return line + b"\r\nContent-Type: application/json\r\n" + rest
+
+    def _stalled_request(self) -> bytes:
+        """An authenticated request whose body never arrives.
+
+        The body has to sit *after* the auth check. Without the header the
+        handler answers 401 and frees the slot at once, so a stall test would
+        measure nothing while still passing.
+        """
+        return self._add_bearer(self._fix_content_type(self._fix_host(
+            b"POST /agent/execute HTTP/1.1\r\nHost: x\r\n"
+            b"Content-Length: 100\r\n\r\n{")))
+
+    def _raw(self, payload: bytes, read_seconds: float = 2.0,
+             authenticated: bool = True) -> bytes:
+        payload = self._fix_content_type(self._fix_host(payload))
+        if authenticated:
+            payload = self._add_bearer(payload)
         with socket.create_connection(("127.0.0.1", self.port), timeout=read_seconds) as sock:
             sock.sendall(payload)
             return self._read_response(sock)
@@ -378,6 +451,19 @@ class HttpErrorResponseTests(_ServerMixin):
         self.assertIn(b"200", response.split(b"\r\n", 1)[0])
         self.assertIn(b"dofus-agent", response)
 
+    def test_a_request_without_the_secret_is_refused(self):
+        # Everything else in this class now authenticates, so this is the one
+        # place that pins the refusal: a page that can reach 127.0.0.1 still
+        # cannot drive the agent without the run's secret.
+        body = b'{"tool":"quest.list","args":{}}'
+        request = (b"POST /agent/execute HTTP/1.1\r\nHost: x\r\n"
+                   b"Content-Type: application/json\r\n"
+                   b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+        response = self._raw(request, authenticated=False)
+        self.assertIn(b"401", response.split(b"\r\n", 1)[0])
+        self.assertIn(b"unauthorized", response)
+        self.assertNotIn(b'"ok"', response, "an unauthenticated call was executed")
+
 
 class HttpDesyncTests(_ServerMixin):
     """An unread body left the next request bytes in the buffer."""
@@ -439,8 +525,7 @@ class HttpConcurrencyCapTests(_ServerMixin):
         try:
             for _ in range(20):
                 sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
-                sock.sendall(b"POST /agent/execute HTTP/1.1\r\nHost: x\r\n"
-                             b"Content-Length: 100\r\n\r\n{")
+                sock.sendall(self._stalled_request())
                 stalled.append(sock)
 
             # Sample while the four handlers are parked in rfile.read.
@@ -462,8 +547,7 @@ class HttpConcurrencyCapTests(_ServerMixin):
         stalled = []
         for _ in range(20):
             sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
-            sock.sendall(b"POST /agent/execute HTTP/1.1\r\nHost: x\r\n"
-                         b"Content-Length: 100\r\n\r\n{")
+            sock.sendall(self._stalled_request())
             stalled.append(sock)
         for sock in stalled:
             sock.close()
@@ -507,8 +591,7 @@ class HttpLivenessUnderFloodTests(_ServerMixin):
         try:
             for _ in range(40):
                 sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
-                sock.sendall(b"POST /agent/execute HTTP/1.1\r\nHost: x\r\n"
-                             b"Content-Length: 100\r\n\r\n{")
+                sock.sendall(self._stalled_request())
                 stalled.append(sock)
 
             started = time.perf_counter()

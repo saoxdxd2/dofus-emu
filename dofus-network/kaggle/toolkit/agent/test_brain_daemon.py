@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -6,6 +7,7 @@ import urllib.request
 from pathlib import Path
 
 from agent.brain_daemon import BrainDaemon, BrainInstance
+from agent.bridge import local_headers
 from agent.serve import AgentHTTPServer
 
 
@@ -35,7 +37,19 @@ class BrainLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="brain-lifecycle-")
         self.root = Path(self.temp.name)
+        # The service requires the run secret on every loopback call, so the suite has to
+        # present one like any other client. Pinned in the environment rather than read
+        # from %LOCALAPPDATA% so the test is hermetic: it neither depends on nor creates
+        # the machine's real secret file.
+        self._saved_secret = os.environ.get("DOFUS_RUN_TOKEN")
+        os.environ["DOFUS_RUN_TOKEN"] = "test-run-secret"
         self.daemon = BrainDaemon(log_dir=self.root, recorder_dir=self.root)
+        # Stopping an instance kicks off a real dataset rebuild (tools/refresh_live_dataset.py
+        # over 100 MB+, then the knowledge index). Measured 2026-11-07: a fleet stop during
+        # this suite spawned those subprocesses, they saturated the disk, and the 2 s client
+        # budget in the HTTP test began timing out one run in three -- a flake caused by the
+        # test, not by the daemon. The rebuild has its own suite; here it is only noise.
+        self.daemon._ingest_live = lambda: False
         self.pilots = {}
         self.requests = []
         self.daemon._make_pilot = self.make_pilot
@@ -51,10 +65,19 @@ class BrainLifecycleTests(unittest.TestCase):
             pilot.cleanup_release.set()
         for thread in self.requests:
             thread.join(6)
-        for item in self.daemon._instances.values():
+        # Snapshot under the daemon's own lock: a start that outlived its client is still
+        # inserting instances from the server thread, and iterating the live dict raised
+        # "dictionary changed size during iteration" *after* the real failure, burying it.
+        with self.daemon._lock:
+            items = list(self.daemon._instances.values())
+        for item in items:
             if item.thread:
                 item.thread.join(3)
                 self.assertFalse(item.thread.is_alive())
+        if self._saved_secret is None:
+            os.environ.pop("DOFUS_RUN_TOKEN", None)
+        else:
+            os.environ["DOFUS_RUN_TOKEN"] = self._saved_secret
         self.temp.cleanup()
 
     def start(self, *names):
@@ -262,8 +285,11 @@ class BrainLifecycleTests(unittest.TestCase):
 
         def request(path, body=None):
             data = json.dumps(body).encode() if body is not None else None
-            req = urllib.request.Request(base + path, data=data,
-                                         headers={"Content-Type": "application/json"})
+            # Every real caller presents the run secret; a test client that does not is
+            # testing the 401 path, not the fleet lifecycle.
+            headers = {"Content-Type": "application/json"}
+            headers.update(local_headers())
+            req = urllib.request.Request(base + path, data=data, headers=headers)
             with opener.open(req, timeout=2) as response:
                 return json.load(response)
 

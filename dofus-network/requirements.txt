@@ -3,9 +3,15 @@
 # Local CPU inference / pipeline testing:
 #   python -m pip install -r requirements.txt
 #
+# Pinned to the versions the shipped runtime actually runs, measured 2026-11-07 on
+# Python 3.14 (requests 2.34.2, numpy 2.5.4). Open floors were the problem: a rebuild
+# could pull a different numpy into a tree whose artifacts were produced against this
+# one, and the mismatch surfaces as an inference difference rather than an error.
+#
 # NOTE: this machine runs Python 3.15, for which PyTorch wheels may not exist
 # yet. For Phase 1/2 training use Google Colab (Python 3.11/3.12) or a venv on
-# Python 3.11-3.13. See docs/DATASETS.md for the environment matrix.
+# Python 3.11-3.13. See docs/DATASETS.md for the environment matrix. Both pins have
+# wheels for 3.11-3.14; a 3.15 venv may need numpy relaxed to a newer build.
 
-numpy>=1.26
-requests>=2.31
+numpy==2.5.4
+requests==2.34.2

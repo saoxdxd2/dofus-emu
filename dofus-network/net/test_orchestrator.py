@@ -171,6 +171,31 @@ def main() -> int:
     arm("a fresh token is reused", again, fresh)
     tmp.unlink(missing_ok=True)
 
+    # --- two tokens, two names: provenance must not overwrite authorisation ------------
+    # run_brain.py mints this token before importing agent.serve, and agent.bridge's
+    # ensure_local_secret() reads DOFUS_RUN_TOKEN *before* the secret file. Exporting the
+    # session token under that name therefore replaced the auth secret for the whole
+    # process: the brain then presented a 16-hex bearer while the host's relay held the
+    # 64-hex file secret, and every loopback call from the brain answered 401 while every
+    # service still reported healthy.
+    saved = {key: os.environ.get(key) for key in ("DOFUS_RUN_TOKEN", oc.SESSION_TOKEN_ENV)}
+    tmp2 = Path(os.environ.get("TEMP", ".")) / "net_orch_session_token_test.json"
+    try:
+        os.environ.pop("DOFUS_RUN_TOKEN", None)
+        os.environ.pop(oc.SESSION_TOKEN_ENV, None)
+        tok = oc.run_token(path=tmp2, write=True)
+        arm("the session token is exported under its own name",
+            os.environ.get(oc.SESSION_TOKEN_ENV), tok)
+        arm("and never as the loopback auth secret",
+            os.environ.get("DOFUS_RUN_TOKEN"), None)
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        tmp2.unlink(missing_ok=True)
+
     # The contract that black-screened the client. A relay answering `Access-Control-Allow-Origin: *`
     # is discarded by Chromium on the game's credentialed map XHR -- status 0 in the page, no log
     # line on the server. Checked on every run so a wildcard cannot return with the next update;

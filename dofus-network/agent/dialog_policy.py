@@ -176,13 +176,22 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     travel = _needs_travel(obs)
     scored = []
     for reply in candidates:
-        tokens = _tokens(reply["text"])
+        text = reply["text"]
+        plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").casefold()
+        tokens = set(_WORD.findall(plain))
         overlap = len(tokens & context) / len(tokens) if tokens else 0.0
         qrel = len(tokens & question) / len(tokens) if tokens else 0.0
+        closing = any(phrase in plain for phrase in _CLOSING)
+        travel_score = 0
+        if travel:
+            if tokens & _LEAVE_WORDS:
+                travel_score = 1
+            elif tokens & _ENTER_WORDS:
+                travel_score = -1
         scored.append({**reply, "score": overlap, "question": qrel,
-                       "travel": _travel_bias(reply["text"]) if travel else 0,
-                       "quest_icon": bool(_QUEST_ICON.search(reply["text"])),
-                       "closing": _is_closing(reply["text"])})
+                       "travel": travel_score,
+                       "quest_icon": bool(_QUEST_ICON.search(text)),
+                       "closing": closing})
     # Primary: objective overlap. The other signals only reorder inside a tie, so
     # a case the objective already decided is decided exactly as before.
     scored.sort(key=lambda reply: (-reply["score"], -reply["question"]))

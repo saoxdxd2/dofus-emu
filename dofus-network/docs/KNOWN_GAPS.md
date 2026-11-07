@@ -8193,6 +8193,61 @@ checked and is already bounded, so this was the only unbounded one:
 
 **Unverified.** The numbers above come from a stubbed pilot; the per-instance cost in production is
 whatever a real `Autopilot` holds, which is larger, so 41.9 MB is a floor rather than a forecast. The
-daemon was not soak-tested against a live client for hours — that needs a farm run. And the HTTP
-lifecycle test in this suite currently returns 401 because `serve.py` is mid-change on the
-loopback-auth branch; that failure is the other feature, not this one.
+daemon was not soak-tested against a live client for hours — that needs a farm run. (The 401 this
+paragraph used to report was a separate defect: `run_brain.py` exported its 16-hex provenance token
+under `DOFUS_RUN_TOKEN`, the name the 64-hex authorisation secret uses. Fixed by giving the
+provenance token its own `DOFUS_SESSION_TOKEN`; the suite is 12/12.)
+
+
+## G108. The recorder cuts every price table before the first price *(measured 2026-11-07)*
+
+**Symptom.** A market projection over `trajectories/play_*.jsonl` produced **0 price rows** from
+**277** `ObjectAveragePricesMessage` frames, and no error to explain it.
+
+**Cause.** `_shrink(value, 6000)` in `scripts/mobile-disguise.js` caps an incoming message at 6000
+characters. `ObjectAveragePricesMessage` serialises as
+`{"_messageType":..., "ids":[...], "avgPrices":[...]}` — the ids come first, so the cut lands before
+the first price. Measured over the whole corpus: 277 of 277 frames truncated, 0 of 277 previews
+parse as JSON, 0 contain `avgPrices`. The same cap empties `setShopDetailsSuccess` (319 frames).
+
+**Why the cap is not the thing to raise.** A full average table is ~55 KB. The corpus is already
+235,637 records across 13 files; raising the cap multiplies the log size for data the client holds in
+memory anyway, and the recorder's job is the action stream, not a price archive.
+
+**Fix — read the cache, not the log.** `__PriceCache.absorb()` already receives the message
+*before* `_shrink` runs, and `market.capture` reads it back through the bridge;
+`python -m advisor.cli capture --out <dir>` writes `market.json` with the untruncated table.
+`tools/market_log.py` projects the logs into a normalized action stream (`action` rows: verb, wire
+name, direction, map, fight edge, state deltas) and joins `market.json` into `market` rows, one per
+gid, newest capture per gid. It refuses to derive prices from the logs: `--check` prints the
+measurement above, and `--require-market` exits 1 when no capture exists instead of writing an
+empty file that looks successful.
+
+**Tests.** 25 in `tools/test_market_log.py`, carried by the gate as "market-log tests execute and
+pass". Two of them exist to keep the reader honest in both directions: an **intact** frame must yield
+its prices (otherwise a broken reader would pass on a corpus that has none), and a **truncated** one
+must yield zero.
+
+
+## G109. Every observation carries a `prices` key that is always empty *(measured 2026-11-07)*
+
+**Symptom.** `observation["prices"]` is present in **6,451** of 11,461 recorded observations and is
+`[]` in every one of them.
+
+**How it was found.** Not by reading the code — by `agent/world_state.py`'s closed-schema audit,
+which lists every key an observation carries and refuses to let one go unclassified. Writing that
+audit surfaced 26 top-level keys that no module named, this one among them.
+
+**Cause.** The key is written by a capture path nothing feeds. `market.capture` produces
+`market.json` on demand (G108) and nothing pushes its result into the observation, so the slot is
+serialised empty on every step.
+
+**Why it matters.** It is the same failure shape as G108: an empty container that reads as a
+measurement. A consumer sees `prices: []` and concludes there are no prices, when the truth is that
+nobody asked. The two states are not distinguishable from the data.
+
+**Not fixed, deliberately.** Wiring it means deciding whether the observation should carry a whole
+price table per step (it would repeat ~2,000 rows on every step) or a single staleness scalar plus a
+pointer to the capture file. That is a data-model decision, not a bug fix. Meanwhile the encoder
+carries `prices_over_100` and reports presence the same way it reports `has_terrain`, so the tensors
+do not claim a price they do not have.

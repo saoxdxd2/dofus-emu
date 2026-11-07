@@ -3251,11 +3251,25 @@ namespace DofusFarm.Engine {
             try { c2.Close(); } catch { }
         }
 
+        private static readonly System.Collections.Generic.Queue<byte[]> _copyBuffers =
+            new System.Collections.Generic.Queue<byte[]>();
+        private static readonly object _bufferLock = new object();
+
         private void CopyCounted(Stream from, Stream to, bool sent) {
-            var buf = new byte[16384];
-            for (int n; (n = from.Read(buf, 0, buf.Length)) > 0; ) {
-                to.Write(buf, 0, n);
-                if (sent) Interlocked.Add(ref _sentBytes, n); else Interlocked.Add(ref _recvBytes, n);
+            byte[] buf = null;
+            lock (_bufferLock) {
+                if (_copyBuffers.Count > 0) buf = _copyBuffers.Dequeue();
+            }
+            if (buf == null) buf = new byte[16384];
+            try {
+                for (int n; (n = from.Read(buf, 0, buf.Length)) > 0; ) {
+                    to.Write(buf, 0, n);
+                    if (sent) Interlocked.Add(ref _sentBytes, n); else Interlocked.Add(ref _recvBytes, n);
+                }
+            } finally {
+                lock (_bufferLock) {
+                    if (_copyBuffers.Count < 32) _copyBuffers.Enqueue(buf);
+                }
             }
         }
     }

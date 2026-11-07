@@ -435,10 +435,17 @@ class HttpAndToolTests(unittest.TestCase):
 
     def test_get_decodes_fake_http_status(self):
         payload = status(row())
-        with patch.object(collector, "_local_opener") as opener:
+        with patch.dict("os.environ", {"DOFUS_RUN_TOKEN": "unit-secret"}), \
+                patch.object(collector, "_local_opener") as opener:
             opener.return_value.open.return_value = self.response(json.dumps(payload).encode())
             self.assertEqual(collector._get("/brain/status"), payload)
-            opener.return_value.open.assert_called_once_with(collector.BRAIN + "/brain/status", timeout=1.5)
+            # A bare URL string cannot carry the run secret, so `_get` builds a Request.
+            # Asserted against the same helper the production path uses, rather than a
+            # hard-coded header, so a change to the scheme is caught here too.
+            request = opener.return_value.open.call_args[0][0]
+            self.assertEqual(request.full_url, collector.BRAIN + "/brain/status")
+            self.assertEqual(request.get_header("Authorization"), "Bearer unit-secret")
+            self.assertEqual(opener.return_value.open.call_args[1]["timeout"], 1.5)
 
     def test_get_returns_none_for_bad_json_nonobject_or_http_failure(self):
         with patch.object(collector, "_local_opener") as opener:

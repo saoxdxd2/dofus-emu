@@ -23,6 +23,7 @@ import json
 import re
 import unicodedata
 from collections import deque
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -350,24 +351,17 @@ def known_map(map_id: Any) -> bool:
     return mid in map_graph()[0]
 
 
-def route_first_hop(here: Any, target: Any) -> Optional[Tuple[int, str, int]]:
-    """First crossing of a shortest indexed route: (map id, direction, crossings).
-
-    None when the index knows no route -- the destination may be newer than the
-    capture. The client only crosses an exit of the map it stands on, so a
-    destination that is not adjacent has to be walked one border at a time; the
-    hop is a hint and the caller still matches it against the exits the client
-    reports, because the live map, not this file, decides what can be crossed.
-    """
-    try:
-        here, target = int(here), int(target)
-    except (TypeError, ValueError):
-        return None
-    if here == target:
-        return None
+@lru_cache(maxsize=8192)
+def _cached_route(here: int, target: int) -> Optional[Tuple[int, str, int]]:
     ids, edges = map_graph()
     if here not in ids or target not in ids:
         return None
+    # Fast-path for direct single-crossing neighbours: O(1) time
+    here_edges = edges.get(here)
+    if here_edges:
+        for direction, dest in here_edges.items():
+            if dest == target:
+                return dest, direction, 1
     seen = {here: (0, None)}
     queue = deque([here])
     while queue:
@@ -384,6 +378,24 @@ def route_first_hop(here: Any, target: Any) -> Optional[Tuple[int, str, int]]:
         if len(seen) > 20000:
             break
     return None
+
+
+def route_first_hop(here: Any, target: Any) -> Optional[Tuple[int, str, int]]:
+    """First crossing of a shortest indexed route: (map id, direction, crossings).
+
+    None when the index knows no route -- the destination may be newer than the
+    capture. The client only crosses an exit of the map it stands on, so a
+    destination that is not adjacent has to be walked one border at a time; the
+    hop is a hint and the caller still matches it against the exits the client
+    reports, because the live map, not this file, decides what can be crossed.
+    """
+    try:
+        h, t = int(here), int(target)
+    except (TypeError, ValueError):
+        return None
+    if h == t:
+        return None
+    return _cached_route(h, t)
 
 
 def route_distance(here: Any, target: Any) -> Optional[int]:

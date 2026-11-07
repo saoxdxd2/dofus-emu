@@ -16,6 +16,13 @@ import os
 import sys
 import time
 import urllib.request
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from agent.bridge import local_headers  # noqa: E402 - needs the path insert above
 
 
 def state_dir() -> str:
@@ -33,10 +40,15 @@ def bridge_port() -> int:
 
 
 def call(port: int, payload: dict, timeout: float = 20.0) -> dict:
+    # The C# bridge enforces Host/Origin/bearer on every directive. This tool drives
+    # the login press, so without the secret the directive is refused and the login
+    # never happens -- the symptom is "wake_login ran fine and nothing woke".
+    headers = {"Content-Type": "application/json"}
+    headers.update(local_headers())
     req = urllib.request.Request(
         "http://127.0.0.1:%d/directive" % port,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method="POST")
+        headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -113,11 +125,13 @@ def press_once(port: int, instance: str) -> dict:
 def start_loop(port: int, instance: str, goal: str) -> bool:
     """Hand the recovered world to the brain daemon, as /brain/start would."""
     try:
+        headers = {"Content-Type": "application/json"}
+        headers.update(local_headers())
         req = urllib.request.Request(
             "http://127.0.0.1:8895/brain/start",
             data=json.dumps({"instances": [instance], "goals": [goal],
                              "policy": "auto"}).encode("utf-8"),
-            headers={"Content-Type": "application/json"}, method="POST")
+            headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=20) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:  # noqa: BLE001 - a dead daemon is a report, not a crash

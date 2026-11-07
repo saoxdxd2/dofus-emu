@@ -77,8 +77,8 @@ class PlanStack:
              parent: Optional[str] = None) -> SubGoal:
         goal = SubGoal(kind=kind, args=dict(args or {}), parent=parent)
         self._goals.append(goal)
-        if len(self._goals) > self.max_depth:
-            self._goals = self._goals[-self.max_depth:]
+        while len(self._goals) > self.max_depth:
+            self._goals.pop(0)
         return goal
 
     def pop(self) -> Optional[SubGoal]:
@@ -120,8 +120,11 @@ def _npc_on_map(observation: Dict[str, Any], npc_id: Any) -> bool:
         if not isinstance(row, dict):
             continue
         for key in ("template_id", "npc_id", "actor_id", "contextual_id"):
+            val = row.get(key)
+            if val is not None and val == wanted:
+                return True
             try:
-                if int(row.get(key)) == wanted:
+                if val is not None and int(val) == wanted:
                     return True
             except (TypeError, ValueError):
                 continue

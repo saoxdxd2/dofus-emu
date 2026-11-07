@@ -54,31 +54,14 @@ class CharacterStats:
     heals: int = 0
 
     def get_stat_for_element(self, element: str) -> int:
-        elem = element.upper()
-        if elem in ("EARTH", "NEUTRAL"):
-            return self.strength
-        elif elem == "FIRE":
-            return self.intelligence
-        elif elem == "WATER":
-            return self.chance
-        elif elem == "AIR":
-            return self.agility
-        return 0
+        return {"EARTH": self.strength, "NEUTRAL": self.strength, "FIRE": self.intelligence,
+                "WATER": self.chance, "AIR": self.agility}.get(element.upper(), 0)
 
     def get_flat_for_element(self, element: str) -> int:
         elem = element.upper()
-        flat = self.damage
-        if elem == "NEUTRAL":
-            flat += self.damage_neutral
-        elif elem == "EARTH":
-            flat += self.damage_earth
-        elif elem == "FIRE":
-            flat += self.damage_fire
-        elif elem == "WATER":
-            flat += self.damage_water
-        elif elem == "AIR":
-            flat += self.damage_air
-        return flat
+        flat_map = {"NEUTRAL": self.damage_neutral, "EARTH": self.damage_earth,
+                    "FIRE": self.damage_fire, "WATER": self.damage_water, "AIR": self.damage_air}
+        return self.damage + flat_map.get(elem, 0)
 
 
 @dataclass
@@ -125,22 +108,17 @@ class TargetStats:
         )
 
     def get_res_percent(self, element: str) -> int:
-        elem = element.upper()
-        if elem == "NEUTRAL": return self.res_percent_neutral
-        if elem == "EARTH": return self.res_percent_earth
-        if elem == "FIRE": return self.res_percent_fire
-        if elem == "WATER": return self.res_percent_water
-        if elem == "AIR": return self.res_percent_air
-        return 0
+        return {"NEUTRAL": self.res_percent_neutral, "EARTH": self.res_percent_earth,
+                "FIRE": self.res_percent_fire, "WATER": self.res_percent_water,
+                "AIR": self.res_percent_air}.get(element.upper(), 0)
 
     def get_res_fixed(self, element: str) -> int:
-        elem = element.upper()
-        if elem == "NEUTRAL": return self.res_fixed_neutral
-        if elem == "EARTH": return self.res_fixed_earth
-        if elem == "FIRE": return self.res_fixed_fire
-        if elem == "WATER": return self.res_fixed_water
-        if elem == "AIR": return self.res_fixed_air
-        return 0
+        return {"NEUTRAL": self.res_fixed_neutral, "EARTH": self.res_fixed_earth,
+                "FIRE": self.res_fixed_fire, "WATER": self.res_fixed_water,
+                "AIR": self.res_fixed_air}.get(element.upper(), 0)
+
+    get_res_percent_for_element = get_res_percent
+    get_res_fixed_for_element = get_res_fixed
 
 
 @dataclass

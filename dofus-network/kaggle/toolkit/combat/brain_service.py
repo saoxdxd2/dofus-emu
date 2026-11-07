@@ -297,7 +297,9 @@ def ensure_brain(port: int = BRAIN_PORT, dry_run: bool = False,
     """
     if dry_run:
         return "dry_run", {"reason": "dry run does not start services"}
-    token = run_token if run_token is not None else os.environ.get("DOFUS_RUN_TOKEN", "")
+    # `DOFUS_SESSION_TOKEN`, not `DOFUS_RUN_TOKEN`: the latter is the shared loopback auth
+    # secret, and reading it here conflated "which run started you" with "may I call you".
+    token = run_token if run_token is not None else os.environ.get("DOFUS_SESSION_TOKEN", "")
     model = is_up(port)
     if model:
         body = ident(port)

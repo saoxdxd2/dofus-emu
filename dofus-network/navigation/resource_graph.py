@@ -32,12 +32,7 @@ class ResourceNode:
     xp_gain: int = 15
 
     def get_name(self, lang: str = "fr") -> str:
-        lang = lang.lower()
-        if lang == "en":
-            return self.name_en or self.name_fr
-        elif lang == "es":
-            return self.name_es or self.name_fr
-        return self.name_fr
+        return {"en": self.name_en, "es": self.name_es}.get(lang.lower()) or self.name_fr
 
 
 @dataclass

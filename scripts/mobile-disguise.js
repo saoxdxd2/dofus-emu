@@ -2087,7 +2087,7 @@
                                 var row = { at: Date.now(), name: String(name),
                                             args: _agentPacketArgs(arguments[1]) };
                                 cmOut.push(row);
-                                if (cmOut.length > 60) cmOut.shift();
+                                if (cmOut.length > 80) cmOut.splice(0, cmOut.length - 60);
                             } catch (e) {}
                             return origSend.apply(cm, arguments);
                         };
@@ -2118,7 +2118,7 @@
                                     row.keys = Object.keys(a).slice(0, 8);
                                 }
                                 cmIn.push(row);
-                                if (cmIn.length > 60) cmIn.shift();
+                                if (cmIn.length > 80) cmIn.splice(0, cmIn.length - 60);
                                 // The battle log the outcome row needs. The client's
                                 // own stack is cleared at fight end, so the numbers
                                 // have to be copied as each fight message arrives.
@@ -2129,7 +2129,7 @@
                                     var fightRow = _agentBattleRow(a, rowName);
                                     if (fightRow) {
                                         fightRing.push(fightRow);
-                                        if (fightRing.length > 800) fightRing.shift();
+                                        if (fightRing.length > 900) fightRing.splice(0, fightRing.length - 800);
                                     }
                                 } else if (/sequence/i.test(rowName)
                                         && a && typeof a === 'object') {
@@ -2146,7 +2146,7 @@
                                             var srow = _agentBattleRow(sm, st);
                                             if (!srow) continue;
                                             fightRing.push(srow);
-                                            if (fightRing.length > 800) fightRing.shift();
+                                            if (fightRing.length > 900) fightRing.splice(0, fightRing.length - 800);
                                         }
                                     }
                                 }
@@ -3905,7 +3905,7 @@
                     added++;
                 }
                 if (added) {
-                    while (ring.length > 800) ring.shift();
+                    if (ring.length > 800) ring.splice(0, ring.length - 800);
                     var keys = Object.keys(sigs);
                     if (keys.length > 1200) {
                         window.__agentBattleSigs = {};
@@ -6329,6 +6329,36 @@
                              name: el.name || null };
                 });
             } catch (e) {}
+            // Terrain: the one static fact the world observation never carried.
+            // Measured 2026-11-07: 0 of 11,452 recorded observations had it, while
+            // the fight board has read these same bits since it was written. Bit 0
+            // of a cell's `l` is walkable; the flags are static for a map, so pack
+            // them once per map object and hand out the same string afterwards.
+            // One bit per cell, four cells per hex digit: 560 cells -> 140 chars.
+            var terrain = null;
+            try {
+                var tmap = (mr && mr.map) || (iso && iso.mapData) || null;
+                var tcells = tmap && tmap.cells;
+                if (tcells && tcells.length) {
+                    var tcache = window.__agentTerrainCache;
+                    if (!tcache || tcache.map !== tmap || tcache.len !== tcells.length) {
+                        var hex = '';
+                        for (var ts = 0; ts < tcells.length; ts += 4) {
+                            var nibble = 0;
+                            for (var tk = 0; tk < 4; tk++) {
+                                var tix = ts + tk;
+                                if (tix >= tcells.length) break;
+                                var tflags = Number(tcells[tix] && tcells[tix].l) || 0;
+                                if (tflags & 1) nibble |= (1 << tk);
+                            }
+                            hex += nibble.toString(16);
+                        }
+                        tcache = window.__agentTerrainCache = {
+                            map: tmap, len: tcells.length, hex: hex };
+                    }
+                    terrain = tcache.hex;
+                }
+            } catch (eT) { terrain = null; }
             var allGroups = [];
             try { allGroups = _listMonsterGroups(); } catch (e) { allGroups = []; }
             return {
@@ -6336,6 +6366,7 @@
                 cell: playerCell,
                 x: coords.posX != null ? coords.posX : (pos.x != null ? pos.x : null),
                 y: coords.posY != null ? coords.posY : (pos.y != null ? pos.y : null),
+                terrain: terrain,
                 neighbours: neighbours,
                 exits: exits,
                 doors: _agentDoorList(mapId),

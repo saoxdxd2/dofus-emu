@@ -19,6 +19,12 @@ from typing import Any
 
 from .inference import ForecastResult, MultiInstanceNetworkHealth, Observation
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from agent.bridge import local_headers  # noqa: E402 - needs the path insert above
+
 logger = logging.getLogger("networkhealth.bridge")
 
 
@@ -50,7 +56,13 @@ class NetworkHealthBridge:
     def fetch_proxy_telemetry(self, port: int, timeout: float = 1.0) -> dict[str, Any] | None:
         url = f"http://127.0.0.1:{port}/__telemetry"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "NetworkHealthBridge/1.0"})
+            # The relay's admin routes now require the run secret, which is the same
+            # value it was launched with (`-admin-token` from LocalSecret.Value). Without
+            # the header this poll returns 401, which reads as "relay down" and would
+            # train the network-health model on a fault that is really an auth failure.
+            headers = {"User-Agent": "NetworkHealthBridge/1.0"}
+            headers.update(local_headers())
+            req = urllib.request.Request(url, headers=headers)
             # The relay is on this machine. urlopen() honours HTTP_PROXY, and with a VPN
             # or proxy client running that is set machine-wide — so the health collector
             # was asking an external proxy to fetch a loopback port, which is both wrong

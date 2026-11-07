@@ -38,20 +38,11 @@ class MapCoord:
 
     def step_towards(self, target: MapCoord) -> Tuple[MapCoord, Direction]:
         """Calculates immediate next coordinate step towards target."""
-        dx = target.x - self.x
-        dy = target.y - self.y
-
-        # Prioritize axis with larger delta
+        dx, dy = target.x - self.x, target.y - self.y
         if abs(dx) >= abs(dy) and dx != 0:
-            if dx > 0:
-                return MapCoord(self.x + 1, self.y), Direction.RIGHT
-            else:
-                return MapCoord(self.x - 1, self.y), Direction.LEFT
-        elif dy != 0:
-            if dy > 0:
-                return MapCoord(self.x, self.y + 1), Direction.DOWN
-            else:
-                return MapCoord(self.x, self.y - 1), Direction.UP
+            return (MapCoord(self.x + 1, self.y), Direction.RIGHT) if dx > 0 else (MapCoord(self.x - 1, self.y), Direction.LEFT)
+        if dy != 0:
+            return (MapCoord(self.x, self.y + 1), Direction.DOWN) if dy > 0 else (MapCoord(self.x, self.y - 1), Direction.UP)
         return self, Direction.RIGHT
 
     def __str__(self) -> str:
@@ -69,12 +60,7 @@ class ZaapLocation:
     kamas_cost_base: int = 20
 
     def get_name(self, lang: str = "fr") -> str:
-        lang = lang.lower()
-        if lang == "en":
-            return self.name_en or self.name_fr
-        elif lang == "es":
-            return self.name_es or self.name_fr
-        return self.name_fr
+        return {"en": self.name_en, "es": self.name_es}.get(lang.lower()) or self.name_fr
 
 
 @dataclass(slots=True)
@@ -415,19 +401,19 @@ class CellPathfinder:
     @classmethod
     def get_border_cells_for_direction(cls, direction: Direction) -> Set[int]:
         """Returns the set of cell IDs that trigger a map change in the specified direction."""
-        if direction == Direction.UP:
-            return cls.TOP_BORDER_CELLS
-        elif direction == Direction.DOWN:
-            return cls.BOTTOM_BORDER_CELLS
-        elif direction == Direction.LEFT:
-            return cls.LEFT_BORDER_CELLS
-        elif direction == Direction.RIGHT:
-            return cls.RIGHT_BORDER_CELLS
-        return set()
+        return {
+            Direction.UP: cls.TOP_BORDER_CELLS,
+            Direction.DOWN: cls.BOTTOM_BORDER_CELLS,
+            Direction.LEFT: cls.LEFT_BORDER_CELLS,
+            Direction.RIGHT: cls.RIGHT_BORDER_CELLS,
+        }.get(direction, set())
 
     @classmethod
     def find_nearest_border_cell(cls, current_cell: int, direction: Direction) -> int:
         """Finds the closest exit cell to step onto to change map in `direction`."""
+        table = _NEAREST_BORDER.get(direction)
+        if table and 0 <= current_cell < cls.TOTAL_CELLS:
+            return table[current_cell]
         border = cls.get_border_cells_for_direction(direction)
         if not border:
             return current_cell
@@ -439,8 +425,18 @@ class CellPathfinder:
 # (two divmods + several int allocations per lookup). Built once at import.
 # Declared after the class body because class-body comprehensions cannot see
 # sibling class attributes in Python 3.
-CellPathfinder._ISO_COORDS = [
+CellPathfinder._ISO_COORDS = tuple(
     ((cid % CellPathfinder.WIDTH) + ((cid // CellPathfinder.WIDTH) // 2),
      ((cid // CellPathfinder.WIDTH) // 2) - (cid % CellPathfinder.WIDTH) + ((cid // CellPathfinder.WIDTH) % 2))
     for cid in range(CellPathfinder.TOTAL_CELLS)
-]
+)
+
+# Precomputed nearest border cell for each direction (4 x 560 lookup table)
+_NEAREST_BORDER: Dict[Direction, Tuple[int, ...]] = {}
+for _d in (Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT):
+    _border = CellPathfinder.get_border_cells_for_direction(_d)
+    if _border:
+        _NEAREST_BORDER[_d] = tuple(
+            min(_border, key=lambda c, _cid=cid: CellPathfinder.cell_distance(_cid, c))
+            for cid in range(CellPathfinder.TOTAL_CELLS)
+        )

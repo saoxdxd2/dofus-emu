@@ -392,14 +392,20 @@ class _MapGraph:
         """
         if here is None or target is None or here == target:
             return None
+        blocked = blocked_first or set()
+        # Fast path: direct adjacent neighbor avoids constructing full reverse BFS tree
+        exits = self.edges().get(here)
+        if exits:
+            for direction, neighbour in exits.items():
+                if neighbour == target and direction not in blocked:
+                    return direction, target, 1
         tree = self._tree(target)
         entry = tree.get(here)
         if entry is None:
             return None
         direction, next_map, hops = entry
-        blocked_first = blocked_first or set()
-        if direction in blocked_first:
-            return self._hop_bfs(here, target, blocked_first)
+        if direction in blocked:
+            return self._hop_bfs(here, target, blocked)
         return direction, next_map, hops
 
 

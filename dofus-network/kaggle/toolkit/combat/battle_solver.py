@@ -111,9 +111,16 @@ TELEPORT_POSITIONS = 8
 _EPS = 1e-9
 
 
-@lru_cache(maxsize=1024)
+_RAW_POINTS: Tuple[Tuple[int, int], ...] = tuple(
+    (c % 14 - c // 28 + 19, c % 14 - c // 28 + c // 14)
+    for c in range(NB_CELLS)
+)
+
+
 def cell_point(cell_id: int) -> Tuple[int, int]:
     """Cell id to map point, exactly as the client's getMapPointFromCellId."""
+    if 0 <= cell_id < NB_CELLS:
+        return _RAW_POINTS[cell_id]
     t = cell_id % 14 - cell_id // 28
     return t + 19, t + cell_id // 14
 
@@ -124,17 +131,26 @@ _CARDINAL_DIRS = ((0, 1), (-1, 0), (0, -1), (1, 0))
 _DIAGONAL_DIRS = ((1, 1), (-1, 1), (-1, -1), (1, -1))
 
 
-def _neighbour_table(diagonal: bool) -> Dict[int, Tuple[int, ...]]:
+class _NeighbourTable(tuple):
+    """Contiguous tuple of cell neighbours; O(1) direct indexing + .get() fallback."""
+
+    def get(self, cell: int, default: Tuple[int, ...] = ()) -> Tuple[int, ...]:
+        if 0 <= cell < len(self):
+            return self[cell]
+        return default
+
+
+def _neighbour_table(diagonal: bool) -> _NeighbourTable:
     """Precomputed cell neighbours; zero coordinate math in BFS hot loops."""
-    table: Dict[int, Tuple[int, ...]] = {}
+    directions = _CARDINAL_DIRS + (_DIAGONAL_DIRS if diagonal else ())
+    rows: List[Tuple[int, ...]] = []
     for cell in range(NB_CELLS):
         x, y = cell_point(cell)
-        directions = _CARDINAL_DIRS + (_DIAGONAL_DIRS if diagonal else ())
-        table[cell] = tuple(
+        rows.append(tuple(
             neighbour for dx, dy in directions
             if (neighbour := _POINTS.get((x + dx, y + dy))) is not None
-        )
-    return table
+        ))
+    return _NeighbourTable(rows)
 
 
 _CARDINAL_NEIGHBOURS = _neighbour_table(False)
@@ -293,8 +309,10 @@ class CellMap:
         return abs(ax - bx) + abs(ay - by)
 
     def neighbours(self, cell: int, diagonal: bool = False) -> List[int]:
-        table = _DIAGONAL_NEIGHBOURS if diagonal else _CARDINAL_NEIGHBOURS
-        return [c for c in table.get(cell, ()) if self.valid(c)]
+        if 0 <= cell < NB_CELLS:
+            table = _DIAGONAL_NEIGHBOURS if diagonal else _CARDINAL_NEIGHBOURS
+            return [c for c in table[cell] if self.valid(c)]
+        return []
 
     def has_los(self, a: int, b: int, occupied: FrozenSet[int] = frozenset()) -> bool:
         """The client's line check: actors and non-seeing cells block the line."""
@@ -364,7 +382,7 @@ class CellMap:
             cost = best[cell]
             if cost + 1.0 > mp + _EPS:
                 continue
-            for nxt in _CARDINAL_NEIGHBOURS.get(cell, ()):
+            for nxt in _CARDINAL_NEIGHBOURS[cell]:
                 if not self.walkable(nxt) or nxt in occupied:
                     continue
                 if nxt in best:

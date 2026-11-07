@@ -40,7 +40,15 @@ if (!rowSrc || !logSrc || !harvestSrc) { console.log('FAILURES: ' + (fail || 1))
 check('the incoming tap feeds the fight ring',
     /__agentBattleRing/.test(src) && /\/\^Game\(Action\)\?Fight\//.test(src),
     'no ring tap in the emit wrapper');
-check('the tap is capped', /fightRing\.length > 800/.test(src), 'ring must not grow forever');
+// The invariant is "bounded", not one particular bound: the tap was pinned to
+// `> 800` + `shift()` and is now a batch trim at `> 900` down to 800, which is
+// still bounded and drops fewer rows per message. Asserting the literal would
+// make a correct cap look like a regression.
+const capMatch = src.match(/fightRing\.length > (\d+)/);
+check('the tap is capped',
+    !!capMatch && /fightRing\.splice\(0, fightRing\.length - \d+\)|fightRing\.shift\(\)/.test(src),
+    capMatch ? 'a threshold with no trim, so the ring grows forever'
+             : 'ring must not grow forever');
 check('sequence batches are expanded into the ring',
     /\/sequence\/i\.test\(rowName\)/.test(src) && /a\.sequence \|\| a\.messages/.test(src),
     'action messages arrive inside messageSequence on this client');

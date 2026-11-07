@@ -42,14 +42,28 @@ REPO_ROOT = Path(__file__).resolve().parent.parent          # .../dofus-network
 TOKEN_FILE = REPO_ROOT / "data" / "run_token.json"
 TOKEN_MAX_AGE_S = 6 * 3600.0
 
+# The session token answers one question: was this helper started by *this* run? It is
+# deliberately not `DOFUS_RUN_TOKEN`. That name is the shared loopback auth secret
+# (`agent/bridge.py`, `desktop/localsecret.cs`, the relay's `-admin-token`), and
+# `ensure_local_secret()` reads it *before* the secret file, so exporting a private token
+# under it replaced the auth secret for the whole process tree. Measured 2026-11-07:
+# `run_brain.py` mints here before importing `agent.serve`, so the brain authenticated
+# with this 16-hex value while the host's relay held the 64-hex file secret -- every
+# loopback call from the brain answered 401 while every service looked healthy.
+SESSION_TOKEN_ENV = "DOFUS_SESSION_TOKEN"
+
 
 def run_token(path: Path = TOKEN_FILE, now: Optional[float] = None,
               write: bool = True) -> str:
     """This session's token: reused if fresh, created otherwise, and put in the environment.
 
-    Children inherit `DOFUS_RUN_TOKEN`, so a server's self-reported token is proof it was started
-    by this run. A token older than TOKEN_MAX_AGE_S is treated as a dead session, not a long-lived
-    one: the failure mode we are guarding against is precisely a process that outlived its parent.
+    Children inherit `DOFUS_SESSION_TOKEN`, so a server's self-reported token is proof it was
+    started by this run. A token older than TOKEN_MAX_AGE_S is treated as a dead session, not a
+    long-lived one: the failure mode we are guarding against is precisely a process that outlived
+    its parent.
+
+    Two tokens, two names, on purpose: this one proves *provenance*, `DOFUS_RUN_TOKEN` proves
+    *authorisation*, and only the host mints the latter. See SESSION_TOKEN_ENV.
     """
     stamp = float(now if now is not None else time.time())
     token = ""
@@ -69,7 +83,7 @@ def run_token(path: Path = TOKEN_FILE, now: Optional[float] = None,
                                             "pid": os.getpid()}), encoding="utf-8")
             except OSError:
                 pass
-    os.environ["DOFUS_RUN_TOKEN"] = token
+    os.environ[SESSION_TOKEN_ENV] = token
     return token
 
 
@@ -219,7 +233,11 @@ def probe_relay(port: int = 8880, timeout: float = 1.5) -> Dict[str, Any]:
         return {"answering": False, "port_open": False}
     code = None
     try:
-        with urllib.request.urlopen("http://127.0.0.1:%d/__cdn/health" % int(port),
+        # `/__cdn/__probe` is the relay's own no-content liveness path. It used to probe
+        # `/__cdn/health`, which the CDN handler parses as a target with no slash and
+        # answers 400 "Bad relay target" -- so a perfectly healthy relay was recorded as
+        # `http_status: 400` and read as broken by anyone looking at the table.
+        with urllib.request.urlopen("http://127.0.0.1:%d/__cdn/__probe" % int(port),
                                     timeout=timeout) as response:
             code = response.status
     except urllib.error.HTTPError as exc:      # 404 still proves an HTTP server is there
@@ -426,7 +444,7 @@ def classify(component: Dict[str, Any], token: str,
 
 
 def status(token: Optional[str] = None) -> Dict[str, Any]:
-    token = token or os.environ.get("DOFUS_RUN_TOKEN") or run_token(write=False)
+    token = token or os.environ.get(SESSION_TOKEN_ENV) or run_token(write=False)
     rows = [classify(c, token) for c in COMPONENTS]
     return {"token": token, "checked_at": round(time.time(), 3),
             "components": rows,
@@ -473,7 +491,7 @@ def ensure(token: Optional[str] = None, sleep: Callable[[float], None] = time.sl
     `actor` defaults to `combat.brain_service.ensure_brain`: keeping one brain-ensure path means
     the orchestrator cannot drift from what the autopilot does when it starts a brain itself.
     """
-    token = token or os.environ.get("DOFUS_RUN_TOKEN") or run_token(write=False)
+    token = token or os.environ.get(SESSION_TOKEN_ENV) or run_token(write=False)
     if actor is None:
         from combat.brain_service import ensure_brain as default_actor
 

@@ -88,6 +88,8 @@ TOOL_ORDER = (
     "farm.start", "farm.stop", "fight.join", "fight.pass", "inv.list", "inv.sell",
     "hdv.scan", "hdv.list", "chat.say", "state.snapshot", "safe.stop",
 )
+_TOOL_INDEX: Dict[str, int] = {name: i for i, name in enumerate(TOOL_ORDER)}
+_TOOL_ORDER_LEN: int = len(TOOL_ORDER)
 
 
 def features(tool: str, ok: bool, error: Optional[str],
@@ -110,12 +112,11 @@ def features(tool: str, ok: bool, error: Optional[str],
             return default
 
     err = str(error or "")
-    vec: list[float] = []
 
-    # tool identity
-    idx = TOOL_ORDER.index(tool) if tool in TOOL_ORDER else len(TOOL_ORDER)
-    for i in range(len(TOOL_ORDER) + 1):
-        vec.append(1.0 if i == idx else 0.0)
+    # tool identity - pre-indexed lookup and pre-allocated vector: O(1) time and space
+    idx = _TOOL_INDEX.get(tool, _TOOL_ORDER_LEN)
+    vec: list[float] = [0.0] * (_TOOL_ORDER_LEN + 1)
+    vec[idx] = 1.0
 
     # outcome shape
     vec.append(1.0 if ok else 0.0)

@@ -68,6 +68,11 @@ def state_dir() -> Path:
 # `DOFUS_RUN_TOKEN` wins when it is set, because that is what run_brain.py and
 # net/orchestrator.py already export to their children. Otherwise the file is
 # authoritative, and the first process to need it creates it atomically.
+#
+# That name is for *authorisation only*. The network pipeline's provenance token is
+# `DOFUS_SESSION_TOKEN` (net/orchestrator.SESSION_TOKEN_ENV) precisely so it cannot land
+# here: exporting it as `DOFUS_RUN_TOKEN` made every Python service present a bearer the
+# host had never minted, because this function reads the environment before the file.
 
 SECRET_FILENAME = "local_secret"
 
