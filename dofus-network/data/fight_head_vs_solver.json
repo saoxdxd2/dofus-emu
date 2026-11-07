@@ -1,0 +1,16 @@
+{
+ "paired_matchups": 200,
+ "mean_score_delta": -0.0875,
+ "bootstrap_ci95": [
+  -0.115,
+  -0.0612
+ ],
+ "improved": 3,
+ "worsened": 40,
+ "unchanged": 157,
+ "sign_test_p_two_sided": 3.02e-09,
+ "base_win_rate": 0.4938,
+ "arm_win_rate": 0.4062,
+ "arm_notes": "unmodified checkpoint",
+ "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test"
+}

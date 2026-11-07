@@ -1,0 +1,136 @@
+{
+  "fights": [
+    {
+      "casts": 4,
+      "fight_id": 133,
+      "matched": 3,
+      "non_damage": 1,
+      "spells": {
+        "7041": {
+          "bias": -8.95,
+          "casts": 2,
+          "mae": 8.95,
+          "median_error": 8.95
+        },
+        "7051": {
+          "bias": 4.05,
+          "casts": 1,
+          "mae": 4.05,
+          "median_error": 4.05
+        }
+      },
+      "unmatched": 0,
+      "won": true
+    },
+    {
+      "casts": 9,
+      "fight_id": 138,
+      "matched": 6,
+      "non_damage": 3,
+      "spells": {
+        "7045": {
+          "bias": -8.92,
+          "casts": 6,
+          "mae": 10.5,
+          "median_error": 9.5
+        }
+      },
+      "unmatched": 0,
+      "won": true
+    }
+  ],
+  "pairs": [
+    {
+      "actual": 26.0,
+      "losses": 1,
+      "predicted": 21.95,
+      "spell": 7051,
+      "target": -1
+    },
+    {
+      "actual": 18.0,
+      "losses": 1,
+      "predicted": 18.95,
+      "spell": 7041,
+      "target": -1
+    },
+    {
+      "actual": 2.0,
+      "losses": 1,
+      "predicted": 18.95,
+      "spell": 7041,
+      "target": -1
+    },
+    {
+      "actual": 32.0,
+      "losses": 1,
+      "predicted": 35.25,
+      "spell": 7045,
+      "target": -3
+    },
+    {
+      "actual": 40.0,
+      "losses": 1,
+      "predicted": 35.25,
+      "spell": 7045,
+      "target": -4
+    },
+    {
+      "actual": 18.0,
+      "losses": 1,
+      "predicted": 35.25,
+      "spell": 7045,
+      "target": -4
+    },
+    {
+      "actual": 21.0,
+      "losses": 1,
+      "predicted": 35.25,
+      "spell": 7045,
+      "target": -1
+    },
+    {
+      "actual": 32.0,
+      "losses": 1,
+      "predicted": 35.25,
+      "spell": 7045,
+      "target": -2
+    },
+    {
+      "actual": 15.0,
+      "losses": 1,
+      "predicted": 35.25,
+      "spell": 7045,
+      "target": -2
+    }
+  ],
+  "summary": {
+    "fights": 2,
+    "matched_casts": 9,
+    "non_damage_casts": 4,
+    "overall_bias": -7.48,
+    "overall_mae": 9.44,
+    "per_spell": {
+      "7041": {
+        "bias": -8.95,
+        "casts": 2,
+        "mae": 8.95,
+        "median_error": 8.95
+      },
+      "7045": {
+        "bias": -8.92,
+        "casts": 6,
+        "mae": 10.5,
+        "median_error": 9.5
+      },
+      "7051": {
+        "bias": 4.05,
+        "casts": 1,
+        "mae": 4.05,
+        "median_error": 4.05
+      }
+    },
+    "status": "ok",
+    "unmatched_casts": 0
+  }
+}

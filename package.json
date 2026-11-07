@@ -1,0 +1,17 @@
+{
+  "name": "dofus-touch-farm",
+  "version": "1.0.0",
+  "description": "Dofus Touch Farm - Native C# & Standalone WebView2 Game Environment",
+  "scripts": {
+    "test": "node tools/js-error-finder.js",
+    "check": "node tools/js-error-finder.js",
+    "lint": "node tools/js-error-finder.js"
+  },
+  "keywords": [
+    "dofus-touch",
+    "bot",
+    "webview2"
+  ],
+  "author": "",
+  "license": "ISC"
+}

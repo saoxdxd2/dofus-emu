@@ -1,0 +1,26 @@
+{
+ "kind": "cleanroom-addressable-target",
+ "measured": "2026-11-04",
+ "rows": 3719,
+ "distinct_states": 2064,
+ "head_accuracy": 0.9043,
+ "feature_conditioned_bound": 0.9702,
+ "head_agrees_with_bound": 0.9204,
+ "rows_recoverable_by_a_better_decision": 265,
+ "recoverable_share": 0.0713,
+ "rows_no_model_on_these_features_can_get": 111,
+ "unreachable_share": 0.0298,
+ "head_wrong_by_true_tool": {
+  "nav.goto": 162,
+  "quest.list": 37,
+  "inv.list": 35,
+  "quest.advance": 34,
+  "state.snapshot": 29,
+  "farm.start": 22,
+  "fight.join": 10,
+  "inv.sell": 7,
+  "hdv.list": 3,
+  "farm.stop": 3
+ },
+ "reading": "265 of 3,719 rows (7.1%) are states where the best answer these features support is correct and the head is not: that is the whole prize for a weight edit or a hand-compiled rule, and nav.goto alone is 162 of the head's misses. 111 rows (3.0%) are labelled inconsistently *given the features*, so no model on this input space gets them and a gate that demands more is asking for overfitting."
+}

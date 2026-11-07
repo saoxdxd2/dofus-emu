@@ -1,0 +1,145 @@
+"""Generate tools/patch-rules.json from tools/patch-engine.js.
+
+Why: the runtime updater replaces build/script.js with the server's copy, which
+throws away every patch applied at build time. The desktop app has no node, so it
+cannot run patch-engine.js after an update. This extracts the rules once into
+JSON, which both engines then read: the JS one at build time, ClientBundle.cs at
+runtime. One source of truth, no second copy of the strings to keep in sync.
+
+Run from the repo root:  python tools/make-patch-rules.py
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SRC = ROOT / "tools" / "patch-engine.js"
+OUT = ROOT / "tools" / "patch-rules.json"
+
+
+def read() -> str:
+    return SRC.read_text(encoding="utf-8")
+
+
+def literal(src: str, name: str) -> str:
+    """const NAME = '...';  (single-quoted, no escapes used in this file)"""
+    m = re.search(r"const %s = '([^']*)';" % re.escape(name), src, re.S)
+    if not m:
+        raise SystemExit("literal not found: " + name)
+    return m.group(1)
+
+
+def replace_pair(src: str, old_var: str, new_var: str) -> tuple[str, str]:
+    return literal(src, old_var), literal(src, new_var)
+
+
+def main() -> None:
+    src = read()
+    rules: list[dict] = []
+
+    # 0: guard resizeWideScreen against a not-yet-built shortcutBarManager
+    m0 = re.search(r"const resizeNeedle = '([^']*)';", src)
+    if not m0:
+        raise SystemExit("patch 0 needle not found")
+    # Match whatever guard the engine installs: it grew a menuBar check, and a
+    # rigid pattern silently stopped extracting the rule.
+    m0r = re.search(r"'(if\(!l.*?shortcutBars\.playerBar)'", src, re.S)
+    if not m0r:
+        raise SystemExit("patch 0 replacement not found")
+    rules.append({
+        "id": 0, "kind": "replace", "core": True,
+        "old": m0.group(1),
+        "new": m0r.group(0).strip("'"),
+    })
+
+    # 1-4: boundary replacements (marker .. marker -> whole new body)
+    rules.append({
+        "id": 1, "kind": "boundary",
+        "start": "o.prototype._setupTouchInteraction=function(){",
+        "end": "),this._setupHighlightInteraction(),this._setupCameraInteraction()}",
+        "replacement": literal(src, "newTouch"),
+    })
+    rules.append({
+        "id": 2, "kind": "boundary",
+        "start": ',this.on("transformEnd",function(){',
+        "end": "Date.now()-i>100||c.addInertia(u,p,.8)});var W=window.isoEngine.actorManager.us",
+        "replacement": literal(src, "newTrEnd"),
+    })
+    rules.append({
+        "id": 3, "kind": "boundary",
+        "start": "c.prototype._tapRoleplay=function(e,t,i,n){",
+        "end": ":void this._movePlayerOnMap(m)}},c.prototype._tapFightWithSpell",
+        "replacement": literal(src, "newTapRole"),
+    })
+    # 4 and 5/51 used to be extracted here. Rule 4 was a boundary patch whose `end`
+    # marker contains `finally{` - its own output - so it could never match a raw
+    # bundle, and 5/51 pointed at a `_guardTimer` string that exists in no bundle
+    # copy. All three applied nothing, reported "[SKIP]", and the build called it a
+    # day; the protections they name are what tools/patch-engine.js section 20-31
+    # now installs for real (KNOWN_GAPS G11/G12).
+
+    # 6-11: variable pairs
+    for rid, old_var, new_var in [
+        (6, "logWriterOld", "logWriterNew"),
+        (7, "adjustInitOld", "adjustInitNew"),
+        (8, "perfFetchOld", "perfFetchNew"),
+        (9, "webglFnOld", "webglFnNew"),
+        (10, "logFetchOld", "logFetchNew"),
+        (11, "fontProbeOld", "fontProbeNew"),
+    ]:
+        old, new = replace_pair(src, old_var, new_var)
+        rules.append({"id": rid, "kind": "replace", "old": old, "new": new})
+
+    # 12: updateScreen must re-read the viewport so the game follows the window
+    old, new = replace_pair(src, "viewportOld", "viewportNew")
+    rules.append({"id": 12, "kind": "replace", "old": old, "new": new})
+
+    # 20-31: map-transition resilience (KNOWN_GAPS G12). Same strings, one source:
+    # patch-engine.js installs them at build time and ClientBundle.cs installs them
+    # after an auto-update, so neither route can ship a client without a watchdog.
+    for rid in range(20, 32):
+        old, new = replace_pair(src, "resil%dOld" % rid, "resil%dNew" % rid)
+        rules.append({"id": rid, "kind": "replace", "old": old, "new": new})
+
+    payload = {
+        "version": 4,
+        "note": "Client bundle patches. Applied at build time by tools/patch-engine.js "
+                "and at runtime by desktop/ClientBundle.cs after an auto-update.",
+        "rules": rules,
+    }
+    OUT.write_text(json.dumps(payload, indent=1, ensure_ascii=False), encoding="utf-8")
+    print("wrote %s: %d rules, %d bytes" % (OUT, len(rules), OUT.stat().st_size))
+
+    # The desktop app has no JSON library and the rules contain quotes, braces
+    # and newlines. A tiny base64 line format is parsed in ~20 lines of C# and
+    # cannot be broken by escaping.
+    import base64
+
+    def b64(text: str) -> str:
+        return base64.b64encode(text.encode("utf-8", "surrogateescape")).decode("ascii")
+
+    lines = ["# patch-rules v4 - generated by tools/make-patch-rules.py, do not edit",
+             "# id | kind | core | fields (base64, UTF-8)"]
+    for r in rules:
+        lines.append("[%s]" % r["id"])
+        lines.append("kind=" + r["kind"])
+        lines.append("core=%d" % (1 if r.get("core") else 0))
+        if r["kind"] == "boundary":
+            lines.append("start=" + b64(r["start"]))
+            lines.append("end=" + b64(r["end"]))
+            lines.append("replacement=" + b64(r["replacement"]))
+            if r.get("maxLen"):
+                lines.append("maxlen=%d" % int(r["maxLen"]))
+        else:
+            lines.append("old=" + b64(r["old"]))
+            lines.append("new=" + b64(r["new"]))
+    txt = ROOT / "tools" / "patch-rules.txt"
+    txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("wrote %s: %d lines" % (txt, len(lines)))
+
+
+if __name__ == "__main__":
+    main()

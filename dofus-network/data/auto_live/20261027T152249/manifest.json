@@ -1,0 +1,59 @@
+{
+ "started": "20261027T152249",
+ "slot": 1,
+ "goals": [
+  "do all the quests"
+ ],
+ "rounds": [
+  {
+   "round": 0,
+   "slot": 1,
+   "log": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\auto_live\\20261027T152249\\auto_0_20261027T152249.jsonl",
+   "ready": {
+    "ok": true,
+    "wait_s": 2.6,
+    "logins": 0,
+    "state": {
+     "slot": 1,
+     "in_world": true,
+     "connected": true,
+     "name": "Brruh",
+     "level": 1,
+     "agent_build": "2026-10-27g",
+     "map_id": 147062786
+    }
+   },
+   "run": {
+    "command": [
+     "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\run_autopilot.py",
+     "--steps",
+     "120",
+     "--policy",
+     "planner",
+     "--instance",
+     "dofus-01",
+     "--log",
+     "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\auto_live\\20261027T152249\\auto_0_20261027T152249.jsonl",
+     "--stop-file",
+     "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\auto_live\\stop",
+     "--minutes",
+     "10.0",
+     "--goal",
+     "do all the quests"
+    ],
+    "exit": 0,
+    "seconds": 58.9,
+    "log": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\auto_live\\20261027T152249\\auto_0_20261027T152249.jsonl"
+   },
+   "summary": {
+    "rows": 0,
+    "ok": 0,
+    "map_changed": 0,
+    "tools": {}
+   },
+   "outcome": "ran"
+  }
+ ],
+ "transitions_rc": 2,
+ "transitions_stdout": ""
+}

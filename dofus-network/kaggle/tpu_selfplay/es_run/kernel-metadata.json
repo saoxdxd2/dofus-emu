@@ -1,0 +1,25 @@
+{
+ "id": "tajdinenizar/dofus-combat-es-v1",
+ "title": "Dofus combat ES v1",
+ "code_file": "train_es.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_tpu": false,
+ "machine_shape": "NvidiaTeslaT4",
+ "docker_image_pinning_type": "latest",
+ "enable_internet": false,
+ "keywords": [
+  "gpu",
+  "evolution",
+  "jax",
+  "combat"
+ ],
+ "dataset_sources": [
+  "tajdinenizar/dofus-encounter-tables"
+ ],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": []
+}

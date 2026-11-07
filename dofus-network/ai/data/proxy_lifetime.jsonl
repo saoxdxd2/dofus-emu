@@ -1,0 +1,25 @@
+{"ts": 1792785490.7178404, "url": "http://45.232.210.177:999", "score": 6436.568623092073, "reason": "median 6054ms jitter 765ms trend -19% loss 0/3"}
+{"ts": 1792785490.7178404, "url": "http://186.96.111.214:999", "score": 12019.584975001635, "reason": "median 7838ms jitter 362ms trend -9% loss 1/3"}
+{"ts": 1792785490.7178404, "url": "http://45.232.210.193:999", "score": 12509.624400001485, "reason": "median 4510ms jitter 0ms trend +0% loss 2/3"}
+{"ts": 1792785490.7178404, "url": "http://103.250.70.46:9249", "score": 14368.977899997844, "reason": "median 6369ms jitter 0ms trend +0% loss 2/3"}
+{"ts": 1792785490.7178404, "url": "http://115.178.50.122:8080", "score": 20534.534500002337, "reason": "median 12535ms jitter 0ms trend +0% loss 2/3"}
+{"ts": 1792785490.7178404, "url": "http://45.65.226.173:999", "score": 21998.475000000326, "reason": "median 13998ms jitter 0ms trend +0% loss 2/3"}
+{"ts": 1792785490.7178404, "url": "socks5://182.18.83.37:7890", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "socks5://8.212.165.164:41890", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "socks5://47.91.110.148:1000", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "socks5://8.213.195.191:8008", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "socks5://8.213.134.213:8182", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "socks5://47.250.51.110:138", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://47.91.121.127:1234", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://8.220.205.172:11443", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://103.182.22.206:8000", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://112.169.99.71:8042", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://118.71.227.154:2114", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://42.115.72.47:2096", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://38.56.251.27:999", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://220.128.223.136:8083", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://149.129.255.179:8018", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://1.10.248.240:443", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://116.100.68.206:8080", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://182.18.83.37:7890", "score": 1000000000.0, "reason": "no successful sample"}
+{"ts": 1792785490.7178404, "url": "http://112.169.99.71:8073", "score": 1000000000.0, "reason": "no successful sample"}

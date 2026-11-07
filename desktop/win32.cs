@@ -1,0 +1,600 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows.Forms;
+
+namespace DofusFarm.Native
+{
+    public static class NativeMethods
+    {
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool CreateProcessW(
+            string lpApplicationName, string lpCommandLine,
+            IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,
+            bool bInheritHandles, uint dwCreationFlags,
+            IntPtr lpEnvironment, string lpCurrentDirectory,
+            ref STARTUPINFOW lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress,
+            byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesRead);
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern uint NtQueryInformationProcess(IntPtr hProcess, int processInfoClass,
+            ref PROCESS_BASIC_INFORMATION_X processInformation, uint processInformationLength,
+            ref uint returnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_BASIC_INFORMATION_X
+        {
+            public IntPtr ExitStatus;
+            public IntPtr PebBaseAddress;
+            public IntPtr AffinityMask;
+            public int BasePriority;
+            public IntPtr UniqueProcessId;
+            public IntPtr InheritedFromUniqueProcessId;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct PEB_X
+        {
+            public byte byteReserved1; public byte BeingDebugged; public byte Reserved2; public byte Reserved3;
+            public IntPtr Reserved4; public IntPtr Reserved5; public IntPtr Reserved6;
+            public IntPtr ProcessParameters;
+            public IntPtr Reserved7; public IntPtr Reserved8; public IntPtr Reserved9;
+            public IntPtr Reserved10; public IntPtr CLSID; public IntPtr Reserved11;
+            public IntPtr Reserved12; public IntPtr Reserved13; public IntPtr Reserved14;
+            public IntPtr Reserved15; public IntPtr Reserved16; public IntPtr Reserved17;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct RTL_USER_PROCESS_PARAMETERS_X
+        {
+            public ushort Length; public ushort MaximumLength; public IntPtr DisposalParameters;
+            public IntPtr ImagePathName; public IntPtr CommandLine;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CreatePipe(ref IntPtr hReadPipe, ref IntPtr hWritePipe,
+            ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool ReadFile(IntPtr hFile, byte[] lpBuffer, uint nNumberOfBytesToRead,
+            out uint lpNumberOfBytesRead, IntPtr lpOverlapped);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool PeekNamedPipe(IntPtr hPipe, IntPtr lpBuffer, uint nBufferSize,
+            out uint lpBytesRead, out uint lpTotalBytesAvail, IntPtr lpReserved);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool CreateDirectoryW(string lpPathName, IntPtr lpSecurityAttributes);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_POWER_THROTTLING_STATE
+        {
+            public uint Version;
+            public uint ControlMask;
+            public uint StateMask;
+        }
+
+        public const uint PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1;
+        public const uint PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1;
+        public const int ProcessPowerThrottling = 4;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetProcessInformation(IntPtr hProcess, int ProcessInformationClass, ref PROCESS_POWER_THROTTLING_STATE ProcessInformation, uint ProcessInformationSize);
+    }
+
+    public struct STARTUPINFOW
+    {
+        public uint cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public uint dwX;
+        public uint dwY;
+        public uint dwXSize;
+        public uint dwYSize;
+        public uint dwXCountChars;
+        public uint dwYCountChars;
+        public uint dwFillAttribute;
+        public uint dwFlags;
+        public ushort wShowWindow;
+        public ushort cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SECURITY_ATTRIBUTES
+    {
+        public int nLength;
+        public bool bInheritHandle;
+        public IntPtr lpSecurityDescriptor;
+    }
+
+    public struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public uint dwProcessId;
+        public uint dwThreadId;
+    }
+
+
+    public static class Win32
+    {
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+            int X, int Y, int cx, int cy, uint uFlags);
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern bool CreateHardLink(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr hObject);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        public struct PROCESSENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern bool Process32First(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern bool Process32Next(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+        public const uint TH32CS_SNAPPROCESS = 0x00000002;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern int GetClassNameW(IntPtr hWnd, StringBuilder s, int n);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder s, int n);
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongW", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        public static IntPtr GetWindowLong(IntPtr hWnd, int nIndex)
+        {
+            if (IntPtr.Size == 8)
+                return GetWindowLongPtr64(hWnd, nIndex);
+            else
+                return new IntPtr(GetWindowLong32(hWnd, nIndex));
+        }
+
+        public static IntPtr SetWindowLong(IntPtr hWnd, int nIndex, IntPtr dwNewLong)
+        {
+            if (IntPtr.Size == 8)
+                return SetWindowLongPtr64(hWnd, nIndex, dwNewLong);
+            else
+                return new IntPtr(SetWindowLong32(hWnd, nIndex, unchecked((int)dwNewLong.ToInt64())));
+        }
+
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+            public int Width { get { return Right - Left; } }
+            public int Height { get { return Bottom - Top; } }
+        }
+
+        public const int SW_HIDE = 0;
+        public const int SW_SHOWNORMAL = 1;
+        public const int SW_SHOWMINIMIZED = 2;
+        public const int SW_MAXIMIZE = 3;
+        public const int SW_RESTORE = 9;
+
+        public class WindowInfo
+        {
+            public IntPtr Handle;
+            public int Pid;
+            public string Class;
+            public string Title;
+            public int Width;
+            public int Height;
+        }
+
+        /// <summary>One process-table walk, reusable by several tree queries.</summary>
+        public static Dictionary<int, List<int>> SnapshotParentMap()
+        {
+            Dictionary<int, List<int>> parentMap = new Dictionary<int, List<int>>();
+            IntPtr snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snap != IntPtr.Zero && snap != (IntPtr)(-1))
+            {
+                try
+                {
+                    PROCESSENTRY32 pe = new PROCESSENTRY32();
+                    pe.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+                    if (Process32First(snap, ref pe))
+                    {
+                        do
+                        {
+                            int ppid = (int)pe.th32ParentProcessID;
+                            int pid = (int)pe.th32ProcessID;
+                            if (!parentMap.ContainsKey(ppid))
+                                parentMap[ppid] = new List<int>();
+                            parentMap[ppid].Add(pid);
+                        } while (Process32Next(snap, ref pe));
+                    }
+                }
+                finally
+                {
+                    CloseHandle(snap);
+                }
+            }
+            return parentMap;
+        }
+
+        public static HashSet<int> GetProcessTrees(IEnumerable<int> rootPids)
+        {
+            return GetProcessTrees(rootPids, null);
+        }
+
+        public static HashSet<int> GetProcessTrees(IEnumerable<int> rootPids,
+            Dictionary<int, List<int>> parentMap)
+        {
+            HashSet<int> targets = rootPids != null ? new HashSet<int>(rootPids) : new HashSet<int>();
+            if (targets.Count == 0) return targets;
+            if (parentMap == null) parentMap = SnapshotParentMap();
+
+            Queue<int> frontier = new Queue<int>(rootPids);
+            while (frontier.Count > 0)
+            {
+                int curr = frontier.Dequeue();
+                List<int> children;
+                if (parentMap.TryGetValue(curr, out children))
+                {
+                    foreach (int child in children)
+                    {
+                        if (targets.Add(child))
+                        {
+                            frontier.Enqueue(child);
+                        }
+                    }
+                }
+            }
+            return targets;
+        }
+
+        public static List<int> GetProcessTree(int rootPid)
+        {
+            return new List<int>(GetProcessTrees(new[] { rootPid }));
+        }
+
+        public static List<WindowInfo> GetEmulatorWindows(IEnumerable<int> launcherPids)
+        {
+            HashSet<int> targets = GetProcessTrees(launcherPids);
+            List<WindowInfo> found = new List<WindowInfo>();
+            EnumWindows(delegate (IntPtr h, IntPtr l)
+            {
+                uint wpid = 0;
+                GetWindowThreadProcessId(h, out wpid);
+                if (targets.Contains((int)wpid))
+                {
+                    StringBuilder sb = new StringBuilder(256);
+                    GetClassNameW(h, sb, 256);
+                    StringBuilder tb = new StringBuilder(512);
+                    GetWindowTextW(h, tb, 512);
+                    RECT r;
+                    GetWindowRect(h, out r);
+
+                    found.Add(new WindowInfo
+                    {
+                        Handle = h,
+                        Pid = (int)wpid,
+                        Class = sb.ToString(),
+                        Title = tb.ToString(),
+                        Width = r.Width,
+                        Height = r.Height
+                    });
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            return found;
+        }
+
+        public static void HideAllProcessWindows(int rootPid)
+        {
+            if (rootPid <= 0) return;
+            foreach (WindowInfo w in GetEmulatorWindows(new[] { rootPid }))
+            {
+                ShowWindowAsync(w.Handle, SW_HIDE);
+            }
+        }
+
+        public const int SWP_NOSIZE = 0x0001;
+        public const int SWP_NOMOVE = 0x0002;
+        public const int SWP_NOACTIVATE = 0x0010;
+        public const int SWP_FRAMECHANGED = 0x0020;
+        public const int SWP_NOZORDER = 0x0004;
+        public const int GWL_STYLE = -16;
+        public const int GWL_EXSTYLE = -20;
+        public const int WS_DISABLED = 0x08000000;
+        public const int WS_EX_TRANSPARENT = 0x00000020;
+        public const int WS_EX_NOACTIVATE = 0x08000000;
+
+        // The emulator's Qt window can come up with WS_DISABLED or a click-through
+        // extended style, which makes the whole device window ignore mouse clicks.
+        public static void EnsureDeviceWindowInteractive(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero) return;
+            try
+            {
+                long style = GetWindowLong(hWnd, GWL_STYLE).ToInt64();
+                long cleanStyle = style & ~(long)WS_DISABLED;
+                if (cleanStyle != style) SetWindowLong(hWnd, GWL_STYLE, new IntPtr(cleanStyle));
+
+                long ex = GetWindowLong(hWnd, GWL_EXSTYLE).ToInt64();
+                long cleanEx = ex & ~((long)WS_EX_TRANSPARENT | (long)WS_EX_NOACTIVATE);
+                if (cleanEx != ex) SetWindowLong(hWnd, GWL_EXSTYLE, new IntPtr(cleanEx));
+
+                if (cleanStyle != style || cleanEx != ex)
+                {
+                    SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                }
+            }
+            catch { }
+        }
+
+        public static void HideEmulatorConsole(IEnumerable<int> launcherPids)
+        {
+            foreach (WindowInfo w in GetEmulatorWindows(launcherPids))
+            {
+                if (w.Class == "ConsoleWindowClass")
+                {
+                    ShowWindowAsync(w.Handle, SW_HIDE);
+                }
+            }
+        }
+
+        public static void HideEmulatorToolbar(IEnumerable<int> launcherPids)
+        {
+            foreach (WindowInfo w in GetEmulatorWindows(launcherPids))
+            {
+                if (w.Class.IndexOf("ToolSaveBits", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    (w.Title == "Emulator" && w.Width < 120))
+                {
+                    ShowWindowAsync(w.Handle, SW_HIDE);
+                }
+            }
+        }
+
+        public static IntPtr FindDeviceWindow(int launcherPid)
+        {
+            List<WindowInfo> wins = GetEmulatorWindows(new[] { launcherPid });
+            foreach (WindowInfo w in wins)
+            {
+                if (w.Class != "ConsoleWindowClass" &&
+                    !w.Class.Contains("IME") &&
+                    !w.Class.Contains("DummyWin") &&
+                    !w.Class.Contains("ToolSaveBits") &&
+                    !w.Class.Contains("PbufferClass") &&
+                    w.Width > 200 && w.Height > 150)
+                {
+                    if (w.Title.StartsWith("Android Emulator", StringComparison.OrdinalIgnoreCase) ||
+                        w.Class.Contains("QWindowIcon"))
+                        return w.Handle;
+                }
+            }
+
+            WindowInfo biggest = null;
+            foreach (WindowInfo w in wins)
+            {
+                if (w.Class != "ConsoleWindowClass" &&
+                    !w.Class.Contains("ToolSaveBits") &&
+                    !w.Class.Contains("PbufferClass") &&
+                    w.Width > 200 && w.Height > 150)
+                {
+                    if (biggest == null || (w.Width * w.Height > biggest.Width * biggest.Height))
+                        biggest = w;
+                }
+            }
+            return biggest != null ? biggest.Handle : IntPtr.Zero;
+        }
+
+        public static Rectangle[] ComputeLayout(int count, bool edgeToEdge)
+        {
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            int gap = edgeToEdge ? 0 : 4;
+
+            if (count <= 1)
+            {
+                if (edgeToEdge)
+                {
+                    return new[] { new Rectangle(wa.X, wa.Y, wa.Width, wa.Height) };
+                }
+                int targetW = Math.Min(1200, (int)(wa.Width * 0.8));
+                int targetH = Math.Min(740, (int)(wa.Height * 0.85));
+                int x = wa.X + (wa.Width - targetW) / 2;
+                int y = wa.Y + (wa.Height - targetH) / 2;
+                return new[] { new Rectangle(x, y, targetW, targetH) };
+            }
+            if (count == 2)
+            {
+                int w = (wa.Width - gap) / 2;
+                return new[]
+                {
+                    new Rectangle(wa.X, wa.Y, w, wa.Height),
+                    new Rectangle(wa.X + w + gap, wa.Y, wa.Width - w - gap, wa.Height)
+                };
+            }
+            // Equal cells in a balanced grid. A short final row is centered
+            // instead of stretching or shrinking its windows.
+            int cols = (count <= 4) ? 2 : ((count <= 6) ? 3 : 4);
+            int rows = (count + cols - 1) / cols;
+            int cellW = (wa.Width - gap * (cols - 1)) / cols;
+            int cellH = (wa.Height - gap * (rows - 1)) / rows;
+
+            Rectangle[] rects = new Rectangle[count];
+            for (int i = 0; i < count; i++)
+            {
+                int r = i / cols;
+                int rowStart = r * cols;
+                int rowCols = Math.Min(cols, count - rowStart);
+                int c = i - rowStart;
+                int rowWidth = rowCols * cellW + (rowCols - 1) * gap;
+                int rowX = wa.X + (wa.Width - rowWidth) / 2;
+                int x = rowX + c * (cellW + gap);
+                int y = wa.Y + r * (cellH + gap);
+                int w = (c == rowCols - 1) ? (rowX + rowWidth - x) : cellW;
+                int h = (r == rows - 1) ? (wa.Y + wa.Height - y) : cellH;
+                rects[i] = new Rectangle(x, y, w, h);
+            }
+            return rects;
+        }
+
+        public static void ApplyFarmLayout(IList<int> launcherPids, bool edgeToEdge)
+        {
+            if (launcherPids == null || launcherPids.Count == 0) return;
+
+            HideEmulatorConsole(launcherPids);
+            HideEmulatorToolbar(launcherPids);
+
+            Rectangle[] rects = ComputeLayout(launcherPids.Count, edgeToEdge);
+
+            for (int i = 0; i < launcherPids.Count && i < rects.Length; i++)
+            {
+                IntPtr hWnd = FindDeviceWindow(launcherPids[i]);
+                if (hWnd != IntPtr.Zero)
+                {
+                    ShowWindow(hWnd, SW_RESTORE);
+                    MoveWindow(hWnd, rects[i].X, rects[i].Y, rects[i].Width, rects[i].Height, true);
+                    SetWindowPos(hWnd, IntPtr.Zero, rects[i].X, rects[i].Y, rects[i].Width, rects[i].Height, 0x0040);
+                    EnsureDeviceWindowInteractive(hWnd);
+                }
+            }
+        }
+
+        public static Rectangle CascadeBounds(int index)
+        {
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            int width = Math.Min(640, (int)(wa.Width * 0.5));
+            int height = Math.Min(800, (int)(wa.Height * 0.75));
+            return new Rectangle(wa.X + index * 45, wa.Y + index * 45, width, height);
+        }
+
+        public static void ApplyCascadeLayout(IList<int> launcherPids)
+        {
+            if (launcherPids == null || launcherPids.Count == 0) return;
+
+            HideEmulatorConsole(launcherPids);
+            HideEmulatorToolbar(launcherPids);
+
+            for (int i = 0; i < launcherPids.Count; i++)
+            {
+                IntPtr hWnd = FindDeviceWindow(launcherPids[i]);
+                if (hWnd != IntPtr.Zero)
+                {
+                    ShowWindow(hWnd, SW_RESTORE);
+                    Rectangle b = CascadeBounds(i);
+                    MoveWindow(hWnd, b.X, b.Y, b.Width, b.Height, true);
+                    SetWindowPos(hWnd, IntPtr.Zero, b.X, b.Y, b.Width, b.Height, 0x0040);
+                    EnsureDeviceWindowInteractive(hWnd);
+                }
+            }
+        }
+
+        public static bool SetProcessPowerThrottling(int pid, bool enable)
+        {
+            if (pid <= 0) return false;
+            IntPtr hProcess = IntPtr.Zero;
+            try
+            {
+                // PROCESS_SET_INFORMATION = 0x0200
+                hProcess = NativeMethods.OpenProcess(0x0200, false, pid);
+                if (hProcess == IntPtr.Zero) return false;
+
+                NativeMethods.PROCESS_POWER_THROTTLING_STATE state = new NativeMethods.PROCESS_POWER_THROTTLING_STATE
+                {
+                    Version = NativeMethods.PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                    ControlMask = NativeMethods.PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                    StateMask = enable ? NativeMethods.PROCESS_POWER_THROTTLING_EXECUTION_SPEED : 0
+                };
+
+                return NativeMethods.SetProcessInformation(hProcess, NativeMethods.ProcessPowerThrottling, ref state, (uint)Marshal.SizeOf(state));
+            }
+            catch { return false; }
+            finally
+            {
+                if (hProcess != IntPtr.Zero) NativeMethods.CloseHandle(hProcess);
+            }
+        }
+    }
+}

@@ -1,0 +1,461 @@
+{
+ "fallback": "quest.advance",
+ "rules": [
+  {
+   "tool": "inv.sell",
+   "when": [
+    {
+     "feature": "has_param1",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "has_needed",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "inv_full",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "inv_stacks",
+     "op": ">=",
+     "value": 0.5
+    }
+   ]
+  },
+  {
+   "tool": "farm.start",
+   "when": [
+    {
+     "feature": "has_param1",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "has_needed",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "inv_full",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "nav.goto",
+   "when": [
+    {
+     "feature": "obj_map",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "on_target",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "nav.goto",
+   "when": [
+    {
+     "feature": "obj_map",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "on_target",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "has_param1",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "has_needed",
+     "op": ">=",
+     "value": 0.5
+    }
+   ]
+  },
+  {
+   "tool": "fight.join",
+   "when": [
+    {
+     "feature": "type_0",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "obj_map",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "on_target",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_6",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_14",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_16",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_4",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "fight.join",
+   "when": [
+    {
+     "feature": "type_0",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "on_target",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_6",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_14",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_16",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_4",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "fight.join",
+   "when": [
+    {
+     "feature": "type_6",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "obj_map",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "on_target",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_0",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_14",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_16",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_4",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "fight.join",
+   "when": [
+    {
+     "feature": "type_6",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "on_target",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_0",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_14",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_16",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_4",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "fight.join",
+   "when": [
+    {
+     "feature": "type_14",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "obj_map",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "on_target",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_0",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_6",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_16",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_4",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "fight.join",
+   "when": [
+    {
+     "feature": "type_14",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "on_target",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_0",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_6",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_16",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_4",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "fight.join",
+   "when": [
+    {
+     "feature": "type_16",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "obj_map",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "on_target",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_0",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_6",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_14",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_4",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "fight.join",
+   "when": [
+    {
+     "feature": "type_16",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "on_target",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_0",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_6",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_14",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "type_4",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  },
+  {
+   "tool": "nav.goto",
+   "when": [
+    {
+     "feature": "type_4",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "obj_map",
+     "op": "<=",
+     "value": 0.4
+    },
+    {
+     "feature": "has_param0",
+     "op": ">=",
+     "value": 0.5
+    },
+    {
+     "feature": "has_param1",
+     "op": "<=",
+     "value": 0.4
+    }
+   ]
+  }
+ ],
+ "notes": "The head decides in three deductions. (1) A bring/craft objective that names its second parameter (has_param1) and does not already carry the item (has_needed=0) is a gather job: farm.start, or inv.sell once the bags are full - and it outranks travel, which the probes show only narrowly (farm 5.54 vs nav 5.50). (2) Otherwise obj_map=1 with on_target=0 means the objective has a destination the agent is not standing on, and that is nav.goto with a 3-7 logit margin; the same flip (on_target 0->1) makes nav.goto collapse and the objective's own type decide. (3) Then the objective type picks the action: the monster types 0/6/14/16 join the fight (fight.join beats quest.advance by 4-5 once on target or with no destination), while talk (1/9), area (5), craft (17) and unknown types all step the quest, hence the quest.advance fallback. Type one-hot bits are mutually exclusive by construction, and every rule pair was checked jointly unsatisfiable otherwise. Ops used are only the four allowed ones; '<' is written as '<=' 0.4 on features that are 0/1 or thirds."
+}

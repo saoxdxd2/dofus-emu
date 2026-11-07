@@ -1,0 +1,697 @@
+{
+ "corpus": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\transitions",
+ "drift": {
+  "features": 42,
+  "features_compared": 42,
+  "files": [
+   "train.jsonl",
+   "val.jsonl"
+  ],
+  "flags": [
+   {
+    "feature": 33,
+    "flagged": true,
+    "live_mean": 0.8553,
+    "name": "err_none",
+    "out_of_range_share": 0.855,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 13,
+    "flagged": true,
+    "live_mean": 0.0959,
+    "name": "type_other",
+    "out_of_range_share": 0.096,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 14,
+    "flagged": true,
+    "live_mean": 0.9041,
+    "name": "has_param0",
+    "out_of_range_share": 0.096,
+    "ref_mean": 1.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 34,
+    "flagged": true,
+    "live_mean": 0.0031,
+    "name": "err_structural",
+    "out_of_range_share": 0.003,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 41,
+    "flagged": true,
+    "live_mean": 0.009,
+    "name": "kamas",
+    "out_of_range_share": 1.0,
+    "ref_mean": 0.5771,
+    "reference_constant": false,
+    "z": -3.5
+   },
+   {
+    "feature": 37,
+    "flagged": true,
+    "live_mean": 0.1415,
+    "name": "err_other",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.9307,
+    "reference_constant": false,
+    "z": -3.11
+   },
+   {
+    "feature": 19,
+    "flagged": true,
+    "live_mean": 0.0,
+    "name": "quest_level",
+    "out_of_range_share": 1.0,
+    "ref_mean": 0.1134,
+    "reference_constant": false,
+    "z": -1.19
+   },
+   {
+    "feature": 16,
+    "flagged": true,
+    "live_mean": 0.348,
+    "name": "n_params",
+    "out_of_range_share": 1.0,
+    "ref_mean": 0.5084,
+    "reference_constant": false,
+    "z": -0.96
+   }
+  ],
+  "in_coverage": false,
+  "max_abs_z": 3.5,
+  "median_abs_z": 0.52,
+  "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\tool_sft_v3",
+  "per_feature": [
+   {
+    "feature": 0,
+    "flagged": false,
+    "live_mean": 0.3789,
+    "name": "type_0",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.2298,
+    "reference_constant": false,
+    "z": 0.35
+   },
+   {
+    "feature": 1,
+    "flagged": false,
+    "live_mean": 0.1604,
+    "name": "type_1",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.1356,
+    "reference_constant": false,
+    "z": 0.07
+   },
+   {
+    "feature": 2,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_2",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0385,
+    "reference_constant": false,
+    "z": -0.2
+   },
+   {
+    "feature": 3,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_3",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.3182,
+    "reference_constant": false,
+    "z": -0.68
+   },
+   {
+    "feature": 4,
+    "flagged": false,
+    "live_mean": 0.2248,
+    "name": "type_4",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0605,
+    "reference_constant": false,
+    "z": 0.69
+   },
+   {
+    "feature": 5,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_5",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 6,
+    "flagged": false,
+    "live_mean": 0.1399,
+    "name": "type_6",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0623,
+    "reference_constant": false,
+    "z": 0.32
+   },
+   {
+    "feature": 7,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_9",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0488,
+    "reference_constant": false,
+    "z": -0.23
+   },
+   {
+    "feature": 8,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_10",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 9,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_12",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.077,
+    "reference_constant": false,
+    "z": -0.29
+   },
+   {
+    "feature": 10,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_14",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0227,
+    "reference_constant": false,
+    "z": -0.15
+   },
+   {
+    "feature": 11,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_16",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0066,
+    "reference_constant": false,
+    "z": -0.08
+   },
+   {
+    "feature": 12,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "type_17",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 13,
+    "flagged": true,
+    "live_mean": 0.0959,
+    "name": "type_other",
+    "out_of_range_share": 0.096,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 14,
+    "flagged": true,
+    "live_mean": 0.9041,
+    "name": "has_param0",
+    "out_of_range_share": 0.096,
+    "ref_mean": 1.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 15,
+    "flagged": false,
+    "live_mean": 0.1399,
+    "name": "has_param1",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.5253,
+    "reference_constant": false,
+    "z": -0.77
+   },
+   {
+    "feature": 16,
+    "flagged": true,
+    "live_mean": 0.348,
+    "name": "n_params",
+    "out_of_range_share": 1.0,
+    "ref_mean": 0.5084,
+    "reference_constant": false,
+    "z": -0.96
+   },
+   {
+    "feature": 17,
+    "flagged": false,
+    "live_mean": 0.4481,
+    "name": "obj_map",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.7791,
+    "reference_constant": false,
+    "z": -0.8
+   },
+   {
+    "feature": 18,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "obj_coords",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.1914,
+    "reference_constant": false,
+    "z": -0.49
+   },
+   {
+    "feature": 19,
+    "flagged": true,
+    "live_mean": 0.0,
+    "name": "quest_level",
+    "out_of_range_share": 1.0,
+    "ref_mean": 0.1134,
+    "reference_constant": false,
+    "z": -1.19
+   },
+   {
+    "feature": 20,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "step_index",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0118,
+    "reference_constant": false,
+    "z": -0.2
+   },
+   {
+    "feature": 21,
+    "flagged": false,
+    "live_mean": 0.6479,
+    "name": "inv_stacks",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0976,
+    "reference_constant": false,
+    "z": 2.08
+   },
+   {
+    "feature": 22,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "has_needed",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.1768,
+    "reference_constant": false,
+    "z": -0.46
+   },
+   {
+    "feature": 23,
+    "flagged": false,
+    "live_mean": 0.2013,
+    "name": "on_target",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.5384,
+    "reference_constant": false,
+    "z": -0.68
+   },
+   {
+    "feature": 24,
+    "flagged": false,
+    "live_mean": 0.4308,
+    "name": "hops_to_target",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.2277,
+    "reference_constant": false,
+    "z": 0.69
+   },
+   {
+    "feature": 25,
+    "flagged": false,
+    "live_mean": 1.0,
+    "name": "map_known",
+    "out_of_range_share": 0.0,
+    "ref_mean": 1.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 26,
+    "flagged": false,
+    "live_mean": 0.0367,
+    "name": "level",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.2152,
+    "reference_constant": false,
+    "z": -1.06
+   },
+   {
+    "feature": 27,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "objectives_done",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.2567,
+    "reference_constant": false,
+    "z": -1.36
+   },
+   {
+    "feature": 28,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "quests_done",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.1528,
+    "reference_constant": false,
+    "z": -1.07
+   },
+   {
+    "feature": 29,
+    "flagged": false,
+    "live_mean": 0.2557,
+    "name": "active_count",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.7564,
+    "reference_constant": false,
+    "z": -1.74
+   },
+   {
+    "feature": 30,
+    "flagged": false,
+    "live_mean": 0.0006,
+    "name": "fail_streak",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0978,
+    "reference_constant": false,
+    "z": -0.4
+   },
+   {
+    "feature": 31,
+    "flagged": false,
+    "live_mean": 0.9984,
+    "name": "last_ok",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.7862,
+    "reference_constant": false,
+    "z": 0.52
+   },
+   {
+    "feature": 32,
+    "flagged": false,
+    "live_mean": 0.2478,
+    "name": "last_tool",
+    "out_of_range_share": 0.358,
+    "ref_mean": 0.2554,
+    "reference_constant": false,
+    "z": -0.06
+   },
+   {
+    "feature": 33,
+    "flagged": true,
+    "live_mean": 0.8553,
+    "name": "err_none",
+    "out_of_range_share": 0.855,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 34,
+    "flagged": true,
+    "live_mean": 0.0031,
+    "name": "err_structural",
+    "out_of_range_share": 0.003,
+    "ref_mean": 0.0,
+    "reference_constant": true,
+    "z": null
+   },
+   {
+    "feature": 35,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "err_transport",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0005,
+    "reference_constant": false,
+    "z": -0.02
+   },
+   {
+    "feature": 36,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "err_action",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0688,
+    "reference_constant": false,
+    "z": -0.27
+   },
+   {
+    "feature": 37,
+    "flagged": true,
+    "live_mean": 0.1415,
+    "name": "err_other",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.9307,
+    "reference_constant": false,
+    "z": -3.11
+   },
+   {
+    "feature": 38,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "obs_stale",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.3865,
+    "reference_constant": false,
+    "z": -0.79
+   },
+   {
+    "feature": 39,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "obs_partial",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0779,
+    "reference_constant": false,
+    "z": -0.29
+   },
+   {
+    "feature": 40,
+    "flagged": false,
+    "live_mean": 0.0,
+    "name": "inv_full",
+    "out_of_range_share": 0.0,
+    "ref_mean": 0.0781,
+    "reference_constant": false,
+    "z": -0.29
+   },
+   {
+    "feature": 41,
+    "flagged": true,
+    "live_mean": 0.009,
+    "name": "kamas",
+    "out_of_range_share": 1.0,
+    "ref_mean": 0.5771,
+    "reference_constant": false,
+    "z": -3.5
+   }
+  ],
+  "rows": 19686,
+  "status": "compared"
+ },
+ "generated_at": "2026-11-07T05:28:18Z",
+ "kept": {
+  "actions": 504,
+  "actions_advance": 8,
+  "actions_moved": 224,
+  "paired": 636,
+  "reads": 132,
+  "test": 112,
+  "total": 636,
+  "train": 385,
+  "val": 139,
+  "with_features": 636
+ },
+ "label_rule": "a change observed in a run of reads is credited to the last acting step; reads never claim a change; a directive the page refused before sending is always a miss (G65)",
+ "label_version": 3,
+ "labeler_sha": "cbd39ce2dd57",
+ "leaks": {
+  "detail": {},
+  "segments": 0
+ },
+ "parse_errors": {
+  "test": 0,
+  "train": 0,
+  "val": 0
+ },
+ "provenance": {
+  "breeds": {
+   "1": 411,
+   "12": 60,
+   "4": 165
+  },
+  "characters": {
+   "4404438": 112,
+   "4422236": 53,
+   "4425019": 298,
+   "4434090": 60,
+   "4434148": 113
+  },
+  "characters_n": 5,
+  "days": {
+   "2026-10-23": 100,
+   "2026-10-24": 251,
+   "2026-10-28": 60,
+   "2026-10-29": 113,
+   "2026-11-04": 104,
+   "2026-11-05": 8
+  },
+  "days_n": 6,
+  "goals": {
+   "do all the quests": 254,
+   "join the fight": 2,
+   "plz do all the quests": 318,
+   "recover the last page of the aqueduct blueprints": 1
+  },
+  "instances": {
+   "default": 352,
+   "dofus-01": 114,
+   "dofus-02": 2,
+   "dofus-03": 55,
+   "dofus-05": 113
+  },
+  "levels": {
+   "1": 137,
+   "10": 10,
+   "11": 198,
+   "12": 7,
+   "13": 65,
+   "18": 50,
+   "2": 161,
+   "22": 3,
+   "8": 5
+  },
+  "levels_n": 9,
+  "objective_types": {
+   "-1": 61,
+   "0": 241,
+   "1": 102,
+   "4": 143,
+   "6": 89
+  },
+  "sessions": 9,
+  "sources": {
+   "default.20261026-074102-070180.jsonl": 351,
+   "default.jsonl": 1,
+   "dofus-01.jsonl": 114,
+   "dofus-02.20261029-022349-419629.jsonl": 2,
+   "dofus-03.jsonl": 55,
+   "dofus-05.jsonl": 113
+  }
+ },
+ "quarantine": {
+  "by_reason": {
+   "no_features": 308,
+   "tutorial": 9067,
+   "unpaired": 113
+  },
+  "examples": [
+   {
+    "id": "baf7187f77ced859#0",
+    "reasons": [
+     "no_features"
+    ],
+    "split": "train",
+    "tool": "quest.advance"
+   },
+   {
+    "id": "fea456505087f024#0",
+    "reasons": [
+     "no_features"
+    ],
+    "split": "train",
+    "tool": "state.snapshot"
+   },
+   {
+    "id": "42a0432c6f3b285a#0",
+    "reasons": [
+     "no_features"
+    ],
+    "split": "train",
+    "tool": "state.snapshot"
+   },
+   {
+    "id": "42a0432c6f3b285a#1",
+    "reasons": [
+     "no_features"
+    ],
+    "split": "train",
+    "tool": "quest.advance"
+   },
+   {
+    "id": "42a0432c6f3b285a#2",
+    "reasons": [
+     "no_features"
+    ],
+    "split": "train",
+    "tool": "quest.advance"
+   },
+   {
+    "id": "42a0432c6f3b285a#3",
+    "reasons": [
+     "no_features"
+    ],
+    "split": "train",
+    "tool": "state.snapshot"
+   }
+  ],
+  "total": 9379
+ },
+ "reference": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\tool_sft_v3",
+ "rows": {
+  "test": 314,
+  "total": 10015,
+  "train": 8298,
+  "val": 1403
+ },
+ "schema": {
+  "fatal": [],
+  "label_version": 3,
+  "stale_rows": 0,
+  "v3_rows": 10015,
+  "warnings": [
+   "multi_character: 5 character(s) in one corpus"
+  ]
+ },
+ "source_manifest": {
+  "label_version": 3,
+  "rows": 10015,
+  "split_policy": "temporal",
+  "x_coverage_pct": 98.0
+ },
+ "version": 1,
+ "written": {
+  "test": 112,
+  "train": 385,
+  "val": 139
+ }
+}

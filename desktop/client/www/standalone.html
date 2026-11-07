@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Dofus Touch (Desktop WebView2)</title>
+    <meta name="viewport" content="width=device-width, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="format-detection" content="telephone=no">
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="transparent" />
+    <meta name="msapplication-tap-highlight" content="no">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: wss: ws: gap: cdvfile: http: 'unsafe-eval' 'unsafe-inline';">
+    <link rel="stylesheet" href="build/styles-native.css?v=7f2ca26913">
+    <style>
+        html, body {
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            background-color: #000 !important;
+        }
+    </style>
+    <script type="text/javascript">
+        (function() {
+            var rawSearch = (window.location.search || '').replace(/;/g, '&');
+            var params = new URLSearchParams(rawSearch);
+            var clean = function(val, fallback) {
+                if (!val) return fallback;
+                var s = val.split(/[;&]/)[0].trim();
+                return s || fallback;
+            };
+            var v = clean(params.get('appVersion'), (window.appInfo && window.appInfo.version) || null);
+            var b = clean(params.get('buildVersion'), window.buildVersion || '1.74.9');
+            var c = clean(params.get('versionCode'), (window.appInfo && window.appInfo.versionCode) || '3014002');
+            // `server` is what the game resolves its socket against. Without it
+            // the client falls back to the page origin (https://dofus.local),
+            // which is a WebView2 virtual host that exists only for HTTP: the
+            // socket then dials a name nothing can route, and the only symptom
+            // is a bare LOGIN_ERROR.
+            window.appInfo = { version: v, identifier: 'com.ankama.dofustouch', build: v, versionCode: c,
+                               server: 'https://dt-proxy-production-login.ankama-games.com' };
+            window.buildVersion = b;
+        })();
+    </script>
+    <!-- The agent script is injected by the host, not by this page: WebView2 adds it
+         with AddScriptToExecuteOnDocumentCreatedAsync, and the proxy injects its own
+         copy for the Android path. Do not add a <script src> for it here again —
+         loading it twice ran the whole agent twice (two FarmBot.init(), two
+         connection bindings, one HUD). -->
+    <script type="text/javascript" src="js/cordova-standalone-shim.js?v=356cb4a7f0"></script>
+    <script type="text/javascript" src="js/cdn-relay-shim.js?v=880a7cd31c"></script>
+    <script type="text/javascript" src="js/wizassets-shim.js?v=d8fe2cbe1b"></script>
+    <script type="text/javascript" src="js/debug-overlay.js?v=fe541ef5f5"></script>
+    <!-- App-compat layer for Ankama's builds: binds by name at the facade and the XHR seam, and
+         runs pristine when it cannot resolve. Must precede build/script.js so the window.dofus
+         trap is installed before the bundle creates it. See js/compat-shim.js. -->
+    <script type="text/javascript" src="js/compat-shim.js?v=8eb4ae864c"></script>
+</head>
+<body class="dofusBody">
+    <script type="text/javascript" src="build/script.js?v=cf70b65e36"></script>
+    <script type="text/javascript">
+        (function() {
+            // The game creates the map widgets (mapBorder1/2, screenLeftover, sidebarBackground)
+            // only while the world UI is being built. _resizeUi touches all of them without a
+            // guard, so calling it on the login screen throws on the first setStyles and can
+            // leave a transition half-applied — the black screen after the loading screen.
+            function guiReadyForResize() {
+                var g = window.gui;
+                return !!(window.isoEngine && g && typeof g._resizeUi === 'function' &&
+                          g.playerData && g.mapBorder1 && g.mapBorder2 &&
+                          g.screenLeftover && g.sidebarBackground);
+            }
+
+            function syncDimensions() {
+                if (!guiReadyForResize()) return;
+                try {
+                    window.gui._resizeUi();
+                    if (window.isoEngine && window.isoEngine.mapScene && typeof window.isoEngine.mapScene.requireCompleteRefresh === 'function') {
+                        window.isoEngine.mapScene.requireCompleteRefresh();
+                    }
+                } catch(e) {
+                    console.warn('[Standalone] Viewport sync notice:', e.message);
+                }
+            }
+
+            window.addEventListener('resize', syncDimensions);
+            window.addEventListener('orientationchange', syncDimensions);
+
+            // Keep polling until the world UI exists, not merely until `gui` and `isoEngine`
+            // are defined: those appear long before the widgets above.
+            var attempts = 0;
+            var bootInterval = setInterval(function() {
+                attempts++;
+                if (guiReadyForResize()) {
+                    clearInterval(bootInterval);
+                    syncDimensions();
+                } else if (attempts >= 300) {
+                    clearInterval(bootInterval);
+                }
+            }, 200);
+
+            window.addEventListener('error', function(evt) {
+                if (evt && evt.message) {
+                    console.error('[Browser Error]', evt.message, 'at', evt.filename + ':' + evt.lineno);
+                }
+            });
+            window.addEventListener('unhandledrejection', function(evt) {
+                if (evt && evt.reason) {
+                    console.error('[Unhandled Rejection]', evt.reason);
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

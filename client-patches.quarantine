@@ -1,0 +1,1 @@
+2026-11-04: these 23 rules match build 3.3.11 byte-for-byte and still break it -- the patched series callback double-fires ("Callback was already called") and the client black-screens. Re-derive against the current build, prove it in-game, then delete this file.

@@ -1,0 +1,17 @@
+# Runtime Python dependencies -- what `setup.exe` installs, and all the driving product needs.
+#
+# Derived, not typed: `python tools/shipped_deps.py --write` rewrites this list from the import
+# graph of the shipped entry points (run_brain, run_autopilot, agent.serve, agent.autopilot,
+# agent.executor, agent.commands, agent.planner, combat_ai_server, ai.onnx_policy,
+# ai.lexical_policy). Two tiers exist because one measurement said so: importing every one of those
+# with `sys.modules['torch'] = None` succeeds, while torch's installed footprint on this host is
+# 508.8 MB and transformers' is 107.8 MB. Putting them in this file made every install download
+# 617.7 MB of packages for the one service that uses them -- the network-health sentinel -- which
+# is `requirements-ai.txt`, installed on purpose with `install-python-ai.bat`.
+#
+# site-packages never crosses the installer, so this list is the installed copy's only source of
+# Python packages. Keep it that way: a distribution belongs here when a path the product runs needs
+# it, not when some file in the tree mentions it.
+
+numpy
+requests

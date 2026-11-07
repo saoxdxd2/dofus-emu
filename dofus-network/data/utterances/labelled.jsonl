@@ -1,0 +1,95 @@
+{"id": "nf-en-stop-1", "goal": "stop plz", "lang": "en", "tool": "safe.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-stop-2", "goal": "halt everything", "lang": "en", "tool": "safe.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-follow-1", "goal": "follow him", "lang": "en", "tool": "nav.follow", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-follow-2", "goal": "follow me bro", "lang": "en", "tool": "nav.follow", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-pass-2", "goal": "just pass the turn already", "lang": "en", "tool": "fight.pass", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-join-1", "goal": "join the team fight", "lang": "en", "tool": "fight.join", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-join-2", "goal": "go fight cmt", "lang": "en", "tool": "fight.join", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-zaap-2", "goal": "tp to astrub pls", "lang": "en", "tool": "nav.goto", "args": {"zaap": "Astrub"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-coords-1", "goal": "go to 4,-19", "lang": "en", "tool": "nav.goto", "args": {"x": 4, "y": -19}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-coords-2", "goal": "move x=4 y=-19", "lang": "en", "tool": "nav.goto", "args": {"x": 4, "y": -19}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-questlist-1", "goal": "what quests can i do", "lang": "en", "tool": "quest.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-questlist-2", "goal": "quests for astrub only", "lang": "en", "tool": "quest.list", "args": {"area": "Astrub"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-questadv-1", "goal": "next quest step", "lang": "en", "tool": "quest.advance", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-questadv-2", "goal": "keep doing the quest", "lang": "en", "tool": "quest.advance", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-farm-1", "goal": "farm bouftou 200x", "lang": "en", "tool": "farm.start", "args": {"monster": "Bouftou", "kill_count": 200}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-farm-2", "goal": "grind wood please", "lang": "en", "tool": "farm.start", "args": {"resource": "wood"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-farmstop-2", "goal": "enough farming for now", "lang": "en", "tool": "farm.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-invlist-1", "goal": "show my bags", "lang": "en", "tool": "inv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-invlist-2", "goal": "what do i have on me", "lang": "en", "tool": "inv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-sell-1", "goal": "sell all bouftou wool", "lang": "en", "tool": "inv.sell", "args": {"item": "bouftou wool", "all": true}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-sell-2", "goal": "put 5 wool on the ah for 2k", "lang": "en", "tool": "inv.sell", "args": {"item": "wool", "quantity": 5, "price": 2000}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-hdvlist-1", "goal": "list what i have on the ah", "lang": "en", "tool": "hdv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-hdvlist-2", "goal": "whats mine on sale rn", "lang": "en", "tool": "hdv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-hdvscan-1", "goal": "how much is bouftou wool going for", "lang": "en", "tool": "hdv.scan", "args": {"item": "bouftou wool"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-hdvscan-2", "goal": "price check on wood", "lang": "en", "tool": "hdv.scan", "args": {"item": "wood"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-chat-1", "goal": "say hi in the group", "lang": "en", "tool": "chat.say", "args": {"text": "hi"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-chat-2", "goal": "tell them i am on my way", "lang": "en", "tool": "chat.say", "args": {"text": "i am on my way"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-know-1", "goal": "search bouftou", "lang": "en", "tool": "knowledge.search", "args": {"query": "bouftou"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-know-2", "goal": "what drops from a bouftou", "lang": "en", "tool": "knowledge.search", "args": {"query": "bouftou"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-state-1", "goal": "what is happening right now", "lang": "en", "tool": "state.snapshot", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-en-state-2", "goal": "status?", "lang": "en", "tool": "state.snapshot", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-stop-1", "goal": "arrete tout", "lang": "fr", "tool": "safe.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-stop-2", "goal": "stop svp", "lang": "fr", "tool": "safe.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-follow-1", "goal": "su le maitre", "lang": "fr", "tool": "nav.follow", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-follow-2", "goal": "follow moi", "lang": "fr", "tool": "nav.follow", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-pass-1", "goal": "passe ton tour", "lang": "fr", "tool": "fight.pass", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-pass-2", "goal": "passe stp", "lang": "fr", "tool": "fight.pass", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-join-2", "goal": "join le fight", "lang": "fr", "tool": "fight.join", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-zaap-2", "goal": "tp astrub svp", "lang": "fr", "tool": "nav.goto", "args": {"zaap": "Astrub"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-coords-1", "goal": "va en 4,-19", "lang": "fr", "tool": "nav.goto", "args": {"x": 4, "y": -19}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-questlist-1", "goal": "koi comme quete", "lang": "fr", "tool": "quest.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-questlist-2", "goal": "quete astrub seulement", "lang": "fr", "tool": "quest.list", "args": {"area": "Astrub"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-questadv-1", "goal": "continu la quete", "lang": "fr", "tool": "quest.advance", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-questadv-2", "goal": "avance la quete", "lang": "fr", "tool": "quest.advance", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-farm-1", "goal": "farm bouftou 100x", "lang": "fr", "tool": "farm.start", "args": {"monster": "Bouftou", "kill_count": 100}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-farm-2", "goal": "recolte du bois", "lang": "fr", "tool": "farm.start", "args": {"resource": "bois"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-farmstop-1", "goal": "arrete le farm", "lang": "fr", "tool": "farm.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-invlist-1", "goal": "montre mes sacs", "lang": "fr", "tool": "inv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-invlist-2", "goal": "jai quoi la", "lang": "fr", "tool": "inv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-sell-1", "goal": "vend toute la laine de bouftou", "lang": "fr", "tool": "inv.sell", "args": {"item": "laine de bouftou", "all": true}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-sell-2", "goal": "met 5 laine ah 2k", "lang": "fr", "tool": "inv.sell", "args": {"item": "laine", "quantity": 5, "price": 2000}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-hdvlist-1", "goal": "mes items en vente", "lang": "fr", "tool": "hdv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-hdvlist-2", "goal": "jai quoi a lhdv", "lang": "fr", "tool": "hdv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-hdvscan-1", "goal": "c combien la laine de bouftou", "lang": "fr", "tool": "hdv.scan", "args": {"item": "laine de bouftou"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-hdvscan-2", "goal": "prix du bois", "lang": "fr", "tool": "hdv.scan", "args": {"item": "bois"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-chat-1", "goal": "dis salut a léquipe", "lang": "fr", "tool": "chat.say", "args": {"text": "salut", "channel": "team"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-know-2", "goal": "sa sert a quoi la laine de bouftou", "lang": "fr", "tool": "knowledge.search", "args": {"query": "laine de bouftou"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-state-1", "goal": "tu fais quoi la", "lang": "fr", "tool": "state.snapshot", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-fr-state-2", "goal": "status stp", "lang": "fr", "tool": "state.snapshot", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-stop-2", "goal": "stop porfa", "lang": "es", "tool": "safe.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-follow-1", "goal": "sigueme", "lang": "es", "tool": "nav.follow", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-pass-1", "goal": "pasa turno", "lang": "es", "tool": "fight.pass", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-join-1", "goal": "entra al fight", "lang": "es", "tool": "fight.join", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-coords-1", "goal": "ve a 4,-19", "lang": "es", "tool": "nav.goto", "args": {"x": 4, "y": -19}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-questlist-1", "goal": "que missions hay", "lang": "es", "tool": "quest.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-questadv-1", "goal": "sigue con la mission", "lang": "es", "tool": "quest.advance", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-farm-1", "goal": "farmea bouftou 50x", "lang": "es", "tool": "farm.start", "args": {"monster": "Bouftou", "kill_count": 50}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-farm-2", "goal": "recolecta madera", "lang": "es", "tool": "farm.start", "args": {"resource": "madera"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-farmstop-1", "goal": "para el farmeo", "lang": "es", "tool": "farm.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-invlist-1", "goal": "muestrame el invec", "lang": "es", "tool": "inv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-sell-1", "goal": "vende toda la lana de bouftou", "lang": "es", "tool": "inv.sell", "args": {"item": "lana de bouftou", "all": true}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-sell-2", "goal": "pon 5 lana a 2k", "lang": "es", "tool": "inv.sell", "args": {"item": "lana", "quantity": 5, "price": 2000}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-hdvlist-1", "goal": "que tengo en la subasta", "lang": "es", "tool": "hdv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-hdvscan-1", "goal": "cuanto vale la lana de bouftou", "lang": "es", "tool": "hdv.scan", "args": {"item": "lana de bouftou"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-chat-1", "goal": "di hola al grupo", "lang": "es", "tool": "chat.say", "args": {"text": "hola"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-es-state-1", "goal": "que haces ahora", "lang": "es", "tool": "state.snapshot", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-stop-1", "goal": "alles stop", "lang": "de", "tool": "safe.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-stop-2", "goal": "aufhören bitte", "lang": "de", "tool": "safe.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-follow-1", "goal": "folg mir", "lang": "de", "tool": "nav.follow", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-pass-1", "goal": "pass mal", "lang": "de", "tool": "fight.pass", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-join-1", "goal": "komm in den fight", "lang": "de", "tool": "fight.join", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-coords-1", "goal": "geh zu 4,-19", "lang": "de", "tool": "nav.goto", "args": {"x": 4, "y": -19}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-questlist-1", "goal": "welche quests gibt es", "lang": "de", "tool": "quest.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-questadv-1", "goal": "mach die quest weiter", "lang": "de", "tool": "quest.advance", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-farm-1", "goal": "farm bouftou 100x", "lang": "de", "tool": "farm.start", "args": {"monster": "Bouftou", "kill_count": 100}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-farm-2", "goal": "holz sammeln", "lang": "de", "tool": "farm.start", "args": {"resource": "holz"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-farmstop-1", "goal": "farm stoppen", "lang": "de", "tool": "farm.stop", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-invlist-1", "goal": "was hab ich so dabei", "lang": "de", "tool": "inv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-sell-1", "goal": "verkaf meine bouftollwolle", "lang": "de", "tool": "inv.sell", "args": {"item": "bouftollwolle", "all": true}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-sell-2", "goal": "5 wolle für 2k auf das ah", "lang": "de", "tool": "inv.sell", "args": {"item": "wolle", "quantity": 5, "price": 2000}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-hdvlist-1", "goal": "was steht bei mir im ah", "lang": "de", "tool": "hdv.list", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-hdvscan-1", "goal": "preis von bouftollwolle", "lang": "de", "tool": "hdv.scan", "args": {"item": "bouftollwolle"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-chat-1", "goal": "sag hallo zur gruppe", "lang": "de", "tool": "chat.say", "args": {"text": "hallo"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-know-1", "goal": "such mal bouftou", "lang": "de", "tool": "knowledge.search", "args": {"query": "bouftou"}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}
+{"id": "nf-de-state-1", "goal": "was machst du grade", "lang": "de", "tool": "state.snapshot", "args": {}, "needs_label": false, "source": "ingest", "in_sft_corpus": false}

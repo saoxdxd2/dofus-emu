@@ -1,0 +1,1034 @@
+{
+ "python": "3.11.9",
+ "ram": {
+  "achievement": {
+   "build_s": 0.118,
+   "commit_mb": 78.4,
+   "entries": 2781,
+   "peak_mb": 99.1,
+   "resident_mb": 84.5
+  },
+  "after_probes": {
+   "commit_mb": 78.7,
+   "peak_mb": 99.1,
+   "resident_mb": 85.0
+  },
+  "dungeon": {
+   "build_s": 0.006,
+   "commit_mb": 75.5,
+   "entries": 187,
+   "peak_mb": 99.1,
+   "resident_mb": 81.9
+  },
+  "item": {
+   "build_s": 1.647,
+   "commit_mb": 73.2,
+   "entries": 21554,
+   "peak_mb": 99.1,
+   "resident_mb": 79.0
+  },
+  "monster": {
+   "build_s": 0.091,
+   "commit_mb": 17.0,
+   "entries": 2000,
+   "peak_mb": 28.0,
+   "resident_mb": 23.1
+  },
+  "npc": {
+   "build_s": 0.104,
+   "commit_mb": 74.6,
+   "entries": 6472,
+   "peak_mb": 99.1,
+   "resident_mb": 80.9
+  },
+  "quest": {
+   "build_s": 0.12,
+   "commit_mb": 48.2,
+   "entries": 1976,
+   "peak_mb": 63.0,
+   "resident_mb": 54.5
+  },
+  "spell": {
+   "build_s": 0.026,
+   "commit_mb": 75.2,
+   "entries": 2000,
+   "peak_mb": 99.1,
+   "resident_mb": 81.7
+  }
+ },
+ "results": {
+  "Astrub|npc|3": [
+   {
+    "actions": [
+     11,
+     3
+    ],
+    "id": 606,
+    "kind": "npc",
+    "name": {
+     "de": "Gef\u00e4ngnisw\u00e4chter von Astrub",
+     "en": "Astrub Jail Guard",
+     "es": "Guardi\u00e1n de los calabozos de Astrub",
+     "fr": "Gardien des Ge\u00f4les d'Astrub",
+     "pt": "Guardi\u00e3o da Pris\u00e3o de Astrub"
+    },
+    "score": 8.0
+   },
+   {
+    "actions": [
+     3
+    ],
+    "id": 2274,
+    "kind": "npc",
+    "name": {
+     "de": "Astrub-Ritter",
+     "en": "Astrub Knight",
+     "es": "Caballero de Astrub",
+     "fr": "Chevalier d'Astrub",
+     "pt": "Cavaleiro de Astrub"
+    },
+    "score": 8.0
+   },
+   {
+    "actions": [
+     3
+    ],
+    "id": 4177,
+    "kind": "npc",
+    "name": {
+     "de": "Besorgter Astrubianer",
+     "en": "Worried Astrubian",
+     "es": "Astrubiense preocupado",
+     "fr": "Astrubien inquiet",
+     "pt": "Astrubiano Inquieto"
+    },
+    "score": 8.0
+   }
+  ],
+  "Bouftou|monster|3": [
+   {
+    "grades": [
+     {
+      "hp": 29,
+      "level": 1
+     },
+     {
+      "hp": 49,
+      "level": 2
+     },
+     {
+      "hp": 69,
+      "level": 3
+     },
+     {
+      "hp": 90,
+      "level": 4
+     },
+     {
+      "hp": 110,
+      "level": 5
+     }
+    ],
+    "id": 36,
+    "is_boss": false,
+    "kind": "monster",
+    "name": {
+     "name_en": "Gobball",
+     "name_es": "Jalat\u00f3",
+     "name_fr": "Bouftou"
+    },
+    "score": 10.0
+   },
+   {
+    "grades": [
+     {
+      "hp": 170,
+      "level": 22
+     },
+     {
+      "hp": 190,
+      "level": 24
+     },
+     {
+      "hp": 220,
+      "level": 26
+     },
+     {
+      "hp": 250,
+      "level": 28
+     },
+     {
+      "hp": 280,
+      "level": 30
+     }
+    ],
+    "id": 101,
+    "is_boss": false,
+    "kind": "monster",
+    "name": {
+     "name_en": "Gobball",
+     "name_es": "Jalat\u00f3",
+     "name_fr": "Bouftou"
+    },
+    "score": 10.0
+   },
+   {
+    "grades": [
+     {
+      "hp": 160,
+      "level": 20
+     },
+     {
+      "hp": 150,
+      "level": 40
+     },
+     {
+      "hp": 150,
+      "level": 60
+     },
+     {
+      "hp": 150,
+      "level": 80
+     },
+     {
+      "hp": 160,
+      "level": 100
+     }
+    ],
+    "id": 3332,
+    "is_boss": false,
+    "kind": "monster",
+    "name": {
+     "name_en": "Gobball",
+     "name_es": "Jalat\u00f3",
+     "name_fr": "Bouftou"
+    },
+    "score": 10.0
+   }
+  ],
+  "blank_query": [],
+  "bouftou|item|5": [
+   {
+    "id": 16745,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 100,
+    "name": {
+     "de": "Fresssack-Schmorbraten",
+     "en": "Braised Gobball",
+     "es": "Jalat\u00f3 a la brasa",
+     "fr": "Bouftou Brais\u00e9",
+     "pt": "Papatudo na brasa"
+    },
+    "price": 0,
+    "score": 8.0,
+    "type_id": 187
+   },
+   {
+    "id": 19772,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 1,
+    "name": {
+     "de": "H\u00f6hlen-Fresssack",
+     "en": "Cave-Dwelling Gobball",
+     "es": "Jalat\u00f3 troglodita",
+     "fr": "Bouftou troglodyte",
+     "pt": "Papatudo Troglodita"
+    },
+    "price": 0,
+    "score": 8.0,
+    "type_id": 32
+   },
+   {
+    "id": 31450,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 60,
+    "name": {
+     "de": "Vereister Fresssack",
+     "en": "Permafrosty Gobball",
+     "es": "Jalat\u00f3 de escarcha",
+     "fr": "Bouftou de givre",
+     "pt": "Papatudo G\u00e9lido"
+    },
+    "price": 1,
+    "score": 8.0,
+    "type_id": 250
+   },
+   {
+    "id": 279,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 5,
+    "name": {
+     "de": "Die Tr\u00e4ne des Fresssacks",
+     "en": "Gobball Tear",
+     "es": "La L\u00e1grima de Jalat\u00f3",
+     "fr": "La Larme du Bouftou",
+     "pt": "A L\u00e1grima do Papatudo"
+    },
+    "price": 500,
+    "score": 4.0,
+    "type_id": 1
+   },
+   {
+    "id": 384,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 19,
+    "name": {
+     "de": "Fresssackwolle",
+     "en": "Gobball Wool",
+     "es": "Lana de jalat\u00f3",
+     "fr": "Laine de Bouftou",
+     "pt": "L\u00e3 de Papatudo"
+    },
+    "price": 1,
+    "score": 4.0,
+    "type_id": 57
+   }
+  ],
+  "crocodusse|monster|5": [],
+  "dofus pourpre|item|4": [
+   {
+    "id": 694,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 110,
+    "name": {
+     "de": "Purpur-Dofus",
+     "en": "Crimson Dofus",
+     "es": "Dofus P\u00farpura",
+     "fr": "Dofus Pourpre",
+     "pt": "Dofus P\u00farpura"
+    },
+    "price": 11000,
+    "score": 10.5,
+    "type_id": 23
+   },
+   {
+    "id": 21701,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 1,
+    "name": {
+     "de": "Frisch bemalter Purpur-Dofus",
+     "en": "Freshly Painted Crimson Dofus",
+     "es": "Dofus P\u00farpura reci\u00e9n pintado",
+     "fr": "Dofus Pourpre fra\u00eechement peint",
+     "pt": "Dofus P\u00farpura Rec\u00e9m-pintado"
+    },
+    "price": 1,
+    "score": 8.5,
+    "type_id": 131
+   },
+   {
+    "id": 250,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 72,
+    "name": {
+     "de": "Ares",
+     "en": "Axel",
+     "es": "Ares",
+     "fr": "Ares",
+     "pt": "Ares"
+    },
+    "price": 7200,
+    "score": 4.5,
+    "type_id": 8
+   },
+   {
+    "id": 15443,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 1,
+    "name": {
+     "de": "Thron-Schl\u00fcssel des Minotoror",
+     "en": "Minotoror Throne Room Key",
+     "es": "Llave del trono del Minotauroro",
+     "fr": "Clef du Tr\u00f4ne du Minotoror",
+     "pt": "Chave do Trono do Minotoror"
+    },
+    "price": 1,
+    "score": 4.5,
+    "type_id": 126
+   }
+  ],
+  "glouton|any|4": [
+   {
+    "id": 2316,
+    "kind": "spell",
+    "name": {
+     "name_en": "Gulon",
+     "name_es": "Glot\u00f3n",
+     "name_fr": "Glouton"
+    },
+    "score": 10.0,
+    "type_id": 425
+   },
+   {
+    "id": 2209,
+    "kind": "spell",
+    "name": {
+     "name_en": "Kanigreed",
+     "name_es": "Kaniglot\u00f3n",
+     "name_fr": "Kaniglouton"
+    },
+    "score": 4.0,
+    "type_id": 425
+   },
+   {
+    "id": 2536,
+    "is_dungeon": false,
+    "kind": "quest",
+    "level_max": 200,
+    "level_min": 200,
+    "name": {
+     "de": "Die Barb\u00e4rmampfe der Dimensionen",
+     "en": "Dimensional Gluttons",
+     "es": "Los glotones de las dimensiones",
+     "fr": "Les gloutons des dimensions",
+     "pt": "Os glut\u00f5es das dimens\u00f5es"
+    },
+    "score": 4.0,
+    "start_position": [
+     {
+      "mapId": 234753031,
+      "npcId": 7717
+     }
+    ],
+    "steps": [
+     {
+      "id": 3217,
+      "name": {
+       "de": "Die Barb\u00e4rmampfe der Dimensionen",
+       "en": "Dimensional Gluttons",
+       "es": "Los glotones de las dimensiones",
+       "fr": "Les gloutons des dimensions",
+       "pt": "Os glut\u00f5es das dimens\u00f5es"
+      },
+      "objectives": [
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} sprechen",
+         "en": "Talk to {npc,7716}",
+         "es": "Ve a ver a {npc,7716}",
+         "fr": "Aller voir {npc,7716}",
+         "pt": "Fale com: {npc,7716}"
+        },
+        "type_id": 1
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "Zu {npc,7717} zur\u00fcckkehren",
+         "en": "Talk to {npc,7717} again",
+         "es": "Vuelve a ver a {npc,7717}",
+         "fr": "Retourner voir {npc,7717}",
+         "pt": "Fale com {npc,7717} novamente"
+        },
+        "type_id": 9
+       },
+       {
+        "coords": null,
+        "map_id": 234751491,
+        "text": {
+         "de": "{npc,7738} sprechen",
+         "en": "Talk to {npc,7738}",
+         "es": "Ve a ver a {npc,7738}",
+         "fr": "Aller voir {npc,7738}",
+         "pt": "Fale com: {npc,7738}"
+        },
+        "type_id": 1
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,16467} x3",
+         "en": "Take 3 {item,16467} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 3 x {item,16467}",
+         "fr": "Ramener \u00e0 {npc,7716} : x3 {item,16467}",
+         "pt": "Entregue a {npc,7716}: 3x \"{item,16467}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,16465} x3",
+         "en": "Take 3 {item,16465} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 3 x {item,16465}",
+         "fr": "Ramener \u00e0 {npc,7716} : x3 {item,16465}",
+         "pt": "Entregue a {npc,7716}: 3x \"{item,16465}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,16469} x3",
+         "en": "Take 3 {item,16469} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 3 x {item,16469}",
+         "fr": "Ramener \u00e0 {npc,7716} : x3 {item,16469}",
+         "pt": "Entregue a {npc,7716}: 3x \"{item,16469}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,281} x5",
+         "en": "Take 5 {item,281} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 5 x {item,281}",
+         "fr": "Ramener \u00e0 {npc,7716} : x5 {item,281}",
+         "pt": "Entregue a {npc,7716}: 5x \"{item,281}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,381} x5",
+         "en": "Take 5 {item,381} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 5 x {item,381}",
+         "fr": "Ramener \u00e0 {npc,7716} : x5 {item,381}",
+         "pt": "Entregue a {npc,7716}: 5x \"{item,381}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,1734} x5",
+         "en": "Take 5 {item,1734} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 5 x {item,1734}",
+         "fr": "Ramener \u00e0 {npc,7716} : x5 {item,1734}",
+         "pt": "Entregue a {npc,7716}: 5x \"{item,1734}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,32055} x10",
+         "en": "Take 10 {item,32055} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 10 x {item,32055}",
+         "fr": "Ramener \u00e0 {npc,7716} : x10 {item,32055}",
+         "pt": "Entregue a {npc,7716}: 10x \"{item,32055}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,15455} x3",
+         "en": "Take 3 {item,15455} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 3 x {item,15455}",
+         "fr": "Ramener \u00e0 {npc,7716} : x3 {item,15455}",
+         "pt": "Entregue a {npc,7716}: 3x \"{item,15455}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,32057} x1",
+         "en": "Take 1 {item,32057} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 1 x {item,32057}",
+         "fr": "Ramener \u00e0 {npc,7716} : x1 {item,32057}",
+         "pt": "Entregue a {npc,7716}: 1x \"{item,32057}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,32058} x1",
+         "en": "Take 1 {item,32058} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 1 x {item,32058}",
+         "fr": "Ramener \u00e0 {npc,7716} : x1 {item,32058}",
+         "pt": "Entregue a {npc,7716}: 1x \"{item,32058}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,14479} x3",
+         "en": "Take 3 {item,14479} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 3 x {item,14479}",
+         "fr": "Ramener \u00e0 {npc,7716} : x3 {item,14479}",
+         "pt": "Entregue a {npc,7716}: 3x \"{item,14479}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,32056} x1",
+         "en": "Take 1 {item,32056} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 1 x {item,32056}",
+         "fr": "Ramener \u00e0 {npc,7716} : x1 {item,32056}",
+         "pt": "Entregue a {npc,7716}: 1x \"{item,32056}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,19406} x2",
+         "en": "Take 2 {item,19406} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 2 x {item,19406}",
+         "fr": "Ramener \u00e0 {npc,7716} : x2 {item,19406}",
+         "pt": "Entregue a {npc,7716}: 2x \"{item,19406}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,9267} x3",
+         "en": "Take 3 {item,9267} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 3 x {item,9267}",
+         "fr": "Ramener \u00e0 {npc,7716} : x3 {item,9267}",
+         "pt": "Entregue a {npc,7716}: 3x \"{item,9267}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "{npc,7716} folgendes bringen: {item,32059} x1",
+         "en": "Take 1 {item,32059} to {npc,7716}",
+         "es": "Entr\u00e9gale a {npc,7716}: 1 x {item,32059}",
+         "fr": "Ramener \u00e0 {npc,7716} : x1 {item,32059}",
+         "pt": "Entregue a {npc,7716}: 1x \"{item,32059}\""
+        },
+        "type_id": 3
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "Mit Koch Sm\u00f6rebr\u00f6d Rezepte ausprobieren, bis ihr das richtige gefunden habt",
+         "en": "Try out recipes with Chef Fingachopp until you find the right one",
+         "es": "Prueba recetas con el chef Kemekemo hasta dar con la adecuada",
+         "fr": "Exp\u00e9rimenter des recettes avec le chef Zutl\u00e9do\u00e2 jusqu'\u00e0 trouver la bonne",
+         "pt": "Experimente receitas com o chef Carambudedo at\u00e9 achar a certa"
+        },
+        "type_id": 0
+       },
+       {
+        "coords": null,
+        "map_id": 234753031,
+        "text": {
+         "de": "Zu {npc,7717} zur\u00fcckkehren",
+         "en": "Talk to {npc,7717} again",
+         "es": "Vuelve a ver a {npc,7717}",
+         "fr": "Retourner voir {npc,7717}",
+         "pt": "Fale com {npc,7717} novamente"
+        },
+        "type_id": 9
+       }
+      ],
+      "optimal_level": 200
+     }
+    ]
+   },
+   {
+    "id": 2656,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 40,
+    "name": {
+     "de": "Gobichons abgenagter Knochen",
+     "en": "Gobelishous's Chewed Bone",
+     "es": "Hueso ro\u00eddo de gobloso",
+     "fr": "Os rong\u00e9 de Gobichon",
+     "pt": "Osso Ro\u00eddo de Gobil\u00e3o"
+    },
+    "price": 1,
+    "score": 4.0,
+    "type_id": 47
+   }
+  ],
+  "haut|achievement|3": [
+   {
+    "description": {
+     "de": "\"H\u00f6he des Geheuls\" erkunden",
+     "en": "Discover the \"Howling Heights\" area.",
+     "es": "Explorar la zona de los \u00abAltos de los Aullidos\u00bb.",
+     "fr": "D\u00e9couvrir la zone \"Hauts des Hurlements\".",
+     "pt": "Descobrir a zona \"Morro dos Uivos\"."
+    },
+    "id": 316,
+    "kind": "achievement",
+    "level": 90,
+    "name": {
+     "de": "H\u00f6he des Geheuls",
+     "en": "Howling Heights",
+     "es": "Altos de los Aullidos",
+     "fr": "Hauts des Hurlements",
+     "pt": "Morro dos Uivos"
+    },
+    "points": 1,
+    "score": 8.0
+   },
+   {
+    "description": {
+     "de": "Folgende Questen beenden:",
+     "en": "Complete the following quests:",
+     "es": "Terminar las siguientes misiones.",
+     "fr": "Terminer les qu\u00eates suivantes.",
+     "pt": "Completar as seguintes miss\u00f5es."
+    },
+    "id": 601,
+    "kind": "achievement",
+    "level": 40,
+    "name": {
+     "de": "Hochseilakrobatik",
+     "en": "High Voltage",
+     "es": "Altos vuelos",
+     "fr": "Haute voltige",
+     "pt": "Altas acrobacias"
+    },
+    "points": 10,
+    "score": 8.0
+   },
+   {
+    "description": {
+     "de": "Die Herausforderung [challenge,303] abschlie\u00dfen und damit den Kamedelspatz in seinem Dungeon besiegen.",
+     "en": "Defeat the Cross Strich in this boss's dungeon while completing the [challenge,303] challenge.",
+     "es": "Vencer a Thor Pestruz en su mazmorra validando el reto [challenge,303].",
+     "fr": "Vaincre la Haute Truche dans son donjon en validant le challenge [challenge,303].",
+     "pt": "Derrotar o Altostruz em seu calabou\u00e7o completando o desafio [challenge,303]."
+    },
+    "id": 1062,
+    "kind": "achievement",
+    "level": 130,
+    "name": {
+     "de": "Kamedelspatz (Als Erstes)",
+     "en": "Cross Strich (First)",
+     "es": "Thor Pestruz (primera posici\u00f3n)",
+     "fr": "Haute Truche (Premier)",
+     "pt": "Altostruz (Primeiro)"
+    },
+    "points": 10,
+    "score": 8.0
+   }
+  ],
+  "laine|any|3": [
+   {
+    "id": 384,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 19,
+    "name": {
+     "de": "Fresssackwolle",
+     "en": "Gobball Wool",
+     "es": "Lana de jalat\u00f3",
+     "fr": "Laine de Bouftou",
+     "pt": "L\u00e3 de Papatudo"
+    },
+    "price": 1,
+    "score": 8.0,
+    "type_id": 57
+   },
+   {
+    "id": 880,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 30,
+    "name": {
+     "de": "K\u00f6nigliche Fresssackwolle",
+     "en": "Royal Gobball Wool",
+     "es": "Lana de Jalat\u00f3 Real",
+     "fr": "Laine de Bouftou Royal",
+     "pt": "L\u00e3 de Papatudo Real"
+    },
+    "price": 1,
+    "score": 8.0,
+    "type_id": 57
+   },
+   {
+    "id": 881,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 23,
+    "name": {
+     "de": "Tschamanen-Kanalkratten-Wolle",
+     "en": "Strubian Raeman Wool",
+     "es": "Lana de ram\u00e1n strubiense",
+     "fr": "Laine de Ramane Strubien",
+     "pt": "L\u00e3 de Ram\u00e3 Strubiano"
+    },
+    "price": 1,
+    "score": 8.0,
+    "type_id": 57
+   }
+  ],
+  "mimo|any|2": [
+   {
+    "id": 497,
+    "kind": "spell",
+    "name": {
+     "name_en": "Cuddle",
+     "name_es": "Mimo",
+     "name_fr": "C\u00e2lin"
+    },
+    "score": 10.0,
+    "type_id": 425
+   },
+   {
+    "id": 846,
+    "kind": "spell",
+    "name": {
+     "name_en": "Refrigerated Hug",
+     "name_es": "Mimo Frigor\u00edfico",
+     "name_fr": "C\u00e2lin frigorifique"
+    },
+    "score": 8.0,
+    "type_id": 425
+   }
+  ],
+  "pelle|any|5": [
+   {
+    "id": 153,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 6,
+    "name": {
+     "de": "H\u00f6lzerne Schaufel",
+     "en": "Twiggy Shovel",
+     "es": "Pala de maderucha",
+     "fr": "Pelle de Boisaille",
+     "pt": "P\u00e1 de graveto"
+    },
+    "price": 600,
+    "score": 8.0,
+    "type_id": 8
+   },
+   {
+    "grades": [
+     {
+      "hp": 180,
+      "level": 1
+     },
+     {
+      "hp": 250,
+      "level": 1
+     },
+     {
+      "hp": 320,
+      "level": 1
+     },
+     {
+      "hp": 240,
+      "level": 4
+     },
+     {
+      "hp": 270,
+      "level": 5
+     }
+    ],
+    "id": 238,
+    "is_boss": false,
+    "kind": "monster",
+    "name": {
+     "name_en": "Living Shovel",
+     "name_es": "Pala animada",
+     "name_fr": "Pelle Anim\u00e9e"
+    },
+    "score": 8.0
+   },
+   {
+    "id": 241,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 17,
+    "name": {
+     "de": "Kehrschaufel",
+     "en": "Crapouille's Shovel",
+     "es": "Pala de Crapullo",
+     "fr": "Pelle de Crapouille",
+     "pt": "P\u00e1 de Crapulino"
+    },
+    "price": 1700,
+    "score": 8.0,
+    "type_id": 8
+   },
+   {
+    "id": 247,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 19,
+    "name": {
+     "de": "Sch\u00fcrfschaufel",
+     "en": "Scratchy Shovel",
+     "es": "Pala de raspadura",
+     "fr": "Pelle de Rapage",
+     "pt": "P\u00e1 de raspagem"
+    },
+    "price": 1900,
+    "score": 8.0,
+    "type_id": 8
+   },
+   {
+    "id": 296,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 29,
+    "name": {
+     "de": "Krachlerschaufel",
+     "en": "Crackler Shovel",
+     "es": "Pala de crujidor",
+     "fr": "Pelle du Craqueleur",
+     "pt": "P\u00e1 do Smagador"
+    },
+    "price": 2900,
+    "score": 8.0,
+    "type_id": 8
+   }
+  ],
+  "ram|spell|3": [
+   {
+    "id": 998,
+    "kind": "spell",
+    "name": {
+     "name_en": "Ram",
+     "name_es": "Ranciedad",
+     "name_fr": "Ratatinage"
+    },
+    "score": 10.0,
+    "type_id": 425
+   },
+   {
+    "id": 240,
+    "kind": "spell",
+    "name": {
+     "name_en": "Paralysing Branch",
+     "name_es": "Rama Paralizadora",
+     "name_fr": "Branche Paralysante"
+    },
+    "score": 8.0,
+    "type_id": 425
+   },
+   {
+    "id": 483,
+    "kind": "spell",
+    "name": {
+     "name_en": "Soft Oak Branch",
+     "name_es": "Ramificaci\u00f3n del Roble Blando",
+     "name_fr": "Embranchement du Ch\u00eane Mou"
+    },
+    "score": 8.0,
+    "type_id": 425
+   }
+  ],
+  "repeat": [
+   {
+    "id": 16745,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 100,
+    "name": {
+     "de": "Fresssack-Schmorbraten",
+     "en": "Braised Gobball",
+     "es": "Jalat\u00f3 a la brasa",
+     "fr": "Bouftou Brais\u00e9",
+     "pt": "Papatudo na brasa"
+    },
+    "price": 0,
+    "score": 8.0,
+    "type_id": 187
+   },
+   {
+    "id": 19772,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 1,
+    "name": {
+     "de": "H\u00f6hlen-Fresssack",
+     "en": "Cave-Dwelling Gobball",
+     "es": "Jalat\u00f3 troglodita",
+     "fr": "Bouftou troglodyte",
+     "pt": "Papatudo Troglodita"
+    },
+    "price": 0,
+    "score": 8.0,
+    "type_id": 32
+   },
+   {
+    "id": 31450,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 60,
+    "name": {
+     "de": "Vereister Fresssack",
+     "en": "Permafrosty Gobball",
+     "es": "Jalat\u00f3 de escarcha",
+     "fr": "Bouftou de givre",
+     "pt": "Papatudo G\u00e9lido"
+    },
+    "price": 1,
+    "score": 8.0,
+    "type_id": 250
+   },
+   {
+    "id": 279,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 5,
+    "name": {
+     "de": "Die Tr\u00e4ne des Fresssacks",
+     "en": "Gobball Tear",
+     "es": "La L\u00e1grima de Jalat\u00f3",
+     "fr": "La Larme du Bouftou",
+     "pt": "A L\u00e1grima do Papatudo"
+    },
+    "price": 500,
+    "score": 4.0,
+    "type_id": 1
+   },
+   {
+    "id": 384,
+    "is_saleable": true,
+    "kind": "item",
+    "level": 19,
+    "name": {
+     "de": "Fresssackwolle",
+     "en": "Gobball Wool",
+     "es": "Lana de jalat\u00f3",
+     "fr": "Laine de Bouftou",
+     "pt": "L\u00e3 de Papatudo"
+    },
+    "price": 1,
+    "score": 4.0,
+    "type_id": 57
+   }
+  ],
+  "temporix|quest|5": [],
+  "unmapped_kind": [],
+  "zeth|dungeon|3": []
+ }
+}

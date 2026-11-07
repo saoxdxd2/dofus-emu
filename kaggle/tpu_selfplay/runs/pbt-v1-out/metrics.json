@@ -1,0 +1,7 @@
+{
+ "backend": "gpu",
+ "device_count": 2,
+ "method": "generational-ppo-pbt",
+ "checkpoint": "/kaggle/working/encounter_pbt.pkl",
+ "metrics": "/kaggle/working/pbt/metrics.json"
+}

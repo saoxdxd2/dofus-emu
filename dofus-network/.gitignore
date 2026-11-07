@@ -1,0 +1,47 @@
+# Ignore generated pipeline artifacts and local caches.
+
+# Pipeline outputs
+networkhealth_artifacts/*
+!networkhealth_artifacts/features.npz
+!networkhealth_artifacts/clean.jsonl
+networkhealth_v1_artifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Model weights are large; move them deliberately, never by accident
+*.pt
+*.pth
+*.ckpt
+
+# Editor / OS
+.vscode/settings.json
+.DS_Store
+Thumbs.db
+
+# Planner: generated knowledge base and learned economy state
+data/kb/dofus_kb.npz
+data/kb/dofus_names.bin
+data/kb/economy_state.json
+data/kb/schedule_state.json
+data/kb/experience.jsonl
+data/kb/posteriors.json
+data/kb/traces.jsonl
+data/kb/decision_graph.json
+data/kb/thinking_cache.json
+
+# Knowledge spine: generated SQLite is rebuildable from data/cache
+data/knowledge/*.sqlite
+data/knowledge/*.sqlite.tmp
+data/knowledge/*.sqlite-*
+
+# Dialog labels are generated from trajectory logs
+data/dialog_labels/

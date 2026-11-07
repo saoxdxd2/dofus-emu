@@ -1,0 +1,743 @@
+{
+ "objectives": 51,
+ "buckets": {
+  "pointer_unresolvable": 29,
+  "fully_resolvable": 22,
+  "objective_row_missing": 1
+ },
+ "rows": [
+  {
+   "quest_id": 3841,
+   "objective_id": 13491,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    697965
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "697965": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13493,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    713562
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "713562": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13495,
+   "type": "QuestObjectiveDiscoverMap",
+   "pointers": [
+    698025
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "698025": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13499,
+   "type": "QuestObjectiveFightMonster",
+   "pointers": [
+    4192,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4192": false,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13505,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    698193
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "698193": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13507,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    698229
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "698229": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13531,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    698711
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "698711": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13537,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    713802
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "713802": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13539,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    714276
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "714276": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13541,
+   "type": "QuestObjectiveDiscoverMap",
+   "pointers": [
+    698953
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "698953": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13543,
+   "type": "QuestObjectiveFightMonster",
+   "pointers": [
+    4194,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4194": true,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13922,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3888
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3888": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 13924,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3888
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3888": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14056,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3888
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3888": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14058,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    712152
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "712152": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14060,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    713846
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "713846": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14062,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    713882
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "713882": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14070,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    715354
+   ],
+   "objective_resolved": false,
+   "pointers_resolved": {
+    "715354": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14072,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    715390
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "715390": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14074,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    715426
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "715426": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14076,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    715462
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "715462": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 3841,
+   "objective_id": 14080,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    715624
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "715624": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4260,
+   "objective_id": 13900,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3888
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3888": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4260,
+   "objective_id": 13902,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    719010
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "719010": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4260,
+   "objective_id": 14078,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    719012
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "719012": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13930,
+   "type": "QuestObjectiveDiscoverMap",
+   "pointers": [
+    716836
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "716836": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13932,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3896
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3896": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13934,
+   "type": "QuestObjectiveMultiFightMonster",
+   "pointers": [
+    4211,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4211": true,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13936,
+   "type": "QuestObjectiveMultiFightMonster",
+   "pointers": [
+    4213,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4213": true,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13938,
+   "type": "QuestObjectiveMultiFightMonster",
+   "pointers": [
+    4215,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4215": true,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13940,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    719652
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "719652": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13942,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3898
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3898": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13944,
+   "type": "QuestObjectiveFightMonster",
+   "pointers": [
+    4210,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4210": true,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13946,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3888
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3888": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13948,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    704145
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "704145": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13950,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    704143
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "704143": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13952,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3900
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3900": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13954,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3888
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3888": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13956,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    707984
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "707984": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4262,
+   "objective_id": 13958,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    727568
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "727568": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13960,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    714266
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "714266": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13962,
+   "type": "QuestObjectiveFightMonster",
+   "pointers": [
+    4214,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4214": true,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13964,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    708672
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "708672": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13966,
+   "type": "QuestObjectiveFightMonster",
+   "pointers": [
+    4212,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4212": true,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13968,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3904
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3904": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13970,
+   "type": "QuestObjectiveFightMonster",
+   "pointers": [
+    4216,
+    1
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "4216": true,
+    "1": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13972,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3904
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3904": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13974,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3888
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3888": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4264,
+   "objective_id": 13976,
+   "type": "QuestObjectiveFreeForm",
+   "pointers": [
+    727564
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "727564": false
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4274,
+   "objective_id": 13926,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3892
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3892": true
+   },
+   "live": true
+  },
+  {
+   "quest_id": 4274,
+   "objective_id": 13928,
+   "type": "QuestObjectiveGoToNpc",
+   "pointers": [
+    3888
+   ],
+   "objective_resolved": true,
+   "pointers_resolved": {
+    "3888": true
+   },
+   "live": true
+  }
+ ],
+ "top_missing_pointers": [
+  [
+   "697965",
+   1
+  ],
+  [
+   "713562",
+   1
+  ],
+  [
+   "698025",
+   1
+  ],
+  [
+   "4192",
+   1
+  ],
+  [
+   "698193",
+   1
+  ],
+  [
+   "698229",
+   1
+  ],
+  [
+   "698711",
+   1
+  ],
+  [
+   "713802",
+   1
+  ],
+  [
+   "714276",
+   1
+  ],
+  [
+   "698953",
+   1
+  ],
+  [
+   "712152",
+   1
+  ],
+  [
+   "713846",
+   1
+  ]
+ ],
+ "source": "observed_quests.jsonl",
+ "store": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\knowledge\\dofus_knowledge.sqlite"
+}

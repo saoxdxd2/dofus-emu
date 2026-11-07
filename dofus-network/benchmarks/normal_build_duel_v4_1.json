@@ -1,0 +1,264 @@
+{
+ "builds": {
+  "dana_ouro": {
+   "name": "dana ouro",
+   "build_id": 2128696,
+   "class": "Ecaflip",
+   "level": 200,
+   "element": "water",
+   "hp": 4825,
+   "ap": 12,
+   "mp": 6,
+   "po": 6,
+   "initiative": 3575,
+   "crit": 47,
+   "crit_damage": 40,
+   "heals": 0,
+   "summons": 3,
+   "stats": {
+    "strength": 380,
+    "intelligence": 160,
+    "chance": 1115,
+    "agility": 220,
+    "power": 100,
+    "damage": 0,
+    "damage_neutral": 57,
+    "damage_earth": 57,
+    "damage_fire": 20,
+    "damage_water": 143,
+    "damage_air": 32,
+    "critical_hit": 47,
+    "damage_critical": 40,
+    "heals": 0
+   },
+   "resist_percent": {
+    "neutral": 21,
+    "earth": 17,
+    "fire": 24,
+    "water": 17,
+    "air": 7
+   },
+   "resist_fixed": {
+    "neutral": 15,
+    "earth": 0,
+    "fire": 20,
+    "water": 0,
+    "air": 40
+   }
+  },
+  "stuff_terre_pp": {
+   "name": "Stuff Terre-PP THL",
+   "build_id": 3449404,
+   "class": "Cra",
+   "level": 200,
+   "element": "earth",
+   "hp": 7500,
+   "ap": 12,
+   "mp": 5,
+   "po": 5,
+   "initiative": 1917,
+   "crit": 44,
+   "crit_damage": 0,
+   "heals": 10,
+   "summons": 3,
+   "stats": {
+    "strength": 1018,
+    "intelligence": 180,
+    "chance": 230,
+    "agility": 190,
+    "power": 1050,
+    "damage": 25,
+    "damage_neutral": 140,
+    "damage_earth": 140,
+    "damage_fire": 60,
+    "damage_water": 70,
+    "damage_air": 50,
+    "critical_hit": 44,
+    "damage_critical": 0,
+    "heals": 10
+   },
+   "resist_percent": {
+    "neutral": 0,
+    "earth": 18,
+    "fire": 20,
+    "water": 20,
+    "air": -4
+   },
+   "resist_fixed": {
+    "neutral": 30,
+    "earth": 10,
+    "fire": 10,
+    "water": 12,
+    "air": 12
+   }
+  }
+ },
+ "caps": {
+  "ap": 12,
+  "mp": 6,
+  "po": 6
+ },
+ "matchups": {
+  "solver_vs_solver": {
+   "games": 20,
+   "side1_win": 0.0,
+   "side2_win": 1.0,
+   "draw": 0.0,
+   "mean_turns": 6.0
+  },
+  "two_ply_vs_solver": {
+   "games": 20,
+   "side1_win": 0.0,
+   "side2_win": 1.0,
+   "draw": 0.0,
+   "mean_turns": 6.0
+  },
+  "solver_vs_two_ply": {
+   "games": 20,
+   "side1_win": 0.0,
+   "side2_win": 1.0,
+   "draw": 0.0,
+   "mean_turns": 6.0
+  },
+  "value_vs_solver": {
+   "games": 20,
+   "side1_win": 0.0,
+   "side2_win": 1.0,
+   "draw": 0.0,
+   "mean_turns": 6.0
+  },
+  "solver_vs_value": {
+   "games": 20,
+   "side1_win": 0.0,
+   "side2_win": 1.0,
+   "draw": 0.0,
+   "mean_turns": 6.0
+  }
+ },
+ "mirror": {
+  "dana_ouro": {
+   "solver_vs_solver": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "solver_vs_random": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "random_vs_solver": {
+    "games": 20,
+    "side1_win": 0.55,
+    "side2_win": 0.45,
+    "draw": 0.0,
+    "mean_turns": 7.45
+   },
+   "random_vs_random": {
+    "games": 20,
+    "side1_win": 0.75,
+    "side2_win": 0.25,
+    "draw": 0.0,
+    "mean_turns": 7.95
+   },
+   "value_vs_solver": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "solver_vs_value": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "two_ply_vs_solver": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "solver_vs_two_ply": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   }
+  },
+  "stuff_terre_pp": {
+   "solver_vs_solver": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "solver_vs_random": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "random_vs_solver": {
+    "games": 20,
+    "side1_win": 0.25,
+    "side2_win": 0.75,
+    "draw": 0.0,
+    "mean_turns": 7.75
+   },
+   "random_vs_random": {
+    "games": 20,
+    "side1_win": 0.7,
+    "side2_win": 0.3,
+    "draw": 0.0,
+    "mean_turns": 8.0
+   },
+   "value_vs_solver": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "solver_vs_value": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "two_ply_vs_solver": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   },
+   "solver_vs_two_ply": {
+    "games": 20,
+    "side1_win": 1.0,
+    "side2_win": 0.0,
+    "draw": 0.0,
+    "mean_turns": 7.0
+   }
+  }
+ },
+ "notes": [
+  "Normal public builds only; Temporix/event builds are excluded.",
+  "Page-computed totals from the public build pages; class kits from the official Touch spell cache.",
+  "Direct damage/steal/heal only; crit rolls, spell-per-turn limits, push, AP/MP denial, shields, statuses, traps and summons are not modelled yet.",
+  "The `matchups` block pits one build against the other: its outcome is dominated by the build, so read policy skill in `mirror`.",
+  "The learned value model was trained on v3 synthetic builds; treat it as out-of-distribution here."
+ ],
+ "elapsed_s": 114.3
+}

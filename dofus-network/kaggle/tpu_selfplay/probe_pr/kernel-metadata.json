@@ -1,0 +1,20 @@
+{
+ "id": "tajdinenizar/dofus-tpu-pr-probe",
+ "title": "Dofus TPU PR probe",
+ "code_file": "probe_env.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": true,
+ "enable_gpu": false,
+ "enable_tpu": true,
+ "machine_shape": "TpuV5E8",
+ "docker_image": "gcr.io/kaggle-images/python@sha256:17b2fc7f27c25c6c2fd4230ec8e66097ab2b89fc88e1e4d6f338b72e1ee0bc3e",
+ "enable_internet": true,
+ "keywords": [
+  "tpu"
+ ],
+ "dataset_sources": [],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": []
+}

@@ -1,0 +1,990 @@
+{
+ "version": 1,
+ "note": "Capability registry: actions are DATA, not code. The encoder's action head is derived from these descriptions, so adding a capability means appending an entry and re-encoding it — no retraining, no new class id.",
+ "languages": [
+  "en",
+  "fr",
+  "es",
+  "de"
+ ],
+ "capabilities": [
+  {
+   "id": "knowledge.search",
+   "verb": "knowledge",
+   "description": "Look up game knowledge (monsters, spells, quests, items, NPCs, achievements, dungeons) in the local DofusDB cache. Use before claiming any game fact.",
+   "backend": "local",
+   "directive": null,
+   "returns": "list of compact records with 'id', 'name' (localised dict) and key fields",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "query": {
+     "type": "str",
+     "doc": "Free-text name or keyword, any of the 4 languages.",
+     "required": true
+    },
+    "kind": {
+     "type": "str",
+     "doc": "Entity kind to search, or 'any'.",
+     "required": false,
+     "enum": [
+      "any",
+      "monster",
+      "spell",
+      "quest",
+      "item",
+      "npc",
+      "achievement",
+      "dungeon"
+     ],
+     "default": "any"
+    },
+    "limit": {
+     "type": "int",
+     "doc": "Max results.",
+     "required": false,
+     "default": 5
+    }
+   }
+  },
+  {
+   "id": "nav.goto",
+   "verb": "nav",
+   "description": "Travel to a target. Give one of: [x,y] coordinates, a zaap name, an NPC, a map id, a cell, or a direction. `direction` leaves by that edge; `cell` walks to that specific spot on the current map.",
+   "backend": "directive",
+   "directive": "NAV_GOTO",
+   "returns": "transition ack; for an adjacent map the client walks to the border cell first, and a non-adjacent target is refused with the current map's exits",
+   "read_only": false,
+   "moves": true,
+   "lists": false,
+   "params": {
+    "x": {
+     "type": "int",
+     "doc": "Target X coordinate.",
+     "required": false
+    },
+    "y": {
+     "type": "int",
+     "doc": "Target Y coordinate.",
+     "required": false
+    },
+    "zaap": {
+     "type": "str",
+     "doc": "Zaap name, any language.",
+     "required": false
+    },
+    "npc": {
+     "type": "str",
+     "doc": "NPC name to travel to.",
+     "required": false
+    },
+    "npc_id": {
+     "type": "int",
+     "doc": "NPC id on the current map, as listed in snapshot.map.npcs.",
+     "required": false
+    },
+    "map_id": {
+     "type": "int",
+     "doc": "Raw map id.",
+     "required": false
+    },
+    "cell": {
+     "type": "int",
+     "doc": "Walk to this cell on the current map (a specific spot).",
+     "required": false
+    },
+    "direction": {
+     "type": "str",
+     "doc": "Leave by this edge of the current map.",
+     "required": false,
+     "enum": [
+      "left",
+      "right",
+      "top",
+      "bottom"
+     ]
+    },
+    "lang": {
+     "type": "str",
+     "doc": "Reply language.",
+     "required": false,
+     "enum": [
+      "fr",
+      "en",
+      "es",
+      "de"
+     ],
+     "default": "fr"
+    },
+    "from_x": {
+     "type": "int",
+     "doc": "Current X (default 4).",
+     "required": false
+    },
+    "from_y": {
+     "type": "int",
+     "doc": "Current Y (default -19).",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "nav.follow",
+   "verb": "nav",
+   "description": "Follow a character on the current map and through map changes. Empty name means 'follow the order giver'.",
+   "backend": "directive",
+   "directive": "FOLLOW",
+   "returns": "directive ack",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "name": {
+     "type": "str",
+     "doc": "Character name to follow; empty = the order giver.",
+     "required": false,
+     "default": ""
+    }
+   }
+  },
+  {
+   "id": "quest.list",
+   "verb": "quest",
+   "description": "List quests suitable for a level (and optionally an area), with start position and step objectives.",
+   "backend": "local",
+   "directive": null,
+   "returns": "list of quests with id, localised name, level range and step objectives",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "area": {
+     "type": "str",
+     "doc": "Area or subarea name filter, any language (e.g. 'astrub').",
+     "required": false
+    },
+    "level_min": {
+     "type": "int",
+     "doc": "Player level lower bound.",
+     "required": false
+    },
+    "level_max": {
+     "type": "int",
+     "doc": "Player level upper bound.",
+     "required": false
+    },
+    "dungeon_only": {
+     "type": "bool",
+     "doc": "Only dungeon quests.",
+     "required": false,
+     "default": false
+    },
+    "limit": {
+     "type": "int",
+     "doc": "Max results.",
+     "required": false,
+     "default": 10
+    }
+   }
+  },
+  {
+   "id": "quest.advance",
+   "verb": "quest",
+   "description": "Execute the next actionable step of a quest: navigate, talk to the NPC, harvest, or fight as the step objective requires.",
+   "backend": "directive",
+   "directive": "QUEST_ADVANCE",
+   "returns": "per-step progress report",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "quest_id": {
+     "type": "int",
+     "doc": "Quest id from quest.list.",
+     "required": true
+    },
+    "npc_id": {
+     "type": "int",
+     "required": false,
+     "doc": "Talk to this NPC, by the template id the objective carries."
+    },
+    "objective_id": {
+     "type": "int",
+     "required": false,
+     "doc": "Validate this objective. Use it to claim one the game already accepts (objectiveStatus 2)."
+    },
+    "reply": {
+     "type": "int",
+     "required": false,
+     "doc": "Which dialog reply to choose, by index. Defaults to 0, which is what an unanswered NPC dialog needs."
+    },
+    "reply_text": {
+     "type": "str",
+     "required": false,
+     "doc": "Which dialog reply to choose, by the exact French text reported in dialog.replies. With reply, both must agree."
+    },
+    "close": {
+     "type": "bool",
+     "required": false,
+     "doc": "Close an open dialog whose reply list is empty."
+    },
+    "accept": {
+     "type": "bool",
+     "required": false,
+     "doc": "Accept the quest this dialog is offering. The page sends QuestStartRequestMessage only when the dialog's own start_quest link matches quest_id, then closes."
+    }
+   }
+  },
+  {
+   "id": "farm.start",
+   "verb": "farm",
+   "description": "Start a farm loop: kill monster groups and/or harvest resources, looting according to the filter, optionally auto-selling.",
+   "backend": "directive",
+   "directive": "FARM_START",
+   "returns": "farm session id and live counters",
+   "read_only": false,
+   "moves": true,
+   "lists": false,
+   "params": {
+    "monster": {
+     "type": "id_or_name",
+     "doc": "Monster id from the objective, or a name from the corpus. The client needs an id; the harness resolves a name.",
+     "required": false
+    },
+    "resource": {
+     "type": "id_or_name",
+     "doc": "Resource id from the objective, or a name. The client harvests the nearest interactive element; the id selects it when the client can.",
+     "required": false
+    },
+    "zone": {
+     "type": "str",
+     "doc": "Area/subarea to stay inside, any language.",
+     "required": false
+    },
+    "restart": {
+     "type": "bool",
+     "doc": "Start a fresh session even if the farm is already running.",
+     "required": false,
+     "default": false
+    },
+    "map_id": {
+     "type": "int",
+     "doc": "Farm on one specific map.",
+     "required": false
+    },
+    "kill_count": {
+     "type": "int",
+     "doc": "Stop after this many kills.",
+     "required": false,
+     "default": 100
+    },
+    "duration_min": {
+     "type": "int",
+     "doc": "Stop after this many minutes.",
+     "required": false
+    },
+    "loot_filter": {
+     "type": "str_list",
+     "doc": "Item names to keep; others can be dropped.",
+     "required": false
+    },
+    "auto_sell": {
+     "type": "bool",
+     "doc": "Auto-list kept loot on the market when bags fill.",
+     "required": false,
+     "default": false
+    }
+   }
+  },
+  {
+   "id": "farm.stop",
+   "verb": "farm",
+   "description": "Stop the active farm loop and return to a safe idle state.",
+   "backend": "directive",
+   "directive": "FARM_STOP",
+   "returns": "final farm counters",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {}
+  },
+  {
+   "id": "fight.join",
+   "verb": "fight",
+   "description": "Join a fight: a monster group containing the named monster, an explicit group, or the nearest group.",
+   "backend": "directive",
+   "directive": "AUTO_JOIN_COMBAT",
+   "returns": "fight state",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "monster": {
+     "type": "int",
+     "required": false,
+     "doc": "Monster id from the objective. The group containing it is chosen; the client knows which group that is."
+    },
+    "group_id": {
+     "type": "int",
+     "required": false,
+     "doc": "Explicit monster-group id, when the caller already has one."
+    }
+   }
+  },
+  {
+   "id": "fight.pass",
+   "verb": "fight",
+   "description": "Pass the current combat turn.",
+   "backend": "directive",
+   "directive": "PASS_TURN",
+   "returns": "ack",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {}
+  },
+  {
+   "id": "inv.list",
+   "verb": "inv",
+   "description": "List inventory contents, optionally filtered by kind.",
+   "backend": "directive",
+   "directive": "INV_LIST",
+   "returns": "items with id, name, quantity, unit weight",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "kind": {
+     "type": "str",
+     "doc": "Inventory slice.",
+     "required": false,
+     "enum": [
+      "all",
+      "resources",
+      "equipment",
+      "consumables",
+      "quest_items"
+     ],
+     "default": "all"
+    }
+   }
+  },
+  {
+   "id": "inv.sell",
+   "verb": "inv",
+   "description": "Sell inventory items on the market (HDV) at a price rule. Default rule is median market price minus 1 kama.",
+   "backend": "directive",
+   "directive": "INV_SELL",
+   "returns": "per-item listing report (price used, quantity, market depth)",
+   "read_only": false,
+   "moves": false,
+   "lists": true,
+   "params": {
+    "item": {
+     "type": "str",
+     "doc": "Item name; omit when all=true.",
+     "required": false
+    },
+    "all": {
+     "type": "bool",
+     "doc": "Consider the whole inventory.",
+     "required": false,
+     "default": false
+    },
+    "quantity": {
+     "type": "int",
+     "doc": "Units to sell. Default 1: a bare \"sell X\" sells one unit, never the whole stack.",
+     "required": false,
+     "default": 1
+    },
+    "min_stock": {
+     "type": "int",
+     "doc": "Keep at least this many units.",
+     "required": false,
+     "default": 1
+    },
+    "price_rule": {
+     "type": "str",
+     "doc": "Pricing rule.",
+     "required": false,
+     "enum": [
+      "median_minus_1",
+      "undercut",
+      "fixed"
+     ],
+     "default": "median_minus_1"
+    },
+    "price": {
+     "type": "int",
+     "doc": "Price per unit when price_rule=fixed.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "hdv.scan",
+   "verb": "hdv",
+   "description": "Scan the market (HDV) for an item and return price statistics (min/median/max over current listings).",
+   "backend": "directive",
+   "directive": "HDV_SCAN",
+   "returns": "price stats and listing count",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "item": {
+     "type": "str",
+     "required": false,
+     "doc": "Item name to look up."
+    },
+    "category": {
+     "type": "int",
+     "required": false,
+     "doc": "Market category id, when browsing rather than searching."
+    },
+    "type": {
+     "type": "int",
+     "required": false,
+     "doc": "Item type id filter."
+    },
+    "item_type": {
+     "type": "int",
+     "required": false,
+     "doc": "Alias of type."
+    },
+    "id": {
+     "type": "int",
+     "required": false,
+     "doc": "Item id filter."
+    },
+    "gid": {
+     "type": "int",
+     "required": false,
+     "doc": "Item group id filter."
+    }
+   }
+  },
+  {
+   "id": "hdv.list",
+   "verb": "hdv",
+   "description": "List an item for sale on the market at an explicit or rule-based price.",
+   "backend": "directive",
+   "directive": "HDV_LIST",
+   "returns": "listing confirmations",
+   "read_only": false,
+   "moves": false,
+   "lists": true,
+   "params": {
+    "item": {
+     "type": "str",
+     "doc": "Item name, any language.",
+     "required": true
+    },
+    "quantity": {
+     "type": "int",
+     "doc": "Units to list.",
+     "required": false,
+     "default": 1
+    },
+    "price_rule": {
+     "type": "str",
+     "doc": "Pricing rule.",
+     "required": false,
+     "enum": [
+      "median_minus_1",
+      "undercut",
+      "fixed"
+     ],
+     "default": "median_minus_1"
+    },
+    "price": {
+     "type": "int",
+     "doc": "Price per unit when price_rule=fixed.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "chat.say",
+   "verb": "chat",
+   "description": "Send a chat message.",
+   "backend": "directive",
+   "directive": "CHAT_SAY",
+   "returns": "ack",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "text": {
+     "type": "str",
+     "doc": "Message text.",
+     "required": true
+    },
+    "channel": {
+     "type": "str",
+     "doc": "Chat channel.",
+     "required": false,
+     "enum": [
+      "say",
+      "team",
+      "guild",
+      "whisper"
+     ],
+     "default": "say"
+    },
+    "target": {
+     "type": "str",
+     "doc": "Recipient for whisper.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "state.snapshot",
+   "verb": "state",
+   "description": "Request a structured snapshot of current game state (position, map, HP, inventory summary, active fight).",
+   "backend": "directive",
+   "directive": "STATE_SNAPSHOT",
+   "returns": "observation dict recorded into the trajectory log",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {}
+  },
+  {
+   "id": "safe.stop",
+   "verb": "safe",
+   "description": "Emergency stop: halt farm/fight loops, stop acting, log out of dangerous situations. Always available.",
+   "backend": "directive",
+   "directive": "SAFE_STOP",
+   "returns": "ack",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "reason": {
+     "type": "str",
+     "doc": "Why the stop was triggered.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "knowledge.remember",
+   "verb": "knowledge",
+   "description": "Record something you discovered that the cache does not know (an NPC's map, a drop, a price, a quest prerequisite). Facts keep their provenance, so a wrong one can be corrected or forgotten. Never use this to copy the cache.",
+   "backend": "local",
+   "directive": null,
+   "returns": "{'changed': bool, 'note': str}",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "kind": {
+     "type": "str",
+     "doc": "Fact kind.",
+     "required": true,
+     "enum": [
+      "npc_map",
+      "monster_drop",
+      "item_source",
+      "price",
+      "quest_prereq",
+      "route",
+      "other"
+     ]
+    },
+    "key": {
+     "type": "str",
+     "doc": "Stable key, e.g. 'npc:447'.",
+     "required": true
+    },
+    "value": {
+     "type": "str",
+     "doc": "The fact as text or JSON, e.g. '12345' or '{\"map\": 123}'.",
+     "required": true
+    },
+    "confidence": {
+     "type": "float",
+     "doc": "0-1; 0.9 if you saw it, 0.5 if inferred.",
+     "required": false,
+     "default": 0.5
+    }
+   }
+  },
+  {
+   "id": "knowledge.forget",
+   "verb": "knowledge",
+   "description": "Delete a fact that turned out to be wrong. Use it instead of storing a contradicting value, so the store stays small.",
+   "backend": "local",
+   "directive": null,
+   "returns": "{'removed': bool}",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "kind": {
+     "type": "str",
+     "doc": "Fact kind.",
+     "required": true
+    },
+    "key": {
+     "type": "str",
+     "doc": "Key of the fact to remove.",
+     "required": true
+    },
+    "reason": {
+     "type": "str",
+     "doc": "Why it is wrong (kept in the log).",
+     "required": false,
+     "default": ""
+    }
+   }
+  },
+  {
+   "id": "fight.state",
+   "verb": "fight",
+   "description": "Read the live combat board: turn owner, fighters, cells, HP/AP/MP, team membership, and the controlled character's spell descriptors. The result also carries a versioned observation and a contract naming any fact the client did not expose.",
+   "backend": "directive",
+   "directive": "FIGHT_STATE",
+   "returns": "turn, fighter and spell facts from the live client, plus observation/contract",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {}
+  },
+  {
+   "id": "fight.plan",
+   "verb": "fight",
+   "description": "Read the live board and compute this turn's legal move-and-cast plan: exact cell geometry, line of sight, AP/MP, cooldowns, resistances, damage and healing. top_k > 1 also returns alternative plans (including pass) for a ranker. Read-only; it never casts or moves anything. Every answer carries the live observation and its contract.",
+   "backend": "local",
+   "directive": null,
+   "returns": "actions with cells/targets/AP/MP/damage, plus the normalized live observation, its contract, and the ranker decision",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "beam_width": {
+     "type": "int",
+     "doc": "How many partial turns to keep while searching.",
+     "required": false,
+     "default": 16
+    },
+    "max_actions": {
+     "type": "int",
+     "doc": "Maximum casts to consider in the plan.",
+     "required": false,
+     "default": 4
+    },
+    "top_k": {
+     "type": "int",
+     "doc": "Also return this many candidate plans; 1 = best only.",
+     "required": false,
+     "default": 1
+    },
+    "rank_with_value": {
+     "type": "bool",
+     "doc": "Compatibility alias for ranker=value: rank candidates with the learned encounter value head.",
+     "required": false,
+     "default": false
+    },
+    "ranker": {
+     "type": "str",
+     "doc": "Which plan ranker to use. 'solver' keeps the solver order; 'value' ranks candidates with the learned value head and refuses when the live observation lacks self stats or enemy spell facts; 'grid' ranks with the 30M 560-cell solver-distillation model (opt-in, read-only, fails open when the artifact is absent).",
+     "required": false,
+     "enum": [
+      "solver",
+      "value",
+      "grid"
+     ],
+     "default": "solver"
+    }
+   }
+  },
+  {
+   "id": "fight.estimate",
+   "verb": "fight",
+   "description": "Estimate whether the controlled character can win a monster group visible on this map: turns to kill, incoming damage, expected HP loss, and a calibrated win probability. Read-only; it never joins or casts.",
+   "backend": "local",
+   "directive": null,
+   "returns": "p_win (null until calibrated), raw_score, expected_hp_loss and turns, confidence, missing inputs, allowed and blocked_reason",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "group_id": {
+     "type": "int",
+     "doc": "Monster group id from map.groups.",
+     "required": false
+    },
+    "monster": {
+     "type": "id_or_name",
+     "doc": "Monster id or name. When several visible groups contain it, the least favourable one is estimated.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "hdv.buy",
+   "verb": "hdv",
+   "description": "Buy a market listing at or below a maximum unit price. uid is the listing id, not the item id. Use hdv.scan/hdv.prices first when only an item name or gid is known; the page resolves a listing only from prices the server already sent.",
+   "backend": "directive",
+   "directive": "HDV_BUY",
+   "returns": "listing uid, quantity, unit price, total and price source",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "uid": {
+     "type": "int",
+     "doc": "Market listing id (ExchangeBidHouseBuyMessage.uid), not the item id.",
+     "required": false
+    },
+    "listing_uid": {
+     "type": "int",
+     "doc": "Alias of uid.",
+     "required": false
+    },
+    "item": {
+     "type": "str",
+     "doc": "Item name; used only to resolve an inventory-known gid.",
+     "required": false
+    },
+    "gid": {
+     "type": "int",
+     "doc": "Item generic id; used to find a cached listing.",
+     "required": false
+    },
+    "quantity": {
+     "type": "int",
+     "doc": "Units to buy.",
+     "required": false,
+     "default": 1
+    },
+    "qty": {
+     "type": "int",
+     "doc": "Alias of quantity.",
+     "required": false
+    },
+    "max_price": {
+     "type": "int",
+     "doc": "Maximum unit price. Required unless price is given; the handler never buys above it.",
+     "required": false
+    },
+    "price": {
+     "type": "int",
+     "doc": "Expected unit price; must be <= max_price when both are present.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "inv.equip",
+   "verb": "inv",
+   "description": "Equip or remove an item. A saved preset uses InventoryPresetUseMessage; object_uid uses the client's own inventory.equipItem path and reports which gate stopped it when it sends nothing. slot forces the client's ObjectSetPositionMessage for an item whose type blocks equipItem; remove (or slot -1) sends the same message with position -1, which is the only way to free a slot, since an occupied slot does not swap.",
+   "backend": "directive",
+   "directive": "INV_EQUIP",
+   "returns": "preset/object, post-state and the available presets",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "preset_id": {
+     "type": "int",
+     "doc": "Saved inventory preset id (InventoryPresetUseMessage).",
+     "required": false
+    },
+    "preset": {
+     "type": "int",
+     "doc": "Alias of preset_id.",
+     "required": false
+    },
+    "object_uid": {
+     "type": "int",
+     "doc": "Inventory object UID; equips through the client's inventory.equipItem path.",
+     "required": false
+    },
+    "slot": {
+     "type": "str",
+     "doc": "Slot position ('weapon' or 0-16) sent via ObjectSetPositionMessage when equipItem sends nothing; -1 removes.",
+     "required": false
+    },
+    "remove": {
+     "type": "bool",
+     "doc": "Send ObjectSetPositionMessage with position -1; alias of slot -1.",
+     "required": false
+    },
+    "name": {
+     "type": "str",
+     "doc": "Item name or preset name.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "hdv.prices",
+   "verb": "hdv",
+   "description": "Read or capture current market prices from the page's server-message price cache. This is a read-only observation, not a purchase.",
+   "backend": "directive",
+   "directive": "HDV_PRICES",
+   "returns": "average prices, cached listing statistics and cache ages",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "item": {
+     "type": "str",
+     "doc": "Item name, when the page can resolve it from the inventory.",
+     "required": false
+    },
+    "gid": {
+     "type": "int",
+     "doc": "Item generic id.",
+     "required": false
+    },
+    "type": {
+     "type": "int",
+     "doc": "Item type id filter.",
+     "required": false
+    },
+    "category": {
+     "type": "int",
+     "doc": "Market category id.",
+     "required": false
+    },
+    "refresh": {
+     "type": "bool",
+     "doc": "Ask the server for the average-price table.",
+     "required": false,
+     "default": false
+    }
+   }
+  },
+  {
+   "id": "tap.interactive",
+   "verb": "tap",
+   "description": "Use a visible interactive element (door, chest, quest object, resource) through the client's own InteractiveUseRequestMessage.",
+   "backend": "directive",
+   "directive": "INTERACTIVE",
+   "returns": "chosen element id, skill instance uid and cell",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "element_id": {
+     "type": "int",
+     "doc": "Interactive element id from map.interactives.",
+     "required": false
+    },
+    "elem_id": {
+     "type": "int",
+     "doc": "Alias of element_id.",
+     "required": false
+    },
+    "skill_id": {
+     "type": "int",
+     "doc": "Skill instance uid, when known.",
+     "required": false
+    },
+    "skill_uid": {
+     "type": "int",
+     "doc": "Alias of skill_id.",
+     "required": false
+    },
+    "cell": {
+     "type": "int",
+     "doc": "Select the element standing on this cell.",
+     "required": false
+    },
+    "name": {
+     "type": "str",
+     "doc": "Reserved for a future named lookup; the page does not invent names it cannot read.",
+     "required": false
+    }
+   }
+  },
+  {
+   "id": "ui.tap",
+   "verb": "ui",
+   "description": "Press the game's own UI: a menu-bar icon by name (Spell, Book, Map, Bag, Carac), any visible control by CSS selector, or a control the tutorial's hint/condition drives by object path (client_target: challenge, spell_upgrade_confirm, spell_plus, charac_update, world, and the later tutorials' controls: contextual_menu:N, npc_menu:N, trade_slot, trade_validate, craft_slot, craft_recipe, craft_merge, craft_drag, shop_category:N, shop_item:N, sell_info, bestiary_monster, bestiary_drop, close:NAME). The tutorial's interface steps are completed by this press; their objectives are server-counted and a claim on one ends the connection.",
+   "backend": "directive",
+   "directive": "UI_TAP",
+   "returns": "pressed selector, open windows before and after, and whether the press changed the open-window set",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "menu": {
+     "type": "str",
+     "doc": "Menu icon name, e.g. Spell, Book, Map, Bag, Carac.",
+     "required": false
+    },
+    "selector": {
+     "type": "str",
+     "doc": "CSS selector for any other visible control, e.g. .shopBtn.",
+     "required": false
+    },
+    "client_target": {
+     "type": "str",
+     "doc": "Client-object control the tutorial points at: challenge, spell_upgrade_confirm, spell_plus, charac_update (spends unspent stat points, then fires the characteristics condition), world (a touchend on the game body for a TAP_ANYWHERE step), the later tutorials' controls (contextual_menu:N, npc_menu:N, trade_slot, trade_validate, craft_slot, craft_recipe, craft_merge, craft_drag, shop_category:N, shop_item:N, sell_info, bestiary_monster, bestiary_drop) or close:NAME (closes a window the step ends on closing).",
+     "required": false
+    },
+    "close_first": {
+     "type": "str",
+     "doc": "Window name to close before pressing, so the press produces a real opening.",
+     "required": false
+    },
+    "index": {
+     "type": "int",
+     "doc": "Which visible match to press, 0-based.",
+     "required": false,
+     "default": 0
+    },
+    "cycle": {
+     "type": "bool",
+     "doc": "Press again after the window opens, so an open-and-close step is given back.",
+     "required": false,
+     "default": false
+    },
+    "cycle_ms": {
+     "type": "int",
+     "doc": "Delay before the second press.",
+     "required": false,
+     "default": 1200
+    }
+   }
+  },
+  {
+   "id": "ui.icons",
+   "verb": "ui",
+   "description": "List the menu-bar icons the client shows right now (key, disabled flag, position) and the open windows. Read-only.",
+   "backend": "directive",
+   "directive": "UI_ICONS",
+   "returns": "icons list and open window names",
+   "read_only": true,
+   "moves": false,
+   "lists": false,
+   "params": {}
+  },
+  {
+   "id": "shop.buy",
+   "verb": "shop",
+   "description": "Buy the first article of the tutorial's shop window with the client's own hard-price button. The tutorial enables a fake shop whose purchase is free and whose button makes the client validate the quest objective itself; outside that mode the same button starts a real-currency purchase, so the page refuses and says so.",
+   "backend": "directive",
+   "directive": "SHOP_BUY",
+   "returns": "article id, the button pressed, open windows before/after",
+   "read_only": false,
+   "moves": false,
+   "lists": false,
+   "params": {
+    "which": {
+     "type": "str",
+     "doc": "Which article to buy; 'first' is the tutorial's pack.",
+     "required": false,
+     "default": "first"
+    }
+   }
+  }
+ ]
+}

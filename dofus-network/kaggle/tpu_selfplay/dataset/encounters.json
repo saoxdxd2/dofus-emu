@@ -1,0 +1,19 @@
+{
+ "samples": 8192,
+ "seed": 7,
+ "max_enemies": 4,
+ "level_min": 1,
+ "level_max": 60,
+ "boss_prob": 0.15,
+ "group_weights": [
+  0.25,
+  0.35,
+  0.25,
+  0.15
+ ],
+ "enemy_level_bonus": 4,
+ "source_spells": "data\\cache\\official_class_spells.json",
+ "source_monsters": "data\\cache\\monsters_full.json",
+ "enemy_spells": "melee/ranged/heavy scaled by grade level; monster-to-spell ids are not in the cache",
+ "player_build": "one focused element 70%, two 25%, three 5%; elemental stat folded into the spell damage"
+}

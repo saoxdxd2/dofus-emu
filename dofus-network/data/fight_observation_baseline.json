@@ -1,0 +1,15 @@
+{
+ "boards": 135,
+ "actionable": 120,
+ "contract_mismatches": 0,
+ "board_block_mismatches": 0,
+ "slim_view_mismatches": 0,
+ "full_view_mismatches": 0,
+ "full_ms_per_board": 0.57237,
+ "slim_ms_per_board": 0.04721,
+ "removed_pct_of_observation_path": 91.8,
+ "rounds": 7,
+ "passes": 6,
+ "interpreter": "3.11.9",
+ "at": 1793749622.6725333
+}

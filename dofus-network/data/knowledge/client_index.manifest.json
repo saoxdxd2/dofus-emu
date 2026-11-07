@@ -1,0 +1,103 @@
+{
+ "checked_at": "2026-11-07T13:11:10",
+ "logs": [
+  {
+   "name": "dofus-01.jsonl",
+   "size": 53436815,
+   "mtime": 1793860716
+  },
+  {
+   "name": "dofus-02.20261029-022349-419629.jsonl",
+   "size": 67106196,
+   "mtime": 1793261963
+  },
+  {
+   "name": "dofus-02.jsonl",
+   "size": 4337125,
+   "mtime": 1793966328
+  },
+  {
+   "name": "dofus-03.jsonl",
+   "size": 23285420,
+   "mtime": 1793966372
+  },
+  {
+   "name": "dofus-04.jsonl",
+   "size": 11523818,
+   "mtime": 1794029336
+  },
+  {
+   "name": "dofus-05.20261029-170756-782023.jsonl",
+   "size": 67115153,
+   "mtime": 1793293670
+  },
+  {
+   "name": "dofus-05.jsonl",
+   "size": 40010049,
+   "mtime": 1793296238
+  },
+  {
+   "name": "default.20261026-074102-070180.jsonl",
+   "size": 67113652,
+   "mtime": 1793000461
+  },
+  {
+   "name": "default.jsonl",
+   "size": 50741823,
+   "mtime": 1793786139
+  }
+ ],
+ "rows": 57,
+ "quests": [
+  3841,
+  4260,
+  4262,
+  4264,
+  4266,
+  4274,
+  4278,
+  4604,
+  4644
+ ],
+ "fields": {
+  "type_id": {
+   "present": 51,
+   "total": 57,
+   "pct": 89.5
+  },
+  "map_id": {
+   "present": 26,
+   "total": 57,
+   "pct": 45.6
+  },
+  "params": {
+   "present": 51,
+   "total": 57,
+   "pct": 89.5
+  },
+  "text": {
+   "present": 46,
+   "total": 57,
+   "pct": 80.7
+  },
+  "step_id": {
+   "present": 51,
+   "total": 57,
+   "pct": 89.5
+  },
+  "quest_name": {
+   "present": 51,
+   "total": 57,
+   "pct": 89.5
+  }
+ },
+ "conflicts": {},
+ "unbound_step_objectives_seen": 217,
+ "sources": {
+  "catalog": 51,
+  "ready": 49,
+  "current": 34,
+  "step": 40
+ },
+ "index_sha256": "34a78457d3ec37516d6a53cad6577b0625e5af03285c3cc5cb88d6a864611c56"
+}

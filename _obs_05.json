@@ -1,0 +1,2242 @@
+{
+ "connected": true,
+ "in_fight": false,
+ "character": {
+  "id": 4434148,
+  "name": "Bruih",
+  "level": 13,
+  "breed": 1
+ },
+ "position": {
+  "cell": 416,
+  "x": 7,
+  "y": -60,
+  "map_id": 145490434
+ },
+ "in_world": true,
+ "login": "[redacted]",
+ "hp": {
+  "life": 145,
+  "max": 145,
+  "ap": 6,
+  "mp": 3
+ },
+ "alive": true,
+ "life_state": 0,
+ "points": {
+  "stats": 0,
+  "spells": 6
+ },
+ "last_fight_end": {
+  "at": 1793295451484,
+  "fight_id": 1482,
+  "my_id": 4434148,
+  "won": true,
+  "results": [
+   {
+    "id": -1,
+    "alive": false,
+    "xp": null,
+    "kamas": null
+   },
+   {
+    "id": 4434148,
+    "alive": true,
+    "xp": null,
+    "kamas": null
+   }
+  ],
+  "duration": 9988,
+  "keys": [
+   "_messageType",
+   "duration",
+   "lootShareLimitMalus",
+   "results",
+   "score",
+   "entities",
+   "_isInitialized"
+  ],
+  "challenges": [],
+  "battle_log": [
+   {
+    "type": "GameFightJoinMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightPlacementPossiblePositionsMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightShowFighterMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightOptionStateUpdateMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": 1482
+   },
+   {
+    "type": "GameFightOptionStateUpdateMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": 1482
+   },
+   {
+    "type": "GameFightOptionStateUpdateMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": 1482
+   },
+   {
+    "type": "GameFightOptionStateUpdateMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": 1482
+   },
+   {
+    "type": "GameFightShowFighterMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightUpdateTeamMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": 1482
+   },
+   {
+    "type": "GameFightUpdateTeamMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": 1482
+   },
+   {
+    "type": "GameFightHumanReadyStateMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightStartMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightTurnListMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightSynchronizeMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightNewRoundMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightTurnStartMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightSynchronizeMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightSpellCastMessage",
+    "at_action": 300,
+    "source": -1,
+    "target": -1,
+    "spell": 6936,
+    "spell_level": 1,
+    "cell": null,
+    "effect": -1,
+    "critical": 2,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightPointsVariationMessage",
+    "at_action": 102,
+    "source": -1,
+    "target": -1,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": -1,
+    "critical": null,
+    "delta": -2,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightSynchronizeMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightSpellCastMessage",
+    "at_action": 300,
+    "source": -1,
+    "target": 4434148,
+    "spell": 6938,
+    "spell_level": 1,
+    "cell": null,
+    "effect": -1,
+    "critical": 2,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightPointsVariationMessage",
+    "at_action": 102,
+    "source": -1,
+    "target": -1,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": -1,
+    "critical": null,
+    "delta": -3,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightLifePointsLostMessage",
+    "at_action": 98,
+    "source": -1,
+    "target": 4434148,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": 161792,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": 25,
+    "permanent_damages": 2,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightSlideMessage",
+    "at_action": 5,
+    "source": -1,
+    "target": 4434148,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": 161793,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightSynchronizeMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightPointsVariationMessage",
+    "at_action": 129,
+    "source": -1,
+    "target": -1,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": -1,
+    "critical": null,
+    "delta": -3,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightSynchronizeMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightTurnEndMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightTurnReadyRequestMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightTurnStartMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightSynchronizeMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightSpellCastMessage",
+    "at_action": 300,
+    "source": 4434148,
+    "target": -1,
+    "spell": 19,
+    "spell_level": 4,
+    "cell": null,
+    "effect": -1,
+    "critical": 2,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightPointsVariationMessage",
+    "at_action": 102,
+    "source": 4434148,
+    "target": 4434148,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": -1,
+    "critical": null,
+    "delta": -3,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightLifePointsLostMessage",
+    "at_action": 96,
+    "source": -22300,
+    "target": -1,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": 6604,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": 37,
+    "permanent_damages": 3,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightDispellableEffectMessage",
+    "at_action": 152,
+    "source": 4434148,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": 189580,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightDispellableEffectMessage",
+    "at_action": 123,
+    "source": 4434148,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": 189580,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightSynchronizeMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightSpellCastMessage",
+    "at_action": 300,
+    "source": 4434148,
+    "target": -1,
+    "spell": 19,
+    "spell_level": 4,
+    "cell": null,
+    "effect": -1,
+    "critical": 1,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightPointsVariationMessage",
+    "at_action": 102,
+    "source": 4434148,
+    "target": 4434148,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": -1,
+    "critical": null,
+    "delta": -3,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightLifePointsLostMessage",
+    "at_action": 96,
+    "source": -22300,
+    "target": -1,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": 6401,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": 45,
+    "permanent_damages": 4,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameActionFightDeathMessage",
+    "at_action": 103,
+    "source": 4434148,
+    "target": -1,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": 6401,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightTurnReadyRequestMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   },
+   {
+    "type": "GameFightEndMessage",
+    "at_action": null,
+    "source": null,
+    "target": null,
+    "spell": null,
+    "spell_level": null,
+    "cell": null,
+    "effect": null,
+    "critical": null,
+    "delta": null,
+    "value": null,
+    "loss": null,
+    "permanent_damages": null,
+    "shield_loss": null,
+    "fight_id": null
+   }
+  ]
+ },
+ "fight_id": 1482,
+ "challenges": [],
+ "battle_log_tail": [
+  {
+   "type": "GameActionFightSpellCastMessage",
+   "at_action": 300,
+   "source": 4434148,
+   "target": -1,
+   "spell": 19,
+   "spell_level": 4,
+   "cell": null,
+   "effect": -1,
+   "critical": 2,
+   "delta": null,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameActionFightPointsVariationMessage",
+   "at_action": 102,
+   "source": 4434148,
+   "target": 4434148,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": -1,
+   "critical": null,
+   "delta": -3,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameActionFightLifePointsLostMessage",
+   "at_action": 96,
+   "source": -22300,
+   "target": -1,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": 6604,
+   "critical": null,
+   "delta": null,
+   "value": null,
+   "loss": 37,
+   "permanent_damages": 3,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameActionFightDispellableEffectMessage",
+   "at_action": 152,
+   "source": 4434148,
+   "target": null,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": 189580,
+   "critical": null,
+   "delta": null,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameActionFightDispellableEffectMessage",
+   "at_action": 123,
+   "source": 4434148,
+   "target": null,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": 189580,
+   "critical": null,
+   "delta": null,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameFightSynchronizeMessage",
+   "at_action": null,
+   "source": null,
+   "target": null,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": null,
+   "critical": null,
+   "delta": null,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameActionFightSpellCastMessage",
+   "at_action": 300,
+   "source": 4434148,
+   "target": -1,
+   "spell": 19,
+   "spell_level": 4,
+   "cell": null,
+   "effect": -1,
+   "critical": 1,
+   "delta": null,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameActionFightPointsVariationMessage",
+   "at_action": 102,
+   "source": 4434148,
+   "target": 4434148,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": -1,
+   "critical": null,
+   "delta": -3,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameActionFightLifePointsLostMessage",
+   "at_action": 96,
+   "source": -22300,
+   "target": -1,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": 6401,
+   "critical": null,
+   "delta": null,
+   "value": null,
+   "loss": 45,
+   "permanent_damages": 4,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameActionFightDeathMessage",
+   "at_action": 103,
+   "source": 4434148,
+   "target": -1,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": 6401,
+   "critical": null,
+   "delta": null,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameFightTurnReadyRequestMessage",
+   "at_action": null,
+   "source": null,
+   "target": null,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": null,
+   "critical": null,
+   "delta": null,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  },
+  {
+   "type": "GameFightEndMessage",
+   "at_action": null,
+   "source": null,
+   "target": null,
+   "spell": null,
+   "spell_level": null,
+   "cell": null,
+   "effect": null,
+   "critical": null,
+   "delta": null,
+   "value": null,
+   "loss": null,
+   "permanent_damages": null,
+   "shield_loss": null,
+   "fight_id": null
+  }
+ ],
+ "in_dialog": false,
+ "dialog": {
+  "open": false
+ },
+ "agent_build": "2026-10-29bf",
+ "login_cooldown": null,
+ "last_disconnect": null,
+ "last_nav": {
+  "at": 1793296217528,
+  "stage": "change_requested_at_edge",
+  "from_map": 145490434,
+  "to_map": 145490432,
+  "direction": "top",
+  "cell": 19
+ },
+ "keep_alive": {
+  "marks": 2933,
+  "failed": 5,
+  "present": true,
+  "via": "setInterval-owner",
+  "last_source": "directive",
+  "idle_ms": 0,
+  "age_ms": 0,
+  "inactive": false
+ },
+ "geometry": {
+  "boot": {
+   "w": 1350,
+   "h": 729
+  },
+  "now": {
+   "w": 1350,
+   "h": 729
+  },
+  "dpr": 1,
+  "drifted": false,
+  "in_world": false,
+  "pending": false,
+  "reloads_last_2min": 0
+ },
+ "user_input": {
+  "trusted": 184,
+  "during_run": 120,
+  "by_type": {
+   "pointerdown": 55,
+   "touchstart": 55,
+   "keydown": 48,
+   "mousedown": 1,
+   "wheel": 25
+  },
+  "last_ts": 1793295765478
+ },
+ "map": {
+  "map_id": 145490434,
+  "cell": 416,
+  "x": 7,
+  "y": -60,
+  "neighbours": {
+   "left": 145489921,
+   "right": 145490945,
+   "top": 145490432,
+   "bottom": 145490434
+  },
+  "exits": [
+   {
+    "direction": "left",
+    "map_id": 145489921,
+    "blocked": false,
+    "cells": [
+     406,
+     378,
+     434,
+     350,
+     462,
+     490
+    ]
+   },
+   {
+    "direction": "right",
+    "map_id": 145490945,
+    "blocked": false,
+    "cells": [
+     405,
+     433,
+     377,
+     349,
+     419,
+     391
+    ]
+   },
+   {
+    "direction": "top",
+    "map_id": 145490432,
+    "blocked": false,
+    "cells": [
+     21,
+     8,
+     7,
+     20,
+     6,
+     19
+    ]
+   },
+   {
+    "direction": "bottom",
+    "map_id": 145490434,
+    "blocked": false,
+    "cells": [
+     554,
+     540,
+     553,
+     539,
+     552,
+     538
+    ]
+   }
+  ],
+  "doors": [
+   {
+    "cell": 16,
+    "to_map": 145490433,
+    "at": 1793295412250
+   },
+   {
+    "cell": 21,
+    "to_map": 145490433,
+    "at": 1793293547810
+   },
+   {
+    "cell": 322,
+    "to_map": 145489922,
+    "at": 1793296023420
+   },
+   {
+    "cell": 335,
+    "to_map": 145490946,
+    "at": 1793293953824
+   },
+   {
+    "cell": 349,
+    "to_map": 145490946,
+    "at": 1793296009811
+   }
+  ],
+  "npcs": [
+   {
+    "npc_id": 3952,
+    "actor_id": -1,
+    "cell": 444,
+    "name": null
+   },
+   {
+    "npc_id": 3944,
+    "actor_id": -2,
+    "cell": 118,
+    "name": null
+   }
+  ],
+  "interactives": [],
+  "groups": [
+   {
+    "group_id": -20447,
+    "contextualId": -20447,
+    "cell": 525,
+    "monster_ids": [
+     4215,
+     4215,
+     4213
+    ],
+    "members": [
+     {
+      "monster_id": 4215,
+      "level": 5,
+      "is_boss": false,
+      "is_mini_boss": false
+     },
+     {
+      "monster_id": 4215,
+      "level": 6,
+      "is_boss": false,
+      "is_mini_boss": false
+     },
+     {
+      "monster_id": 4213,
+      "level": 6,
+      "is_boss": false,
+      "is_mini_boss": false
+     }
+    ],
+    "member_count": 3,
+    "levels_known": 3,
+    "total_level": 17,
+    "max_level": 6,
+    "is_boss": false,
+    "scale_level": 0,
+    "static_keys": [
+     "_type",
+     "mainCreatureLightInfos",
+     "underlings"
+    ]
+   },
+   {
+    "group_id": -20450,
+    "contextualId": -20450,
+    "cell": 396,
+    "monster_ids": [
+     4213,
+     4213
+    ],
+    "members": [
+     {
+      "monster_id": 4213,
+      "level": 5,
+      "is_boss": false,
+      "is_mini_boss": false
+     },
+     {
+      "monster_id": 4213,
+      "level": 5,
+      "is_boss": false,
+      "is_mini_boss": false
+     }
+    ],
+    "member_count": 2,
+    "levels_known": 2,
+    "total_level": 10,
+    "max_level": 5,
+    "is_boss": false,
+    "scale_level": 0,
+    "static_keys": [
+     "_type",
+     "mainCreatureLightInfos",
+     "underlings"
+    ]
+   },
+   {
+    "group_id": -20449,
+    "contextualId": -20449,
+    "cell": 441,
+    "monster_ids": [
+     4215
+    ],
+    "members": [
+     {
+      "monster_id": 4215,
+      "level": 6,
+      "is_boss": false,
+      "is_mini_boss": false
+     }
+    ],
+    "member_count": 1,
+    "levels_known": 1,
+    "total_level": 6,
+    "max_level": 6,
+    "is_boss": false,
+    "scale_level": 0,
+    "static_keys": [
+     "_type",
+     "mainCreatureLightInfos",
+     "underlings"
+    ]
+   },
+   {
+    "group_id": -20448,
+    "contextualId": -20448,
+    "cell": 481,
+    "monster_ids": [
+     4211
+    ],
+    "members": [
+     {
+      "monster_id": 4211,
+      "level": 7,
+      "is_boss": false,
+      "is_mini_boss": false
+     }
+    ],
+    "member_count": 1,
+    "levels_known": 1,
+    "total_level": 7,
+    "max_level": 7,
+    "is_boss": false,
+    "scale_level": 0,
+    "static_keys": [
+     "_type",
+     "mainCreatureLightInfos",
+     "underlings"
+    ]
+   }
+  ],
+  "group_count": 4,
+  "groups_scan": {
+   "manager": true,
+   "path": "actors",
+   "seen": 6,
+   "matched": 4,
+   "types": {
+    "GameRolePlayNpcInformations": 2,
+    "GameRolePlayGroupMonsterInformations": 4
+   }
+  },
+  "transition": {
+   "outgoing": [
+    {
+     "at": 1793296090329,
+     "name": "MapInformationsRequestMessage",
+     "args": {
+      "mapId": 145490433
+     }
+    },
+    {
+     "at": 1793296096186,
+     "name": "ChangeMapMessage",
+     "args": {
+      "mapId": 145490432
+     }
+    },
+    {
+     "at": 1793296102585,
+     "name": "ChangeMapMessage",
+     "args": {
+      "mapId": 145490432
+     }
+    },
+    {
+     "at": 1793296106008,
+     "name": "SequenceNumberMessage",
+     "args": {
+      "number": 14
+     }
+    },
+    {
+     "at": 1793296106008,
+     "name": "BasicLatencyStatsMessage",
+     "args": {
+      "latency": 1453,
+      "sampleCount": 10,
+      "max": 10
+     }
+    },
+    {
+     "at": 1793296109345,
+     "name": "ChangeMapMessage",
+     "args": {
+      "mapId": 145490432
+     }
+    },
+    {
+     "at": 1793296115745,
+     "name": "GameMapMovementRequestMessage",
+     "args": {
+      "keyMovements": "array[4]",
+      "mapId": 145490433
+     }
+    },
+    {
+     "at": 1793296116753,
+     "name": "BasicPingMessage",
+     "args": {
+      "quiet": true
+     }
+    },
+    {
+     "at": 1793296117368,
+     "name": "MapInformationsRequestMessage",
+     "args": {
+      "mapId": 145490433
+     }
+    },
+    {
+     "at": 1793296140184,
+     "name": "BasicPingMessage",
+     "args": {
+      "quiet": true
+     }
+    },
+    {
+     "at": 1793296197947,
+     "name": "GameMapMovementRequestMessage",
+     "args": {
+      "keyMovements": "array[4]",
+      "mapId": 145490433
+     }
+    },
+    {
+     "at": 1793296198162,
+     "name": "MapInformationsRequestMessage",
+     "args": {
+      "mapId": 145490433
+     }
+    },
+    {
+     "at": 1793296200354,
+     "name": "BasicPingMessage",
+     "args": {
+      "quiet": true
+     }
+    },
+    {
+     "at": 1793296204364,
+     "name": "ChangeMapMessage",
+     "args": {
+      "mapId": 145490432
+     }
+    },
+    {
+     "at": 1793296210780,
+     "name": "ChangeMapMessage",
+     "args": {
+      "mapId": 145490432
+     }
+    },
+    {
+     "at": 1793296217528,
+     "name": "ChangeMapMessage",
+     "args": {
+      "mapId": 145490432
+     }
+    },
+    {
+     "at": 1793296223800,
+     "name": "GameMapMovementRequestMessage",
+     "args": {
+      "keyMovements": "array[4]",
+      "mapId": 145490433
+     }
+    },
+    {
+     "at": 1793296223953,
+     "name": "MapInformationsRequestMessage",
+     "args": {
+      "mapId": 145490433
+     }
+    },
+    {
+     "at": 1793296231920,
+     "name": "GameMapMovementRequestMessage",
+     "args": {
+      "keyMovements": "array[8]",
+      "mapId": 145490433
+     }
+    },
+    {
+     "at": 1793296232080,
+     "name": "MapInformationsRequestMessage",
+     "args": {
+      "mapId": 145490433
+     }
+    }
+   ],
+   "incoming": [
+    {
+     "at": 1793296223953,
+     "name": "data",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296223953,
+     "name": "BasicNoOperationMessage",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296224113,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "seq",
+      "lastPacketId",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1793296224113,
+     "name": "BasicAckMessage",
+     "keys": [
+      "_messageType",
+      "seq",
+      "lastPacketId",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1793296224113,
+     "name": "data",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296224113,
+     "name": "BasicNoOperationMessage",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296231920,
+     "name": "send",
+     "keys": [
+      "call",
+      "data"
+     ]
+    },
+    {
+     "at": 1793296231920,
+     "name": "send:sendMessage",
+     "keys": [
+      "call",
+      "data"
+     ]
+    },
+    {
+     "at": 1793296232080,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "seq",
+      "lastPacketId",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1793296232080,
+     "name": "BasicAckMessage",
+     "keys": [
+      "_messageType",
+      "seq",
+      "lastPacketId",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1793296232080,
+     "name": "data",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296232080,
+     "name": "GameMapNoMovementMessage",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296232080,
+     "name": "send",
+     "keys": [
+      "call",
+      "data"
+     ]
+    },
+    {
+     "at": 1793296232080,
+     "name": "send:sendMessage",
+     "keys": [
+      "call",
+      "data"
+     ]
+    },
+    {
+     "at": 1793296232080,
+     "name": "data",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296232080,
+     "name": "BasicNoOperationMessage",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296232238,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "seq",
+      "lastPacketId",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1793296232238,
+     "name": "BasicAckMessage",
+     "keys": [
+      "_messageType",
+      "seq",
+      "lastPacketId",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1793296232318,
+     "name": "data",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1793296232318,
+     "name": "BasicNoOperationMessage",
+     "keys": [
+      "_messageType"
+     ]
+    }
+   ],
+   "map_info": {
+    "at": 1793296075899,
+    "map": 145490434,
+    "sub_area": 852
+   },
+   "no_move": {
+    "at": 1793296232080
+   },
+   "last_nav": {
+    "at": 1793296217528,
+    "stage": "change_requested_at_edge",
+    "from_map": 145490434,
+    "to_map": 145490432,
+    "direction": "top",
+    "cell": 19
+   }
+  }
+ },
+ "tutorial": {
+  "active": false,
+  "quest_id": null,
+  "step_id": null,
+  "special_step_id": null,
+  "step_checkpoint": null,
+  "hint_target": null,
+  "interactive_hint": null,
+  "menu_hint": null,
+  "open_window": null,
+  "tap_anywhere": false,
+  "ending_conditions": null,
+  "behaviour_ids": null,
+  "can_change_map": {
+   "left": true,
+   "right": true,
+   "top": true,
+   "bottom": true
+  },
+  "unblocked_cells": null,
+  "unblocked_npc_id": null
+ },
+ "quests_active": {
+  "4262": 0,
+  "4264": 0
+ },
+ "quest_steps": {
+  "4262": 4954,
+  "4264": 4956
+ },
+ "quests_finished": 3,
+ "current_objective": {
+  "quest_id": "4262",
+  "step": 0,
+  "objective_id": 13948,
+  "status": 2,
+  "type_id": 0,
+  "type": "QuestObjectiveFreeForm",
+  "map_id": 145490432,
+  "params": {
+   "parameter0": 704145
+  },
+  "text": "Recover the first page of the aqueduct blueprints.",
+  "step_id": 4954
+ },
+ "ready_objectives": [
+  {
+   "quest_id": "4262",
+   "objective_id": 13948,
+   "type_id": 0,
+   "type": "QuestObjectiveFreeForm",
+   "map_id": 145490432,
+   "params": {
+    "parameter0": 704145
+   },
+   "text": "Recover the first page of the aqueduct blueprints.",
+   "step_id": 4954
+  },
+  {
+   "quest_id": "4264",
+   "objective_id": 13966,
+   "type_id": 6,
+   "type": "QuestObjectiveFightMonster",
+   "map_id": 145490946,
+   "params": {
+    "parameter0": 4212,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Brytnee Spyr in a single fight.",
+   "step_id": 4956
+  }
+ ],
+ "step_objectives": [
+  {
+   "id": 13930,
+   "done": true,
+   "status": 0,
+   "type_id": 4,
+   "type": "QuestObjectiveDiscoverMap",
+   "map_id": 145489920,
+   "params": {
+    "parameter0": 716836
+   },
+   "text": "Find the map: Dam worksite.",
+   "step_id": 4954
+  },
+  {
+   "id": 13932,
+   "done": true,
+   "status": 0,
+   "type_id": 1,
+   "type": "QuestObjectiveGoToNpc",
+   "map_id": 145489920,
+   "params": {
+    "parameter0": 3896
+   },
+   "text": "Talk to Foreman Kosh",
+   "step_id": 4954
+  },
+  {
+   "id": 13934,
+   "done": true,
+   "status": 0,
+   "type_id": 14,
+   "type": "QuestObjectiveMultiFightMonster",
+   "cur_completion": 0,
+   "max_completion": 1,
+   "params": {
+    "parameter0": 4211,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Boorbear",
+   "step_id": 4954
+  },
+  {
+   "id": 13936,
+   "done": true,
+   "status": 0,
+   "type_id": 14,
+   "type": "QuestObjectiveMultiFightMonster",
+   "cur_completion": 0,
+   "max_completion": 1,
+   "params": {
+    "parameter0": 4213,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Weaselraff",
+   "step_id": 4954
+  },
+  {
+   "id": 13938,
+   "done": true,
+   "status": 0,
+   "type_id": 14,
+   "type": "QuestObjectiveMultiFightMonster",
+   "cur_completion": 0,
+   "max_completion": 1,
+   "params": {
+    "parameter0": 4215,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Harrizarre",
+   "step_id": 4954
+  },
+  {
+   "id": 13940,
+   "done": true,
+   "status": 0,
+   "type_id": 0,
+   "type": "QuestObjectiveFreeForm",
+   "map_id": 145489920,
+   "params": {
+    "parameter0": 719652
+   },
+   "text": "Go back and see Foreman Kosh once the monsters have been defeated.",
+   "step_id": 4954
+  },
+  {
+   "id": 13942,
+   "done": true,
+   "status": 0,
+   "type_id": 1,
+   "type": "QuestObjectiveGoToNpc",
+   "map_id": 145489920,
+   "params": {
+    "parameter0": 3898
+   },
+   "text": "Talk to Aggressive Raccoon",
+   "step_id": 4954
+  },
+  {
+   "id": 13944,
+   "done": true,
+   "status": 0,
+   "type_id": 6,
+   "type": "QuestObjectiveFightMonster",
+   "map_id": 145489920,
+   "params": {
+    "parameter0": 4210,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Aggressive Raccoon in a single fight.",
+   "step_id": 4954
+  },
+  {
+   "id": 13946,
+   "done": true,
+   "status": 0,
+   "type_id": 1,
+   "type": "QuestObjectiveGoToNpc",
+   "map_id": 145489920,
+   "params": {
+    "parameter0": 3888
+   },
+   "text": "Talk to Ayin Spyr",
+   "step_id": 4954
+  },
+  {
+   "id": 13948,
+   "done": false,
+   "status": 2,
+   "type_id": 0,
+   "type": "QuestObjectiveFreeForm",
+   "map_id": 145490432,
+   "params": {
+    "parameter0": 704145
+   },
+   "text": "Recover the first page of the aqueduct blueprints.",
+   "step_id": 4954
+  }
+ ],
+ "objectives_completed": 0,
+ "quests_catalog": [
+  {
+   "id": 4262,
+   "steps": [
+    {
+     "id": 4954,
+     "objectives": [
+      {
+       "id": 13930,
+       "type_id": 4,
+       "type": "QuestObjectiveDiscoverMap",
+       "map_id": 145489920,
+       "params": {
+        "parameter0": 716836
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13932,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145489920,
+       "params": {
+        "parameter0": 3896
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13934,
+       "type_id": 14,
+       "type": "QuestObjectiveMultiFightMonster",
+       "params": {
+        "parameter0": 4211,
+        "parameter1": 1
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13936,
+       "type_id": 14,
+       "type": "QuestObjectiveMultiFightMonster",
+       "params": {
+        "parameter0": 4213,
+        "parameter1": 1
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13938,
+       "type_id": 14,
+       "type": "QuestObjectiveMultiFightMonster",
+       "params": {
+        "parameter0": 4215,
+        "parameter1": 1
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13940,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145489920,
+       "params": {
+        "parameter0": 719652
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13942,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145489920,
+       "params": {
+        "parameter0": 3898
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13944,
+       "type_id": 6,
+       "type": "QuestObjectiveFightMonster",
+       "map_id": 145489920,
+       "params": {
+        "parameter0": 4210,
+        "parameter1": 1
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13946,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145489920,
+       "params": {
+        "parameter0": 3888
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13948,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490432,
+       "params": {
+        "parameter0": 704145
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13950,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490944,
+       "params": {
+        "parameter0": 704143
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13952,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145490944,
+       "params": {
+        "parameter0": 3900
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13954,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145490944,
+       "params": {
+        "parameter0": 3888
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13956,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490944,
+       "params": {
+        "parameter0": 707984
+       },
+       "step_id": 4954
+      },
+      {
+       "id": 13958,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490435,
+       "params": {
+        "parameter0": 727568
+       },
+       "step_id": 4954
+      }
+     ],
+     "name": "Personae Non Gratae in Albuera",
+     "description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue."
+    }
+   ],
+   "truncated": false,
+   "name": "Personae Non Gratae in Albuera",
+   "step_ids": [
+    4954
+   ],
+   "step_index": 0,
+   "step_id": 4954
+  },
+  {
+   "id": 4264,
+   "steps": [
+    {
+     "id": 4956,
+     "objectives": [
+      {
+       "id": 13960,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490946,
+       "params": {
+        "parameter0": 714266
+       },
+       "step_id": 4956
+      },
+      {
+       "id": 13962,
+       "type_id": 6,
+       "type": "QuestObjectiveFightMonster",
+       "map_id": 145490946,
+       "params": {
+        "parameter0": 4214,
+        "parameter1": 1
+       },
+       "step_id": 4956
+      },
+      {
+       "id": 13964,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490946,
+       "params": {
+        "parameter0": 708672
+       },
+       "step_id": 4956
+      },
+      {
+       "id": 13966,
+       "type_id": 6,
+       "type": "QuestObjectiveFightMonster",
+       "map_id": 145490946,
+       "params": {
+        "parameter0": 4212,
+        "parameter1": 1
+       },
+       "step_id": 4956
+      },
+      {
+       "id": 13968,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145490946,
+       "params": {
+        "parameter0": 3904
+       },
+       "step_id": 4956
+      },
+      {
+       "id": 13970,
+       "type_id": 6,
+       "type": "QuestObjectiveFightMonster",
+       "map_id": 145490946,
+       "params": {
+        "parameter0": 4216,
+        "parameter1": 1
+       },
+       "step_id": 4956
+      },
+      {
+       "id": 13972,
+       "type_id": 9,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145490946,
+       "params": {
+        "parameter0": 3904
+       },
+       "step_id": 4956
+      },
+      {
+       "id": 13974,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145490946,
+       "params": {
+        "parameter0": 3888
+       },
+       "step_id": 4956
+      },
+      {
+       "id": 13976,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490435,
+       "params": {
+        "parameter0": 727564
+       },
+       "step_id": 4956
+      }
+     ],
+     "name": "Mudding About: Getting Better in Albuera!",
+     "description": "The Spyr Warrior clan is training for combat in an open area, duelling to keep in shape. As Ayin Spyr's new friend, you can take part in the family jousts."
+    }
+   ],
+   "truncated": false,
+   "name": "Mudding About: Getting Better in Albuera!",
+   "step_ids": [
+    4956
+   ],
+   "step_index": 0,
+   "step_id": 4956
+  }
+ ],
+ "quest_catalog_status": {
+  "quests": 2,
+  "steps": 2,
+  "objectives": 24,
+  "truncated": false
+ },
+ "open_windows": [],
+ "xp": 49232,
+ "xp_level": 13,
+ "kamas": 265,
+ "auto_fight": false,
+ "farm_state": {
+  "inFight": false,
+  "myTurn": false,
+  "placement": null,
+  "readied": false,
+  "readying": false,
+  "lastTurnId": null,
+  "turnStartedAt": 1793295447150
+ },
+ "farm_session": {
+  "fights": 7,
+  "wins": 7,
+  "losses": 0,
+  "kills": 0,
+  "drops": {},
+  "drop_count": 0,
+  "xp": 14390,
+  "kamas": 0,
+  "minutes": 0,
+  "kills_per_minute": null,
+  "xp_per_minute": null,
+  "kamas_per_minute": null
+ },
+ "inventory": {
+  "kamas": 265,
+  "items": [
+   {
+    "gid": 18848,
+    "qty": 1,
+    "object_uid": 89678787
+   },
+   {
+    "gid": 18844,
+    "qty": 1,
+    "object_uid": 89678788
+   },
+   {
+    "gid": 18846,
+    "qty": 1,
+    "object_uid": 89678789
+   },
+   {
+    "gid": 18976,
+    "qty": 1,
+    "object_uid": 89678790
+   },
+   {
+    "gid": 18974,
+    "qty": 1,
+    "object_uid": 89678791
+   },
+   {
+    "gid": 1512,
+    "qty": 1,
+    "object_uid": 89678792
+   }
+  ],
+  "raw_keys": null,
+  "equipped_entry_keys": [
+   "eventHandlers",
+   "isItemInstance",
+   "exchangeAllowed",
+   "isInitialised",
+   "effectsMap",
+   "shortName",
+   "_type",
+   "position",
+   "objectGID",
+   "effects",
+   "isShiny",
+   "objectUID",
+   "quantity",
+   "exchangeable",
+   "weight",
+   "item",
+   "id"
+  ],
+  "equipped": [
+   {
+    "slot": 1,
+    "gid": 18844
+   },
+   {
+    "slot": 6,
+    "gid": 18846
+   },
+   {
+    "slot": 7,
+    "gid": 18848
+   },
+   {
+    "slot": 23,
+    "gid": 18976
+   }
+  ],
+  "presets": [],
+  "item_sets": [],
+  "preset_blocked": false,
+  "in_fight_inventory": false
+ },
+ "prices": []
+}

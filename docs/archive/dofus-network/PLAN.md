@@ -1,0 +1,523 @@
+# PLAN — the living plan
+
+> **Status note (2026-11-07).** This document was the single status source through
+> 2026-10-26. Live status is now `CURRENT.md` (running system) and `resume.md` (session
+> handoff); the tables below are historical reasoning.
+
+It superseded the status tables scattered across `ARCH_REASSESSMENT.md` and `PIPELINE.md`,
+which remain as the reasoning. The running-system map is `CURRENT.md`; open defects and
+their evidence are in `KNOWN_GAPS.md` (the deleted `PRETRAIN_GAPS.md` had one live item
+left — it is now `KNOWN_GAPS.md` G5).
+
+Last rewritten: 2026-10-24, after the dialog/monster observation contract and the
+strategist replan. Doc-map reconciliation pass: 2026-10-26.
+
+**The "third agent" design, the language layer and the training split now live in
+`AGENT3_PLAN.md`.** This file stays the living status: what is true now and what
+runs next. Read the two together: `AGENT3_PLAN.md` says why, this file says
+where we are.
+
+---
+
+## 1. Goal
+
+A Dofus Touch agent that takes a goal in natural language ("I want kamas", "do the
+quests", "beat this monster") and carries it out unattended: plan, move, fight,
+farm, trade, learn from outcomes. An actor and a strategist inside ~200 MB per
+instance, no cloud at runtime. The strategist understands French quest text and
+dialogs, knows whether a fight is winnable, and can recommend the stats or gear
+that would change the answer.
+
+---
+
+## 2. Verified state
+
+### Client (the part that was broken today)
+
+| item | value |
+|---|---|
+| game bundle | **1.74.9**, downloaded from the server (was a cached 1.74.8) |
+| login | **works** — guest and Google both complete |
+| window resize | **fixed 2026-10-24** — `updateScreen` re-reads the live viewport every call (patch rule 12); the old build froze the boot-time size |
+| patches | 11 active, patch 4 skipped (markers moved in 1.74.9) |
+| updater | **transactional**: staging tree → re-apply patches → validate → commit with `.prev`; refuses a bundle that fails validation |
+| patch rules | one source (`tools/patch-rules.txt`, generated from `patch-engine.js`); `DofusFarm.exe --bundle-selftest` proves the runtime rules equal the build |
+| self-heal | a missing/truncated `script.js` is restored from `script.js.bak` before the page loads |
+
+### Model
+
+| checkpoint | val tool | val call | gold tool | gold call |
+|---|---|---|---|---|
+| v11 | 92.9% | 68.5% | 87.3% | 71.8% |
+| **v15** (resume) | **93.9%** | **69.8%** | **94.4%** | **77.5%** |
+
+INT8: 25.4 MB, 62 ms/call, **zero** accuracy delta vs fp32 on the serving path.
+
+### Harness
+
+Observation piggyback wired and unit-tested. Farm counters derive
+fights/wins/losses/kills/xp/kamas/drops from state diffs.
+
+**`agent/autopilot.py` now closes the loop**: observe -> choose -> guard ->
+execute -> label -> decide, for minutes or hours, with no human in it. Every step
+is written to `trajectories/autopilot.jsonl` with a verdict (`advanced` / `noop` /
+`failed` / `blocked`), the latency and the observation cell/map. Those verdicts are
+the second agent's training labels, so the loop is also its data generator.
+
+Verified end to end in `--dry-run` (choose + guard, never send). **Not yet run
+against a live instance** — that is the next step, and the first thing it will
+prove is whether the observation piggyback works under a real directive.
+
+### Network (rewritten 2026-10-22 evening)
+
+| item | value |
+|---|---|
+| egress owner | **one** `ProxySupervisor`; `auto` is the default mode |
+| candidates | userspace tunnel, configured upstream, every `proxies.txt` entry |
+| probe | real request + exit IP; a candidate whose exit IP equals ours is rejected |
+| failover | re-probe every 45 s; on a switch the running relays are rebuilt on the same ports |
+| fail-closed | covers **launching**, not just dialling: no healthy egress = the client does not start |
+| measured here | Maroc Telecom drops UDP outright (WireGuard, MASQUE/QUIC and UDP DNS all fail); only a TCP proxy carries traffic |
+| pool health | 1 of 12 known entries alive at the time of measurement |
+
+`warp` mode (the system client) rewrites routing/DNS for the whole machine and is
+the reason a dropped tunnel took the WiFi with it. **Repair my network** exists
+for exactly that: disconnect, stop the service, flush DNS, probe.
+
+### Second agent (linked 2026-10-22 evening)
+
+| item | value |
+|---|---|
+| module | `agent/verifier.py` — verdict + residual + drift, one call |
+| sources | human (`verdicts_human.jsonl`) > model (GUI auto-loads `verifier_head.onnx`, but never for read-only tools; accuracy is circular — `KNOWN_GAPS.md` G6) > rule (always) |
+| loop | `autopilot._verdict` returns the full `Verdict`; `Step` carries `session` + `source` |
+| drift | 3 explainable contradictions; two in a row prints `REPLAN` |
+| test | `advisor/selftest.py` (the old `smoke_verifier` gate was removed 2026-10-25 — see `KNOWN_GAPS.md` G8) |
+
+Deliberately **rules first**: waiting for a dataset inverts the dependency. The
+loop has to run and fail, and the labels fall out of it.
+
+### Strategist observation (added 2026-10-24)
+
+| item | value |
+|---|---|
+| `map.groups` | actor id, cell, monster ids, per-member level/boss flags, `total_level` only when every level is known |
+| `map.npcs` / `map.interactives` / `map.exits` | already in the snapshot; groups join them |
+| `snap.dialog` | French question + replies with `{index,text,reply_id}`, readiness flags; no text-id lookup reimplemented |
+| `quest.advance` | accepts `reply_text`; resolves exactly one normalized match to the index the client sends, refuses ambiguity |
+| tests | `node tools/test_dialog_groups.js` → 28 cases; `node tools/test_npc_actor.js` → 7; `node tools/test_claim_guard.js` → 18 |
+| live status | **offline-tested only**; the agent injects at document creation, so a full app restart is required |
+
+`debug.version` reports `2026-10-24f`, and every snapshot carries the same value
+as `agent_build`. The live checklist is in `AGENT3_PLAN.md` §4.1.
+
+### Knowledge spine (built 2026-10-24)
+
+| item | value |
+|---|---|
+| store | `knowledge/` → `data/knowledge/dofus_knowledge.sqlite` (43 MB, generated, ignored) |
+| builder | `python -m knowledge.build` — transactional temp file → atomic replace |
+| contents | 1,976 quests, 2,225 steps, 15,543 objectives, 2,781 achievements, 9,173 achievement objectives, 2,000 monsters, 6,472 NPCs, 21,554 items |
+| resolver | `CanonicalStore.resolve_objective(115)` → `Vaincre x1 Wabbit Gm en un seul combat`; unknown ids stay as placeholders and are reported |
+| provenance | all rows `source=dofusdb_cache`, `verified_live=0`; duplicate objective ids: 0 |
+| test | ~~`python -m knowledge.selftest`~~ removed 2026-10-25 (the `knowledge` package now ships only `build.py`; no self-test) — see `KNOWN_GAPS.md` G8 |
+| not yet | Touch client DB rows (#27), achievement objective details, interior map names, papycha reference index |
+
+`knowledge.CanonicalStore` is deliberately not `agent.knowledge_store.KnowledgeStore`:
+the first is the static reference, the second is the mutable discovery log. Two
+different lifetimes, two different names.
+
+### Window layout: pages, not one long column
+
+The window used to be a single column -- header, toolbar, grid, a 184 px AI strip,
+status bar -- so the instance list, which is the thing you actually watch, kept
+losing rows to panels touched once a session. It is a page shell now:
+
+| page | contents |
+|---|---|
+| **Instances** | the toolbar and the grid, nothing else |
+| **AI** | mode, target, policy, dry run, goals, budgets, quick actions, live output |
+| **Settings** | login mode, client-update opt-out, WARP status + reconnect, folder shortcuts, reset AI settings |
+| **Shortcuts** | rebind the five actions by pressing a key |
+| **Logs** | live tails of `DofusFarm.log` and `autopilot.jsonl` |
+
+The status bar stays global: it reports the active instance and the quick-focus
+buttons regardless of which page is open.
+
+### AI page
+
+The old "AI Commander" strip could not work: it POSTed text to
+`/sentinel/parse_command` (a route the sentinel does not serve), swallowed the
+error, then matched keywords with `AUTO_FARM` as the default branch -- so **any**
+sentence started farming -- and handed the result to a DOM-click hack that guesses
+CSS selectors. Removed.
+
+What the AI page does instead:
+
+| control | behaviour |
+|---|---|
+| Mode `Off / Order / Auto` | Off does nothing; Order runs one goal for 4 steps; Auto runs the goal list for the full budget |
+| Target | all instances, or slot #1-4 (mapped through `GetInstanceIdFromSlot`) |
+| Policy | `rule` (deterministic) or `encoder v15` (the trained model) |
+| Dry run | chooses and guards, sends nothing |
+| Start / Stop / Send order | spawns `run_autopilot.py`, writes the stop file, waits 4 s then kills |
+| Join / Pass / Halt | single tool calls posted straight to the bridge on 8893 |
+| Shortcuts... | jumps to the Shortcuts page |
+
+Settings persist to `ai_settings.ini` next to the exe. Shortcuts are stored as
+virtual-key ints, not strings: `Keys.ToString()` ordering for modifier
+combinations is not stable enough to compare. Defaults: **F5** start, **F6** stop,
+**F7** send order, **F8** dry run, **F12** emergency stop, handled in
+`ProcessCmdKey` so they work whatever has focus.
+
+The page decides nothing: every guard (no buying, no invented prices, no-progress
+detection) stays in `agent/autopilot.py`, where the tests can see it.
+
+### Protocol
+
+Captured from three real sessions (1.16 MB, 9.2 MB, 10.2 MB): character creation,
+map entry, movement, fights, NPC dialog, quest validation, market buy/list, zaap,
+**harvest** (`InteractiveUseRequestMessage`), **teleport potions**
+(`TeleportRequestMessage`), **item use** (`ObjectUseMessage`).
+
+Prices are a separate channel and are now cached in the page: `hdv.scan` sends the
+category, and `ObjectAveragePricesMessage` / `ExchangeBidHouseInListAddedMessage`
+arrive later and are absorbed by `__PriceCache`. A listing resolves its rule from
+that cache and reports `price_source`, so a price can always be traced to the
+server message it came from.
+
+---
+
+## 3. What the incident changed about the plan
+
+The client update (1.74.8 → 1.74.9) took the whole stack down for a night. The
+lesson is structural, not incidental:
+
+> **The emulator is coupled to a minified bundle that changes without notice.**
+
+Consequences now baked into the plan:
+
+1. **Auto-update is mandatory**, not a nice-to-have (`EnsureClientUpToDate`).
+2. **Patches must fail soft** — a stale boundary is a `[SKIP]`, never an abort, and
+   a patch that matches an absurd span (>60 KB) is refused outright.
+3. **Every native dependency needs a Proxy stub**, because the client adds calls we
+   do not ship (Adjust was the first; there will be others).
+4. **Capture before coding.** Every client verb is now written from recorded
+   traffic, never from reading the bundle.
+
+---
+
+## 4. Ordered work list
+
+Status of the original list (`ARCH_REASSESSMENT.md` §I.2), plus what the incident
+added.
+
+| # | work | gate | status |
+|---|---|---|---|
+| 1 | Corpus regeneration | unsolvable 18.9% → 0% | **done** |
+| 2 | Post-processor scope (fill-only, refuse-not-guess) | Δ ≥ 0 per tool | **done** |
+| 3 | `farm.start` key canonicalisation | call 14.6% → >70% | **open** — needs label regeneration |
+| 4 | `quest_id` as entity reference | call → >85% | **done** (94.5%) |
+| 5 | Gazetteer boundary snapping | item errors −36 | **done** |
+| 6 | Class imbalance for never-selected tools | per-tool floor ≥80% | **open** |
+| 7 | Observation in the harness | ≥1,000 non-null records | **implemented, not exercised** — dialog/groups now present; live session still pending |
+| 8 | Click accuracy | measurable | **unblocked by 7**, not started |
+| 9 | **Client auto-update** | a build change needs no human | **done** (2026-10-22) |
+| 10 | **Patch-engine hardening** | one stale patch cannot discard the rest | **done** (2026-10-22) |
+| 11 | **Market verbs** (`hdv.scan` / `hdv.list` / `inv.sell`) | buy + list round-trip on a live instance | **built** — needs a live test |
+| 12 | **Quest verb** (`quest.advance`) | talk → dialog → objective validated | **talk validated live 2026-10-24**; multi-reply choice and validation still need a live test |
+| 13 | **Harvest** (`InteractiveUseRequestMessage`) | collect a resource node | **built** — needs a live test |
+| 14 | **Price resolution** | `price_rule` becomes a concrete number | **open — the linking gap** |
+| 15 | **Account strategy** | instances survive a client update | **decision needed** |
+| 16 | **One owner for egress** (`ProxySupervisor`, `auto` default) | a dead candidate is replaced without a relaunch | **done** (2026-10-22) |
+| 17 | **Update is a transaction** (staging → patch → validate → commit) | a server update cannot leave an unpatched bundle | **done** (2026-10-22) |
+| 18 | **Second agent linked** (rules + human, model optional) | labels on every step, offline smoke test green | **done** (2026-10-22) |
+| 19 | **Drift → real replan** | `REPLAN` calls `ScheduleManager.replan` | **open** — one wire, needs a live plan |
+| 20 | **Verifier model** (`build_verifier_sft` → `train_verifier` → INT8) | beats the rule baseline on the same session | **open** — needs one live session first |
+| 21 | **Monster groups in every snapshot** (`map.groups`) | a planner can see every group on every map | **built 2026-10-24** — offline-tested, live pending |
+| 22 | **Dialog text + replies + `reply_text`** | the policy can choose by meaning, not index | **built 2026-10-24** — offline-tested, live pending |
+| 23 | **Knowledge spine** (client DB + achievements + placeholder resolver + guide refs) | every live objective resolves to typed entities | **open** — M1 |
+| 24 | **Dialog policy v0** (deterministic, labels from objective deltas) | 100 live dialogs, top-1 > baseline | **built 2026-10-24** — ranker plus `ai/build_dialog_labels.py`, which pairs each chosen reply with the next objective state; offline-tested, 0 usable rows exist until a session has the M0 dialog contract |
+| 25 | **`fight.estimate` v0** (analytic + calibrated) | 50 live fights, calibration error <0.1 | **built 2026-10-24** — estimator, guard, outcome log, and an ECE-gated fitter; offline-tested. `p_win` stays `null` until the calibrator is fitted from live fights, so unattended fights are currently refused by design |
+| 26 | **Strategist merge** (planner + advisor, one interface) | four questions answered from one observation | **open** — M4 |
+| 27 | **TPU combat self-play** | reproducible vectorised encounters on TPU | **built 2026-10-24** — `combat/encounter/` (JAX env + PPO + heuristic bootstrap) and `kaggle/tpu_selfplay/` (TPU kernel); CPU smoke and sim-label calibrator ECE 0.0299 (in-sample, sim only). TPU run pending the user's dataset/kernel upload |
+
+---
+
+## 4b. What "built" means here
+
+The three verbs now exist in `scripts/mobile-disguise.js` and send exactly the
+messages captured on 2026-10-22:
+
+| verb | message | precondition |
+|---|---|---|
+| `quest.advance` | `QuestObjectiveValidationMessage {questId, objectiveId}` or `NpcGenericActionRequestMessage {npcId, npcActionId:3, npcMapId}` | an NPC on the current map, or an explicit objective id |
+| `hdv.scan` | `ExchangeBidHouseTypeMessage {type}` + `ExchangeBidHouseListMessage {id}` | an **open exchange** — the server ignores these otherwise |
+| `hdv.list` / `inv.sell` | `ExchangeObjectMovePricedMessage {objectUID, quantity, price}` | open exchange, item in inventory, **explicit price** |
+| `farm.start` + resource | `InteractiveUseRequestMessage {elemId, skillInstanceUid}` | an interactive element on the current map |
+
+Each one reports its missing precondition by name instead of silently doing
+nothing, and each refuses rather than inventing a value — `hdv.list` will not list
+at a guessed price.
+
+### The market model, corrected
+
+The first version of this plan assumed "sell an item" was one action that either
+worked or did not. It is not. **Completing a sale is not controllable** — you can
+put an item on the market at a price, and then a buyer either appears or does not.
+What *is* controllable:
+
+| controllable | not controllable |
+|---|---|
+| read the market price (`hdv.scan`) | whether anyone buys |
+| list an item you own at a chosen price (`hdv.list`) | when it sells, or if it ever does |
+| manage what you have listed | the price someone else lists at tomorrow |
+
+So the loop is **supply**, not revenue: check the price, list, manage, wait. Any
+planner that treats a listing as income will over-report kamas and learn a drop
+rate that never happened. The autopilot therefore records a successful listing as
+`listing_open` with `state: "open"`, and never as kamas earned — there is a test
+for exactly this (`test_autopilot_listing_is_not_revenue`).
+
+**Buying is available through `hdv.buy`.** The 25-tool research vocabulary includes
+the purchase verb; it requires an explicit listing uid and a max price, and the page
+only uses prices the server already sent. The details of the buy packet are in
+`PROTOCOL_NOTES.md` (`ExchangeBidHouseBuyMessage`).
+
+### How the price is resolved now
+
+`hdv.list` accepts `price_rule: median_minus_1 | undercut | fixed`:
+
+* `fixed` needs an explicit integer — if the caller did not supply one, the call is
+  refused rather than guessed;
+* `median_minus_1` / `undercut` are resolved **in the page** from `__PriceCache`,
+  which only ever holds values the server actually sent
+  (`ObjectAveragePricesMessage`, `ExchangeBidHouseInListAddedMessage`);
+* the result reports `price_source` (e.g. `median_minus_1:listing`), and the
+  autopilot refuses to count a listing whose price it cannot trace.
+
+That is the compromise the earlier draft argued against — but with a twist that
+keeps it honest: the *arithmetic* (one kama under the measured price, floor of 1)
+lives in the page, while the *decision* (may this listing happen at all) lives in
+`agent/autopilot.py` where the tests can see it. The guard is the thing that would
+lose money, not the subtraction.
+
+## 5. Next five things, in order
+
+The full architecture and the reasons are in `AGENT3_PLAN.md`; this is the
+execution order.
+
+1. **Live-validate M0.** Full app restart, then `python ai/verify_live.py`
+   (from `dofus-network/`). It now encodes the checklist in
+   `AGENT3_PLAN.md` §4.1: exact `debug.version` = `2026-10-24f`, the
+   `map.groups` shape with member levels, French `snap.dialog` with aligned
+   reply ids, and a `reply_text` round-trip. PASS/FAIL/SKIP is printed per
+   check. This is the only step that turns 21/22 into evidence.
+2. **One live session with labels.** Let the loop run for a few hundred steps and
+   keep `autopilot.jsonl`. Verify `hdv.scan` → `hdv.list`, `quest.advance`
+   (NPC → dialog → objective), one harvest, and — now that groups are visible —
+   one `fight.estimate` row before a fight and its outcome after. The autopilot
+   writes the estimate and its settlement to `trajectories/fight_outcomes.jsonl`;
+   that file is the calibration set, not a report. This is the verifier and
+   dialog dataset.
+3. **Knowledge spine (M1).** Harvest the Touch client DB (task #27), enrich
+   achievement objectives, build the canonical store and placeholder resolver,
+   and index papycha as reference-only with attribution. Before the dialog policy
+   can be evaluated, the objectives have to resolve. The papycha site accepted
+   TCP but returned no bytes from this host on 2026-10-24 (robots, sitemap, HTTP
+   and HTTPS, with and without `www`), so that index needs another egress; do not
+   route around it.
+4. **Dialog policy v0 (M2) and drift → replan.** The deterministic ranker logs
+   every choice with the objective delta; `python -m ai.build_dialog_labels`
+   turns a session log into `data/dialog_labels/rows.jsonl` (question, replies,
+   chosen text, objective before/after, outcome) for the evaluation and the
+   encoder later. It skips choices whose observation did not expose the dialog
+   and counts them, so an old log cannot inflate the dataset. In parallel, wire
+   `REPLAN` to `ScheduleManager.replan("drop_rate_drift")` and measure whether
+   replanning helps.
+5. **Fight estimate v0 (M3)** — mostly built. `combat/fight_estimate.py` turns
+   the character sheet and one `map.groups` entry into turns-to-kill,
+   incoming damage, expected HP loss and named missing inputs;
+   `FightAdvisor.annotate` attaches it to every observation, and the autopilot
+   refuses `fight.join` / a visible `farm.start` target unless the estimate
+   passes. What remains is the probability: `p_win` is `null` until
+   `python -m combat.fight_estimate` has ≥20 resolved live fights with both
+   wins and losses, which is why fights are refused unattended today. The
+   fitter now reports ECE, Brier and log loss and refuses to install a
+   calibrator above the 0.10 gate (`--force` overrides, loudly). Every fight
+   already writes its claim and outcome to `trajectories/fight_outcomes.jsonl`.
+   The loop now treats a fight as a wait, not a planning hole: if any snapshot
+   says `in_fight`, it drops a pre-fight recovery order, arms auto-fight with a
+   no-target `fight.join` when `auto_fight` is false, and re-observes once a
+   second without issuing world actions until the fight ends. The page caches a
+   placement message that arrived while the bot was off and replays it on
+   enable, so a fight opened by a dialog still gets its ready click;
+   `debug.fight_state` reports placement, ready and turn state.
+   Buying stays human.
+
+Then the model work resumes: item 3 (`farm.start` labels) and item 6 (class
+imbalance), the verifier head (item 20), then the strategist merge (M4) and the
+TPU combat self-play pilot (M5).
+
+The M5 lane now exists end to end:
+
+* `combat/encounter/` — batched JAX environment (AP/MP, ranges, resists, heals,
+  initiative, team turn order), a shared policy/value head, PPO self-play, a
+  scripted first opponent, and a sim-label exporter;
+* `kaggle/tpu_selfplay/` — two-phase TPU kernel (heuristic bootstrap, then
+  self-play) and a self-contained dataset builder;
+* a 64-row CPU smoke produced a silver calibrator at ECE 0.0299, which proves
+  the pipeline but is **not** a live-calibrated probability. The live guard
+  stays on the bootstrap/tutorial envelopes until the M3 live gate. Sim rows
+  carry `source: "sim"`; the default `models/fight_calibrator.json` must remain
+  a live artifact.
+
+---
+
+## 6. Decisions needed
+
+1. **Accounts.** Guests are wiped by updates and disposable-mail signup is blocked
+   by CloudFront. The durable answer is real accounts in `accounts.txt`, one per
+   slot. Automated signup is rejected: CAPTCHA + CloudFront, and it is the one
+   thing that plausibly gets accounts banned.
+2. **Patch 4.** `launchMapTransition` no longer matches in 1.74.9. Either port it
+   against the new code or accept the unpatched transition (map changes work, the
+   watchdog is missing).
+3. **Harvest capture.** Who does the 60-second recording.
+4. **Multilingual encoder.** Benchmark a small multilingual sentence encoder on
+   French dialog ranking before committing; do not assume an English checkpoint
+   transfers. See `AGENT3_PLAN.md` §11.2.
+5. **Fight threshold.** Start at `p_win ≥ 0.90`; confirm whether a 5% expected
+   death chance is acceptable for quest bosses (default: no).
+
+---
+
+## 7. Invariants
+
+1. **Drive the client, do not reimplement it.** Pathfinding, line of sight, map
+   edges and the fight state machine are the game's.
+2. **Never connect direct.** The proxy fails closed; WARP exists to keep the IP
+   away from Ankama. No upstream, no traffic.
+3. **Capture before coding.** A verb without recorded traffic is a guess.
+4. **Fail soft on the client, hard on privacy.** A stale patch, a missing SDK or a
+   failed download must degrade; an IP leak must stop the instance.
+5. **Numbers in docs are measured.** Anything unmeasured is labelled as such.
+6. **A bound port is not a working tunnel.** `wireproxy` binds before the
+   handshake completes, so an ISP that drops WARP's UDP looks healthy to a port
+   check. Probe with a real CONNECT, or do not claim it works.
+7. **An update is a transaction.** Download to staging, re-apply the patches,
+   validate, commit with a backup. Never delete a live file before its
+   replacement exists — that is how a 403 became a black screen.
+8. **Fail closed covers launching.** If egress cannot be wired and the mode is
+   not `direct`, the client does not open. A leak is worse than a no-show.
+9. **An outage must not require a relaunch.** WARP drops on a network change
+   (wifi <-> ethernet) and returns by itself; the proxy keeps listening and keeps
+   failing closed, and the host reconnects WARP before starting an instance. A
+   forty-second tunnel gap must cost forty seconds, not a restart.
+10. **Text is an observation, not a program.** The model proposes `reply_text`;
+    the client resolves it to a reply id; the handler sends it. Never fabricate a
+    protocol message from parsed text.
+11. **Unknown is not zero.** A missing level, price or monster input stays null
+    and forces an abstain, never a default.
+12. **Reference is not training.** Papycha's content signal forbids AI training;
+    guides are RAG with attribution, never labels.
+13. **The planner may estimate; only the server decides.** A win probability is a
+    falsifiable claim; the outcome row is the answer.
+14. **Every head abstains when its inputs are missing.** An abstain is a logged,
+    valid decision; a guess is not.
+
+## Party scoring handoff (2026-11-06; weight objective remains open)
+
+Status: proven in the offline harness, not yet in weights. The all-fight joint HP-capped (spell,
+target) overlay wins 3,521/4,096 party boards, versus candidate 3,121 and scripted play 3,564.
+Seeds 701/901 were originally held out but have since been reused; they are not fresh selection tests.
+This all-fight result does not establish the opening-only ceiling or a need for cross-ally coordination.
+
+The same-board controls on diagnosis seeds 317/433 isolate the cause: candidate 1,572/2,048,
+independent raw teacher scoring 1,770, independent HP-capped scoring 1,765, joint allocation 1,774,
+and scripted play 1,790. Independent raw scoring retains 198/202 (98.02%) of the joint overlay's
+net gain. Joint minus raw is +0.1953 percentage points, paired 95% CI [-0.3947, +0.7853]; its
+advantage is not established here. Reservation does improve the capped control by 9 wins
+(+0.4395 points, CI [+0.0948, +0.7841]). The next numerical trace therefore targets dynamic
+spell-target scoring, not an assumed communication requirement. Evidence:
+`models/allocation_controls_s317_433_v1.json` in the evidence directory; §XII.16c gives hashes and controls.
+
+Next move, in order, from `C:/Users/sao/Documents/dofus-evidence`:
+1. Use `models/party_allocation_labels_active_s317_433_v2.npz` (18,319 active decisions).
+   The old 298,318-row export included 279,999 post-terminal rows and is superseded. `raw_score`
+   is the uncapped teacher score, not HP-capped allocation credit. Replay the hashed allocator to
+   reconstruct inputs; the NPZ contains labels, not observation tensors.
+2. Trace the active spell/target disagreements through the actual network arrays before authoring
+   numerical edits. Regression fitting or distillation is not the user's requested direct WSP method.
+   Compare terminal outcomes on the same boards: the existing overlay reference is 3,521/4,096 on
+   seeds 317/433/701/901, or 1,747/2,048 on 701/901 alone. These are measured references, not proof
+   of a new weight arm; any selected edit still needs genuinely unused evaluation boards.
+   **Done 2026-11-06 (§XII.16d), and it closes the cheap path: see "Trace result" below.**
+3. Only after a weight arm clears the gate: the installed-copy path (#77) and live capture (#127).
+
+### Trace result (2026-11-06): the gap is spell selection and no bias edit reaches it
+
+The 18,319 active decisions were replayed with the accepted checkpoint, recording the exact tensors
+both heads read, and the replay is the label export's own trajectory (board/step/ally/spell/target
+identical row for row). Measured:
+
+* The network agrees with the allocator on 29.36% of pairs; the scripted opening on 91.33%. Spell
+  differs 60.41%, target 25.50%, same spell with a different target 10.22%.
+* It is not picking a wrong spell in place of the right one -- it **spreads the basic cast across
+  spells 1 and 2**: of 14,208 rows whose allocator spell is 0 it keeps 0 on 5,812 (40.9%) and moves
+  3,737 to spell 1 and 3,807 to spell 2. The script keeps 77.35% on spell 0.
+* A writable bias cannot fix that. Max-margin feasibility over the 5-number spell bias is infeasible
+  at margin **-9.18** logits. Fitted on even boards, scored on odd: spell **80.17%** vs network
+  38.53% vs a constant "always spell 0" **76.48%** -- 41.6 points over the network, **3.7 over the
+  constant**. Target table (40 numbers): 74.85% vs 73.35% network, **+1.50**. Pair: 60.34% vs
+  27.91%, against the script's 90.99%.
+* 28.63% of rows sit in groups whose integer-rounded spell logits are identical but whose wanted
+  spell is not, so part of the remainder is label ambiguity, not head capacity.
+
+So the next weight trace should **not** target "dynamic spell-target scoring" (XII.16c's phrasing):
+the target axis is already 73-75% right and 40 numbers buy 1.5 points. What both heads lack is
+HP-capped credit as an input -- whether a cast's damage can actually be removed, whether the slot is
+a kill. That is #142's territory (an input or interaction term), not a coordinate write, and the
+direct numerical WSP objective is not reachable by searching harder over the arrays that exist.
+
+**Reading the weights found why (§XII.16e).** Three exact zeros, all measured on the checkpoint:
+`t_bias` is **40 zeros**, so the target ranking is identical for every spell (forward pass:
+`max |target[s] - target[0]| = 0.0`); the spell bias is **1.45e-3**; and the 32 actor inputs plus 4
+globals the blind mask clears have encoder rows at **drift 0.0 from initialization** — they never
+trained, because a zero input gives a zero gradient. Removing the blind mask on the same weights
+makes the decision *worse* (39.59% → 36.31%, 915 flips right against 1,516 wrong), so the blindness
+cannot be lifted by a flag. And no party checkpoint on disk has ever been trained visible: all 27
+are blind, and the only visible arm is solo. The experiment that would settle it is
+`--blind ""` on the party corpus, which has never been run.
+
+**It has now been run (§XII.16f), and it settles the spell axis.** `train.py` could not build a party
+arm at all — `Config` was constructed without `allies`, so every checkpoint is a solo arm relabelled
+at evaluation time, which is also how `t_bias` got its 40 zeros (`[spells, n_actors]` recreated fresh
+at 8 actors). `--allies`/`--enemies` are now arguments with a shape guard. Trained on 2xT4 (60 iters,
+170 s, `--blind ""`, 8-actor corpus) and evaluated on the same 18,319 states:
+
+| arm | spell agrees | target agrees | pair |
+|---|---:|---:|---:|
+| accepted (blind weights, blind input) | 39.59% | 74.50% | 29.36% |
+| accepted weights, full input | 36.31% | 73.60% | 27.10% |
+| trained party arm, mechanics visible | **73.03%** | 74.55% | **55.12%** |
+
+**+33.44 points of spell agreement from training alone** — the blindness was the cause. The target
+axis did not move (+0.05) and that is a scale fact, not a training shortfall: the trained `t_bias` is
+max 0.0095 while the attention term it offsets spans 116 logits, so #142 needs the interaction term
+(or a table at attention scale), never more iterations. The arm wins less than the accepted one
+(52.9% vs 77.4% on the same corpus), so it is a diagnostic, not a promotion candidate.
+
+Not done and not faked: no weight edit reproduces the allocation, nothing is installed or promoted,
+and the party candidate is unchanged at `mech_swarm_direct_move_spell_bias0_n8_s317_v5.pkl`
+(SHA-256 92d024d3...). Details: docs/ARCH_REASSESSMENT.md §XII.10-XII.16c; artifact hashes in
+dofus-evidence/models/ARTIFACT_LEDGER.json and the control report.
+
+Task status: #151 (active-label audit) and #152 (same-board coordination controls) are complete.
+#150 remains open: the all-fight controls do not settle an opening-only weight intervention.
+#142's representability trace is **done** (§XII.16d) and it answers "no bias coordinate carries the
+decision", so the head change now has a measured target: HP-capped credit as an input. #123's
+pipeline-versus-cheap-edit gap is quantified from the cheap side (60.34% pair reproduction, +3.7
+points over a constant). #77 and #127 remain waiting for weight-policy acceptance and live
+verification. Older tasks whose titles say closed but whose status is pending have not been silently
+certified by this documentation cleanup.

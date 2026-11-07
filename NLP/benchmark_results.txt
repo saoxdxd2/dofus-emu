@@ -1,0 +1,120 @@
+
+==============================================================================
+SST-2 validation (GLUE) - binary movie-review sentiment
+==============================================================================
+examples: 872  (negative=428, positive=444)
+accuracy: 0.5138   macro-F1: 0.4348
+majority baseline: 0.5092
+per class recall: negative=0.9042  positive=0.1374
+known-token coverage: 0.3251 (5,717/17,584 non-punctuation tokens)
+sentences with a known sentiment word: 168/872 (19.27%)
+accuracy on that diagnostic subset: 0.6667  (n=168)
+exact-zero sentiment scores: 706/872 (80.96%)
+
+confusion matrix (rows=gold, cols=pred):
+         negative positive
+negative      387       41
+positive      383       61
+
+==============================================================================
+SST-2 test (1,821 examples) - exact split used for Llama comparison
+==============================================================================
+sentences: GLUE test parquet; labels: SetFit/sst2 copy
+examples: 1821  (negative=912, positive=909)
+accuracy: 0.4992   macro-F1: 0.4073
+majority baseline: 0.5008
+per class recall: negative=0.8914  positive=0.1056
+known-token coverage: 0.3223 (11,637/36,107 non-punctuation tokens)
+sentences with a known sentiment word: 297/1821 (16.31%)
+accuracy on that diagnostic subset: 0.5758  (n=297)
+exact-zero sentiment scores: 1526/1821 (83.80%)
+
+confusion matrix (rows=gold, cols=pred):
+         negative positive
+negative      813       99
+positive      813       96
+
+==============================================================================
+Language identification test set (papluca/language-identification)
+4-language subset: English, French, Spanish, German
+==============================================================================
+examples: 2000  (500 per language)
+accuracy: 0.9860   macro-F1: 0.9860   chance: 0.2500
+  en: 0.9940 (n=500)
+  fr: 0.9900 (n=500)
+  es: 0.9800 (n=500)
+  de: 0.9800 (n=500)
+known-token coverage: 0.3895 (27,247/69,958 non-punctuation tokens)
+
+confusion matrix (rows=gold, cols=pred):
+               en       fr       es       de
+      en      497        2        1        0
+      fr        3      495        0        2
+      es        6        4      490        0
+      de       10        0        0      490
+
+==============================================================================
+Multilingual sentiment test (SemEval/DEFT/InterTASS/SB10k)
+3 classes, 870 examples per language
+==============================================================================
+
+[en]  n=870
+  accuracy=0.4080  macro-F1=0.3249  majority=0.3333
+  predicted counts: neg=31 neu=756 pos=83
+  known-token coverage=0.2586  sentences with sentiment word=115/870 (13.22%)
+  accuracy with a known sentiment word=0.6957 (n=115)
+  confusion (rows=gold, cols=pred):
+         negative  neutral positive
+negative       23      252       15
+ neutral        4      275       11
+positive        4      229       57
+
+[fr]  n=870
+  accuracy=0.3437  macro-F1=0.1990  majority=0.3333
+  predicted counts: neg=17 neu=837 pos=16
+  known-token coverage=0.2971  sentences with sentiment word=38/870 (4.37%)
+  accuracy with a known sentiment word=0.3947 (n=38)
+  confusion (rows=gold, cols=pred):
+         negative  neutral positive
+negative        7      276        7
+ neutral        3      285        2
+positive        7      276        7
+
+[es]  n=870
+  accuracy=0.3931  macro-F1=0.3224  majority=0.3333
+  predicted counts: neg=66 neu=709 pos=95
+  known-token coverage=0.3419  sentences with sentiment word=170/870 (19.54%)
+  accuracy with a known sentiment word=0.5118 (n=170)
+  confusion (rows=gold, cols=pred):
+         negative  neutral positive
+negative       34      233       23
+ neutral       10      258       22
+positive       22      218       50
+
+[de]  n=870
+  accuracy=0.3782  macro-F1=0.2995  majority=0.3333
+  predicted counts: neg=65 neu=711 pos=94
+  known-token coverage=0.1759  sentences with sentiment word=161/870 (18.51%)
+  accuracy with a known sentiment word=0.4410 (n=161)
+  confusion (rows=gold, cols=pred):
+         negative  neutral positive
+negative       31      229       30
+ neutral        8      258       24
+positive       26      224       40
+
+[all four languages]
+  n=3480  accuracy=0.3807  macro-F1=0.2901  majority=0.3333
+  all-neutral baseline: accuracy=0.3333  macro-F1=0.1667
+
+==============================================================================
+Benchmarks that cannot be scored by this model
+==============================================================================
+MMLU, ARC, HellaSwag, GSM8K, HumanEval, TriviaQA ...  N/A
+Reason: Polyglot-0 has no language-modeling/generation head, no
+multiple-choice scorer, and no world knowledge.  It has only a
+4-way language head, a 3-way sentiment head, and a 91-concept
+closed vocabulary.  Reporting a number on these would require
+inventing a task adapter, not evaluating the model.
+
+Done.  All scores are inference-only; no benchmark labels were used
+to construct or edit any weight.

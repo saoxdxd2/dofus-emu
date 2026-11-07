@@ -1,0 +1,27 @@
+{
+ "action": "no_new_rows",
+ "at": "2026-11-01T03:09:35Z",
+ "logs": [],
+ "new_bytes": 0,
+ "progress": {
+  "corpus_rate": 0.3648,
+  "objective_progress": false,
+  "sessions_with_new_rows": 0,
+  "trend": "unmeasured"
+ },
+ "seconds": 0.06,
+ "steps": {
+  "evidence": {
+   "changed": [],
+   "files": 4,
+   "ok": true,
+   "seconds": 0.03,
+   "skipped": "every live log matches the last capture",
+   "step": "evidence",
+   "written": null
+  }
+ },
+ "ts": 1793502575.074,
+ "verdict": "objective progress not yet measured: 6 close(s), none with a non-baseline delta",
+ "version": 1
+}

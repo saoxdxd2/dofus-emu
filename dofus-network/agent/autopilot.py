@@ -1,0 +1,4327 @@
+"""Autonomous loop: the agent drives the client instead of answering one order.
+
+Why this module exists
+----------------------
+Every step until now was request/response. A human said "sell the bread", the
+agent answered once, and the recorder wrote one row. That is why the encoder
+plateaued: it has seen 2,273 hand-written rows and **zero of its own**. A model
+cannot learn a policy from labels a human wrote about a game it never played.
+
+This loop closes that: it observes, chooses, acts, labels the outcome, and
+decides whether to continue -- on its own, for minutes or hours.
+
+What it deliberately will not do
+--------------------------------
+* **It never buys.** `ExchangeBidHouseBuyMessage` spends money irreversibly at
+  whatever price is on the listing, and there is no undo. Supply is safe to
+  automate; demand is not.
+* **It never invents a price.** A listing without an explicit integer price is
+  refused before it reaches the client.
+* **It never treats a listing as revenue.** Putting an item on the market is
+  controllable; *someone buying it* is not. A successful `hdv.list` is recorded
+  as `listing_open` with an expected fill time, never as kamas earned. Conflating
+  the two is how a bot learns a drop rate that never happened.
+
+The four labels it emits (and why they matter)
+----------------------------------------------
+Each step gets a verdict, a residual and a drift flag. Those are exactly the
+heads the second agent needs, so this loop is also its training-data generator:
+
+    verdict  advanced | noop | failed | blocked   (did the world change?)
+    residual  seconds late vs the tool's own estimate, when it has one
+    drift     the observation contradicts what the previous step assumed
+
+Usage
+-----
+    python -m agent.autopilot --goal "list the bread at market price" --steps 12
+    python -m agent.autopilot --goals-file goals.txt --minutes 30 --interval 2
+    python -m agent.autopilot --goal "..." --dry-run      # choose, never send
+
+Stop it with Ctrl-C, the `--stop-file`, or by touching `AUTOPILOT_STOP` in the
+repo root. It calls `safe.stop` on the way out so the client is not left mid-loop.
+"""
+
+from __future__ import annotations
+
+import argparse
+import inspect
+import json
+import os
+import time
+import uuid
+from collections import deque
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence
+
+from agent.runtime import AgentRuntime, RulePolicy, ToolCall
+from agent.executor import payload_of
+from agent.observe import flatten
+from agent.awareness import character_key
+from agent.features import DELIVER_TYPES
+from agent.planner import _goal_mode
+from agent.thinking import ThinkingLayer
+from agent.knowledge_context import enrich_observation, load_default_store
+from agent.controller import Controller, Decision
+from agent.verifier import (LISTING_TOOLS, READ_ONLY_TOOLS, Verdict, Verifier, changed_keys,
+                            promise_state)
+from agent.gate import RuleGate
+from agent.schema import TOOL_SCHEMA, validate_call
+from agent.recorder import _redact
+from agent.command_shadow import (DEFAULT_MODEL as COMMAND_SHADOW_MODEL,
+                                  load_command_model, shadow_row)
+from agent.jsonio import dumps_bytes as _fast_dumps
+from combat.fight_estimate import FightAdvisor, FightOutcomeLog
+from combat.brain_service import ensure_brain
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_LOG = REPO_ROOT / "trajectories" / "autopilot.jsonl"
+DEFAULT_STOP = REPO_ROOT / "AUTOPILOT_STOP"
+SESSION_CLOSE_OFF = ("0", "off", "false", "no")
+SESSION_CLOSE_TIMEOUT_S = 300
+
+
+def session_close_enabled(environ: Optional[Dict[str, str]] = None,
+                          dry_run: bool = False) -> bool:
+    """Whether a finished run may spawn the post-session pipeline.
+
+    The switch exists because Autopilot threads live inside the shared daemon: a
+    host that stops and restarts runs every few minutes would otherwise pay the
+    rebuild on every stop. Default is on; `AUTOPILOT_SESSION_CLOSE=off` turns it
+    off without touching code.
+    """
+    if dry_run:
+        return False
+    env = os.environ if environ is None else environ
+    return (str(env.get("AUTOPILOT_SESSION_CLOSE", "on")).strip().lower()
+            not in SESSION_CLOSE_OFF)
+LOG_MAX_BYTES = 64 * 1024 * 1024
+
+# Tools disabled by policy. Empty on purpose: the 28-tool research vocabulary
+# includes hdv.buy, inv.equip, hdv.prices and tap.interactive.
+FORBIDDEN_TOOLS: set[str] = set()
+
+# Tools whose effect lands after the call returns.
+#
+# `quest.advance` walks to the NPC and talks in the walk callback; `nav.goto` asks the
+# client's pathfinder and the map changes on the next server round trip; `fight.join`
+# walks then attacks; `tap.interactive` walks to the element and only then sends the
+# use. All of them answer ok immediately, so observing in the same instant scores them
+# `noop` — the cell has not moved yet because the walk just started. That is what a
+# live session showed: 30 steps of `quest.advance ok / noop`, the loop cycling retry ->
+# recover forever while the character was actually walking.
+SETTLE_TOOLS = {"quest.advance", "nav.goto", "fight.join", "farm.start",
+                "tap.interactive"}
+
+# Tools that can start a fight. Both go through the estimator before the client
+# sees them, so an unattended fight only begins with a passing estimate.
+FIGHT_TOOLS = {"fight.join", "farm.start"}
+
+# How old a snapshot may be before the loop refuses to decide on it.
+#
+# The bridge returns the post-action state with every directive, so the usual
+# decision input is well under this; only a long pause (`--interval`) or a
+# bridge that stopped answering makes the cache stale. An unknown age is not
+# fresh: it means nobody recorded when the snapshot was taken.
+OBS_FRESH_MS = 4000.0
+
+# While a farm order is running, no fight/kill/kamas movement for this long
+# means the bot is idle (no group on this map, or waiting for a respawn). Resume
+# planning so the targeted farm can join the next matching group or explore;
+# the farm.start no-op guard caps a truly dead loop at three attempts.
+FARM_IDLE_S = 20.0
+
+# A crossing is a journey the client performs, not a command it answers. Measured on
+# the run of 2026-11-04/05: one border asked five times at 6.5 s spacing, and the
+# crossing landed 30 s after the first ask -- the fifth ask, not the first. Another
+# asked ten times in 54 s while the character walked from cell 299 to the exit at 537
+# and back to 299, never crossing: each fresh ask re-pathed the walk from where the
+# character stood, so the loop interrupted its own journey. While the cell (or the
+# map, or the objective) is still moving the promise is not broken, it is in flight,
+# so the settle extends to this instead of handing the decision loop a reason to ask
+# again. A border that really refuses costs two waits of this length and then the
+# crossing bound retires it.
+CROSSING_IN_FLIGHT_S = 30.0
+
+# How long the settle waits, per poll, for a predicate tool's own promise: measured
+# live as a 6.07 s median gap after `nav.goto`, and a dialog page does not arrive in
+# less than the round trip that opened it.
+PROMISED_SETTLE_WINDOW_S = 6.0
+
+
+def settle_deadline(tool: str, started: float, last_change: float,
+                    window: float, cap_s: Optional[float] = None) -> float:
+    """When a settle must stop waiting, given that the world was still moving.
+
+    Pure arithmetic on monotonic numbers so the bound is checkable without spending
+    wall clock: for a tool with no in-flight phase the answer is the plain window,
+    and for a crossing the deadline slides with each observed movement until the cap.
+    The cap is read at call time, not frozen into a default -- a default would keep
+    the old value when the constant is re-assigned.
+    """
+    if tool != "nav.goto":
+        return started + window
+    cap = CROSSING_IN_FLIGHT_S if cap_s is None else cap_s
+    return min(started + cap, last_change + window)
+
+# How many read-only steps a repair decision may wait for before its outcome is
+# considered unknowable. A recovery's own snapshot is one of them; twelve is roughly
+# one farm-poll generation, after which crediting the decision would be guessing.
+PENDING_CREDIT_STEPS = 12
+
+# There is no client *window* at all — the host has none open, so the bridge
+# answers without ever reaching a page. The words are the host's own
+# (desktop/agentbridge.cs).
+#
+# This is not a failed step and not the same as `fell_out`: with no page there is
+# no new snapshot, so the in_world transition that detects a kick never appears.
+# A live run put 27 consecutive `state.snapshot` failures into exactly this state,
+# each one answered with a replan that could only produce another doomed call.
+ABSENT_CLIENT_MARKERS = (
+    "no client instance", "not an active client", "no client window is open",
+)
+
+
+def client_absent(error: Any) -> bool:
+    text = str(error or "").lower()
+    return any(marker in text for marker in ABSENT_CLIENT_MARKERS)
+
+
+# A wait's own clock. The live log paces the loop at a 0.374 s median gap between
+# consecutive steps, of which the round trip is only 18.2 ms -- so the gap is the
+# loop's pacing, and 0.35 s reproduces it. Keeping the cadence matters more than the
+# exact number: the planner's wait gates count *passes*, so a different cadence
+# silently changes how long a scripted tutorial pause lasts.
+WAIT_POLL_S = 0.35
+
+# How many wait passes in a row are still a wait rather than a stall.
+#
+# Measured on the baseline's 3,010 read-steps: they come in 671 runs with a median
+# length of 1 and a p99 of 6 -- a legitimate wait is short, because it is standing
+# between an action and the state the action promised. Two runs broke the shape: one
+# of 149 passes (56 s) and one of 1,581 (586 s), which together are 57% of all the
+# wait traffic. The long one is the case this bound exists for: 1,576 of its 1,581
+# reads *succeeded*, so nothing in the loop could call it a failure -- the planner
+# simply had no action for the goal and the run spent ten minutes looking, five reads
+# per second, while reporting `advanced` every time.
+#
+# Past the bound a read is dispatched as one real step per 40 passes, which hands the
+# spin back to the streak, refusal and stall machinery that already knows how to
+# retire a goal. Same wall-clock cost, one step row per ~15 s instead of per 0.374 s.
+MAX_CONSECUTIVE_WAITS = 40
+
+# Whole wait windows that may end with no actionable candidate before the run ends.
+# Live 2026-10-29: a 467-pass wait (172 s, ~11 windows) where every escalation was
+# gate-refused, so the loop could neither act nor stop. Four windows is ~56 s of
+# nothing -- long enough for a respawn, short enough that the session is not spent
+# staring at it. A real step resets the count.
+DEAD_WINDOW_LIMIT = 4
+
+# Passes one run may spend waiting for the client to publish its quest data before the
+# "no action for this goal" verdict is allowed to stand. Three is ~5 s: the quest block
+# arrives with the world, so a fourth empty reading is not a slow load, it is the truth.
+QUEST_DATA_WAIT_LIMIT = 3
+
+# Quests one run may retire because whole windows of waiting found no action
+# for them. Bounded so a broken plan cannot empty the log in one session.
+RETIRE_LIMIT = 3
+# Times the same quest may be retired before the loop concludes the policy will keep
+# choosing it anyway. Past this the retirement is not patience, it is a cycle.
+RETIRE_REPEAT_LIMIT = 3
+
+
+# How many candidates the wait escalation is allowed to skip while looking for one
+# that is an action. Measured, not guessed: the thinking layer's fallback candidate is
+# `state.snapshot` ("refresh the observation"), which is the very thing the wait exists
+# to stop dispatching -- taking it would reset the streak and double the spin instead of
+# breaking it. Three tries finds any real alternative and then gives up.
+ESCALATE_TRIES = 3
+
+# How long one scripted step is allowed to hold the loop. A tutorial step completes
+# when the game's own script says so, so waiting on it is correct -- what was wrong is
+# that the wait re-dispatched the identical directive: measured live 2026-10-27, 119
+# `quest.advance {npc_id:3888,quest_id:3841}` and 120 `nav.goto {direction:left}`
+# no-ops in single sessions, roughly half of every step the farm took, and the client's
+# world never moved. Three minutes of real patience, then the run says so and stops.
+TUTORIAL_HOLD_S = 180
+
+# How long the tutorial may keep the stall guard switched off. The hold above bounds one
+# scripted step; this bounds the *exemption*. Measured live: one session talked to the
+# same NPC 426 times across 50 hours of wall clock, and every one of those steps carried
+# `tutorial.active: true` -- so the exemption meant to protect the tutorial disabled the
+# only guard watching for a quest that never moves.
+TUTORIAL_PATIENCE_S = 3 * TUTORIAL_HOLD_S
+
+# How many consecutive reads the loop may spend before it asks for something else.
+# A planner-chosen read is normally turned into a wait, but only while the wait
+# counter is under MAX_CONSECUTIVE_WAITS; past that the loop dispatches the read as a
+# real step, and nothing bounds those. Live 2026-10-29, four runs of 8, 9, 11 and 12
+# identical `state.snapshot` steps under an active tutorial -- 40 of a 239-step
+# session, two of which ended in `safe.stop`. Six is well past the one or two a
+# legitimate plan needs (arrive, look, act).
+READ_STREAK_LIMIT = 6
+
+# How many times a talk may open no dialog before the loop stops treating it as a
+# try-again. One is noise (the client can be mid-animation); two identical sends with
+# no answer is a server that is not responding to this NPC action.
+DEAD_TALK_TRIES = 2
+
+# Crossings the page sent and the server ignored before the run gives up on the map.
+# A ChangeMapMessage the server refuses is silent, so the only witness is "the map
+# did not change". Twelve rotations cover every edge a map reports (four, tried
+# three times); past that the exit is scripted and currently unavailable, and each
+# repeated request is anti-bot signal with no upside (live 2026-10-29: the Albuera
+# solo area took ~100 refused crossings in two minutes before this bound existed).
+NAV_DECLINE_LIMIT = 12
+
+
+def fell_out_of_world(before: Any, after: Any) -> Optional[str]:
+    """The reason the client left the world between two states, or None.
+
+    Returns the client's own reason string, or `""` when the world simply vanished,
+    or None when it is still there. Two ways to know the session is gone: we watched
+    the world disappear, or the client told us why it left. Either alone is enough; a
+    bare `in_world: false` in a state that was already out of the world is not,
+    because a map transition can briefly report no map and that must not end the run.
+    Both the post-step check and the wait check need this decision, and a second copy
+    drifting away from the first is how a kick stops being detected.
+    """
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return None
+    if after.get("in_world") is not False:
+        return None
+    why = after.get("last_disconnect") or {}
+    reason = why.get("reason") if isinstance(why, dict) else None
+    if before.get("in_world") is not False or reason:
+        return str(reason or "")
+    return None
+
+
+def _game_error(result: Any) -> Optional[str]:
+    """The game's own rejection, inside a transport-successful response.
+
+    A directive answers ``ok`` when the bridge executed it. Whether the *game*
+    accepted it is ``response.result.ok``, and 70 of 264 live calls were game
+    failures wearing a success flag ("no NPC on this map"). The loop has to see
+    that, or it retries a call the server already refused.
+    """
+    data = getattr(result, "data", None)
+    if not isinstance(data, dict):
+        return None
+    response = data.get("response")
+    if not isinstance(response, dict):
+        return None
+    inner = response.get("result")
+    if not isinstance(inner, dict) or inner.get("ok") is not False:
+        return None
+    return str(inner.get("error") or "the client rejected the call")
+
+# Minimum price we will ever list at. One kama is the floor the game itself
+# enforces; anything below it is a typo, not a strategy.
+PRICE_FLOOR = 1
+
+# Price rules the client can resolve from a price the server actually sent
+# (ObjectAveragePricesMessage / ExchangeBidHouseInListAddedMessage, cached in the
+# page). The names must stay in sync with the schema's `hdv.list.price_rule`
+# enum -- `fixed` is deliberately absent: it means "the caller knows the number".
+MEASURED_PRICE_RULES = {"median_minus_1", "undercut"}
+
+
+@dataclass
+class Step:
+    index: int
+    goal: str
+    tool: str
+    args: Dict[str, Any]
+    ok: bool
+    error: Optional[str]
+    latency_ms: float
+    verdict: str
+    # Did the crossing this call promised actually happen? Shadow only: it rides the
+    # row so a `advanced` that is really a bounced border can be counted, and changes
+    # no verdict and no training label. See `verifier.promise_state`.
+    promise: Optional[str] = None
+    residual_s: Optional[float] = None
+    drift: bool = False
+    observation_cell: Optional[int] = None
+    observation_map: Optional[int] = None
+    # Compact before/after state (the keys the verifier actually reads). Without
+    # these, a logged step cannot be turned into a training example later: the
+    # label would be there but not the input that produced it.
+    obs_before: Dict[str, Any] = field(default_factory=dict)
+    obs_after: Dict[str, Any] = field(default_factory=dict)
+    note: str = ""
+    # The planner's own sentence for this call (`ToolCall.why`). It reached the
+    # trajectory corpus through `record_meta()` but never the run record, so the
+    # "0 of 1,044 step rows carry a reason" measurement had no answer readable
+    # from the log (#99). It rides the record, never the directive.
+    why: str = ""
+    session: str = ""
+    source: str = "rule"          # which agent produced the label: rule | model | human
+    at: float = field(default_factory=time.time)
+    # The claim and its settlement. A fight step without these cannot be used
+    # for calibration: the estimate that authorised it would be lost.
+    fight_estimate: Optional[Dict[str, Any]] = None
+    fight_outcome: Optional[Dict[str, Any]] = None
+    # The stacked planner's proposal and policy baseline for this call, when one
+    # ran. Without it a live row cannot tell a model decision from an if-chain.
+    ensemble: Optional[Dict[str, Any]] = None
+    # What a refused call's own answer said. The refusal sentence names the
+    # symptom; these fields name the cause, and they only exist in the response.
+    evidence: Optional[Dict[str, Any]] = None
+
+    def as_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+BRAIN_MODULES = ("agent.planner", "agent.plan_stack", "agent.autopilot", "agent.thinking",
+                 "agent.controller", "agent.runtime", "agent.verifier", "agent.executor",
+                 "combat.live_policy", "ai.lexical_policy")
+_BRAIN_BUILD: Optional[str] = None
+
+
+def brain_inputs() -> Dict[str, str]:
+    """The source this process actually holds, per deciding module.
+
+    `inspect.getsource` rather than a file read: the digest is a statement about what was
+    *running*, and the two differ the moment a process holds code the disk no longer has --
+    which is the exact situation the live rows were read in. A module that cannot be read
+    is named in the digest instead of dropped: a stamp that quietly loses a module would
+    look like a code change, and the difference matters.
+    """
+    import importlib.util
+    import sys as _sys
+
+    out: Dict[str, str] = {}
+    for name in BRAIN_MODULES:
+        try:
+            loaded = _sys.modules.get(name)
+            if loaded is not None:
+                out[name] = inspect.getsource(loaded)
+                continue
+            # Not imported yet -- read the file the import would have used, rather than
+            # importing it to ask. Importing dragged jax in through `combat.live_policy`
+            # and cost 3 s on the first row of every run (measured 2026-11-05, when it
+            # broke a 3 s budget on `test_gate_shadow_reaches_the_trajectory`).
+            spec = importlib.util.find_spec(name)
+            source = None
+            path = getattr(spec, "origin", None)
+            if path and path != "unknown":
+                source = Path(path).read_text(encoding="utf-8", errors="replace")
+            out[name] = source if source is not None else "<unloaded:no-source>"
+        except Exception as exc:  # noqa: BLE001 - the stamp must still be computable
+            out[name] = "<unloaded:%s>" % type(exc).__name__
+    return out
+
+
+def brain_build() -> str:
+    """`brain-<12 hex>` over the loaded decision code, stable for the process."""
+    import hashlib
+
+    global _BRAIN_BUILD
+    if _BRAIN_BUILD is None:
+        inputs = brain_inputs()
+        h = hashlib.sha256()
+        for name in sorted(inputs):
+            h.update(name.encode("utf-8"))
+            h.update(b"\0")
+            h.update(inputs[name].encode("utf-8", "replace"))
+        _BRAIN_BUILD = "brain-" + h.hexdigest()[:12]
+    return _BRAIN_BUILD
+
+
+def _stamp_brain_build(blob: bytes) -> bytes:
+    """Put the code identity of this process on the row, whatever row kind it is.
+
+    The `agent_build` a reader sees is the *page's* stamp, hand-written in
+    scripts/mobile-disguise.js and pinned by its own gate check. Measured 2026-11-04: all
+    51 nav rows of the day still read `2026-10-31a` while the brain had been rewritten
+    twice, so no live row could say whether a fix was loaded -- and a bound that works in
+    the tree cannot be credited from the log (#101, and the precondition for #97 and #99).
+    Every row the autopilot writes passes through `_append_log_line`, so this is one seam
+    rather than thirteen call sites.
+    """
+    if not blob.startswith(b"{") or blob.startswith(b"{}"):
+        return blob
+    return (b'{"brain_build":"' + brain_build().encode("ascii") + b'",' + blob[1:])
+
+
+class Autopilot:
+    """Observe -> choose -> execute -> label, until a stop condition fires."""
+
+    def __init__(
+        self,
+        runtime: AgentRuntime,
+        goals: Sequence[str],
+        log_path: Path = DEFAULT_LOG,
+        stop_file: Path = DEFAULT_STOP,
+        max_steps: int = 0,          # 0 = unlimited
+        minutes: float = 0.0,        # 0 = unlimited
+        interval: float = 0.0,
+        steps_per_goal: int = 8,
+        consecutive_failure_limit: int = 3,
+        dry_run: bool = False,
+        on_step=None,
+        verifier_model: Optional[Path] = None,
+        veto_threshold: float = 0.0,
+        explore: float = 0.0,
+        explore_seed: int = 0,
+        preflight: bool = True,
+        # Seconds to keep re-observing after an asynchronous tool before judging
+        # it. 0 disables the wait (tests, dry runs).
+        settle_s: float = 3.0,
+        # Deliberate dwell after a world-changing action. The completion gate
+        # already waits for movement/dialogs; this is the short "thinking token"
+        # that lets animations and the next observation settle before deciding.
+        think_s: float = 0.25,
+        # Optional training data. Off leaves the solver unaffected; it only
+        # stops writing the board snapshot rows used by a learned ranker.
+        fight_boards: bool = True,
+        # "auto" makes the loop start the combat brain if nothing is serving it;
+        # "off" leaves fights to the page's own heuristic fallback.
+        brain: str = "auto",
+        # Read-only command-parser shadow. "auto" logs the learned proposal next to
+        # the rule for each goal; the rule still chooses. "off" removes the probe.
+        command_shadow: str = "off",
+        command_shadow_model: Path = COMMAND_SHADOW_MODEL,
+    ) -> None:
+        self.runtime = runtime
+        self.fight_boards = fight_boards
+        self.brain_mode = brain if brain in ("auto", "off") else "auto"
+        # What the combat brain probe last said, so the summary can answer "was the
+        # learned policy available for this run?" instead of implying it was.
+        self._brain: Dict[str, Any] = {}
+        self._brain_attempts = 0
+        self._brain_try_at = 0.0
+        # Floor between probes. A brain that cannot start for a structural reason
+        # (no interpreter imports its dependencies) will not be fixed by asking
+        # again in five seconds, and the probe itself costs subprocess spawns.
+        self.brain_retry_s = 300.0
+        self.goals = list(goals)
+        self.command_shadow = command_shadow if command_shadow in ("auto", "off") else "off"
+        self.command_shadow_model = Path(command_shadow_model)
+        self._command_model: Any = None
+        self._command_shadow_loaded = False
+        self._command_shadow_status: Dict[str, Any] = {}
+        self._command_shadow_rows = 0
+        self.log_path = Path(log_path)
+        self.stop_file = Path(stop_file)
+        self.max_steps = max_steps
+        self.session = uuid.uuid4().hex[:8]
+        self.verifier = Verifier(model_path=verifier_model, veto_threshold=veto_threshold)
+        # Agent 2: owns the objective, the strategy table and the failure memory.
+        # The verifier answers "did that work"; the controller decides what the
+        # actor does next, which is the part that used to be missing.
+        self.preflight = preflight
+        self.world_poll_s = 3.0
+        self.world_report_s = 30.0
+        # A session that ends back at the login screen is a state the loop can
+        # leave by itself (live 2026-10-29: it waited 90+ minutes instead). The
+        # press is bounded and spaced; the page's own guard refuses it inside a
+        # "Server busy" cooldown, so this can never become a login stampede.
+        self._world_login = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 20.0}
+        self.settle_s = settle_s
+        self.think_s = max(0.0, float(think_s))
+        self._think_until = 0.0
+        # Steps allowed without `objectives_completed` rising before the current quest
+        # is considered stuck. Only applies to unlimited runs.
+        self.stall_limit = 8
+        self._best_progress = -1
+        self._stall_since = 0
+        # A quest that is retired and then chosen again is the policy ignoring its own
+        # skip. Retiring it on every stall window is a loop with a print: one offline
+        # replay of the live shape (same talk, a cell drift every 15th call) spent 340
+        # steps and 29 retirements on one quest and never escaped.
+        self._retired_qids: set = set()
+        # The objective ledger: what has been tried *for this objective* and what that proved.
+        # Set by `main`; None keeps the loop exactly as it was when it is absent.
+        self.ledger = None
+        self._ledger_pending = None
+        # The conjugate posterior store (`planning/experience.py`). Until now it was reachable
+        # only through `serve.py --schedule`, which nothing launches, so the loop that actually
+        # ran kept its outcomes in the controller's in-memory table and the JSONL and never in a
+        # posterior. Set by `main`; None leaves the loop exactly as it was.
+        self.experience = None
+        self._retire_repeats = 0
+        self._stall_unretired = 0
+        self._tutorial_since = 0.0
+        self._tutorial_expired = False
+        self._read_streak = 0
+        # A talk whose packet left and whose dialog never arrived, counted. Measured
+        # live 2026-10-27: NpcGenericActionRequestMessage{npcId:-1,npcActionId:3}
+        # matches the client's own menu handler field for field, and the server never
+        # answers it -- so the loop reported `ok`, the verdict said `noop`, and it
+        # re-sent the same doomed talk 108 times in one session.
+        self._dead_talks: Dict[str, int] = {}
+        # Map crossings the server declined while the character stood on the portal.
+        self._dead_navs: Dict[str, int] = {}
+        # The last refusal text the page captured from the client's own error
+        # channel, so a repeated message is printed once instead of every turn.
+        self._last_client_error: Optional[str] = None
+        # The state file is keyed by the *instance*, not the session: a session id is a fresh uuid
+        # per run, so keying on it meant every run started from nothing and wrote a new file (803
+        # of them, 378 holding a single step). One instance is one character, which is the thing
+        # that should accumulate.
+        self.controller = Controller(session=self.session, explore=explore,
+                                     seed=explore_seed,
+                                     state_key=(getattr(runtime, "instance", None) or "default"))
+        self.controller.set_objective("; ".join(goals))
+        self.controller.load()
+        # After the fast policy repeats the same failure, this layer searches the
+        # untried interactions the current board supports. It never replays a
+        # recent call, and it yields back to the controller when exhausted.
+        self.thinking = ThinkingLayer()
+        self.on_replan = None            # set by the host: (reason, decision) -> None
+        self._forced_call: Optional[ToolCall] = None
+        self._hinted = False
+        self._pending: Optional[Decision] = None
+        self._pending_age = 0
+        self.replan_requested = 0
+        self.deadline = time.time() + minutes * 60.0 if minutes > 0 else 0.0
+        self.interval = interval
+        self.steps_per_goal = steps_per_goal
+        self.consecutive_failure_limit = consecutive_failure_limit
+        self.dry_run = dry_run
+        self.on_step = on_step
+
+        # Recent steps for the thinking layer and the UI. The run itself is
+        # unlimited, so this list must not be: the counters below keep the full
+        # history's information without holding every observation it carried.
+        self.steps: List[Step] = []
+        self.step_history = 256
+        self._step_total = 0
+        self._verdict_counts: Dict[str, int] = {}
+        # Shadow accounting of `Step.promise` -- see `verifier.promise_state`.
+        self._promise_counts: Dict[str, int] = {}
+        self._source_counts: Dict[str, int] = {}
+        # Manual interventions, as counted by the client's trusted-input instrument.
+        self._intervention_seen = 0
+        self._intervention_total = 0
+        # Recovery accounting: criterion 5 asks whether the run gets itself back,
+        # so a rescue is a measured event, not a print line.
+        self._recoveries = 0
+        self._recoveries_ok = 0
+        self._recovery_wait_s = 0.0
+        # Waits that were never dispatched as steps: see WAIT_POLL_S.
+        self._waits = 0
+        self._consecutive_waits = 0
+        # Whole wait windows that ended with nothing actionable at all. Live
+        # 2026-10-29: 467 passes (172 s) of "the policy had no action to take",
+        # because every 40-pass window ended in a farm.start the quest gate
+        # refuses. A run that survives that is a run that never ends; the count
+        # turns it into a bounded, visible stop.
+        self._dead_windows = 0
+        # Quests retired by the dead-window path this run; bounded per run.
+        self._retired = 0
+        # How many passes have been spent waiting for the client to publish its quest data.
+        # Right after a login the snapshot can be in world with an empty quest block, and one
+        # such reading used to end the run (see `_quest_data_pending`).
+        self._quest_data_waits = 0
+        # One `session_end` row per pilot, whichever exit path fires -- see summary().
+        self._end_row_written = False
+        self._forced_reason = ""
+        # Dialog attempts and whether the conversation moved: see _record_dialog.
+        self._dialogs = 0
+        self._dialog_stalls = 0
+        # The page's AFK witness, folded in from each step's post-action snapshot.
+        # "This run was never kicked" is not evidence of liveness: the client's own
+        # timer warns at 5 min idle and calls disconnect("INACTIVITY") at 10, and a
+        # keep-alive that silently did nothing (no recordActivity to call, or a page
+        # that reloaded and lost the flag) looks identical from the outside.
+        self._keep_alive = {"steps": 0, "present_steps": 0, "marks": 0,
+                            "failed": 0, "idle_max_ms": 0, "last_source": None,
+                            "age_max_ms": 0, "inactive_steps": 0}
+        # The viewport the client was laid out for versus the one it has now. A
+        # pre-world client keeps the geometry it booted with, so a drifted pair is
+        # the machine-readable form of "this instance looks broken": a squashed
+        # login screen whose buttons are not where the page thinks they are. The
+        # page reloads itself out of that; the counters say how often it had to.
+        self._geometry = {"steps": 0, "drift_steps": 0, "in_world_steps": 0,
+                          "reloads": 0, "boot": None, "now": None}
+        self._first_step_at = 0.0
+        self._last_step_at = 0.0
+        # A long run can list hundreds of items; keep the recent ledger for
+        # inspection and the total for the summary.
+        self.open_listings: Deque[Dict[str, Any]] = deque(maxlen=512)
+        self._listing_total = 0
+        self.knowledge = load_default_store()
+        # Agent 3's read-only answers: one shared estimator behind both the guard
+        # and the `fight.estimate` tool, so a step and its refusal cannot disagree.
+        # Reuse the canonical connection (and its bounded name cache) instead of
+        # opening a second handle to the same 42 MiB read-only database.
+        self.fights = FightAdvisor(store=self.knowledge)
+        self.fight_log = FightOutcomeLog()
+        self._character_at = 0.0     # last accepted sheet
+        self._character_try = 0.0    # last attempt, successful or not
+        self._character_key: Optional[str] = None
+        self.character_ttl_s = 60.0
+        self.character_retry_s = 30.0
+        # The page owns a fight once it starts. These track the wait so the loop
+        # can arm the in-page bot periodically and say how long the wait has been.
+        self._fight_arm_at = 0.0
+        self._fight_wait_since: Optional[float] = None
+        self._fight_wait_report = 0.0
+        # The tutorial's challenge step waits for a real touchend on the
+        # challenge slot; the page's combat casts never produce one. One press
+        # per fight, bounded, only while the scenario's hint points there.
+        self._hint_taps = 0
+        self._hint_tap_at = 0.0
+        # A farm order is a standing state, not a per-step action. Re-issuing
+        # farm.start reset the page's session (kills/kamas back to zero) and the
+        # controller's snapshot recovery in between kept the loop busy without
+        # progress. While the FarmBot is enabled the loop holds and watches.
+        self._farm_wait = False
+        self._farm_wait_since: Optional[float] = None
+        self._farm_wait_report = 0.0
+        self._farm_progress = None
+        self._farm_progress_at = 0.0
+        self._farm_objective = None
+        # Board snapshots are the raw material for cell-level combat training:
+        # the in-page bot plays, but the board and the eventual outcome are
+        # still a labelled example for a plan ranker.
+        self.fight_board_path = self.log_path.with_name("fight_boards.jsonl")
+        self._fight_board_at = 0.0
+        self._fight_board_key: Optional[bytes] = None
+        # Maintained in memory: stat() per step / per board was one syscall per
+        # append just to decide whether to rotate.
+        try:
+            self._log_size = self.log_path.stat().st_size
+        except OSError:
+            self._log_size = 0
+        try:
+            self._fight_log_size = self.fight_board_path.stat().st_size
+        except OSError:
+            self._fight_log_size = 0
+        executor = getattr(runtime, "executor", None)
+        if executor is not None and getattr(executor, "fights", None) is None:
+            executor.fights = self.fights
+        if executor is not None and self.knowledge is not None:
+            executor.canonical_store = self.knowledge
+        self._last_obs: Optional[Dict[str, Any]] = None
+        # The last object that already carries both knowledge and fight
+        # annotations. The carried post-action snapshot was enriched again at
+        # the top of the next step; returning the prepared object avoids that
+        # duplicate pass while preserving the same observation contract.
+        self._prepared_obs: Optional[Dict[str, Any]] = None
+        # Provenance of `_last_obs`, recorded with the step it justified. A
+        # snapshot the loop reused must not be written down as if it arrived
+        # with the call: that is the difference between a training pair and a
+        # snapshot paired with an action taken much later.
+        self._obs_age_ms: Optional[float] = None
+        self._obs_source: str = "call"
+        # G9: one run, one character. The bridge addresses an instance by slot, not by
+        # account, so a slot that reloaded into a different login looks exactly like a
+        # kick unless the character itself is compared.
+        self._identity: Optional[Dict[str, Any]] = None
+        self._identity_drift: Optional[Dict[str, Any]] = None
+        self._recent: List[str] = []
+        # Crossings sent that the map never answered, since the last real map
+        # change. See NAV_DECLINE_LIMIT.
+        self._crossing_declines: int = 0
+        # How many times the loop chose to wait out a crossing already in flight
+        # instead of re-asking it (#106). Without this the rule is invisible in the
+        # log: a waited-out walk and a walk that was re-asked five times both look
+        # like "fewer rows", and the next reader cannot say which happened.
+        self._crossings_waited_out: int = 0
+        # Consecutive no-op outcomes per action tool. Read-only recoveries do
+        # not reset it: farm.start -> state.snapshot -> farm.start used to run
+        # forever because every snapshot cleared the exact-repeat streak.
+        self._action_noops: Dict[str, int] = {}
+        # Shadow only: what the repeat-streak gate would veto on this decision.
+        # The counter is recorded with each call's meta and never blocks a call;
+        # the corpus says an identical retry after two misses meets ~2% (G48-G54).
+        self._gate = RuleGate()
+        # Patience with a scripted step, timed once per action signature. See
+        # _tutorial_hold: a wait must be spent as a wait, and it must end.
+        self._hold_key: Optional[str] = None
+        self._hold_world: Optional[str] = None
+        self._hold_started_at = 0.0
+        # How many full patience windows one stuck step has cost. Reported in the
+        # summary: a session that waited an hour is a different fact from one that
+        # acted an hour, and only this number can tell them apart afterwards.
+        self._hold_cycles = 0
+        # Guard refusals are decisions, not crashes. A refused call is reported to
+        # the policy and the controller, and the loop takes another step; only the
+        # same refusal three times in a row is a dead end for the goal.
+        self._refusals: List[str] = []
+        self._index = 0
+        self._log_path().parent.mkdir(parents=True, exist_ok=True)
+
+    # -- plumbing ------------------------------------------------------------
+
+    def _log_path(self) -> Path:
+        return self.log_path
+
+    def _rotate_log(self) -> None:
+        """Keep an unlimited run from producing one unbounded step log."""
+        try:
+            if self._log_size >= LOG_MAX_BYTES:
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                rotated = self.log_path.with_name(
+                    f"{self.log_path.stem}.{stamp}{self.log_path.suffix}")
+                suffix = 0
+                while rotated.exists():
+                    suffix += 1
+                    rotated = self.log_path.with_name(
+                        f"{self.log_path.stem}.{stamp}-{suffix}{self.log_path.suffix}")
+                self.log_path.rename(rotated)
+                self._log_size = 0
+        except OSError:
+            pass
+
+    def _append_log_line(self, blob: bytes) -> None:
+        self._rotate_log()
+        if not blob.endswith(b"\n"):
+            # One call site forgot the newline and it cost 101 rows: every
+            # `{"kind": "brain"}` row in the four live logs was glued onto the record
+            # after it, so neither parsed -- 68 step rows and 27 intervention rows among
+            # them (measured 2026-10-31). The helper guarantees the line ending now, so
+            # a caller cannot repeat it.
+            blob = blob + b"\n"
+        blob = _stamp_brain_build(blob)
+        try:
+            with self.log_path.open("ab") as handle:
+                handle.write(blob)
+            self._log_size += len(blob)
+        except OSError:
+            pass  # a full disk must not stop the bot from stopping cleanly
+
+    def _ensure_command_shadow(self) -> Any:
+        """Load the command model once, fail-open. Logs one status row per session."""
+        if self.command_shadow == "off" or self._command_shadow_loaded:
+            return self._command_model
+        self._command_shadow_loaded = True
+        model, error = load_command_model(self.command_shadow_model)
+        self._command_model = model
+        self._command_shadow_status = {"available": model is not None,
+                                       "error": error,
+                                       "model": str(self.command_shadow_model)}
+        self._append_log_line(_fast_dumps({
+            "kind": "command_shadow_status",
+            "session": self.session,
+            "mode": self.command_shadow,
+            "model": str(self.command_shadow_model),
+            "available": model is not None,
+            "error": error,
+            "at": time.time(),
+        }) + b"\n")
+        if model is None:
+            print(f"[autopilot] command shadow unavailable: {error}")
+        return model
+
+    def _log_command_shadow(self, goal: str) -> None:
+        """Record the model's proposal next to the rule. Never changes the goal path."""
+        if self.command_shadow == "off":
+            return
+        model = self._ensure_command_shadow()
+        if model is None:
+            return
+        try:
+            row = shadow_row(goal, model)
+        except Exception as exc:      # noqa: BLE001 - the shadow must fail open
+            row = {"kind": "command_shadow", "text": goal, "model": None,
+                   "available": False, "would_override": False,
+                   "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+        row.update({"session": self.session, "at": time.time()})
+        self._append_log_line(_fast_dumps(row) + b"\n")
+        self._command_shadow_rows += 1
+
+    def _emit(self, step: Step) -> None:
+        if not self._first_step_at:
+            self._first_step_at = step.at
+        self._last_step_at = step.at
+        # A step is the end of a wait: the streak that bounds the idle passes restarts,
+        # and a reason written for a directive no longer labels anything.
+        self._consecutive_waits = 0
+        self._forced_reason = ""
+        if step.tool not in READ_ONLY_TOOLS and step.tool not in LISTING_TOOLS:
+            # A real action is progress the dead-window count was asking for; the
+            # overflow read dispatched at the bound is not, or the cycle it exists
+            # to surface would reset its own counter.
+            self._dead_windows = 0
+        self._step_total += 1
+        self._verdict_counts[step.verdict] = (
+            self._verdict_counts.get(step.verdict, 0) + 1)
+        if step.promise:
+            self._promise_counts[step.promise] = (
+                self._promise_counts.get(step.promise, 0) + 1)
+        self._source_counts[step.source] = (
+            self._source_counts.get(step.source, 0) + 1)
+        self.steps.append(step)
+        if len(self.steps) > self.step_history:
+            del self.steps[:len(self.steps) - self.step_history]
+        self._append_log_line(_fast_dumps(step.as_dict()) + b"\n")
+
+    def _emit_decision(self, decision: Decision, call: ToolCall, result: Any,
+                       obs: Optional[Dict[str, Any]], ok: Optional[bool] = None,
+                       error: Any = None) -> None:
+        """Log the repair decision next to the step that provoked it.
+
+        A decision is not recoverable from the steps: a retry and a continue both end
+        in a tool call, so the old log could only guess the action from the tool name.
+        Guessing is how the first reality check ended up ranking strategies it had
+        inferred rather than observed. One extra line per decision removes the guess
+        and makes the log a bandit dataset (state, action, reward) instead of a
+        transcript.
+
+        `ok`/`error` must be the values the controller was given, not the transport
+        result: the bridge reports success for a call the game refused, so recording
+        `result.ok` made 455 rule refusals read as successful steps with no error text
+        -- and every offline analysis of "why did that repair fail" was then looking at
+        a field that was always null.
+        """
+        if ok is None:
+            ok = bool(getattr(result, "ok", False))
+        if error is None:
+            error = getattr(result, "error", None)
+        self._append_log_line(_fast_dumps({
+                    "kind": "decision",
+                    "session": self.session,
+                    "goal": None,
+                    "action": decision.action,
+                    "cause": decision.cause,
+                    "explored": bool(decision.explored),
+                    "confidence": decision.confidence,
+                    "tool": call.tool,
+                    "ok": bool(ok),
+                    "error": error,
+                    "obs": obs if isinstance(obs, dict) else {},
+                    "at": time.time(),
+                }) + b"\n")
+
+    def _should_stop(self) -> Optional[str]:
+        """A pre-existing stop file is reported explicitly.
+
+        Otherwise the loop exits with "done: stop file" on its first check and the
+        run looks like it did nothing -- which is exactly what a leftover file from
+        the previous session produces.
+        """
+        drift = getattr(self, "_identity_drift", None)
+        if drift is not None:
+            bound = drift.get("bound") or {}
+            seen = drift.get("seen") or {}
+            return ("the slot logged into a different character (%s -> %s)"
+                    % (bound.get("name") or bound.get("id"),
+                       seen.get("name") or seen.get("id")))
+        # Only three things end a run: the goals are done, the user stops it, or
+        # an explicit budget was set. There is deliberately no default timeout --
+        # a session that quits on a clock leaves the character mid-task.
+        if self.max_steps > 0 and self._index >= self.max_steps:
+            return f"step budget reached ({self.max_steps})"
+        if self.deadline and time.time() >= self.deadline:
+            return "time budget reached"
+        if self.stop_file.exists():
+            return f"stop file present ({self.stop_file.name})"
+        return None
+
+    def _check_identity(self, obs: Any) -> bool:
+        """Bind the run to one character and fail closed when the slot changes.
+
+        `snap.character` carries the client's own `{id, name}`. Unknown (character
+        select, an older page, a null field) is not a change; only two comparable
+        identities that disagree are. The id is authoritative when both sides have
+        one -- a rename is the same account -- and the name is the fallback for a
+        build that does not expose the id.
+        """
+        char = obs.get("character") if isinstance(obs, dict) else None
+        if not isinstance(char, dict):
+            return getattr(self, "_identity_drift", None) is None
+        # At character selection the client can still hold the last character's base
+        # informations; binding to that would turn a legitimate login into a drift on
+        # the first real snapshot. Identity is only known in the world.
+        in_world = obs.get("in_world")
+        if in_world is not True:
+            position = obs.get("position") if isinstance(obs.get("position"), dict) else {}
+            if in_world is False or position.get("map_id") in (None, 0):
+                return getattr(self, "_identity_drift", None) is None
+        cid = char.get("id")
+        name = char.get("name")
+        if cid is None and not name:
+            return getattr(self, "_identity_drift", None) is None
+        seen = {"id": str(cid) if cid is not None else None,
+                "name": str(name) if name not in (None, "") else None}
+        if self._identity is None:
+            self._identity = seen
+            self._append_log_line(_fast_dumps({
+                "kind": "identity", "session": self.session, "event": "bound",
+                "character_id": seen["id"], "name": seen["name"],
+                "at": time.time(),
+            }) + b"\n")
+            return True
+        bound = self._identity
+        if bound.get("id") is not None and seen.get("id") is not None:
+            same = bound["id"] == seen["id"]
+        elif bound.get("name") and seen.get("name"):
+            same = bound["name"] == seen["name"]
+        else:
+            same = True          # nothing comparable on both sides
+        if same:
+            # Fill in a field the first snapshot lacked; never rewrite one.
+            if seen.get("id") is not None and bound.get("id") is None:
+                bound["id"] = seen["id"]
+            if seen.get("name") and not bound.get("name"):
+                bound["name"] = seen["name"]
+            return True
+        self._identity_drift = {"bound": dict(bound), "seen": dict(seen)}
+        self._append_log_line(_fast_dumps({
+            "kind": "identity", "session": self.session, "event": "drift",
+            "bound": dict(bound), "seen": dict(seen), "at": time.time(),
+        }) + b"\n")
+        return False
+
+    # -- observation ---------------------------------------------------------
+
+    @staticmethod
+    def _obs_map(obs: Any) -> Optional[int]:
+        if not isinstance(obs, dict):
+            return None
+        for value in (obs.get("map_id"), (obs.get("position") or {}).get("map_id"),
+                      (obs.get("map") or {}).get("map_id")):
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    @staticmethod
+    def _obs_cell(obs: Any) -> Optional[int]:
+        if not isinstance(obs, dict):
+            return None
+        for value in (obs.get("cell"), (obs.get("position") or {}).get("cell"),
+                      (obs.get("map") or {}).get("cell")):
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    @classmethod
+    def _world_key(cls, obs: Any) -> Tuple[Any, ...]:
+        if not isinstance(obs, dict):
+            return ()
+        objective = obs.get("current_objective")
+        objective_id = objective.get("objective_id") if isinstance(objective, dict) else None
+        return (cls._obs_map(obs), cls._obs_cell(obs), bool(obs.get("in_dialog")),
+                bool(obs.get("in_fight")), objective_id,
+                obs.get("objectives_completed"), bool(obs.get("auto_fight")))
+
+    @staticmethod
+    def _dialog_signature(dialog: Dict[str, Any]) -> Tuple[Any, ...]:
+        """The parts of a dialog block that only change when the page does.
+
+        `ids_ready` and any timestamp tick without the conversation moving, so they
+        are left out: the settle must not exit on its own clock.
+        """
+        replies = dialog.get("replies")
+        if isinstance(replies, list):
+            replies = tuple(str(r) if not isinstance(r, dict) else str(r.get("text"))
+                            for r in replies)
+        else:
+            replies = None
+        return (bool(dialog.get("open")), dialog.get("npc_id"),
+                dialog.get("message"), dialog.get("reply_text"), replies)
+
+    @classmethod
+    def _action_complete(cls, call: Any, before: Any, after: Any) -> bool:
+        """Has the action reached the state it promised, not just started?"""
+        if not isinstance(after, dict) or not after:
+            return False
+        before = before if isinstance(before, dict) else {}
+        tool = str(getattr(call, "tool", "") or "")
+        args = getattr(call, "args", {}) or {}
+        if tool == "nav.goto":
+            before_map, after_map = cls._obs_map(before), cls._obs_map(after)
+            # Any crossing completes the step. The planner names the journey's
+            # destination, but the executor sends one border at a time, so waiting for
+            # the far map would hold every hop until the window ran out -- measured
+            # live: a 6.07 s median gap after `nav.goto` while the crossing itself is
+            # one round trip. A walk within the map is the cell target below.
+            if bool(after_map) and after_map != before_map:
+                return True
+            target = args.get("map_id")
+            if target is not None:
+                try:
+                    return cls._obs_map(after) == int(target)
+                except (TypeError, ValueError):
+                    return False
+            target_cell = args.get("cell")
+            if target_cell is not None:
+                try:
+                    return cls._obs_cell(after) == int(target_cell)
+                except (TypeError, ValueError):
+                    return False
+            return False
+        if tool == "quest.advance":
+            # A reply inside an open dialog promises a new page, not a new objective:
+            # the quest only moves when the conversation ends. Without this the settle
+            # waited its whole six-second window on every reply -- measured live, 601
+            # `quest.advance` steps with a 6.73 s median gap to the next step, while the
+            # page answered in 18 ms. The dialog block is the witness (the same page
+            # text, npc and reply list the planner reads).
+            a_dlg = after.get("dialog")
+            b_dlg = before.get("dialog")
+            if args.get("close"):
+                if before.get("in_dialog") and not after.get("in_dialog"):
+                    return True
+            elif args.get("reply") is not None or args.get("reply_text") is not None:
+                if isinstance(a_dlg, dict) and cls._dialog_signature(a_dlg) != \
+                        cls._dialog_signature(b_dlg if isinstance(b_dlg, dict) else {}):
+                    return True
+            if after.get("in_dialog") and not before.get("in_dialog"):
+                return True
+            if after.get("objectives_completed") != before.get("objectives_completed"):
+                return True
+            b_obj = before.get("current_objective")
+            a_obj = after.get("current_objective")
+            if (a_obj or {}).get("objective_id") != (b_obj or {}).get("objective_id"):
+                return True
+            before_map, after_map = cls._obs_map(before), cls._obs_map(after)
+            return bool(after_map) and after_map != before_map
+        if tool in ("fight.join", "farm.start"):
+            if after.get("in_fight") and not before.get("in_fight"):
+                return True
+            return bool(after.get("auto_fight")) and not bool(before.get("auto_fight"))
+        return bool(changed_keys(before, after))
+
+    def _settle(self, before: Any, after: Any, call: Any = None,
+                step_s: float = 0.4) -> Any:
+        """Wait until the action completes, then until the world is quiet.
+
+        Returning on the first cell change let the next directive interrupt a
+        walk or a dialog that was still running. The loop issues one action at a
+        time: wait for the tool's own completion predicate (map change, target
+        cell, dialog/objective, fight), or, for actions without one, until the
+        world has been stable for a short quiet window. Only then is the next
+        decision allowed, with the caller's think pause on top.
+        """
+        if self.settle_s <= 0:
+            return after
+        if not isinstance(before, dict):
+            before = after if isinstance(after, dict) else None
+            if before is None:
+                return after
+        tool = str(getattr(call, "tool", "") or "")
+        # `_action_complete` knows what these four tools promised; for every other
+        # tool "some key changed" is the best available definition of done.
+        promised = tool in SETTLE_TOOLS
+        window = self.settle_s
+        if tool in ("nav.goto", "quest.advance"):
+            window = max(window, PROMISED_SETTLE_WINDOW_S)
+        elif tool in ("fight.join", "farm.start"):
+            window = max(window, 4.0)
+        started = time.monotonic()
+        deadline = settle_deadline(tool, started, started, window)
+        quiet_s = min(0.8, max(0.4, self.think_s + 0.3))
+        best = after
+        last_key = self._world_key(best)
+        last_change = started
+        delay = step_s
+        while time.monotonic() < deadline:
+            if isinstance(best, dict) and best:
+                if self._action_complete(call, before, best):
+                    self._record_settled(best, after)
+                    return best
+                key = self._world_key(best)
+                if key != last_key:
+                    last_key = key
+                    last_change = time.monotonic()
+                    # The world moved, so the action is still being performed: for a
+                    # crossing, that means the character is walking to the border and
+                    # the loop must not hand itself a reason to re-ask and re-path it.
+                    extended = settle_deadline(tool, started, last_change, window)
+                    if extended > deadline:
+                        self._crossings_waited_out += 1
+                    deadline = extended
+                elif (not promised
+                      and changed_keys(before, best)
+                      and time.monotonic() - last_change >= quiet_s):
+                    # A quiet world is not a finished action. `changed_keys(before,
+                    # best)` compares against the *start*, so any unrelated tick --
+                    # AP, HP, a cell drift -- keeps this branch eligible, and a
+                    # predicate tool used to exit here after ~0.8 s. Measured on the
+                    # live log: `quest.advance` rows judged noop returned in 0.80 s
+                    # (median) while the dialog they queued opened 1.2 s later, so
+                    # 480 accepted claims were scored as doing nothing and the loop
+                    # moved on -- and then interrupted its own walk. For a tool whose
+                    # promise we can check, only the promise ends the wait.
+                    self._record_settled(best, after)
+                    return best
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 1.6, max(step_s, 0.8))
+            nxt = self.observe(max_age_ms=-1.0, record=False)
+            if nxt:
+                best = nxt
+        self._record_settled(best, after)
+        return best
+
+    def _record_observation(self, observation: Any) -> None:
+        writer = getattr(getattr(self, "runtime", None), "observe", None)
+        if callable(writer) and isinstance(observation, dict) and observation:
+            try:
+                writer(observation, source="live")
+            except Exception:  # noqa: BLE001 - a log failure must not fail a step
+                pass
+
+    def _record_settled(self, best: Any, after: Any) -> None:
+        # Record only a state produced by a poll. If no poll happened, `after`
+        # came either from observe() (already recorded) or from the directive's
+        # piggybacked snapshot (adopted without a row, as before).
+        if best is after or not isinstance(best, dict):
+            return
+        writer = getattr(self.runtime, "observe", None)
+        if callable(writer):
+            try:
+                writer(best, source="live")
+            except Exception:  # noqa: BLE001 - a log failure must not fail a step
+                pass
+
+    def observe(self, max_age_ms: float = OBS_FRESH_MS,
+                record: bool = True) -> Optional[Dict[str, Any]]:
+        """Return the freshest state we can get, and remember how fresh it is.
+
+        The runtime holds the snapshot the bridge returned with the previous
+        directive. That snapshot is the state *after* that action, so it is a
+        legitimate decision input for the next one — but only while it is
+        recent. Anything older, or of unknown age, is fetched again: deciding
+        on an old snapshot is how the loop replays a plan against a world that
+        has already moved on.
+        """
+        current, age_ms, source = self.runtime.current_observation()
+        if (isinstance(current, dict) and current and age_ms is not None
+                and age_ms <= max_age_ms):
+            if current is self._prepared_obs:
+                self._last_obs = current
+                self._obs_age_ms, self._obs_source = age_ms, source
+                return current
+            current = self._prepare_obs(current)
+            self._last_obs = current
+            self._obs_age_ms, self._obs_source = age_ms, source
+            return current
+
+        if self.dry_run:
+            return self._last_obs
+
+        executor = getattr(self.runtime, "executor", None)
+        instance = getattr(self.runtime, "instance", None)
+        snap = None
+        # A polling read is not a step. `snapshot()` exists so the settle loop
+        # can re-read the state without writing a state.snapshot row for every
+        # poll; test doubles that only implement `execute` still work.
+        reader = getattr(executor, "snapshot", None)
+        if callable(reader):
+            snap = reader(instance=instance)
+        elif executor is not None:
+            result = executor.execute(
+                "state.snapshot", {}, instance=instance, source="live")
+            if result.ok and isinstance(getattr(result, "data", None), dict):
+                snap = result.data.get("snapshot") or result.data
+        if isinstance(snap, dict) and snap:
+            snap = self._prepare_obs(snap)
+            self._last_obs = snap
+            self._obs_age_ms, self._obs_source = 0.0, "call"
+            if record:
+                self.runtime.observe(snap, source="live")
+            else:
+                # Adopt without writing a full observation row; the settle
+                # loop records the final state once.
+                note = getattr(self.runtime, "note_observation", None)
+                if callable(note):
+                    note(snap)
+            return snap
+        if isinstance(current, dict) and current:
+            # No independent read path (a test double, or a bridge that just
+            # failed): use the runtime's copy, but say it is stale so the
+            # recorder never presents it as a fresh pairing.
+            current = self._prepare_obs(current)
+            self._last_obs = current
+            self._obs_age_ms, self._obs_source = age_ms, "stale"
+            return current
+        self._obs_source = "stale"
+        return self._last_obs
+
+    def _prepare_obs(self, observation: Dict[str, Any]) -> Dict[str, Any]:
+        prepared = self._annotate_fights(
+            enrich_observation(observation, self.knowledge))
+        self._prepared_obs = prepared
+        return prepared
+
+    # -- the fight advisor ---------------------------------------------------
+
+    def _refresh_character(self, force: bool = False) -> None:
+        """Keep the advisor's character sheet current, and cheap to keep.
+
+        The estimator needs stats, spells and HP, which only `debug.character`
+        provides. Polling it every step would be a second round trip per action;
+        the sheet only changes on a level-up or an equipment change. A 60-second
+        TTL is the fallback, and a character signature (level, max HP, breed,
+        spells, equipment) forces an immediate refresh when the player changes
+        something mid-run.
+        """
+        if self.dry_run:
+            return
+        sheet = self.fights.character
+        now = time.time()
+        signature = character_key(self._last_obs)
+        changed = (sheet is not None and self._character_key is not None
+                   and signature != self._character_key)
+        if not force and not changed and sheet is not None \
+                and (now - self._character_at) < self.character_ttl_s:
+            return
+        # A failed fetch must not count as a fresh sheet: without this gate the
+        # first attempt before login would lock fights out for the whole TTL.
+        if not force and not changed \
+                and (now - self._character_try) < self.character_retry_s:
+            return
+        if changed:
+            print("[autopilot] character sheet changed; refreshing")
+        executor = getattr(self.runtime, "executor", None)
+        reader = getattr(executor, "character_report", None)
+        if not callable(reader):
+            return
+        self._character_try = now
+        report = reader(instance=getattr(self.runtime, "instance", None))
+        if report is not None and self.fights.use_character_report(report):
+            self._character_at = now
+            self._character_key = signature
+
+    def _annotate_fights(self, obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Attach the per-group estimate the planner reads on this map.
+
+        The actor never sees this; it is the controller's view of "can I take
+        that group". Maps without monsters cost nothing, and the estimate is
+        cached by group composition, not recomputed per snapshot.
+        """
+        if not isinstance(obs, dict) or not obs or obs.get("in_fight"):
+            return obs
+        groups = self.fights.groups(obs)
+        if not groups:
+            return obs
+        self._refresh_character()
+        return self.fights.annotate(obs, groups=groups)
+
+    # -- guards --------------------------------------------------------------
+
+    def guard(self, call: ToolCall) -> Optional[str]:
+        """Return a refusal reason, or None when the call is safe to send."""
+        if call.tool in FORBIDDEN_TOOLS:
+            return "refused: tool is disabled by policy"
+        if call.tool in LISTING_TOOLS:
+            price = call.args.get("price")
+            rule = call.args.get("price_rule")
+            if isinstance(price, int) and not isinstance(price, bool):
+                if price < PRICE_FLOOR:
+                    return f"refused: price {price} is below the {PRICE_FLOOR} kama floor"
+            elif rule in MEASURED_PRICE_RULES:
+                # The page resolves the rule from a price the SERVER sent and must
+                # report `price_source`; if it does not, the listing is recorded as
+                # unverified rather than as a listing (see run()).
+                pass
+            else:
+                return ("refused: a listing needs an explicit integer price, or a rule "
+                        f"({', '.join(MEASURED_PRICE_RULES)}) the client can resolve from a "
+                        "measured market price")
+        ok, err = validate_call(call.tool, call.args)
+        if not ok:
+            return f"refused: schema rejected the call ({err})"
+        if call.tool in FIGHT_TOOLS:
+            return self._fight_guard(call)
+        return None
+
+    def _fight_guard(self, call: ToolCall) -> Optional[str]:
+        """Refuse a fight the estimator cannot say yes to.
+
+        The plan's rule is explicit: no unattended fight without a calibrated
+        estimate that clears the threshold, the HP-loss limit, and the boss
+        opt-in. A failed estimate is not permission to try.
+        """
+        observation = self._last_obs
+        if not isinstance(observation, dict) or not observation:
+            return "refused: no observation, so this fight cannot be estimated"
+        if observation.get("in_fight"):
+            return None  # already committed; the fight loop owns it now
+        self._refresh_character()
+        return self.fights.assess_call(call.tool, dict(call.args or {}), observation)
+
+    def _track_fight(self, before: Optional[Dict[str, Any]],
+                     after: Optional[Dict[str, Any]],
+                     tool: Optional[str] = None):
+        """Write the estimate when a fight starts, and the outcome when it ends.
+
+        These two rows are the calibration set: the estimate is a falsifiable
+        claim, and the HP before/after is the evidence. A fight that starts
+        without an estimate (the session began mid-fight) writes nothing.
+
+        `tool` is the call that produced the snapshot in which the fight became
+        visible. It is what lets the outcome row name the join that started it.
+        """
+        if not isinstance(after, dict):
+            return None, None
+        was = bool(isinstance(before, dict) and before.get("in_fight"))
+        now = bool(after.get("in_fight"))
+        if now and not was and self.fight_log.pending is None:
+            estimate = self.fights.last_estimate
+            if isinstance(estimate, dict) and estimate.get("features"):
+                self.fight_log.start(estimate, before, session=self.session,
+                                     started_by=tool)
+                return estimate, None
+            return None, None
+        # A fight can also end between two steps, so the resolution is driven
+        # by the pending claim, not by watching `in_fight` go false.
+        if self.fight_log.pending is not None and not now:
+            outcome = self.fight_log.resolve(after, session=self.session)
+            self._record_fight_outcome(outcome, after)
+            return None, outcome
+        return None, None
+
+    # -- combat board capture ------------------------------------------------
+
+    def _append_fight_log(self, record: Dict[str, Any]) -> None:
+        try:
+            self.fight_board_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._fight_log_size >= LOG_MAX_BYTES:
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                rotated = self.fight_board_path.with_name(
+                    f"{self.fight_board_path.stem}.{stamp}"
+                    f"{self.fight_board_path.suffix}")
+                suffix = 0
+                while rotated.exists():
+                    suffix += 1
+                    rotated = self.fight_board_path.with_name(
+                        f"{self.fight_board_path.stem}.{stamp}-{suffix}"
+                        f"{self.fight_board_path.suffix}")
+                self.fight_board_path.rename(rotated)
+                self._fight_log_size = 0
+            blob = _fast_dumps(_redact(record)) + b"\n"
+            with self.fight_board_path.open("ab") as handle:
+                handle.write(blob)
+            self._fight_log_size += len(blob)
+        except OSError as exc:
+            print(f"[autopilot] could not write fight board log: {exc}")
+
+    def _record_fight_board(self, goal: Optional[str]) -> None:
+        """Snapshot the live board once per distinct turn/HP/cell state.
+
+        This is read-only and deliberately separate from the action trajectory:
+        the in-page bot is playing, so the board is observation data for a
+        learned plan ranker, not a record of an action this agent chose.
+        """
+        if not self.fight_boards:
+            return
+        executor = getattr(self.runtime, "executor", None)
+        reader = getattr(executor, "fight_state", None)
+        if not callable(reader):
+            return
+        try:
+            board = reader()
+        except Exception:  # noqa: BLE001 - a diagnostic read must not break the loop
+            return
+        if not isinstance(board, dict) or not board.get("in_fight"):
+            return
+        key = _fast_dumps({
+            "fight_id": board.get("fight_id"),
+            "round": board.get("round"),
+            "turn": board.get("current_fighter_id"),
+            "my_cell": board.get("my_cell"),
+            "my_turn": board.get("is_my_turn"),
+            "fighters": [
+                [f.get("id"), f.get("hp"), f.get("cell"), f.get("alive")]
+                for f in (board.get("fighters") or [])
+                if isinstance(f, dict)
+            ],
+        })
+        if key == self._fight_board_key:
+            return
+        self._fight_board_key = key
+        self._append_fight_log({
+            "kind": "fight_board",
+            "run": self.session,
+            "goal": goal,
+            "board": board,
+        })
+
+    def _record_interventions(self, observation: Optional[Dict[str, Any]]) -> int:
+        """Log trusted human input that arrived while the loop was running.
+
+        The goal counts "zero manual interventions", and until the client could
+        tell a real input event from the agent's own, nothing on disk could answer
+        it: a steered run and an unattended run wrote identical rows. The page
+        distinguishes them because everything the agent clicks is synthesised with
+        `dispatchEvent` (`isTrusted: false`), so only genuine human input is
+        counted in `user_input.during_run`.
+
+        Counters are monotonic per client session, so the delta against the last
+        value seen is the number of new interventions since this step. A page
+        reload resets them, which is why the seen-watermark is taken downwards too
+        instead of only ever rising: without that, one reload would re-report the
+        same clicks as new interventions and inflate the number the goal is
+        measured by.
+        """
+        if not isinstance(observation, dict):
+            return 0
+        ui = observation.get("user_input")
+        if not isinstance(ui, dict):
+            return 0
+        try:
+            seen = int(ui.get("during_run") or 0)
+        except (TypeError, ValueError):
+            return 0
+        if seen < self._intervention_seen:
+            self._intervention_seen = seen          # the page reloaded; re-baseline
+            return 0
+        delta = seen - self._intervention_seen
+        if delta <= 0:
+            return 0
+        self._intervention_seen = seen
+        self._intervention_total += delta
+        self._append_log_line(_fast_dumps({
+            "kind": "intervention",
+            "session": self.session,
+            "events": delta,
+            "by_type": ui.get("by_type") or {},
+            "client_last_ts": ui.get("last_ts"),
+            "at": time.time(),
+        }) + b"\n")
+        return delta
+
+    def _record_fight_outcome(self, outcome: Optional[Dict[str, Any]],
+                              observation: Optional[Dict[str, Any]]) -> None:
+        if not isinstance(outcome, dict):
+            return
+        self._append_fight_log({
+            "kind": "fight_outcome",
+            "run": self.session,
+            "outcome": outcome,
+            "observation": observation,
+        })
+
+    def _wait_out_fight(self, observation: Dict[str, Any],
+                        goal: Optional[str] = None) -> None:
+        """Hold the goal while the page plays the fight.
+
+        A fight is turn-based: most of its wall-clock time belongs to the
+        server and the animations, not to the policy. Issuing quest or travel
+        directives during that time cannot work, and a recovery order formed
+        before the fight (`safe.stop` in particular) disables the in-page bot
+        that clicks ready. So the loop stays here and re-observes; the fight
+        end is the signal to resume the goal on fresh state.
+
+        Fights also start without `fight.join` -- a dialog reply or a quest can
+        open one -- so auto-fight can be off when the first in-fight snapshot
+        arrives. `fight.join` with no target only arms the bot when a fight is
+        already open; it never attacks a second group.
+        """
+        if self._forced_call is not None:
+            self._forced_call = None
+            print("[autopilot] dropping a pre-fight recovery order; the fight "
+                  "owns the next action")
+        now = time.time()
+        if self._fight_wait_since is None:
+            self._fight_wait_since = now
+            self._fight_wait_report = now
+            self._hint_taps = 0
+            self._hint_tap_at = 0.0
+            print("[autopilot] in a fight; waiting out the turns instead of "
+                  "sending world actions")
+            # One more chance for a brain that was not up at startup (crashed, or was
+            # never started because nothing asked). Bounded by brain_retry_s and by the
+            # final-state rule, so a brain that cannot exist costs one probe.
+            self._ensure_brain("fight_start")
+        if (not self.dry_run and not observation.get("auto_fight")
+                and now - self._fight_arm_at >= 5.0):
+            self._fight_arm_at = now
+            executor = getattr(self.runtime, "executor", None)
+            if executor is not None:
+                result = executor.execute(
+                    "fight.join", {}, instance=getattr(self.runtime, "instance", None),
+                    goal=goal, source="live", observation=observation,
+                    observation_age_ms=self._obs_age_ms,
+                    observation_source=self._obs_source)
+                data = getattr(result, "data", None)
+                armed = bool(isinstance(data, dict) and data.get("auto_fight"))
+                print("[autopilot] auto-fight was off; arm -> "
+                      + ("on" if armed else "not yet")
+                      + ("" if getattr(result, "ok", False)
+                         else " (" + str(getattr(result, "error", ""))[:80] + ")"))
+        # The tutorial's challenge step ends on TAP_ANYWHERE, a touchend the page's
+        # combat casts never produce (they call fightManager.castSpell). Only the
+        # scenario's own hint says which fight this is; the press is bounded and
+        # retried a few times in case the slot is not on screen yet.
+        tutorial = observation.get("tutorial") if isinstance(observation, dict) else None
+        hint = tutorial.get("hint_target") if isinstance(tutorial, dict) else None
+        if (hint == "challenge" and not self.dry_run
+                and self._hint_taps < 5 and now - self._hint_tap_at >= 3.0):
+            executor = getattr(self.runtime, "executor", None)
+            if executor is not None:
+                self._hint_taps += 1
+                self._hint_tap_at = now
+                result = executor.execute(
+                    "ui.tap", {"client_target": "challenge"},
+                    instance=getattr(self.runtime, "instance", None),
+                    goal=goal, source="live", observation=observation,
+                    observation_age_ms=self._obs_age_ms,
+                    observation_source=self._obs_source)
+                print("[autopilot] tutorial hint points at the challenge slot; press -> "
+                      + ("ok" if getattr(result, "ok", False)
+                         else "failed (" + str(getattr(result, "error", ""))[:80] + ")"))
+        if now - self._fight_wait_report >= 30.0:
+            self._fight_wait_report = now
+            print(f"[autopilot] fight wait {now - self._fight_wait_since:.0f}s; "
+                  f"auto_fight={bool(observation.get('auto_fight'))}")
+        # A fight board only changes on a turn/action, and those states last
+        # seconds. Sampling every second meant a second `fight_state` round
+        # trip per second on top of the loop's world snapshot for no new
+        # training row (the key dedupe ran only after the fetch).
+        if now - self._fight_board_at >= 2.0:
+            self._fight_board_at = now
+            self._record_fight_board(goal)
+        time.sleep(1.0)
+
+    @staticmethod
+    def _farm_counters(observation: Dict[str, Any]) -> Optional[tuple]:
+        """(fights, kills, xp, kamas, drops) from the page session, if present."""
+        session = observation.get("farm_session") if isinstance(observation, dict) else None
+        if not isinstance(session, dict):
+            return None
+        return (session.get("fights"), session.get("kills"), session.get("xp"),
+                session.get("kamas"), session.get("drop_count"))
+
+    def _wait_out_farm(self, observation: Dict[str, Any],
+                       goal: Optional[str] = None) -> None:
+        """Hold the goal while the page's FarmBot is playing.
+
+        The bot is a standing order: re-issuing farm.start is unnecessary and
+        (before the page-side guard) reset its counters every cycle. Stay here
+        while auto_fight is on, report progress, and resume planning when the
+        farm stops, advances a quest objective, or stops producing for two
+        minutes so the scheduler can try another route.
+        """
+        if self._forced_call is not None:
+            self._forced_call = None
+        # The farm order is a standing state, not a repair; do not credit the
+        # controller's strategy with an unrelated step after the wait.
+        self._pending = None
+        self._pending_age = 0
+        now = time.time()
+        if not observation.get("auto_fight"):
+            if self._farm_wait:
+                print("[autopilot] the farm stopped; resuming planning")
+                self._record_observation(observation)
+            self._farm_wait = False
+            self._farm_wait_since = None
+            return
+        if self._farm_wait_since is None:
+            self._farm_wait_since = now
+            self._farm_wait_report = now
+            self._farm_progress = self._farm_counters(observation)
+            self._farm_progress_at = now
+            self._farm_objective = observation.get("objectives_completed")
+            print("[autopilot] farm is running; holding the goal and watching progress")
+        counters = self._farm_counters(observation)
+        if counters is not None and counters != self._farm_progress:
+            self._farm_progress = counters
+            self._farm_progress_at = now
+        progress = observation.get("objectives_completed")
+        if (isinstance(progress, (int, float))
+                and isinstance(self._farm_objective, (int, float))
+                and progress > self._farm_objective):
+            print("[autopilot] farm advanced the objective; resuming planning")
+            self._record_observation(observation)
+            self._farm_wait = False
+            self._farm_wait_since = None
+            return
+        if now - self._farm_progress_at >= FARM_IDLE_S:
+            print(f"[autopilot] the farm produced no kills/xp/kamas for "
+                  f"{FARM_IDLE_S:.0f}s; resuming planning")
+            self._record_observation(observation)
+            self._farm_wait = False
+            self._farm_wait_since = None
+            return
+        if now - self._farm_wait_report >= 30.0:
+            self._farm_wait_report = now
+            session = observation.get("farm_session") or {}
+            print(f"[autopilot] farm wait {now - self._farm_wait_since:.0f}s; "
+                  f"kills={session.get('kills')} kamas={session.get('kamas')} "
+                  f"xp={session.get('xp')}")
+        # The in-page bot plays the fights; the agent only watches for a stop,
+        # an objective change or a stalled session. A 5 s poll cuts the idle
+        # full-state snapshots by 60% without delaying any action it owns.
+        time.sleep(5.0)
+
+    # -- labelling -----------------------------------------------------------
+
+    def _verdict(self, result, before: Optional[Dict[str, Any]],
+                 after: Optional[Dict[str, Any]], call: Optional[ToolCall] = None,
+                 latency_ms: float = 0.0) -> Verdict:
+        """Ask the second agent. It returns verdict + residual + drift together,
+        so the loop stops re-deriving them from different key lists."""
+        game_error = _game_error(result)
+        return self.verifier.label(
+            tool=(call.tool if call is not None else "-"),
+            args=(dict(call.args) if call is not None else {}),
+            ok=bool(result.ok) and game_error is None,
+            error=(game_error if game_error is not None
+                   else (None if result.ok else str(result.error))),
+            before=before,
+            after=after,
+            latency_ms=latency_ms,
+            session=self.session,
+            index=self._index,
+        )
+
+    # -- the loop ------------------------------------------------------------
+
+    def run(self) -> Dict[str, Any]:
+        """Own the lock for the whole run, however it ends.
+
+        A loop that dies without clearing its lock would block the idle trainer
+        forever, so the release is in a `finally`, not on the happy path.
+        """
+        if not self._acquire_run_lock():
+            # Fail closed and loud: two loops on one client double every directive
+            # and every recorded row (measured 2026-10-28).
+            print("[autopilot] another loop already drives this instance; standing down")
+            return self._finish("another driver holds the instance lock")
+        self._write_lock()
+        # Adopt what earlier sessions learned about this client's menu bar, so the first
+        # press of a run is already informed instead of rediscovering the pair.
+        self._seed_menu_windows()
+        self._seed_surface_labels()
+        try:
+            return self._run()
+        finally:
+            # A fight still open when the session ends is not a win or a loss;
+            # recording it as unresolved keeps it out of the calibration set
+            # without losing the fact that it happened.
+            self.fight_log.flush("session_end")
+            self._close_session()
+            self._clear_lock()
+
+    def _close_session(self) -> None:
+        """Hand the finished run to the close pipeline; never fail the run for it.
+
+        A separate process on purpose: it imports the transition builder, the
+        janitor and the trainers, and none of that should grow the loop thread's
+        memory when the run has already ended. Measured 2026-10-31: one close over
+        237k log lines took 33.5 s, 19 s of it the corpus rebuild.
+        """
+        if not session_close_enabled(dry_run=self.dry_run):
+            return
+        import subprocess
+        import sys
+        try:
+            process = subprocess.run(
+                [sys.executable, "-m", "tools.session_close", "--quiet"],
+                cwd=str(REPO_ROOT), capture_output=True, text=True,
+                timeout=SESSION_CLOSE_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must not end a run
+            print("[autopilot] session close skipped: %s: %s"
+                  % (type(exc).__name__, exc))
+            return
+        if process.returncode != 0:
+            print("[autopilot] session close exited %d: %s"
+                  % (process.returncode,
+                     (process.stderr or process.stdout).strip()[-200:]))
+
+    def _run(self) -> Dict[str, Any]:
+        tools = [t["name"] for t in TOOL_SCHEMA["tools"]]
+        budget = "unlimited" if self.max_steps <= 0 else (str(self.max_steps) + " steps")
+        print(f"[autopilot] {len(self.goals)} goal(s), {budget}"
+              f"{' (dry run)' if self.dry_run else ''}")
+        if self.preflight:
+            self._warn_if_no_bridge()
+            if not self._require_world():
+                return self._finish(self._should_stop()
+                                    or "stopped while waiting for the world")
+            # Before the first fight, not during it: the page's fallback plays the
+            # turns while the brain warms up, so starting it up front is what makes
+            # "the learned policy decided this" true for the whole session.
+            self._ensure_brain()
+
+        for goal in self.goals:
+            failures = 0
+            # A directive the previous goal's repair queued must not be executed under
+            # this goal's label. Observed live-shaped: a `noop` on one goal made the
+            # controller force the same call again, the goal ended on its one directive,
+            # and the next goal began by dispatching the previous goal's action.
+            self._forced_call = None
+            self._forced_reason = ""
+            self._consecutive_waits = 0
+            self._farm_wait = False
+            self._farm_wait_since = None
+            self._action_noops.clear()
+            self._gate.clear()
+            # Shadow only: the model's parse is written beside the rule, and the
+            # rule below still owns every decision.
+            self._log_command_shadow(goal)
+            # Why this run ended. "goals exhausted" used to be reported even when the
+            # session had died, which reads as success and hides the one thing worth
+            # knowing.
+            ended_because = "goals exhausted"
+            # An unlimited step budget has to mean unlimited.
+            #
+            # `steps_per_goal` is a per-goal slice: Order mode means "do this one
+            # thing, a few steps, done". Auto mode means "keep working until I stop
+            # you". The two were conflated, so with --steps 0 the loop still ran
+            # exactly eight directives per goal and then exited 0 — which from
+            # outside is indistinguishable from "the AI does nothing". It was doing
+            # eight steps and quitting, by design, every single time.
+            budget = self.steps_per_goal if self.max_steps > 0 else None
+            taken = 0
+            while budget is None or taken < budget:
+                taken += 1
+                reason = self._should_stop()
+                if reason:
+                    print(f"[autopilot] stopping: {reason}")
+                    return self._finish(reason)
+
+                # The thinking token: a short deliberate dwell after a
+                # world-changing action, on top of the completion gate. It is
+                # skipped for reads, which do not need animation time.
+                think = self._think_until - time.monotonic()
+                if think > 0:
+                    time.sleep(min(think, 1.0))
+
+                # Idle farm polls are adopted, not recorded: an hours-long farm
+                # would otherwise write a trajectory row every few seconds.
+                before = self.observe(record=not self._farm_wait)
+                self._learn_surface_labels(before)
+                if isinstance(before, dict) and (before.get("quests_active")
+                                                 or before.get("ready_objectives")):
+                    self._quest_data_waits = 0
+                if not self._check_identity(before):
+                    print("[autopilot] stopping: " + str(self._should_stop()))
+                    return self._finish(self._should_stop() or "identity drift")
+                if isinstance(before, dict) and before.get("in_fight"):
+                    # The page is playing a turn-based fight. Planning a quest
+                    # step here was the live failure: `quest.advance` ran for
+                    # minutes against a board, and the ready click never came
+                    # because auto-fight had never been armed.
+                    self._wait_out_fight(before, goal)
+                    taken -= 1  # waiting is not one of the goal's directives
+                    continue
+                self._fight_wait_since = None
+                self._fight_wait_report = 0.0
+                self._fight_arm_at = 0.0
+                if self.fight_log.pending is not None:
+                    # The fight can end between two steps. Record its outcome
+                    # with this fresh observation instead of waiting for the
+                    # next action, which may never come if the run stops here.
+                    self._track_fight(None, before)
+                if self._farm_wait:
+                    self._wait_out_farm(before, goal)
+                    taken -= 1
+                    continue
+                if self._forced_call is not None:
+                    call = self._forced_call
+                    self._forced_call = None
+                    print(f"[autopilot] agent2 directs: {call.tool} {call.args}")
+                else:
+                    try:
+                        self.runtime.policy.last_stack = None
+                    except Exception:  # noqa: BLE001 - only the learned planner has one
+                        pass
+                    call = self.runtime.policy.choose(goal, before or {}, tools)
+                    # The reason a no-call carries goes on the blocked row below, read
+                    # from `last_no_call` at the one place that writes it. It used to be
+                    # copied into `_forced_reason` here as well, which could never reach
+                    # a record: this branch emits a step (and `_emit` clears the reason
+                    # in the same pass) instead of falling through to a wait.
+                if call is not None and call.tool == "farm.start" \
+                        and not self._farm_allowed(goal, before):
+                    # The learned planner has this gate too, but the ThinkingLayer
+                    # and controller can force a call around it. This is the one
+                    # invariant every source must respect: a quests prompt never
+                    # starts a farm session for a non-delivery objective.
+                    print("[autopilot] refusing farm.start under a quest goal")
+                    self._forced_reason = ("a farm.start was refused because this "
+                                           "prompt is a quest goal")
+                    call = ToolCall("state.snapshot", {}, goal)
+                if call is not None and self._holding(call, before):
+                    # Nothing the step depends on has moved since this exact call
+                    # failed to move it three times, and the step is one the game's
+                    # own script completes. Asking again is the stampede the hold
+                    # exists to stop -- 119 identical no-ops in one live session.
+                    self._hold_wait(goal, before)
+                    taken -= 1
+                    continue
+                if call is None:
+                    # A character standing in the world with a bag and no quest block at all is
+                    # not a character with nothing to do -- it is a snapshot taken before the
+                    # client finished loading the quests. Measured 2026-11-07: right after a
+                    # guest login the observation carried `in_world: true`, four bag items and
+                    # `quests_active: {}`, `ready_objectives: []`, `tutorial.active: false`,
+                    # while quests 3841 and 4260 were active minutes earlier. The policy returned
+                    # no call, the controller called the goal unmappable, and a 14-step run ended
+                    # after one step. Waiting is the correct answer; retiring the goal is not.
+                    if (self._quest_data_pending(before)
+                            and self._quest_data_waits < QUEST_DATA_WAIT_LIMIT):
+                        self._quest_data_waits += 1
+                        print("[autopilot] no quest data in the observation yet "
+                              "(in world, %d bag item(s), 0 active, 0 ready); waiting %d/%d "
+                              "instead of retiring the goal"
+                              % (len(((before or {}).get("inventory") or {}).get("items") or []),
+                                 self._quest_data_waits, QUEST_DATA_WAIT_LIMIT))
+                        self._append_log_line(_fast_dumps({
+                            "kind": "wait", "session": self.session, "goal": goal,
+                            "reason": "quest data not loaded yet",
+                            "consecutive": self._quest_data_waits,
+                            "at": time.time()}))
+                        time.sleep(1.5)
+                        continue
+                    # Say what was in hand when the policy gave up. "nothing in the
+                    # policy matched this goal" is a verdict about the policy, and the
+                    # two causes that produce it -- no observation at all, or an
+                    # observation the policy cannot use -- need opposite fixes. Live
+                    # 2026-11-04: the row carried `obs_before: {}` and
+                    # `observation_map: None` for a character standing in a rendered
+                    # world, and nothing in the record said whether the snapshot ever
+                    # arrived.
+                    had = "obs_keys=%d map=%s cell=%s in_world=%s src=%s age=%s" % (
+                        len(before or {}),
+                        (before or {}).get("map_id"),
+                        (before or {}).get("cell"),
+                        (before or {}).get("in_world"),
+                        getattr(self, "_obs_source", None),
+                        round(getattr(self, "_obs_age_ms", -1) or -1))
+                    why = str(getattr(self.runtime.policy, "last_no_call", "")
+                              or "<policy gave no reason>")[:220]
+                    self._emit(Step(index=self._index, goal=goal, tool="-", args={},
+                                    ok=False, error="policy returned no call",
+                                    latency_ms=0.0, verdict="blocked", session=self.session,
+                                    source="rule",
+                                    note="nothing in the policy matched this goal; had %s | %s"
+                                         % (had, why)))
+                    # Agent 2 must see this too. A goal the policy cannot express is
+                    # an invalid assumption, and skipping the controller here meant
+                    # the most common failure of all was invisible to it.
+                    decision = self.controller.on_step(
+                        Verdict("blocked", 0.9, None, False, "rule"),
+                        "-", False, "policy returned no call", before, None)
+                    self.controller.save()
+                    # And on the record: this branch used to return a decision the
+                    # log never saw, so the one failure class the whole run turns on
+                    # was invisible to any offline read of the repair data.
+                    self._emit_decision(decision, ToolCall("-", {}, goal), None,
+                                        before or {}, ok=False,
+                                        error="policy returned no call")
+                    if decision.action in ("replan", "abort"):
+                        self._apply_decision(decision, goal, None)
+                    # An objective the policy cannot express is the same dead end as
+                    # one it can only wait on: the operator retires it and takes the
+                    # next. Ending here threw away a live session whose map had no
+                    # exits and two other objectives ready (live 2026-10-29,
+                    # dofus-05: "no action for goal ... moving on"). Bounded by
+                    # RETIRE_LIMIT so a broken log cannot empty itself.
+                    if self._retired < RETIRE_LIMIT:
+                        qid = self._retire_stuck_objective(before)
+                        if qid is not None:
+                            self._retired += 1
+                            print("[autopilot] the policy cannot express quest %s; "
+                                  "retiring it for this run and taking the next "
+                                  "objective" % qid)
+                            continue
+                    print(f"[autopilot] no action for goal {goal!r}; moving on")
+                    if not self._hinted:
+                        self._hinted = True
+                        print("[autopilot] the rule policy understands, for example: "
+                              "'open inventory', 'list quests', 'farm', 'go to [4,-19]', "
+                              "'sell all', 'scan hdv for <item>', 'join fight', 'stop'. "
+                              "Anything else needs the encoder policy (--policy encoder).")
+                    break
+
+                # A read is not an action. `state.snapshot` is what the planner and
+                # the thinking layer return when the thing they want has not happened
+                # yet ("wait for the NPC", "wait for a map change", "wait for the
+                # target to spawn", the scripted tutorial gate) and what every
+                # controller recovery hint points at. Dispatching it as a step made
+                # the wait look like work in three places at once: 3,010 of the
+                # baseline's 4,287 steps were these reads, 3,005 of them scored
+                # `advanced`, so the run's own success rate was mostly counting
+                # looking -- and a policy trained on that corpus learns that looking
+                # is the most reliable thing it can do. The loop already takes a
+                # snapshot at the top of every iteration, so the directive carried no
+                # information the next pass would not have anyway.
+                #
+                # Past MAX_CONSECUTIVE_WAITS the read is dispatched again, so a goal
+                # with no action left in it stays a failure the loop can see rather
+                # than turning into an unfalsifiable wait.
+                if (call is not None and call.tool == "state.snapshot"
+                        and self._consecutive_waits < MAX_CONSECUTIVE_WAITS):
+                    if not self._hold_wait(goal, before):
+                        ended_because = "stopped while waiting"
+                        break
+                    taken -= 1  # waiting is not one of the goal's directives
+                    continue
+
+                refusal = self.guard(call)
+                if refusal:
+                    self._emit(Step(index=self._index, goal=goal, tool=call.tool,
+                                    args=dict(call.args), ok=False, error=refusal,
+                                    latency_ms=0.0, verdict="blocked", note=refusal,
+                                    session=self.session, source="guard"))
+                    self._index += 1
+                    print(f"[autopilot] {refusal}")
+                    # A refusal is an outcome the policy must see. The planner only
+                    # learns a claim was server-counted or a target unreachable if
+                    # the refusal is reported back; before, it was dropped and the
+                    # same call was chosen again on the next step.
+                    reporter = getattr(self.runtime.policy, "note_result", None)
+                    if reporter is not None:
+                        try:
+                            reporter(call.tool, False, refusal, before or {})
+                        except Exception:  # noqa: BLE001 - history must not kill a run
+                            pass
+                    decision = self.controller.on_step(
+                        Verdict("blocked", 0.9, None, False, "guard"),
+                        call.tool, False, refusal, before, None)
+                    self.controller.save()
+                    self._emit_decision(decision, call, None, before,
+                                        ok=False, error=refusal)
+                    if decision.action == "replan":
+                        self._apply_decision(decision, goal, call)
+                    # A guard refusal is deterministic: no recovery call can turn
+                    # it into a yes, and the controller's recovery hint (a plain
+                    # snapshot) would reset the refusal streak below. Let the
+                    # planner choose again instead.
+                    key = (f"{call.tool}|"
+                           f"{json.dumps(call.args, sort_keys=True, ensure_ascii=False)}|"
+                           f"{refusal}")
+                    if self._refusals and self._refusals[-1] == key:
+                        self._refusals.append(key)
+                    else:
+                        self._refusals = [key]
+                    if len(self._refusals) < 3:
+                        if self.interval:
+                            time.sleep(self.interval)
+                        continue
+                    # The same refused call three times in a row is a dead end:
+                    # the report above did not change the plan. Retire the quest
+                    # it belongs to and let the next plan pass choose another,
+                    # instead of ending the whole run as a silent success.
+                    self._refusals.clear()
+                    if _tutorial_active(before):
+                        print("[autopilot] the tutorial is holding this step open; "
+                              "waiting instead of abandoning the goal")
+                        self._tutorial_hold(_call_key(call), before)
+                        self._report_hold(call)
+                        self._hold_wait(goal, before)
+                        continue
+                    qid = self._retire_named_quest(call, before)
+                    if qid is not None:
+                        print(f"[autopilot] retiring quest {qid}; taking another")
+                        continue
+                    print(f"[autopilot] the guard refuses every route to {goal!r}; "
+                          "moving on")
+                    break
+
+                # A call that made it past the guard ends any refusal streak.
+                self._refusals.clear()
+                if self.dry_run:
+                    self._emit(Step(index=self._index, goal=goal, tool=call.tool,
+                                    args=dict(call.args), ok=True, error=None,
+                                    latency_ms=0.0, verdict="noop", note="dry run"))
+                    print(f"[autopilot] would call {call.tool} {call.args}")
+                    self._index += 1
+                    key = _call_key(call)
+                    self._recent.append(key)
+                    del self._recent[:-32]
+                    if len(self._recent) >= 3 and len(set(self._recent[-3:])) == 1:
+                        print(f"[autopilot] dry run: {call.tool} repeats with nothing to change; "
+                              f"moving on from {goal!r}")
+                        break
+                    if self.interval:
+                        time.sleep(self.interval)
+                    continue
+
+                started = time.perf_counter()
+                _meta = (call.record_meta() if hasattr(call, "record_meta")
+                         else getattr(call, "meta", None))
+                _meta = dict(_meta) if isinstance(_meta, dict) else {}
+                _meta["gate"] = self._gate.shadow(call.tool, call.args)
+                result = self.runtime.executor.execute(
+                    call.tool, call.args, instance=self.runtime.instance,
+                    goal=goal, source="live", observation=before,
+                    observation_age_ms=self._obs_age_ms,
+                    observation_source=self._obs_source,
+                    meta=_meta or None)
+                # Stop the clock before observing. `observe()` can cost seconds when
+                # it has to ask a dead bridge, and counting that as the action's
+                # latency made every step look slow for the wrong reason.
+                latency_ms = (time.perf_counter() - started) * 1000.0
+                # The bridge returns the state immediately after the directive ran.
+                # Adopt it: it is the one after-state available without a second
+                # round trip. Calling observe() here handed back the pre-action
+                # snapshot instead, so settle compared `before` with `before` and
+                # every action looked inert.
+                data = getattr(result, "data", None)
+                snap = data.get("snapshot") if isinstance(data, dict) else None
+                if isinstance(snap, dict) and snap:
+                    snap = self._prepare_obs(snap)
+                    adopt = getattr(self.runtime, "note_observation", None)
+                    if callable(adopt):
+                        adopt(snap)
+                    self._last_obs = snap
+                    self._obs_age_ms, self._obs_source = 0.0, "carried"
+                    after = snap
+                else:
+                    after = self.observe()
+                # One successful press is enough to know which window an icon opens, so learn
+                # it here rather than in a table somebody has to maintain.
+                self._learn_menu_window(before, after, call)
+
+                # Transport success is not game success. Keep the two apart: the
+                # first says the bridge reached the page, the second says the game
+                # accepted the action. The loop acts on the second.
+                game_error = _game_error(result)
+                step_ok = bool(result.ok) and game_error is None
+                step_error = (game_error if game_error is not None
+                              else (None if result.ok else str(result.error)))
+
+                # No client window is not a failed step: it is the absence of an
+                # environment. Wait for one to exist (the host opens a client, the
+                # operator relaunches) rather than replanning into another doomed
+                # directive — the settle poll and the retry ladder below would each
+                # spend a round trip on a page that is not there. Checked before the
+                # settle so a dead client cannot trigger a poll storm.
+                if not step_ok and client_absent(step_error):
+                    if not self._recover_world(str(step_error)[:80],
+                                               trigger="client_absent"):
+                        ended_because = (self._should_stop()
+                                         or ("the client window is gone and did not come "
+                                             "back (open an instance in DofusFarm)"))
+                        break
+                    continue
+
+                # A walk is not finished when the call returns. Give the tools that move
+                # the character, open a dialog or start a fight a moment to land before
+                # judging them — otherwise every one of them scores `noop` and the loop
+                # retries an action that is already in flight.
+                if step_ok and call.tool in SETTLE_TOOLS:
+                    after = self._settle(before, after, call=call)
+                if call.tool not in READ_ONLY_TOOLS and call.tool not in LISTING_TOOLS:
+                    self._think_until = time.monotonic() + self.think_s
+
+                # A successful farm order is a standing state. In Auto mode hold
+                # the goal instead of asking the scheduler again; an Order-mode
+                # farm keeps its bounded step budget so it still finishes.
+                if step_ok and call.tool == "farm.start" and self.max_steps <= 0:
+                    self._farm_wait = True
+                    self._farm_wait_since = time.time()
+                    self._farm_wait_report = self._farm_wait_since
+                    self._farm_progress = self._farm_counters(
+                        after if isinstance(after, dict) else {})
+                    self._farm_progress_at = self._farm_wait_since
+                    self._farm_objective = ((after or {}).get("objectives_completed")
+                                            if isinstance(after, dict) else None)
+
+                # A closed connection is not a failed step.
+                #
+                # When the game ends the session — a kick, a timeout, a login from
+                # somewhere else — the page reloads and every directive after that answers
+                # into a socket that no longer exists. Retrying looks identical to a
+                # stubborn agent, and it keeps knocking on a server that just closed the
+                # door.
+                #
+                # `connected` is not the signal: it stays true as long as the client's
+                # connectionManager object exists, which it does at the login screen too.
+                # Falling out of the world mid-run is: we were on a map, and now we are not.
+                if isinstance(after, dict) and isinstance(before, dict):
+                    reason = fell_out_of_world(before, after)
+                    if reason is not None:
+                        if not self._recover_world(reason or None):
+                            ended_because = (self._should_stop()
+                                             or ("the client left the world"
+                                                 + (f" ({reason})" if reason else "")))
+                            break
+                        continue
+
+                fight_estimate, fight_outcome = self._track_fight(before, after, tool=call.tool)
+                self._record_interventions(after)
+                self._record_dialog(call, before, after, result)
+
+                v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
+                verdict = v.verdict
+                self._gate.observe(call.tool, call.args, verdict)
+
+                # Report the outcome back to the policy. `note_result` existed and was
+                # never called, so the planner's attempt history was always empty — it
+                # could not tell a tool that had just failed from one it had never
+                # tried, and any history feature trained on that would be a fiction.
+                reporter = getattr(self.runtime.policy, "note_result", None)
+                if reporter is not None:
+                    # The refusal's own payload travels with the report. "no group here" and
+                    # "groups here, no member readable" share one sentence and need opposite
+                    # repairs (KNOWN_GAPS G7).
+                    reported: Sequence[Any] = (call.tool, step_ok,
+                                               str(step_error or verdict), after or {})
+                    try:
+                        if _accepts_detail(reporter):
+                            reporter(*reported, getattr(result, "data", None))
+                        else:
+                            reporter(*reported)
+                    except Exception:  # noqa: BLE001 - policy history must not kill a run
+                        pass
+
+                note = ""
+                dialog_decision = getattr(self.runtime.policy, "last_dialog_decision", None)
+                if isinstance(dialog_decision, dict) and (before or {}).get("in_dialog"):
+                    note = ("dialog_%s: %s" % (dialog_decision.get("status"),
+                                               dialog_decision.get("reason")))
+                if result.ok and call.tool in LISTING_TOOLS:
+                    data = result.data if isinstance(result.data, dict) else {}
+                    source = str(data.get("price_source") or "")
+                    explicit = isinstance(call.args.get("price"), int)
+                    if explicit or source:
+                        # A listing is an intent, not income: record it as open and
+                        # never as kamas earned. The price and where it came from
+                        # travel with it, so a bad listing can be traced later.
+                        self.open_listings.append({
+                            "tool": call.tool,
+                            "args": dict(call.args),
+                            "price": data.get("price", call.args.get("price")),
+                            "price_source": source or "explicit",
+                            "at": time.time(),
+                            "state": "open",
+                        })
+                        self._listing_total += 1
+                        note = "listing_open: fill depends on a buyer, not on us"
+                    else:
+                        note = ("listing_unverified: the client did not report where the price "
+                                "came from, so this is not counted as a listing")
+
+                ensemble = None
+                stack_record = getattr(self.runtime.policy, "last_stack", None)
+                if isinstance(stack_record, dict) and stack_record:
+                    ensemble = {
+                        "mode": stack_record.get("mode"),
+                        "active": bool(stack_record.get("active")),
+                        "policy": stack_record.get("policy"),
+                        "stack": stack_record.get("stack"),
+                        "chosen": stack_record.get("chosen"),
+                        "scores": [
+                            {"tool": row.get("tool"),
+                             "score": round(float(row.get("score") or 0.0), 6)}
+                            for row in (stack_record.get("scores") or [])[:5]
+                        ],
+                    }
+
+                step = Step(
+                    index=self._index,
+                    goal=goal,
+                    tool=call.tool,
+                    args=dict(call.args),
+                    ok=step_ok,
+                    error=step_error,
+                    # The action's own latency, not the action plus the observation
+                    # that followed it. Recomputed here it silently included the
+                    # post-step snapshot, so a 200 ms query printed as 6 s.
+                    latency_ms=latency_ms,
+                    verdict=verdict,
+                    promise=promise_state(call.tool, call.args, before, after),
+                    residual_s=v.residual_s,
+                    drift=v.drift,
+                    session=self.session,
+                    source=v.source,
+                    observation_cell=_cell_of(after),
+                    observation_map=_map_of(after),
+                    obs_before=_compact(before),
+                    obs_after=_compact(after),
+                    fight_estimate=fight_estimate,
+                    fight_outcome=fight_outcome,
+                    ensemble=ensemble,
+                    evidence=(None if step_ok else _failure_evidence(result)),
+                    note=note,
+                    why=str(_meta.get("why") or "")[:240],
+                )
+                self._emit(step)
+                self._note_keep_alive(after)
+                self._note_geometry(after)
+                self._index += 1
+
+                mark = "ok" if step_ok else "FAIL"
+                # Say what came back, not just that it came back. Without this the
+                # panel shows "inv.list ok advanced 165ms" forever and the user has
+                # no way to tell a working query from a silent no-op.
+                detail = _summarise(result)
+                print(f"[autopilot] {self._index:3d} {call.tool:14s} {mark:4s} "
+                      f"{verdict:8s} {step.latency_ms:6.0f}ms{detail}"
+                      f"{'' if step_ok else '  ' + str(step_error)[:80]}")
+
+                if self.on_step:
+                    try:
+                        self.on_step(step)
+                    except Exception:  # noqa: BLE001 - a UI callback must not kill the run
+                        pass
+
+                # ---- agent 2 decides what happens next ----------------------
+                # First credit the previous decision with this outcome, then ask
+                # for a new one. Without the credit step the strategy table never
+                # learns which recovery works, and the controller degrades into a
+                # counter that happens to have opinions.
+                self._credit_pending(call, v)
+
+                decision = self.controller.on_step(v, call.tool, step_ok, step_error,
+                                                   before, after,
+                                                   detail=getattr(result, "data", None),
+                                                   args=dict(call.args))
+                self._pending = decision
+                self.controller.save()
+                self._emit_decision(decision, call, result, after,
+                                    ok=step_ok, error=step_error)
+
+                outcome = self._apply_decision(decision, goal, call)
+                if outcome == "abort":
+                    break
+
+                if not result.ok:
+                    # A missing client is not a failed step. Retrying it three times and
+                    # then retiring a quest is what the log showed: the window had closed,
+                    # and the loop went on filing failures against a quest that had done
+                    # nothing wrong, then abandoned the goal with "goals exhausted".
+                    reason = str(result.error or "")
+                    if "no client instance" in reason or "not reachable" in reason:
+                        print("[autopilot] the client is gone: " + reason
+                              + "; waiting for it to return instead of ending the session")
+                        if not self._recover_world("client window closed"):
+                            ended_because = "the client window closed"
+                            break
+                        print("[autopilot] the client is back; resuming")
+                        continue
+
+                    failures += 1
+                    if failures >= self.consecutive_failure_limit:
+                        print(f"[autopilot] {failures} failures in a row on {goal!r}; "
+                              f"abandoning this goal")
+                        break
+                else:
+                    failures = 0
+
+                if (after or {}).get("in_fight"):
+                    self._recent.clear()
+                    self._action_noops.clear()
+                    self._stall_since = self._index
+                    time.sleep(1.0)
+                    continue
+
+                # Stall detection on world progress. Repeating the same call is only
+                # one shape of a livelock; the commoner one here is the controller
+                # cycling retry -> recover -> continue forever, where no call repeats
+                # three times yet nothing is ever completed. `objectives_completed` is
+                # the honest measure of whether the session is getting anywhere.
+                #
+                # While a tutorial step runs, "no progress" is the script's state,
+                # not the quest's: the scenario holds the world still until its own
+                # target is tapped. Retiring the quest then blamed the only live
+                # quest for the tutorial's gate.
+                tutorial_active = _tutorial_active(after)
+                if tutorial_active and not self._tutorial_expired:
+                    now = time.monotonic()
+                    if not self._tutorial_since:
+                        self._tutorial_since = now
+                    elif now - self._tutorial_since > TUTORIAL_PATIENCE_S:
+                        print("[autopilot] the tutorial step has not advanced in %.0fs; "
+                              "it no longer counts as scripted patience"
+                              % (now - self._tutorial_since))
+                        self._tutorial_expired = True
+                elif not tutorial_active:
+                    self._tutorial_since = 0.0
+                    self._tutorial_expired = False
+                tutorial_active = tutorial_active and not self._tutorial_expired
+                prog = (after or {}).get("objectives_completed")
+                if isinstance(prog, (int, float)):
+                    if prog > self._best_progress:
+                        self._best_progress = prog
+                        self._stall_since = self._index
+                        self._retire_repeats = 0
+                        self._stall_unretired = 0
+                    elif (not tutorial_active and self.max_steps <= 0
+                          and self._index - self._stall_since >= self.stall_limit):
+                        qid, reason = self._retire_with_budget(call, before)
+                        if reason:
+                            print("[autopilot] %s; ending the goal instead of looping" % reason)
+                            ended_because = reason
+                            break
+                        self._stall_since = self._index
+                        self._recent.clear()
+                        self._action_noops.clear()
+
+                # No-progress detection. A rule policy will happily pick the same
+                # tool for the same goal forever; without this the loop burns the
+                # whole budget repeating one scan. Three identical calls with no
+                # world change means the goal is not reachable this way.
+                key = _call_key(call)
+                # A standing farm order is the one action whose no-op is hidden
+                # by its own recovery snapshot. Count every settle tool by call
+                # signature across interleaved reads; a snapshot that changes
+                # nothing must not reset a navigation/quest no-op streak.
+                track_action = call.tool in SETTLE_TOOLS
+                if verdict == "advanced":
+                    self._recent.clear()
+                    self._hold_key = None
+                    self._hold_world = None
+                    self._last_client_error = None
+                    if track_action:
+                        self._action_noops.pop(key, None)
+                    # A real crossing (by any tool: a walk, a dialog teleport, a
+                    # scripted step) restarts the decline count: the next dead map
+                    # deserves its own budget.
+                    _prev_map = flatten(before or {}).get("map_id")
+                    _new_map = flatten(after or {}).get("map_id")
+                    if (_prev_map is not None and _new_map is not None
+                            and _prev_map != _new_map):
+                        self._crossing_declines = 0
+                else:
+                    self._note_client_error(after)
+                    if track_action:
+                        self._action_noops[key] = self._action_noops.get(key, 0) + 1
+                    self._recent.append(key)
+                    del self._recent[:-32]
+                    if call.tool == "nav.goto" and verdict == "noop":
+                        self._crossing_declines += 1
+                    if self._crossing_declines >= NAV_DECLINE_LIMIT:
+                        here = flatten(after or {}) \
+                            if after is not None else flatten(before or {})
+                        print("[autopilot] %d crossings were sent and the map never "
+                              "changed (map %s); this exit is scripted and not "
+                              "available -- ending the run instead of re-asking"
+                              % (self._crossing_declines, here.get("map_id")))
+                        break
+                    if (call.tool == "nav.goto" and verdict == "noop"
+                            and _standing_on_exit(call.args, after)):
+                        # The client is on the portal cell and the map did not change:
+                        # the server declined the crossing, and re-asking from the same
+                        # cell cannot produce a different answer.
+                        self._dead_navs[key] = self._dead_navs.get(key, 0) + 1
+                        if self._dead_navs[key] >= DEAD_TALK_TRIES:
+                            print("[autopilot] nav.goto %s declined from cell %s %dx; "
+                                  "holding the step"
+                                  % ((call.args or {}).get("direction"),
+                                     flatten(after or {}).get("cell"),
+                                     self._dead_navs[key]))
+                            self._tutorial_hold(key, before)
+                            self._report_hold(call)
+                            self._hold_wait(goal, before)
+                            continue
+                    if (call.tool == "quest.advance" and verdict == "noop"
+                            and (call.args or {}).get("npc_id") is not None
+                            and (call.args or {}).get("reply") is None
+                            and not (after or {}).get("in_dialog")
+                            and (payload_of(result).get("via")
+                                 in ("talked", "walk_then_talk"))):
+                        # The packet went out and no dialog followed it. Three tries
+                        # is the general no-op allowance; a talk has a stronger
+                        # witness, so it gets one, then the step is held like any
+                        # other scripted wait.
+                        self._dead_talks[key] = self._dead_talks.get(key, 0) + 1
+                        if self._dead_talks[key] >= DEAD_TALK_TRIES:
+                            print("[autopilot] %s opened no dialog %dx; the server is "
+                                  "not answering this talk, holding the step"
+                                  % (call.tool, self._dead_talks[key]))
+                            self._tutorial_hold(key, before)
+                            self._report_hold(call)
+                            self._hold_wait(goal, before)
+                            continue
+                    repeated = (len(self._recent) >= 3
+                                and len(set(self._recent[-3:])) == 1)
+                    streak = self._action_noops.get(key, 0) if track_action else 0
+                    if repeated or streak >= 3:
+                        if streak >= 3 and not repeated:
+                            print(f"[autopilot] no progress: {call.tool} no-op 3x "
+                                  "(read-only recoveries ignored)")
+                        else:
+                            print(f"[autopilot] no progress: {call.tool} repeated 3x "
+                                  "with no change")
+                        if tutorial_active:
+                            # The plan is waiting on the scripted step (a dialog
+                            # reply list that has not arrived, an NPC animation).
+                            # Retiring the quest or abandoning the goal here turns
+                            # the tutorial's timing into a lost session -- but this
+                            # used to clear its own counters and re-dispatch the same
+                            # call forever, which is how one session spent half its
+                            # steps on 119 identical no-ops. Wait as a wait, on a
+                            # clock, and stop when the clock says enough.
+                            print("[autopilot] the tutorial is holding this step open;"
+                                  " waiting instead of retiring the quest")
+                            self._recent.clear()
+                            self._action_noops.clear()
+                            self._stall_since = self._index
+                            self._tutorial_hold(key, before)
+                            self._report_hold(call)
+                            self._hold_wait(goal, before)
+                            continue
+                        if self.max_steps <= 0:
+                            # Retire the quest and take another, instead of ending the
+                            # session. An objective that never moves is usually one
+                            # this build cannot do at all (an area, a craft, an NPC
+                            # that is elsewhere); the next quest may be fine.
+                            qid, reason = self._retire_with_budget(call, before)
+                            if reason:
+                                print("[autopilot] %s; ending the goal instead of looping"
+                                      % reason)
+                                ended_because = reason
+                                break
+                            if qid is not None:
+                                self._recent.clear()
+                                self._action_noops.clear()
+                                continue
+                        print(f"[autopilot] abandoning {goal!r}")
+                        break
+
+                if self._note_read_streak(call, goal, after) == "break":
+                    ended_because = "stopped while waiting"
+                    break
+
+                # A goal that produced a real world change is done; repeating it
+                # would just re-list the same item.
+                #
+                # A query counts as done after one successful call too: "open
+                # inventory" asked to *see* the inventory, and it was seen. Without
+                # this the loop re-read the same list for the whole step budget,
+                # which is what "the AI does nothing" looked like from outside.
+                # In Order mode ("open the inventory") a successful read IS the
+                # goal, so it ends the run. In Auto mode the goal is a standing
+                # instruction and a read is a recovery — breaking here meant one
+                # `state.snapshot` after one noop ended the whole session, which is
+                # exactly what "the AI does nothing" looked like.
+                if verdict == "advanced" and (call.tool in LISTING_TOOLS
+                                              or call.tool in READ_ONLY_TOOLS):
+                    if self.max_steps > 0:
+                        break
+
+                # A floor on the step rate, because this loop can run unattended for
+                # hours. With interval 0 (the panel's default) it would issue
+                # directives as fast as the client answers, which is not how a person
+                # plays and is a good way to get an account flagged. 0.35 s is still
+                # far faster than a human and invisible to the game.
+                time.sleep(self.interval if self.interval > 0 else 0.35)
+
+            # end per-goal loop (bounded in Order mode, unbounded in Auto mode)
+        return self._finish(ended_because)
+
+    # -- teardown ------------------------------------------------------------
+
+    def stop_client(self) -> None:
+        """Leave the client in a safe state. Best effort, never raises."""
+        if self.dry_run:
+            return
+        try:
+            self.runtime.executor.execute("safe.stop", {}, instance=self.runtime.instance,
+                                          source="live")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _acquire_run_lock(self) -> bool:
+        """Become the only loop driving this instance, or stand down.
+
+        The old lock was a plain file write: two loops (the host's own
+        `run_autopilot` and the brain daemon's per-instance thread) each wrote it,
+        each considered itself the owner, and both drove the same client. The live
+        evidence is fight 900 on 2026-10-28: two `fight_outcome` rows for one fight,
+        127 ms apart, one per writer. An OS advisory lock is what makes "one
+        instance, one driver" true across processes, and a lock left by a dead
+        process is not held, so a crashed loop does not wedge the slot.
+        """
+        name = str(getattr(self.runtime, "instance", None) or "default")
+        safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
+        path = self.log_path.parent / ("autopilot.%s.lock" % safe)
+        handle = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handle = open(path, "a+")
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps({"session": self.session, "pid": os.getpid(),
+                                     "instance": name, "started": time.time()}))
+            handle.flush()
+        except OSError:
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            return False
+        self._lock_handle = handle
+        self._lock_path = path
+        return True
+
+    def _write_lock(self) -> None:
+        """Mark that a loop owns the account.
+
+        The idle trainer refuses to touch the CPU or the artifacts while this
+        exists: training during a live run is how you get a half-updated model and
+        a ban in the same afternoon.
+        """
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            lock = self.log_path.parent / "autopilot.lock"
+            lock.write_text(json.dumps({"session": self.session,
+                                        "pid": os.getpid(),
+                                        "started": time.time()}), encoding="utf-8")
+            self._lock_path_global = lock
+        except OSError:
+            self._lock_path_global = None
+
+    def _clear_lock(self) -> None:
+        handle = getattr(self, "_lock_handle", None)
+        if handle is not None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+            try:
+                handle.close()
+            except OSError:
+                pass
+            self._lock_handle = None
+        try:
+            if getattr(self, "_lock_path", None) is not None:
+                self._lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            if getattr(self, "_lock_path_global", None) is not None:
+                self._lock_path_global.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _warn_if_no_bridge(self) -> None:
+        """Say it once, up front, instead of grinding 6 s per directive.
+
+        Without this, starting the loop with no client open looks like a hang: each
+        call waits for the HTTP timeout, the controller retries, and three failures
+        per goal take ~18 s before anything is printed.
+        """
+        # A TCP connect is not enough: a force-killed host leaves a listening socket
+        # that accepts connections and never answers, which makes every directive
+        # wait for the full HTTP timeout. Ask for a response instead.
+        from agent.bridge import bridge_port, reachable
+
+        if reachable():
+            return
+        port = bridge_port()
+        print("[autopilot] FATAL: no client bridge answering on 127.0.0.1:%d." % port)
+        print("[autopilot]   The app publishes its port to "
+              "LOCALAPPDATA\\DofusFarm\\bridge_port.txt; a stale file means the app "
+              "is not running, or its bridge never bound.")
+        print("[autopilot]   A port held by another process is the usual cause: the"
+              " bridge logs '[AGENT] directive bridge listening on ...' when it binds.")
+        print("[autopilot]   Refusing to run: every directive would fail and the run"
+              " would look like it finished.")
+        raise SystemExit(3)
+
+    # Probe results that will not improve by asking again.
+    BRAIN_FINAL_STATES = ("reused", "started", "no_interpreter")
+
+    def _ensure_brain(self, reason: str = "startup") -> None:
+        """Make the trained combat brain reachable, and record whether it was.
+
+        The page asks ``127.0.0.1:8891/v1/combat/decide`` for every fight turn and, when
+        nothing answers, marks the brain down and plays the turn with a hardcoded
+        heuristic. Measured over the recorded corpus: 388 in-fight observations, every
+        one of them heuristic, and one warm-up row for the learned policy. So a run
+        cannot say "the learned policy fought for me" unless something started the
+        server -- and cannot say it afterwards either, which is what this row is for.
+
+        A brain that dies mid-run is a component failure like any other: the page keeps
+        playing with its fallback, and this gets one bounded retry per fight start
+        rather than none or infinitely many.
+
+        ``preflight`` is the real-session switch: a run constructed without it is the
+        regression gate's synthetic loop, which must not leave a detached server process
+        behind on the developer's machine.
+        """
+        if self.brain_mode == "off" or not self.preflight:
+            return
+        if self._brain.get("state") in self.BRAIN_FINAL_STATES:
+            return
+        now = time.time()
+        if now - self._brain_try_at < self.brain_retry_s:
+            return
+        self._brain_try_at = now
+        self._brain_attempts += 1
+        state, detail = ensure_brain(dry_run=self.dry_run)
+        row: Dict[str, Any] = {"kind": "brain", "session": self.session,
+                               "when": reason, "mode": self.brain_mode,
+                               "state": state, "attempt": self._brain_attempts}
+        for key in ("model", "pid", "cmd", "reason", "waited_s"):
+            if detail.get(key) is not None:
+                row[key] = detail[key]
+        self._brain = row
+        self._append_log_line(_fast_dumps(row))
+        if state == "started":
+            print(f"[autopilot] combat brain started (pid {row.get('pid')}): "
+                  f"{row.get('model')}")
+        elif state == "reused":
+            print(f"[autopilot] combat brain already answering: {row.get('model')}")
+        elif state == "dry_run":
+            print("[autopilot] dry run: the combat brain was left untouched")
+        else:
+            print(f"[autopilot] no combat brain ({state}: {str(row.get('reason'))[:90]})"
+                  " -- fights are played by the page's hardcoded fallback")
+
+    def _require_world(self, fresh: bool = False) -> bool:
+        """Wait until the character is in the game world, then start.
+
+        The client stays *connected* at character selection. There is no map, no
+        cell and no NPC, so every directive answers ok and changes nothing — the
+        loop then burns its budget, decides the plan is stuck, and exits 0. That
+        is indistinguishable from a broken agent, and it is the state this
+        project spent a night debugging.
+
+        Being at the login screen when the AI is switched on is a wait, not an
+        end, and the wait presses the guest login itself a bounded number of times
+        (live 2026-10-29: a session that ended back at the guest screen parked the
+        loop for 90+ minutes because `session.login` is not a policy tool). The
+        page's own guard is still the authority: inside a "Server busy" cooldown it
+        refuses the press, so this cannot become a login stampede. There is no
+        deadline here; the wait ends when a map appears, when the operator stops
+        the run, or when the client stops answering.
+        """
+        if self.dry_run:
+            return True
+        waiting_since = time.time()
+        last_report = waiting_since
+        announced = False
+        self._last_world_screen = None
+        self._last_login_cooldown = None
+        login = getattr(self, "_world_login", None)
+        if not isinstance(login, dict):
+            login = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 20.0}
+        # Character selection is a separate screen with a separate action: the
+        # client holds the last character but no map, and entering the world is a
+        # CharacterSelectionMessage, not the guest form. A fall-out that lands
+        # there used to wait out the whole budget (live 2026-10-29: 751.8 s,
+        # recovered: false) because only the guest form was ever pressed.
+        enter = getattr(self, "_world_enter", None)
+        if not isinstance(enter, dict):
+            enter = {"tries": 0, "next_at": 0.0, "max": 3, "spacing": 20.0}
+        # The budgets belong to one wait: a session that falls out twice gets a
+        # fresh (still bounded) pair, otherwise the second dropout could never be
+        # answered. `_recover_world` calls this once per fall-out, so resetting on
+        # a returned world is per-fall-out, not per-loop-iteration.
+        login["tries"] = 0
+        login["next_at"] = 0.0
+        enter["tries"] = 0
+        enter["next_at"] = 0.0
+        self._world_login = login
+        self._world_enter = enter
+        while True:
+            reason = self._should_stop()
+            if reason:
+                print("[autopilot] stopping while waiting for the world: %s (last screen: %s)"
+                      % (reason, self._screen_text(getattr(self, "_last_world_screen", None))))
+                return False
+            # A recovery wait must not trust the snapshot from before the kick:
+            # it can still say in_world=true for a session that is already gone.
+            obs = self.observe(max_age_ms=-1.0 if fresh else OBS_FRESH_MS)
+            screen = self._world_screen(obs)
+            self._last_world_screen = screen
+            if not self._check_identity(obs):
+                print("[autopilot] stopping: " + str(self._should_stop()))
+                return False
+            # A permanent ban is not a wait and not a retry: the page refuses every
+            # pressed login for good, and each press is another auth attempt. Only a
+            # per-slot reset (a fresh guest) changes the answer, so say that and end
+            # instead of parking the loop in front of a popup that cannot change.
+            if self._login_banned(obs):
+                block = obs.get("login") if isinstance(obs, dict) else None
+                text = block.get("text") if isinstance(block, dict) else None
+                print("[autopilot] the login screen reports a permanent ban (%s); "
+                      "ending the run -- reset this slot for a fresh guest"
+                      % str(text or "no text")[:160])
+                return False
+            cooldown = obs.get("login_cooldown") if isinstance(obs, dict) else None
+            if isinstance(cooldown, dict):
+                self._last_login_cooldown = cooldown
+            # An escalated cooldown is a slot lockout, not a slow login. The page
+            # backs off 10 min at the first refused guest press and an hour from
+            # the second on (live 2026-10-29: "Server busy", 3527 s left), and a
+            # silent "still waiting for the world" line for that hour is the
+            # "server busy keeps coming back" report. Name it and end; the daemon
+            # status and the recovery row carry the reason.
+            lockout = self._login_lockout(obs)
+            if lockout:
+                print("[autopilot] the guest login is locked out (%s; %.0f min left "
+                      "after %s refused attempts); ending the run -- wait out the "
+                      "cooldown or reset this slot for a fresh guest"
+                      % (str(lockout.get("reason") or "no reason")[:120],
+                         float(lockout.get("remaining_s") or 0) / 60.0,
+                         lockout.get("fails")))
+                return False
+            pos = obs.get("position") if isinstance(obs, dict) else None
+            map_id = pos.get("map_id") if isinstance(pos, dict) else None
+            if isinstance(obs, dict) and obs and obs.get("in_world") is not False \
+                    and map_id not in (None, 0):
+                if announced:
+                    print("[autopilot] the character is in the world; starting")
+                return True
+            # A stale snapshot with no bridge behind it is a closed client, not a
+            # slow login; waiting there would park the run forever.
+            if self._obs_source != "call" and not self._bridge_alive():
+                print("[autopilot] the client stopped answering while waiting for "
+                      "the world; stopping")
+                return False
+            now = time.time()
+            character = obs.get("character") if isinstance(obs, dict) else None
+            at_login = (isinstance(obs, dict) and obs.get("in_world") is False
+                        and not (isinstance(character, dict) and character.get("name")))
+            # The same halt on the character-selection screen: `in_world` is false
+            # but the client still holds the last character, so `at_login` is false
+            # and no press happens. The client's own play action there is
+            # `selectCharacter(id)`, which sends exactly this message.
+            at_selection = (isinstance(obs, dict) and obs.get("in_world") is False
+                            and isinstance(character, dict)
+                            and bool(character.get("name")))
+            if at_selection and enter["tries"] < enter["max"] and now >= enter["next_at"]:
+                enter["tries"] += 1
+                enter["next_at"] = now + enter["spacing"]
+                selected = character.get("id")
+                bound = getattr(self, "_identity", None)
+                if isinstance(bound, dict) and bound.get("id"):
+                    selected = bound.get("id")
+                args = {"target": "character"}
+                try:
+                    if selected is not None and int(selected) > 0:
+                        args["character_id"] = int(selected)
+                except (TypeError, ValueError):
+                    pass
+                print("[autopilot] at character selection; entering the world as %s "
+                      "(%d/%d)" % (selected, enter["tries"], enter["max"]))
+                try:
+                    press = self.runtime.executor.recovery_call(
+                        "session.login", args,
+                        instance=getattr(self.runtime, "instance", None))
+                    print("[autopilot] enter-world press -> ok=%s %s"
+                          % (press.ok, str(press.error or "")[:160]))
+                except Exception as exc:  # noqa: BLE001 - a press must not end the wait
+                    print("[autopilot] enter-world press failed: %s" % exc)
+            if login["tries"] < login["max"] and now >= login["next_at"] and at_login:
+                login["tries"] += 1
+                login["next_at"] = now + login["spacing"]
+                print("[autopilot] at the login screen; pressing a guarded guest "
+                      "login (%d/%d)" % (login["tries"], login["max"]))
+                try:
+                    press = self.runtime.executor.recovery_call(
+                        "session.login", {"target": "guest"},
+                        instance=getattr(self.runtime, "instance", None))
+                    print("[autopilot] login press -> ok=%s %s"
+                          % (press.ok, str(press.error or "")[:160]))
+                except Exception as exc:  # noqa: BLE001 - a press must not end the wait
+                    print("[autopilot] login press failed: %s" % exc)
+            if not announced:
+                print("[autopilot] the character is not in the world yet (login "
+                      "screen or loading); waiting until a map appears [%s]"
+                      % self._screen_text(screen))
+                announced = True
+                last_report = now
+            elif now - last_report >= self.world_report_s:
+                print("[autopilot] still waiting for the world (%ds, %s; login %d/%d, "
+                      "enter %d/%d); log in and stand on a map"
+                      % (int(now - waiting_since), self._screen_text(screen),
+                         login["tries"], login["max"], enter["tries"], enter["max"]))
+                last_report = now
+            time.sleep(self.world_poll_s)
+
+    @staticmethod
+    def _world_screen(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Name the screen the world wait is looking at.
+
+        The 2026-10-29 rescue that waited 751.8 s left only the elapsed time
+        behind: its console lived in the daemon process, so the persisted
+        recovery row could not say whether the client was at the login form,
+        at character selection, or carrying a snapshot with no world in it.
+        These fields are the evidence that question needed.
+        """
+        if not isinstance(obs, dict) or not obs:
+            return {"state": "no_snapshot"}
+        character = obs.get("character") if isinstance(obs.get("character"), dict) else {}
+        position = obs.get("position") if isinstance(obs.get("position"), dict) else {}
+        login = obs.get("login") if isinstance(obs.get("login"), dict) else None
+        map_id = position.get("map_id")
+        if obs.get("in_world") is not False and map_id not in (None, 0):
+            state = "in_world"
+        elif obs.get("in_world") is False and character.get("name"):
+            state = "character_selection"
+        elif obs.get("in_world") is False:
+            state = "login"
+        else:
+            state = "unknown"
+        screen = {"state": state, "connected": obs.get("connected"),
+                  "map_id": map_id, "character": character.get("name")}
+        if login and login.get("text"):
+            screen["login"] = str(login["text"])[:80]
+        return screen
+
+    @staticmethod
+    def _screen_text(screen: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(screen, dict) or not screen:
+            return "no screen recorded"
+        parts = [str(screen.get("state") or "?")]
+        for key in ("connected", "map_id", "character", "login"):
+            if screen.get(key) is not None:
+                parts.append("%s=%s" % (key, screen[key]))
+        return " ".join(parts)
+
+    @staticmethod
+    def _login_banned(obs: Optional[Dict[str, Any]]) -> bool:
+        """Whether the page's login screen is refusing this account for good.
+
+        The page publishes `login` from the client's own popup text ("Your account
+        has been permanently banned"); an absent or malformed block is "not
+        banned", because guessing a ban would end a healthy session.
+        """
+        if not isinstance(obs, dict):
+            return False
+        block = obs.get("login")
+        return bool(isinstance(block, dict) and block.get("banned"))
+
+    @staticmethod
+    def _login_lockout(obs: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """The page's login cooldown once it has escalated past a slow server.
+
+        The page's backoff is 10 min after the first refused guest press, then
+        60 min, then 3 h. One refusal is worth waiting out inside the run; from
+        the second on the slot stays shut for an hour and only a per-slot reset
+        (a fresh guest) or waiting changes the answer, so the wait ends with the
+        reason instead of parking silently.
+        """
+        if not isinstance(obs, dict):
+            return None
+        cool = obs.get("login_cooldown")
+        if not isinstance(cool, dict):
+            return None
+        try:
+            remaining = float(cool.get("remaining_s") or 0)
+            fails = int(cool.get("fails") or 0)
+        except (TypeError, ValueError):
+            return None
+        if remaining < 1800 and fails < 2:
+            return None
+        return {"reason": cool.get("reason"),
+                "remaining_s": remaining,
+                "fails": fails}
+
+    @staticmethod
+    def _farm_allowed(goal: str, obs: Optional[Dict[str, Any]]) -> bool:
+        """A quests prompt may farm only to gather a delivery item."""
+        if _goal_mode(goal) != "quest":
+            return True
+        obj = (obs or {}).get("current_objective") or {}
+        try:
+            return int(obj.get("type_id")) in DELIVER_TYPES
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _bridge_alive() -> bool:
+        try:
+            from agent.bridge import reachable
+
+            return bool(reachable())
+        except Exception:  # noqa: BLE001 - a probe must not end a run
+            return True
+
+    def _wait_for_window(self) -> bool:
+        """Wait until the host has a client window again.
+
+        `_require_world` decides from a snapshot, and with no page there is no new
+        snapshot — the runtime's carried one still says the character is standing on a
+        map, so asking it "are we in the world?" answers yes and the wait would exit
+        instantly, straight back into the same doomed directive. That is a hot loop, not
+        a recovery. The host's own count is the only honest signal here, and it costs no
+        game packet.
+
+        Like the login wait there is no deadline: the operator opens a window when they
+        can. It ends on a window, on the stop file, or on a host that stopped answering.
+        """
+        if self.dry_run:
+            return True
+        from agent.bridge import client_count
+
+        started = time.time()
+        last_report = started
+        announced = False
+        while True:
+            if self._should_stop():
+                return False
+            count = client_count()
+            if count is None and not self._bridge_alive():
+                print("[autopilot] the host stopped answering; ending the run")
+                return False
+            if count:
+                if announced:
+                    print("[autopilot] %d client window(s) open again after %.1f s"
+                          % (count, time.time() - started))
+                return True
+            now = time.time()
+            if not announced:
+                print("[autopilot] no client window is open; waiting for one "
+                      "(open an instance in DofusFarm)")
+                announced = True
+            elif now - last_report >= 30.0:
+                print("[autopilot] still waiting for a client window (%.0f s)"
+                      % (now - started))
+                last_report = now
+            time.sleep(1.0)
+
+    def _recover_world(self, reason: Optional[str] = None,
+                       trigger: str = "fell_out") -> bool:
+        """Wait for a kicked/reloaded client instead of ending the run.
+
+        A kick, relogin or connection reset returns the page to the login screen;
+        sending more directives into it only repeats the failure. The same wait
+        used before the first step is correct here too, and after the world
+        returns the queue of no-ops and a stale farm/fight wait must be cleared
+        so the next decision starts from the new session.
+
+        The wait is measured and logged, because "recovery success" is a baseline
+        number rather than an assumption: how many times the session had to be
+        rescued, how long each rescue took, and whether it came back at all.
+        """
+        lead = ("the client window is gone" if trigger == "client_absent"
+                else "the client left the world mid-run")
+        print("[autopilot] %s%s; waiting for it to come back"
+              % (lead, f" (reason: {reason})" if reason else ""))
+        started = time.time()
+        self._prepared_obs = None
+        self._last_world_screen = None
+        # With no window the snapshot cannot answer anything, so the presence check
+        # comes first; for a kick or a reload the page exists and answers, and only
+        # the world is missing.
+        present = self._wait_for_window() if trigger == "client_absent" else True
+        recovered = present and self._require_world(fresh=True)
+        waited = round(time.time() - started, 1)
+        self._recoveries += 1
+        if recovered:
+            self._recoveries_ok += 1
+            self._recovery_wait_s += waited
+        self._append_log_line(_fast_dumps({
+            "kind": "recovery",
+            "session": self.session,
+            "trigger": trigger,
+            "reason": (str(reason or "")[:120] or None),
+            "recovered": bool(recovered),
+            "waited_s": waited,
+            "screen": getattr(self, "_last_world_screen", None),
+            "login_cooldown": getattr(self, "_last_login_cooldown", None),
+            "at": time.time(),
+        }) + b"\n")
+        if not recovered:
+            print("[autopilot] the world did not come back after %.1f s (last screen: %s)"
+                  % (waited, self._screen_text(getattr(self, "_last_world_screen", None))))
+            return False
+        print("[autopilot] the world is back after %.1f s; resuming" % waited)
+        self._recent.clear()
+        self._action_noops.clear()
+        self._gate.clear()
+        self._stall_since = self._index
+        self._farm_wait = False
+        self._farm_wait_since = None
+        self._farm_wait_report = 0.0
+        self._fight_wait_since = None
+        self._fight_wait_report = 0.0
+        self._fight_arm_at = 0.0
+        self._forced_call = None
+        self._prepared_obs = None
+        return True
+
+    def _retire_with_budget(self, call: Any,
+                            before: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Optional[str]]:
+        """Retire the quest a stuck step was about, or say why the goal must end.
+
+        Both stall paths need the same arithmetic: a quest retired once and chosen again
+        is the policy ignoring its skip, and retiring it again on the next window is a
+        cycle. The reason is returned rather than raised so the caller can end the goal
+        with a sentence a log reader can act on.
+        """
+        qid = self._retire_named_quest(call, before)
+        if qid is None:
+            self._stall_unretired += 1
+            if self._stall_unretired >= RETIRE_REPEAT_LIMIT:
+                return None, ("%d stall windows without progress and no quest to "
+                              "retire" % self._stall_unretired)
+            return None, None
+        if qid in self._retired_qids:
+            self._retire_repeats += 1
+        else:
+            self._retired_qids.add(qid)
+            self._retire_repeats = 1
+        if self._retire_repeats >= RETIRE_REPEAT_LIMIT:
+            return qid, ("quest %s stayed chosen after %d retirements"
+                         % (qid, self._retire_repeats))
+        print(f"[autopilot] {self.stall_limit} steps without progress; "
+              f"retiring quest {qid} and taking another")
+        return qid, None
+
+    def _retire_named_quest(self, call: Any, before: Optional[Dict[str, Any]]) -> Optional[int]:
+        """Retire the quest a stuck call was about, not just the first active one.
+
+        A start loop on a quest that never becomes active (584) used to retire the
+        only quest that *was* active (3841): the dead start stayed in the curriculum
+        and was chosen again on the next plan pass, so the loop outlived the quest it
+        had wrongly blamed.
+        """
+        qid = None
+        try:
+            raw = (getattr(call, "args", None) or {}).get("quest_id")
+            if raw is not None:
+                qid = int(raw)
+        except (TypeError, ValueError):
+            qid = None
+        if qid is None:
+            # The policy knows which quest its last plan was for. The active list
+            # does not: it is ordered by the game, and taking its first entry
+            # retired the tutorial quest (3841) because a start loop for a
+            # different quest had stalled. Never guess from that list.
+            try:
+                raw = getattr(self.runtime.policy, "current_quest", None)
+                if raw is not None:
+                    qid = int(raw)
+            except (TypeError, ValueError):
+                qid = None
+        skipper = getattr(self.runtime.policy, "skip", None)
+        if skipper is None or qid is None:
+            return None
+        skipper(qid)
+        return qid
+
+    def _note_client_error(self, after: Any) -> None:
+        """Print a refusal the client itself reported, once per new message.
+
+        The page captures what the client writes to its error channel. Until it
+        did, a talk the server refused and a talk that simply changed nothing
+        looked identical: the loop retried both. This only speaks; the decision
+        stays with the planner until the texts have been read live.
+        """
+        rows = (after or {}).get("client_errors") if isinstance(after, dict) else None
+        if not isinstance(rows, list) or not rows:
+            return
+        newest = rows[-1] if isinstance(rows[-1], dict) else None
+        text = str((newest or {}).get("text") or "")
+        if not text or text == self._last_client_error:
+            return
+        self._last_client_error = text
+        print("[autopilot] the client reported: %s" % text)
+
+    def _tutorial_hold(self, key: str, obs: Any) -> bool:
+        """True while patience with one scripted step still has time left.
+
+        The clock is per action signature, not per loop: a new call is a new question
+        to the world and gets its own window, and a step that moves resets it. The
+        bound exists because the alternative was a wait that never ended -- the same
+        directive every 0.35 s until the step budget or a human did.
+        """
+        now = time.time()
+        if key != self._hold_key:
+            self._hold_key = key
+            self._hold_world = _world_sig(obs)
+            self._hold_started_at = now
+            return True
+        if (now - self._hold_started_at) < TUTORIAL_HOLD_S:
+            return True
+        # Patience expires into a longer patience, not into an exit. A loop that ends
+        # stops sending directives, the page's keep-alive gate closes with it, and the
+        # same client timer that started this logs the character out ten minutes
+        # later -- so quitting on a stuck step trades a stalled session for a dead
+        # one. Retrying the step once per window keeps the session in world and the
+        # retry rate bounded (was 119 identical directives in one session).
+        self._hold_started_at = now
+        self._hold_world = _world_sig(obs)
+        self._hold_cycles += 1
+        return True
+
+    def _report_hold(self, call: Any) -> None:
+        """Say it once per window, not once per pass.
+
+        The count is the point: `hold_cycles` turns "the run was 40 minutes long" into
+        "the run spent 13 windows waiting on one scripted step", which is the
+        difference between a slow character and a stuck one.
+        """
+        if self._hold_cycles and self._hold_cycles != getattr(self, "_hold_reported", -1):
+            self._hold_reported = self._hold_cycles
+            print("[autopilot] step %s has not moved for %ds; staying in world and "
+                  "retrying once per window (cycle %d)"
+                  % (call.tool, TUTORIAL_HOLD_S, self._hold_cycles))
+
+    def _holding(self, call: Any, obs: Any) -> bool:
+        """True while this exact call is on a patient timeout.
+
+        The hold is per call signature AND per world state: as soon as anything the
+        step depends on moves -- map, cell, the active objective, an open dialog --
+        the same call is a different question and may be asked again at once. Without
+        the world half, a hold would keep waiting through progress it should act on.
+        """
+        if self._hold_key is None or self._hold_key != _call_key(call):
+            return False
+        if self._hold_world != _world_sig(obs):
+            self._hold_key = None
+            self._hold_world = None
+            return False
+        return (time.time() - self._hold_started_at) < TUTORIAL_HOLD_S
+
+    def _note_read_streak(self, call: Any, goal: str, obs: Any) -> str:
+        """Count consecutive reads; answer "keep", "act" or "break".
+
+        A planner read is turned into a wait while the wait counter is under its
+        bound, so a dispatched read means either the plan asked for one on a healthy
+        loop or the counter overflowed. Either way a run of them is the loop looking
+        without acting: live 2026-10-29, four runs of 8, 9, 11 and 12 identical
+        `state.snapshot` steps in one 239-step session. Action resets the count.
+        """
+        if str(getattr(call, "tool", "") or "") not in READ_ONLY_TOOLS:
+            self._read_streak = 0
+            return "keep"
+        self._read_streak += 1
+        if self._read_streak < READ_STREAK_LIMIT:
+            return "keep"
+        self._read_streak = 0
+        print("[autopilot] %d reads in a row with no action between them;"
+              " looking for something to do" % READ_STREAK_LIMIT)
+        forced = self._next_real_action(goal, obs)
+        if forced is None:
+            return "keep" if self._hold_wait(goal, obs) else "break"
+        self._consecutive_waits = 0
+        self._forced_call = ToolCall(tool=forced.tool, args=dict(forced.args),
+                                     goal=goal)
+        self._forced_reason = forced.why
+        print("[autopilot] the reads had nothing new; trying %s %s (%s)"
+              % (forced.tool, forced.args, forced.why))
+        return "act"
+
+    def _next_real_action(self, goal: str, obs: Any) -> Any:
+        """The first proposed call that is not a read and passes the goal gate.
+
+        Shared by the wait escalation and the read streak: both reach the same
+        conclusion ("this plan has nothing new to say") and must not answer it with
+        another read. Live 2026-10-29: every escalation inside a 467-pass wait
+        proposed farm.start, the quest gate refused it, and the cycle repeated ~11
+        times because the refusal only reset the wait counter.
+        """
+        idle = READ_ONLY_TOOLS | LISTING_TOOLS
+        for _ in range(ESCALATE_TRIES):
+            candidate = self.thinking.propose(goal, obs, self.steps[-8:], None)
+            if candidate is None:
+                break
+            if candidate.tool in idle or candidate.tool == "-":
+                continue
+            if candidate.tool == "farm.start" and not self._farm_allowed(goal, obs):
+                continue
+            return candidate
+        # The board search came back empty. Settle whatever the ledger proposed last time against
+        # the observation we now hold -- `record` compares the objective before and after, so an
+        # action that changed the world without moving this objective refutes the belief -- then
+        # ask for the next untried one. This is the layer the wait loop never had: G98 spent 306
+        # passes on a bag objective with two items unequipped, because nothing remembered that the
+        # menu press had already been tried and had proved nothing.
+        return self._ledger_call(goal, obs)
+
+    def _ledger_call(self, goal: str, obs: Any) -> Any:
+        """Settle the last hypothesis and offer the next untried one, or None.
+
+        Called from two places: the wait escalation (as a last resort) and the *first* wait, so a
+        "no action" state asks the ledger before spending 40 passes on it. The second caller is the
+        point: measured 2026-11-06, the ledger was wired but never consulted, because the only path
+        to it ran at the 40-wait bound -- which is exactly the sitting-still behaviour it exists to
+        remove.
+        """
+        if self.ledger is None or not isinstance(obs, dict):
+            return None
+        try:
+            if self._ledger_pending is not None:
+                rec, hyp, before = self._ledger_pending
+                self._ledger_pending = None
+                # The step's own verdict, so a refusal ("the server completes this objective")
+                # refutes at once instead of costing three noop attempts -- but only when that
+                # step actually ran *this* hypothesis. Measured 2026-11-06: the claim was credited
+                # with `advanced` because a different action advanced an objective between the
+                # proposal and the next consultation, which teaches the ledger a false success.
+                last = self.steps[-1] if self.steps else None
+                # Tool *and* args: a planner claim and the ledger's claim are both
+                # `quest.advance`, so the name alone still let the planner's success be credited
+                # to the ledger's hypothesis (measured 2026-11-06: the claim scored `advanced`
+                # from a step that asked a different NPC).
+                ran_args = dict(getattr(last, "args", {}) or {})
+                ran_it = (str(getattr(last, "tool", "") or "") == hyp.tool
+                          and all(ran_args.get(k) == v for k, v in dict(hyp.args).items()))
+                # `reason` carries the refusal's own sentence when there is one, which is what
+                # lets the ledger learn a fact ("this objective type is completed by the server")
+                # instead of Python holding a rule about objective types.
+                self.ledger.record(rec, hyp, before, obs,
+                                   verdict=str(getattr(last, "verdict", "") or "")
+                                   if ran_it else "noop",
+                                   reason=str(getattr(last, "error", "") or "") if ran_it else "")
+            rec = self.ledger.sync(obs)
+            hyp = self.ledger.next_hypothesis(rec, obs) if rec is not None else None
+            if hyp is not None:
+                self._ledger_pending = (rec, hyp, obs)
+                return ToolCall(tool=hyp.tool, args=dict(hyp.args), goal=goal)
+        except Exception as exc:  # noqa: BLE001 - a ledger fault must not stop the loop
+            print("[autopilot] objective ledger skipped: %s: %s" % (type(exc).__name__, exc))
+        return None
+
+    @staticmethod
+    def _quest_data_pending(obs: Any) -> bool:
+        """In the world with no quest block at all -- a snapshot taken too early.
+
+        The tell is the bag: a character that has been in the world long enough to hold items
+        has quests too, so an empty `quests_active` next to a non-empty bag means the client
+        has not published them yet. A genuinely questless character with an empty bag falls
+        through to the old verdict, and the caller bounds the wait anyway.
+        """
+        if not isinstance(obs, dict) or not obs.get("in_world"):
+            return False
+        if obs.get("quests_active") or obs.get("ready_objectives"):
+            return False
+        if obs.get("current_objective"):
+            return False
+        tutorial = obs.get("tutorial")
+        if isinstance(tutorial, dict) and tutorial.get("active"):
+            return False
+        items = (obs.get("inventory") or {}).get("items")
+        return bool(items)
+
+    def _hold_wait(self, goal: str, before: Any) -> bool:
+        """Spend time, not a step, on a wait the policy asked for.
+
+        Returns True to keep the run going. The wait is still visible -- a `kind:
+        "wait"` row with the reason and how many passes it has taken -- and it keeps
+        the two things a dispatched wait had: the same cadence (so the planner's own
+        wait counters, which are calibrated in passes, still mean the same wall-clock
+        amount) and the same kick detection (a wait at the login screen is a recovery,
+        not a spin).
+
+        What it no longer does is produce a step row, a verdict, or a reward: those
+        were what turned 3,010 lookups into apparent success.
+        """
+        self._waits += 1
+        self._consecutive_waits += 1
+        reason = self._forced_reason or "the policy had no action to take"
+        self._forced_reason = ""
+        thought = None
+        if self._consecutive_waits == 1 and self._forced_call is None:
+            # Nothing to do is not the same as nothing to try. Ask the objective ledger first:
+            # it remembers what has already been tried for this objective and refutes what failed,
+            # so the answer here is the next untried thing rather than the 40-pass wait.
+            ledger_thought = self._ledger_call(goal, before)
+            if ledger_thought is not None:
+                self._forced_call = ledger_thought
+                self._consecutive_waits = 0
+                print("[autopilot] ledger: %s %s instead of waiting"
+                      % (ledger_thought.tool, ledger_thought.args))
+        if self._consecutive_waits == MAX_CONSECUTIVE_WAITS:
+            # Reaching the bound is the strongest signal the loop has that this goal has
+            # no action left in it -- the shape of the baseline's 1,581-pass run. Before
+            # spending a doomed round trip on that, ask the layer that searches the
+            # current board for an interaction nobody has tried in this scene. Only a
+            # real action counts as an answer: a read back would reset the streak and
+            # double the spin. When it has nothing left this falls through to the plain
+            # overflow read, so the escalation cannot become its own loop.
+            thought = self._next_real_action(goal, before)
+            if thought is None:
+                self._dead_windows += 1
+                if self._dead_windows >= DEAD_WINDOW_LIMIT:
+                    # Ending the run throws away a session that is still alive: the
+                    # character stood on a map with no exits, its NPCs already asked
+                    # and two other objectives waiting (live 2026-10-29, dofus-05).
+                    # Retiring the objective the run cannot move is what the operator
+                    # does next, and the planner has `skip` for it. Bounded, so a
+                    # broken plan cannot retire the whole log in one run.
+                    if self._retired < RETIRE_LIMIT:
+                        qid = self._retire_stuck_objective(before)
+                        if qid is not None:
+                            self._retired += 1
+                            self._dead_windows = 0
+                            self._consecutive_waits = 0
+                            print("[autopilot] %d full wait windows had no action for "
+                                  "quest %s; retiring it for this run and taking the "
+                                  "next objective" % (DEAD_WINDOW_LIMIT, qid))
+                            return True
+                    print("[autopilot] %d full wait windows ended with nothing to do "
+                          "(%d passes, %s); ending the run -- the step needs a human "
+                          "or a new plan" % (self._dead_windows, self._consecutive_waits,
+                                             reason))
+                    return False
+            else:
+                self._dead_windows = 0
+        self._append_log_line(_fast_dumps({
+            "kind": "wait",
+            "session": self.session,
+            "goal": goal,
+            "reason": reason,
+            "consecutive": self._consecutive_waits,
+            "escalated": thought.tool if thought is not None else None,
+            "in_dialog": bool((before or {}).get("in_dialog"))
+            if isinstance(before, dict) else None,
+            "at": time.time(),
+        }) + b"\n")
+        if self._consecutive_waits == 1 or self._consecutive_waits % 30 == 0:
+            print("[autopilot] wait x%d: %s" % (self._consecutive_waits, reason))
+        if thought is not None:
+            self._consecutive_waits = 0
+            self._forced_call = ToolCall(tool=thought.tool, args=dict(thought.args),
+                                         goal=goal)
+            self._forced_reason = thought.why
+            print("[autopilot] the wait had no action left; trying %s %s (%s)"
+                  % (thought.tool, thought.args, thought.why))
+        if not self.dry_run:
+            # A dry run has no world to wait for, and ten fast passes must not turn
+            # into seconds of sleeping on the way to a `--steps 8` smoke test.
+            time.sleep(max(WAIT_POLL_S, self.interval))
+            self._last_step_at = time.time()
+        # A wait can outlive the session it was waiting inside. Without this the loop
+        # would keep asking the policy for an action on a page that is back at the
+        # login screen, and the scheduler would never see the kick it is supposed to
+        # recover from: no step is dispatched here, so the post-step check never runs.
+        # A wait that keeps reading a dead bridge is covered by the bound instead --
+        # the next dispatched step takes the transport path and its own recovery.
+        fresh = self.observe(record=False)
+        left = fell_out_of_world(before, fresh)
+        if left is not None:
+            recovered = self._recover_world(left or None, trigger="wait_fell_out")
+            if recovered:
+                # The count measured a wait inside a session that has ended; the new
+                # world gets its own budget.
+                self._consecutive_waits = 0
+            return recovered
+        return True
+
+    def _retire_stuck_objective(self, obs: Any) -> Optional[int]:
+        """Retire the quest whose objective this run cannot move.
+
+        The planner's `skip` is the same primitive the operator's "retire" path
+        uses; the autopilot only calls it after whole windows of no action, so a
+        slow step cannot retire a healthy quest. None when there is nothing to
+        name or no policy that can skip.
+        """
+        policy = getattr(self.runtime, "policy", None)
+        skip = getattr(policy, "skip", None)
+        if skip is None or not isinstance(obs, dict):
+            return None
+        obj = obs.get("current_objective")
+        if not isinstance(obj, dict):
+            return None
+        try:
+            qid = int(obj.get("quest_id"))
+        except (TypeError, ValueError):
+            return None
+        try:
+            skip(qid)
+        except Exception:  # noqa: BLE001 - a policy that cannot skip is not a crash
+            return None
+        return qid
+
+    def _record_dialog(self, call: Any, before: Any, after: Any,
+                       result: Any = None) -> None:
+        """Pair a dialog reply with the page it produced.
+
+        The ranker's *primary* signal is quest-objective token overlap, and on the 1,547
+        open dialogs in the recorded corpus it scored 0.0 on every single one: all 1,524
+        choices came from the question tie-break or from a page with one reply. Nothing in
+        any log says whether the reply it picked moved the conversation, so criterion (4)
+        -- replace the heuristic where data supports it -- has no data to support it. The
+        pairing exists for one step and then is thrown away; this writes it down.
+
+        Only dialog actions produce a row (a reply index, an explicit close, or an
+        accepted offer), so the cost is one row per talk attempt -- 110 in an entire
+        baseline session-set.
+
+        The dispatch fields matter more than they look. The recorded corpus replays one
+        page 87 times against a single reply whose server id is 41457, and the wire log
+        shows the *server* answering that id with `LeaveDialogMessage`: the conversation
+        ends, the loop re-opens it, and `outcome` alone reads as "the ranker picked badly".
+        `reply_id` (which id went on the wire), `via` (which object answered), `dispatch_ok`
+        and `ended_by` are what separate "we ended it", "the server ended it" and "nothing
+        was sent" -- and `objective_type` is the feature that says whether any reply could
+        have validated the objective in the first place.
+        """
+        args = getattr(call, "args", None)
+        if not isinstance(args, dict):
+            return
+        chose = args.get("reply")
+        accepted = args.get("accept") is True
+        if chose is None and not args.get("close") and not accepted:
+            return
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return
+        db = before.get("dialog")
+        if not isinstance(db, dict) or not db.get("open"):
+            return
+        da = after.get("dialog")
+        da = da if isinstance(da, dict) else {}
+        if not da:
+            outcome = "unknown"        # no dialog block came back: it says nothing
+        elif not da.get("open"):
+            outcome = "closed"
+        elif da.get("message") == db.get("message"):
+            outcome = "same page"
+        else:
+            outcome = "advanced"
+        asked = "accept" if accepted else ("close" if chose is None else int(chose))
+        # A dialog that is gone after a reply we did not ask to close was ended by the
+        # game, not by us. Without this split, `closed` flatters the agent: it looks like
+        # a completed exchange, and the loop re-opens the same page believing it moved.
+        ended_by = None
+        if outcome == "closed":
+            ended_by = ("accept" if accepted
+                        else ("asked" if asked == "close" else "after_reply"))
+        data = getattr(result, "data", None)
+        data = data if isinstance(data, dict) else {}
+        self._dialogs += 1
+        if outcome == "same page":
+            self._dialog_stalls += 1
+        kn = before.get("knowledge")
+        kn = kn if isinstance(kn, dict) else {}
+        tracker = before.get("current_objective")
+        tracker = tracker if isinstance(tracker, dict) else {}
+        # The ranker's own features, kept with the outcome: a row without the scores that
+        # produced the choice is a log line, not a training pair.
+        decision = getattr(getattr(self.runtime, "policy", None),
+                           "last_dialog_decision", None)
+        decision = decision if isinstance(decision, dict) else {}
+        replies = db.get("replies")
+        replies = replies if isinstance(replies, list) else []
+        self._append_log_line(_fast_dumps({
+            "kind": "dialog",
+            "session": self.session,
+            "index": self._index,
+            "quest_id": args.get("quest_id"),
+            "objective_id": kn.get("objective_id") or tracker.get("objective_id"),
+            "objective_type": kn.get("type_id", tracker.get("type_id")),
+            "npc_id": db.get("npc_id"),
+            "name_id": db.get("name_id"),
+            "page": str(db.get("message") or "")[:120],
+            "replies": [str(r.get("text") or "")[:80]
+                        for r in replies[:8] if isinstance(r, dict)],
+            "asked": asked,
+            "reply_text": str(args.get("reply_text") or "")[:80],
+            "reply_id": data.get("reply_id"),
+            "via": data.get("via"),
+            "accepted_offer": bool(data.get("accepted_offer")),
+            "dispatch_ok": bool(getattr(result, "ok", True)),
+            "error": None if getattr(result, "error", None) is None
+                     else str(result.error)[:120],
+            "reason": decision.get("reason"),
+            "scores": decision.get("scores")[:8] if isinstance(
+                decision.get("scores"), list) else [],
+            "outcome": outcome,
+            "ended_by": ended_by,
+            "page_after": str(da.get("message") or "")[:120] if da.get("open") else None,
+            # Which read the outcome was measured against. The corpus reconstruction
+            # (G23) found every multi-reply pair in the old logs labelled from an
+            # observation read *before* the answer, which makes `same page` mean
+            # nothing; a label is only as good as the state it was compared against.
+            "after_source": getattr(self, "_obs_source", "unknown"),
+            "at": time.time(),
+        }) + b"\n")
+
+    def _credit_pending(self, call: Any, verdict: Any) -> None:
+        """Score the held repair decision -- but only against a step that could
+        have moved the world.
+
+        Every recovery hint this project issues is `state.snapshot`, and the verifier
+        rightly scores a successful read as `advanced`: a lookup that returns data did
+        what was asked. Feeding *that* back as the reward for the repair measures the
+        probe instead of the repair. On the live baseline it produced 348 successes in
+        348 attempts for `incomplete:recover` and 145 of 145 for `stale_state:recover`,
+        while the same decisions credited against the next real action scored 28 of 348
+        and 0 of 145. A table trained on the first number learns "always recover", which
+        is not a recovery policy, it is a tautology.
+
+        So a read leaves the decision pending; the credit lands on the first step that
+        could have changed something, and a decision nothing answers within
+        `PENDING_CREDIT_STEPS` reads is dropped rather than guessed at.
+        """
+        if self._pending is None:
+            return
+        if str(getattr(call, "tool", "") or "") in READ_ONLY_TOOLS:
+            self._pending_age += 1
+            if self._pending_age > PENDING_CREDIT_STEPS:
+                self._pending = None
+                self._pending_age = 0
+            return
+        self.controller.observe_outcome(self._pending, verdict)
+        self._note_experience(self._pending, verdict)
+        self._pending = None
+        self._pending_age = 0
+
+    def _learn_menu_window(self, before: Any, after: Any, call: Any) -> None:
+        """Which window did that press open? Record it, so the planner stops guessing.
+
+        `ui.tap` reports `open_before` and `open_windows`, so the pair a menu key opens is
+        observable in one step. The planner keeps the table; this only notices and persists.
+        Two conditions keep it honest: the press must have *changed* something (a disabled
+        icon returns `changed: false` and opens nothing), and exactly one window may have
+        appeared -- if two did, this press did not name the pair and nothing is learned.
+        """
+        if str(getattr(call, "tool", "") or "") != "ui.tap":
+            return
+        args = dict(getattr(call, "args", {}) or {})
+        menu = args.get("menu")
+        if not menu or not isinstance(after, dict) or not isinstance(before, dict):
+            return
+        before_windows = {str(w) for w in (before.get("open_windows") or [])}
+        after_windows = {str(w) for w in (after.get("open_windows") or [])}
+        opened = [w for w in (after_windows - before_windows) if w]
+        if len(opened) != 1:
+            return
+        policy = getattr(self.runtime, "policy", None)
+        learn = getattr(policy, "learn_menu_window", None)
+        if not callable(learn):
+            return
+        try:
+            if not learn(str(menu), opened[0]):
+                return
+        except Exception as exc:  # noqa: BLE001 - learning must never stop the loop
+            print("[autopilot] menu-window learning skipped: %s: %s"
+                  % (type(exc).__name__, exc))
+            return
+        print("[autopilot] learned: menu %r opens window %r" % (menu, opened[0]))
+        self._remember_menu_window(str(menu), opened[0])
+
+    def _remember_menu_window(self, menu: str, window: str) -> None:
+        """Persist the pair, so the next start does not have to rediscover it."""
+        store = getattr(getattr(self.runtime, "executor", None), "store", None)
+        if store is None:
+            return
+        try:
+            store.remember("menu_window", menu, window, source="observed")
+        except Exception as exc:  # noqa: BLE001
+            print("[autopilot] menu-window fact not stored: %s: %s"
+                  % (type(exc).__name__, exc))
+
+    def _seed_menu_windows(self) -> int:
+        """Adopt the pairs earlier sessions learned, before the first press."""
+        store = getattr(getattr(self.runtime, "executor", None), "store", None)
+        policy = getattr(self.runtime, "policy", None)
+        load = getattr(policy, "load_menu_windows", None)
+        if store is None or not callable(load):
+            return 0
+        try:
+            facts = {str(f.key): f.value for f in store.find("menu_window")}
+            adopted = int(load(facts) or 0)
+        except Exception as exc:  # noqa: BLE001
+            print("[autopilot] menu-window seed skipped: %s: %s"
+                  % (type(exc).__name__, exc))
+            return 0
+        if adopted:
+            print("[autopilot] adopted %d menu-window fact(s) from the knowledge base"
+                  % adopted)
+        return adopted
+
+    def _learn_surface_labels(self, observation: Any) -> int:
+        """Learn the client's own names for its menu icons.
+
+        `state.snapshot.menu_icons` is `[{key, label}]` read from the page's own
+        menu bar, so the label is published data, not an assertion. The planner
+        matches objective text against these labels before its English seed; that
+        is what makes a French objective work without a French table in Python.
+        """
+        if not isinstance(observation, dict):
+            return 0
+        icons = observation.get("menu_icons")
+        if not isinstance(icons, list):
+            return 0
+        policy = getattr(self.runtime, "policy", None)
+        learn = getattr(policy, "learn_surface_label", None)
+        if not callable(learn):
+            return 0
+        learned = 0
+        for icon in icons:
+            if not isinstance(icon, dict):
+                continue
+            key, label = icon.get("key"), icon.get("label")
+            if not key or not label:
+                continue
+            try:
+                if not learn(label, key):
+                    continue
+            except Exception as exc:  # noqa: BLE001 - learning must never stop the loop
+                print("[autopilot] menu-label learning skipped: %s: %s"
+                      % (type(exc).__name__, exc))
+                continue
+            self._remember_surface_label(str(label), str(key))
+            learned += 1
+        if learned:
+            print("[autopilot] learned %d menu label(s) from the client" % learned)
+        return learned
+
+    def _remember_surface_label(self, label: str, menu: str) -> None:
+        store = getattr(getattr(self.runtime, "executor", None), "store", None)
+        if store is None:
+            return
+        try:
+            store.remember("surface_label", label, menu, source="observed")
+        except Exception as exc:  # noqa: BLE001
+            print("[autopilot] menu-label fact not stored: %s: %s"
+                  % (type(exc).__name__, exc))
+
+    def _seed_surface_labels(self) -> int:
+        """Adopt the labels earlier sessions learned, before the first plan."""
+        store = getattr(getattr(self.runtime, "executor", None), "store", None)
+        policy = getattr(self.runtime, "policy", None)
+        load = getattr(policy, "load_surface_labels", None)
+        if store is None or not callable(load):
+            return 0
+        try:
+            facts = {str(f.key): f.value for f in store.find("surface_label")}
+            adopted = int(load(facts) or 0)
+        except Exception as exc:  # noqa: BLE001
+            print("[autopilot] menu-label seed skipped: %s: %s"
+                  % (type(exc).__name__, exc))
+            return 0
+        if adopted:
+            print("[autopilot] adopted %d menu label(s) from the knowledge base"
+                  % adopted)
+        return adopted
+
+    def _note_experience(self, decision: Any, verdict: Any) -> None:
+        """Record the repair outcome in the conjugate store -- the first caller it has had.
+
+        One Beta per (cause, strategy): the label is already computed here, the update is a few
+        float adds, and the store persists it. This is what makes the posterior table auditable
+        across runs instead of dying with the process, and it is the same label the controller
+        scores in memory, so the two cannot disagree about what happened.
+        """
+        if self.experience is None:
+            return
+        try:
+            from planning.experience import Event
+
+            cause = str(getattr(decision, "cause", "") or "unknown")
+            strategy = str(getattr(decision, "strategy", "") or getattr(decision, "action", "")
+                           or "none")
+            moved = str(getattr(verdict, "verdict", verdict)) == "advanced"
+            self.experience.record(Event(
+                kind="beta", key="repair:%s:%s" % (cause, strategy),
+                value=1.0 if moved else 0.0, source="live",
+                context={"action": str(getattr(decision, "action", "") or "")}))
+        except Exception as exc:  # noqa: BLE001 - a store fault must not stop the loop
+            print("[autopilot] experience store skipped: %s: %s" % (type(exc).__name__, exc))
+
+    def _apply_decision(self, decision: Decision, goal: str, call: ToolCall) -> str:
+        """Turn agent 2's decision into what the actor does on the next step.
+
+        Separate from the loop so it can be tested without a client: this is the
+        join between "we noticed something" and "we changed what happens", and it
+        is the thing that used to be missing entirely.
+        """
+        if decision.action == "retry":
+            if call is not None:
+                self._forced_call = call
+                self._forced_reason = decision.reason
+            return "retry"
+        if decision.action == "recover" and decision.next_call:
+            self._forced_call = ToolCall(tool=decision.next_call["tool"],
+                                         args=dict(decision.next_call.get("args") or {}),
+                                         goal=goal)
+            self._forced_reason = decision.reason
+            return "recover"
+        if decision.action == "replan":
+            self.replan_requested += 1
+            print(f"[autopilot] REPLAN ({decision.cause}): {decision.reason}")
+            thought = self.thinking.propose(
+                goal, self._last_obs, self.steps[-8:], decision)
+            if thought is not None:
+                self._forced_call = ToolCall(
+                    tool=thought.tool, args=dict(thought.args), goal=goal)
+                # A thought that says "wait for the NPC" and a read that says nothing
+                # are the same step to the loop but different waits to a reader. The
+                # reason is the thought's own words, kept for the wait row.
+                self._forced_reason = thought.why or decision.reason
+                print(f"[autopilot] THINK ({decision.cause}): {thought.why} "
+                      f"-> {thought.tool} {thought.args}")
+                return "think"
+            print("[autopilot] THINK: no untried alternative; falling back to the scheduler")
+            if self.on_replan is not None:
+                try:
+                    self.on_replan(decision.reason, decision)
+                except Exception:  # noqa: BLE001 - a host callback must not kill the run
+                    pass
+            return "replan"
+        if decision.action == "abort":
+            print(f"[autopilot] agent2 aborts {goal!r}: {decision.reason}")
+            return "abort"
+        return "continue"
+
+    def _note_keep_alive(self, obs: Optional[Dict[str, Any]]) -> None:
+        """Fold the page's AFK witness into the run's counters."""
+        if not isinstance(obs, dict):
+            return
+        record = _compact(obs).get("keep_alive")
+        if not isinstance(record, dict):
+            return
+        counters = self._keep_alive
+        counters["steps"] += 1
+        if record.get("present"):
+            counters["present_steps"] += 1
+        counters["marks"] = max(counters["marks"], int(record.get("marks") or 0))
+        counters["failed"] = max(counters["failed"], int(record.get("failed") or 0))
+        counters["idle_max_ms"] = max(counters["idle_max_ms"],
+                                      int(record.get("idle_ms") or 0))
+        # The client's own countdown, not ours: how far it had actually run at the
+        # worst moment of the run, and whether it ever reached the warning state.
+        counters["age_max_ms"] = max(counters["age_max_ms"], int(record.get("age_ms") or 0))
+        if record.get("inactive"):
+            counters["inactive_steps"] += 1
+        if record.get("last_source"):
+            counters["last_source"] = record["last_source"]
+
+    def _note_geometry(self, obs: Optional[Dict[str, Any]]) -> None:
+        """Fold the page's viewport witness into the run's counters."""
+        if not isinstance(obs, dict):
+            return
+        record = _compact(obs).get("geometry")
+        if not isinstance(record, dict):
+            return
+        counters = self._geometry
+        counters["steps"] += 1
+        if record.get("in_world"):
+            counters["in_world_steps"] += 1
+        if record.get("drifted"):
+            counters["drift_steps"] += 1
+        counters["reloads"] = max(counters["reloads"],
+                                  int(record.get("reloads_last_2min") or 0))
+        counters["boot"] = record.get("boot")
+        counters["now"] = record.get("now")
+
+    def summary(self, reason: str) -> Dict[str, Any]:
+        self.controller.save(force=True)
+        # The refusal buckets live on the policy. Reached through `getattr` all the way, because
+        # this call is what ends a run: a missing attribute here would lose the whole summary,
+        # and criterion 5 is measured from nothing else.
+        policy = getattr(getattr(self, "runtime", None), "policy", None)
+        data = {
+            "reason": reason,
+            "session": self.session,
+            "steps": self._step_total,
+            "verdicts": dict(self._verdict_counts),
+            "promises": dict(self._promise_counts),
+            "label_sources": dict(self._source_counts),
+            "replan_requested": self.replan_requested,
+            "manual_interventions": self._intervention_total,
+            "recoveries": self._recoveries,
+            "recoveries_ok": self._recoveries_ok,
+            "recovery_wait_s": round(self._recovery_wait_s, 1),
+            # Whether this run was actually alive on the wire. `present_steps` short
+            # of `steps` means the client had no activity flag for us to flip; a big
+            # `idle_max_ms` means the loop let the countdown run between marks.
+            "keep_alive": dict(getattr(self, "_keep_alive", {})),
+            # Whether this client was laid out for the window it actually has.
+            "geometry": dict(getattr(self, "_geometry", {})),
+            # Time spent patient on a scripted step, in windows of TUTORIAL_HOLD_S.
+            "hold_cycles": int(getattr(self, "_hold_cycles", 0)),
+            # Talks whose packet left and whose dialog never arrived, by call. This is
+            # the difference between "the AI is slow" and "the server will not answer
+            # this NPC", and nothing else in the log can say it.
+            "dead_talks": dict(getattr(self, "_dead_talks", {})),
+            "declined_crossings": dict(getattr(self, "_dead_navs", {})),
+            # The two hand-written crossing rules, as counts. A run that waited out six
+            # walks and granted two returns is a different run from one that re-asked
+            # the same border ten times, and only these numbers say so afterwards.
+            "crossings_waited_out": int(getattr(self, "_crossings_waited_out", 0)),
+            "returns_granted": len(getattr(policy, "_return_granted", ()) or ()),
+            # Waits are reported, not counted as work. Before this, 3,010 of them were
+            # the majority of "steps" and nearly all of the run's apparent success.
+            "waits": self._waits,
+            "dialogs": self._dialogs,
+            "dialog_stalls": self._dialog_stalls,
+            # Which combat policy was reachable for this run. A fight count without
+            # this cannot say whether the learned policy or the page's fallback
+            # decided the turns -- which is the difference the whole combat goal rests on.
+            "brain": {key: self._brain.get(key)
+                      for key in ("state", "model", "mode", "reason", "when")},
+            "command_shadow": {
+                "mode": getattr(self, "command_shadow", "off"),
+                "available": bool(getattr(self, "_command_model", None)),
+                "rows": int(getattr(self, "_command_shadow_rows", 0)),
+                "error": (getattr(self, "_command_shadow_status", {}) or {}).get("error"),
+            },
+            # G7: which kind of group refusal the page gave, counted. A run that travelled
+            # because the named mob is on another map and a run whose client could not read the
+            # members of the groups under its nose are different failures with different fixes,
+            # and only these counts tell them apart afterwards.
+            "group_refusals": dict(getattr(policy, "_group_refusals", {}) or {}),
+            "group_read_broken": bool(getattr(policy, "_group_read_broken", False)),
+            "controller": self.controller.stats(),
+            "open_listings": self._listing_total,
+            "log": str(self.log_path),
+            "elapsed_s": (round(self._last_step_at - self._first_step_at, 1)
+                          if self._step_total > 1 else 0.0),
+        }
+        print(f"[autopilot] done: {reason} | {self._verdict_counts} | "
+              f"{self._listing_total} open listing(s)")
+        return data
+
+    def _finish(self, reason: str) -> Dict[str, Any]:
+        """End the run: report it, then put the reason on the log.
+
+        The run of 2026-11-04/05 left 27 `safe.stop` rows across two days -- ten of
+        them taken while the character was not even in the world (`in_world` false,
+        `hp 0/0`, no position at all) -- and not one says which condition ended the
+        loop. The reason went to stdout, which is gone by the time anyone opens the
+        file, so "it turned off by itself" was unanswerable from the record.
+
+        Every exit path of `_run` returns through here. `summary()` stays free of side
+        effects on purpose: two suites call it as a pure report on a partial object,
+        and a row written from there would fail them for a reason that has nothing to
+        do with what they test.
+        """
+        data = self.summary(reason)
+        if not getattr(self, "_end_row_written", False):
+            self._end_row_written = True
+            self._append_log_line(_fast_dumps({
+                "kind": "session_end",
+                "session": self.session,
+                "instance": str(getattr(self.runtime, "instance", "") or ""),
+                "at": round(time.time(), 3),
+                "reason": data["reason"],
+                "steps": data["steps"],
+                "waits": data["waits"],
+                "verdicts": data["verdicts"],
+                "promises": data["promises"],
+                "retired": int(getattr(self, "_retired", 0)),
+                "recoveries": data["recoveries"],
+                "dead_talks": len(data["dead_talks"]),
+                "declined_crossings": sum(data["declined_crossings"].values()),
+                "crossings_waited_out": data["crossings_waited_out"],
+                "returns_granted": data["returns_granted"],
+                "elapsed_s": data["elapsed_s"],
+            }) + b"\n")
+        return data
+
+
+def _accepts_detail(fn: Any) -> bool:
+    """Does this policy's outcome report take the refusal payload?
+
+    The call sits inside a `except Exception: pass`, because policy history must never kill a
+    run -- which is exactly why a wrong arity has to be checked rather than discovered: it would
+    be swallowed, and the planner would stop learning from failures with nothing printed.
+    """
+    try:
+        return "detail" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+_EVIDENCE_KEYS = (
+    "reason", "via", "slot", "possible_positions", "type_id", "type_category",
+    "has_template", "instance_position", "bag_has_instance", "usable",
+    "messages", "equipped_before", "equipped_after", "presets", "remove",
+    "object_uid", "gid", "item", "target", "monster", "quantity",
+)
+
+
+def _failure_evidence(result: Any) -> Optional[Dict[str, Any]]:
+    """The refused call's own answer, kept on the step row.
+
+    Live 2026-10-29: 76 refused `inv.equip` rows carried the same sentence
+    ("equipItem sent nothing ... pass slot") and none of the fields that say why
+    -- which positions the item type allows, whether its template loaded, whether
+    the bag held the instance. Those fields exist only in that response, so a
+    refusal without them costs another live session to diagnose.
+    """
+    data = getattr(result, "data", None)
+    for _ in range(3):
+        if not isinstance(data, dict):
+            return None
+        inner = None
+        for key in ("response", "result", "data", "value"):
+            if key in data and isinstance(data[key], dict):
+                inner = data[key]
+                break
+        if inner is None:
+            break
+        data = inner
+    if not isinstance(data, dict):
+        return None
+    out = {key: data[key] for key in _EVIDENCE_KEYS if key in data}
+    return out or None
+
+
+def _summarise(result: Any) -> str:
+    """A short, human-readable trace of what a tool returned.
+
+    Best effort on purpose: a result shape we do not recognise must not break the
+    print, because this line is the only window the user has into the loop.
+    """
+    try:
+        data = getattr(result, "data", None)
+        if data is None:
+            return ""
+        # A directive result is an envelope: {directive_payload, response, snapshot}.
+        # Unwrap it, or the summary shows request bookkeeping instead of the answer.
+        for _ in range(3):
+            if not isinstance(data, dict):
+                break
+            inner = None
+            for key in ("response", "result", "data", "value"):
+                if key in data and data[key] is not None:
+                    inner = data[key]
+                    break
+            if inner is None or inner is data:
+                break
+            data = inner
+        if isinstance(data, dict):
+            for key in ("items", "inventory", "quests", "listings", "results"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    return "  -> %d %s" % (len(value), key)
+            bits = []
+            for key in ("kamas", "cell", "map_id", "inventory_size", "count", "name"):
+                if key in data and data[key] is not None:
+                    bits.append("%s=%s" % (key, data[key]))
+                if len(bits) >= 3:
+                    break
+            if bits:
+                return "  -> " + ", ".join(bits)
+            # Never stringify a whole bridge snapshot just to print 60 chars;
+            # some of them are hundreds of KB.
+            keys = [str(key) for key in list(data)[:6]]
+            more = "" if len(data) <= 6 else ", +%d" % (len(data) - 6)
+            return "  -> {%s%s}" % (", ".join(keys), more)
+        if isinstance(data, list):
+            return "  -> %d row(s)" % len(data)
+        text = str(data)
+        return "  -> " + (text[:60] + ("..." if len(text) > 60 else ""))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _tutorial_active(obs: Optional[Dict[str, Any]]) -> bool:
+    """Whether a scripted tutorial step is running on this observation."""
+    if not isinstance(obs, dict):
+        return False
+    block = obs.get("tutorial")
+    return isinstance(block, dict) and bool(block.get("active"))
+
+
+def _compact(obs: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Only the keys the verifier reads, so a step row stays small but trainable.
+
+    The snapshot nests position under `position.map_id`; reading only the top
+    level made every logged step say `observation_map: null` while the planner
+    (which flattens) knew exactly where the character stood.
+    """
+    if not isinstance(obs, dict):
+        return {}
+    flat = flatten(obs)
+    keys = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
+            "in_dialog", "in_fight", "objectives_completed")
+    out = {k: flat[k] for k in keys if k in flat}
+    for key in ("current_objective", "ready_objectives", "dialog", "knowledge",
+                # The page's AFK witness. A prevented inactivity drop is silent, so a
+                # run that was never kicked is not evidence that it stayed alive.
+                "keep_alive", "geometry"):
+        if flat.get(key) is not None:
+            out[key] = flat[key]
+    # The planner's view of the map's groups. Bounded: a full map can list
+    # dozens, and a step row is not a snapshot.
+    estimates = flat.get("fight_estimates")
+    if isinstance(estimates, list) and estimates:
+        out["fight_estimates"] = estimates[:8]
+    tutorial = flat.get("tutorial")
+    if isinstance(tutorial, dict) and tutorial.get("active"):
+        out["tutorial"] = {"active": True, "quest_id": tutorial.get("quest_id"),
+                           "step_id": tutorial.get("step_id")}
+    return out
+
+
+def _world_sig(obs: Optional[Dict[str, Any]]) -> str:
+    """What a held step is actually waiting on: where we stand and what is asked.
+
+    Deliberately narrow. HP, kamas and XP move on their own and would release the hold
+    every second, which is the stampede again under another name.
+    """
+    flat = flatten(obs or {})
+    objective = flat.get("current_objective") or {}
+    return "%s|%s|%s|%s" % (flat.get("map_id"), flat.get("cell"),
+                            objective.get("objective_id"), bool(flat.get("in_dialog")))
+
+
+def _standing_on_exit(args: Optional[Dict[str, Any]],
+                      obs: Optional[Dict[str, Any]]) -> bool:
+    """True when the character already stands on a cell that leads where it asked.
+
+    Standing on the portal and asking again is not patience -- it is the same request
+    the server already ignored, sent again. The exit list is the client's own, so this
+    needs no map database and no guessed coordinates.
+    """
+    direction = (args or {}).get("direction")
+    if not direction:
+        return False
+    flat = flatten(obs or {})
+    cell = flat.get("cell")
+    if cell is None:
+        return False
+    for exit_to in ((flat.get("map") or {}).get("exits") or []):
+        if not isinstance(exit_to, dict):
+            continue
+        if exit_to.get("direction") == direction and cell in (
+                exit_to.get("cells") or []):
+            return True
+    return False
+
+
+def _call_key(call: Any) -> str:
+    """One identity for "the same call again": the tool plus every argument.
+
+    The repeat, refusal and tutorial-hold guards all need this, and the no-op streak
+    that hid 119 identical directives was only ever compared against a second,
+    separately written spelling of the same idea.
+    """
+    return "%s|%s" % (getattr(call, "tool", "?"),
+                      json.dumps(getattr(call, "args", {}) or {},
+                                 sort_keys=True, ensure_ascii=False))
+
+
+def _cell_of(obs: Optional[Dict[str, Any]]) -> Optional[int]:
+    if not isinstance(obs, dict):
+        return None
+    for key in ("cell", "cellId", "cell_id"):
+        value = obs.get(key)
+        if isinstance(value, int):
+            return value
+    pos = obs.get("position")
+    if isinstance(pos, dict):
+        cell = pos.get("cell")
+        if isinstance(cell, int):
+            return cell
+    return None
+
+
+def _map_of(obs: Optional[Dict[str, Any]]) -> Optional[int]:
+    if not isinstance(obs, dict):
+        return None
+    for key in ("map_id", "mapId"):
+        value = obs.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    for block in (obs.get("position"), obs.get("map")):
+        if isinstance(block, dict):
+            value = block.get("map_id", block.get("mapId"))
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+    value = obs.get("map")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+# -- CLI ---------------------------------------------------------------------
+
+
+def _load_goals(args: argparse.Namespace) -> List[str]:
+    goals: List[str] = list(args.goal or [])
+    if args.goals_file:
+        path = Path(args.goals_file)
+        if not path.exists():
+            raise SystemExit(f"goals file not found: {path}")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                goals.append(line)
+    return goals
+
+
+def _build_policy(args: argparse.Namespace):
+    policy = _base_policy(args)
+    epsilon = float(getattr(args, "explore_objectives", 0.0) or 0.0)
+    if epsilon > 0.0:
+        # Off by default. A run has to ask for it, because every explored step is a
+        # step the teacher would have spent elsewhere.
+        from agent.explore import ExplorationPolicy
+
+        policy = ExplorationPolicy(policy, epsilon=epsilon,
+                                   seed=getattr(args, "explore_seed", None))
+        print(f"[autopilot] policy: exploration epsilon {epsilon}")
+    return policy
+
+
+def _base_policy(args: argparse.Namespace):
+    if args.policy == "rule":
+        return RulePolicy()
+    # "auto" is what /brain/start and the panel send when nobody chose a policy.
+    # It used to fall through to the rule policy, so a quest goal never reached the
+    # quest planner and the loop answered "no action for goal" (live 2026-10-29).
+    # The learned planner falls back to the deterministic planner without a model.
+    if args.policy in ("planner", "auto"):
+        from agent.planner_nn import NNPlanner
+
+        # The learned planner: same interface, tool choice comes from the student
+        # model instead of an if-chain. Falls back to the deterministic planner when
+        # no model is present, which is what makes it safe to try.
+        planner = NNPlanner(level_hint=int(args.level_hint), store=None,
+                            stack_mode=args.ensemble)
+        print(f"[autopilot] policy: {planner.note}; {planner.stack_note}")
+        return planner
+    if args.policy == "encoder":
+        from ai.encoder_serve import EncoderToolPolicy  # imported lazily: needs onnxruntime
+
+        model_dir = Path(args.model_dir)
+        onnx = model_dir / "encoder_int8.onnx"
+        if not onnx.exists():
+            raise SystemExit(f"no INT8 graph at {onnx}")
+        return EncoderToolPolicy(
+            onnx=onnx,
+            tokenizer=model_dir / "tokenizer.json",
+            policy_json=model_dir / "policy.json",
+        )
+    return RulePolicy()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agent.autopilot",
+        description="Run the agent loop on its own against a live instance.")
+    parser.add_argument("--goal", action="append", help="goal text (repeatable)")
+    parser.add_argument("--goals-file", help="one goal per line, # for comments")
+    parser.add_argument("--steps", type=int, default=0, help="step budget (0 = run until the goals are done)")
+    parser.add_argument("--minutes", type=float, default=0.0, help="wall-clock budget (0 = none)")
+    parser.add_argument("--verifier-model", type=Path, default=None,
+                        help="ONNX verifier head (optional; rules are used without it)")
+    parser.add_argument("--veto-threshold", type=float, default=0.0,
+                        help="pre-flight veto confidence (0 = never veto; needs a model)")
+    parser.add_argument("--interval", type=float, default=0.0, help="seconds between steps (0 = as fast as the client answers)")
+    parser.add_argument("--think", type=float, default=0.25,
+                        help="dwell after a world-changing action before the next decision")
+    parser.add_argument("--steps-per-goal", type=int, default=8)
+    parser.add_argument("--policy", choices=("rule", "encoder", "planner"), default="rule")
+    parser.add_argument("--ensemble", choices=("off", "shadow", "act"), default="act",
+                        help="planner only: stack the tool policy with foresight; "
+                             "act requires the artifact's held-out gate")
+    parser.add_argument("--explore-objectives", type=float, default=0.0,
+                        help="epsilon for bounded objective-order exploration; 0 = off "
+                             "(every step follows the teacher). Distinct from "
+                             "--explore, which randomizes repair decisions.")
+    parser.add_argument("--explore-seed", type=int, default=None,
+                        help="seed for the objective-exploration coin")
+    parser.add_argument("--level-hint", type=int, default=60,
+                        help="character level, for the planner's curriculum")
+    parser.add_argument("--model-dir", default=str(REPO_ROOT / "models" / "encoder30_v15"))
+    parser.add_argument("--instance", default="default")
+    parser.add_argument("--directive-url", default=None,
+                        help="default: the port the app published to bridge_port.txt")
+    parser.add_argument("--log", default=str(DEFAULT_LOG))
+    parser.add_argument("--stop-file", default=str(DEFAULT_STOP))
+    parser.add_argument("--explore", type=float, default=0.0,
+                        help="fraction of repair decisions to take at random, so a "
+                             "session produces data that can rank the alternatives. "
+                             "Costs real steps; 0 by default")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="choose and guard, but never send a directive")
+    parser.add_argument("--no-fight-boards", dest="fight_boards",
+                        action="store_false", default=True,
+                        help="do not record fight board snapshots for training")
+    parser.add_argument("--brain", choices=("auto", "off"), default="auto",
+                        help="auto: start the combat brain (127.0.0.1:8891) if nothing "
+                             "serves it, so fights use the learned policy; "
+                             "off: leave the page's heuristic fallback in charge")
+    parser.add_argument("--command-shadow", choices=("auto", "off"), default="off",
+                        help="auto: log the learned parser's proposal next to the rule "
+                             "for each goal (read-only; the rule still acts); off: none")
+    parser.add_argument("--command-shadow-model", type=Path,
+                        default=COMMAND_SHADOW_MODEL,
+                        help="command encoder heads for the shadow")
+    return parser
+
+
+def main(argv: Optional[Iterable[str]] = None) -> int:
+    from agent import jsonio
+    jsonio.utf8_console()  # captured text must not meet a cp1252 console
+    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    goals = _load_goals(args)
+    if not goals:
+        raise SystemExit("nothing to do: pass --goal or --goals-file")
+
+    runtime = AgentRuntime(
+        policy=_build_policy(args),
+        directive_url=args.directive_url,
+        instance=args.instance,
+    )
+    # One store for facts learned by playing and facts the knowledge tools read:
+    # a planner that discovers "npc 1280 is on map X" must write the same place
+    # `knowledge.remember`/`knowledge.search` use, or the fact is invisible to
+    # the next session.
+    if hasattr(runtime.policy, "store") and runtime.policy.store is None:
+        runtime.policy.store = runtime.executor.store
+    pilot = Autopilot(
+        runtime=runtime,
+        goals=goals,
+        log_path=Path(args.log),
+        stop_file=Path(args.stop_file),
+        max_steps=args.steps,
+        verifier_model=args.verifier_model,
+        veto_threshold=args.veto_threshold,
+        minutes=args.minutes,
+        interval=args.interval,
+        think_s=args.think,
+        steps_per_goal=args.steps_per_goal,
+        dry_run=args.dry_run,
+        explore=args.explore,
+        fight_boards=args.fight_boards,
+        brain=args.brain,
+        command_shadow=args.command_shadow,
+        command_shadow_model=args.command_shadow_model,
+    )
+    # Per-instance objective belief, so a rethink survives a restart. It is only consulted when the
+    # policy has nothing to say, which is the state that used to become a 40-pass wait.
+    try:
+        from agent.objective_ledger import ObjectiveLedger
+
+        state = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "DofusFarm"
+        pilot.ledger = ObjectiveLedger(
+            state / ("objectives.%s.json" % (args.instance or "default")),
+            instance=args.instance or "default")
+    except Exception as exc:  # noqa: BLE001 - never block a run on the ledger
+        print("[autopilot] objective ledger unavailable: %s: %s" % (type(exc).__name__, exc))
+    try:
+        from planning.experience import ExperienceStore
+
+        state = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "DofusFarm"
+        pilot.experience = ExperienceStore(log_path=state / "experience.jsonl",
+                                           snapshot_path=state / "posteriors.json")
+        if len(pilot.experience):
+            print("[autopilot] experience store: %d posterior(s), %d event(s) seen"
+                  % (len(pilot.experience), pilot.experience.events_seen))
+        # The store is only worth writing if something reads it: seed the repair table with what
+        # earlier sessions measured, so a new run starts from that evidence instead of from nothing.
+        seeded = pilot.controller.seed_from_store(pilot.experience)
+        if seeded:
+            print("[autopilot] repair table seeded with %d row(s) from the experience store"
+                  % seeded)
+    except Exception as exc:  # noqa: BLE001 - never block a run on the store
+        print("[autopilot] experience store unavailable: %s: %s" % (type(exc).__name__, exc))
+    try:
+        summary = pilot.run()
+    except KeyboardInterrupt:
+        summary = pilot._finish("interrupted")
+    finally:
+        pilot.stop_client()
+        # The store buffers its event log (autosave every 25), so a short session would end with
+        # the posteriors unsaved and the next run starting from nothing -- the same defect the
+        # controller had when its state file was keyed on the session.
+        if pilot.experience is not None:
+            try:
+                pilot.experience.save()
+            except Exception as exc:  # noqa: BLE001
+                print("[autopilot] experience store not saved: %s: %s"
+                      % (type(exc).__name__, exc))
+    print(json.dumps(summary, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

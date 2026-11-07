@@ -1,0 +1,25 @@
+{
+ "id": "tajdinenizar/dofus-combat-tpu-v2",
+ "title": "Dofus combat TPU v2",
+ "code_file": "train_selfplay.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": false,
+ "enable_tpu": true,
+ "machine_shape": "TpuV5E8",
+ "docker_image_pinning_type": "latest",
+ "enable_internet": false,
+ "keywords": [
+  "tpu",
+  "self-play",
+  "jax",
+  "combat"
+ ],
+ "dataset_sources": [
+  "tajdinenizar/dofus-encounter-tables"
+ ],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": []
+}

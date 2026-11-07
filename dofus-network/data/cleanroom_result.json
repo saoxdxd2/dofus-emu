@@ -1,0 +1,45 @@
+{
+ "kind": "cleanroom-result",
+ "measured": "2026-11-04",
+ "target": "models/tool_policy.onnx (49,365 params, 42 -> 192 gelu -> 21)",
+ "agent": "one subagent, 100/100 probes spent, 13 rules + fallback, tools covered 5/21",
+ "rule_file": "data/cleanroom_rule.json",
+ "bars": {
+  "incumbent_head": 0.9043,
+  "feature_conditioned_ceiling": 0.9702,
+  "sgd_100_probes_on_labels": 0.8639,
+  "sgd_100_probes_on_head_agreement": 0.9637
+ },
+ "rule_alone": {
+  "agreement_with_head": 0.9465,
+  "accuracy_on_labels": 0.8701,
+  "share_not_fallback": 0.6948,
+  "distinct_tools": 5
+ },
+ "verdict_vs_sgd_same_budget": "the deduced rule beats SGD at the same 100-query budget on labels (0.8701 vs 0.8639)",
+ "hybrid": {
+  "best": 0.9083,
+  "gate": "override the head where its top-2 logit margin <= 0.75",
+  "rescued": 25,
+  "broke": 10,
+  "sign_test_p": 0.0167,
+  "random_override_control_at_same_gate": 0.8855,
+  "reading": "the gate is not what helps; the rule's direction does. Same gate with a random tool choice scores BELOW the incumbent."
+ },
+ "exact_weight_compile": {
+  "partition_overlaps": 0,
+  "analytic_compile_mismatches": 3719,
+  "status": "my analytic 2-layer construction is wrong -- not an architectural limit",
+  "correction": "I first wrote 'one hidden layer cannot express an AND of thresholds'. The next measurement refuted that: distilling the rule INTO the shipped 42x192x21 shape reproduces it at 0.9978 rule-agreement when trained on all 3,719 rule labels. So the shape holds the rule fine; the analytic closed-form construction is the bug.",
+  "learnability_at_budget": {
+   "distilled_from_100_rule_labels": 0.9339,
+   "distilled_from_3719_rule_labels": 0.9978,
+   "reading": "expressible in the head shape, but NOT recoverable into it at the 100-query budget -- that is the real limit."
+  }
+ },
+ "rule_ceiling": {
+  "best_label_accuracy_the_rule_can_reach": 0.8699,
+  "reading": "the deduced rule is a 0.87-class predictor; its value was never standing alone, it was carrying information the head lacks in the head's own low-margin region."
+ },
+ "honest_summary": "At 100 queries, a hand-deduced symbolic rule beat SGD on labels (0.8701 vs 0.8639) and, gated to the head's low-margin rows, beat the incumbent (0.9083 vs 0.9043, 25 rescued / 10 broken, p=0.0167) where a random override at the same gate scored 0.8855 -- so the direction, not the gating, is the gain. It did NOT reach the incumbent alone, it covers 5 of 21 tools because 100 probes cannot find the rare classes, and my closed-form weight compile is broken (3,719 mismatches)."
+}

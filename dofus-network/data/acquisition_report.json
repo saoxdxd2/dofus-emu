@@ -1,0 +1,63 @@
+{
+  "seed": 42,
+  "sources": [
+    {
+      "source": "dofusdb_encyclopedia",
+      "ok": true,
+      "records": 4000,
+      "seconds": 122.17,
+      "detail": {
+        "monsters": 2000,
+        "spells": 2000,
+        "monsters_with_grades": 2000,
+        "monsters_trilingual": 2000
+      },
+      "error": null
+    },
+    {
+      "source": "bot_logs",
+      "ok": true,
+      "records": 0,
+      "seconds": 0.0,
+      "detail": {
+        "skipped": true,
+        "reason": "no --logs-dir provided"
+      },
+      "error": null
+    },
+    {
+      "source": "synthetic_corpus",
+      "ok": true,
+      "records": 10238,
+      "seconds": 0.78,
+      "detail": {
+        "combat_scenarios": 20000,
+        "written": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\dofus_deep_training_corpus.json"
+      },
+      "error": null
+    },
+    {
+      "source": "online_corpus",
+      "ok": true,
+      "records": 10990,
+      "seconds": 0.46,
+      "detail": {
+        "staged": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\_online_corpus_staging.json",
+        "backbone_preserved": 10238,
+        "merged_into_corpus": 5074
+      },
+      "error": null
+    }
+  ],
+  "corpus_samples": 15361,
+  "merged_extra_samples": 49,
+  "corpus_file": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\dofus_deep_training_corpus.json",
+  "combat_file": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\dofus_combat_policy_dataset.json",
+  "combat_scenarios": 5000,
+  "live_sources_ok": [
+    "dofusdb_encyclopedia",
+    "synthetic_corpus",
+    "online_corpus"
+  ],
+  "degraded": []
+}

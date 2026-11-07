@@ -1,0 +1,81 @@
+{
+ "rows": 3719,
+ "tools": 21,
+ "clusters_scored": 6,
+ "clusters_skipped_below_min": null,
+ "verdicts": {
+  "editable": 6
+ },
+ "clusters": [
+  {
+   "true": "nav.goto",
+   "predicted": "fight.join",
+   "n_flagged": 96,
+   "n_clean_reference": 1076,
+   "residual_cosine_consistency": 0.8616,
+   "mean_direction_vs_edit_direction": -0.878,
+   "shuffled_control_consistency": 0.6397,
+   "lift_over_control": 0.2219,
+   "verdict": "editable"
+  },
+  {
+   "true": "nav.goto",
+   "predicted": "quest.advance",
+   "n_flagged": 54,
+   "n_clean_reference": 1076,
+   "residual_cosine_consistency": 0.8614,
+   "mean_direction_vs_edit_direction": -0.8258,
+   "shuffled_control_consistency": 0.579,
+   "lift_over_control": 0.2824,
+   "verdict": "editable"
+  },
+  {
+   "true": "farm.start",
+   "predicted": "quest.advance",
+   "n_flagged": 19,
+   "n_clean_reference": 168,
+   "residual_cosine_consistency": 0.8581,
+   "mean_direction_vs_edit_direction": -0.5692,
+   "shuffled_control_consistency": 0.6607,
+   "lift_over_control": 0.1974,
+   "verdict": "editable"
+  },
+  {
+   "true": "quest.advance",
+   "predicted": "farm.start",
+   "n_flagged": 18,
+   "n_clean_reference": 1063,
+   "residual_cosine_consistency": 0.9441,
+   "mean_direction_vs_edit_direction": -0.6562,
+   "shuffled_control_consistency": 0.4031,
+   "lift_over_control": 0.5409,
+   "verdict": "editable"
+  },
+  {
+   "true": "quest.advance",
+   "predicted": "nav.goto",
+   "n_flagged": 15,
+   "n_clean_reference": 1063,
+   "residual_cosine_consistency": 0.7773,
+   "mean_direction_vs_edit_direction": -0.7126,
+   "shuffled_control_consistency": 0.3178,
+   "lift_over_control": 0.4595,
+   "verdict": "editable"
+  },
+  {
+   "true": "nav.goto",
+   "predicted": "farm.start",
+   "n_flagged": 12,
+   "n_clean_reference": 1076,
+   "residual_cosine_consistency": 0.9103,
+   "mean_direction_vs_edit_direction": -0.7432,
+   "shuffled_control_consistency": 0.7278,
+   "lift_over_control": 0.1825,
+   "verdict": "editable"
+  }
+ ],
+ "bands": {
+  "editable_at": 0.3,
+  "noise_at": 0.15
+ }
+}

@@ -1,0 +1,11 @@
+{
+ "title": "Dofus encounter tables",
+ "id": "tajdinenizar/dofus-encounter-tables",
+ "licenses": [
+  {
+   "name": "other"
+  }
+ ],
+ "description": "Batched encounter specs and spell tables for TPU combat self-play. Built from the official class spell and monster caches; no client payloads. Private use.",
+ "samples": 8192
+}

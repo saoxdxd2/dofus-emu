@@ -1,0 +1,23 @@
+[autopilot] policy: tool policy not loaded (lazy)
+[autopilot] 1 goal(s), 120 steps
+[autopilot] combat brain started (pid 14300): encounter_ppo_pbt_actor
+[autopilot]   1 nav.goto       ok   advanced     27ms  -> cell=289, map_id=147062786
+[autopilot]   2 quest.advance  ok   advanced     28ms  -> map_id=147062786
+[autopilot]   3 quest.advance  ok   noop          5ms  -> map_id=147062786
+[autopilot] agent2 directs: quest.advance {'npc_id': 3888, 'quest_id': 3841}
+[autopilot]   4 quest.advance  ok   noop         28ms  -> map_id=147062786
+[autopilot] agent2 directs: state.snapshot {}
+[autopilot] wait x1: recovering from incomplete via state.snapshot
+[autopilot]   5 quest.advance  ok   noop          8ms  -> map_id=147062786
+[autopilot] REPLAN (plan_wrong): quest.advance failed 3 times in a row
+[autopilot] THINK (plan_wrong): join the target's group -> fight.join {'monster': 713562}
+[autopilot] no progress: quest.advance repeated 3x with no change
+[autopilot] the tutorial is holding this step open; waiting instead of retiring the quest
+[autopilot] agent2 directs: fight.join {'monster': 713562}
+[autopilot] refused: fight blocked — no monster group on the current map
+[autopilot]   7 quest.advance  ok   noop         30ms  -> map_id=147062786
+[autopilot] agent2 directs: state.snapshot {}
+[autopilot] wait x1: recovering from incomplete via state.snapshot
+[autopilot]   8 quest.advance  ok   noop         25ms  -> map_id=147062786
+[autopilot] done: goals exhausted | {'advanced': 2, 'noop': 5, 'blocked': 1} | 0 open listing(s)
+{"reason": "goals exhausted", "session": "ab909a4b", "steps": 8, "verdicts": {"advanced": 2, "noop": 5, "blocked": 1}, "label_sources": {"rule": 7, "guard": 1}, "replan_requested": 1, "manual_interventions": 0, "recoveries": 0, "recoveries_ok": 0, "recovery_wait_s": 0.0, "waits": 2, "dialogs": 0, "dialog_stalls": 0, "brain": {"state": "started", "model": "encounter_ppo_pbt_actor", "mode": "auto", "reason": "spawned", "when": "startup"}, "command_shadow": {"mode": "off", "available": false, "rows": 0, "error": null}, "group_refusals": {"elsewhere": 0, "empty_map": 0, "unread_members": 0, "other": 1}, "group_read_broken": false, "controller": {"session": "ab909a4b", "objective": "do all the quests", "progress": 0.04, "steps": 8, "replans": 1, "causes": {"none": 2, "incomplete": 5, "wrong_target": 1}, "failures": {"nav.goto": 0, "quest.advance": 2, "fight.join": 1}, "strategies": {"none:continue": {"n": 2, "ok": 1, "score": 0.121}, "incomplete:retry": {"n": 1, "ok": 0, "score": 0.0}, "incomplete:recover": {"n": 2, "ok": 0, "score": 0.0}, "plan_wrong:replan": {"n": 1, "ok": 0, "score": 0.0}}}, "open_listings": 0, "log": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\auto_live\\20261027T152249\\auto_0_20261027T152249.jsonl", "elapsed_s": 39.9}

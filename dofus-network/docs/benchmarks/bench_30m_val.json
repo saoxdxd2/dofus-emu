@@ -1,0 +1,361 @@
+{
+  "checkpoint": "C:\\Users\\sao\\AppData\\Local\\Temp\\opencode\\encoder_gpu_output\\encoder_policy\\model.pt",
+  "params": 30737555,
+  "config": {
+    "d_model": 512,
+    "n_layers": 7,
+    "vocab_size": 15548,
+    "max_seq_len": 256
+  },
+  "legacy_zeroed": [
+    "lex_tool.weight",
+    "lex_tool.bias"
+  ],
+  "load_seconds": 0.66,
+  "splits": {
+    "val": {
+      "cases": 3290,
+      "skipped_too_long": 0,
+      "tool_accuracy": 0.0119,
+      "call_accuracy": 0.0088,
+      "top3_tool": 0.0498,
+      "by_lang": {
+        "fr": {
+          "cases": 682,
+          "tool": 0.0147,
+          "call": 0.0088
+        },
+        "en": {
+          "cases": 756,
+          "tool": 0.0132,
+          "call": 0.0093
+        },
+        "es": {
+          "cases": 635,
+          "tool": 0.0094,
+          "call": 0.0063
+        },
+        "de": {
+          "cases": 733,
+          "tool": 0.0027,
+          "call": 0.0027
+        },
+        "auto": {
+          "cases": 484,
+          "tool": 0.0227,
+          "call": 0.0207
+        }
+      },
+      "by_tool": {
+        "chat.say": {
+          "cases": 84,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "farm.start": {
+          "cases": 164,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "farm.stop": {
+          "cases": 22,
+          "tool": 0.6364,
+          "call": 0.6364
+        },
+        "fight.join": {
+          "cases": 181,
+          "tool": 0.011,
+          "call": 0.0055
+        },
+        "fight.pass": {
+          "cases": 25,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "hdv.list": {
+          "cases": 351,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "hdv.scan": {
+          "cases": 306,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "inv.list": {
+          "cases": 35,
+          "tool": 0.2571,
+          "call": 0.0571
+        },
+        "inv.sell": {
+          "cases": 953,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "knowledge.search": {
+          "cases": 61,
+          "tool": 0.0164,
+          "call": 0.0
+        },
+        "nav.follow": {
+          "cases": 44,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "nav.goto": {
+          "cases": 263,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "quest.advance": {
+          "cases": 578,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "quest.list": {
+          "cases": 174,
+          "tool": 0.0,
+          "call": 0.0
+        },
+        "safe.stop": {
+          "cases": 29,
+          "tool": 0.4483,
+          "call": 0.4138
+        },
+        "state.snapshot": {
+          "cases": 20,
+          "tool": 0.0,
+          "call": 0.0
+        }
+      },
+      "confidence": {
+        "mean_correct": 0.1137,
+        "mean_wrong": 0.0991,
+        "separation": 0.0146
+      },
+      "latency_ms": {
+        "p50": 118.3,
+        "p95": 126.7,
+        "batches": 206
+      },
+      "failures": [
+        {
+          "id": "51efa22d818832fe",
+          "lang": "auto",
+          "goal": "J'aimerais rejoindre l'affrontement du groupe voisin.",
+          "expected": {
+            "tool": "fight.join",
+            "args": {
+              "target": "groupe proche"
+            }
+          },
+          "predicted": {
+            "tool": "farm.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "1e6db5b955788022",
+          "lang": "auto",
+          "goal": "muévete a [5, -9]",
+          "expected": {
+            "tool": "nav.goto",
+            "args": {
+              "x": 5,
+              "y": -9,
+              "lang": "fr"
+            }
+          },
+          "predicted": {
+            "tool": "knowledge.search",
+            "args": {
+              "query": "5, -9",
+              "kind": "any",
+              "limit": 5
+            }
+          }
+        },
+        {
+          "id": "0cfc17e99a283361",
+          "lang": "auto",
+          "goal": "muévete a [5, -31]",
+          "expected": {
+            "tool": "nav.goto",
+            "args": {
+              "x": 5,
+              "y": -31,
+              "lang": "fr"
+            }
+          },
+          "predicted": {
+            "tool": "knowledge.search",
+            "args": {
+              "query": "5, -31",
+              "kind": "any",
+              "limit": 5
+            }
+          }
+        },
+        {
+          "id": "1f9802cae5bc236f",
+          "lang": "auto",
+          "goal": "continue quest Don't Push",
+          "expected": {
+            "tool": "quest.advance",
+            "args": {
+              "quest_id": 1704
+            }
+          },
+          "predicted": {
+            "tool": "farm.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "c216391af480d836",
+          "lang": "auto",
+          "goal": "termine la session de farm",
+          "expected": {
+            "tool": "farm.stop",
+            "args": {}
+          },
+          "predicted": {
+            "tool": "inv.list",
+            "args": {
+              "kind": "consumables"
+            }
+          }
+        },
+        {
+          "id": "174b8cdc0ffaf1e1",
+          "lang": "auto",
+          "goal": "jage Gelée Bleuet",
+          "expected": {
+            "tool": "farm.start",
+            "args": {
+              "kill_count": 100,
+              "auto_sell": false
+            }
+          },
+          "predicted": {
+            "tool": "inv.list",
+            "args": {
+              "kind": "resources"
+            }
+          }
+        },
+        {
+          "id": "37954a1b9b755cc3",
+          "lang": "auto",
+          "goal": "muévete a [11, 6]",
+          "expected": {
+            "tool": "nav.goto",
+            "args": {
+              "x": 11,
+              "y": 6,
+              "lang": "fr"
+            }
+          },
+          "predicted": {
+            "tool": "quest.list",
+            "args": {
+              "area": "6",
+              "dungeon_only": false,
+              "limit": 10
+            }
+          }
+        },
+        {
+          "id": "b4b84b36f264c68c",
+          "lang": "auto",
+          "goal": "Mets en vente 5 Pierreclat à 1200 kamas.",
+          "expected": {
+            "tool": "hdv.list",
+            "args": {
+              "item": "Pierreclat",
+              "quantity": 5,
+              "price_rule": "fixed",
+              "price": 1200
+            }
+          },
+          "predicted": {
+            "tool": "farm.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "2ca7df4550b4b516",
+          "lang": "auto",
+          "goal": "keep following Perceptor",
+          "expected": {
+            "tool": "nav.follow",
+            "args": {
+              "name": ""
+            }
+          },
+          "predicted": {
+            "tool": "inv.list",
+            "args": {
+              "kind": "resources"
+            }
+          }
+        },
+        {
+          "id": "3083da1563ed36f7",
+          "lang": "auto",
+          "goal": "start farming Indigo Biblop",
+          "expected": {
+            "tool": "farm.start",
+            "args": {
+              "kill_count": 100,
+              "auto_sell": false
+            }
+          },
+          "predicted": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "Indigo Biblop"
+            }
+          }
+        },
+        {
+          "id": "1ec00e49d403f987",
+          "lang": "auto",
+          "goal": "muévete a [2, -24]",
+          "expected": {
+            "tool": "nav.goto",
+            "args": {
+              "x": 2,
+              "y": -24,
+              "lang": "fr"
+            }
+          },
+          "predicted": {
+            "tool": "knowledge.search",
+            "args": {
+              "query": "2, -24",
+              "kind": "any",
+              "limit": 5
+            }
+          }
+        },
+        {
+          "id": "0189f476a760ac1b",
+          "lang": "auto",
+          "goal": "jage Bwak d'Air",
+          "expected": {
+            "tool": "farm.start",
+            "args": {
+              "kill_count": 100,
+              "auto_sell": false
+            }
+          },
+          "predicted": {
+            "tool": "farm.stop",
+            "args": {}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,155 @@
+# OS files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Editor / IDE
+.vs/
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*.tmp
+*.temp
+*.log
+~$*
+
+# Visual Studio / .NET build artifacts
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.pdb
+[Bb]in/
+[Dd]ebug/
+[Rr]elease/
+obj/
+packages/
+*.cache
+
+# Local heavy archives & compiled executables (packed into setup.exe by compile.bat)
+/Build.exe
+/DofusFarm.exe
+/uninstall.exe
+/setup.exe
+/dofus-net-proxy.exe
+/scripts/dofus-net-proxy.exe
+/scripts/bin/
+/sdk/
+/asset_cache/
+/proxy_cache/
+*.avd/
+*.ini.bak
+userdata*.img
+*.img
+*.qcow2
+*.lock
+*.iso
+*.7z
+
+# Measured artifacts: large and reproducible from the dataset/training scripts
+/dofus-network/models/combat_grid/*.pkl
+/dofus-network/models/entity_pointer/*.pkl
+/dofus-network/data/combat_grid_synth*/
+/dofus-network/data/entity_pointer*/
+*.zip
+*.tar.gz
+*.tgz
+
+# Android Launcher build outputs
+launcher/build/
+launcher/.gradle/
+# Android & Mobile Packages (Keep local only, never commit/upload)
+*.apk
+*.apks
+*.xapk
+*.dex
+*.class
+*.jar
+
+# Local runtime state, credentials, logins and account stats (Strict Privacy)
+app_version.json
+identity.json
+alias.json
+account*.json
+accounts*.json
+credentials*.json
+auth*.json
+session*.json
+login*.json
+stats*.json
+token*.json
+*.token
+*.session
+*.credential
+webview2_profiles/
+user_profiles/
+user_data/
+dofus-network/data/credentials/
+dofus-network/data/logs/
+*.bak
+*.orig
+*.rej
+
+# Embedded Python dynamic site-packages & pip artifacts
+runtimes/python/Lib/
+runtimes/python/Scripts/
+runtimes/python/share/
+__pycache__/
+*.pyc
+
+# Heavy model checkpoints & weights (Strictly local)
+*.pt
+*.safetensors
+dofus-network/models/**
+*_DofusFarm.exe
+
+# Agent trajectory logs (training data, stays local)
+dofus-network/trajectories/
+
+# Generated tool-use SFT corpus (training data, stays local)
+dofus-network/data/agent_sft/
+
+
+# ---------------------------------------------------------------------------
+# SECRETS - never commit these. accounts.txt and proxies.txt were tracked before
+# 2026-10-22 and their history still contains real credentials: see HANDOVER.md.
+# ---------------------------------------------------------------------------
+accounts.txt
+proxies.txt
+proxies_*.txt
+network.ini
+ai_settings.ini
+manual-login.flag
+no-client-update.flag
+*.session
+*.token
+
+# git filter-branch scratch
+.git-rewrite/
+
+# Kaggle corpus exports are derived data; the scripts and metadata are tracked.
+dofus-network/kaggle/**/dataset/*.jsonl
+dofus-network/kaggle/**/*.onnx
+dofus-network/data/rollout_sft/*.jsonl
+dofus-network/data/hard_sft/*.jsonl
+dofus-network/data/seq_sft/*.jsonl
+dofus-network/kaggle/runs/**/*.onnx
+dofus-network/data/decision_sft/*.jsonl
+
+# Counterfactual tool corpus (training data, stays local)
+dofus-network/data/tool_sft/*.jsonl
+dofus-network/data/tool_sft_v2/*.jsonl
+dofus-network/data/tool_sft_all/*.jsonl
+# the shipped tool policy is small and is the artifact, so it is tracked
+!dofus-network/models/tool_policy.onnx
+
+# Proxy pool runtime state. These are rewritten every cycle by scripts/proxy_pool.js:
+# a 2 MB scraped candidate queue and the approved/quarantine/dead bookkeeping. Committing
+# them puts a few thousand lines of churn in every diff and tells the next reader nothing.
+proxies_raw.txt
+proxy_pool_state.json
+proxy_pool.log
+proxies.txt.pre-pool.bak

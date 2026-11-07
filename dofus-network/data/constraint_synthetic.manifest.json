@@ -1,0 +1,51 @@
+{
+ "agreement": {
+  "action": 1.0,
+  "action_rows": 2600,
+  "cause": 1.0,
+  "cause_rows": 2600
+ },
+ "causes": {
+  "incomplete": 325,
+  "invalid_assumption": 325,
+  "none": 325,
+  "plan_wrong": 325,
+  "stale_state": 325,
+  "unavailable": 325,
+  "unknown": 325,
+  "wrong_target": 325
+ },
+ "kind": "constraint_synthetic",
+ "live": false,
+ "missing_causes": [],
+ "missing_tools": [],
+ "rows": 2600,
+ "tool_count": 25,
+ "tools": {
+  "chat.say": 104,
+  "farm.start": 104,
+  "farm.stop": 104,
+  "fight.estimate": 104,
+  "fight.join": 104,
+  "fight.pass": 104,
+  "fight.plan": 104,
+  "fight.state": 104,
+  "hdv.buy": 104,
+  "hdv.list": 104,
+  "hdv.prices": 104,
+  "hdv.scan": 104,
+  "inv.equip": 104,
+  "inv.list": 104,
+  "inv.sell": 104,
+  "knowledge.forget": 104,
+  "knowledge.remember": 104,
+  "knowledge.search": 104,
+  "nav.follow": 104,
+  "nav.goto": 104,
+  "quest.advance": 104,
+  "quest.list": 104,
+  "safe.stop": 104,
+  "state.snapshot": 104,
+  "tap.interactive": 104
+ }
+}

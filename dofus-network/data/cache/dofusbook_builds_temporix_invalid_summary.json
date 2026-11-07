@@ -1,0 +1,1957 @@
+{
+ "source": "dofusbook_public_api",
+ "search_error": "HTTP 500 https://touch.dofusbook.net/api/search/touch/stuffs?page=1&sort=update-desc: {\"type\":\"UnknownError\",\"message\":\"Une erreur est survenue\"}",
+ "builds_saved": 2,
+ "classes": {
+  "classes": {
+   "source": "cache",
+   "data": [
+    {
+     "id": 1,
+     "name": "F\u00e9ca",
+     "long_name": "Le bouclier F\u00e9ca",
+     "title": "Protecteur",
+     "description": "Les F\u00e9cas sont de loyaux protecteurs toujours sur la d\u00e9fensive. Ils sont appr\u00e9ci\u00e9s dans les groupes d'aventuriers pour leurs armures \u00e9l\u00e9mentaires et leur capacit\u00e9 \u00e0 encaisser les coups durs.\r\n\r\nIls sont \u00e9galement ma\u00eetres dans l'art des signes magiques : quand il va y avoir du grabuge, les F\u00e9cas sortent leurs glyphes !",
+     "roles": "protection-tank-obstacle",
+     "male_colors": "#FFD27C,#6C4F2D,#F3BA30,#53705E,#6C4F2D",
+     "female_colors": "#F5B95F,#684420,#D07406,#D07406,#6A4106",
+     "male_look": "1|10||135",
+     "female_look": "1|11||125",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#FFD27C",
+       "#6C4F2D",
+       "#F3BA30",
+       "#53705E",
+       "#6C4F2D"
+      ],
+      [
+       "#F5B95F",
+       "#684420",
+       "#D07406",
+       "#D07406",
+       "#6A4106"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "10",
+       "",
+       "135"
+      ],
+      [
+       "1",
+       "11",
+       "",
+       "125"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 2,
+     "name": "Osamodas",
+     "long_name": "Le fouet d'Osamodas",
+     "title": "Invocateur de cr\u00e9atures",
+     "description": "Les Osamodas sont des dompteurs n\u00e9s ! Ils ont le pouvoir d'invoquer des cr\u00e9atures et sont de remarquables dresseurs. Une rumeur pr\u00e9tend qu'ils taillent leurs v\u00eatements dans la peau de leurs ennemis, mais allez donc leur demander ce qu'il en est...\r\n\r\nSi vous \u00eates de son c\u00f4t\u00e9, un Osamodas sera aux petits soins pour vous. Dans le cas contraire, peut-\u00eatre terminerez-vous votre vie sous la forme d'une botte ou d'un bonnet fourr\u00e9.",
+     "roles": "invocation-improvement-heal",
+     "male_colors": "#F3BC5E,#FFFFCE,#49CCDD,#2B2313,#FFC430",
+     "female_colors": "#FFBA50,#FFFFCC,#299AC2,#2B2313,#299AC2",
+     "male_look": "1|20||130",
+     "female_look": "1|21||125",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#F3BC5E",
+       "#FFFFCE",
+       "#49CCDD",
+       "#2B2313",
+       "#FFC430"
+      ],
+      [
+       "#FFBA50",
+       "#FFFFCC",
+       "#299AC2",
+       "#2B2313",
+       "#299AC2"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "20",
+       "",
+       "130"
+      ],
+      [
+       "1",
+       "21",
+       "",
+       "125"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 3,
+     "name": "Enutrof",
+     "long_name": "Les doigts d'Enutrof",
+     "title": "Chasseur de tr\u00e9sors",
+     "description": "Les Enutrofs sont des chasseurs de tr\u00e9sor avides de kamas, qui malgr\u00e9 leur grand \u00e2ge courent comme des dragodindes \u00e0 la vue d'un coffre bien rempli.\r\n\r\nIls sont experts dans l'art de ralentir leurs ennemis : ils peuvent ainsi les harceler avant de les assommer \u00e0 grands coups de pelle le moment venu !",
+     "roles": "obstacle-invocation-improvement",
+     "male_colors": "#F3BC5E,#FFFFCE,#433421,#FFD936,#A66309",
+     "female_colors": "#EAC062,#F3E0A4,#433421,#FFFFCC,#AD8D39",
+     "male_look": "1|30||120",
+     "female_look": "1|31||95",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#F3BC5E",
+       "#FFFFCE",
+       "#433421",
+       "#FFD936",
+       "#A66309"
+      ],
+      [
+       "#EAC062",
+       "#F3E0A4",
+       "#433421",
+       "#FFFFCC",
+       "#AD8D39"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "30",
+       "",
+       "120"
+      ],
+      [
+       "1",
+       "31",
+       "",
+       "95"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 4,
+     "name": "Sram",
+     "long_name": "L'ombre de Sram",
+     "title": "Tacticien voleur et sournois",
+     "description": "Les Srams sont des assassins qui aiment les bourses, rebondies de pr\u00e9f\u00e9rence.\r\n\r\nTrousser les pans d'une tunique, t\u00e2ter le fond d'une poche, faire preuve de doigt\u00e9, palper enfin des bijoux tant convoit\u00e9s avant de poser un pi\u00e8ge ou d'ass\u00e9ner un coup mortel, voil\u00e0 la vie d'un disciple de Sram !",
+     "roles": "damage-obstacle-placement",
+     "male_colors": "#F2E8BE,#2F5476,#2F5476,#2F5476,#857E54",
+     "female_colors": "#EAC062,#FFFFEE,#3F719E,#3F719E,#E2EFB9",
+     "male_look": "1|40||140",
+     "female_look": "1|41||155",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#F2E8BE",
+       "#2F5476",
+       "#2F5476",
+       "#2F5476",
+       "#857E54"
+      ],
+      [
+       "#EAC062",
+       "#FFFFEE",
+       "#3F719E",
+       "#3F719E",
+       "#E2EFB9"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "40",
+       "",
+       "140"
+      ],
+      [
+       "1",
+       "41",
+       "",
+       "155"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 5,
+     "name": "X\u00e9lor",
+     "long_name": "Le sablier de X\u00e9lor",
+     "title": "Ma\u00eetre du temps",
+     "description": "Les X\u00e9lors sont des mages qui ma\u00eetrisent le temps et toutes les m\u00e9caniques qui donnent l'heure : carillons, horloges et pendules leur ob\u00e9issent au doigt et \u00e0 l'\u0153il.\r\n\r\nLes X\u00e9lors jouent donc avec le temps pour ralentir un ennemi ou se t\u00e9l\u00e9porter o\u00f9 bon leur semble.",
+     "roles": "placement-obstacle-damage",
+     "male_colors": "#796B48,#5E4522,#2A5A66,#DD9E32,#422C12",
+     "female_colors": "#796B48,#FFFFCE,#265866,#D4CAA5,#265866",
+     "male_look": "1|50||110",
+     "female_look": "1|51||110",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#796B48",
+       "#5E4522",
+       "#2A5A66",
+       "#DD9E32",
+       "#422C12"
+      ],
+      [
+       "#796B48",
+       "#FFFFCE",
+       "#265866",
+       "#D4CAA5",
+       "#265866"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "50",
+       "",
+       "110"
+      ],
+      [
+       "1",
+       "51",
+       "",
+       "110"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 6,
+     "name": "Ecaflip",
+     "long_name": "La pi\u00e8ce d'Ecaflip",
+     "title": "Ma\u00eetre du hasard",
+     "description": "Les Ecaflips sont des guerriers joueurs qui se fourrent dans les endroits o\u00f9 l'on peut gagner gros, et perdre beaucoup... Un Ecaflip bien dans sa peau parie sans arr\u00eat, pour tout et pour rien.\r\n\r\nMais attention, il prend le jeu tr\u00e8s au s\u00e9rieux et ira m\u00eame jusqu'\u00e0 risquer sa vie sur un jet de d\u00e9s pour tenter de remporter la mise...",
+     "roles": "damage-improvement-heal",
+     "male_colors": "#F9F2DA,#D1713C,#FF5E22,#2A838A,#FFC430",
+     "female_colors": "#F9F2DA,#DB6711,#DE4D1F,#C96F1D,#1F6356",
+     "male_look": "1|60||150",
+     "female_look": "1|61||150",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#F9F2DA",
+       "#D1713C",
+       "#FF5E22",
+       "#2A838A",
+       "#FFC430"
+      ],
+      [
+       "#F9F2DA",
+       "#DB6711",
+       "#DE4D1F",
+       "#C96F1D",
+       "#1F6356"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "60",
+       "",
+       "150"
+      ],
+      [
+       "1",
+       "61",
+       "",
+       "150"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 7,
+     "name": "Eniripsa",
+     "long_name": "Les mains d'Eniripsa",
+     "title": "Gu\u00e9risseur",
+     "description": "Les Eniripsas sont des gu\u00e9risseurs qui soignent d'un simple mot. Ils utilisent le pouvoir de la parole pour soulager les souffrances de leurs alli\u00e9s, mais parfois aussi pour blesser leurs ennemis.\r\n\r\nCertains Eniripsas sont m\u00eame devenus de v\u00e9ritables arpenteurs du verbe, des r\u00f4deurs des langues oubli\u00e9es.",
+     "roles": "heal-improvement-obstacle",
+     "male_colors": "#FFD27C,#705021,#DC8B1C,#5C4C30,#483C37",
+     "female_colors": "#E19B39,#FEF0BC,#FEF0BC,#B63518,#EAD06A",
+     "male_look": "1|70||110",
+     "female_look": "1|71||115",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#FFD27C",
+       "#705021",
+       "#DC8B1C",
+       "#5C4C30",
+       "#483C37"
+      ],
+      [
+       "#E19B39",
+       "#FEF0BC",
+       "#FEF0BC",
+       "#B63518",
+       "#EAD06A"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "70",
+       "",
+       "110"
+      ],
+      [
+       "1",
+       "71",
+       "",
+       "115"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 8,
+     "name": "Iop",
+     "long_name": "Le coeur d'Iop",
+     "title": "Guerrier t\u00e9m\u00e9raire",
+     "description": "Les Iops sont des guerriers fonceurs et sans reproche ! Une chose est s\u00fbre : les Iops savent faire parler les armes. D'ailleurs, se retrouver pris dans une bagarre au moins une fois par jour est pour eux un signe de bonne sant\u00e9.\r\n\r\nLeur temp\u00e9rament imp\u00e9tueux fait des Iops des paladins de l'extr\u00eame, capables du meilleur... comme du pire !",
+     "roles": "damage-improvement-placement",
+     "male_colors": "#FFD27C,#F9922B,#FFFFE1,#2C6770,#DE3207",
+     "female_colors": "#F5B95F,#EB7313,#FFFFE1,#DC3A12,#DC3A12",
+     "male_look": "1|80||140",
+     "female_look": "1|81||140",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#FFD27C",
+       "#F9922B",
+       "#FFFFE1",
+       "#2C6770",
+       "#DE3207"
+      ],
+      [
+       "#F5B95F",
+       "#EB7313",
+       "#FFFFE1",
+       "#DC3A12",
+       "#DC3A12"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "80",
+       "",
+       "140"
+      ],
+      [
+       "1",
+       "81",
+       "",
+       "140"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 9,
+     "name": "Cr\u00e2",
+     "long_name": "L'\u00e9tendue de Cr\u00e2",
+     "title": "Archer",
+     "description": "Les Cr\u00e2s sont des archers aussi fiers que pr\u00e9cis ! Ils font des alli\u00e9s pr\u00e9cieux contre les adeptes de la m\u00eal\u00e9e franche.\r\n\r\nRestant \u00e0 distance, d\u00e9cochant leurs traits empenn\u00e9s dans le moindre orifice laiss\u00e9 sans surveillance, ils ne laissent aucun r\u00e9pit \u00e0 leurs adversaires !",
+     "roles": "damage-obstacle-improvement",
+     "male_colors": "#FFC867,#E1710E,#586400,#593310,#FA950F",
+     "female_colors": "#FFC367,#E17410,#7B7900,#D67207,#6A4106",
+     "male_look": "1|90||140",
+     "female_look": "1|91||135",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#FFC867",
+       "#E1710E",
+       "#586400",
+       "#593310",
+       "#FA950F"
+      ],
+      [
+       "#FFC367",
+       "#E17410",
+       "#7B7900",
+       "#D67207",
+       "#6A4106"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "90",
+       "",
+       "140"
+      ],
+      [
+       "1",
+       "91",
+       "",
+       "135"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 10,
+     "name": "Sadida",
+     "long_name": "Le soulier de Sadida",
+     "title": "Sorcier sylvestre",
+     "description": "Les Sadidas sont des invocateurs qui empoisonnent la vie de leurs ennemis !\r\n\r\nApprivoiser les ronces pour en faire des armes terrifiantes, confectionner des poup\u00e9es de guerre et de soins, voil\u00e0 qui satisfait tout disciple Sadida digne de ce nom.",
+     "roles": "invocation-obstacle-heal",
+     "male_colors": "#82471F,#7C9303,#DBC46D,#DBC46D,#B6823C",
+     "female_colors": "#82471F,#829502,#F5E3A4,#F5E3A4,#E6D79E",
+     "male_look": "1|100||150",
+     "female_look": "1|101||145",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#82471F",
+       "#7C9303",
+       "#DBC46D",
+       "#DBC46D",
+       "#B6823C"
+      ],
+      [
+       "#82471F",
+       "#829502",
+       "#F5E3A4",
+       "#F5E3A4",
+       "#E6D79E"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "100",
+       "",
+       "150"
+      ],
+      [
+       "1",
+       "101",
+       "",
+       "145"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 11,
+     "name": "Sacrieur",
+     "long_name": "Le sang de Sacrieur",
+     "title": "Souffre-douleur berserk",
+     "description": "Les Sacrieurs sont des berserkers qui d\u00e9cuplent leurs forces d\u00e8s qu'ils sont frapp\u00e9s !\r\n\r\nN'ayant pas peur de recevoir des coups, ni de s'exposer aux blessures, ils seront souvent en premi\u00e8re ligne, pr\u00eats \u00e0 verser le premier sang ! Le Sacrieur est vraiment le compagnon id\u00e9al pour vos longues soir\u00e9es guerri\u00e8res...",
+     "roles": "tank-placement-damage",
+     "male_colors": "#FFD27C,#FFA31A,#95AF28,#567022,#FFE842",
+     "female_colors": "#FCC371,#FFA31A,#5B7022,#5B9B4A,#FFE13C",
+     "male_look": "1|110||145",
+     "female_look": "1|111||140",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#FFD27C",
+       "#FFA31A",
+       "#95AF28",
+       "#567022",
+       "#FFE842"
+      ],
+      [
+       "#FCC371",
+       "#FFA31A",
+       "#5B7022",
+       "#5B9B4A",
+       "#FFE13C"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "110",
+       "",
+       "145"
+      ],
+      [
+       "1",
+       "111",
+       "",
+       "140"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 12,
+     "name": "Pandawa",
+     "long_name": "La chopine de Pandawa",
+     "title": "Bagarreur assoiff\u00e9",
+     "description": "Les Pandawas sont des guerriers adeptes des arts martiaux qui savent faire des folies de leur corps ! Ils peuvent m\u00eame en faire avec le corps des autres...\r\n\r\nLe Pandawa sait comment soulever les foules, il porte ses alli\u00e9s sur ses \u00e9paules pour mieux les prot\u00e9ger. Quant \u00e0 ses ennemis, il les enverra valser dans le d\u00e9cor, avant de f\u00eater sa victoire avec une bonne rasade de lait de bambou !",
+     "roles": "placement-damage-tank",
+     "male_colors": "#EBDEC0,#4F4D34,#751516,#EBDEC0,#3D472B",
+     "female_colors": "#F9F2DA,#45422D,#943111,#EBDEC0,#943111",
+     "male_look": "1|120||160",
+     "female_look": "1|121||145",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#EBDEC0",
+       "#4F4D34",
+       "#751516",
+       "#EBDEC0",
+       "#3D472B"
+      ],
+      [
+       "#F9F2DA",
+       "#45422D",
+       "#943111",
+       "#EBDEC0",
+       "#943111"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "120",
+       "",
+       "160"
+      ],
+      [
+       "1",
+       "121",
+       "",
+       "145"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 13,
+     "name": "Roublard",
+     "long_name": "La ruse du Roublard",
+     "title": "Expert en explosifs",
+     "description": "Les Roublards sont des fins strat\u00e8ges poseurs de bombes ! En tout cas, tout le monde le sait, ils manient la poudre comme personne et quand il s'agit de faire exploser leurs ennemis, ils ne se font pas prier.\r\n\r\nSi jamais, en passant par hasard sur un terrain min\u00e9, vous apercevez des \u00e9tincelles, soyez s\u00fbr qu'un Roublard n'est pas bien loin !",
+     "roles": "damage-obstacle-placement",
+     "male_colors": "#E19B39,#272E21,#272E21,#342D1B,#FFFFCC",
+     "female_colors": "#E19B39,#0A5656,#272E21,#342D1B,#342D1B",
+     "male_look": "1|1405||160",
+     "female_look": "1|1407||155",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#E19B39",
+       "#272E21",
+       "#272E21",
+       "#342D1B",
+       "#FFFFCC"
+      ],
+      [
+       "#E19B39",
+       "#0A5656",
+       "#272E21",
+       "#342D1B",
+       "#342D1B"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "1405",
+       "",
+       "160"
+      ],
+      [
+       "1",
+       "1407",
+       "",
+       "155"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 14,
+     "name": "Zobal",
+     "long_name": "Le masque du Zobal",
+     "title": "Guerrier lunatique",
+     "description": "Ce guerrier aux multiples visages peut s'adapter \u00e0 toutes les situations. Il tire son pouvoir des masques qu'il porte et peut ainsi changer de techniques de combat.\r\n\r\nQu'il vous tape de loin, qu'il vous maintienne au corps \u00e0 corps ou qu'il vous cause des d\u00e9g\u00e2ts tr\u00e8s importants, le Zobal est toujours plein de surprises\u0085 Et ses adversaires en font bien souvent les frais.",
+     "roles": "tank-protection-damage",
+     "male_colors": "#FFC367,#DC2931,#4A3623,#1C5150,#E8E4D3",
+     "female_colors": "#FFC367,#DC2931,#4A3623,#1C5150,#E8E4D3",
+     "male_look": "1|1437||150",
+     "female_look": "1|1438||145",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#FFC367",
+       "#DC2931",
+       "#4A3623",
+       "#1C5150",
+       "#E8E4D3"
+      ],
+      [
+       "#FFC367",
+       "#DC2931",
+       "#4A3623",
+       "#1C5150",
+       "#E8E4D3"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "1437",
+       "",
+       "150"
+      ],
+      [
+       "1",
+       "1438",
+       "",
+       "145"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    },
+    {
+     "id": 15,
+     "name": "Steamer",
+     "long_name": "La vapeur du Steamer",
+     "title": "Tacticien technomage",
+     "description": "Les Steamers sont aussi \u00e0 l'aise sous les eaux que sur le champ de bataille. Harponneurs, gardiens, ma\u00eetres des mouvements sur le terrain : ces explorateurs des profondeurs sont changeants comme l'oc\u00e9an.\r\n\r\nLeurs tourelles technomagiques bombardent tous ceux qui passent \u00e0 leur port\u00e9e, aussi bien les amis que les ennemis. Prenez garde \u00e0 ne pas finir noy\u00e9 sous un d\u00e9luge de technomagie !",
+     "roles": "heal-placement-damage",
+     "male_colors": "#FED192,#FBF1BF,#34271A,#F9E79F,#AB8A50",
+     "female_colors": "#FED192,#FBF1BF,#34271A,#F9E79F,#AB8A50",
+     "male_look": "1|1663||160",
+     "female_look": "1|1664||160",
+     "male_size": null,
+     "female_size": null,
+     "colors": [
+      [
+       "#FED192",
+       "#FBF1BF",
+       "#34271A",
+       "#F9E79F",
+       "#AB8A50"
+      ],
+      [
+       "#FED192",
+       "#FBF1BF",
+       "#34271A",
+       "#F9E79F",
+       "#AB8A50"
+      ]
+     ],
+     "look": [
+      [
+       "1",
+       "1663",
+       "",
+       "160"
+      ],
+      [
+       "1",
+       "1664",
+       "",
+       "160"
+      ]
+     ],
+     "size": [
+      null,
+      null
+     ]
+    }
+   ]
+  },
+  "categories": {
+   "source": "cache",
+   "data": {
+    "cloths": [
+     {
+      "id": 15,
+      "value": "ce",
+      "type": "E"
+     },
+     {
+      "id": 14,
+      "value": "br",
+      "type": "E"
+     },
+     {
+      "id": 19,
+      "value": "bo",
+      "type": "E"
+     },
+     {
+      "id": 13,
+      "value": "an",
+      "type": "E"
+     },
+     {
+      "id": 12,
+      "value": "am",
+      "type": "E"
+     },
+     {
+      "id": 16,
+      "value": "ch",
+      "type": "E"
+     },
+     {
+      "id": 17,
+      "value": "ca",
+      "type": "E"
+     },
+     {
+      "id": 22,
+      "value": "fa",
+      "type": "E"
+     },
+     {
+      "id": 99,
+      "type": "E",
+      "value": "ar"
+     }
+    ],
+    "items": [
+     {
+      "id": 27,
+      "value": "ap",
+      "type": "E"
+     },
+     {
+      "id": 15,
+      "value": "ce",
+      "type": "E"
+     },
+     {
+      "id": 28,
+      "value": "al",
+      "type": "E"
+     },
+     {
+      "id": 14,
+      "value": "br",
+      "type": "E"
+     },
+     {
+      "id": 23,
+      "value": "mo",
+      "type": "E"
+     },
+     {
+      "id": 19,
+      "value": "bo",
+      "type": "E"
+     },
+     {
+      "id": 13,
+      "value": "an",
+      "type": "E"
+     },
+     {
+      "id": 24,
+      "value": "mt",
+      "type": "E"
+     },
+     {
+      "id": 12,
+      "value": "am",
+      "type": "E"
+     },
+     {
+      "id": 16,
+      "value": "ch",
+      "type": "E"
+     },
+     {
+      "id": 20,
+      "value": "do",
+      "type": "E"
+     },
+     {
+      "id": 21,
+      "value": "tr",
+      "type": "E"
+     },
+     {
+      "id": 22,
+      "value": "fa",
+      "type": "E"
+     },
+     {
+      "id": 17,
+      "value": "ca",
+      "type": "E"
+     }
+    ],
+    "weapons": [
+     {
+      "id": 7,
+      "value": "ha",
+      "type": "W"
+     },
+     {
+      "id": 6,
+      "value": "fx",
+      "type": "W"
+     },
+     {
+      "id": 10,
+      "value": "pi",
+      "type": "W"
+     },
+     {
+      "id": 8,
+      "value": "ma",
+      "type": "W"
+     },
+     {
+      "id": 9,
+      "value": "pe",
+      "type": "W"
+     },
+     {
+      "id": 4,
+      "value": "da",
+      "type": "W"
+     },
+     {
+      "id": 1,
+      "value": "ar",
+      "type": "W"
+     },
+     {
+      "id": 5,
+      "value": "ep",
+      "type": "W"
+     },
+     {
+      "id": 3,
+      "value": "bn",
+      "type": "W"
+     },
+     {
+      "id": 2,
+      "value": "ba",
+      "type": "W"
+     }
+    ]
+   }
+  },
+  "effects": {
+   "source": "cache",
+   "data": {
+    "main": [
+     {
+      "id": 130,
+      "short_name": "vi",
+      "type": "E"
+     },
+     {
+      "id": 140,
+      "short_name": "fo",
+      "type": "E"
+     },
+     {
+      "id": 150,
+      "short_name": "in",
+      "type": "E"
+     },
+     {
+      "id": 160,
+      "short_name": "ch",
+      "type": "E"
+     },
+     {
+      "id": 170,
+      "short_name": "ag",
+      "type": "E"
+     },
+     {
+      "id": 180,
+      "short_name": "sa",
+      "type": "E"
+     },
+     {
+      "id": 190,
+      "short_name": "pu",
+      "type": "E"
+     },
+     {
+      "id": 200,
+      "short_name": "cc",
+      "type": "E"
+     },
+     {
+      "id": 210,
+      "short_name": "pa",
+      "type": "E"
+     },
+     {
+      "id": 220,
+      "short_name": "pm",
+      "type": "E"
+     },
+     {
+      "id": 230,
+      "short_name": "po",
+      "type": "E"
+     },
+     {
+      "id": 240,
+      "short_name": "ic",
+      "type": "E"
+     },
+     {
+      "id": 310,
+      "short_name": "so",
+      "type": "E"
+     },
+     {
+      "id": 320,
+      "short_name": "pp",
+      "type": "E"
+     },
+     {
+      "id": 330,
+      "short_name": "ii",
+      "type": "E"
+     },
+     {
+      "id": 350,
+      "short_name": "ta",
+      "type": "E"
+     },
+     {
+      "id": 360,
+      "short_name": "fu",
+      "type": "E"
+     },
+     {
+      "id": 370,
+      "short_name": "rpa",
+      "type": "E"
+     },
+     {
+      "id": 380,
+      "short_name": "rpm",
+      "type": "E"
+     },
+     {
+      "id": 390,
+      "short_name": "epa",
+      "type": "E"
+     },
+     {
+      "id": 400,
+      "short_name": "epm",
+      "type": "E"
+     },
+     {
+      "id": 410,
+      "short_name": "dc",
+      "type": "E"
+     },
+     {
+      "id": 420,
+      "short_name": "dp",
+      "type": "E"
+     }
+    ],
+    "normal": [
+     {
+      "id": 10,
+      "short_name": "dn",
+      "type": "D"
+     },
+     {
+      "id": 20,
+      "short_name": "dt",
+      "type": "D"
+     },
+     {
+      "id": 30,
+      "short_name": "df",
+      "type": "D"
+     },
+     {
+      "id": 40,
+      "short_name": "de",
+      "type": "D"
+     },
+     {
+      "id": 50,
+      "short_name": "da",
+      "type": "D"
+     },
+     {
+      "id": 60,
+      "short_name": "vn",
+      "type": "D"
+     },
+     {
+      "id": 70,
+      "short_name": "vt",
+      "type": "D"
+     },
+     {
+      "id": 80,
+      "short_name": "vf",
+      "type": "D"
+     },
+     {
+      "id": 90,
+      "short_name": "ve",
+      "type": "D"
+     },
+     {
+      "id": 100,
+      "short_name": "va",
+      "type": "D"
+     },
+     {
+      "id": 110,
+      "short_name": "pvr",
+      "type": "D"
+     },
+     {
+      "id": 120,
+      "short_name": "pac",
+      "type": "U"
+     },
+     {
+      "id": 130,
+      "short_name": "vi",
+      "type": "E"
+     },
+     {
+      "id": 140,
+      "short_name": "fo",
+      "type": "E"
+     },
+     {
+      "id": 150,
+      "short_name": "in",
+      "type": "E"
+     },
+     {
+      "id": 160,
+      "short_name": "ch",
+      "type": "E"
+     },
+     {
+      "id": 170,
+      "short_name": "ag",
+      "type": "E"
+     },
+     {
+      "id": 180,
+      "short_name": "sa",
+      "type": "E"
+     },
+     {
+      "id": 190,
+      "short_name": "pu",
+      "type": "E"
+     },
+     {
+      "id": 200,
+      "short_name": "cc",
+      "type": "E"
+     },
+     {
+      "id": 210,
+      "short_name": "pa",
+      "type": "E"
+     },
+     {
+      "id": 220,
+      "short_name": "pm",
+      "type": "E"
+     },
+     {
+      "id": 230,
+      "short_name": "po",
+      "type": "E"
+     },
+     {
+      "id": 240,
+      "short_name": "ic",
+      "type": "E"
+     },
+     {
+      "id": 250,
+      "short_name": "dmg",
+      "type": "E"
+     },
+     {
+      "id": 260,
+      "short_name": "dnf",
+      "type": "E"
+     },
+     {
+      "id": 270,
+      "short_name": "dtf",
+      "type": "E"
+     },
+     {
+      "id": 280,
+      "short_name": "dff",
+      "type": "E"
+     },
+     {
+      "id": 290,
+      "short_name": "def",
+      "type": "E"
+     },
+     {
+      "id": 300,
+      "short_name": "daf",
+      "type": "E"
+     },
+     {
+      "id": 302,
+      "short_name": "ds",
+      "type": "E"
+     },
+     {
+      "id": 304,
+      "short_name": "dw",
+      "type": "E"
+     },
+     {
+      "id": 306,
+      "short_name": "dm",
+      "type": "E"
+     },
+     {
+      "id": 308,
+      "short_name": "dd",
+      "type": "E"
+     },
+     {
+      "id": 310,
+      "short_name": "so",
+      "type": "E"
+     },
+     {
+      "id": 320,
+      "short_name": "pp",
+      "type": "E"
+     },
+     {
+      "id": 330,
+      "short_name": "ii",
+      "type": "E"
+     },
+     {
+      "id": 340,
+      "short_name": "pd",
+      "type": "E"
+     },
+     {
+      "id": 350,
+      "short_name": "ta",
+      "type": "E"
+     },
+     {
+      "id": 360,
+      "short_name": "fu",
+      "type": "E"
+     },
+     {
+      "id": 370,
+      "short_name": "rpa",
+      "type": "E"
+     },
+     {
+      "id": 380,
+      "short_name": "rpm",
+      "type": "E"
+     },
+     {
+      "id": 390,
+      "short_name": "epa",
+      "type": "E"
+     },
+     {
+      "id": 400,
+      "short_name": "epm",
+      "type": "E"
+     },
+     {
+      "id": 410,
+      "short_name": "dc",
+      "type": "E"
+     },
+     {
+      "id": 420,
+      "short_name": "dp",
+      "type": "E"
+     },
+     {
+      "id": 430,
+      "short_name": "rc",
+      "type": "E"
+     },
+     {
+      "id": 440,
+      "short_name": "rp",
+      "type": "E"
+     },
+     {
+      "id": 450,
+      "short_name": "pip",
+      "type": "E"
+     },
+     {
+      "id": 460,
+      "short_name": "pi",
+      "type": "E"
+     },
+     {
+      "id": 470,
+      "short_name": "rnp",
+      "type": "E"
+     },
+     {
+      "id": 480,
+      "short_name": "rtp",
+      "type": "E"
+     },
+     {
+      "id": 490,
+      "short_name": "rfp",
+      "type": "E"
+     },
+     {
+      "id": 500,
+      "short_name": "rep",
+      "type": "E"
+     },
+     {
+      "id": 510,
+      "short_name": "rap",
+      "type": "E"
+     },
+     {
+      "id": 520,
+      "short_name": "rn",
+      "type": "E"
+     },
+     {
+      "id": 530,
+      "short_name": "rt",
+      "type": "E"
+     },
+     {
+      "id": 540,
+      "short_name": "rf",
+      "type": "E"
+     },
+     {
+      "id": 550,
+      "short_name": "re",
+      "type": "E"
+     },
+     {
+      "id": 560,
+      "short_name": "ra",
+      "type": "E"
+     },
+     {
+      "id": 562,
+      "short_name": "rs",
+      "type": "E"
+     },
+     {
+      "id": 564,
+      "short_name": "rw",
+      "type": "E"
+     },
+     {
+      "id": 566,
+      "short_name": "rm",
+      "type": "E"
+     },
+     {
+      "id": 568,
+      "short_name": "rd",
+      "type": "E"
+     },
+     {
+      "id": 570,
+      "short_name": "rv",
+      "type": "E"
+     },
+     {
+      "id": 580,
+      "short_name": "pnp",
+      "type": "E"
+     },
+     {
+      "id": 590,
+      "short_name": "ptp",
+      "type": "E"
+     },
+     {
+      "id": 600,
+      "short_name": "pfp",
+      "type": "E"
+     },
+     {
+      "id": 610,
+      "short_name": "pep",
+      "type": "E"
+     },
+     {
+      "id": 620,
+      "short_name": "pap",
+      "type": "E"
+     },
+     {
+      "id": 630,
+      "short_name": "pnf",
+      "type": "E"
+     },
+     {
+      "id": 640,
+      "short_name": "ptf",
+      "type": "E"
+     },
+     {
+      "id": 650,
+      "short_name": "pff",
+      "type": "E"
+     },
+     {
+      "id": 660,
+      "short_name": "pef",
+      "type": "E"
+     },
+     {
+      "id": 670,
+      "short_name": "paf",
+      "type": "E"
+     },
+     {
+      "id": 675,
+      "short_name": "pb",
+      "type": "E"
+     },
+     {
+      "id": 710,
+      "short_name": "chs",
+      "type": "U"
+     }
+    ],
+    "hit": [
+     {
+      "id": 10,
+      "short_name": "dn",
+      "type": "D"
+     },
+     {
+      "id": 20,
+      "short_name": "dt",
+      "type": "D"
+     },
+     {
+      "id": 30,
+      "short_name": "df",
+      "type": "D"
+     },
+     {
+      "id": 40,
+      "short_name": "de",
+      "type": "D"
+     },
+     {
+      "id": 50,
+      "short_name": "da",
+      "type": "D"
+     },
+     {
+      "id": 60,
+      "short_name": "vn",
+      "type": "D"
+     },
+     {
+      "id": 70,
+      "short_name": "vt",
+      "type": "D"
+     },
+     {
+      "id": 80,
+      "short_name": "vf",
+      "type": "D"
+     },
+     {
+      "id": 90,
+      "short_name": "ve",
+      "type": "D"
+     },
+     {
+      "id": 100,
+      "short_name": "va",
+      "type": "D"
+     }
+    ]
+   }
+  },
+  "maj": {
+   "source": "cache",
+   "data": [
+    {
+     "id": 1,
+     "scope": "items",
+     "version": 1.73,
+     "success": 1
+    },
+    {
+     "id": 2,
+     "scope": "spells",
+     "version": 1.73,
+     "success": 1
+    },
+    {
+     "id": 3,
+     "scope": "boosts",
+     "version": 0,
+     "success": 0
+    }
+   ]
+  },
+  "servers": {
+   "source": "cache",
+   "data": [
+    {
+     "value": 1,
+     "text": "Oshimo",
+     "info": "fr"
+    },
+    {
+     "value": 2,
+     "text": "Terra Cogita",
+     "info": "fr"
+    },
+    {
+     "value": 3,
+     "text": "Herdegrize",
+     "info": "fr"
+    },
+    {
+     "value": 4,
+     "text": "Brutas",
+     "info": "es"
+    },
+    {
+     "value": 5,
+     "text": "Grandapan",
+     "info": "international"
+    },
+    {
+     "value": 6,
+     "text": "Dodge",
+     "info": "international"
+    }
+   ]
+  },
+  "threshold": {
+   "source": "memory",
+   "data": {
+    "vi": {
+     "steps": [
+      "0-1"
+     ],
+     "max": 995
+    },
+    "sa": {
+     "steps": [
+      "0-1",
+      "100-2",
+      "200-3",
+      "300-4"
+     ],
+     "max": 398
+    },
+    "fo": {
+     "steps": [
+      "0-1",
+      "100-2",
+      "200-3",
+      "300-4"
+     ],
+     "max": 398
+    },
+    "in": {
+     "steps": [
+      "0-1",
+      "100-2",
+      "200-3",
+      "300-4"
+     ],
+     "max": 398
+    },
+    "ch": {
+     "steps": [
+      "0-1",
+      "100-2",
+      "200-3",
+      "300-4"
+     ],
+     "max": 398
+    },
+    "ag": {
+     "steps": [
+      "0-1",
+      "100-2",
+      "200-3",
+      "300-4"
+     ],
+     "max": 398
+    }
+   }
+  },
+  "badges": {
+   "source": "cache",
+   "data": [
+    {
+     "id": 1,
+     "title": "Tomber le masque",
+     "picture": "profil",
+     "description": "Avoir rempli son profil \u00e0 100%",
+     "kambooks": 50,
+     "ornement": "idol"
+    },
+    {
+     "id": 2,
+     "title": "Qui-Gon Skin",
+     "picture": "skin-jedi",
+     "description": "Avoir un skin vu plus de 300 fois",
+     "kambooks": 300,
+     "ornement": "vigilante"
+    },
+    {
+     "id": 3,
+     "title": "Roxor",
+     "picture": "influenceur",
+     "description": "Avoir un stuff vu plus de 3000 fois",
+     "kambooks": 300,
+     "ornement": "battler"
+    },
+    {
+     "id": 4,
+     "title": "Bienfaiteur",
+     "picture": "bienfaiteur",
+     "description": "Avoir \u00e9t\u00e9 au moins une fois abonn\u00e9 \u00e0 CapricaTV sur Twitch",
+     "kambooks": 300,
+     "ornement": "idol"
+    },
+    {
+     "id": 5,
+     "title": "Tourn\u00e9e du Patron",
+     "picture": "patron",
+     "description": "Avoir \u00e9t\u00e9 au moins une fois patron de Dofusbook",
+     "kambooks": 300,
+     "ornement": "moon"
+    },
+    {
+     "id": 6,
+     "title": "Le Touriste",
+     "picture": "touriste",
+     "description": "Bah alors mon chaton ! On vient plus aux soir\u00e9es ? Miaou ...",
+     "kambooks": 150,
+     "ornement": "moon"
+    },
+    {
+     "id": 7,
+     "title": "Pexeur",
+     "picture": "xp",
+     "description": "Avoir atteint le niveau 50",
+     "kambooks": 50,
+     "ornement": "adventurer"
+    },
+    {
+     "id": 8,
+     "title": "Pexeur Argent",
+     "picture": "xp-2",
+     "description": "Avoir atteint le niveau 100",
+     "kambooks": 100,
+     "ornement": "adventurer"
+    },
+    {
+     "id": 9,
+     "title": "Pexeur Or",
+     "picture": "xp-3",
+     "description": "Avoir atteint le niveau 200",
+     "kambooks": 150,
+     "ornement": "adventurer"
+    },
+    {
+     "id": 10,
+     "title": "Nox",
+     "picture": "time",
+     "description": "30 visites d'affil\u00e9e sur le site",
+     "kambooks": 50,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 11,
+     "title": "Nox Argent",
+     "picture": "time-2",
+     "description": "180 visites d'affil\u00e9e sur le site",
+     "kambooks": 100,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 12,
+     "title": "Nox Or",
+     "picture": "time-3",
+     "description": "365 visites d'affil\u00e9e sur le site",
+     "kambooks": 150,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 13,
+     "title": "Loyal",
+     "picture": "login",
+     "description": "50 visites au total sur le site",
+     "kambooks": 50,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 14,
+     "title": "Loyal Argent",
+     "picture": "login-2",
+     "description": "365 visites au total sur le site",
+     "kambooks": 100,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 15,
+     "title": "Loyal Or",
+     "picture": "login-3",
+     "description": "1000 visites au total sur le site",
+     "kambooks": 150,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 16,
+     "title": "Oppulent",
+     "picture": "chest",
+     "description": "10 000 kambooks obtenus",
+     "kambooks": 50,
+     "ornement": "enurado"
+    },
+    {
+     "id": 17,
+     "title": "Oppulent Argent",
+     "picture": "chest-2",
+     "description": "20 000 kambooks obtenus",
+     "kambooks": 100,
+     "ornement": "enurado"
+    },
+    {
+     "id": 18,
+     "title": "Oppulent Or",
+     "picture": "chest-3",
+     "description": "30 000 kambooks obtenus",
+     "kambooks": 150,
+     "ornement": "enurado"
+    },
+    {
+     "id": 19,
+     "title": "Artiste",
+     "picture": "skin",
+     "description": "20 skins r\u00e9alis\u00e9 avec 100 vues et +",
+     "kambooks": 50,
+     "ornement": "vigilante"
+    },
+    {
+     "id": 20,
+     "title": "Artiste Argent",
+     "picture": "skin-2",
+     "description": "50 skins r\u00e9alis\u00e9 avec 100 vues et +",
+     "kambooks": 100,
+     "ornement": "vigilante"
+    },
+    {
+     "id": 21,
+     "title": "Artiste Or",
+     "picture": "skin-3",
+     "description": "100 skins r\u00e9alis\u00e9 avec 100 vues et +",
+     "kambooks": 150,
+     "ornement": "vigilante"
+    },
+    {
+     "id": 22,
+     "title": "Accro",
+     "picture": "hourglass",
+     "description": "10 heures d'activit\u00e9 sur le site",
+     "kambooks": 50,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 23,
+     "title": "Accro Argent",
+     "picture": "hourglass-2",
+     "description": "100 heures d'activit\u00e9 sur le site",
+     "kambooks": 100,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 24,
+     "title": "Accro Or",
+     "picture": "hourglass-3",
+     "description": "1000 heures d'activit\u00e9 sur le site",
+     "kambooks": 150,
+     "ornement": "xelorium"
+    },
+    {
+     "id": 25,
+     "title": "\u00c9rudit",
+     "picture": "erudit",
+     "description": "Avoir \u00e9crit 5 guides de stuffs",
+     "kambooks": 50,
+     "ornement": "quester"
+    },
+    {
+     "id": 26,
+     "title": "\u00c9rudit Argent",
+     "picture": "erudit-2",
+     "description": "Avoir \u00e9crit 20 guides de stuffs",
+     "kambooks": 100,
+     "ornement": "quester"
+    },
+    {
+     "id": 27,
+     "title": "\u00c9rudit Or",
+     "picture": "erudit-3",
+     "description": "Avoir \u00e9crit 50 guides de stuffs",
+     "kambooks": 150,
+     "ornement": "quester"
+    },
+    {
+     "id": 28,
+     "title": "V\u00e9nal",
+     "picture": "gold",
+     "description": "400 kambooks gagn\u00e9s en 24 heures",
+     "kambooks": 50,
+     "ornement": "enurado"
+    },
+    {
+     "id": 29,
+     "title": "V\u00e9nal Argent",
+     "picture": "gold-2",
+     "description": "700 kambooks gagn\u00e9s en 24 heures",
+     "kambooks": 100,
+     "ornement": "enurado"
+    },
+    {
+     "id": 30,
+     "title": "V\u00e9nal Or",
+     "picture": "gold-3",
+     "description": "1000 kambooks gagn\u00e9s en 24 heures",
+     "kambooks": 150,
+     "ornement": "enurado"
+    }
+   ]
+  },
+  "areas": {
+   "source": "cache",
+   "data": [
+    {
+     "id": 0,
+     "name": "Amakna"
+    }
+   ]
+  },
+  "subareas": {
+   "source": "cache",
+   "data": [
+    {
+     "id": 1,
+     "area_id": 0,
+     "name": "Port de Madrestam"
+    }
+   ]
+  },
+  "jobs": {
+   "source": "cache",
+   "data": [
+    {
+     "id": 1,
+     "name": "Base"
+    },
+    {
+     "id": 2,
+     "name": "B\u00fbcheron"
+    },
+    {
+     "id": 11,
+     "name": "Forgeur d'Ep\u00e9es"
+    },
+    {
+     "id": 13,
+     "name": "Sculpteur d'Arcs"
+    },
+    {
+     "id": 14,
+     "name": "Forgeur de Marteaux"
+    },
+    {
+     "id": 15,
+     "name": "Cordonnier"
+    },
+    {
+     "id": 16,
+     "name": "Bijoutier"
+    },
+    {
+     "id": 17,
+     "name": "Forgeur de Dagues"
+    },
+    {
+     "id": 18,
+     "name": "Sculpteur de B\u00e2tons"
+    },
+    {
+     "id": 19,
+     "name": "Sculpteur de Baguettes"
+    },
+    {
+     "id": 20,
+     "name": "Forgeur de Pelles"
+    },
+    {
+     "id": 24,
+     "name": "Mineur"
+    },
+    {
+     "id": 25,
+     "name": "Boulanger"
+    },
+    {
+     "id": 26,
+     "name": "Alchimiste"
+    },
+    {
+     "id": 27,
+     "name": "Tailleur"
+    },
+    {
+     "id": 28,
+     "name": "Paysan"
+    },
+    {
+     "id": 31,
+     "name": "Forgeur de Haches"
+    },
+    {
+     "id": 36,
+     "name": "P\u00eacheur"
+    },
+    {
+     "id": 41,
+     "name": "Chasseur"
+    },
+    {
+     "id": 56,
+     "name": "Boucher"
+    },
+    {
+     "id": 58,
+     "name": "Poissonnier"
+    },
+    {
+     "id": 60,
+     "name": "Fa\u00e7onneur"
+    },
+    {
+     "id": 65,
+     "name": "Bricoleur"
+    }
+   ]
+  }
+ },
+ "site_stats": {
+  "source": "cache",
+  "data": {
+   "nbCloths": 360,
+   "nbGuides": 2,
+   "nbItems": 4752,
+   "nbStuffs": 1869970,
+   "nbUsers": 407175,
+   "nbSkins": 0
+  }
+ },
+ "note": "Public builds only; profile text and user fields are dropped.",
+ "out": "data\\cache\\dofusbook_builds_test.jsonl"
+}

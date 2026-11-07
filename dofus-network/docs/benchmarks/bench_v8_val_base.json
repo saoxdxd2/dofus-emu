@@ -1,0 +1,338 @@
+{
+  "checkpoint": "C:\\Users\\sao\\kaggle_outputs\\encoder30\\model.pt",
+  "params": 30737555,
+  "config": {
+    "d_model": 512,
+    "n_layers": 7,
+    "vocab_size": 15548,
+    "max_seq_len": 256
+  },
+  "legacy_zeroed": [],
+  "load_seconds": 0.75,
+  "splits": {
+    "val": {
+      "cases": 3290,
+      "skipped_too_long": 0,
+      "tool_accuracy": 0.9474,
+      "call_accuracy": 0.5666,
+      "top3_tool": 0.9672,
+      "by_lang": {
+        "fr": {
+          "cases": 682,
+          "tool": 0.9384,
+          "call": 0.2639
+        },
+        "en": {
+          "cases": 756,
+          "tool": 0.8902,
+          "call": 0.5542
+        },
+        "es": {
+          "cases": 635,
+          "tool": 0.9858,
+          "call": 0.915
+        },
+        "de": {
+          "cases": 733,
+          "tool": 0.9645,
+          "call": 0.4243
+        },
+        "auto": {
+          "cases": 484,
+          "tool": 0.9731,
+          "call": 0.7707
+        }
+      },
+      "by_tool": {
+        "chat.say": {
+          "cases": 84,
+          "tool": 0.8214,
+          "call": 0.7262
+        },
+        "farm.start": {
+          "cases": 164,
+          "tool": 0.9756,
+          "call": 0.2134
+        },
+        "farm.stop": {
+          "cases": 22,
+          "tool": 0.5,
+          "call": 0.5
+        },
+        "fight.join": {
+          "cases": 181,
+          "tool": 0.9779,
+          "call": 0.9779
+        },
+        "fight.pass": {
+          "cases": 25,
+          "tool": 0.8,
+          "call": 0.8
+        },
+        "hdv.list": {
+          "cases": 351,
+          "tool": 0.9772,
+          "call": 0.9402
+        },
+        "hdv.scan": {
+          "cases": 306,
+          "tool": 0.951,
+          "call": 0.951
+        },
+        "inv.list": {
+          "cases": 35,
+          "tool": 0.7429,
+          "call": 0.4
+        },
+        "inv.sell": {
+          "cases": 953,
+          "tool": 0.9916,
+          "call": 0.2067
+        },
+        "knowledge.search": {
+          "cases": 61,
+          "tool": 0.0164,
+          "call": 0.0
+        },
+        "nav.follow": {
+          "cases": 44,
+          "tool": 0.8864,
+          "call": 0.7727
+        },
+        "nav.goto": {
+          "cases": 263,
+          "tool": 0.9772,
+          "call": 0.9544
+        },
+        "quest.advance": {
+          "cases": 578,
+          "tool": 0.9879,
+          "call": 0.4498
+        },
+        "quest.list": {
+          "cases": 174,
+          "tool": 0.9943,
+          "call": 0.9368
+        },
+        "safe.stop": {
+          "cases": 29,
+          "tool": 0.6897,
+          "call": 0.2069
+        },
+        "state.snapshot": {
+          "cases": 20,
+          "tool": 0.7,
+          "call": 0.7
+        }
+      },
+      "confidence": {
+        "mean_correct": 0.8314,
+        "mean_wrong": 0.4509,
+        "separation": 0.3805
+      },
+      "latency_ms": {
+        "p50": 144.2,
+        "p95": 184.6,
+        "batches": 206
+      },
+      "failures": [
+        {
+          "id": "51efa22d818832fe",
+          "lang": "auto",
+          "goal": "J'aimerais rejoindre l'affrontement du groupe voisin.",
+          "expected": {
+            "tool": "fight.join",
+            "args": {
+              "target": "groupe proche"
+            }
+          },
+          "predicted": {
+            "tool": "farm.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "1f9802cae5bc236f",
+          "lang": "auto",
+          "goal": "continue quest Don't Push",
+          "expected": {
+            "tool": "quest.advance",
+            "args": {
+              "quest_id": 1704
+            }
+          },
+          "predicted": {
+            "tool": "quest.advance",
+            "args": {}
+          }
+        },
+        {
+          "id": "b4b84b36f264c68c",
+          "lang": "auto",
+          "goal": "Mets en vente 5 Pierreclat à 1200 kamas.",
+          "expected": {
+            "tool": "hdv.list",
+            "args": {
+              "item": "Pierreclat",
+              "quantity": 5,
+              "price_rule": "fixed",
+              "price": 1200
+            }
+          },
+          "predicted": {
+            "tool": "hdv.list",
+            "args": {
+              "quantity": 5,
+              "price_rule": "undercut"
+            }
+          }
+        },
+        {
+          "id": "f507e825d2d6aff5",
+          "lang": "auto",
+          "goal": "parada de emergencia: it's dangerous",
+          "expected": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "it's dangerous"
+            }
+          },
+          "predicted": {
+            "tool": "safe.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "a23ad4f3f13179f9",
+          "lang": "en",
+          "goal": "parada de emergencia: out of potions",
+          "expected": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "out of potions"
+            }
+          },
+          "predicted": {
+            "tool": "safe.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "f98497d72d7cdd8f",
+          "lang": "auto",
+          "goal": "parada de emergencia: low hp",
+          "expected": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "low hp"
+            }
+          },
+          "predicted": {
+            "tool": "safe.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "ff8b7417994f9bf5",
+          "lang": "auto",
+          "goal": "parada de emergencia: too many monsters",
+          "expected": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "too many monsters"
+            }
+          },
+          "predicted": {
+            "tool": "safe.stop",
+            "args": {}
+          }
+        },
+        {
+          "id": "730f717a0cbfd789",
+          "lang": "auto",
+          "goal": "stop le farm",
+          "expected": {
+            "tool": "farm.stop",
+            "args": {}
+          },
+          "predicted": {
+            "tool": "farm.start",
+            "args": {
+              "kill_count": 100,
+              "auto_sell": false
+            }
+          }
+        },
+        {
+          "id": "b298dd983de2078b",
+          "lang": "auto",
+          "goal": "Susurra a Quetzin: «Te espero junto al faro de Nymara».",
+          "expected": {
+            "tool": "chat.say",
+            "args": {
+              "text": "Te espero junto al faro de Nymara.",
+              "channel": "whisper",
+              "target": "Quetzin"
+            }
+          },
+          "predicted": {
+            "tool": "inv.sell",
+            "args": {
+              "all": true,
+              "min_stock": 1,
+              "price_rule": "fixed"
+            }
+          }
+        },
+        {
+          "id": "c0645381e60ec306",
+          "lang": "auto",
+          "goal": "continue quest A Flee Spirit",
+          "expected": {
+            "tool": "quest.advance",
+            "args": {
+              "quest_id": 1849
+            }
+          },
+          "predicted": {
+            "tool": "quest.advance",
+            "args": {}
+          }
+        },
+        {
+          "id": "2e236842093122ae",
+          "lang": "auto",
+          "goal": "stopp, too many monsters!",
+          "expected": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "too many monsters"
+            }
+          },
+          "predicted": {
+            "tool": "nav.goto",
+            "args": {
+              "zaap": "too many monsters",
+              "lang": "en"
+            }
+          }
+        },
+        {
+          "id": "1ee5a4082be85e69",
+          "lang": "auto",
+          "goal": "stopp, low hp!",
+          "expected": {
+            "tool": "safe.stop",
+            "args": {
+              "reason": "low hp"
+            }
+          },
+          "predicted": {
+            "tool": "state.snapshot",
+            "args": {}
+          }
+        }
+      ]
+    }
+  }
+}

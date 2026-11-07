@@ -1,0 +1,93 @@
+{
+  "val_indist": {
+    "cases": 800,
+    "tool": 0.9613,
+    "call": 0.79,
+    "by_lang": {
+      "auto": {
+        "cases": 84,
+        "tool": 1.0,
+        "call": 0.8214
+      },
+      "de": {
+        "cases": 174,
+        "tool": 0.9655,
+        "call": 0.8103
+      },
+      "en": {
+        "cases": 174,
+        "tool": 0.9483,
+        "call": 0.7356
+      },
+      "es": {
+        "cases": 199,
+        "tool": 0.9648,
+        "call": 0.7889
+      },
+      "fr": {
+        "cases": 169,
+        "tool": 0.9467,
+        "call": 0.8107
+      }
+    }
+  },
+  "val": {
+    "cases": 3073,
+    "tool": 0.9287,
+    "call": 0.6847,
+    "by_lang": {
+      "auto": {
+        "cases": 307,
+        "tool": 0.9479,
+        "call": 0.8013
+      },
+      "de": {
+        "cases": 495,
+        "tool": 0.9192,
+        "call": 0.6525
+      },
+      "en": {
+        "cases": 496,
+        "tool": 0.8468,
+        "call": 0.6875
+      },
+      "es": {
+        "cases": 756,
+        "tool": 0.9709,
+        "call": 0.7632
+      },
+      "fr": {
+        "cases": 1019,
+        "tool": 0.9362,
+        "call": 0.6055
+      }
+    }
+  },
+  "gold": {
+    "cases": 71,
+    "tool": 0.8732,
+    "call": 0.7183,
+    "by_lang": {
+      "de": {
+        "cases": 16,
+        "tool": 0.9375,
+        "call": 0.75
+      },
+      "en": {
+        "cases": 20,
+        "tool": 0.9,
+        "call": 0.75
+      },
+      "es": {
+        "cases": 17,
+        "tool": 0.8235,
+        "call": 0.6471
+      },
+      "fr": {
+        "cases": 18,
+        "tool": 0.8333,
+        "call": 0.7222
+      }
+    }
+  }
+}

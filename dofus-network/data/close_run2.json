@@ -1,0 +1,124 @@
+{
+ "action": "no_new_rows",
+ "at": "2026-11-01T03:10:37Z",
+ "logs": [],
+ "new_bytes": 0,
+ "progress": {
+  "corpus_rate": 0.3648,
+  "objective_progress": false,
+  "sessions_with_new_rows": 0,
+  "trend": "unmeasured"
+ },
+ "seconds": 6.26,
+ "steps": {
+  "evidence": {
+   "capture_seconds": 6.23,
+   "changed": [],
+   "files": 4,
+   "instances": [
+    {
+     "failed": 46,
+     "instance": "autopilot.dofus-01.jsonl",
+     "intervention_rows": 16,
+     "manual_interventions": 47,
+     "ok": 809,
+     "recoveries": {
+      "recover": 453,
+      "replan": 228,
+      "retry": 58
+     },
+     "sessions": 11,
+     "signature": {
+      "mtime": 1793202348.723,
+      "size": 12632394
+     },
+     "source": "C:\\Users\\sao\\AppData\\Local\\DofusFarm\\autopilot.dofus-01.jsonl",
+     "steps": 855,
+     "wall_minutes": 138.7
+    },
+    {
+     "failed": 165,
+     "instance": "autopilot.dofus-02.jsonl",
+     "intervention_rows": 5,
+     "manual_interventions": 19,
+     "ok": 1311,
+     "recoveries": {
+      "recover": 321,
+      "replan": 214,
+      "retry": 62
+     },
+     "sessions": 12,
+     "signature": {
+      "mtime": 1793261961.907,
+      "size": 27549886
+     },
+     "source": "C:\\Users\\sao\\AppData\\Local\\DofusFarm\\autopilot.dofus-02.jsonl",
+     "steps": 1476,
+     "wall_minutes": 212.6
+    },
+    {
+     "failed": 56,
+     "instance": "autopilot.dofus-03.jsonl",
+     "intervention_rows": 5,
+     "manual_interventions": 16,
+     "ok": 486,
+     "recoveries": {
+      "recover": 286,
+      "replan": 160,
+      "retry": 30
+     },
+     "sessions": 14,
+     "signature": {
+      "mtime": 1793261961.977,
+      "size": 9084316
+     },
+     "source": "C:\\Users\\sao\\AppData\\Local\\DofusFarm\\autopilot.dofus-03.jsonl",
+     "steps": 542,
+     "wall_minutes": 118.3
+    },
+    {
+     "failed": 160,
+     "instance": "autopilot.dofus-05.jsonl",
+     "intervention_rows": 51,
+     "manual_interventions": 762,
+     "ok": 1038,
+     "recoveries": {
+      "recover": 325,
+      "replan": 199,
+      "retry": 80
+     },
+     "sessions": 21,
+     "signature": {
+      "mtime": 1793296238.693,
+      "size": 32521293
+     },
+     "source": "C:\\Users\\sao\\AppData\\Local\\DofusFarm\\autopilot.dofus-05.jsonl",
+     "steps": 1198,
+     "wall_minutes": 201.6
+    }
+   ],
+   "ok": true,
+   "seconds": 6.25,
+   "step": "evidence",
+   "totals": {
+    "failed": 427,
+    "intervention_rows": 77,
+    "manual_interventions": 844,
+    "ok": 3644,
+    "recoveries": {
+     "recover": 1385,
+     "replan": 801,
+     "retry": 230
+    },
+    "recovery_rows": 2416,
+    "sessions": 58,
+    "steps": 4071,
+    "wall_minutes": 671.2
+   },
+   "written": "data\\evidence\\live_sessions.jsonl"
+  }
+ },
+ "ts": 1793502637.206,
+ "verdict": "objective progress not yet measured: 7 close(s), none with a non-baseline delta",
+ "version": 1
+}

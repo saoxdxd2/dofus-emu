@@ -1,0 +1,3867 @@
+[
+  {
+    "id": 3359,
+    "name_fr": "Malheur",
+    "name_en": "Calamity",
+    "name_es": "Desgracia",
+    "type_id": 425,
+    "spell_levels": [
+      20394
+    ]
+  },
+  {
+    "id": 3360,
+    "name_fr": "Torpeur",
+    "name_en": "Torpor",
+    "name_es": "Sopor",
+    "type_id": 425,
+    "spell_levels": [
+      20395
+    ]
+  },
+  {
+    "id": 3361,
+    "name_fr": "Râttirance",
+    "name_en": "Attrakeshun",
+    "name_es": "Rastrimán",
+    "type_id": 425,
+    "spell_levels": [
+      20396
+    ]
+  },
+  {
+    "id": 3362,
+    "name_fr": "Moissonnage",
+    "name_en": "Harvest",
+    "name_es": "Cosecha",
+    "type_id": 425,
+    "spell_levels": [
+      20397
+    ]
+  },
+  {
+    "id": 3363,
+    "name_fr": "Peste Issyde",
+    "name_en": "Pesty Side",
+    "name_es": "Peste Izida",
+    "type_id": 425,
+    "spell_levels": [
+      20398
+    ]
+  },
+  {
+    "id": 3364,
+    "name_fr": "Plantes Zombies",
+    "name_en": "Zombie Plants",
+    "name_es": "Plantas Zombis",
+    "type_id": 425,
+    "spell_levels": [
+      20399
+    ]
+  },
+  {
+    "id": 3365,
+    "name_fr": "Citwouille Explosive",
+    "name_en": "Explosive Pumpkwin",
+    "name_es": "Calawaza Explosiva",
+    "type_id": 425,
+    "spell_levels": [
+      20400
+    ]
+  },
+  {
+    "id": 3367,
+    "name_fr": "Poutchicide",
+    "name_en": "Poutchicide",
+    "name_es": "Puchizida",
+    "type_id": 425,
+    "spell_levels": [
+      20402
+    ]
+  },
+  {
+    "id": 3368,
+    "name_fr": "Lancer d'œuf",
+    "name_en": "Egging",
+    "name_es": "Huevazo",
+    "type_id": 425,
+    "spell_levels": [
+      20403
+    ]
+  },
+  {
+    "id": 3369,
+    "name_fr": "Morsure Affaiblissante",
+    "name_en": "Weakening Bite",
+    "name_es": "Mordisco Debilitador",
+    "type_id": 425,
+    "spell_levels": [
+      20404
+    ]
+  },
+  {
+    "id": 3370,
+    "name_fr": "Hypnose Brûlante",
+    "name_en": "Burning Hypnosis",
+    "name_es": "Hipnosis Abrasadora",
+    "type_id": 108,
+    "spell_levels": [
+      20405,
+      20406,
+      20407,
+      20408,
+      20409
+    ]
+  },
+  {
+    "id": 3371,
+    "name_fr": "Bond affaiblissant",
+    "name_en": "Weakening Leap",
+    "name_es": "Salto Debilitador",
+    "type_id": 425,
+    "spell_levels": [
+      20410
+    ]
+  },
+  {
+    "id": 3372,
+    "name_fr": "Glyphe Sylvestre",
+    "name_en": "Sylvan Glyph",
+    "name_es": "Glifo Silvestre",
+    "type_id": 425,
+    "spell_levels": [
+      20411,
+      20413,
+      20414,
+      20415,
+      20416
+    ]
+  },
+  {
+    "id": 3373,
+    "name_fr": "Sylve",
+    "name_en": "Sylv'",
+    "name_es": "Espesura",
+    "type_id": 425,
+    "spell_levels": [
+      20412,
+      20417,
+      20418,
+      20419,
+      20420
+    ]
+  },
+  {
+    "id": 3374,
+    "name_fr": "Arbre Collant",
+    "name_en": "Sticky Tree",
+    "name_es": "Árbol Pesado",
+    "type_id": 425,
+    "spell_levels": [
+      20421,
+      20422,
+      20423,
+      20424,
+      20425,
+      24800
+    ]
+  },
+  {
+    "id": 3375,
+    "name_fr": "Écorce agressive",
+    "name_en": "Aggressive Bark",
+    "name_es": "Corteza Agresiva",
+    "type_id": 425,
+    "spell_levels": [
+      20426,
+      20427,
+      20428,
+      20429,
+      20430
+    ]
+  },
+  {
+    "id": 3376,
+    "name_fr": "Bond Glissant",
+    "name_en": "Slippery Leap",
+    "name_es": "Salto Resbaladizo",
+    "type_id": 425,
+    "spell_levels": [
+      20431,
+      20432,
+      20433,
+      20434,
+      20435
+    ]
+  },
+  {
+    "id": 3377,
+    "name_fr": "Appel de la Fôret",
+    "name_en": "Call of the Forest",
+    "name_es": "Llamada del Bosque",
+    "type_id": 425,
+    "spell_levels": [
+      20437,
+      20438,
+      20439,
+      20440,
+      20441
+    ]
+  },
+  {
+    "id": 3378,
+    "name_fr": "Flair",
+    "name_en": "Sniff",
+    "name_es": "Olfacción",
+    "type_id": 186,
+    "spell_levels": [
+      20442
+    ]
+  },
+  {
+    "id": 3379,
+    "name_fr": "Pandibluff",
+    "name_en": "Pandibluff",
+    "name_es": "Pandiful",
+    "type_id": 425,
+    "spell_levels": [
+      20447
+    ]
+  },
+  {
+    "id": 3380,
+    "name_fr": "Gourde Explosive",
+    "name_en": "Explosive Gourd",
+    "name_es": "Cantimplora Explosiva",
+    "type_id": 425,
+    "spell_levels": [
+      20448
+    ]
+  },
+  {
+    "id": 3381,
+    "name_fr": "Projectile Persécuteur",
+    "name_en": "Tormenting Projectile",
+    "name_es": "Proyectil Perseguidor",
+    "type_id": 425,
+    "spell_levels": [
+      20449
+    ]
+  },
+  {
+    "id": 3382,
+    "name_fr": "Sablier Ardent",
+    "name_en": "Ardent Sandglass",
+    "name_es": "Reloj de Arena Ardiente",
+    "type_id": 425,
+    "spell_levels": [
+      20450
+    ]
+  },
+  {
+    "id": 3383,
+    "name_fr": "Trouble",
+    "name_en": "Blur",
+    "name_es": "Disturbio",
+    "type_id": 425,
+    "spell_levels": [
+      20451
+    ]
+  },
+  {
+    "id": 3384,
+    "name_fr": "Ralentissement Forcé",
+    "name_en": "Forced Slow Down",
+    "name_es": "Ralentización Forzosa",
+    "type_id": 425,
+    "spell_levels": [
+      20452
+    ]
+  },
+  {
+    "id": 3385,
+    "name_fr": "Virevoltage",
+    "name_en": "Pirouetting",
+    "name_es": "Aire Comprimido",
+    "type_id": 425,
+    "spell_levels": [
+      20453
+    ]
+  },
+  {
+    "id": 3386,
+    "name_fr": "Pelle Azimuth",
+    "name_en": "Azimuth Shovel",
+    "name_es": "Pala Acimut",
+    "type_id": 425,
+    "spell_levels": [
+      20454
+    ]
+  },
+  {
+    "id": 3387,
+    "name_fr": "Horloge Flasque",
+    "name_en": "Wound Clock",
+    "name_es": "Reloj Acuífero",
+    "type_id": 425,
+    "spell_levels": [
+      20455,
+      20456,
+      20457,
+      20458,
+      20459
+    ]
+  },
+  {
+    "id": 3388,
+    "name_fr": "Trempage Huileux",
+    "name_en": "Oily Soak",
+    "name_es": "Remojo Aceitoso",
+    "type_id": 425,
+    "spell_levels": [
+      20460,
+      20461,
+      20462,
+      20463,
+      20464
+    ]
+  },
+  {
+    "id": 3389,
+    "name_fr": "Trempage Aqueux",
+    "name_en": "Watery Soak",
+    "name_es": "Remojo Acuoso",
+    "type_id": 425,
+    "spell_levels": [
+      20465,
+      20466,
+      20467,
+      20468,
+      20469
+    ]
+  },
+  {
+    "id": 3390,
+    "name_fr": "Souffle Fermenté",
+    "name_en": "Fermented Breath",
+    "name_es": "Aliento Fermentado",
+    "type_id": 425,
+    "spell_levels": [
+      20470,
+      20471,
+      20472,
+      20473,
+      20474
+    ]
+  },
+  {
+    "id": 3391,
+    "name_fr": "Protection de la Plaine",
+    "name_en": "Plain Protection",
+    "name_es": "Protección de la Llanura",
+    "type_id": 425,
+    "spell_levels": [
+      20475
+    ]
+  },
+  {
+    "id": 3392,
+    "name_fr": "Rafistolage",
+    "name_en": "Rations",
+    "name_es": "Inyección",
+    "type_id": 425,
+    "spell_levels": [
+      20480
+    ]
+  },
+  {
+    "id": 3393,
+    "name_fr": "Transfusion Forcée",
+    "name_en": "Forced Rationing",
+    "name_es": "Transfusión Forzada",
+    "type_id": 425,
+    "spell_levels": [
+      20481
+    ]
+  },
+  {
+    "id": 3394,
+    "name_fr": "Rajustement",
+    "name_en": "Rug Muncher",
+    "name_es": "Ratasticar",
+    "type_id": 425,
+    "spell_levels": [
+      20482
+    ]
+  },
+  {
+    "id": 3395,
+    "name_fr": "Ratatouille",
+    "name_en": "Ratatouille",
+    "name_es": "Ratatouille",
+    "type_id": 425,
+    "spell_levels": [
+      20483
+    ]
+  },
+  {
+    "id": 3396,
+    "name_fr": "Raclette",
+    "name_en": "Bratworst",
+    "name_es": "Ratasta",
+    "type_id": 425,
+    "spell_levels": [
+      20484
+    ]
+  },
+  {
+    "id": 3397,
+    "name_fr": "Racket",
+    "name_en": "Riffraff",
+    "name_es": "Ratero",
+    "type_id": 425,
+    "spell_levels": [
+      20485
+    ]
+  },
+  {
+    "id": 3398,
+    "name_fr": "Ramolli",
+    "name_en": "Prattle",
+    "name_es": "Ratería",
+    "type_id": 425,
+    "spell_levels": [
+      20486
+    ]
+  },
+  {
+    "id": 3399,
+    "name_fr": "Béco du Tofu Royal",
+    "name_en": "Royal Tofu Peck",
+    "name_es": "Pico del Tofu Real",
+    "type_id": 425,
+    "spell_levels": [
+      20487
+    ]
+  },
+  {
+    "id": 3400,
+    "name_fr": "Bénédiction du Tofulailler Royal",
+    "name_en": "Blessing of the Royal Tofu House",
+    "name_es": "Bendición del Tofullinero Real",
+    "type_id": 425,
+    "spell_levels": [
+      20488,
+      20489,
+      20490,
+      20491,
+      20492
+    ]
+  },
+  {
+    "id": 3401,
+    "name_fr": "Envol Libérateur",
+    "name_en": "Liberating Flight",
+    "name_es": "Vuelo Liberador",
+    "type_id": 425,
+    "spell_levels": [
+      20493
+    ]
+  },
+  {
+    "id": 3402,
+    "name_fr": "Dindoboule",
+    "name_en": "Dragoball",
+    "name_es": "Pavorráqueo",
+    "type_id": 425,
+    "spell_levels": [
+      20494
+    ]
+  },
+  {
+    "id": 3403,
+    "name_fr": "Stimulation Dragodinde",
+    "name_en": "Dragoturkey Stimulation",
+    "name_es": "Estimulación Dragopavil",
+    "type_id": 425,
+    "spell_levels": [
+      20495
+    ]
+  },
+  {
+    "id": 3404,
+    "name_fr": "Dindoneau",
+    "name_en": "Dragosplash",
+    "name_es": "Pavocuático",
+    "type_id": 425,
+    "spell_levels": [
+      20496
+    ]
+  },
+  {
+    "id": 3405,
+    "name_fr": "Dragodingue",
+    "name_en": "Dragocraze",
+    "name_es": "Dragolocado",
+    "type_id": 425,
+    "spell_levels": [
+      20497
+    ]
+  },
+  {
+    "id": 3406,
+    "name_fr": "Cuit à point",
+    "name_en": "Chargrill",
+    "name_es": "Bien Tostado",
+    "type_id": 425,
+    "spell_levels": [
+      20498
+    ]
+  },
+  {
+    "id": 3407,
+    "name_fr": "Coup de pelle à tarte",
+    "name_en": "Cake Shovel Slap",
+    "name_es": "Golpe de Rodillo",
+    "type_id": 425,
+    "spell_levels": [
+      20499
+    ]
+  },
+  {
+    "id": 3408,
+    "name_fr": "Frappe du Craqueleur Légendaire",
+    "name_en": "Legendary Crackler Punch",
+    "name_es": "Golpe de Crujidor Legendario",
+    "type_id": 425,
+    "spell_levels": [
+      20500
+    ]
+  },
+  {
+    "id": 3409,
+    "name_fr": "Pwâkoukas",
+    "name_en": "Fleastakoukas",
+    "name_es": "Pazcuotas",
+    "type_id": 425,
+    "spell_levels": [
+      20501
+    ]
+  },
+  {
+    "id": 7243,
+    "name_fr": "Tempête Dévastatrice",
+    "name_en": "Devastating Tempest",
+    "name_es": "Tormenta Devastadora",
+    "type_id": 425,
+    "spell_levels": [
+      29034
+    ]
+  },
+  {
+    "id": 7245,
+    "name_fr": "Cactouille",
+    "name_en": "Cactickle",
+    "name_es": "Secosquillas",
+    "type_id": 425,
+    "spell_levels": [
+      29036,
+      29045
+    ]
+  },
+  {
+    "id": 7247,
+    "name_fr": "Forêt de Cactus",
+    "name_en": "Cactus Forest",
+    "name_es": "Bosque de Cactus",
+    "type_id": 425,
+    "spell_levels": [
+      29046,
+      29047,
+      29056
+    ]
+  },
+  {
+    "id": 7257,
+    "name_fr": "Sable mouvant",
+    "name_en": "Quicksand",
+    "name_es": "Arena Movediza",
+    "type_id": 425,
+    "spell_levels": [
+      29058
+    ]
+  },
+  {
+    "id": 7258,
+    "name_fr": "Reconnaissance",
+    "name_en": "Recognition",
+    "name_es": "Reconocimiento",
+    "type_id": 425,
+    "spell_levels": [
+      29059
+    ]
+  },
+  {
+    "id": 7259,
+    "name_fr": "Entrave Sableuse",
+    "name_en": "Sandy Shackle",
+    "name_es": "Traba Arenosa",
+    "type_id": 425,
+    "spell_levels": [
+      29060
+    ]
+  },
+  {
+    "id": 7260,
+    "name_fr": "Enragement Motivant",
+    "name_en": "Motivating Rage",
+    "name_es": "Enfurecimiento Motivador",
+    "type_id": 425,
+    "spell_levels": [
+      29061
+    ]
+  },
+  {
+    "id": 7261,
+    "name_fr": "Iop",
+    "name_en": "Iop",
+    "name_es": "Yopuka",
+    "type_id": 49,
+    "spell_levels": [
+      29063
+    ]
+  },
+  {
+    "id": 7262,
+    "name_fr": "Primaire",
+    "name_en": "Primary",
+    "name_es": "Primario",
+    "type_id": 49,
+    "spell_levels": [
+      29064
+    ]
+  },
+  {
+    "id": 7263,
+    "name_fr": "Force d'âme",
+    "name_en": "Soul Strength",
+    "name_es": "Fuerza de Alma",
+    "type_id": 425,
+    "spell_levels": [
+      29065
+    ]
+  },
+  {
+    "id": 7264,
+    "name_fr": "Capture élémentale",
+    "name_en": "Elemental Capture",
+    "name_es": "Captura Elemental",
+    "type_id": 425,
+    "spell_levels": [
+      29066
+    ]
+  },
+  {
+    "id": 7266,
+    "name_fr": "Pan ! T'es mort",
+    "name_en": "Bam! You're dead!",
+    "name_es": "¡Pan! Y Se Murió",
+    "type_id": 425,
+    "spell_levels": [
+      29068
+    ]
+  },
+  {
+    "id": 7267,
+    "name_fr": "Flèche élémentaire",
+    "name_en": "Elemental Arrow",
+    "name_es": "Flecha Elemental",
+    "type_id": 425,
+    "spell_levels": [
+      29074,
+      29203
+    ]
+  },
+  {
+    "id": 7268,
+    "name_fr": "Coup de Défenses épicé",
+    "name_en": "Spicy Defensive Blow",
+    "name_es": "Colmillazo Especiado",
+    "type_id": 425,
+    "spell_levels": [
+      29083
+    ]
+  },
+  {
+    "id": 7269,
+    "name_fr": "Larvement épicé",
+    "name_en": "Spicy Larvage",
+    "name_es": "Larvamiento Especiado",
+    "type_id": 425,
+    "spell_levels": [
+      29084,
+      29085,
+      29086,
+      29087,
+      29088
+    ]
+  },
+  {
+    "id": 7298,
+    "name_fr": "Contrôle élémentaire",
+    "name_en": "Elemental Control",
+    "name_es": "Control Elemental",
+    "type_id": 425,
+    "spell_levels": [
+      29118,
+      29126
+    ]
+  },
+  {
+    "id": 7308,
+    "name_fr": "Contrôle élémentaire",
+    "name_en": "Elemental Control",
+    "name_es": "Control Elemental",
+    "type_id": 425,
+    "spell_levels": [
+      29129,
+      29130,
+      29131,
+      29136,
+      29137,
+      29138
+    ]
+  },
+  {
+    "id": 7312,
+    "name_fr": "Contrôle élémentaire",
+    "name_en": "Elemental Control",
+    "name_es": "Control Elemental",
+    "type_id": 425,
+    "spell_levels": [
+      29141,
+      29147,
+      29148,
+      29149
+    ]
+  },
+  {
+    "id": 7321,
+    "name_fr": "Furiosa",
+    "name_en": "Furiosa",
+    "name_es": "Furiosa",
+    "type_id": 425,
+    "spell_levels": [
+      29158
+    ]
+  },
+  {
+    "id": 7322,
+    "name_fr": "Art des globules",
+    "name_en": "War Kid Art",
+    "name_es": "Arte de la Sangre",
+    "type_id": 425,
+    "spell_levels": [
+      29159
+    ]
+  },
+  {
+    "id": 7323,
+    "name_fr": "Écrasement facial",
+    "name_en": "Facial Crushing",
+    "name_es": "Aplastamiento Facial",
+    "type_id": 425,
+    "spell_levels": [
+      29162
+    ]
+  },
+  {
+    "id": 7324,
+    "name_fr": "Rage féline",
+    "name_en": "Feline Rage",
+    "name_es": "Rabia Felina",
+    "type_id": 425,
+    "spell_levels": [
+      29163
+    ]
+  },
+  {
+    "id": 7325,
+    "name_fr": "Double pied",
+    "name_en": "Double Foot",
+    "name_es": "Doble Pie",
+    "type_id": 425,
+    "spell_levels": [
+      29164
+    ]
+  },
+  {
+    "id": 7326,
+    "name_fr": "Surprise féline",
+    "name_en": "Feline Surprise",
+    "name_es": "Sorpresa Felina",
+    "type_id": 425,
+    "spell_levels": [
+      29165
+    ]
+  },
+  {
+    "id": 7327,
+    "name_fr": "Danse guerrière",
+    "name_en": "Warrior's Dance",
+    "name_es": "Danza Guerrera",
+    "type_id": 425,
+    "spell_levels": [
+      29166,
+      29167,
+      29176,
+      29177
+    ]
+  },
+  {
+    "id": 7328,
+    "name_fr": "Rapprochement félin",
+    "name_en": "Feline Proximity",
+    "name_es": "Acercamiento Felino",
+    "type_id": 425,
+    "spell_levels": [
+      29168,
+      29169,
+      29170,
+      29174,
+      29175
+    ]
+  },
+  {
+    "id": 7329,
+    "name_fr": "Combo félin",
+    "name_en": "Feline Combo",
+    "name_es": "Combo Felino",
+    "type_id": 425,
+    "spell_levels": [
+      29171
+    ]
+  },
+  {
+    "id": 7330,
+    "name_fr": "Combo félin",
+    "name_en": "Feline Combo",
+    "name_es": "Combo Felino",
+    "type_id": 425,
+    "spell_levels": [
+      29172,
+      29173
+    ]
+  },
+  {
+    "id": 7331,
+    "name_fr": "Bénédiction des Dofus",
+    "name_en": "Dofus Blessing",
+    "name_es": "Bendición de los Dofus",
+    "type_id": 40,
+    "spell_levels": [
+      29178,
+      29179,
+      29180,
+      29181,
+      29182
+    ]
+  },
+  {
+    "id": 7332,
+    "name_fr": "Coup prismatique",
+    "name_en": "Prismatic Blow",
+    "name_es": "Golpe Prismático",
+    "type_id": 425,
+    "spell_levels": [
+      29183
+    ]
+  },
+  {
+    "id": 7333,
+    "name_fr": "Armure prismatique",
+    "name_en": "Prismatic Armour",
+    "name_es": "Armadura Prismática",
+    "type_id": 425,
+    "spell_levels": [
+      29184
+    ]
+  },
+  {
+    "id": 7334,
+    "name_fr": "Explosion prismatique",
+    "name_en": "Prismatic Explosion",
+    "name_es": "Explosión Prismática",
+    "type_id": 425,
+    "spell_levels": [
+      29185
+    ]
+  },
+  {
+    "id": 7335,
+    "name_fr": "Cercle foudroyant",
+    "name_en": "Thunderous Circle",
+    "name_es": "Círculo Fulminante",
+    "type_id": 425,
+    "spell_levels": [
+      29186
+    ]
+  },
+  {
+    "id": 7336,
+    "name_fr": "Vent tourbillonnant",
+    "name_en": "Whirlwind Gust",
+    "name_es": "Viento Arremolinado",
+    "type_id": 425,
+    "spell_levels": [
+      29187
+    ]
+  },
+  {
+    "id": 7337,
+    "name_fr": "Temps orageux",
+    "name_en": "Stormy Times",
+    "name_es": "Tiempo Tormentoso",
+    "type_id": 425,
+    "spell_levels": [
+      29188
+    ]
+  },
+  {
+    "id": 7338,
+    "name_fr": "Voile de chaleur",
+    "name_en": "Heat Veil",
+    "name_es": "Velo de Calor",
+    "type_id": 425,
+    "spell_levels": [
+      29189
+    ]
+  },
+  {
+    "id": 7339,
+    "name_fr": "Hurlement du vent",
+    "name_en": "Howling of the Wind",
+    "name_es": "Aullido del Viento",
+    "type_id": 425,
+    "spell_levels": [
+      29190
+    ]
+  },
+  {
+    "id": 7340,
+    "name_fr": "Morsure assoiffée",
+    "name_en": "Thirsty Bite",
+    "name_es": "Mordedura Sedienta",
+    "type_id": 425,
+    "spell_levels": [
+      29191
+    ]
+  },
+  {
+    "id": 7341,
+    "name_fr": "Contrôle élémentaire",
+    "name_en": "Elemental Control",
+    "name_es": "Control Elemental",
+    "type_id": 425,
+    "spell_levels": [
+      29192
+    ]
+  },
+  {
+    "id": 7342,
+    "name_fr": "Flèche élémentaire",
+    "name_en": "Elemental Arrow",
+    "name_es": "Flecha Elemental",
+    "type_id": 425,
+    "spell_levels": [
+      29193
+    ]
+  },
+  {
+    "id": 7343,
+    "name_fr": "Cacterreur",
+    "name_en": "Casterror",
+    "name_es": "Cacterror",
+    "type_id": 425,
+    "spell_levels": [
+      29194,
+      29213
+    ]
+  },
+  {
+    "id": 7344,
+    "name_fr": "Paternalisme",
+    "name_en": "Paternalism",
+    "name_es": "Paternalismo",
+    "type_id": 425,
+    "spell_levels": [
+      29195
+    ]
+  },
+  {
+    "id": 7345,
+    "name_fr": "Coup d'Œil",
+    "name_en": "Glance",
+    "name_es": "Vistazo",
+    "type_id": 425,
+    "spell_levels": [
+      29196
+    ]
+  },
+  {
+    "id": 7346,
+    "name_fr": "Bien vu l'Aveugle",
+    "name_en": "Blinding Obviousness",
+    "name_es": "Ojo Activo",
+    "type_id": 425,
+    "spell_levels": [
+      29197
+    ]
+  },
+  {
+    "id": 7347,
+    "name_fr": "Vent Tournoyant",
+    "name_en": "Whirling Wind",
+    "name_es": "Viento Arremolinado",
+    "type_id": 425,
+    "spell_levels": [
+      29198
+    ]
+  },
+  {
+    "id": 7348,
+    "name_fr": "Combustion Incontwôlée",
+    "name_en": "Uncontwolled Combustion",
+    "name_es": "Combustión Incontwolada",
+    "type_id": 425,
+    "spell_levels": [
+      29199,
+      29210,
+      29211,
+      29212
+    ]
+  },
+  {
+    "id": 7349,
+    "name_fr": "Combustion Incontwôlée",
+    "name_en": "Uncontwolled Combustion",
+    "name_es": "Combustión Incontwolada",
+    "type_id": 425,
+    "spell_levels": [
+      29200
+    ]
+  },
+  {
+    "id": 7350,
+    "name_fr": "Massue Explosive",
+    "name_en": "Explosive Wallop",
+    "name_es": "Maza Explosiva",
+    "type_id": 425,
+    "spell_levels": [
+      29201
+    ]
+  },
+  {
+    "id": 7351,
+    "name_fr": "Wavelot Implosif",
+    "name_en": "Implosive Speaw",
+    "name_es": "Wabalina Implosiva",
+    "type_id": 425,
+    "spell_levels": [
+      29202
+    ]
+  },
+  {
+    "id": 7353,
+    "name_fr": "Cacterreur",
+    "name_en": "Casterror",
+    "name_es": "Cacterror",
+    "type_id": 425,
+    "spell_levels": [
+      29214
+    ]
+  },
+  {
+    "id": 12841,
+    "name_fr": "Pile ou Face",
+    "name_en": "Heads or Tails",
+    "name_es": "Cara o Cruz",
+    "type_id": 6,
+    "spell_levels": [
+      40758,
+      40759,
+      40760
+    ]
+  },
+  {
+    "id": 12842,
+    "name_fr": "Seconde Chance",
+    "name_en": "Second Chance",
+    "name_es": "Segunda Oportunidad",
+    "type_id": 6,
+    "spell_levels": [
+      40764,
+      40765
+    ]
+  },
+  {
+    "id": 12843,
+    "name_fr": "Bonne Pioche",
+    "name_en": "Lucky Draw",
+    "name_es": "Golpe de Fortuna",
+    "type_id": 6,
+    "spell_levels": [
+      40767,
+      79224,
+      79225
+    ]
+  },
+  {
+    "id": 12844,
+    "name_fr": "Bond du Félin",
+    "name_en": "Catnip",
+    "name_es": "Salto del Felino",
+    "type_id": 6,
+    "spell_levels": [
+      40770,
+      40771,
+      40772
+    ]
+  },
+  {
+    "id": 12845,
+    "name_fr": "Château de Cartes",
+    "name_en": "House of Cards",
+    "name_es": "Castillo de Naipes",
+    "type_id": 6,
+    "spell_levels": [
+      40773,
+      79608,
+      79609
+    ]
+  },
+  {
+    "id": 12846,
+    "name_fr": "Topkaj",
+    "name_en": "Topkaj",
+    "name_es": "Topkaj",
+    "type_id": 6,
+    "spell_levels": [
+      40776,
+      40777,
+      40778
+    ]
+  },
+  {
+    "id": 12847,
+    "name_fr": "Esprit Félin",
+    "name_en": "Feline Spirit",
+    "name_es": "Espíritu Felino",
+    "type_id": 6,
+    "spell_levels": [
+      40779,
+      40780,
+      40781
+    ]
+  },
+  {
+    "id": 12848,
+    "name_fr": "Baraka",
+    "name_en": "Luck",
+    "name_es": "Baraka",
+    "type_id": 6,
+    "spell_levels": [
+      40782,
+      40783,
+      40784
+    ]
+  },
+  {
+    "id": 12849,
+    "name_fr": "Griffe Joueuse",
+    "name_en": "Playful Claw",
+    "name_es": "Garra Juguetona",
+    "type_id": 586,
+    "spell_levels": [
+      40785,
+      40786
+    ]
+  },
+  {
+    "id": 12850,
+    "name_fr": "Tarot d'Ecaflip",
+    "name_en": "Ecaflip's Tarot",
+    "name_es": "Tarot de Zurcarák",
+    "type_id": 586,
+    "spell_levels": [
+      40788
+    ]
+  },
+  {
+    "id": 12851,
+    "name_fr": "Griffe de Ceangal",
+    "name_en": "Claw of Ceangal",
+    "name_es": "Garra de Ceangal",
+    "type_id": 586,
+    "spell_levels": [
+      40791
+    ]
+  },
+  {
+    "id": 12852,
+    "name_fr": "Perception",
+    "name_en": "Perception",
+    "name_es": "Percepción",
+    "type_id": 6,
+    "spell_levels": [
+      40794,
+      40795,
+      40796
+    ]
+  },
+  {
+    "id": 12853,
+    "name_fr": "Rekop",
+    "name_en": "Rekop",
+    "name_es": "Rekop",
+    "type_id": 586,
+    "spell_levels": [
+      40797
+    ]
+  },
+  {
+    "id": 12854,
+    "name_fr": "Odorat",
+    "name_en": "Smell",
+    "name_es": "Olfato",
+    "type_id": 6,
+    "spell_levels": [
+      40800,
+      40801
+    ]
+  },
+  {
+    "id": 12855,
+    "name_fr": "Langue Râpeuse",
+    "name_en": "Rough Tongue",
+    "name_es": "Lengua Raspadora",
+    "type_id": 586,
+    "spell_levels": [
+      40803,
+      79635
+    ]
+  },
+  {
+    "id": 12856,
+    "name_fr": "Griffe Invocatrice",
+    "name_en": "Summoning Claw",
+    "name_es": "Garra Invocadora",
+    "type_id": 6,
+    "spell_levels": [
+      40806,
+      40807,
+      79633
+    ]
+  },
+  {
+    "id": 12857,
+    "name_fr": "Réflexes",
+    "name_en": "Reflex",
+    "name_es": "Reflejos",
+    "type_id": 6,
+    "spell_levels": [
+      40809,
+      40810,
+      79630
+    ]
+  },
+  {
+    "id": 12858,
+    "name_fr": "Tout ou Rien",
+    "name_en": "All or Nothing",
+    "name_es": "Todo o Nada",
+    "type_id": 586,
+    "spell_levels": [
+      40812
+    ]
+  },
+  {
+    "id": 12859,
+    "name_fr": "Destin d'Ecaflip",
+    "name_en": "Fate of Ecaflip",
+    "name_es": "Destino de Zurcarák",
+    "type_id": 586,
+    "spell_levels": [
+      40815
+    ]
+  },
+  {
+    "id": 12860,
+    "name_fr": "Âme Féline",
+    "name_en": "Feline Soul",
+    "name_es": "Alma Felina",
+    "type_id": 2288,
+    "spell_levels": [
+      40818,
+      40819,
+      40820
+    ]
+  },
+  {
+    "id": 12861,
+    "name_fr": "Félintion",
+    "name_en": "Felintion",
+    "name_es": "Feliación",
+    "type_id": 6,
+    "spell_levels": [
+      40821,
+      40822
+    ]
+  },
+  {
+    "id": 12863,
+    "name_fr": "Roue de la Fortune",
+    "name_en": "Wheel of Fortune",
+    "name_es": "Rueda de la Fortuna",
+    "type_id": 586,
+    "spell_levels": [
+      40830
+    ]
+  },
+  {
+    "id": 12864,
+    "name_fr": "Jass",
+    "name_en": "Jass",
+    "name_es": "Jass",
+    "type_id": 6,
+    "spell_levels": [
+      40831,
+      43779,
+      79229
+    ]
+  },
+  {
+    "id": 12865,
+    "name_fr": "Entrechat",
+    "name_en": "Leap",
+    "name_es": "Trenzado",
+    "type_id": 586,
+    "spell_levels": [
+      40832,
+      43780
+    ]
+  },
+  {
+    "id": 12866,
+    "name_fr": "Belote",
+    "name_en": "Belote",
+    "name_es": "Belote",
+    "type_id": 6,
+    "spell_levels": [
+      40833,
+      43776,
+      79632
+    ]
+  },
+  {
+    "id": 12867,
+    "name_fr": "Prédation",
+    "name_en": "Predation",
+    "name_es": "Predación",
+    "type_id": 586,
+    "spell_levels": [
+      40834,
+      43784
+    ]
+  },
+  {
+    "id": 12869,
+    "name_fr": "Caresse Invocatrice",
+    "name_en": "Summoning Stroke",
+    "name_es": "Caricia Invocadora",
+    "type_id": 586,
+    "spell_levels": [
+      40836
+    ]
+  },
+  {
+    "id": 12870,
+    "name_fr": "Blakjak",
+    "name_en": "Blakjak",
+    "name_es": "Blakjak",
+    "type_id": 6,
+    "spell_levels": [
+      40837,
+      79230,
+      79631
+    ]
+  },
+  {
+    "id": 12872,
+    "name_fr": "Feulement",
+    "name_en": "Yowling",
+    "name_es": "Bufido",
+    "type_id": 586,
+    "spell_levels": [
+      40839
+    ]
+  },
+  {
+    "id": 12873,
+    "name_fr": "Lapement",
+    "name_en": "Lapping Up",
+    "name_es": "Lametazo",
+    "type_id": 586,
+    "spell_levels": [
+      40840,
+      79634
+    ]
+  },
+  {
+    "id": 12874,
+    "name_fr": "Neuf Vies",
+    "name_en": "Nine Lives",
+    "name_es": "Nueve Vidas",
+    "type_id": 586,
+    "spell_levels": [
+      40841
+    ]
+  },
+  {
+    "id": 12875,
+    "name_fr": "Coussinets",
+    "name_en": "Pawpads",
+    "name_es": "Almohadillas",
+    "type_id": 6,
+    "spell_levels": [
+      40842,
+      79226
+    ]
+  },
+  {
+    "id": 12876,
+    "name_fr": "Bonne Étoile",
+    "name_en": "Lucky Star",
+    "name_es": "Buena Estrella",
+    "type_id": 586,
+    "spell_levels": [
+      40843
+    ]
+  },
+  {
+    "id": 12877,
+    "name_fr": "Redistribution",
+    "name_en": "Redistribution",
+    "name_es": "Redistribución",
+    "type_id": 586,
+    "spell_levels": [
+      40844,
+      79236
+    ]
+  },
+  {
+    "id": 12878,
+    "name_fr": "Fanfaronnade",
+    "name_en": "Bravado",
+    "name_es": "Fantasmada",
+    "type_id": 586,
+    "spell_levels": [
+      40845,
+      79636
+    ]
+  },
+  {
+    "id": 12879,
+    "name_fr": "Mésaventure",
+    "name_en": "Misadventure",
+    "name_es": "Desventura",
+    "type_id": 586,
+    "spell_levels": [
+      40846
+    ]
+  },
+  {
+    "id": 12880,
+    "name_fr": "Infortune",
+    "name_en": "Misfortune",
+    "name_es": "Desdicha",
+    "type_id": 586,
+    "spell_levels": [
+      40847,
+      79637
+    ]
+  },
+  {
+    "id": 12881,
+    "name_fr": "Tromperie",
+    "name_en": "Trickery",
+    "name_es": "Truco",
+    "type_id": 6,
+    "spell_levels": [
+      40848,
+      81591,
+      81592
+    ]
+  },
+  {
+    "id": 12882,
+    "name_fr": "Toupet",
+    "name_en": "Nerve",
+    "name_es": "Osadía",
+    "type_id": 586,
+    "spell_levels": [
+      40849
+    ]
+  },
+  {
+    "id": 12883,
+    "name_fr": "Kraps",
+    "name_en": "Kraps",
+    "name_es": "Kraps",
+    "type_id": 586,
+    "spell_levels": [
+      40850
+    ]
+  },
+  {
+    "id": 12884,
+    "name_fr": "Mistigri",
+    "name_en": "Pussycat",
+    "name_es": "Mistigri",
+    "type_id": 2289,
+    "spell_levels": [
+      40851
+    ]
+  },
+  {
+    "id": 12888,
+    "name_fr": "Tromperie",
+    "name_en": "Trickery",
+    "name_es": "Truco",
+    "type_id": 3929,
+    "spell_levels": [
+      40861
+    ]
+  },
+  {
+    "id": 12899,
+    "name_fr": "Perception",
+    "name_en": "Perception",
+    "name_es": "Percepción",
+    "type_id": 3929,
+    "spell_levels": [
+      40875,
+      79844,
+      79845
+    ]
+  },
+  {
+    "id": 12901,
+    "name_fr": "Bonne Étoile",
+    "name_en": "Lucky Star",
+    "name_es": "Buena Estrella",
+    "type_id": 3929,
+    "spell_levels": [
+      40882
+    ]
+  },
+  {
+    "id": 12902,
+    "name_fr": "Truanderie",
+    "name_en": "Gangsterdom",
+    "name_es": "Truhanería",
+    "type_id": 4,
+    "spell_levels": [
+      40883,
+      40884,
+      40885
+    ]
+  },
+  {
+    "id": 12903,
+    "name_fr": "Concentration de Chakra",
+    "name_en": "Chakra Concentration",
+    "name_es": "Concentración de Chakra",
+    "type_id": 4,
+    "spell_levels": [
+      40886,
+      40887
+    ]
+  },
+  {
+    "id": 12904,
+    "name_fr": "Sournoiserie",
+    "name_en": "Deviousness",
+    "name_es": "Engaño",
+    "type_id": 4,
+    "spell_levels": [
+      40889,
+      40890,
+      40891
+    ]
+  },
+  {
+    "id": 12905,
+    "name_fr": "Fourberie",
+    "name_en": "Furrow",
+    "name_es": "Estratagema",
+    "type_id": 4,
+    "spell_levels": [
+      40892,
+      76682,
+      76683
+    ]
+  },
+  {
+    "id": 12906,
+    "name_fr": "Piège Sournois",
+    "name_en": "Tricky Trap",
+    "name_es": "Trampas solapadas",
+    "type_id": 4,
+    "spell_levels": [
+      40895,
+      40896,
+      40897
+    ]
+  },
+  {
+    "id": 12907,
+    "name_fr": "Arsenic",
+    "name_en": "Arsenic",
+    "name_es": "Arsénico",
+    "type_id": 4,
+    "spell_levels": [
+      40898,
+      40899,
+      40900
+    ]
+  },
+  {
+    "id": 16649,
+    "name_fr": "Stratus",
+    "name_en": "Stratus",
+    "name_es": "Estrato",
+    "type_id": 1001,
+    "spell_levels": [
+      48402,
+      48973
+    ]
+  },
+  {
+    "id": 16650,
+    "name_fr": "Boulet magique",
+    "name_en": "Magic Cannonball",
+    "name_es": "Bala mágica",
+    "type_id": 3458,
+    "spell_levels": [
+      48403
+    ]
+  },
+  {
+    "id": 16652,
+    "name_fr": "Rinku",
+    "name_en": "Rinku",
+    "name_es": "Rinku",
+    "type_id": 1002,
+    "spell_levels": [
+      48404
+    ]
+  },
+  {
+    "id": 16653,
+    "name_fr": "Rinku",
+    "name_en": "Rinku",
+    "name_es": "Rinku",
+    "type_id": 1002,
+    "spell_levels": [
+      48405
+    ]
+  },
+  {
+    "id": 16654,
+    "name_fr": "Armure des vents",
+    "name_en": "Wind Armour",
+    "name_es": "Armadura de Viento",
+    "type_id": 1002,
+    "spell_levels": [
+      48406
+    ]
+  },
+  {
+    "id": 16655,
+    "name_fr": "Fusée incendiaire",
+    "name_en": "Incendiary Rocket",
+    "name_es": "Cohete Incendiario",
+    "type_id": 3455,
+    "spell_levels": [
+      48407,
+      48408
+    ]
+  },
+  {
+    "id": 16656,
+    "name_fr": "Fusée incendiaire",
+    "name_en": "Incendiary Rocket",
+    "name_es": "Cohete Incendiario",
+    "type_id": 3455,
+    "spell_levels": [
+      48409,
+      48410
+    ]
+  },
+  {
+    "id": 16657,
+    "name_fr": "Fusée incendiaire",
+    "name_en": "Incendiary Rocket",
+    "name_es": "Cohete Incendiario",
+    "type_id": 3455,
+    "spell_levels": [
+      48411,
+      48415
+    ]
+  },
+  {
+    "id": 16658,
+    "name_fr": "Fusée incendiaire",
+    "name_en": "Incendiary Rocket",
+    "name_es": "Cohete Incendiario",
+    "type_id": 3455,
+    "spell_levels": [
+      48412
+    ]
+  },
+  {
+    "id": 16659,
+    "name_fr": "Kozaru No Kotsu",
+    "name_en": "Kozaru No Kotsu",
+    "name_es": "Kozaru No Kotsu",
+    "type_id": 1002,
+    "spell_levels": [
+      48413
+    ]
+  },
+  {
+    "id": 16660,
+    "name_fr": "Kozaru No Kotsu",
+    "name_en": "Kozaru No Kotsu",
+    "name_es": "Kozaru No Kotsu",
+    "type_id": 1002,
+    "spell_levels": [
+      48414
+    ]
+  },
+  {
+    "id": 16661,
+    "name_fr": "Échec critique",
+    "name_en": "Critical Failure",
+    "name_es": "Fallo Crítico",
+    "type_id": 3455,
+    "spell_levels": [
+      48416
+    ]
+  },
+  {
+    "id": 16662,
+    "name_fr": "Kozaru No Kotsu",
+    "name_en": "Kozaru No Kotsu",
+    "name_es": "Kozaru No Kotsu",
+    "type_id": 1002,
+    "spell_levels": [
+      48417
+    ]
+  },
+  {
+    "id": 16663,
+    "name_fr": "Kozaru No Kotsu",
+    "name_en": "Kozaru No Kotsu",
+    "name_es": "Kozaru No Kotsu",
+    "type_id": 1002,
+    "spell_levels": [
+      48418
+    ]
+  },
+  {
+    "id": 16664,
+    "name_fr": "Échec critique",
+    "name_en": "Critical Failure",
+    "name_es": "Fallo Crítico",
+    "type_id": 3455,
+    "spell_levels": [
+      48419
+    ]
+  },
+  {
+    "id": 16665,
+    "name_fr": "Décollage raté",
+    "name_en": "Failed Takeoff",
+    "name_es": "Despegue Fallido",
+    "type_id": 3455,
+    "spell_levels": [
+      48420
+    ]
+  },
+  {
+    "id": 16666,
+    "name_fr": "Obus aveuglant",
+    "name_en": "Blinding Mortar Shell",
+    "name_es": "Obús Cegador",
+    "type_id": 3456,
+    "spell_levels": [
+      48421,
+      48422
+    ]
+  },
+  {
+    "id": 16667,
+    "name_fr": "Dépression Atmosphérique",
+    "name_en": "Atmospheric Low",
+    "name_es": "Depresión Atmosférica",
+    "type_id": 1002,
+    "spell_levels": [
+      48423
+    ]
+  },
+  {
+    "id": 16668,
+    "name_fr": "Obus aveuglant",
+    "name_en": "Blinding Mortar Shell",
+    "name_es": "Obús Cegador",
+    "type_id": 3456,
+    "spell_levels": [
+      48424,
+      48425
+    ]
+  },
+  {
+    "id": 16669,
+    "name_fr": "Obus aveuglant",
+    "name_en": "Blinding Mortar Shell",
+    "name_es": "Obús Cegador",
+    "type_id": 3456,
+    "spell_levels": [
+      48426
+    ]
+  },
+  {
+    "id": 16670,
+    "name_fr": "Feu d'artifice",
+    "name_en": "Fireworks",
+    "name_es": "Fuego Artificial",
+    "type_id": 3456,
+    "spell_levels": [
+      48427
+    ]
+  },
+  {
+    "id": 16671,
+    "name_fr": "Obus gluant",
+    "name_en": "Sticky Mortar Shell",
+    "name_es": "Obús Pegajoso",
+    "type_id": 3456,
+    "spell_levels": [
+      48428
+    ]
+  },
+  {
+    "id": 16672,
+    "name_fr": "Pétard",
+    "name_en": "Banger",
+    "name_es": "Petardo",
+    "type_id": 3459,
+    "spell_levels": [
+      48429,
+      48430
+    ]
+  },
+  {
+    "id": 16673,
+    "name_fr": "Pétard",
+    "name_en": "Banger",
+    "name_es": "Petardo",
+    "type_id": 3459,
+    "spell_levels": [
+      48431,
+      48432
+    ]
+  },
+  {
+    "id": 16674,
+    "name_fr": "Pétard",
+    "name_en": "Banger",
+    "name_es": "Petardo",
+    "type_id": 3459,
+    "spell_levels": [
+      48433
+    ]
+  },
+  {
+    "id": 16675,
+    "name_fr": "Phosphore",
+    "name_en": "Phosphorus",
+    "name_es": "Fósforo",
+    "type_id": 3459,
+    "spell_levels": [
+      48434
+    ]
+  },
+  {
+    "id": 16676,
+    "name_fr": "Poudre énervante",
+    "name_en": "Annoying Powder",
+    "name_es": "Pólvora Irritante",
+    "type_id": 3459,
+    "spell_levels": [
+      48435
+    ]
+  },
+  {
+    "id": 16677,
+    "name_fr": "Source des vents",
+    "name_en": "Wind Source",
+    "name_es": "Fuente de los Vientos",
+    "type_id": 999,
+    "spell_levels": [
+      48436
+    ]
+  },
+  {
+    "id": 16678,
+    "name_fr": "Source des vents",
+    "name_en": "Wind Source",
+    "name_es": "Fuente de los Vientos",
+    "type_id": 999,
+    "spell_levels": [
+      48437
+    ]
+  },
+  {
+    "id": 16679,
+    "name_fr": "Source des vents",
+    "name_en": "Wind Source",
+    "name_es": "Fuente de los Vientos",
+    "type_id": 999,
+    "spell_levels": [
+      48438
+    ]
+  },
+  {
+    "id": 16682,
+    "name_fr": "Jufang",
+    "name_en": "Jufang",
+    "name_es": "Jufang",
+    "type_id": 999,
+    "spell_levels": [
+      48441
+    ]
+  },
+  {
+    "id": 16683,
+    "name_fr": "Jufang",
+    "name_en": "Jufang",
+    "name_es": "Jufang",
+    "type_id": 999,
+    "spell_levels": [
+      48442
+    ]
+  },
+  {
+    "id": 16684,
+    "name_fr": "Da Bàng",
+    "name_en": "Da Bàng",
+    "name_es": "Da Bàng",
+    "type_id": 999,
+    "spell_levels": [
+      48443
+    ]
+  },
+  {
+    "id": 16685,
+    "name_fr": "Ang Eurfiste",
+    "name_en": "Ang Errfiste",
+    "name_es": "Ang Erfist",
+    "type_id": 999,
+    "spell_levels": [
+      48444
+    ]
+  },
+  {
+    "id": 16686,
+    "name_fr": "Vent contraire",
+    "name_en": "Headwind",
+    "name_es": "Aire en Contra",
+    "type_id": 1004,
+    "spell_levels": [
+      48445
+    ]
+  },
+  {
+    "id": 16687,
+    "name_fr": "Vent contraire",
+    "name_en": "Headwind",
+    "name_es": "Aire en Contra",
+    "type_id": 1004,
+    "spell_levels": [
+      48446
+    ]
+  },
+  {
+    "id": 16688,
+    "name_fr": "Vent contraire",
+    "name_en": "Headwind",
+    "name_es": "Aire en Contra",
+    "type_id": 1004,
+    "spell_levels": [
+      48447
+    ]
+  },
+  {
+    "id": 16689,
+    "name_fr": "Henshin No Numa",
+    "name_en": "Henshin No Numa",
+    "name_es": "Henshin No Numa",
+    "type_id": 1008,
+    "spell_levels": [
+      48448
+    ]
+  },
+  {
+    "id": 16690,
+    "name_fr": "Henshinobi",
+    "name_en": "Henshinobi",
+    "name_es": "Henshinobi",
+    "type_id": 1008,
+    "spell_levels": [
+      48449
+    ]
+  },
+  {
+    "id": 16691,
+    "name_fr": "Fujin Tsuinburedo",
+    "name_en": "Fujin Tsuinburedo",
+    "name_es": "Fujin Tsuinburedo",
+    "type_id": 1004,
+    "spell_levels": [
+      48451
+    ]
+  },
+  {
+    "id": 16692,
+    "name_fr": "Tsunamishi",
+    "name_en": "Tsunamishi",
+    "name_es": "Tsunamishi",
+    "type_id": 1009,
+    "spell_levels": [
+      48452
+    ]
+  },
+  {
+    "id": 16693,
+    "name_fr": "Moussang",
+    "name_en": "Monsooang",
+    "name_es": "Monzang",
+    "type_id": 1004,
+    "spell_levels": [
+      48453
+    ]
+  },
+  {
+    "id": 16694,
+    "name_fr": "Élévation du Jardin de Pierres",
+    "name_en": "Rock Garden Elevation",
+    "name_es": "Elevación del Jardín de las Piedras",
+    "type_id": 1009,
+    "spell_levels": [
+      48454,
+      48455,
+      48456
+    ]
+  },
+  {
+    "id": 16695,
+    "name_fr": "Ishi Nuken",
+    "name_en": "Ishi Nuken",
+    "name_es": "Ishi Nuken",
+    "type_id": 1009,
+    "spell_levels": [
+      48457
+    ]
+  },
+  {
+    "id": 16696,
+    "name_fr": "Pierre Taillée",
+    "name_en": "Cut Stone",
+    "name_es": "Piedra tallada",
+    "type_id": 1010,
+    "spell_levels": [
+      48458,
+      48459
+    ]
+  },
+  {
+    "id": 16697,
+    "name_fr": "Tambourrin",
+    "name_en": "Clodrum",
+    "name_es": "Tamburrada",
+    "type_id": 1011,
+    "spell_levels": [
+      48460
+    ]
+  },
+  {
+    "id": 16698,
+    "name_fr": "Percusseins",
+    "name_en": "Thwackjubblies",
+    "name_es": "Senofonía",
+    "type_id": 1011,
+    "spell_levels": [
+      48461
+    ]
+  },
+  {
+    "id": 16699,
+    "name_fr": "Valseuses",
+    "name_en": "Cobblers",
+    "name_es": "Keselospisa",
+    "type_id": 1012,
+    "spell_levels": [
+      48462
+    ]
+  },
+  {
+    "id": 16700,
+    "name_fr": "Transpompoko",
+    "name_en": "Transpompoko",
+    "name_es": "Transpompoko",
+    "type_id": 1012,
+    "spell_levels": [
+      48463,
+      48464,
+      66400,
+      66401
+    ]
+  },
+  {
+    "id": 16701,
+    "name_fr": "Altocumulus",
+    "name_en": "Altocumulus",
+    "name_es": "Altocúmulo",
+    "type_id": 1003,
+    "spell_levels": [
+      48466
+    ]
+  },
+  {
+    "id": 21143,
+    "name_fr": "Relique du dieu mort",
+    "name_en": "Relic of the Dead God",
+    "name_es": "Reliquia del Dios Muerto",
+    "type_id": 1737,
+    "spell_levels": [
+      55263
+    ]
+  },
+  {
+    "id": 21155,
+    "name_fr": "Fureur bontarienne",
+    "name_en": "Bontarian Fury",
+    "name_es": "Furor Bontariano",
+    "type_id": 1742,
+    "spell_levels": [
+      55287
+    ]
+  },
+  {
+    "id": 21156,
+    "name_fr": "Fureur bontarienne",
+    "name_en": "Bontarian Fury",
+    "name_es": "Furor Bontariano",
+    "type_id": 1748,
+    "spell_levels": [
+      55288,
+      55289
+    ]
+  },
+  {
+    "id": 21157,
+    "name_fr": "Fureur bontarienne",
+    "name_en": "Bontarian Fury",
+    "name_es": "Furor Bontariano",
+    "type_id": 1748,
+    "spell_levels": [
+      55290
+    ]
+  },
+  {
+    "id": 21158,
+    "name_fr": "Fureur bontarienne",
+    "name_en": "Bontarian Fury",
+    "name_es": "Furor Bontariano",
+    "type_id": 1741,
+    "spell_levels": [
+      55291
+    ]
+  },
+  {
+    "id": 21159,
+    "name_fr": "Fureur bontarienne",
+    "name_en": "Bontarian Fury",
+    "name_es": "Furor Bontariano",
+    "type_id": 1741,
+    "spell_levels": [
+      55292,
+      55293,
+      55294,
+      55295
+    ]
+  },
+  {
+    "id": 21160,
+    "name_fr": "Frappe terrestre bontarienne",
+    "name_en": "Bontarian Earthly Blow",
+    "name_es": "Ataque Terrestre Bontariano",
+    "type_id": 1742,
+    "spell_levels": [
+      55296
+    ]
+  },
+  {
+    "id": 21161,
+    "name_fr": "Frappe aqueuse bontarienne",
+    "name_en": "Bontarian Watery Blow",
+    "name_es": "Ataque Acuoso Bontariano",
+    "type_id": 1742,
+    "spell_levels": [
+      55297
+    ]
+  },
+  {
+    "id": 21162,
+    "name_fr": "Targe",
+    "name_en": "Targe",
+    "name_es": "Tarja",
+    "type_id": 1742,
+    "spell_levels": [
+      55298
+    ]
+  },
+  {
+    "id": 21163,
+    "name_fr": "Coup d'épée",
+    "name_en": "Sword Blow",
+    "name_es": "Espadazo",
+    "type_id": 1744,
+    "spell_levels": [
+      55299,
+      55651
+    ]
+  },
+  {
+    "id": 21164,
+    "name_fr": "Ravage",
+    "name_en": "Devastate",
+    "name_es": "Rapapolvo",
+    "type_id": 1744,
+    "spell_levels": [
+      55300,
+      55650
+    ]
+  },
+  {
+    "id": 21165,
+    "name_fr": "Gonflette",
+    "name_en": "Bulking Up",
+    "name_es": "Musculitos",
+    "type_id": 1744,
+    "spell_levels": [
+      55301
+    ]
+  },
+  {
+    "id": 21166,
+    "name_fr": "Vengeance revigorante",
+    "name_en": "Invigorating Vengeance",
+    "name_es": "Venganza Revitalizante",
+    "type_id": 1745,
+    "spell_levels": [
+      55302
+    ]
+  },
+  {
+    "id": 21167,
+    "name_fr": "Vengeance revigorante",
+    "name_en": "Invigorating Vengeance",
+    "name_es": "Venganza Revitalizante",
+    "type_id": 1749,
+    "spell_levels": [
+      55303,
+      55304
+    ]
+  },
+  {
+    "id": 21168,
+    "name_fr": "Attirance bouillonnante",
+    "name_en": "Boiling Attraction",
+    "name_es": "Atracción Efervescente",
+    "type_id": 1745,
+    "spell_levels": [
+      55305
+    ]
+  },
+  {
+    "id": 21169,
+    "name_fr": "Frappe boostée",
+    "name_en": "Boosted Blow",
+    "name_es": "Ataque Potenciado",
+    "type_id": 1745,
+    "spell_levels": [
+      55306
+    ]
+  },
+  {
+    "id": 21170,
+    "name_fr": "Glyphe éroffensif",
+    "name_en": "Eroffensive Glyph",
+    "name_es": "Glifo Erofensivo",
+    "type_id": 1745,
+    "spell_levels": [
+      55307,
+      55308,
+      55309,
+      55310
+    ]
+  },
+  {
+    "id": 21171,
+    "name_fr": "Épérosif",
+    "name_en": "Corrosword",
+    "name_es": "Espada Erosiva",
+    "type_id": 1746,
+    "spell_levels": [
+      55311
+    ]
+  },
+  {
+    "id": 21172,
+    "name_fr": "Craterre",
+    "name_en": "Cratearth",
+    "name_es": "Cratierra",
+    "type_id": 1746,
+    "spell_levels": [
+      55312
+    ]
+  },
+  {
+    "id": 21174,
+    "name_fr": "Doublure inflexible",
+    "name_en": "Inflexible Double",
+    "name_es": "Doble Inflexible",
+    "type_id": 1746,
+    "spell_levels": [
+      55314,
+      55315,
+      55316,
+      55317
+    ]
+  },
+  {
+    "id": 21175,
+    "name_fr": "Empalement",
+    "name_en": "Impalement",
+    "name_es": "Empalamiento",
+    "type_id": 1747,
+    "spell_levels": [
+      55318
+    ]
+  },
+  {
+    "id": 21176,
+    "name_fr": "Frappe neutralisante",
+    "name_en": "Neutralising Blow",
+    "name_es": "Ataque Neutralizador",
+    "type_id": 1747,
+    "spell_levels": [
+      55319
+    ]
+  },
+  {
+    "id": 21177,
+    "name_fr": "Glyphe zélée",
+    "name_en": "Zealous Glyph",
+    "name_es": "Glifo Afanoso",
+    "type_id": 1747,
+    "spell_levels": [
+      55320,
+      55321
+    ]
+  },
+  {
+    "id": 21178,
+    "name_fr": "État Indéplaçable",
+    "name_en": "Unmovable State",
+    "name_es": "Estado Indesplazable",
+    "type_id": 2879,
+    "spell_levels": [
+      55322
+    ]
+  },
+  {
+    "id": 21182,
+    "name_fr": "Coulisse temporelle",
+    "name_en": "Temporal Backdrop",
+    "name_es": "Bastidor Temporal",
+    "type_id": 1733,
+    "spell_levels": [
+      55340
+    ]
+  },
+  {
+    "id": 21183,
+    "name_fr": "Coulisse temporelle",
+    "name_en": "Temporal Backdrop",
+    "name_es": "Bastidor Temporal",
+    "type_id": 1733,
+    "spell_levels": [
+      55341,
+      55342
+    ]
+  },
+  {
+    "id": 21184,
+    "name_fr": "Limbes paradoxales",
+    "name_en": "Paradoxical Limbo",
+    "name_es": "Limbo Paradójico",
+    "type_id": 1733,
+    "spell_levels": [
+      55343
+    ]
+  },
+  {
+    "id": 21185,
+    "name_fr": "Dsiortosin",
+    "name_en": "Dsiortosin",
+    "name_es": "Dsiotrsóin",
+    "type_id": 1733,
+    "spell_levels": [
+      55344
+    ]
+  },
+  {
+    "id": 21186,
+    "name_fr": "Instabilité permanente",
+    "name_en": "Permanent Instability",
+    "name_es": "Inestabilidad Permanente",
+    "type_id": 1755,
+    "spell_levels": [
+      55345
+    ]
+  },
+  {
+    "id": 21191,
+    "name_fr": "Terreur Nocturne",
+    "name_en": "Night Terror",
+    "name_es": "Terror Nocturno",
+    "type_id": 1761,
+    "spell_levels": [
+      55357,
+      55359
+    ]
+  },
+  {
+    "id": 21192,
+    "name_fr": "Terreur Nocturne",
+    "name_en": "[!] Terreur Nocturne",
+    "name_es": "[!] Terreur Nocturne",
+    "type_id": 1761,
+    "spell_levels": [
+      55358
+    ]
+  },
+  {
+    "id": 21193,
+    "name_fr": "Terreur Nocturne",
+    "name_en": "[!] Terreur Nocturne",
+    "name_es": "[!] Terreur Nocturne",
+    "type_id": 1761,
+    "spell_levels": [
+      55360
+    ]
+  },
+  {
+    "id": 21194,
+    "name_fr": "Élaboration",
+    "name_en": "Elaboration",
+    "name_es": "Elaboración",
+    "type_id": 1761,
+    "spell_levels": [
+      55361
+    ]
+  },
+  {
+    "id": 21195,
+    "name_fr": "Mouvement Lugubre",
+    "name_en": "Lugubrious Movement",
+    "name_es": "Movimiento Lúgubre",
+    "type_id": 1761,
+    "spell_levels": [
+      55362
+    ]
+  },
+  {
+    "id": 21196,
+    "name_fr": "Tempête de Griffes",
+    "name_en": "Claw Storm",
+    "name_es": "Tormenta de Garras",
+    "type_id": 1761,
+    "spell_levels": [
+      55363
+    ]
+  },
+  {
+    "id": 21197,
+    "name_fr": "Radioactivité instable",
+    "name_en": "Unstable Radioactivity",
+    "name_es": "Radioactividad Inestable",
+    "type_id": 1767,
+    "spell_levels": [
+      55364
+    ]
+  },
+  {
+    "id": 21198,
+    "name_fr": "Raclage altérable",
+    "name_en": "Adjustable Scratch",
+    "name_es": "Frote Alterable",
+    "type_id": 1767,
+    "spell_levels": [
+      55365
+    ]
+  },
+  {
+    "id": 21199,
+    "name_fr": "Radar inconstant",
+    "name_en": "Unreliable Radar",
+    "name_es": "Radar Inconstante",
+    "type_id": 1767,
+    "spell_levels": [
+      55367
+    ]
+  },
+  {
+    "id": 21200,
+    "name_fr": "Radar inconstant",
+    "name_en": "[!] Radar inconstant",
+    "name_es": "[!] Radar inconstant",
+    "type_id": 1768,
+    "spell_levels": [
+      55368,
+      55369
+    ]
+  },
+  {
+    "id": 21201,
+    "name_fr": "Raclage altérable",
+    "name_en": "[!] Raclage altérable",
+    "name_es": "[!] Raclage altérable",
+    "type_id": 1768,
+    "spell_levels": [
+      55370,
+      55371,
+      55379,
+      55380
+    ]
+  },
+  {
+    "id": 21203,
+    "name_fr": "Radioactivité instable",
+    "name_en": "[!] Radioactivité instable",
+    "name_es": "[!] Radioactivité instable",
+    "type_id": 1768,
+    "spell_levels": [
+      55381,
+      55382
+    ]
+  },
+  {
+    "id": 21204,
+    "name_fr": "Bwerzerk",
+    "name_en": "Bwerserk",
+    "name_es": "Bwerserker",
+    "type_id": 1765,
+    "spell_levels": [
+      55383,
+      55384,
+      55385,
+      55386,
+      55387,
+      55388,
+      55389
+    ]
+  },
+  {
+    "id": 21205,
+    "name_fr": "Koudbar'",
+    "name_en": "Hand at the Tiller",
+    "name_es": "Bajoncete",
+    "type_id": 1764,
+    "spell_levels": [
+      55390,
+      55391
+    ]
+  },
+  {
+    "id": 21206,
+    "name_fr": "Koud'main",
+    "name_en": "Helping Hand",
+    "name_es": "Manita",
+    "type_id": 1764,
+    "spell_levels": [
+      55392
+    ]
+  },
+  {
+    "id": 21207,
+    "name_fr": "R'gar Bôvain",
+    "name_en": "Em'tee Stare",
+    "name_es": "Karakansá",
+    "type_id": 1764,
+    "spell_levels": [
+      55395
+    ]
+  },
+  {
+    "id": 21208,
+    "name_fr": "Somnifair",
+    "name_en": "Sleepy Timez",
+    "name_es": "Somnífiero",
+    "type_id": 1764,
+    "spell_levels": [
+      55396
+    ]
+  },
+  {
+    "id": 21209,
+    "name_fr": "Pôlifaz",
+    "name_en": "Pollifaze",
+    "name_es": "Polifásiko",
+    "type_id": 1764,
+    "spell_levels": [
+      55397
+    ]
+  },
+  {
+    "id": 21210,
+    "name_fr": "Sousoufrappe",
+    "name_en": "Moumouslap",
+    "name_es": "Rarataque",
+    "type_id": 1772,
+    "spell_levels": [
+      55398
+    ]
+  },
+  {
+    "id": 21212,
+    "name_fr": "Sousouboost",
+    "name_en": "Moumouboost",
+    "name_es": "Raraboost",
+    "type_id": 1772,
+    "spell_levels": [
+      55400
+    ]
+  },
+  {
+    "id": 21215,
+    "name_fr": "Motivation brâkmarienne",
+    "name_en": "Brakmarian Motivation",
+    "name_es": "Motivación Brakmariana",
+    "type_id": 1777,
+    "spell_levels": [
+      55403
+    ]
+  },
+  {
+    "id": 26034,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66299,
+      66300,
+      66301
+    ]
+  },
+  {
+    "id": 26035,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66302,
+      66303,
+      66304,
+      66308,
+      66309,
+      66310,
+      66311,
+      66312,
+      66313,
+      66314,
+      66315,
+      66316,
+      66317,
+      66318,
+      66319,
+      66320,
+      66321
+    ]
+  },
+  {
+    "id": 26036,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66305,
+      66306,
+      66307
+    ]
+  },
+  {
+    "id": 26037,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66322,
+      66323,
+      81654,
+      81655,
+      81656
+    ]
+  },
+  {
+    "id": 26038,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "Vortex – Wave Management",
+    "name_es": "Vórtex - Gestión de olas",
+    "type_id": 3028,
+    "spell_levels": [
+      66326,
+      66327,
+      66328
+    ]
+  },
+  {
+    "id": 26039,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66329,
+      66330,
+      66331,
+      66332,
+      66333,
+      67084
+    ]
+  },
+  {
+    "id": 26040,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66334,
+      66335
+    ]
+  },
+  {
+    "id": 26041,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66336,
+      66337,
+      66338,
+      66339
+    ]
+  },
+  {
+    "id": 26042,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66340,
+      66341,
+      66342,
+      66343,
+      74180
+    ]
+  },
+  {
+    "id": 26043,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66344,
+      66345,
+      67074
+    ]
+  },
+  {
+    "id": 26044,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66348,
+      66349,
+      66350,
+      66351,
+      66352,
+      66353,
+      66354,
+      66419,
+      66420
+    ]
+  },
+  {
+    "id": 26045,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66355,
+      66356
+    ]
+  },
+  {
+    "id": 26046,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66357,
+      66358,
+      66359
+    ]
+  },
+  {
+    "id": 26047,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66360,
+      66361,
+      66362
+    ]
+  },
+  {
+    "id": 26048,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66364,
+      66365,
+      66366
+    ]
+  },
+  {
+    "id": 26049,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66367,
+      66368,
+      66369
+    ]
+  },
+  {
+    "id": 26050,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66370,
+      66371,
+      66372
+    ]
+  },
+  {
+    "id": 26051,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66373,
+      66374,
+      66375,
+      71075
+    ]
+  },
+  {
+    "id": 26052,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66376,
+      66377,
+      67062,
+      67083
+    ]
+  },
+  {
+    "id": 26053,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66378,
+      66379,
+      66380
+    ]
+  },
+  {
+    "id": 26054,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66381,
+      66382,
+      66383,
+      67080
+    ]
+  },
+  {
+    "id": 26055,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66384,
+      66385,
+      66448,
+      66449
+    ]
+  },
+  {
+    "id": 26056,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66386,
+      66387,
+      66388,
+      66389,
+      66390
+    ]
+  },
+  {
+    "id": 26057,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66391,
+      66392,
+      70562,
+      70744
+    ]
+  },
+  {
+    "id": 26058,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3028,
+    "spell_levels": [
+      66393
+    ]
+  },
+  {
+    "id": 26059,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66399,
+      67220
+    ]
+  },
+  {
+    "id": 26060,
+    "name_fr": "Idole de Nékinéko",
+    "name_en": "Nekineko Idol",
+    "name_es": "Ídolo de Genkyatto",
+    "type_id": 4430,
+    "spell_levels": [
+      66402,
+      86992,
+      86993
+    ]
+  },
+  {
+    "id": 26061,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66403,
+      66404,
+      66405,
+      66406
+    ]
+  },
+  {
+    "id": 26062,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66407,
+      66408,
+      66409,
+      66410
+    ]
+  },
+  {
+    "id": 26063,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66411,
+      66412,
+      66413,
+      66414
+    ]
+  },
+  {
+    "id": 26064,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66415,
+      66416
+    ]
+  },
+  {
+    "id": 26065,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66421,
+      66422,
+      66423,
+      66424
+    ]
+  },
+  {
+    "id": 26066,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66425,
+      66426,
+      67232
+    ]
+  },
+  {
+    "id": 26067,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66427,
+      66428
+    ]
+  },
+  {
+    "id": 26069,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66431,
+      66432,
+      66433
+    ]
+  },
+  {
+    "id": 26070,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66434,
+      66435
+    ]
+  },
+  {
+    "id": 26071,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66436,
+      66437,
+      66438,
+      81669
+    ]
+  },
+  {
+    "id": 26072,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66441,
+      66442,
+      66443
+    ]
+  },
+  {
+    "id": 26073,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66445,
+      66446,
+      66447
+    ]
+  },
+  {
+    "id": 26074,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66450,
+      66451,
+      67048
+    ]
+  },
+  {
+    "id": 26075,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66453,
+      66454,
+      66455
+    ]
+  },
+  {
+    "id": 26076,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66456,
+      66457,
+      67219
+    ]
+  },
+  {
+    "id": 26077,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66458,
+      66459
+    ]
+  },
+  {
+    "id": 26078,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66460,
+      66461,
+      66462,
+      66463
+    ]
+  },
+  {
+    "id": 26079,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66464,
+      66465
+    ]
+  },
+  {
+    "id": 26080,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66466,
+      66467
+    ]
+  },
+  {
+    "id": 26081,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66469,
+      66470,
+      81657
+    ]
+  },
+  {
+    "id": 26082,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66471,
+      67215,
+      67216
+    ]
+  },
+  {
+    "id": 26083,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66476,
+      66477
+    ]
+  },
+  {
+    "id": 26085,
+    "name_fr": "Validation / Invalidation Challenge",
+    "name_en": "[!] Validation / Invalidation Challenge",
+    "name_es": "[!] Validation / Invalidation Challenge",
+    "type_id": 3026,
+    "spell_levels": [
+      66482,
+      66485,
+      66486,
+      66487,
+      66488
+    ]
+  },
+  {
+    "id": 31420,
+    "name_fr": "Kabombz",
+    "name_en": "Kabombz",
+    "name_es": "Kabombz",
+    "type_id": 4045,
+    "spell_levels": [
+      82899
+    ]
+  },
+  {
+    "id": 31421,
+    "name_fr": "Kabombz",
+    "name_en": "Kabombz",
+    "name_es": "Kabombz",
+    "type_id": 4045,
+    "spell_levels": [
+      82900
+    ]
+  },
+  {
+    "id": 31422,
+    "name_fr": "Kabombz",
+    "name_en": "Kabombz",
+    "name_es": "Kabombz",
+    "type_id": 4045,
+    "spell_levels": [
+      82901
+    ]
+  },
+  {
+    "id": 31423,
+    "name_fr": "Kabombz",
+    "name_en": "Kabombz",
+    "name_es": "Kabombz",
+    "type_id": 4045,
+    "spell_levels": [
+      82902
+    ]
+  },
+  {
+    "id": 31424,
+    "name_fr": "Kabombz",
+    "name_en": "Kabombz",
+    "name_es": "Kabombz",
+    "type_id": 4045,
+    "spell_levels": [
+      82903
+    ]
+  },
+  {
+    "id": 31425,
+    "name_fr": "Kabombz",
+    "name_en": "Kabombz",
+    "name_es": "Kabombz",
+    "type_id": 4045,
+    "spell_levels": [
+      82904
+    ]
+  },
+  {
+    "id": 31426,
+    "name_fr": "Résonance sempiternelle",
+    "name_en": "Eternal Resonance",
+    "name_es": "Resonancia Sempiterna",
+    "type_id": 4046,
+    "spell_levels": [
+      82906
+    ]
+  },
+  {
+    "id": 31427,
+    "name_fr": "Seuil PV Vénérable 50%",
+    "name_en": "[!] Seuil PV Vénérable 50%",
+    "name_es": "[!] Seuil PV Vénérable 50%",
+    "type_id": 3991,
+    "spell_levels": [
+      82907
+    ]
+  },
+  {
+    "id": 31428,
+    "name_fr": "Gare au Gorille",
+    "name_en": "Beware the Gorilla",
+    "name_es": "Ojo al Gorila",
+    "type_id": 3991,
+    "spell_levels": [
+      82908
+    ]
+  },
+  {
+    "id": 31429,
+    "name_fr": "Pulsation",
+    "name_en": "Beat",
+    "name_es": "Pulsación",
+    "type_id": 4046,
+    "spell_levels": [
+      82909
+    ]
+  },
+  {
+    "id": 31430,
+    "name_fr": "Thresholds Manager",
+    "name_en": "[!] Thresholds Manager",
+    "name_es": "[!] Thresholds Manager",
+    "type_id": 4049,
+    "spell_levels": [
+      82911
+    ]
+  },
+  {
+    "id": 31431,
+    "name_fr": "Faux espoirs",
+    "name_en": "False Hope",
+    "name_es": "Falsas Esperanzas",
+    "type_id": 4046,
+    "spell_levels": [
+      82912,
+      84467
+    ]
+  },
+  {
+    "id": 31432,
+    "name_fr": "Rituel Primordial",
+    "name_en": "[!] Rituel Primordial",
+    "name_es": "[!] Rituel Primordial",
+    "type_id": 4014,
+    "spell_levels": [
+      82913
+    ]
+  },
+  {
+    "id": 31433,
+    "name_fr": "Dévastation",
+    "name_en": "Devastation",
+    "name_es": "Devastación",
+    "type_id": 4046,
+    "spell_levels": [
+      82914,
+      84320,
+      84393,
+      84394,
+      84395,
+      84396,
+      84397,
+      84398
+    ]
+  },
+  {
+    "id": 31434,
+    "name_fr": "Rituel Primordial",
+    "name_en": "Primordial Ritual",
+    "name_es": "Ritual Primordial",
+    "type_id": 4014,
+    "spell_levels": [
+      82915
+    ]
+  },
+  {
+    "id": 31435,
+    "name_fr": "Rituel Primordial",
+    "name_en": "Primordial Ritual",
+    "name_es": "Ritual Primordial",
+    "type_id": 4047,
+    "spell_levels": [
+      82917
+    ]
+  },
+  {
+    "id": 31436,
+    "name_fr": "Aéropique",
+    "name_en": "Air Ace",
+    "name_es": "Golpazo Aéreo",
+    "type_id": 562,
+    "spell_levels": [
+      82918,
+      82992
+    ]
+  },
+  {
+    "id": 31438,
+    "name_fr": "Gargameha",
+    "name_en": "Gargahameha",
+    "name_es": "Gargameha",
+    "type_id": 4012,
+    "spell_levels": [
+      82920,
+      82994
+    ]
+  },
+  {
+    "id": 31440,
+    "name_fr": "Martinet",
+    "name_en": "Swift Whip",
+    "name_es": "Fuete",
+    "type_id": 562,
+    "spell_levels": [
+      82937,
+      82938,
+      82984
+    ]
+  },
+  {
+    "id": 31441,
+    "name_fr": "Gobmutation",
+    "name_en": "Gobgobmutation",
+    "name_es": "Jamamutación",
+    "type_id": 4004,
+    "spell_levels": [
+      82939
+    ]
+  },
+  {
+    "id": 31442,
+    "name_fr": "Goberration",
+    "name_en": "Gobgoberration",
+    "name_es": "Jamaberración",
+    "type_id": 4005,
+    "spell_levels": [
+      82952,
+      82953
+    ]
+  },
+  {
+    "id": 31443,
+    "name_fr": "Savoir infini",
+    "name_en": "Infinite Knowledge",
+    "name_es": "Saber Infinito",
+    "type_id": 4046,
+    "spell_levels": [
+      82968
+    ]
+  },
+  {
+    "id": 31444,
+    "name_fr": "Résonance sempiternelle",
+    "name_en": "Eternal Resonance",
+    "name_es": "Resonancia Sempiterna",
+    "type_id": 4048,
+    "spell_levels": [
+      82969
+    ]
+  },
+  {
+    "id": 31445,
+    "name_fr": "Rafale Bestiale",
+    "name_en": "Beastly Barrage",
+    "name_es": "Ráfaga Bestial",
+    "type_id": 4012,
+    "spell_levels": [
+      82970,
+      82971,
+      82972,
+      82974,
+      83119
+    ]
+  },
+  {
+    "id": 31446,
+    "name_fr": "Thresholds Manager",
+    "name_en": "[!] Thresholds Manager",
+    "name_es": "[!] Thresholds Manager",
+    "type_id": 4049,
+    "spell_levels": [
+      82976,
+      82977,
+      82979
+    ]
+  },
+  {
+    "id": 31447,
+    "name_fr": "Thresholds Manager",
+    "name_en": "[!] Thresholds Manager",
+    "name_es": "[!] Thresholds Manager",
+    "type_id": 4049,
+    "spell_levels": [
+      82978,
+      83022,
+      83023
+    ]
+  },
+  {
+    "id": 31448,
+    "name_fr": "canEndFight",
+    "name_en": "[!] canEndFight",
+    "name_es": "[!] canEndFight",
+    "type_id": 4027,
+    "spell_levels": [
+      82987,
+      82988,
+      82989,
+      82990,
+      82991
+    ]
+  },
+  {
+    "id": 31450,
+    "name_fr": "Extraction",
+    "name_en": "[!] Extraction",
+    "name_es": "[!] Extraction",
+    "type_id": 3989,
+    "spell_levels": [
+      83003
+    ]
+  },
+  {
+    "id": 31451,
+    "name_fr": "Fuir le combat",
+    "name_en": "Run From the Fight",
+    "name_es": "Huir del Combate",
+    "type_id": 3989,
+    "spell_levels": [
+      83004
+    ]
+  },
+  {
+    "id": 31453,
+    "name_fr": "Fuir",
+    "name_en": "Run Away",
+    "name_es": "Huir",
+    "type_id": 3989,
+    "spell_levels": [
+      83009
+    ]
+  },
+  {
+    "id": 31454,
+    "name_fr": "Continuer",
+    "name_en": "Continue",
+    "name_es": "Continuar",
+    "type_id": 3989,
+    "spell_levels": [
+      83010
+    ]
+  },
+  {
+    "id": 31455,
+    "name_fr": "Parasite Manager",
+    "name_en": "[!] Parasite Manager",
+    "name_es": "[!] Parasite Manager",
+    "type_id": 4031,
+    "spell_levels": [
+      83015,
+      83016
+    ]
+  },
+  {
+    "id": 31456,
+    "name_fr": "Portail Eliatrope",
+    "name_en": "Eliatrope Portal",
+    "name_es": "Portal Selatrop",
+    "type_id": 4046,
+    "spell_levels": [
+      83017,
+      84358
+    ]
+  },
+  {
+    "id": 31457,
+    "name_fr": "Replacement",
+    "name_en": "Replacement",
+    "name_es": "Recolocación",
+    "type_id": 4046,
+    "spell_levels": [
+      83018,
+      84356
+    ]
+  },
+  {
+    "id": 31458,
+    "name_fr": "Rituel Robuste",
+    "name_en": "Robust Ritual",
+    "name_es": "Ritual Robusto",
+    "type_id": 4052,
+    "spell_levels": [
+      83019
+    ]
+  },
+  {
+    "id": 31459,
+    "name_fr": "Rituel Brutal",
+    "name_en": "Brutal Ritual",
+    "name_es": "Ritual Brutal",
+    "type_id": 4052,
+    "spell_levels": [
+      83020
+    ]
+  },
+  {
+    "id": 31460,
+    "name_fr": "Rituel Véloce",
+    "name_en": "Swift Ritual",
+    "name_es": "Ritual Veloz",
+    "type_id": 4052,
+    "spell_levels": [
+      83021
+    ]
+  },
+  {
+    "id": 31461,
+    "name_fr": "Ronce Primitive",
+    "name_en": "Primitive Bramble",
+    "name_es": "Zarza Primitiva",
+    "type_id": 425,
+    "spell_levels": [
+      83024
+    ]
+  },
+  {
+    "id": 31462,
+    "name_fr": "Poison Sauvage",
+    "name_en": "Wild Poison",
+    "name_es": "Veneno Salvaje",
+    "type_id": 425,
+    "spell_levels": [
+      83025
+    ]
+  },
+  {
+    "id": 31463,
+    "name_fr": "Larme Animale",
+    "name_en": "Animal Tear",
+    "name_es": "Lágrima Animal",
+    "type_id": 425,
+    "spell_levels": [
+      83026
+    ]
+  },
+  {
+    "id": 31464,
+    "name_fr": "Herbe Sauvage",
+    "name_en": "Savage Grass",
+    "name_es": "Hierba Salvaje",
+    "type_id": 425,
+    "spell_levels": [
+      83027
+    ]
+  },
+  {
+    "id": 31465,
+    "name_fr": "Vent Primitif",
+    "name_en": "Primitive Wind",
+    "name_es": "Viento Primitivo",
+    "type_id": 425,
+    "spell_levels": [
+      83028
+    ]
+  },
+  {
+    "id": 31467,
+    "name_fr": "Staging Manager",
+    "name_en": "[!] Staging Manager",
+    "name_es": "[!] Staging Manager",
+    "type_id": 4030,
+    "spell_levels": [
+      83031,
+      83096,
+      83097,
+      83098,
+      83099,
+      83100,
+      83101,
+      83102,
+      83103,
+      83104,
+      83105,
+      83106,
+      83107,
+      83108,
+      83177,
+      83253,
+      83254,
+      83267,
+      83460,
+      83654,
+      83655
+    ]
+  },
+  {
+    "id": 31468,
+    "name_fr": "Tic, Tac",
+    "name_en": "Tick-Tick-Tick",
+    "name_es": "Tic, Tac",
+    "type_id": 4054,
+    "spell_levels": [
+      83032,
+      83033,
+      83034,
+      83035
+    ]
+  },
+  {
+    "id": 31469,
+    "name_fr": "Tic, Toc",
+    "name_en": "Tick-Tock",
+    "name_es": "Tic, Toc",
+    "type_id": 4055,
+    "spell_levels": [
+      83036,
+      83037,
+      83038,
+      83039,
+      83040
+    ]
+  },
+  {
+    "id": 31470,
+    "name_fr": "F'heure",
+    "name_en": "Press F to Rewind",
+    "name_es": "F'Méride",
+    "type_id": 4057,
+    "spell_levels": [
+      83041
+    ]
+  },
+  {
+    "id": 31471,
+    "name_fr": "Jaquemart",
+    "name_en": "Jacquemart",
+    "name_es": "Jaquemart",
+    "type_id": 4054,
+    "spell_levels": [
+      83042
+    ]
+  },
+  {
+    "id": 31472,
+    "name_fr": "Tocante",
+    "name_en": "Ticker",
+    "name_es": "Peluco",
+    "type_id": 4055,
+    "spell_levels": [
+      83043
+    ]
+  },
+  {
+    "id": 31473,
+    "name_fr": "Contretemps",
+    "name_en": "Bad Timing",
+    "name_es": "Contratiempo",
+    "type_id": 4054,
+    "spell_levels": [
+      83044
+    ]
+  },
+  {
+    "id": 31474,
+    "name_fr": "Contre-la-montre",
+    "name_en": "Against the Clock",
+    "name_es": "Contrarreloj",
+    "type_id": 4055,
+    "spell_levels": [
+      83045
+    ]
+  }
+]

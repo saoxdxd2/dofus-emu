@@ -1,0 +1,41 @@
+# The opt-in AI tier -- installed by `install-python-ai.bat`, not by `setup.exe`.
+#
+# Measured on this host (installed footprint, Python 3.14 site-packages):
+#   torch         508.8 MB   the network-health forecaster's training and checkpoint code
+#                            (networkhealth/model.py, trm_moe.py, inference/runtime.py) and the
+#                            torch-native policy implementations (ai/encoder_policy.py,
+#                            ai/tool_policy.py, combat/recursive_reasoner.py). Every one of them is
+#                            reached only through a deferred import, and the ONNX route
+#                            (`ai/onnx_policy.py` + the int8 graphs in `models/`) covers the same
+#                            encoders without torch.
+#   transformers  107.8 MB   encoder training/export (ai/train_*.py, ai/export_*.py)
+#   safetensors     0.8 MB   networkhealth checkpoint loading and model export
+#   -------
+#   total         617.4 MB   what the default install used to download for services most users
+#                            never start.
+#
+# Four more joined on 2026-11-03, with the weights they load. Sizes here are `du` over this repo's
+# embedded runtime (runtimes/python/Lib/site-packages):
+#   onnxruntime    43 MB   ai/onnx_policy.py, agent/command_onnx.py, agent/planner_nn.py -- the
+#                          int8 graphs (models/encoder30_v15/, models/command_encoder30/,
+#                          models/tool_policy.onnx, models/verifier_head.onnx)
+#   scikit-learn   29 MB   ai/lexical_policy.py, the learned command policy at the parse_command
+#                          seam (needs DOFUS_LEARNED_COMMAND_MODEL)
+#   tokenizers    7.9 MB   models/*/tokenizer.json, to feed the encoder graphs
+#   joblib        1.3 MB   loads models/lexical_policy/policy.joblib
+#   -------
+# Those four graphs and the 15.4 MB policy.joblib (47.8 MB in-zip, 45.5% of setup.exe) no longer
+# ship: all three consumers are off by default (`--policy rule`, command_shadow="off", and the
+# lexical policy behind an env var). Install this tier, then copy the weight files in from the repo
+# to run them -- the code is shipped, the weights are not.
+#
+# This tier is for training, export and the optional torch policy implementations.
+# The Sentinel itself imports without torch since 2026-11-07.
+
+joblib
+onnxruntime
+safetensors
+scikit-learn
+tokenizers
+torch
+transformers

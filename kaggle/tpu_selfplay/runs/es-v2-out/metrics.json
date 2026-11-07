@@ -1,0 +1,22 @@
+{
+ "method": "openai-es",
+ "backend": "gpu",
+ "device_count": 2,
+ "population": 128,
+ "samples": 256,
+ "generations": 120,
+ "best_fitness": 0.7891493439674377,
+ "last": {
+  "generation": 120,
+  "fitness_mean": 0.7700614929199219,
+  "fitness_max": 0.7803608179092407,
+  "best_fitness": 0.7891493439674377,
+  "theta_norm": 97.3627700805664,
+  "elapsed_s": 234.0,
+  "eval_player_win": 0.724609375,
+  "eval_enemy_win": 0.2734375,
+  "eval_draw": 0.001953125,
+  "eval_rounds": 5.275390625
+ },
+ "out": "/kaggle/working/encounter_es.pkl"
+}

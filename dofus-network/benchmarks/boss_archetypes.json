@@ -1,0 +1,63 @@
+{
+  "matchups": [
+    {
+      "boss": "melee_bruiser",
+      "policy": "solver",
+      "games": 40,
+      "wins": 21,
+      "win_rate": 0.525,
+      "mean_turns": 4.53,
+      "mean_hp_left": 0.525
+    },
+    {
+      "boss": "melee_bruiser",
+      "policy": "two_ply",
+      "games": 40,
+      "wins": 27,
+      "win_rate": 0.675,
+      "mean_turns": 4.67,
+      "mean_hp_left": 0.675
+    },
+    {
+      "boss": "melee_bruiser",
+      "policy": "value",
+      "games": 40,
+      "wins": 21,
+      "win_rate": 0.525,
+      "mean_turns": 4.53,
+      "mean_hp_left": 0.525
+    },
+    {
+      "boss": "ranged_artillery",
+      "policy": "solver",
+      "games": 40,
+      "wins": 40,
+      "win_rate": 1.0,
+      "mean_turns": 5.0,
+      "mean_hp_left": 0.553
+    },
+    {
+      "boss": "ranged_artillery",
+      "policy": "two_ply",
+      "games": 40,
+      "wins": 40,
+      "win_rate": 1.0,
+      "mean_turns": 5.0,
+      "mean_hp_left": 0.553
+    },
+    {
+      "boss": "ranged_artillery",
+      "policy": "value",
+      "games": 40,
+      "wins": 40,
+      "win_rate": 1.0,
+      "mean_turns": 5.0,
+      "mean_hp_left": 0.553
+    }
+  ],
+  "seconds": 21.4,
+  "delta_melee_bruiser": 0.15,
+  "delta_value_melee_bruiser": 0.0,
+  "delta_ranged_artillery": 0.0,
+  "delta_value_ranged_artillery": 0.0
+}

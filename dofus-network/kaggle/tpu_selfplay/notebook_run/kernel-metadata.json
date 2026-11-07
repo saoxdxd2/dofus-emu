@@ -1,0 +1,25 @@
+{
+ "id": "tajdinenizar/dofus-combat-tpu-notebook",
+ "title": "Dofus combat TPU notebook",
+ "code_file": "TPU_SELFPLAY_CELL.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": true,
+ "enable_gpu": false,
+ "enable_tpu": true,
+ "machine_shape": "TpuV5E8",
+ "docker_image": "gcr.io/kaggle-private-byod/python-tpuvm@sha256:91bcc1f50b7afae5cf2aae1001c42ea93232c8ba2500c51b623727ddb47abc0a",
+ "enable_internet": true,
+ "keywords": [
+  "tpu",
+  "self-play",
+  "jax",
+  "combat"
+ ],
+ "dataset_sources": [
+  "tajdinenizar/dofus-encounter-tables"
+ ],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": []
+}

@@ -1,0 +1,248 @@
+{
+ "matchups": 200,
+ "seeds": [
+  23,
+  37,
+  53
+ ],
+ "per_seed": [
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0925,
+   "bootstrap_ci95": [
+    0.065,
+    0.1212
+   ],
+   "improved": 42,
+   "worsened": 3,
+   "unchanged": 155,
+   "sign_test_p_two_sided": 8.65e-10,
+   "base_win_rate": 0.41,
+   "arm_win_rate": 0.5025,
+   "arm_notes": "unmodified checkpoint",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 23,
+   "arm": "ceil"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0425,
+   "bootstrap_ci95": [
+    0.0225,
+    0.065
+   ],
+   "improved": 25,
+   "worsened": 4,
+   "unchanged": 171,
+   "sign_test_p_two_sided": 0.000104,
+   "base_win_rate": 0.41,
+   "arm_win_rate": 0.4525,
+   "arm_notes": "unmodified checkpoint encounter_wsp_pass01.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 23,
+   "arm": "pass01"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0575,
+   "bootstrap_ci95": [
+    0.0338,
+    0.0825
+   ],
+   "improved": 31,
+   "worsened": 4,
+   "unchanged": 165,
+   "sign_test_p_two_sided": 3.47e-06,
+   "base_win_rate": 0.41,
+   "arm_win_rate": 0.4675,
+   "arm_notes": "unmodified checkpoint encounter_wsp_pass02.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 23,
+   "arm": "pass02"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0775,
+   "bootstrap_ci95": [
+    0.0488,
+    0.1075
+   ],
+   "improved": 38,
+   "worsened": 5,
+   "unchanged": 157,
+   "sign_test_p_two_sided": 2.5e-07,
+   "base_win_rate": 0.41,
+   "arm_win_rate": 0.4875,
+   "arm_notes": "unmodified checkpoint encounter_wsp_all.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 23,
+   "arm": "all"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0725,
+   "bootstrap_ci95": [
+    0.05,
+    0.0963
+   ],
+   "improved": 34,
+   "worsened": 1,
+   "unchanged": 165,
+   "sign_test_p_two_sided": 2.1e-09,
+   "base_win_rate": 0.4338,
+   "arm_win_rate": 0.5062,
+   "arm_notes": "unmodified checkpoint",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 37,
+   "arm": "ceil"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0213,
+   "bootstrap_ci95": [
+    0.0063,
+    0.0375
+   ],
+   "improved": 14,
+   "worsened": 4,
+   "unchanged": 182,
+   "sign_test_p_two_sided": 0.0309,
+   "base_win_rate": 0.4338,
+   "arm_win_rate": 0.455,
+   "arm_notes": "unmodified checkpoint encounter_wsp_pass01.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 37,
+   "arm": "pass01"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0312,
+   "bootstrap_ci95": [
+    0.0125,
+    0.05
+   ],
+   "improved": 18,
+   "worsened": 4,
+   "unchanged": 178,
+   "sign_test_p_two_sided": 0.00434,
+   "base_win_rate": 0.4338,
+   "arm_win_rate": 0.465,
+   "arm_notes": "unmodified checkpoint encounter_wsp_pass02.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 37,
+   "arm": "pass02"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0338,
+   "bootstrap_ci95": [
+    0.0075,
+    0.06
+   ],
+   "improved": 26,
+   "worsened": 10,
+   "unchanged": 164,
+   "sign_test_p_two_sided": 0.0113,
+   "base_win_rate": 0.4338,
+   "arm_win_rate": 0.4675,
+   "arm_notes": "unmodified checkpoint encounter_wsp_all.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 37,
+   "arm": "all"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.1075,
+   "bootstrap_ci95": [
+    0.08,
+    0.1363
+   ],
+   "improved": 46,
+   "worsened": 1,
+   "unchanged": 153,
+   "sign_test_p_two_sided": 6.82e-13,
+   "base_win_rate": 0.4012,
+   "arm_win_rate": 0.5088,
+   "arm_notes": "unmodified checkpoint",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 53,
+   "arm": "ceil"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0563,
+   "bootstrap_ci95": [
+    0.0338,
+    0.08
+   ],
+   "improved": 28,
+   "worsened": 3,
+   "unchanged": 169,
+   "sign_test_p_two_sided": 4.65e-06,
+   "base_win_rate": 0.4012,
+   "arm_win_rate": 0.4575,
+   "arm_notes": "unmodified checkpoint encounter_wsp_pass01.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 53,
+   "arm": "pass01"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0663,
+   "bootstrap_ci95": [
+    0.04,
+    0.0925
+   ],
+   "improved": 34,
+   "worsened": 5,
+   "unchanged": 161,
+   "sign_test_p_two_sided": 2.43e-06,
+   "base_win_rate": 0.4012,
+   "arm_win_rate": 0.4675,
+   "arm_notes": "unmodified checkpoint encounter_wsp_pass02.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 53,
+   "arm": "pass02"
+  },
+  {
+   "paired_matchups": 200,
+   "mean_score_delta": 0.0638,
+   "bootstrap_ci95": [
+    0.035,
+    0.0925
+   ],
+   "improved": 37,
+   "worsened": 8,
+   "unchanged": 155,
+   "sign_test_p_two_sided": 1.54e-05,
+   "base_win_rate": 0.4012,
+   "arm_win_rate": 0.465,
+   "arm_notes": "unmodified checkpoint encounter_wsp_all.pkl",
+   "verdict": "read mean_score_delta with bootstrap_ci95 and the sign test",
+   "seed": 53,
+   "arm": "all"
+  }
+ ],
+ "pooled": {
+  "ceil": {
+   "improved": 122,
+   "worsened": 5,
+   "mean_delta": 0.09083333333333332
+  },
+  "pass01": {
+   "improved": 67,
+   "worsened": 11,
+   "mean_delta": 0.04003333333333333
+  },
+  "pass02": {
+   "improved": 83,
+   "worsened": 13,
+   "mean_delta": 0.051666666666666666
+  },
+  "all": {
+   "improved": 101,
+   "worsened": 23,
+   "mean_delta": 0.05836666666666666
+  }
+ }
+}
