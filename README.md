@@ -1068,26 +1068,21 @@ python -m advisor selftest
 |---|---|
 | `dofus-network/docs/CURRENT.md` | **the running-system map** — services/ports, the 7-stage loop, think-token pacing, model inventory, combat pipeline, the 28<!--f:tools--> tools |
 | `dofus-network/docs/KNOWN_GAPS.md` | **honest limits, G1–G69** — keep-alive fixed live (G1), equip shipped and its tutorial wall explained (G2/G62), refusal text now read (G64), no vision (G4), forecaster dark (G5), live fight proven (G7), tests restored (G8) |
-| `dofus-network/docs/AI_ARCHITECTURE.md` | the canonical map of the learned agent: encoder, planner, verifier, knowledge — shipped vs target |
+| `dofus-network/docs/AI_ARCHITECTURE.md` | the map of the learned agent: what a default run loads, the opt-in lanes, and the frozen research |
 | `dofus-network/docs/BASELINE.md` | the recorded live baseline (criterion 5 of Full Auto), measured before changes |
 | `dofus-network/docs/BRAIN_DAEMON.md` | one Python process for all instances: `/brain/*` API, threads, locks, host integration |
-| `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target entity-pointer brain design (not shipped) |
-| `dofus-network/docs/LEARNED_FACTS.md` | what belongs in a constant and what must be learned — the rulebook behind the menu/surface-label conversion |
+| `dofus-network/docs/LEARNING.md` | **what the system learns from** — outcomes → posteriors, failures → labels, facts vs constants, latent reasoning and online updates (four documents merged 2026-11-07) |
 | `dofus-network/docs/OBJECTIVE_LEDGER.md` | confirmation at the level of the objective: hypotheses, sweeps, stale premises |
 | `dofus-network/docs/TRAINING_PLAN.md` | one shared learned brain (≤30M total / ≤10M active), harness as gym — design direction |
 | `dofus-network/docs/WIRING_AUDIT.md` | what the running loop actually uses, checked at construction sites (2026-11-06) |
 | `docs/archive/dofus-network/PLAN.md` | the older living plan — status superseded by `CURRENT.md` / `AI_ARCHITECTURE.md` / `resume.md`; moved to the archive 2026-11-07 |
 | `dofus-network/docs/PROJECT_LOG.md` | every decision (D1–D24) with the falsifier |
-| `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, why no token CoT |
+| `dofus-network/docs/PLANNING.md` | **how the agent is meant to think** — planner tiers and RAM budget, then the strategist plan (two brains, many heads) (two documents merged 2026-11-07) |
 | `dofus-network/docs/SECOND_AGENT.md` | the verifier: design and how it was meant to be tested (test gate removed — see KNOWN_GAPS G8) |
-| `docs/archive/dofus-network/AGENT2_DESIGN.md` | earlier second-agent design (superseded by AGENT3_PLAN); moved to the archive 2026-11-07 |
-| `dofus-network/docs/AGENT3_PLAN.md` | the current second-agent plan (design, not shipped) |
-| `dofus-network/docs/FAILURE_TO_SUPERVISION.md` | how kicks/refusals/regressions become labels, data and tests |
+| `docs/archive/dofus-network/AGENT2_DESIGN.md` | earlier second-agent design (superseded by `PLANNING.md`); moved to the archive 2026-11-07 |
 | `dofus-network/docs/PROTOCOL_NOTES.md` | captured Dofus messages and field layouts |
 | `dofus-network/docs/PIPELINE.md` | data pipeline end to end |
 | `dofus-network/docs/CAPABILITY_REGISTRY.md` | the tools and their contracts as data (live count is 28) |
-| `dofus-network/docs/EXPERIENCE_LEARNING.md` | experience/replay design |
-| `dofus-network/docs/LATENT_AND_ONLINE_LEARNING.md` | latent bus and online updates |
 | `dofus-network/docs/ARCH_REASSESSMENT.md` | the architectural argument (reasoning; status column superseded) |
 | `dofus-network/docs/README.md` | the docs map with reading order by question |
 

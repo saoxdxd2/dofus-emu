@@ -1892,7 +1892,7 @@ Other measured facts:
 | **Decision** | model | what next, which tool, which dialog reply, whether the world moved | yes — that is the project |
 
 The model may only **rank legal candidates**. A rejected proposal is a refusal, and
-refusals are supervision (`FAILURE_TO_SUPERVISION.md`), not noise.
+refusals are supervision (`LEARNING.md`), not noise.
 
 ### 9.2 The agent loop (7 stages)
 
@@ -2769,7 +2769,7 @@ asset cache 103.6 MiB with the ~99% hit rate measured on the 2026-10-27 run.
 ## 13. Open gaps (G1–G102<!--f:gaps_max-->)
 
 This is the project's own gap register, condensed. The full evidence is in
-`dofus-network/docs/KNOWN_GAPS.md` (8,129<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
+`dofus-network/docs/KNOWN_GAPS.md` (8,136<!--f:known_gaps_lines--> lines / ~299 KB). Read the numbered entry before
 touching the area.
 
 | # | gap | status |
@@ -5609,20 +5609,20 @@ four defects, and one new rule.
 | `dofus-network/docs/BRAIN_DAEMON.md` | one-process daemon: `/brain/*` API, per-instance threads, locks, host integration, remaining RSS/WebView2 work | **current** (2026-10-27) |
 | `dofus-network/docs/ENTITY_POINTER_ARCHITECTURE.md` | target 80M/40M/30M entity-pointer design, pointer action space, sub-goal stack, Kaggle training and gates | **design** (2026-10-27); blocked on live data, not on design |
 | `dofus-network/docs/AI_ARCHITECTURE.md` | canonical AI map: shipped/shadow/target, component inventory, gates, measured/rejected, build order | **2026-10-28** — still says the first live fight is unproven and 1,024 checks; §2/§12/§13 here supersede both |
-| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G102<!--f:gaps_max-->**) | **current** (2026-10-31), 8,129<!--f:known_gaps_lines--> lines |
+| `dofus-network/docs/KNOWN_GAPS.md` | open defects with evidence (**G1–G102<!--f:gaps_max-->**) | **current** (2026-10-31), 8,136<!--f:known_gaps_lines--> lines |
 | `dofus-network/docs/BASELINE.md` | live baseline before the 2026-10-26 fixes | **historical before-picture** |
 | `dofus-network/docs/TRAINING_PLAN.md` | training programme, budget, phases, gates | **current** (2026-10-30: carries the pre-registered promotion bar and both negative results) |
 | `dofus-network/docs/PLAN.md` | older living status/ordered work list | partly stale; status superseded by CURRENT/AI_ARCHITECTURE |
 | `dofus-network/docs/PROJECT_LOG.md` | decisions D1–D24 with falsifiers | current reasoning, not status |
 | `dofus-network/docs/ARCH_REASSESSMENT.md` | architectural argument | reasoning; status columns superseded |
-| `dofus-network/docs/AGENT3_PLAN.md` | three-agent/dialog/knowledge design | design, not shipped |
+| `dofus-network/docs/PLANNING.md` | three-agent/dialog/knowledge design | design, not shipped |
 | `dofus-network/docs/AGENT2_DESIGN.md`, `SECOND_AGENT.md` | earlier second-agent designs | historical |
-| `dofus-network/docs/FAILURE_TO_SUPERVISION.md` | how failures become labels/tests | current |
+| `dofus-network/docs/LEARNING.md` | how failures become labels/tests | current |
 | `dofus-network/docs/PROTOCOL_NOTES.md` | captured wire formats | current, grows with captures |
 | `dofus-network/docs/PIPELINE.md` | data path corpus→train→serve→log | current, widths superseded by CURRENT |
-| `dofus-network/docs/PLANNER_DESIGN.md` | tier architecture, RAM budget, no token CoT | its `hdv.buy` example predates the 25-tool vocabulary |
-| `dofus-network/docs/EXPERIENCE_LEARNING.md` | outcomes → posteriors without a reward model | current |
-| `dofus-network/docs/LATENT_AND_ONLINE_LEARNING.md` | latent bus/online updates judgement | current decision, not shipped |
+| `dofus-network/docs/PLANNING.md` | tier architecture, RAM budget, no token CoT | its `hdv.buy` example predates the 25-tool vocabulary |
+| `dofus-network/docs/LEARNING.md` | outcomes → posteriors without a reward model | current |
+| `dofus-network/docs/LEARNING.md` | latent bus/online updates judgement | current decision, not shipped |
 | `dofus-network/docs/CAPABILITY_REGISTRY.md` | tools as data | **note corrected 2026-10-30 to 28<!--f:tools--> tools** (it said 25; its worked example still discusses the 16-object era by design) |
 | `rules.md` (root) | the owner's standing instruction file: capability policy, the "no moralizing disclaimers" rule, and (added 2026-10-30) the **change policy** — clean the code you touch before you add to it | **current** (2026-10-30). Its tool count was stale at 25 and now says 28 with the list; `data/capabilities.json` remains the authority and the gate asserts it |
 | `README.md` (root) | high-level overview, quick start, architecture | **corrected 2026-10-30b**: installer 224,413,696 B, bridge 8893–8899 (`bridge_port.txt` = 8896), 23 patch rules matched 23/23, 28<!--f:tools--> tools, gate 2,149<!--f:gate_checks--> / advisor 91, pill's four shapes, 64 MB log rotation, no policy/budget field in the GUI, `-config` is never passed to the relay, `networkhealth_artifacts/` is gone. Its §1–§9 prose still describes the 2026-10-27 build in places it was not touched |
@@ -5684,7 +5684,7 @@ four defects, and one new rule.
 - **MoE** — mixture of experts; deferred.
 - **Full Auto** — `steps=0`, no wall-clock, autonomous goal loop.
 - **Order mode** — one goal for a small step budget.
-- **M0–M5** — the milestone ladder in `AGENT3_PLAN.md`: observation contract, dialog,
+- **M0–M5** — the milestone ladder in `PLANNING.md`: observation contract, dialog,
   fight estimate, strategist merge, TPU self-play.
 
 ---

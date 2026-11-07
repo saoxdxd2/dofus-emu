@@ -1,16 +1,17 @@
-# AI_ARCHITECTURE — the canonical map of the learned agent (shipped vs target)
+# AI_ARCHITECTURE — the map of the learned agent (live, opt-in, frozen)
 
-Written 2026-10-27. This document is the single source of truth for **what the AI is**: which
-components exist, what each one decides, where it plugs into the code, and what evidence a
-component must produce before it may replace a rule. `TRAINING_PLAN.md` holds the training
-programme, `ARCH_REASSESSMENT.md` and `AGENT2_DESIGN.md` hold the reasoning that led here, and
-`KNOWN_GAPS.md` holds the open defects; when they disagree with this file about *structure*, this
-file wins.
+Updated 2026-11-07. This file answers **what exists and what a normal run loads**; the design
+rationale lives in `ARCH_REASSESSMENT.md`, `TRAINING_PLAN.md`, `PLANNING.md` and
+`PROJECT_LOG.md`, and open defects live in `KNOWN_GAPS.md`. Gate at this revision:
+`python -m agent.regression` → **2,149 checks / 0 failed**.
 
-Everything below is labelled **shipped**, **shadow**, or **target**. Nothing is claimed as live
-that was only measured offline. Gate at time of writing: `python -m agent.regression` →
-**922 checks / 0 failed**; mutation driver `tools/mutate_cause_gate.py` → **329 mutations**,
-command batch 19/19 caught.
+**If you are not changing the AI, read §A and stop.** §B is opt-in, §C is evidence kept for the
+record and safe to ignore.
+
+`POST /brain/start` runs `--policy planner`: one `run_brain.py` daemon on `127.0.0.1:8895`, one
+`Autopilot` thread per instance, shared models in one interpreter (`BRAIN_DAEMON.md`). The model
+may only **rank legal candidates**; a harness refusal is supervision
+(`docs/LEARNING.md`), not noise.
 
 ## 0. The division of labour (permanent)
 
@@ -21,46 +22,65 @@ command batch 19/19 caught.
 | **Knowledge** | data | quest graph, map graph, client-reported observed quests | never (it is content, not a decision) |
 | **Decision** | model | what to do next, which tool, which dialog reply, whether the world moved | yes — and it must, that is the whole project |
 
-The model may only ever **rank legal candidates**. A proposal the harness rejects is logged as a
-refusal, and refusals are supervision (`docs/FAILURE_TO_SUPERVISION.md`), not noise.
+**Tool vocabulary (updated 2026-11-07).** The legal registry is **28 tools**: the 21 the shipped
+49K policy was trained on plus seven rule-only tools (`hdv.buy`, `inv.equip`, `hdv.prices`,
+`tap.interactive`, `ui.tap`, `ui.icons`, `shop.buy`). The head keeps **21 trained logits**; the
+seven unlearned tools are rule-only until a new head is trained. The legal registry and the
+learned head are separate contracts, so adding a capability does not silently change the model's
+output width. Semantic classes (read-only, moves, lists) are declared on each capability in
+`data/capabilities.json`, and `agent/verifier.py` derives `READ_ONLY_TOOLS` / `MOVE_TOOLS` /
+`LISTING_TOOLS` from them; the gate fails if the registry and the schema seed disagree on classes
+or **parameter shapes**, if the command model's `command_onnx.json` intents/actions/tags drift
+from `agent.commands`, if a shipped sidecar names a tool the executor does not know, or if a
+directive tool has no client handler.
 
-**Process model (2026-10-27).** The host starts **one** `run_brain.py` daemon on
-`127.0.0.1:8895`; the daemon runs one `Autopilot` thread per instance and shares the
-Python interpreter and process-wide models/knowledge. The old per-instance
-`run_autopilot.py` child path remains as a fallback. See `BRAIN_DAEMON.md`.
+## A. What a default run loads
 
-**Tool vocabulary (updated 2026-11-07).** The legal registry is **28 tools**: the 21 the
-shipped 49K policy was trained on plus seven rule-only tools (`hdv.buy`, `inv.equip`,
-`hdv.prices`, `tap.interactive`, `ui.tap`, `ui.icons`, `shop.buy`). The head keeps **21
-trained logits**; the seven unlearned tools are rule-only until a new head is trained. The
-legal registry and the learned head are separate contracts, so adding a capability does not
-silently change the model's output width. Semantic classes (read-only, moves, lists) are
-declared on each capability in `data/capabilities.json`, and `agent/verifier.py` derives
-`READ_ONLY_TOOLS` / `MOVE_TOOLS` / `LISTING_TOOLS` from them; the gate fails if the registry
-and the schema seed disagree on classes or **parameter shapes**, if the command model's
-`command_onnx.json` intents/actions/tags drift from `agent.commands`, if a shipped sidecar
-names a tool the executor does not know, or if a directive tool has no client handler.
+| decides | code | artifact | load condition |
+|---|---|---|---|
+| objective choice, tool call, retries | `agent/planner.py`, `agent/planner_nn.py`, `agent/autopilot.py`, `agent/runtime.py`, `agent/executor.py` | none (rules) | always |
+| which tool, among 21 trained logits | `agent/planner_nn.py` (ONNX) | `models/tool_policy.onnx` + `tool_policy.json` (42 numbers → 21) | lazily under `--policy planner` (the daemon default) |
+| candidate ranking over the policy | `agent/foresight.py`, `agent/ensemble.py` | `models/foresight_v1`, `models/tool_stack.json` | with the policy under `--ensemble act` (default) |
+| when to defer the head to the rules | `agent/consult_gate.py` | `models/consult_gate.json` | fail-open when the artifact is present |
+| verdict on every step | `agent/verifier.py` (rules) | none | always; the verifier head is opt-in (§B) |
+| parsed user goals | `agent/commands.py`, `agent/runtime.py` (rules) | none | always; the command model is shadow-only (§B) |
+| knowledge (quests, maps, items) | `planning/kb.py` | packed arrays under `data/cache` | always |
+| combat turns | `combat/brain_service.py` (JAX PPO) | `models/encounter_selfplay.pkl` | auto-start probe; **never taken a live turn** (`KNOWN_GAPS`) |
 
-## 1. Shipped inventory (measured, this machine)
+Held-out evidence for the live pair: the tool policy scores **0.9043** on the episode-held-out
+split and the consult gate moves that to **0.9099** (3,719 rows, paired-sign p = 0.0002); the
+measurement and its random-answer control are in `agent/consult_gate.py`'s header.
 
-| # | Component | Artifact | Size | Decides | Status |
-|---|---|---|---|---|---|
-| 1 | Domain language trunk | `models/encoder30_v15` (frozen) | **24.9M** params | hidden states for command/entity text | shipped, teacher + encoder |
-| 2 | Command heads | `models/command_encoder30/heads.pt` | **0.29M** | intent (13), action, BIO slot spans | shipped, **shadow-only parser** |
-| 3 | Routed per-instance adapter | `heads_adapter*.pt` + `router.json` (cosine, thr 0.95) | 0.29M | the 16 recorded user goals | shipped, base **43/43** unchanged |
-| 4 | Deployable runtime form | `models/command_encoder30/command_encoder_int8.onnx` + `command_onnx.json` + `tokenizer.json` | **25,813,919 B** | same as 2+3, torch-free via `agent/command_onnx.py` | **opt-in only since 2026-11-03**: the graph and its wheels (onnxruntime, tokenizers) are in `requirements-ai.txt`, not in `setup.exe` (54.5 MiB, 506 entries); the configs ship so a copied-in weight resolves |
-| 5 | Shadow instrument | `agent/command_shadow.py`, `tools/command_shadow_report.py` | — | did the model and the rule agree | shipped (`--command-shadow auto`, default off) |
-| 6 | Replay instrument | `tools/command_replay.py` | — | did the parsed action's tool get executed, did the session advance | shipped: 71 groups / 5,721 steps, 46 advanced / 25 stalled |
-| 7 | Tool policy (opt-in) | `ai/train_tool_policy.py`, `--policy` | 49K MLP | which tool (21 trained logits; 28 legal tools) | shipped, opt-in, not the default path |
-| 8 | Combat actor | JAX PPO `dofus-network/models/encounter_selfplay.pkl`, `combat/brain_service.py` | ~0.2M | per-turn fight action | shipped + auto-start probe; **never taken a live turn** |
-| 9 | Live evidence runner | `tools/live_evidence.py` | — | refuses to claim anything without a client window | shipped; live bridge reachable, evidence accumulates per run |
-| 10 | Tool ensemble | `models/tool_stack.json`, `agent/ensemble.py`, `ai/train_stacker.py` | 21 KB, 23 leaves | which tool: policy + foresight + K-means context | shipped, gate-passed, active only under `--policy planner` |
+## B. Opt-in — works, but a normal run does not load it
 
-Measured held-out numbers that justify keeping these artifacts: 26 held-out base phrasings —
-**84.6% exact command vs 53.8% rule**, intent **96.2% vs 69.2%**
-(`models/command_encoder30/metrics_eval.json`). On the 7 real user goals, the routed adapter maps
-**7/7** to the expected tool and would change the planner's *goal mode* on **0/7** — the parser's
-value is inside quest mode (list → run), not in routing.
+| lane | turn it on | artifact | measured state |
+|---|---|---|---|
+| command parser (30M encoder + INT8 heads) | `--command-shadow auto` (record only) or `--policy encoder` | `models/encoder30_v15` (24.9M), `models/command_encoder30/command_encoder_int8.onnx` (25.8 MB) + `command_onnx.json` | 84.6% exact command / 96.2% intent on 26 held-out phrasings; not in `setup.exe` |
+| lexical command policy | `ai.lexical_policy.load_if_configured` | `models/lexical_policy` | shadow at the parsing seam |
+| encoder as tool policy | `--policy encoder` | same encoder + `policy.json` (16 labels) | opt-in; the planner head is the default |
+| verifier head | `--verifier-model` | `models/verifier_head.onnx` | unmeasured/circular until a human-validation contract exists (G6) |
+| objective exploration | `--explore-objectives` | none | epsilon exploration, off by default |
+| combat grid ranker | executor `ranker=grid` | `models/combat_grid` | selectable ranker; the default is the solver |
+
+## C. Frozen evidence and retired lanes — safe to ignore
+
+| lane | what is on disk | state |
+|---|---|---|
+| THX-05 entity pointer | archived 2026-11-07: `kaggle/archive/entity_pointer*` (kernels + 3,977-row corpora), `data/archive/entity_pointer_2026-11-07`, `docs/archive/dofus-network/ENTITY_POINTER_ARCHITECTURE.md` | never trained, no artifact, not wired; the dataset builder, trainer and gate were removed from the live tree |
+| cause head | `models/cause_head.*` (JSON/ONNX/prototypes), `ai/train_cause_head.py`, `ai/test_cause_head.py` | trained (0.855 on unseen phrasings) but **retired**: its 25-tool feature axis cannot read the 28-tool registry; not wired |
+| move head | `ai/train_move_head.py`, `ai/train_move_head_gated.py` | gated; publishes no artifact (last gate: median AUC 0.787, worst ECE 0.315) |
+| planner student | `ai/train_planner_student.py` | no artifact, no consumer |
+| weight-space programming | `agent/weight_space.py`, `models/weight_edits_*.json`, `models/encounter_wsp_*.pkl` | closed research; measured, but no weight arm shipped |
+| command model v1 | `models/command_encoder/`, `ai/train_command_model.py` | superseded by `command_encoder30`; nothing loads it |
+| verifier SFT recipe | `ai/build_verifier_sft.py`, `ai/train_verifier_head.py` | recipe for the opt-in head above |
+
+No path in this table runs during a live session.
+
+## 1. The design record below
+
+Sections 2–11 are the 2026-10-27 design record behind the live foresight lane (problem statement,
+chosen method, data contract, acceptance gates, rejected ideas, measured foresight results, build
+order). Read them for *why*; read §A–§C for *status*.
 
 ## 2. The problem this architecture exists to solve
 

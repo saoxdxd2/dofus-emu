@@ -1,6 +1,6 @@
 # Docs map
 
-Twenty-three documents in `dofus-network/docs/` besides this map. The benchmark/eval JSON the
+Sixteen documents in `dofus-network/docs/` besides this map. The benchmark/eval JSON the
 architecture docs cite live in `dofus-network/docs/benchmarks/`; those are data, not documentation.
 
 **"How do I run it / what's actually wired?" → `CURRENT.md`.**
@@ -12,26 +12,21 @@ architecture docs cite live in `dofus-network/docs/benchmarks/`; those are data,
 |---|---|---|
 | **`CURRENT.md`** | How to run it: services/ports, the 7-stage loop, think-token pacing, policy modes, model inventory, combat pipeline, the 28 tools | **yes — the running-system map** |
 | **`KNOWN_GAPS.md`** | What is *not* true yet, each with evidence (forecaster dark, no vision, live fight, test-gate history) | **yes — honest limits** |
-| **`AI_ARCHITECTURE.md`** | What the AI is: encoder, planner, verifier, knowledge — shipped vs target | **yes — canonical AI map (2026-10-27)** |
+| **`AI_ARCHITECTURE.md`** | What the AI is: what a default run loads (§A), the opt-in lanes (§B), and the frozen research that can be ignored (§C) | **yes — live/opt-in/frozen map (2026-11-07)** |
 | `ARCH_REASSESSMENT.md` | The architectural argument: evidence, nine sections, ordered work list | reasoning; its status column is superseded by `CURRENT.md` |
 | `BASELINE.md` | The recorded live baseline required by criterion (5) of Full Auto | yes — a measurement, not status |
 | `BRAIN_DAEMON.md` | One Python process for all instances: `/brain/*` API, per-instance threads, locks, host integration | yes — implemented 2026-10-27 |
-| `ENTITY_POINTER_ARCHITECTURE.md` | Target 80M/40M/30M entity-pointer brain, pointer actions, sub-goal stack, Kaggle training and gates | design, not shipped |
-| `PLANNER_DESIGN.md` | How planning, economy and the strategy bandit fit together | yes — its `hdv.buy` example predates the 28-tool vocabulary |
+| `PLANNING.md` | **How the agent is meant to think** — planner tiers and the RAM budget, then the strategist plan (two brains, many heads), economy and the strategy bandit. Two documents merged 2026-11-07 | design, not shipped — read `CURRENT.md` for what runs; the `hdv.buy` example predates the 28-tool vocabulary |
 | `PIPELINE.md` | The data path: corpus → training → serving → logging | yes — model widths/counts superseded by `CURRENT.md` |
 | `TRAINING_PLAN.md` | One shared learned brain (≤30M total / ≤10M active); the harness as its gym | user direction, 2026-10-27 — design, not shipped |
 | `docs/archive/dofus-network/PLAN.md` | The older living plan and its status tables — **moved out 2026-11-07** | **historical — status now lives in `CURRENT.md` and `resume.md`** |
 | `PROJECT_LOG.md` | Why each decision was made, and what would change our mind (D1–D24) | yes — reasoning, not status |
 | `PROTOCOL_NOTES.md` | Exact wire format of every action, captured from real sessions | yes — grows with each capture |
-| `EXPERIENCE_LEARNING.md` | How outcomes become posteriors without a reward model | yes |
-| `FAILURE_TO_SUPERVISION.md` | How kicks, refusals and regressions become gate labels, data and tests; GPU-only rule for evolution | yes — active 2026-10-24 |
-| `LEARNED_FACTS.md` | Which facts belong in a constant and which must be learned; the rulebook behind the menu-window and surface-label conversion | yes — written 2026-11-07 |
+| `LEARNING.md` | **What the system learns from** — outcomes → posteriors, failures → gate labels, facts vs constants, latent reasoning and online updates. Four documents merged 2026-11-07; its contents list names the originals | yes — active |
 | `OBJECTIVE_LEDGER.md` | Confirmation at the level of the objective: hypotheses, sweeps, stale premises | yes — ledger design |
-| `LATENT_AND_ONLINE_LEARNING.md` | Judgement on latent reasoning, agent-to-agent channels, online weight updates | yes — decisions, not status |
 | `CAPABILITY_REGISTRY.md` | The tools as data: names, params, descriptions | prose count predates the live 28; `data/capabilities.json` is authoritative |
 | `WIRING_AUDIT.md` | What the running loop actually uses, checked at construction sites | yes — audited 2026-11-06 |
-| `docs/archive/dofus-network/AGENT2_DESIGN.md` | An earlier second-agent design — **moved out 2026-11-07** | **superseded by `AGENT3_PLAN.md`** |
-| `AGENT3_PLAN.md` | The current second-agent plan | design, not shipped — read `CURRENT.md` for what actually runs |
+| `docs/archive/dofus-network/AGENT2_DESIGN.md` | An earlier second-agent design — **moved out 2026-11-07** | **superseded by `PLANNING.md`** |
 | `SECOND_AGENT.md` | Another second-agent write-up | design/history; `CURRENT.md` §2 is the live loop |
 
 ## Reading order by question
@@ -43,10 +38,10 @@ architecture docs cite live in `dofus-network/docs/benchmarks/`; those are data,
 - *"How does this message look on the wire?"* → `PROTOCOL_NOTES.md`
 - *"Why is it designed this way?"* → `ARCH_REASSESSMENT.md`, then `PROJECT_LOG.md`
 - *"How does the model train and serve?"* → `PIPELINE.md` → `CURRENT.md` §5
-- *"How do failures become data?"* → `FAILURE_TO_SUPERVISION.md`
-- *"Should this be a constant or a learned fact?"* → `LEARNED_FACTS.md`
+- *"How do failures become data?"* → `LEARNING.md`
+- *"Should this be a constant or a learned fact?"* → `LEARNING.md`
 - *"Why did we reject X?"* → `PROJECT_LOG.md` (decisions) and
-  `LATENT_AND_ONLINE_LEARNING.md` (judged proposals)
+  `LEARNING.md` (judged proposals)
 
 ## Rules for these files
 
@@ -90,8 +85,8 @@ they are not duplicates:
 | document | "agent" means | status |
 |---|---|---|
 | `SECOND_AGENT.md` | the **verifier** — it judges what the first agent did | live |
-| `AGENT3_PLAN.md` | the **strategist** — a second brain for planning and fight decisions | design, not shipped |
-| `docs/archive/dofus-network/AGENT2_DESIGN.md` | an earlier **actor** design, carried into `AGENT3_PLAN.md` | superseded |
+| `PLANNING.md` | the **strategist** — a second brain for planning and fight decisions | design, not shipped |
+| `docs/archive/dofus-network/AGENT2_DESIGN.md` | an earlier **actor** design, carried into `PLANNING.md` | superseded |
 
 The numbering (2, 3, second) is historical and does not describe an order. `CURRENT.md` §2 is the
 only description of the loop that actually runs.

@@ -67,7 +67,7 @@ strategist inside roughly 200 MB per instance with no cloud at runtime.
 
 | code | workstream | primary paths |
 |---|---|---|
-| A | Weights / language layer / ~200 MB | `tools/read_weights.py`, `tools/run_distill_controls.py`, `kaggle/`, `NLP/`, `dofus-network/kaggle/`, `dofus-network/docs/AGENT3_PLAN.md` |
+| A | Weights / language layer / ~200 MB | `tools/read_weights.py`, `tools/run_distill_controls.py`, `kaggle/`, `NLP/`, `dofus-network/kaggle/`, `dofus-network/docs/PLANNING.md` |
 | B | WSP / combat policy / teacher heads | `dofus-network/agent/weight_space.py`, `dofus-network/combat/`, `tools/wsp_*.py`, `tools/test_wsp_*.py`, `ARCH_REASSESSMENT.md` §XII |
 | C | Boss fights / economy / live data | `dofus-network/combat/boss_benchmark.py`, `dofus-network/combat/encounter/`, `dofus-network/advisor/market.py`, `tools/mech_input_price.py`, `tools/party_leverage.py` |
 | D | Host / installer / patch pipeline | `desktop/`, `tools/patch-engine.js`, `tools/patch-rules.json`, `tools/apply-patch-rules.py`, `tools/payload_audit.py`, `tools/shipped_deps.py`, `docs/archive/CLEANUP.md` |
@@ -265,7 +265,7 @@ on map 147062786; 3 real steps `farm.start ok noop`; **world drop mid-run, recov
 guarded guest login; replan to `quest.advance {quest_id: 3841, npc_id: 3888}`. Contract check: all 22
 directive tools have client handlers; the 6 local ones must not be sent to the bridge.
 
-Still missing: a producer that writes verdicts into the conjugate store. Docs: `EXPERIENCE_LEARNING.md`
+Still missing: a producer that writes verdicts into the conjugate store. Docs: `LEARNING.md`
 "Measured state, 2026-11-06".
 
 ### 2026-11-06 — why the quest run stopped moving (G98)
@@ -470,7 +470,7 @@ Tests: `tools/test_tutorial_dialog_reply.py` 8. Gate 2,109 checks, 0 failed.
 
 The user's read was right: several of the night's fixes were game facts asserted in Python
 (`_UI_WINDOWS = {"Bag": "equipment"}`, the French surface phrases, `type_id == 0`). The rule is now
-written down in `docs/LEARNED_FACTS.md`: a protocol marker or a search budget may be a constant, a
+written down in `docs/LEARNING.md`: a protocol marker or a search budget may be a constant, a
 fact the client publishes must be observed and stored.
 
 First one converted, end to end:

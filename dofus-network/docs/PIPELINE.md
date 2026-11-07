@@ -175,7 +175,7 @@ caching, and it is cached as a tree, not as a number.
 
 No epoch, no offline phase, no replay buffer for the fast loop. The slow loop
 still exists for the one thing experience cannot teach: language. See
-`docs/EXPERIENCE_LEARNING.md` §5 for its trigger and budget.
+`docs/LEARNING.md` §5 for its trigger and budget.
 
 ---
 

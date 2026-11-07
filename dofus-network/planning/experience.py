@@ -29,7 +29,7 @@ What this store must NOT learn
 ------------------------------
 Feasibility (a level-1 cannot fight a level-200 monster), safety limits, and the
 tool schema are hard rules. Learning those online means a catastrophic action can
-teach the wrong lesson. See ``docs/EXPERIENCE_LEARNING.md``.
+teach the wrong lesson. See ``docs/LEARNING.md``.
 """
 
 from __future__ import annotations

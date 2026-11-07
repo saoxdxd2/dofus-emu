@@ -33,7 +33,7 @@ Everything else is a default. That list is the whole of what a real run can enab
 ## What that means
 
 1. **The loop that runs is rules-only.** Planner, verifier-by-rule, controller. Everything learned is
-   optional, gated, or off -- which is a deliberate design (`PLANNER_DESIGN.md`: rules first), but it
+   optional, gated, or off -- which is a deliberate design (`PLANNING.md`: rules first), but it
    means "the AI" in a normal session is a symbolic planner with a repair table, not a model.
 2. **Two layers had no caller at all**, and both are now wired: the conjugate store (zero references
    in the loop; reachable only from `serve.py --schedule`, which nothing launches) and the objective
