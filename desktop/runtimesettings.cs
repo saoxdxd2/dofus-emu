@@ -23,6 +23,11 @@ namespace DofusFarm.Engine
         // Always-on AI: every client that launches is driven without pressing Start.
         // A manual Stop still wins until the next launch.
         public bool AutoAi = true;
+        // Off by default. When on, clients that are not in the foreground get
+        // BelowNormal + EcoQoS execution throttling; that also applies to the
+        // window the user is about to switch to, which is why it is no longer
+        // the default. The governor still evens out priority classes.
+        public bool BackgroundThrottle = false;
 
         private static readonly object _lock = new object();
         private static RuntimeSettings _current;
@@ -70,6 +75,7 @@ namespace DofusFarm.Engine
                     else if (Same(key, "telemetry")) settings.Telemetry = ParseBool(value, settings.Telemetry);
                     else if (Same(key, "fight_boards")) settings.FightBoards = ParseBool(value, settings.FightBoards);
                     else if (Same(key, "auto_ai")) settings.AutoAi = ParseBool(value, settings.AutoAi);
+                    else if (Same(key, "background_throttle")) settings.BackgroundThrottle = ParseBool(value, settings.BackgroundThrottle);
                 }
             }
             catch { }
@@ -89,6 +95,7 @@ namespace DofusFarm.Engine
                 text.AppendLine("telemetry=" + (Telemetry ? "1" : "0"));
                 text.AppendLine("fight_boards=" + (FightBoards ? "1" : "0"));
                 text.AppendLine("auto_ai=" + (AutoAi ? "1" : "0"));
+                text.AppendLine("background_throttle=" + (BackgroundThrottle ? "1" : "0"));
                 File.WriteAllText(path, text.ToString(), Encoding.UTF8);
                 lock (_lock) { _current = this; }
             }

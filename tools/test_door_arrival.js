@@ -125,5 +125,16 @@ function makeWorld(opts) {
           w.api.forMap(11, 12) === 555, JSON.stringify(w.api.list(11)));
 }
 
+// 6. Known static interior doors are available when the door store is fresh/empty.
+{
+    const w = makeWorld({ pos: { mapId: 145490435, cell: 100 } });
+    check('known door from 145490435 to 146276352 is cell 346 on fresh store',
+          w.api.forMap(145490435, 146276352) === 346,
+          JSON.stringify(w.api.list(145490435)));
+    check('known door from 146276352 to 145490435 is cell 451 on fresh store',
+          w.api.forMap(146276352, 145490435) === 451,
+          JSON.stringify(w.api.list(146276352)));
+}
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

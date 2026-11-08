@@ -338,6 +338,7 @@ namespace DofusFarm.UI
         // for every client, and one client's step count was shown on all of them.
         private readonly Dictionary<Process, string> _instanceByProc = new Dictionary<Process, string>();
         private readonly object _procLock = new object();
+        private int _brainStatusBusy;
 
         // One brain daemon for every instance. The old path spawned one Python
         // child per selected instance, each with its own interpreter, numpy,
@@ -1735,6 +1736,24 @@ namespace DofusFarm.UI
 
         private void RefreshBrainStatus()
         {
+            // Cached answer, refreshed on a pool thread. This is called from a 1000 ms
+            // Windows.Forms.Timer tick, so the HTTP probe it used to run inline blocked
+            // the host window every tick -- against a Python daemon that is CPU-bound
+            // under the GIL while it plans. Callers read the last known state now.
+            if ((DateTime.UtcNow - _brainStatusAt).TotalMilliseconds < 1500) return;
+            if (Interlocked.CompareExchange(ref _brainStatusBusy, 1, 0) != 0) return;
+            _brainStatusAt = DateTime.UtcNow;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try { FetchBrainStatus(); }
+                catch { }
+                finally { Interlocked.Exchange(ref _brainStatusBusy, 0); }
+            });
+        }
+
+        /// <summary>The blocking probe. Pool thread only -- never the UI thread.</summary>
+        private void FetchBrainStatus()
+        {
             Process process;
             lock (_brainLock) process = _brain;
             if (process == null)
@@ -1756,8 +1775,6 @@ namespace DofusFarm.UI
                     return;
                 }
             }
-            if ((DateTime.UtcNow - _brainStatusAt).TotalMilliseconds < 1500) return;
-            _brainStatusAt = DateTime.UtcNow;
             string body = BrainRequest("GET", "/brain/status", null, 1200);
             if (body == null) return;
 

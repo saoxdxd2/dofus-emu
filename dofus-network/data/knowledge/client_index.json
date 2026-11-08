@@ -1,6 +1,6 @@
 {
  "manifest": {
-  "checked_at": "2026-11-07T22:05:45",
+  "checked_at": "2026-11-07T23:54:52",
   "conflicts": {},
   "fields": {
    "map_id": {
@@ -34,12 +34,12 @@
     "total": 57
    }
   },
-  "index_sha256": "34a78457d3ec37516d6a53cad6577b0625e5af03285c3cc5cb88d6a864611c56",
+  "index_sha256": "007079aec50bc3ac6997adc4346e25f1c0e05b2cf4622d27b56792cd94978353",
   "logs": [
    {
-    "mtime": 1793860716,
+    "mtime": 1794090355,
     "name": "dofus-01.jsonl",
-    "size": 53436815
+    "size": 55331603
    },
    {
     "mtime": 1793261963,
@@ -1828,7 +1828,7 @@
    "type_id": 0
   },
   "4262:13930": {
-   "captures": 2309,
+   "captures": 2401,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1876,7 +1876,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -1906,7 +1906,7 @@
    "type_id": 4
   },
   "4262:13932": {
-   "captures": 2062,
+   "captures": 2154,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1948,7 +1948,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -1977,7 +1977,7 @@
    "type_id": 1
   },
   "4262:13934": {
-   "captures": 2029,
+   "captures": 2121,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2019,7 +2019,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2048,7 +2048,7 @@
    "type_id": 14
   },
   "4262:13936": {
-   "captures": 2029,
+   "captures": 2121,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2090,7 +2090,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2119,7 +2119,7 @@
    "type_id": 14
   },
   "4262:13938": {
-   "captures": 2029,
+   "captures": 2121,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2161,7 +2161,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2190,7 +2190,7 @@
    "type_id": 14
   },
   "4262:13940": {
-   "captures": 2671,
+   "captures": 2763,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2238,7 +2238,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2268,7 +2268,7 @@
    "type_id": 0
   },
   "4262:13942": {
-   "captures": 2003,
+   "captures": 2095,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2316,7 +2316,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2346,7 +2346,7 @@
    "type_id": 1
   },
   "4262:13944": {
-   "captures": 1988,
+   "captures": 2080,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2394,7 +2394,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2425,7 +2425,7 @@
    "type_id": 6
   },
   "4262:13946": {
-   "captures": 1981,
+   "captures": 2073,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2473,7 +2473,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2503,7 +2503,7 @@
    "type_id": 1
   },
   "4262:13948": {
-   "captures": 2505,
+   "captures": 2597,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2551,7 +2551,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2581,7 +2581,7 @@
    "type_id": 0
   },
   "4262:13950": {
-   "captures": 1760,
+   "captures": 1852,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2629,7 +2629,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2659,7 +2659,7 @@
    "type_id": 0
   },
   "4262:13952": {
-   "captures": 1717,
+   "captures": 1809,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2707,7 +2707,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2737,7 +2737,7 @@
    "type_id": 1
   },
   "4262:13954": {
-   "captures": 1618,
+   "captures": 1710,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2785,7 +2785,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2815,7 +2815,7 @@
    "type_id": 1
   },
   "4262:13956": {
-   "captures": 1615,
+   "captures": 1707,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2863,7 +2863,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2893,7 +2893,7 @@
    "type_id": 0
   },
   "4262:13958": {
-   "captures": 1784,
+   "captures": 1968,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2941,7 +2941,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1793853292.757,
+   "last_at": 1794090355.325,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",

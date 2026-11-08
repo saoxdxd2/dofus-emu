@@ -961,6 +961,12 @@ namespace DofusBuild
                     Path.Combine(desktopDir, "Hardware.cs"),
                     Path.Combine(desktopDir, "DynamicVersionResolver.cs"),
                     Path.Combine(desktopDir, "IClientBackend.cs"),
+                    // Shared with the farm set: the governor now reads its throttle
+                    // preference from RuntimeSettings, and the engine has used
+                    // LocalSecret since the loopback token was introduced. Omitting
+                    // them here failed setup.exe with CS0103, not the app build.
+                    Path.Combine(desktopDir, "LocalSecret.cs"),
+                    Path.Combine(desktopDir, "RuntimeSettings.cs"),
                     Path.Combine(desktopDir, "PriorityGovernor.cs"),
                     Path.Combine(desktopDir, "FarmEngine.cs"),
                     Path.Combine(desktopDir, "ProxySupervisor.cs"),

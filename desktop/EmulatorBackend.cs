@@ -206,6 +206,11 @@ namespace DofusFarm.Engine
             return new List<int>();
         }
 
+        public int GetActiveBrowserProcessId()
+        {
+            return 0;
+        }
+
         public void Dispose()
         {
             try { _engine.OnLog -= _logForwarder; } catch { }

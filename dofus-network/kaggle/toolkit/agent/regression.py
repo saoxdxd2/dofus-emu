@@ -13599,6 +13599,31 @@ def test_a_silent_house_map_is_left_by_the_crossings_it_knows() -> None:
           flat_plan.get("tool") == (firsts[0].get("tool") if firsts else None),
           "%s vs %s" % (flat_plan.get("tool"), [c.get("tool") for c in firsts]))
 
+    # Live 2026-11-07: Quest 4262 objective 13958 on map 145490435 has exhausted all
+    # outdoor NPCs (3920, 3934). The target (Great Jarl Ordyn 3892) is inside the house
+    # on map 146276352. The planner must step through the entrance door (cell 346), not
+    # wander away through an exterior border exit.
+    slim_with_house = _copy.deepcopy(slim)
+    slim_with_house["map"]["doors"] = [{"cell": 346, "to_map": 146276352, "via": "known"}]
+    exhausted_outdoor = QuestPlanner()
+    exhausted_outdoor._npc_asked[(4262, 13958, HERE)] = {3920, 3934}
+    door_plan = exhausted_outdoor.plan_objective(quest, 0, give, slim_with_house)
+    check("an exhausted exterior map enters the house through its door cell",
+          door_plan and door_plan[0].get("tool") == "nav.goto"
+          and door_plan[0].get("args", {}).get("map_id") == 146276352,
+          door_plan)
+
+    # Inside the house: Ordyn is visible, so the agent talks to him rather than leaving.
+    inside_obs = {"map_id": 146276352, "position": {"map_id": 146276352, "cell": 424},
+                  "map": {"map_id": 146276352, "exits": [],
+                          "npcs": [{"npc_id": 3892, "cell": 317}],
+                          "doors": [{"cell": 451, "to_map": HERE, "via": "known"}]}}
+    talk_ordyn = QuestPlanner().plan_objective(quest, 0, give, inside_obs)
+    check("inside the house the agent talks to Great Jarl Ordyn directly",
+          talk_ordyn and talk_ordyn[0].get("tool") == "quest.advance"
+          and talk_ordyn[0].get("args", {}).get("npc_id") == 3892,
+          talk_ordyn)
+
     # The silent house map: no exits, no neighbours published, target not adjacent.
     interior = {"cell": 300, "level": 12, "quests_active": {"4262": 0},
                 "position": {"map_id": 145490432},

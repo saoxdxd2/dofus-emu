@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "suite": "agent.regression",
+      "verdict": "blocked",
+      "exit": 1,
+      "seconds": 147.74,
+      "missing": "jax",
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    }
+  ],
+  "seconds": 353.95,
+  "failed": 0,
+  "blocked": 1
+}

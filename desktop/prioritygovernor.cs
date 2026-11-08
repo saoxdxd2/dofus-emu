@@ -386,32 +386,48 @@ namespace DofusFarm.Engine
                     return;
                 }
 
-                int activeBrowserPid = -1;
-                List<int> browserPids = (Backend != null) ? Backend.GetAllBrowserProcessIds() : null;
-
-                if (fgPid > 0)
+                // Scope: this host's own WebView2 processes only. The enumeration
+                // above is machine-wide, so without this filter the farm re-prioritised
+                // (and throttled) other applications' browsers.
+                HashSet<int> ownTree = null;
+                try { ownTree = Win32.GetProcessTrees(new[] { Process.GetCurrentProcess().Id }, parents); }
+                catch { ownTree = null; }
+                HashSet<int> keep = new HashSet<int>();
+                if (ownTree != null)
                 {
-                    foreach (Process p in wvProcs)
-                    {
-                        if (p.Id == (int)fgPid)
-                        {
-                            activeBrowserPid = p.Id;
-                            break;
-                        }
-                    }
+                    for (int i = 0; i < wvProcs.Length; i++)
+                        if (ownTree.Contains(wvProcs[i].Id)) keep.Add(wvProcs[i].Id);
+                }
+                List<Process> owned = new List<Process>(keep.Count);
+                for (int i = 0; i < wvProcs.Length; i++)
+                {
+                    if (keep.Contains(wvProcs[i].Id)) { owned.Add(wvProcs[i]); continue; }
+                    try { wvProcs[i].Dispose(); } catch { }
+                }
+                wvProcs = owned.ToArray();
+                if (wvProcs.Length == 0)
+                {
+                    lock (_throttleState) { _throttleState.Clear(); }
+                    lock (_priorityState) { _priorityState.Clear(); }
+                    return;
+                }
 
-                    if (activeBrowserPid <= 0 && browserPids != null && browserPids.Count > 0)
+                // Which client the user is in, asked of the backend that owns the
+                // windows. GetForegroundWindow's PID cannot answer this: every client
+                // window belongs to the host process, never to msedgewebview2.
+                int activeBrowserPid = -1;
+                if (Backend != null)
+                {
+                    try { activeBrowserPid = Backend.GetActiveBrowserProcessId(); }
+                    catch { activeBrowserPid = -1; }
+                }
+                if (activeBrowserPid <= 0 && _lastForegroundWvPid > 0)
+                {
+                    // Focus is in the host page or a dialog. Keep the client that was
+                    // last active instead of demoting one and promoting another tick.
+                    for (int i = 0; i < wvProcs.Length; i++)
                     {
-                        HashSet<int> tree = null;
-                        try { tree = Win32.GetProcessTrees(new[] { (int)fgPid }, parents); } catch { }
-                        foreach (int bPid in browserPids)
-                        {
-                            if (bPid == (int)fgPid || (tree != null && tree.Contains(bPid)))
-                            {
-                                activeBrowserPid = bPid;
-                                break;
-                            }
-                        }
+                        if (wvProcs[i].Id == _lastForegroundWvPid) { activeBrowserPid = _lastForegroundWvPid; break; }
                     }
                 }
 
@@ -425,7 +441,9 @@ namespace DofusFarm.Engine
                 if (activeBrowserPid > 0 && activeBrowserPid != _lastForegroundWvPid)
                 {
                     _lastForegroundWvPid = activeBrowserPid;
-                    Log(string.Format("Foreground WebView2 prioritized (PID: {0} -> AboveNormal, EcoQoS off). Background renderers throttled.", activeBrowserPid));
+                    Log(string.Format("Foreground WebView2 prioritized (PID: {0} -> AboveNormal). Other clients stay at Normal{1}.",
+                        activeBrowserPid,
+                        RuntimeSettings.Current.BackgroundThrottle ? " with EcoQoS throttling" : ", EcoQoS off"));
                 }
                 else if (activeBrowserPid <= 0 && _lastForegroundWvPid != 0)
                 {
@@ -452,13 +470,18 @@ namespace DofusFarm.Engine
                         lock (_priorityState) known = _priorityState.TryGetValue(p.Id, out applied);
                         if (!known || applied != isForeground)
                         {
+                            // Background clients stay at Normal. BelowNormal was applied
+                            // to the window the user was about to switch to, which is
+                            // most of what made a fast host feel slow.
                             ProcessPriorityClass want = isForeground
                                 ? ProcessPriorityClass.AboveNormal
-                                : ProcessPriorityClass.BelowNormal;
+                                : ProcessPriorityClass.Normal;
                             if (p.PriorityClass != want) p.PriorityClass = want;
                             lock (_priorityState) _priorityState[p.Id] = isForeground;
                         }
-                        bool throttled = !isForeground;
+                        // EcoQoS (execution-speed throttling) is opt-in now; see
+                        // RuntimeSettings.BackgroundThrottle.
+                        bool throttled = !isForeground && RuntimeSettings.Current.BackgroundThrottle;
                         lock (_throttleState)
                         {
                             bool previous;

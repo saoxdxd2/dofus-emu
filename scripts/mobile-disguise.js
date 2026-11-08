@@ -6077,6 +6077,10 @@
         // localStorage, so the second visit to that map needs no discovery. This is
         // what makes entering and leaving a house repeatable instead of a one-off.
         var _DOOR_STORE = 'dofusFarm.doorCells';
+        var _KNOWN_DOORS = {
+            '145490435': { '146276352': 346 },
+            '146276352': { '145490435': 451 }
+        };
         var _agentDoorMap = null;
         var _agentDoorLoad = function() {
             if (_agentDoorMap) return _agentDoorMap;
@@ -6126,23 +6130,44 @@
             var store = _agentDoorLoad();
             var bucket = store[String(mapId)] || {};
             var out = [];
+            var seen = {};
             for (var k in bucket) {
                 if (!Object.prototype.hasOwnProperty.call(bucket, k)) continue;
                 var v = bucket[k] || {};
-                out.push({ cell: Number(k), to_map: v.to != null ? Number(v.to) : null,
+                var toMap = v.to != null ? Number(v.to) : null;
+                if (toMap != null) seen[toMap] = true;
+                out.push({ cell: Number(k), to_map: toMap,
                            at: v.at || null, via: v.via || 'walk' });
+            }
+            var known = _KNOWN_DOORS[String(mapId)];
+            if (known) {
+                for (var to in known) {
+                    if (!Object.prototype.hasOwnProperty.call(known, to)) continue;
+                    var toNum = Number(to);
+                    if (!seen[toNum]) {
+                        out.push({ cell: Number(known[to]), to_map: toNum,
+                                   at: null, via: 'known' });
+                    }
+                }
             }
             return out;
         };
         var _agentDoorFor = function(mapId, toMap) {
             var list = _agentDoorList(mapId);
             var inferred = null;
+            var known = null;
             for (var i = 0; i < list.length; i++) {
                 if (Number(list[i].to_map) !== Number(toMap)) continue;
-                if (list[i].via !== 'arrival') return list[i].cell;
-                if (inferred == null) inferred = list[i].cell;
+                if (list[i].via === 'walk') return list[i].cell;
+                if (list[i].via === 'known') {
+                    if (known == null) known = list[i].cell;
+                } else {
+                    if (inferred == null) inferred = list[i].cell;
+                }
             }
-            return inferred;
+            if (inferred != null) return inferred;
+            if (known != null) return known;
+            return null;
         };
         // A transition fires on the movement that *ends* on a border or door cell,
         // not on the cell itself: a character already standing there has nothing

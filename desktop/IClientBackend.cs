@@ -103,6 +103,12 @@ namespace DofusFarm.Engine
         ICollection<string> GetActiveInstanceIds();
         List<int> GetAllBrowserProcessIds();
 
+        // Browser process of the window the user is actually in, or 0. The
+        // governor needs this to prioritise the right client: the client window
+        // is owned by the host process, so GetForegroundWindow's PID can never
+        // name a browser process.
+        int GetActiveBrowserProcessId();
+
         event Action<string> OnLog;
         event Action<string, ClientInstanceState> OnStateChanged;
     }

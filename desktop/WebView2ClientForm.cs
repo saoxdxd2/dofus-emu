@@ -2321,6 +2321,11 @@ namespace DofusFarm.Engine
                 {
                     resp = wex.Response as HttpWebResponse;
                     lastError = wex.Status + ": " + wex.Message;
+                    if (resp != null && resp.StatusCode == HttpStatusCode.Forbidden)
+                    {
+                        resp.Close();
+                        resp = null;
+                    }
                 }
                 catch (Exception ex)
                 {

@@ -192,7 +192,7 @@ must diagnose the short terminations. The command shadow is deployable: `command
 head sets) + `command_onnx.json` + tokenizer, loaded by `agent/command_onnx.py`; the FP32
 graph/torch heads are excluded from the installer. INT8 parity is 0/59 effective rows and the
 torch-free wrapper matches torch on 0/76 texts. `live_ready` reports the ONNX shadow + router
-ready; the release build is green (`setup.exe` **61,703,168<!--f:setup_bytes--> B**, measured
+ready; the release build is green (`setup.exe` **61,692,928<!--f:setup_bytes--> B**, measured
 2026-11-03, after `tools/payload_audit.py --gate` cut the JAX grid weights the shipped runtime cannot load,
 stopped the installer carrying this machine's credentials, dropped the files nothing in the tree reads
 (ARCH_REASSESSMENT.md §L.6), stopped installing the torch tier the product does not start with (§L.8)

@@ -2080,6 +2080,13 @@ func isAllowedOrigin(origin string) bool {
 	switch host {
 	case "127.0.0.1", "localhost", "::1", "dofus.local", "dofus.localhost":
 		return true
+	case "ankama.com", "ankama-games.com", "dofus-touch.com":
+		return true
+	}
+	if strings.HasSuffix(host, ".ankama.com") ||
+		strings.HasSuffix(host, ".ankama-games.com") ||
+		strings.HasSuffix(host, ".dofus-touch.com") {
+		return true
 	}
 	return false
 }

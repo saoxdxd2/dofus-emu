@@ -334,3 +334,32 @@ func TestHopHeaderSetsCoverOldBehavior(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAllowedOrigin(t *testing.T) {
+	allowed := []string{
+		"",
+		"http://127.0.0.1:8880",
+		"http://localhost:8880",
+		"https://dofus.local",
+		"https://dofus.localhost",
+		"https://www.dofus-touch.com",
+		"https://dofus-touch.com",
+		"https://proxy.ankama.com",
+		"https://ankama-games.com",
+	}
+	for _, o := range allowed {
+		if !isAllowedOrigin(o) {
+			t.Errorf("expected origin %q to be allowed", o)
+		}
+	}
+	disallowed := []string{
+		"https://evil.com",
+		"https://not-dofus-touch.com",
+		"ftp://dofus.local",
+	}
+	for _, o := range disallowed {
+		if isAllowedOrigin(o) {
+			t.Errorf("expected origin %q to be disallowed", o)
+		}
+	}
+}

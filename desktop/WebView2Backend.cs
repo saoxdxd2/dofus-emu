@@ -478,6 +478,37 @@ namespace DofusFarm.Engine
             return pids;
         }
 
+        /// <summary>
+        /// Browser process of the client window the user is actually in, or 0.
+        ///
+        /// The governor used to infer this from GetForegroundWindow's PID, which
+        /// cannot work: every client window is a WinForms Form owned by this host
+        /// process, so the foreground PID is DofusFarm.exe and never msedgewebview2.
+        /// It then fell back to "the first browser process in the host's tree", so
+        /// with more than one slot every client but an arbitrary one was pushed to
+        /// BelowNormal regardless of which window the user was using.
+        /// </summary>
+        public int GetActiveBrowserProcessId()
+        {
+            try
+            {
+                IntPtr hFg = DofusFarm.Native.Win32.GetForegroundWindow();
+                if (hFg == IntPtr.Zero) return 0;
+
+                IntPtr root = hFg;
+                try { root = DofusFarm.Native.Win32.GetAncestor(hFg, DofusFarm.Native.Win32.GA_ROOT); } catch { }
+
+                foreach (var f in _activeForms.Values)
+                {
+                    if (f == null || f.IsDisposed || !f.IsHandleCreated) continue;
+                    IntPtr h = f.Handle;
+                    if (hFg == h || root == h) return f.BrowserProcessId;
+                }
+            }
+            catch { }
+            return 0;
+        }
+
         public ICollection<string> GetActiveInstanceIds()
         {
             return _activeForms.Keys;

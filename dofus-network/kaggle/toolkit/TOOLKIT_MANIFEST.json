@@ -365,9 +365,9 @@
       "missing": false,
       "path": "agent/planner.py",
       "source": "agent/planner.py",
-      "source_sha256": "1ff2be4f853e858b0a6bed19eec7328581e09e7e3c703192862f03d0754113ce",
+      "source_sha256": "0da19adf8a4b74441c79f4c70956fa8e9fbc02f66d6ff98c238528983e02c027",
       "status": "sync",
-      "toolkit_sha256": "1ff2be4f853e858b0a6bed19eec7328581e09e7e3c703192862f03d0754113ce"
+      "toolkit_sha256": "0da19adf8a4b74441c79f4c70956fa8e9fbc02f66d6ff98c238528983e02c027"
     },
     {
       "drift": false,
@@ -392,9 +392,9 @@
       "missing": false,
       "path": "agent/regression.py",
       "source": "agent/regression.py",
-      "source_sha256": "00f1660daf54fd787279d67093180c78d308246cf310d028b96f1b7bd2a93eef",
+      "source_sha256": "79ad4ce80da2b39f2d82a144fe76d9a05d60f400f9977df0dcba40f382714d42",
       "status": "sync",
-      "toolkit_sha256": "00f1660daf54fd787279d67093180c78d308246cf310d028b96f1b7bd2a93eef"
+      "toolkit_sha256": "79ad4ce80da2b39f2d82a144fe76d9a05d60f400f9977df0dcba40f382714d42"
     },
     {
       "drift": false,
@@ -1803,6 +1803,15 @@
     {
       "drift": false,
       "missing": false,
+      "path": "tools/gate.py",
+      "source": "tools/gate.py",
+      "source_sha256": "d8157909b4ea221e092350df9c8c870d9f308c4d97857441dfff6ba0a0ad93b8",
+      "status": "sync",
+      "toolkit_sha256": "d8157909b4ea221e092350df9c8c870d9f308c4d97857441dfff6ba0a0ad93b8"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "tools/group_scan.py",
       "source": "tools/group_scan.py",
       "source_sha256": "842d9870304efc69adcddf45f4aef8fd576877c4ca8b28944ba11cd2e5900af2",
@@ -2188,7 +2197,7 @@
       "toolkit_sha256": "6ab3d0547e76d7d1d275270917d9f433488a65b01df2c3eaf2a0cd12d659b97b"
     }
   ],
-  "generated_at": "2026-11-07T21:04:27.655650+00:00",
+  "generated_at": "2026-11-07T22:57:15.930824+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }

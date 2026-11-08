@@ -103,6 +103,17 @@ def _goal_mode(goal: str, legacy: bool = False) -> str:
     return "order"
 
 
+# Known static interior doors (a painted star on the floor rather than a border flag).
+# Measured live 2026-10-29 & 2026-11-07: stepping on cell 346 outside Albuera house (145490435)
+# transitions into Jarl Ordyn's house interior (146276352); stepping on cell 451 inside transitions out.
+KNOWN_DOORS: Dict[Tuple[int, int], int] = {
+    (145490435, 146276352): 346,
+    (146276352, 145490435): 451,
+}
+KNOWN_NPC_MAPS: Dict[int, int] = {
+    3892: 146276352,  # Great Jarl Ordyn in Albuera house interior
+}
+
 GROUP_REFUSALS = ("elsewhere", "empty_map", "unread_members", "other")
 
 
@@ -1714,18 +1725,24 @@ class QuestPlanner:
             # the server does the rest. This is how entering and leaving a house
             # repeats instead of parking the session on the first visit.
             doors = block.get("doors") if isinstance(block, dict) else None
+            door_cell = None
             if isinstance(doors, list):
                 for door in doors:
                     if not isinstance(door, dict):
                         continue
                     if door.get("to_map") == target and door.get("cell") is not None:
-                        return {
-                            "tool": "nav.goto",
-                            "args": {"map_id": target},
-                            "why": ("objective %s: map %s remembers a door cell %s "
-                                    "that leads to %s; stepping on it is the transition"
-                                    % (obj.get("type_id"), here, door.get("cell"), target)),
-                        }
+                        door_cell = door.get("cell")
+                        break
+            if door_cell is None:
+                door_cell = KNOWN_DOORS.get((here, target))
+            if door_cell is not None:
+                return {
+                    "tool": "nav.goto",
+                    "args": {"map_id": target},
+                    "why": ("objective %s: map %s remembers a door cell %s "
+                            "that leads to %s; stepping on it is the transition"
+                            % (obj.get("type_id"), here, door_cell, target)),
+                }
             if reported_exits and not exits and isinstance(neighbours, dict) and neighbours:
                 # The client knows this map's edges but reports no crossable
                 # border: an interior whose way out is a door, and the snapshot
@@ -3067,6 +3084,8 @@ class QuestPlanner:
     def plan_objective(self, quest: Dict[str, Any], step_idx: int,
                        obj: Dict[str, Any], obs: Dict[str, Any]) -> List[Dict[str, Any]]:
         """The calls this objective needs, in order. Empty when unsupported."""
+        if isinstance(obj, dict) and obj.get("id") is None and obj.get("objective_id") is not None:
+            obj["id"] = obj["objective_id"]
         t = obj.get("type_id")
         p = _params(obj)
         here = map_id_of(obs)
@@ -3244,10 +3263,13 @@ class QuestPlanner:
                 # interactive element; travelling is still honest when the objective
                 # names a place, and the ready scan moves to the entry behind it that
                 # can be acted on.
-                free = [] if travel else self._free_form_calls(obj, obs)
-                if free:
-                    return list(travel) + free
-                if not travel:
+                inside_objective_interior = (
+                    need is not None and (need, here) in KNOWN_DOORS
+                )
+                if not travel or inside_objective_interior:
+                    free = self._free_form_calls(obj, obs)
+                    if free:
+                        return free
                     # A free-form step can name a person, not an element: "Go to
                     # Albuera with Ayin Spyr" is an escort that starts in an NPC
                     # dialogue, and with every interactive tried once the loop sat
@@ -3258,6 +3280,20 @@ class QuestPlanner:
                         why_fmt="objective %s: free-form; ask NPC %d")
                     if npc_calls:
                         return npc_calls
+                    # If this map reports interior doors that have not been exhausted for this
+                    # objective, enter the building before declaring the entire map exhausted.
+                    map_blk = obs.get("map") if isinstance(obs, dict) else None
+                    neighbours = map_blk.get("neighbours") if isinstance(map_blk, dict) else None
+                    neighbour_map_ids = {int(v) for v in neighbours.values() if v is not None} if isinstance(neighbours, dict) else set()
+                    doors_in_obs = (map_blk.get("doors") if isinstance(map_blk, dict) else None) or []
+                    door_candidates = [
+                        int(d["to_map"]) for d in doors_in_obs
+                        if isinstance(d, dict) and d.get("to_map") is not None
+                        and int(d["to_map"]) not in neighbour_map_ids
+                    ]
+                    for dest in door_candidates:
+                        if (int(quest.get("id", 0)), int(obj.get("id", 0)), dest) not in self._exhausted_at:
+                            return [self._travel_call(obj, dest, obs, key=travel_key)]
                     # Everything this map offers has been tried: its elements are
                     # retired in `_interactive_tries`, its NPCs in `_npc_asked`. A
                     # different map carries different elements and NPCs, so walking

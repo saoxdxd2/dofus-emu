@@ -1,0 +1,255 @@
+{
+  "results": [
+    {
+      "suite": "toolkit mirror",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.65,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "agent/test_artifacts.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.23,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "agent/test_brain_daemon.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 1.51,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "agent/test_explore.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.24,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "agent/test_weight_space.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.19,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "ai/test_cause_head.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.33,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "ai/test_move_gate.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.31,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "combat/test_battle_solver.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.58,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "combat/test_env_math.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.29,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "combat/test_env_mechanics.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 16.89,
+      "missing": null,
+      "python": "C:\\Users\\sao\\AppData\\Local\\Programs\\Python\\Python314\\python.EXE"
+    },
+    {
+      "suite": "combat/test_grid_dataset.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 1.82,
+      "missing": null,
+      "python": "C:\\Users\\sao\\AppData\\Local\\Programs\\Python\\Python314\\python.EXE"
+    },
+    {
+      "suite": "combat/test_grid_model.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 11.72,
+      "missing": null,
+      "python": "C:\\Users\\sao\\AppData\\Local\\Programs\\Python\\Python314\\python.EXE"
+    },
+    {
+      "suite": "combat/test_live_policy.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.45,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "combat/test_mech_net.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 21.98,
+      "missing": null,
+      "python": "C:\\Users\\sao\\AppData\\Local\\Programs\\Python\\Python314\\python.EXE"
+    },
+    {
+      "suite": "combat/test_normal_build_duel.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.46,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "combat/test_online_learn.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 3.73,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "combat/test_side_swap.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 1.53,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "combat/test_strike_economy.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 11.81,
+      "missing": null,
+      "python": "C:\\Users\\sao\\AppData\\Local\\Programs\\Python\\Python314\\python.EXE"
+    },
+    {
+      "suite": "combat/test_touch_source.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 4.19,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "net/test_orchestrator.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 1.92,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_collect_live_data.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.51,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_data_janitor.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.27,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_distill_beam.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 48.52,
+      "missing": null,
+      "python": "C:\\Users\\sao\\AppData\\Local\\Programs\\Python\\Python314\\python.EXE"
+    },
+    {
+      "suite": "tools/test_entity_pointer_gate.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.35,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_market_log.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.26,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_progress_report.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.17,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_session_close.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.5,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_session_report.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.22,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_sync_kaggle_toolkit.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.26,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "tools/test_world_state.py",
+      "verdict": "pass",
+      "exit": 0,
+      "seconds": 0.19,
+      "missing": null,
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    },
+    {
+      "suite": "agent.regression",
+      "verdict": "timeout",
+      "exit": 124,
+      "seconds": 120.05,
+      "missing": "jax",
+      "python": "C:\\Users\\sao\\Documents\\dofus-emu\\runtimes\\python\\python.exe"
+    }
+  ],
+  "seconds": 373.55,
+  "failed": 1,
+  "blocked": 0
+}
