@@ -31,6 +31,7 @@ from combat.encounter import model
 from combat.encounter.checkpoint import load_params_config
 from combat.encounter.env import action_masks, initial_state, observe
 from combat.observation import live_view
+from combat.grid_infer import rank_plans as grid_rank_plans
 from combat.plan_value import (board_encounter, _empty_spell_row,
                                _player_spell_rows)
 
@@ -454,6 +455,32 @@ class LivePolicy:
         self._vc_fired = getattr(self, "_vc_fired", 0) + int(picked is not None)
         return picked
 
+
+    def _grid_choice(self, board: Board,
+                     plans: Sequence[TurnPlan]) -> Optional[TurnPlan]:
+        """The realization the 560-cell grid ranker expects to win.
+
+        The grid model (``models/combat_grid/model.pkl``) scores each legal plan
+        from the full board layout -- cell occupancy, LoS, distance, visibility --
+        which is complementary to the encounter value head (fighter tokens only).
+        It loads through the numpy backend on the embedded runtime, so no jax
+        wheel is required. Returns None when the checkpoint is absent or the
+        backend is unavailable; the caller falls through to the distance heuristic.
+        The ranker is an upgrade, never a dependency.
+        """
+        if len(plans) < 2:
+            return None
+        self._gc_asked = getattr(self, "_gc_asked", 0) + 1
+        try:
+            ranked = grid_rank_plans(board, plans)
+        except Exception:  # noqa: BLE001 - a ranker failure must not cost the turn
+            return None
+        if ranked is None:
+            return None
+        picked = ranked[0][1] if ranked else None
+        self._gc_fired = getattr(self, "_gc_fired", 0) + int(picked is not None)
+        return picked
+
     def _realize(self, board: Board, spell_slot: int, target_slot: int,
                  move: int, slots: Sequence[Dict[str, Any]],
                  targets: Sequence[Dict[str, Any]]
@@ -529,8 +556,10 @@ class LivePolicy:
         if matching:
             picked = self._value_choice(board, matching)
             if picked is None:
-                picked = max(matching, key=lambda plan: self._move_score(
-                    board, plan, target, move))
+                picked = self._grid_choice(board, matching)
+                if picked is None:
+                    picked = max(matching, key=lambda plan: self._move_score(
+                        board, plan, target, move))
             return self._emit(board, picked, False, "policy", "policy_move")
 
         fallback = next((plan for plan in plans

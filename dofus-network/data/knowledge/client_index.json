@@ -1,45 +1,50 @@
 {
  "manifest": {
-  "checked_at": "2026-11-08T15:09:02",
+  "checked_at": "2026-11-08T21:56:09",
   "conflicts": {},
   "fields": {
    "map_id": {
-    "pct": 45.6,
-    "present": 26,
-    "total": 57
+    "pct": 53.4,
+    "present": 39,
+    "total": 73
    },
    "params": {
-    "pct": 89.5,
-    "present": 51,
-    "total": 57
+    "pct": 94.5,
+    "present": 69,
+    "total": 73
    },
    "quest_name": {
-    "pct": 89.5,
-    "present": 51,
-    "total": 57
+    "pct": 94.5,
+    "present": 69,
+    "total": 73
    },
    "step_id": {
-    "pct": 89.5,
-    "present": 51,
-    "total": 57
+    "pct": 94.5,
+    "present": 69,
+    "total": 73
    },
    "text": {
-    "pct": 80.7,
-    "present": 46,
-    "total": 57
+    "pct": 75.3,
+    "present": 55,
+    "total": 73
    },
    "type_id": {
-    "pct": 89.5,
-    "present": 51,
-    "total": 57
+    "pct": 94.5,
+    "present": 69,
+    "total": 73
    }
   },
-  "index_sha256": "529db6e90c2c028fed5ec96f151567b4f62238cca09932dbe3c3bf978991af90",
+  "index_sha256": "27898eb5b1f85b57fa072de347249a47a77171c167e351795037bb6f0e45219e",
   "logs": [
    {
-    "mtime": 1794139731,
+    "mtime": 1794171216,
+    "name": "dofus-01.20261108-205337-063447.jsonl",
+    "size": 67134173
+   },
+   {
+    "mtime": 1794171320,
     "name": "dofus-01.jsonl",
-    "size": 58279986
+    "size": 5435749
    },
    {
     "mtime": 1793261963,
@@ -89,16 +94,18 @@
    4264,
    4266,
    4274,
+   4276,
    4278,
+   4280,
    4604,
    4644
   ],
-  "rows": 57,
+  "rows": 73,
   "sources": {
-   "catalog": 51,
-   "current": 34,
-   "ready": 49,
-   "step": 40
+   "catalog": 69,
+   "current": 38,
+   "ready": 58,
+   "step": 44
   },
   "unbound_step_objectives_seen": 217
  },
@@ -150,7 +157,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -221,7 +228,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -292,7 +299,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -363,7 +370,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -435,7 +442,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -506,7 +513,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -577,7 +584,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -647,7 +654,7 @@
    "last_at": 1794029336.97,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -718,7 +725,7 @@
    "last_at": 1794029336.97,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -790,7 +797,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -861,7 +868,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -933,7 +940,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -1004,7 +1011,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -1075,7 +1082,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -1141,7 +1148,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -1193,7 +1200,7 @@
    "last_at": 1794029336.97,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -1260,7 +1267,7 @@
    "last_at": 1794029336.97,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -1332,7 +1339,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -1402,7 +1409,7 @@
    "last_at": 1794029336.97,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -1473,7 +1480,7 @@
    "last_at": 1794029336.97,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -1544,7 +1551,7 @@
    "last_at": 1794029336.97,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -1616,7 +1623,7 @@
    "logs": [
     "default.20261026-074102-070180.jsonl",
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl"
@@ -1828,7 +1835,7 @@
    "type_id": 0
   },
   "4262:13930": {
-   "captures": 2543,
+   "captures": 2627,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1876,10 +1883,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -1906,7 +1913,7 @@
    "type_id": 4
   },
   "4262:13932": {
-   "captures": 2296,
+   "captures": 2380,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1948,10 +1955,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -1977,7 +1984,7 @@
    "type_id": 1
   },
   "4262:13934": {
-   "captures": 2263,
+   "captures": 2347,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2019,10 +2026,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2048,7 +2055,7 @@
    "type_id": 14
   },
   "4262:13936": {
-   "captures": 2263,
+   "captures": 2347,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2090,10 +2097,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2119,7 +2126,7 @@
    "type_id": 14
   },
   "4262:13938": {
-   "captures": 2263,
+   "captures": 2347,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2161,10 +2168,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2190,7 +2197,7 @@
    "type_id": 14
   },
   "4262:13940": {
-   "captures": 2905,
+   "captures": 2989,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2238,10 +2245,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2268,7 +2275,7 @@
    "type_id": 0
   },
   "4262:13942": {
-   "captures": 2237,
+   "captures": 2321,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2316,10 +2323,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2346,7 +2353,7 @@
    "type_id": 1
   },
   "4262:13944": {
-   "captures": 2222,
+   "captures": 2306,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2394,10 +2401,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2425,7 +2432,7 @@
    "type_id": 6
   },
   "4262:13946": {
-   "captures": 2215,
+   "captures": 2299,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2473,10 +2480,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2503,7 +2510,7 @@
    "type_id": 1
   },
   "4262:13948": {
-   "captures": 2739,
+   "captures": 2823,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2551,10 +2558,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2581,7 +2588,7 @@
    "type_id": 0
   },
   "4262:13950": {
-   "captures": 1994,
+   "captures": 2078,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2629,10 +2636,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2659,7 +2666,7 @@
    "type_id": 0
   },
   "4262:13952": {
-   "captures": 1951,
+   "captures": 2035,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2707,10 +2714,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2737,7 +2744,7 @@
    "type_id": 1
   },
   "4262:13954": {
-   "captures": 1852,
+   "captures": 1936,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2785,10 +2792,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2815,7 +2822,7 @@
    "type_id": 1
   },
   "4262:13956": {
-   "captures": 1849,
+   "captures": 1933,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2863,10 +2870,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -2893,7 +2900,7 @@
    "type_id": 0
   },
   "4262:13958": {
-   "captures": 2252,
+   "captures": 2420,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2941,10 +2948,10 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794139731.199,
+   "last_at": 1794164119.851,
    "logs": [
     "default.jsonl",
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3015,7 +3022,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3086,7 +3093,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3158,7 +3165,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3235,7 +3242,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3294,7 +3301,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3356,7 +3363,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3413,7 +3420,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3467,7 +3474,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3521,7 +3528,7 @@
    "first_at": 1793202329.175,
    "last_at": 1793296238.721,
    "logs": [
-    "dofus-01.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
     "dofus-02.20261029-022349-419629.jsonl",
     "dofus-02.jsonl",
     "dofus-03.jsonl",
@@ -3694,34 +3701,1031 @@
    "type": "QuestObjectiveGoToNpc",
    "type_id": 1
   },
-  "4278:13986": {
-   "captures": 132,
-   "field_sources": {},
-   "first_at": 1792734929.565,
-   "last_at": 1792779130.624,
+  "4276:13978": {
+   "captures": 605,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
    "logs": [
-    "default.20261026-074102-070180.jsonl"
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
    ],
-   "objective_id": 13986,
-   "quest_id": 4278,
+   "map_id": 145490947,
+   "objective_id": 13978,
+   "params": {
+    "parameter0": 727566
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
    "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "text": "Give Great Jarl Ordyn's letter to his mariner.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4276:13980": {
+   "captures": 456,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752833,
+   "objective_id": 13980,
+   "params": {
+    "parameter0": 709662
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "text": "Find the map: Belladonna's Dungeon entrance.",
+   "type": "QuestObjectiveDiscoverMap",
+   "type_id": 4
+  },
+  "4276:13982": {
+   "captures": 581,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752833,
+   "objective_id": 13982,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "text": "Talk to Ayin Spyr",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4276:13998": {
+   "captures": 611,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752833,
+   "objective_id": 13998,
+   "params": {
+    "parameter0": 4227
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "text": "Defeat Belladonna in this boss's dungeon",
+   "type": "QuestObjectiveWinMonsterInDungeon",
+   "type_id": 45
+  },
+  "4276:14000": {
+   "captures": 251,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752833,
+   "objective_id": 14000,
+   "params": {
+    "parameter0": 3910
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4276:14002": {
+   "captures": 251,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752833,
+   "objective_id": 14002,
+   "params": {
+    "parameter0": 3888
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4276:14004": {
+   "captures": 251,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145490435,
+   "objective_id": 14004,
+   "params": {
+    "parameter0": 727570
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4276:14006": {
+   "captures": 251,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145489923,
+   "objective_id": 14006,
+   "params": {
+    "parameter0": 716856
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4276:14008": {
+   "captures": 251,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794164121.838,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145489923,
+   "objective_id": 14008,
+   "params": {
+    "parameter0": 716858
+   },
+   "quest_id": 4276,
+   "quest_name": "Witch Hunt",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit...",
+   "step_id": 4958,
+   "step_name": "Witch Hunt",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4278:13984": {
+   "captures": 240,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "ready"
+    ],
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1794169909.363,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752833,
+   "objective_id": 13984,
+   "params": {
+    "parameter0": 4227
+   },
+   "quest_id": 4278,
+   "quest_name": "Slay Dungeons for Glory!",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "Ayin Spyr has suggested you head out to find the World of Twelve's dungeons. Get a glorious start by defeating Belladonna, then head out to see Metamunch Kin in Astrub!",
+   "step_id": 4960,
+   "step_name": "Slay Dungeons for Glory!",
+   "text": "Defeat Belladonna in this boss's dungeon",
+   "type": "QuestObjectiveWinMonsterInDungeon",
+   "type_id": 45
+  },
+  "4278:13986": {
+   "captures": 252,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1792734929.565,
+   "last_at": 1794171320.502,
+   "logs": [
+    "default.20261026-074102-070180.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "map_id": 148374535,
+   "objective_id": 13986,
+   "params": {
+    "parameter0": 811
+   },
+   "quest_id": 4278,
+   "quest_name": "Slay Dungeons for Glory!",
+   "sources": [
+    "catalog",
     "current",
     "ready"
-   ]
+   ],
+   "step_description": "Ayin Spyr has suggested you head out to find the World of Twelve's dungeons. Get a glorious start by defeating Belladonna, then head out to see Metamunch Kin in Astrub!",
+   "step_id": 4960,
+   "step_name": "Slay Dungeons for Glory!",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4278:14068": {
+   "captures": 120,
+   "field_sources": {
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794169909.363,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
+   ],
+   "objective_id": 14068,
+   "params": {
+    "parameter0": 95
+   },
+   "quest_id": 4278,
+   "quest_name": "Slay Dungeons for Glory!",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "Ayin Spyr has suggested you head out to find the World of Twelve's dungeons. Get a glorious start by defeating Belladonna, then head out to see Metamunch Kin in Astrub!",
+   "step_id": 4960,
+   "step_name": "Slay Dungeons for Glory!",
+   "type": "QuestObjectiveDiscoverSubArea",
+   "type_id": 5
   },
   "4278:14090": {
-   "captures": 4,
-   "field_sources": {},
+   "captures": 124,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
    "first_at": 1792780059.247,
-   "last_at": 1792780063.228,
+   "last_at": 1794171320.502,
    "logs": [
-    "default.20261026-074102-070180.jsonl"
+    "default.20261026-074102-070180.jsonl",
+    "dofus-01.20261108-205337-063447.jsonl",
+    "dofus-01.jsonl"
    ],
+   "map_id": 148374535,
    "objective_id": 14090,
+   "params": {
+    "parameter0": 769274
+   },
    "quest_id": 4278,
+   "quest_name": "Slay Dungeons for Glory!",
    "sources": [
+    "catalog",
     "ready"
-   ]
+   ],
+   "step_description": "Ayin Spyr has suggested you head out to find the World of Twelve's dungeons. Get a glorious start by defeating Belladonna, then head out to see Metamunch Kin in Astrub!",
+   "step_id": 4960,
+   "step_name": "Slay Dungeons for Glory!",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4280:13988": {
+   "captures": 168,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1794171224.843,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "objective_id": 13988,
+   "params": {
+    "parameter0": 4225,
+    "parameter1": 1
+   },
+   "quest_id": 4280,
+   "quest_name": "Quick Clean",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "The keeper of Belladonna's dungeon has asked you to defeat monsters on the island in exchange for a key to the dungeon. That seems fair.",
+   "step_id": 4962,
+   "step_name": "Quick Clean",
+   "text": "Defeat 1 Dolomanus in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "4280:13990": {
+   "captures": 168,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1794171224.843,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "objective_id": 13990,
+   "params": {
+    "parameter0": 4223,
+    "parameter1": 1
+   },
+   "quest_id": 4280,
+   "quest_name": "Quick Clean",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "The keeper of Belladonna's dungeon has asked you to defeat monsters on the island in exchange for a key to the dungeon. That seems fair.",
+   "step_id": 4962,
+   "step_name": "Quick Clean",
+   "text": "Defeat 1 Ragnarock in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "4280:13992": {
+   "captures": 168,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1794171224.843,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "objective_id": 13992,
+   "params": {
+    "parameter0": 4219,
+    "parameter1": 1
+   },
+   "quest_id": 4280,
+   "quest_name": "Quick Clean",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "The keeper of Belladonna's dungeon has asked you to defeat monsters on the island in exchange for a key to the dungeon. That seems fair.",
+   "step_id": 4962,
+   "step_name": "Quick Clean",
+   "text": "Defeat 1 Clobberstone in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "4280:13994": {
+   "captures": 168,
+   "field_sources": {
+    "params": [
+     "catalog",
+     "ready"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "ready"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "ready"
+    ],
+    "type": [
+     "catalog",
+     "ready"
+    ],
+    "type_id": [
+     "catalog",
+     "ready"
+    ]
+   },
+   "first_at": 1794171224.843,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "objective_id": 13994,
+   "params": {
+    "parameter0": 4221,
+    "parameter1": 1
+   },
+   "quest_id": 4280,
+   "quest_name": "Quick Clean",
+   "sources": [
+    "catalog",
+    "ready"
+   ],
+   "step_description": "The keeper of Belladonna's dungeon has asked you to defeat monsters on the island in exchange for a key to the dungeon. That seems fair.",
+   "step_id": 4962,
+   "step_name": "Quick Clean",
+   "text": "Defeat 1 Marbmour in a single fight.",
+   "type": "QuestObjectiveFightMonster",
+   "type_id": 6
+  },
+  "4280:13996": {
+   "captures": 84,
+   "field_sources": {
+    "map_id": [
+     "catalog"
+    ],
+    "params": [
+     "catalog"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "type": [
+     "catalog"
+    ],
+    "type_id": [
+     "catalog"
+    ]
+   },
+   "first_at": 1794171224.843,
+   "last_at": 1794171320.502,
+   "logs": [
+    "dofus-01.jsonl"
+   ],
+   "map_id": 145752833,
+   "objective_id": 13996,
+   "params": {
+    "parameter0": 3908
+   },
+   "quest_id": 4280,
+   "quest_name": "Quick Clean",
+   "sources": [
+    "catalog"
+   ],
+   "step_description": "The keeper of Belladonna's dungeon has asked you to defeat monsters on the island in exchange for a key to the dungeon. That seems fair.",
+   "step_id": 4962,
+   "step_name": "Quick Clean",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
   },
   "4604:14532": {
    "captures": 70,

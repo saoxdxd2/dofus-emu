@@ -474,8 +474,8 @@ def build_parser() -> argparse.ArgumentParser:
     # `choose -> None, last_no_call: ''` under rule and a real (if unhappy) verdict under planner.
     # `_base_policy` already learned this lesson for the CLI path on 2026-10-29; the daemon
     # default quietly kept the broken value.
-    parser.add_argument("--brain-policy", choices=["rule", "planner", "encoder"],
-                        default="planner", help="default policy for /brain/start")
+    parser.add_argument("--brain-policy", choices=["auto", "rule", "planner", "encoder"],
+                        default="auto", help="default policy for /brain/start: auto tries the trained encoder first, then planner, then rule")
     parser.add_argument("--brain-log-dir", type=Path, default=None,
                         help="per-instance autopilot logs (default: LOCALAPPDATA/DofusFarm)")
     return parser

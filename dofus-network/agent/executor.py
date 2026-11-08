@@ -502,6 +502,45 @@ def _obs_blocked_directions(observation: Optional[Dict[str, Any]]) -> set:
     return blocked
 
 
+def _obs_door_cell(observation: Optional[Dict[str, Any]],
+                   target: int) -> Optional[int]:
+    """A remembered door cell on the current map that leads to ``target``.
+
+    A house or dungeon interior is entered by stepping on a painted door cell,
+    not by crossing a border. The page records those transitions (learned walks
+    and the static ``_KNOWN_DOORS`` table) and reports them in ``map.doors`` as
+    ``{"cell": N, "to_map": M}``. When one exists, the target is reachable by a
+    single cell step, so routing it through the exported neighbour graph is
+    wrong: the graph carries stale edges and sends the bot to a border it
+    cannot cross (measured 2026-11-08: interior 146538496 -> boss room 145752833
+    via door cell 331 was rewritten to neighbour 145752576, then refused with
+    "map 145752576 is not adjacent to 146538496").
+    """
+    if not isinstance(observation, dict):
+        return None
+    try:
+        want = int(target)
+    except (TypeError, ValueError):
+        return None
+    map_block = observation.get("map")
+    doors: Any = None
+    if isinstance(map_block, dict):
+        doors = map_block.get("doors")
+    if doors is None:
+        doors = observation.get("doors")
+    if not isinstance(doors, list):
+        return None
+    for door in doors:
+        if not isinstance(door, dict) or door.get("cell") is None:
+            continue
+        try:
+            if int(door.get("to_map")) == want:
+                return int(door["cell"])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 class _KnowledgeIndex:
     """Lazy, thread-safe index over the DofusDB cache files."""
 
@@ -1477,6 +1516,15 @@ class ToolExecutor:
                             "direction": direction, "next_map_id": target,
                             "hops_remaining": 1, "source": "observation"}
 
+        # A remembered door cell reaches the target in one step. Pass the target
+        # map through unchanged so the client walks onto that cell and performs
+        # the transition; a graph hop here sends the bot toward a stale edge and
+        # the client refuses it ("map X is not adjacent to Y").
+        door_cell = _obs_door_cell(observation, target)
+        if door_cell is not None:
+            return args, {"requested_map_id": target, "from_map_id": here,
+                          "routable": True, "via_door": door_cell,
+                          "source": "observation_door"}
         step = self._maps.hop(here, target, blocked_first=_obs_blocked_directions(observation))
         if step is None:
             # Not adjacent and not in the exported graph: send the call anyway so

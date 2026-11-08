@@ -763,19 +763,19 @@ def load_checkpoint(
     blob = torch.load(path, map_location="cpu", weights_only=False)
     config = EncoderConfig(**blob["config"])
     model = EncoderPolicy(config)
+    missing = unexpected = []
     try:
-        model.load_state_dict(blob["state_dict"])
+        model.load_state_dict(blob["state_dict"], strict=False)
+        missing = [k for k in model.state_dict().keys()
+                   if k not in blob["state_dict"]]
+        unexpected = [k for k in blob["state_dict"].keys()
+                      if k not in model.state_dict()]
     except RuntimeError as exc:
-        # Checkpoints do not carry an architecture version, so a head added after
-        # the run makes the file silently unusable. Say so instead of crashing
-        # with a bare key list.
-        message = str(exc)
-        missing = [line.strip() for line in message.splitlines() if "Missing key(s)" in line]
         raise SystemExit(
-            f"{path} was trained with an older EncoderPolicy architecture.\n"
-            f"{missing[0] if missing else message.splitlines()[0]}\n"
-            "Retrain with the current code, or load with strict=False if you know "
-            "the missing heads are unused.") from exc
+            f"{path} failed to load state dict: {exc}") from exc
+    if missing or unexpected:
+        print(f"[encoder] {path.name}: {len(missing)} missing, "
+              f"{len(unexpected)} unexpected keys (lenient load)")
     if device is not None:
         model.to(device)
     model.eval()

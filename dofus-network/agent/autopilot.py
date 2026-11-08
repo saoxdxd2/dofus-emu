@@ -66,6 +66,8 @@ from agent.controller import Controller, Decision
 from agent.verifier import (LISTING_TOOLS, READ_ONLY_TOOLS, Verdict, Verifier, changed_keys,
                             promise_state)
 from agent.gate import RuleGate
+from agent.action_memory import (ActionMemory, context_signature,
+                                call_signature as _mem_sig)
 from agent.schema import TOOL_SCHEMA, validate_call
 from agent.recorder import _redact
 from agent.command_shadow import (DEFAULT_MODEL as COMMAND_SHADOW_MODEL,
@@ -123,7 +125,7 @@ FIGHT_TOOLS = {"fight.join", "farm.start"}
 # decision input is well under this; only a long pause (`--interval`) or a
 # bridge that stopped answering makes the cache stale. An unknown age is not
 # fresh: it means nobody recorded when the snapshot was taken.
-OBS_FRESH_MS = float(os.environ.get("AUTOPILOT_OBS_FRESH_MS", "4000.0"))
+OBS_FRESH_MS = float(os.environ.get("AUTOPILOT_OBS_FRESH_MS", "1200.0"))
 
 # While a farm order is running, no fight/kill/kamas movement for this long
 # means the bot is idle (no group on this map, or waiting for a respawn). Resume
@@ -731,6 +733,10 @@ class Autopilot:
         # The counter is recorded with each call's meta and never blocks a call;
         # the corpus says an identical retry after two misses meets ~2% (G48-G54).
         self._gate = RuleGate()
+        # Episode-scoped memory of dead ends: never repeat an action that
+        # already failed for this objective on this map (learned, not a rule).
+        self._memory = ActionMemory()
+        self._mem_veto: Dict[str, int] = {}
         # Patience with a scripted step, timed once per action signature. See
         # _tutorial_hold: a wait must be spent as a wait, and it must end.
         self._hold_key: Optional[str] = None
@@ -1713,7 +1719,7 @@ class Autopilot:
         import sys
         try:
             process = subprocess.run(
-                [sys.executable, "-m", "tools.session_close", "--quiet"],
+                [sys.executable, str(REPO_ROOT / "kaggle" / "toolkit" / "tools" / "session_close.py"), "--quiet"],
                 cwd=str(REPO_ROOT), capture_output=True, text=True,
                 timeout=SESSION_CLOSE_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 - bookkeeping must not end a run
@@ -1753,6 +1759,8 @@ class Autopilot:
             self._farm_wait_since = None
             self._action_noops.clear()
             self._gate.clear()
+            self._memory.reset()
+            self._mem_veto.clear()
             # Shadow only: the model's parse is written beside the rule, and the
             # rule below still owns every decision.
             self._log_command_shadow(goal)
@@ -1788,6 +1796,19 @@ class Autopilot:
                 # would otherwise write a trajectory row every few seconds.
                 before = self.observe(record=not self._farm_wait)
                 self._learn_surface_labels(before)
+                if self._obs_age_ms is not None and self._obs_age_ms > OBS_FRESH_MS / 2.0:
+                    snap = self.observe(max_age_ms=-1.0, record=False)
+                    if isinstance(snap, dict) and snap:
+                        before = snap
+                # Perception: tell the policy which calls already failed here so it
+                # can choose a different one. The encoder reads this text; a rule
+                # planner ignores it and the bounded veto below still applies.
+                if isinstance(before, dict):
+                    _mem_ctx = context_signature(before.get("current_objective"), before)
+                    _dead = self._memory.describe(_mem_ctx)
+                    if _dead:
+                        before = dict(before)
+                        before["already_failed"] = _dead
                 if isinstance(before, dict) and (before.get("quests_active")
                                                  or before.get("ready_objectives")):
                     self._quest_data_waits = 0
@@ -2040,6 +2061,18 @@ class Autopilot:
                 _meta = (call.record_meta() if hasattr(call, "record_meta")
                          else getattr(call, "meta", None))
                 _meta = dict(_meta) if isinstance(_meta, dict) else {}
+                _mem_ctx2 = context_signature(
+                    before.get("current_objective") if isinstance(before, dict) else None,
+                    before if isinstance(before, dict) else None)
+                _msig = _mem_sig(call.tool, call.args)
+                if (self._memory.is_failed(_mem_ctx2, call.tool, call.args)
+                        and self._mem_veto.get(_msig, 0) < 2):
+                    self._mem_veto[_msig] = self._mem_veto.get(_msig, 0) + 1
+                    call = ToolCall("state.snapshot", {}, goal)
+                    _meta["memory_veto"] = True
+                if self._gate.streak(call.tool, call.args) >= self._gate.veto_at:
+                    call = ToolCall("state.snapshot", {}, goal)
+                    _meta["gate_veto"] = True
                 _meta["gate"] = self._gate.shadow(call.tool, call.args)
                 result = self.runtime.executor.execute(
                     call.tool, call.args, instance=self.runtime.instance,
@@ -2145,6 +2178,11 @@ class Autopilot:
                 v = self._verdict(result, before, after, call=call, latency_ms=latency_ms)
                 verdict = v.verdict
                 self._gate.observe(call.tool, call.args, verdict)
+                self._memory.observe(
+                    context_signature(
+                        before.get('current_objective') if isinstance(before, dict) else None,
+                        before if isinstance(before, dict) else None),
+                    call.tool, call.args, verdict)
 
                 # Report the outcome back to the policy. `note_result` existed and was
                 # never called, so the planner's attempt history was always empty — it
@@ -4159,31 +4197,46 @@ def _base_policy(args: argparse.Namespace):
     if args.policy == "rule":
         return RulePolicy()
     # "auto" is what /brain/start and the panel send when nobody chose a policy.
-    # It used to fall through to the rule policy, so a quest goal never reached the
-    # quest planner and the loop answered "no action for goal" (live 2026-10-29).
-    # The learned planner falls back to the deterministic planner without a model.
-    if args.policy in ("planner", "auto"):
-        from agent.planner_nn import NNPlanner
-
-        # The learned planner: same interface, tool choice comes from the student
-        # model instead of an if-chain. Falls back to the deterministic planner when
-        # no model is present, which is what makes it safe to try.
-        planner = NNPlanner(level_hint=int(args.level_hint), store=None,
-                            stack_mode=args.ensemble)
-        print(f"[autopilot] policy: {planner.note}; {planner.stack_note}")
-        return planner
-    if args.policy == "encoder":
-        from ai.encoder_serve import EncoderToolPolicy  # imported lazily: needs onnxruntime
-
-        model_dir = Path(args.model_dir)
-        onnx = model_dir / "encoder_int8.onnx"
-        if not onnx.exists():
-            raise SystemExit(f"no INT8 graph at {onnx}")
-        return EncoderToolPolicy(
-            onnx=onnx,
-            tokenizer=model_dir / "tokenizer.json",
-            policy_json=model_dir / "policy.json",
-        )
+    # It now tries the trained encoder first (the NPL prompt->embedding model at
+    # models/encoder30_v15/), falling back to the learned planner, then the
+    # deterministic rule policy. Every failure is logged so the operator can see
+    # which branch fired.
+    if args.policy in ("auto", "encoder", "planner"):
+        # 1. Try the encoder: INT8 ONNX first (deployment path, loads on the
+        #    embedded runtime without torch/jax), then the torch checkpoint
+        #    (full precision, what was trained).
+        if args.policy in ("auto", "encoder"):
+            try:
+                from ai.encoder_serve import EncoderToolPolicy
+                encoder_dir = REPO_ROOT / "models" / "encoder30_v15"
+                onnx = encoder_dir / "encoder_int8.onnx"
+                checkpoint = encoder_dir / "model.pt"
+                tokenizer = encoder_dir / "tokenizer.json"
+                policy_json = encoder_dir / "policy.json"
+                if onnx.is_file() and tokenizer.is_file() and policy_json.is_file():
+                    print(f"[autopilot] policy: encoder (ONNX INT8, {encoder_dir.name})")
+                    return EncoderToolPolicy(
+                        onnx=onnx,
+                        tokenizer=tokenizer,
+                        policy_json=policy_json,
+                    )
+                if checkpoint.is_file() and tokenizer.is_file() and policy_json.is_file():
+                    print(f"[autopilot] policy: encoder (torch checkpoint, {encoder_dir.name})")
+                    return EncoderToolPolicy(
+                        checkpoint=checkpoint,
+                        tokenizer=tokenizer,
+                        policy_json=policy_json,
+                    )
+                print(f"[autopilot] policy: encoder artifacts incomplete in {encoder_dir}, skipping")
+            except Exception as exc:  # noqa: BLE001 - encoder must not crash the loop
+                print(f"[autopilot] policy: encoder unavailable ({type(exc).__name__}: {exc}), falling through")
+        # 2. Try the learned planner (falls back to deterministic without a model).
+        if args.policy in ("auto", "planner"):
+            from agent.planner_nn import NNPlanner
+            planner = NNPlanner(level_hint=int(args.level_hint), store=None,
+                                stack_mode=args.ensemble)
+            print(f"[autopilot] policy: {planner.note}; {planner.stack_note}")
+            return planner
     return RulePolicy()
 
 

@@ -1,0 +1,8 @@
+[autopilot] policy: encoder (ONNX INT8, encoder30_v15)
+auto -> EncoderToolPolicy
+rule -> RulePolicy
+[autopilot] policy: tool policy not loaded (lazy); stack not loaded
+planner -> NNPlanner
+[autopilot] policy: encoder (ONNX INT8, encoder30_v15)
+encoder -> EncoderToolPolicy
+  backend: onnx

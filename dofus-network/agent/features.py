@@ -605,6 +605,30 @@ FEATURE_NAMES: List[str] = (
 FEATURE_COUNT = len(FEATURE_NAMES)
 
 
+# --- world-perception block (opt-in; the shipped 42-wide head stays 42) -------
+# A retrained head appends agent.world_context.WORLD_FEATURE_NAMES to learn map
+# shape (interior vs open, doors, mob groups). This is perception, not a rule:
+# the numbers come straight from the observation, and the mapping from them to a
+# tool is learned by training / WSP. ``objective_features`` above is untouched so
+# no shipped artifact changes width under it.
+def objective_features_world(state: Dict[str, Any]) -> List[float]:
+    from agent.world_context import world_feature_vector
+    return world_feature_vector(state)
+
+
+def objective_features_full(obj: Dict[str, Any], quest_level: int, step_index: int,
+                            state: Dict[str, Any],
+                            ctx: Optional[Dict[str, Any]] = None) -> List[float]:
+    """The 42 base features followed by the world block -- for a widened head."""
+    return (objective_features(obj, quest_level, step_index, state, ctx)
+            + objective_features_world(state))
+
+
+def feature_count_full() -> int:
+    from agent.world_context import WORLD_FEATURE_NAMES
+    return FEATURE_COUNT + len(WORLD_FEATURE_NAMES)
+
+
 def self_check() -> None:
     """Fail loudly if the vector and the names ever disagree."""
     probe = objective_features({"type_id": 1, "params": "{}"}, 60, 0,
