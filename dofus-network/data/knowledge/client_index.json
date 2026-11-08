@@ -1,6 +1,6 @@
 {
  "manifest": {
-  "checked_at": "2026-11-08T11:53:55",
+  "checked_at": "2026-11-08T15:09:02",
   "conflicts": {},
   "fields": {
    "map_id": {
@@ -34,12 +34,12 @@
     "total": 57
    }
   },
-  "index_sha256": "007079aec50bc3ac6997adc4346e25f1c0e05b2cf4622d27b56792cd94978353",
+  "index_sha256": "529db6e90c2c028fed5ec96f151567b4f62238cca09932dbe3c3bf978991af90",
   "logs": [
    {
-    "mtime": 1794135187,
+    "mtime": 1794139731,
     "name": "dofus-01.jsonl",
-    "size": 55345265
+    "size": 58279986
    },
    {
     "mtime": 1793261963,
@@ -1828,7 +1828,7 @@
    "type_id": 0
   },
   "4262:13930": {
-   "captures": 2401,
+   "captures": 2543,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1876,7 +1876,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -1906,7 +1906,7 @@
    "type_id": 4
   },
   "4262:13932": {
-   "captures": 2154,
+   "captures": 2296,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -1948,7 +1948,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -1977,7 +1977,7 @@
    "type_id": 1
   },
   "4262:13934": {
-   "captures": 2121,
+   "captures": 2263,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2019,7 +2019,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2048,7 +2048,7 @@
    "type_id": 14
   },
   "4262:13936": {
-   "captures": 2121,
+   "captures": 2263,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2090,7 +2090,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2119,7 +2119,7 @@
    "type_id": 14
   },
   "4262:13938": {
-   "captures": 2121,
+   "captures": 2263,
    "completion_captures": {
     "cur_completion": 2
    },
@@ -2161,7 +2161,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2190,7 +2190,7 @@
    "type_id": 14
   },
   "4262:13940": {
-   "captures": 2763,
+   "captures": 2905,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2238,7 +2238,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2268,7 +2268,7 @@
    "type_id": 0
   },
   "4262:13942": {
-   "captures": 2095,
+   "captures": 2237,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2316,7 +2316,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2346,7 +2346,7 @@
    "type_id": 1
   },
   "4262:13944": {
-   "captures": 2080,
+   "captures": 2222,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2394,7 +2394,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2425,7 +2425,7 @@
    "type_id": 6
   },
   "4262:13946": {
-   "captures": 2073,
+   "captures": 2215,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2473,7 +2473,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2503,7 +2503,7 @@
    "type_id": 1
   },
   "4262:13948": {
-   "captures": 2597,
+   "captures": 2739,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2551,7 +2551,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2581,6 +2581,162 @@
    "type_id": 0
   },
   "4262:13950": {
+   "captures": 1994,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1794139731.199,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490944,
+   "objective_id": 13950,
+   "params": {
+    "parameter0": 704143
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Recover the last page of the aqueduct blueprints.",
+   "type": "QuestObjectiveFreeForm",
+   "type_id": 0
+  },
+  "4262:13952": {
+   "captures": 1951,
+   "field_sources": {
+    "map_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "params": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "quest_name": [
+     "catalog"
+    ],
+    "step_description": [
+     "catalog"
+    ],
+    "step_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "step_name": [
+     "catalog"
+    ],
+    "text": [
+     "current",
+     "ready",
+     "step"
+    ],
+    "type": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ],
+    "type_id": [
+     "catalog",
+     "current",
+     "ready",
+     "step"
+    ]
+   },
+   "first_at": 1793202329.175,
+   "last_at": 1794139731.199,
+   "logs": [
+    "default.jsonl",
+    "dofus-01.jsonl",
+    "dofus-02.20261029-022349-419629.jsonl",
+    "dofus-02.jsonl",
+    "dofus-03.jsonl",
+    "dofus-05.20261029-170756-782023.jsonl"
+   ],
+   "map_id": 145490944,
+   "objective_id": 13952,
+   "params": {
+    "parameter0": 3900
+   },
+   "quest_id": 4262,
+   "quest_name": "Personae Non Gratae in Albuera",
+   "sources": [
+    "catalog",
+    "current",
+    "ready",
+    "step"
+   ],
+   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
+   "step_id": 4954,
+   "step_name": "Personae Non Gratae in Albuera",
+   "text": "Talk to Roki",
+   "type": "QuestObjectiveGoToNpc",
+   "type_id": 1
+  },
+  "4262:13954": {
    "captures": 1852,
    "field_sources": {
     "map_id": [
@@ -2629,163 +2785,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
-   "logs": [
-    "default.jsonl",
-    "dofus-01.jsonl",
-    "dofus-02.20261029-022349-419629.jsonl",
-    "dofus-02.jsonl",
-    "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
-   ],
-   "map_id": 145490944,
-   "objective_id": 13950,
-   "params": {
-    "parameter0": 704143
-   },
-   "quest_id": 4262,
-   "quest_name": "Personae Non Gratae in Albuera",
-   "sources": [
-    "catalog",
-    "current",
-    "ready",
-    "step"
-   ],
-   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
-   "step_id": 4954,
-   "step_name": "Personae Non Gratae in Albuera",
-   "text": "Recover the last page of the aqueduct blueprints.",
-   "type": "QuestObjectiveFreeForm",
-   "type_id": 0
-  },
-  "4262:13952": {
-   "captures": 1809,
-   "field_sources": {
-    "map_id": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ],
-    "params": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ],
-    "quest_name": [
-     "catalog"
-    ],
-    "step_description": [
-     "catalog"
-    ],
-    "step_id": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ],
-    "step_name": [
-     "catalog"
-    ],
-    "text": [
-     "current",
-     "ready",
-     "step"
-    ],
-    "type": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ],
-    "type_id": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ]
-   },
-   "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
-   "logs": [
-    "default.jsonl",
-    "dofus-01.jsonl",
-    "dofus-02.20261029-022349-419629.jsonl",
-    "dofus-02.jsonl",
-    "dofus-03.jsonl",
-    "dofus-05.20261029-170756-782023.jsonl"
-   ],
-   "map_id": 145490944,
-   "objective_id": 13952,
-   "params": {
-    "parameter0": 3900
-   },
-   "quest_id": 4262,
-   "quest_name": "Personae Non Gratae in Albuera",
-   "sources": [
-    "catalog",
-    "current",
-    "ready",
-    "step"
-   ],
-   "step_description": "Great Jarl Ordyn is worried about his villagers. Wild animals are attacking the buildings and inhabitants of Albuera as the colony grows on the archipelago. Solving the root cause of the problem has become an important issue.",
-   "step_id": 4954,
-   "step_name": "Personae Non Gratae in Albuera",
-   "text": "Talk to Roki",
-   "type": "QuestObjectiveGoToNpc",
-   "type_id": 1
-  },
-  "4262:13954": {
-   "captures": 1710,
-   "field_sources": {
-    "map_id": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ],
-    "params": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ],
-    "quest_name": [
-     "catalog"
-    ],
-    "step_description": [
-     "catalog"
-    ],
-    "step_id": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ],
-    "step_name": [
-     "catalog"
-    ],
-    "text": [
-     "current",
-     "ready",
-     "step"
-    ],
-    "type": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ],
-    "type_id": [
-     "catalog",
-     "current",
-     "ready",
-     "step"
-    ]
-   },
-   "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2815,7 +2815,7 @@
    "type_id": 1
   },
   "4262:13956": {
-   "captures": 1707,
+   "captures": 1849,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2863,7 +2863,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",
@@ -2893,7 +2893,7 @@
    "type_id": 0
   },
   "4262:13958": {
-   "captures": 1968,
+   "captures": 2252,
    "field_sources": {
     "map_id": [
      "catalog",
@@ -2941,7 +2941,7 @@
     ]
    },
    "first_at": 1793202329.175,
-   "last_at": 1794090355.325,
+   "last_at": 1794139731.199,
    "logs": [
     "default.jsonl",
     "dofus-01.jsonl",

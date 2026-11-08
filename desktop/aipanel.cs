@@ -179,11 +179,10 @@ namespace DofusFarm.UI
                 sb.AppendLine("target_slot=" + TargetSlot.ToString());
                 sb.AppendLine("target_slots=" + string.Join(",",
                     (TargetSlots ?? new List<int>()).ConvertAll(delegate(int v) { return v.ToString(); }).ToArray()));
-                sb.AppendLine("policy=" + Policy);
                 sb.AppendLine("dry=" + (DryRun ? "1" : "0"));
-                sb.AppendLine("steps=" + Steps.ToString());
                 sb.AppendLine("goals=" + Escape(Goals));
                 sb.AppendLine("order=" + Escape(Order));
+                sb.AppendLine("# Shortcuts (VK codes: F5=116, F6=117, F7=118, F8=119, F12=123)");
                 foreach (KeyValuePair<string, int> kv in Shortcuts)
                     sb.AppendLine("shortcut." + kv.Key + "=" + kv.Value.ToString());
                 File.WriteAllText(PathFor(baseDir), sb.ToString());

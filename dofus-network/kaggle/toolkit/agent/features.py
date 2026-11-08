@@ -20,6 +20,7 @@ and a leak makes a validation score meaningless.
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from collections import deque
@@ -32,7 +33,20 @@ from agent.jsonio import loads as fast_loads
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = REPO_ROOT / "data" / "capabilities.json"
 
-OBJECTIVE_TYPES = [0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 14, 16, 17]
+def _load_objective_types() -> List[int]:
+    default_types = [0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 14, 16, 17]
+    try:
+        if REGISTRY.exists():
+            data = fast_loads(REGISTRY.read_bytes())
+            if isinstance(data, dict) and "objective_types" in data:
+                types = [int(t) for t in data["objective_types"] if isinstance(t, (int, float))]
+                if types:
+                    return sorted(set(types))
+    except Exception:
+        pass
+    return default_types
+
+OBJECTIVE_TYPES = _load_objective_types()
 
 # Objective type -> what it needs, decoded from the objective text itself:
 #   0  "Locate and neutralise X"          monster
@@ -561,7 +575,8 @@ def objective_features(obj: Dict[str, Any], quest_level: int, step_index: int,
 
     capacity = int(state.get("inventory_capacity") or 0)
     vec.append(1.0 if capacity and len(inv) >= capacity else 0.0)
-    vec.append(min(1.0, (state.get("kamas") or 0) / 10000.0))
+    kamas_scale = float(os.environ.get("DOFUS_KAMAS_SCALE", 10000.0))
+    vec.append(min(1.0, (state.get("kamas") or 0) / kamas_scale))
     return vec
 
 

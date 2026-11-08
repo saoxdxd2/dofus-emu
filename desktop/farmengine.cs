@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -33,8 +33,10 @@ namespace DofusFarm.Engine {
 
     public static class DeviceCatalog {
         private static string BuildUa(string model, string build, bool mobile = true) {
-            return string.Format("Mozilla/5.0 (Linux; Android 10; {0} Build/{1}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 {2}Safari/537.36",
-                model, build, mobile ? "Mobile " : "");
+            string chromeVer = Environment.GetEnvironmentVariable("DOFUS_CHROME_UA_VERSION");
+            if (string.IsNullOrEmpty(chromeVer)) chromeVer = "Chrome/112.0.5615.137";
+            return string.Format("Mozilla/5.0 (Linux; Android 10; {0} Build/{1}) AppleWebKit/537.36 (KHTML, like Gecko) {2} {3}Safari/537.36",
+                model, build, chromeVer, mobile ? "Mobile " : "");
         }
 
         private static DeviceProfile Make(
@@ -74,7 +76,20 @@ namespace DofusFarm.Engine {
     public class InstanceModel {
         public string Name { get; set; } public string CustomName { get; set; } public string DisplayName { get; set; }
         public int Port { get; set; } public int RamMb { get; set; } public int Cores { get; set; } public int Pid { get; set; }
-        public string Serial { get { return "emulator-" + Port; } }
+        private string _serial;
+        public string Serial {
+            get {
+                if (!string.IsNullOrEmpty(_serial)) return _serial;
+                if (!string.IsNullOrEmpty(PhoneModelId)) {
+                    var prof = DeviceCatalog.GetProfile(PhoneModelId);
+                    if (prof != null && !string.IsNullOrEmpty(prof.SerialPrefix)) {
+                        return prof.SerialPrefix + (10000000 + Port).ToString();
+                    }
+                }
+                return "emulator-" + Port;
+            }
+            set { _serial = value; }
+        }
         public bool IsRunning { get; set; } public bool IsWarmReady { get; set; }
         public string Proxy { get; set; } public string PhoneModelId { get; set; } public string PhoneModelName { get; set; }
     }
@@ -90,6 +105,9 @@ namespace DofusFarm.Engine {
             }
         }
 
+        // Provisioning contract: Engine runtime binaries and disk image paths.
+        // Modern standalone mode uses native WebView2, while legacy Android emulator backend
+        // (AdbPath, EmulatorPath, QemuImgPath, GoldenMasterPath) is opt-in via --include-legacy-emulator.
         public string SdkRoot { get; private set; }
         public string AdbPath { get; private set; }
         public string EmulatorPath { get; private set; }
@@ -350,6 +368,12 @@ namespace DofusFarm.Engine {
             if (handler != null) { try { handler(string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, message)); } catch { } }
         }
 
+        /// <summary>
+        /// Resolves paths according to the engine provisioning contract:
+        /// 1. SdkRoot: searches AppBaseDir, DOFUS_FARM_HOME, Registry, ANDROID_SDK_ROOT, ANDROID_HOME, or user profile.
+        /// 2. ProxyExePath: searches AppBaseDir, scripts, or DOFUS_FARM_HOME.
+        /// 3. GoldenMasterPath / GoldenOverlayPath: searches template AVDs or AppBaseDir for Android backing images.
+        /// </summary>
         private void ResolveSdkPaths(bool skipIntegrityCheck = false) {
             string dfHome = Environment.GetEnvironmentVariable("DOFUS_FARM_HOME");
             string userProf = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -1313,11 +1337,12 @@ namespace DofusFarm.Engine {
                             sb.AppendFormat(" -upstream \"{0}\"", chain);
                             Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> Upstream: {1})...", port, chain));
                         }
-                        // Include the primary egress. When the pool is dead and a
-                        // pinned/custom upstream is the only working route, the old
-                        // Skip(1) sent every asset through dead fallbacks (502s)
-                        // while the game socket on the primary was healthy.
-                        string[] assetEgresses = chain.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).Take(4).ToArray();
+                        // Assets must ONLY use verified-healthy egresses. The Go proxy round-robins
+                        // -cdn-upstream rather than doing failover, so sending unprobed or dead
+                        // fallback hops here causes 8-second connect timeouts and 502 Bad Gateways.
+                        string[] assetEgresses = pinnedCustom
+                            ? new string[] { normalizedUpstream }
+                            : ProxySupervisor.Instance.HealthyEgresses(normalizedUpstream, 4);
                         if (assetEgresses.Length > 0) {
                             sb.AppendFormat(" -cdn-upstream \"{0}\"", string.Join(",", assetEgresses));
                             Log(string.Format("Starting Go Network Spoofing Proxy (Port {0} -> assets over {1} egress(es))...", port, assetEgresses.Length));
@@ -1326,6 +1351,7 @@ namespace DofusFarm.Engine {
                     if (!net.FailClosed) sb.Append(" -allow-direct");
                     Action<string, string> addOpt = (k, v) => { if (!string.IsNullOrEmpty(v)) sb.AppendFormat(" -{0} \"{1}\"", k, v); };
                     addOpt("log", net.LogPath);
+                    addOpt("login-host", net.LoginHost);
                     if (!string.IsNullOrEmpty(net.ExtraArgs)) sb.Append(" ").Append(net.ExtraArgs.Trim());
                     addOpt("serial", serialNo);
                     addOpt("uuid", androidId);

@@ -55,7 +55,9 @@ function check(name, got, want) {
 }
 
 check('lists only real NPC actors', h.list(), [
-    { templateId: 3888, contextualId: 123456, cell: 255, name: null }
+    { templateId: 3888, contextualId: 123456, cell: 255, name: null,
+      has_quest: false, has_exclamation: false, has_question: false,
+      quests_to_start: [], quests_to_valid: [] }
 ]);
 const found = h.find(3888);
 check('resolves the actor id and cell', {
@@ -66,6 +68,25 @@ check('resolves the actor id and cell', {
 check('seen lists the template ids here', found.seen, [3888]);
 check('a missing npc is reported as missing', h.find(9999).actor, null);
 check('the map comes from playerData.position', h.mapId(), 147064834);
+
+// Quest indicator & quest flag recognition
+const questNpc = actor(234567, 260, 3892);
+questNpc.icons = { 1: { questClip: {} } };
+questNpc._questFlag = { questsToStartId: [4262], questsToValidId: [] };
+window.actorManager.actors[234567] = questNpc;
+const questList = h.list();
+const foundQuestNpc = questList.find(a => a.templateId === 3892);
+check('identifies quest exclamation mark indicator on NPC', {
+    has_quest: foundQuestNpc.has_quest,
+    has_exclamation: foundQuestNpc.has_exclamation,
+    has_question: foundQuestNpc.has_question,
+    quests_to_start: foundQuestNpc.quests_to_start
+}, {
+    has_quest: true,
+    has_exclamation: true,
+    has_question: false,
+    quests_to_start: [4262]
+});
 
 // Find a real neighbour with the same grid formula, then check the far cell.
 function point(cell) {

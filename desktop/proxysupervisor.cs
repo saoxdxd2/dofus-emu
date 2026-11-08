@@ -768,6 +768,22 @@ namespace DofusFarm.Engine
             return string.Join(",", parts.ToArray());
         }
 
+        /// <summary>
+        /// Only the primary egress and verified-healthy candidates from the supervisor pool.
+        /// Used for CDN asset downloads (-cdn-upstream) where the Go proxy round-robins requests
+        /// rather than doing failover: unprobed or dead proxies in this list cause 8s timeouts and 502s.
+        /// </summary>
+        public string[] HealthyEgresses(string primary, int max)
+        {
+            if (string.IsNullOrEmpty(primary)) return new string[0];
+            var parts = new List<string> { primary };
+            if (max > 1)
+            {
+                AppendCandidates(parts, max, true);
+            }
+            return parts.ToArray();
+        }
+
         private void AppendCandidates(List<string> parts, int max, bool healthy)
         {
             foreach (ProxyCandidate c in Candidates)

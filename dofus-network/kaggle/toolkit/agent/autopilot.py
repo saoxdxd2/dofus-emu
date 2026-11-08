@@ -2330,6 +2330,11 @@ class Autopilot:
                     self._tutorial_since = 0.0
                     self._tutorial_expired = False
                 tutorial_active = tutorial_active and not self._tutorial_expired
+                if (after or {}).get("in_dialog") or (before or {}).get("in_dialog"):
+                    # Active dialog conversation is not a quest stall
+                    self._stall_since = self._index
+                    self._retire_repeats = 0
+                    self._stall_unretired = 0
                 prog = (after or {}).get("objectives_completed")
                 if isinstance(prog, (int, float)):
                     if prog > self._best_progress:

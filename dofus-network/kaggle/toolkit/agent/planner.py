@@ -21,6 +21,7 @@ does not need to know which one it is talking to.
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
@@ -28,6 +29,8 @@ import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 from agent.observe import flatten, map_id_of
 from agent.jsonio import loads as fast_loads
@@ -45,34 +48,57 @@ from agent.verifier import READ_ONLY_TOOLS  # noqa: E402
 # Prompt routing. The panel pins the planner, so it must decide from the goal
 # text whether the user asked for quests, a farm session, or full auto; the old
 # planner always ran quests and a quest kill objective could start a farm loop.
-_RE_GOAL_QUEST = re.compile(
-    r"\b(qu[eê]te?s?|quests?|objecti(?:f|ve)s?|missions?)\b", re.IGNORECASE)
-_RE_GOAL_FARM = re.compile(
-    r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|mobs?|monsters?|"
-    r"monstres?|r[eé]colte[rz]?|gather|harvest|minar|"
-    r"collecte[rz]?)\b", re.IGNORECASE)
+_GOAL_LEXICON_PATH = REPO_ROOT / "data" / "goal_lexicon.json"
+
+def _load_lexicon() -> Dict[str, Any]:
+    try:
+        if _GOAL_LEXICON_PATH.exists():
+            return json.loads(_GOAL_LEXICON_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+_LEXICON = _load_lexicon()
+
+_QUEST_PATTERNS = _LEXICON.get("goal_quest") or ["qu[eê]te?s?", "quests?", "objecti(?:f|ve)s?", "missions?"]
+_RE_GOAL_QUEST = re.compile(r"\b(" + "|".join(_QUEST_PATTERNS) + r")\b", re.IGNORECASE)
+
+_FARM_PATTERNS = _LEXICON.get("goal_farm") or [
+    "farm(?:ing)?", "farmear", "grind", "kill", "tuer", "matar", "mobs?", "monsters?",
+    "monstres?", "r[eé]colte[rz]?", "gather", "harvest", "minar", "collecte[rz]?"
+]
+_RE_GOAL_FARM = re.compile(r"\b(" + "|".join(_FARM_PATTERNS) + r")\b", re.IGNORECASE)
+
 # What `_RE_GOAL_FARM` was before "kamas" and "resources" were removed: those two
 # words appear in sell and inventory orders ("sell all my resources"), and routing
 # them to the farm planner is what made the order layer look deaf. `DOFUS_GOAL_ROUTER=rules`
 # is documented as the escape hatch back to the old behaviour, so the old pattern is
 # kept here rather than in the history -- otherwise the switch is not an A/B.
-_RE_GOAL_FARM_LEGACY = re.compile(
-    r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|mobs?|monsters?|"
-    r"monstres?|r[eé]colte[rz]?|gather|harvest|minar|"
-    r"collecte[rz]?|kamas?|resources?|ressources?)\b", re.IGNORECASE)
-_AUTO_GOALS = frozenset({"auto", "full auto", "fullauto", "autopilot",
-                         "autonome", "automatic", ""})
+_FARM_LEGACY_PATTERNS = _LEXICON.get("goal_farm_legacy") or [
+    "farm(?:ing)?", "farmear", "grind", "kill", "tuer", "matar", "mobs?", "monsters?",
+    "monstres?", "r[eé]colte[rz]?", "gather", "harvest", "minar", "collecte[rz]?",
+    "kamas?", "resources?", "ressources?"
+]
+_RE_GOAL_FARM_LEGACY = re.compile(r"\b(" + "|".join(_FARM_LEGACY_PATTERNS) + r")\b", re.IGNORECASE)
+
+_AUTO_GOALS = frozenset(_LEXICON.get("auto_goals") or {"auto", "full auto", "fullauto", "autopilot",
+                                                       "autonome", "automatic", ""})
+
 # A user asking the bot to play is a Full Auto request, not an order with no
 # call. Checked after quest/farm so "can you play the quests?" stays a quest.
-_RE_GOAL_AUTO_PLAY = re.compile(
-    r"(?:^|[ 	])(?:(?:can|could|would|will) you play|play (?:the )?game|"
-    r"play for me|take over|do everything|you play|run the game)",
-    re.IGNORECASE)
-_FARM_TARGET_STRIP = re.compile(
-    r"\b(farm(?:ing)?|farmear|grind|kill|tuer|matar|mobs?|monsters?|monstres?|"
-    r"resources?|ressources?|r[eé]colte[rz]?|gather|harvest|minar|collecte[rz]?|"
-    r"kamas?|xp|exp|level|levels|please|the|a|an|some|des|du|de|le|la|les|un|"
-    r"une|for|of|in|on|to|my|character|personnage|all|more)\b", re.IGNORECASE)
+_AUTO_PLAY_PATTERNS = _LEXICON.get("auto_play") or [
+    "(?:can|could|would|will) you play", "play (?:the )?game", "play for me", "take over",
+    "do everything", "you play", "run the game"
+]
+_RE_GOAL_AUTO_PLAY = re.compile(r"(?:^|[ 	])(?:" + "|".join(_AUTO_PLAY_PATTERNS) + r")", re.IGNORECASE)
+
+_STRIP_PATTERNS = _LEXICON.get("farm_target_strip") or [
+    "farm(?:ing)?", "farmear", "grind", "kill", "tuer", "matar", "mobs?", "monsters?", "monstres?",
+    "resources?", "ressources?", "r[eé]colte[rz]?", "gather", "harvest", "minar", "collecte[rz]?",
+    "kamas?", "xp", "exp", "level", "levels", "please", "the", "a", "an", "some", "des", "du", "de", "le", "la", "les", "un",
+    "une", "for", "of", "in", "on", "to", "my", "character", "personnage", "all", "more"
+]
+_FARM_TARGET_STRIP = re.compile(r"\b(" + "|".join(_STRIP_PATTERNS) + r")\b", re.IGNORECASE)
 
 
 def _farm_target(goal: str) -> Optional[str]:
@@ -114,9 +140,21 @@ KNOWN_NPC_NAMES: Dict[str, int] = {
     "great jarl ordyn": 3892,
     "jarl ordyn": 3892,
     "ordyn": 3892,
+    "roki": 3900,
+    "foreman kosh": 3896,
+    "kosh": 3896,
+    "ayin spyr": 3888,
+    "ayin": 3888,
+    "ganymede": 7581,
+    "ganymède": 7581,
+    "archie ologist": 8014,
+    "edgar kéolog": 8014,
 }
 KNOWN_NPC_MAPS: Dict[int, int] = {
     3892: 146276352,  # Great Jarl Ordyn in Albuera house interior
+    3900: 145490944,  # Roki
+    3896: 145489920,  # Foreman Kosh
+    3888: 145489920,  # Ayin Spyr
 }
 
 GROUP_REFUSALS = ("elsewhere", "empty_map", "unread_members", "other")
@@ -479,7 +517,7 @@ DIALOG_ASK_LIMIT = 2
 # it. Measured live 2026-11-07: eight steps of `quest.advance {reply: 0}`, each accepted with a
 # fresh `reply_id`, none advancing the objective, while the quest wanted "equip the recruit set,
 # then talk". This bound is about the conversation going nowhere, not about repetition.
-DIALOG_STALL_LIMIT = 4
+DIALOG_STALL_LIMIT = 16
 
 
 class QuestPlanner:
@@ -554,6 +592,7 @@ class QuestPlanner:
         self._dialog_asks: Dict[Tuple[Any, ...], int] = {}
         self._dialog_stall_key: Optional[Tuple[Any, Any]] = None
         self._dialog_stall = 0
+        self._dialog_seen_messages: set = set()
         # Which window each menu key opens. Seeded from the measured pair and from the
         # knowledge base (`load_menu_windows`), then extended by the loop when a press
         # demonstrably opened something (`learn_menu_window`).
@@ -1090,7 +1129,12 @@ class QuestPlanner:
             if npc_id <= 0:
                 continue
             out.append({"npc_id": npc_id, "cell": entry.get("cell"),
-                        "actor_id": entry.get("actor_id")})
+                        "actor_id": entry.get("actor_id"),
+                        "has_quest": bool(entry.get("has_quest")),
+                        "has_exclamation": bool(entry.get("has_exclamation")),
+                        "has_question": bool(entry.get("has_question")),
+                        "quests_to_start": list(entry.get("quests_to_start") or []),
+                        "quests_to_valid": list(entry.get("quests_to_valid") or [])})
         return out
 
     @staticmethod
@@ -1474,6 +1518,9 @@ class QuestPlanner:
         for item in obs.get("step_objectives") or []:
             add(item)
             check_text(item)
+        if isinstance(obs.get("current_objective"), dict):
+            add(obs["current_objective"])
+            check_text(obs["current_objective"])
         return out
 
     def _npc_talk_calls(self, quest: Dict[str, Any], obj: Dict[str, Any],
@@ -1502,9 +1549,31 @@ class QuestPlanner:
         # "who is nearest" -- the live loop questioned four bystanders about a
         # level gate while the quest's own target stood further away.
         pinned = self._quest_target_npcs(obs)
-        npcs.sort(key=lambda entry: (0 if int(entry["npc_id"]) in pinned else 1,
-                                     self._cell_distance(here, entry.get("cell"))))
+        if isinstance(obj, dict):
+            obj_text = str(obj.get("text") or "").lower()
+            for kw, nid in KNOWN_NPC_NAMES.items():
+                if kw in obj_text:
+                    pinned.setdefault(nid, []).append(int(obj.get("id", obj.get("objective_id", 0)) or 0))
         quest_id = quest.get("id")
+        try:
+            qid_int = int(quest_id)
+        except (TypeError, ValueError):
+            qid_int = 0
+
+        def npc_priority(entry: Dict[str, Any]) -> Tuple[int, int]:
+            nid = int(entry["npc_id"])
+            dist = self._cell_distance(here, entry.get("cell"))
+            if nid in pinned:
+                return (0, dist)
+            if entry.get("has_question") or (qid_int and qid_int in entry.get("quests_to_valid", [])):
+                return (1, dist)
+            if entry.get("has_exclamation") or (qid_int and qid_int in entry.get("quests_to_start", [])):
+                return (2, dist)
+            if entry.get("has_quest"):
+                return (3, dist)
+            return (4, dist)
+
+        npcs.sort(key=npc_priority)
         objective_id = obj.get("id", obj.get("objective_id"))
         try:
             key = (int(quest_id), int(objective_id), int(map_id_of(obs) or 0))
@@ -1526,6 +1595,12 @@ class QuestPlanner:
         if int(npc["npc_id"]) in pinned:
             why += (" (the quest graph names this NPC: %s)"
                     % ",".join(str(q) for q in pinned[int(npc["npc_id"])][:3]))
+        elif npc.get("has_question") or (qid_int and qid_int in npc.get("quests_to_valid", [])):
+            why += " (NPC has quest completion indicator / question mark)"
+        elif npc.get("has_exclamation") or (qid_int and qid_int in npc.get("quests_to_start", [])):
+            why += " (NPC has quest offer indicator / exclamation mark)"
+        elif npc.get("has_quest"):
+            why += " (NPC has quest marker)"
         return [{
             "tool": "quest.advance",
             "args": {"quest_id": int(quest_id), "npc_id": int(npc["npc_id"])},
@@ -2011,9 +2086,23 @@ class QuestPlanner:
             definitive_empty = (reply_count == 0
                                 and (dialog.get("ids_present") is True
                                      or dialog.get("text_present") is True))
-            if (definitive_empty and self._dialog_waits >= 2) or self._dialog_waits >= 6:
+            if definitive_empty and self._dialog_waits >= 2:
                 self._dialog_waits = 0
                 self._dialog_key = None
+                return ToolCall("quest.advance", {
+                    "quest_id": int(quest_id or 0), "close": True,
+                }, goal)
+            if self._dialog_waits >= 6:
+                self._dialog_waits = 0
+                self._dialog_key = None
+                replies = dialog.get("replies")
+                if isinstance(replies, list) and replies:
+                    first_reply = replies[0]
+                    idx = first_reply.get("index", 0) if isinstance(first_reply, dict) else 0
+                    return ToolCall("quest.advance", {
+                        "quest_id": int(quest_id or 0),
+                        "reply_index": int(idx),
+                    }, goal)
                 return ToolCall("quest.advance", {
                     "quest_id": int(quest_id or 0), "close": True,
                 }, goal)
@@ -2021,17 +2110,26 @@ class QuestPlanner:
         self._dialog_waits = 0
         if status == "choose" and quest_id is not None and reply:
             stall_key = (dialog.get("npc_id"), decision.get("objective_id"))
-            if stall_key == self._dialog_stall_key:
-                self._dialog_stall += 1
-            else:
+            msg = dialog.get("message") or dialog.get("text") or dialog.get("question")
+            msg_key = str(msg) if msg is not None else None
+            if stall_key != self._dialog_stall_key:
                 self._dialog_stall_key = stall_key
+                self._dialog_seen_messages.clear()
+                if msg_key:
+                    self._dialog_seen_messages.add(msg_key)
                 self._dialog_stall = 1
+            else:
+                if msg_key and msg_key not in self._dialog_seen_messages:
+                    self._dialog_seen_messages.add(msg_key)
+                    if len(self._dialog_seen_messages) > 128:
+                        self._dialog_seen_messages.pop()
+                    self._dialog_stall = 1
+                else:
+                    self._dialog_stall += 1
             if self._dialog_stall > DIALOG_STALL_LIMIT:
-                # The conversation is not moving the objective. Closing it hands the step back
-                # to the rest of the planner, which is where an "equip, then talk" objective
-                # can actually be worked -- staying in the dialog cannot.
                 self._dialog_stall = 0
                 self._dialog_stall_key = None
+                self._dialog_seen_messages.clear()
                 return ToolCall("quest.advance", {
                     "quest_id": int(quest_id or 0), "close": True,
                 }, goal)
@@ -3321,11 +3419,14 @@ class QuestPlanner:
                     # dialogue, and with every interactive tried once the loop sat
                     # on state.snapshot forever (dofus-05, 2026-10-28). Asking each
                     # map NPC once is the same generic move the fight objectives use.
-                    npc_calls = self._npc_talk_calls(
-                        quest, obj, obs, t,
-                        why_fmt="objective %s: free-form; ask NPC %d")
-                    if npc_calls:
-                        return npc_calls
+                    target_npc_id = None
+                    text_lower = str(obj.get("text") or "").lower()
+                    for name_kw, nid in KNOWN_NPC_NAMES.items():
+                        if name_kw in text_lower:
+                            target_npc_id = nid
+                            break
+                    target_map = KNOWN_NPC_MAPS.get(target_npc_id) if target_npc_id else None
+
                     # If this map reports interior doors that have not been exhausted for this
                     # objective, enter the building before declaring the entire map exhausted.
                     map_blk = obs.get("map") if isinstance(obs, dict) else None
@@ -3337,19 +3438,30 @@ class QuestPlanner:
                         if isinstance(d, dict) and d.get("to_map") is not None
                         and int(d["to_map"]) not in neighbour_map_ids
                     ]
-                    target_npc_id = None
-                    text_lower = str(obj.get("text") or "").lower()
-                    for name_kw, nid in KNOWN_NPC_NAMES.items():
-                        if name_kw in text_lower:
-                            target_npc_id = nid
-                            break
-                    target_map = KNOWN_NPC_MAPS.get(target_npc_id) if target_npc_id else None
                     if target_map and target_map in door_candidates:
                         door_candidates.remove(target_map)
                         door_candidates.insert(0, target_map)
+
+                    if target_map and target_map in door_candidates:
+                        if (int(quest.get("id", 0)), int(obj.get("id", 0)), target_map) not in self._exhausted_at:
+                            return [self._travel_call(obj, target_map, obs, key=travel_key)]
+
+                    npc_calls = self._npc_talk_calls(
+                        quest, obj, obs, t,
+                        why_fmt="objective %s: free-form; ask NPC %d")
+                    npcs_here = self._map_npcs(obs)
+                    if npc_calls:
+                        called_id = int(npc_calls[0]["args"].get("npc_id", 0))
+                        has_marker = any(int(e.get("npc_id", 0)) == called_id and (e.get("has_quest") or e.get("has_exclamation") or e.get("has_question")) for e in npcs_here)
+                        if called_id in (target_npc_id, ) or has_marker:
+                            return npc_calls
+
                     for dest in door_candidates:
                         if (int(quest.get("id", 0)), int(obj.get("id", 0)), dest) not in self._exhausted_at:
                             return [self._travel_call(obj, dest, obs, key=travel_key)]
+
+                    if npc_calls:
+                        return npc_calls
                     # Everything this map offers has been tried: its elements are
                     # retired in `_interactive_tries`, its NPCs in `_npc_asked`. A
                     # different map carries different elements and NPCs, so walking
@@ -3844,6 +3956,7 @@ class QuestPlanner:
         # only just opened.
         twin._dialog_stall_key = None
         twin._dialog_stall = 0
+        twin._dialog_seen_messages = set()
         twin._menu_windows = dict(self._menu_windows)
         twin._surface_labels = dict(self._surface_labels)
         # The gate's own memory is world knowledge (where groups were, which
@@ -4461,7 +4574,15 @@ class QuestPlanner:
                     # conversation first and send the request on the next step.
                     return ToolCall("quest.advance",
                                     {"quest_id": qid, "close": True}, goal)
-                return ToolCall("quest.advance", {"quest_id": qid}, goal)
+                target_npc = None
+                for entry in self._map_npcs(obs):
+                    if qid in entry.get("quests_to_start", []) or entry.get("has_exclamation"):
+                        target_npc = entry["npc_id"]
+                        break
+                adv_args: Dict[str, Any] = {"quest_id": qid}
+                if target_npc:
+                    adv_args["npc_id"] = target_npc
+                return ToolCall("quest.advance", adv_args, goal)
             call = self._plan_quest(qid, int(active[str(qid)] if str(qid) in active else active[qid]), obs, goal)
             if call is not None:
                 self._refund_plan_none(qid)

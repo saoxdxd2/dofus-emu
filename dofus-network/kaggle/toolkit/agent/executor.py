@@ -914,17 +914,19 @@ class ToolExecutor:
 
     def __init__(
         self,
-        sentinel_url: str = "http://127.0.0.1:8890",
+        sentinel_url: Optional[str] = None,
         directive_url: Optional[str] = None,
         cache_dir: Path = DEFAULT_CACHE_DIR,
-        timeout: float = 6.0,
+        timeout: Optional[float] = None,
         knowledge_store: Optional[Path] = None,
         recorder: Optional[TrajectoryRecorder] = None,
         fight_advisor=None,
     ) -> None:
-        self.sentinel_url = sentinel_url.rstrip("/")
+        env_sentinel = os.environ.get("DOFUS_SENTINEL_URL", "http://127.0.0.1:8890")
+        self.sentinel_url = (sentinel_url or env_sentinel).rstrip("/")
         self.directive_url = directive_url or bridge_directive_url()
-        self.timeout = float(timeout)
+        env_timeout = float(os.environ.get("DOFUS_DIRECTIVE_TIMEOUT", 6.0))
+        self.timeout = float(timeout if timeout is not None else env_timeout)
         # A wedged page answers the TCP connect and then takes the full C# wait
         # (10 s) for every directive, so a loop that keeps asking pays the stall
         # again and again. Two consecutive stalls open this circuit for 15 s and

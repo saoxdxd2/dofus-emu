@@ -1,15 +1,15 @@
 {
- "action_move_rate": 31.37,
- "actions": 5632,
+ "action_move_rate": 31.51,
+ "actions": 5671,
  "actions_advance": 65,
  "actions_advance_by_lag": 1,
- "actions_moved": 1767,
+ "actions_moved": 1787,
  "actions_moved_by_lag": 6,
  "actions_progress": 123,
  "actions_progress_by_lag": 6,
- "advance_per_hour": 7.64,
+ "advance_per_hour": 7.62,
  "characters": {
-  "4404438": 179,
+  "4404438": 218,
   "4409663": 1480,
   "4409667": 161,
   "4422236": 196,
@@ -19,9 +19,9 @@
   "4434148": 1199
  },
  "claim_rule": "the action's own promise, read from its args and the snapshot it returned: nav.goto at:<map> or a step, fight.join in_fight, quest.advance a talk opens a dialog / a reply moves the dialog to another node or changes quest state / accept activates the quest, tap.interactive an effect, inv.equip an inventory change; reads have no claim",
- "claims_derivable": 5353,
- "claims_met": 1413,
- "context_rows": 9930,
+ "claims_derivable": 5392,
+ "claims_met": 1432,
+ "context_rows": 9969,
  "days": {
   "2026-10-22": 48,
   "2026-10-23": 280,
@@ -35,10 +35,10 @@
   "2026-11-05": 9,
   "2026-11-06": 127,
   "2026-11-07": 66,
-  "2026-11-08": 1
+  "2026-11-08": 40
  },
  "explored_actions": 0,
- "hours": 8.375,
+ "hours": 8.402,
  "instance_days": 29,
  "label_rule": "a change observed in a run of reads is credited to the last acting step; reads never claim a change; a directive the page refused before sending is always a miss (G65)",
  "label_version": 3,
@@ -46,7 +46,7 @@
  "levels": {
   "1": 1932,
   "10": 13,
-  "11": 256,
+  "11": 295,
   "12": 7,
   "13": 74,
   "18": 71,
@@ -59,9 +59,9 @@
   "8": 153,
   "9": 37
  },
- "mean_step_s": 5.73,
+ "mean_step_s": 5.72,
  "median_step_s": 6.39,
- "moved_per_hour": 205.74,
+ "moved_per_hour": 207.33,
  "nav_form": {
   "cell": {
    "failed_pct": 0.0,
@@ -72,14 +72,14 @@
   "direction": {
    "failed_pct": 0.2,
    "moved": 478,
-   "moved_pct": 26.1,
-   "n": 1834
+   "moved_pct": 26.0,
+   "n": 1835
   },
   "map": {
    "failed_pct": 0.0,
-   "moved": 318,
-   "moved_pct": 80.7,
-   "n": 394
+   "moved": 325,
+   "moved_pct": 80.0,
+   "n": 406
   }
  },
  "nav_form_by_split": {
@@ -92,15 +92,15 @@
    },
    "direction": {
     "failed_pct": 0.8,
-    "moved": 62,
-    "moved_pct": 25.9,
-    "n": 239
+    "moved": 99,
+    "moved_pct": 39.1,
+    "n": 253
    },
    "map": {
     "failed_pct": 0.0,
-    "moved": 27,
-    "moved_pct": 65.9,
-    "n": 41
+    "moved": 73,
+    "moved_pct": 72.3,
+    "n": 101
    }
   },
   "train": {
@@ -111,16 +111,16 @@
     "n": 1
    },
    "direction": {
-    "failed_pct": 0.0,
-    "moved": 331,
-    "moved_pct": 24.5,
-    "n": 1349
+    "failed_pct": 0.1,
+    "moved": 333,
+    "moved_pct": 24.0,
+    "n": 1386
    },
    "map": {
     "failed_pct": 0.0,
-    "moved": 210,
-    "moved_pct": 85.4,
-    "n": 246
+    "moved": 192,
+    "moved_pct": 85.0,
+    "n": 226
    }
   },
   "val": {
@@ -131,22 +131,22 @@
     "n": 1
    },
    "direction": {
-    "failed_pct": 0.4,
-    "moved": 85,
-    "moved_pct": 34.6,
-    "n": 246
+    "failed_pct": 0.0,
+    "moved": 46,
+    "moved_pct": 23.5,
+    "n": 196
    },
    "map": {
     "failed_pct": 0.0,
-    "moved": 81,
-    "moved_pct": 75.7,
-    "n": 107
+    "moved": 60,
+    "moved_pct": 75.9,
+    "n": 79
    }
   }
  },
  "objective_types": {
   "-1": 61,
-  "0": 7751,
+  "0": 7790,
   "1": 309,
   "4": 192,
   "6": 1415,
@@ -191,36 +191,36 @@
   },
   "nav.goto": {
    "advance_pct": 0.7,
-   "advance_per_hour": 3.1,
-   "claim_n": 2231,
+   "advance_per_hour": 3.09,
+   "claim_n": 2244,
    "claim_pct": 32.7,
    "failed_pct": 0.1,
-   "moved_pct": 35.8,
-   "n": 2231,
+   "moved_pct": 35.9,
+   "n": 2244,
    "progress_pct": 1.1,
-   "progress_per_hour": 4.64,
-   "time_pct": 61.7
+   "progress_per_hour": 4.63,
+   "time_pct": 61.6
   },
   "quest.advance": {
    "advance_pct": 1.3,
-   "advance_per_hour": 13.45,
-   "claim_n": 2738,
-   "claim_pct": 24.9,
+   "advance_per_hour": 13.37,
+   "claim_n": 2760,
+   "claim_pct": 25.3,
    "failed_pct": 0.9,
-   "moved_pct": 30.0,
-   "n": 2965,
+   "moved_pct": 30.2,
+   "n": 2987,
    "progress_pct": 2.7,
-   "progress_per_hour": 28.32,
-   "time_pct": 33.7
+   "progress_per_hour": 28.15,
+   "time_pct": 33.8
   },
   "safe.stop": {
    "advance_pct": 0.6,
    "advance_per_hour": 8.05,
-   "claim_n": 154,
+   "claim_n": 157,
    "claim_pct": 0.0,
    "failed_pct": 0.6,
    "moved_pct": 1.9,
-   "n": 154,
+   "n": 157,
    "progress_pct": 1.3,
    "progress_per_hour": 16.11,
    "time_pct": 1.5
@@ -228,13 +228,13 @@
   "tap.interactive": {
    "advance_pct": 0.0,
    "advance_per_hour": 0.0,
-   "claim_n": 58,
+   "claim_n": 59,
    "claim_pct": 1.7,
    "failed_pct": 0.0,
-   "moved_pct": 74.1,
-   "n": 58,
+   "moved_pct": 74.6,
+   "n": 59,
    "progress_pct": 1.7,
-   "progress_per_hour": 23.25,
+   "progress_per_hour": 23.19,
    "time_pct": 0.5
   },
   "ui.tap": {
@@ -250,26 +250,26 @@
    "time_pct": 0.1
   }
  },
- "progress_per_hour": 13.37,
+ "progress_per_hour": 13.33,
  "randomized_actions": 0,
  "reads": 4298,
  "reads_that_saw_a_change": 192,
  "ready_multi_rows": 5451,
- "rows": 10044,
- "rows_built": 10044,
- "segments": 552,
+ "rows": 10083,
+ "rows_built": 10083,
+ "segments": 558,
  "span_days": 17,
  "split_actions": {
-  "test": 845,
-  "train": 3942,
-  "val": 845
+  "test": 851,
+  "train": 3970,
+  "val": 850
  },
  "split_policy": "hash",
  "split_rows": {
-  "test": 1311,
-  "train": 7589,
-  "val": 1144
+  "test": 1086,
+  "train": 7699,
+  "val": 1298
  },
- "with_observation_pair": 9930,
+ "with_observation_pair": 9969,
  "x_coverage_pct": 98.0
 }

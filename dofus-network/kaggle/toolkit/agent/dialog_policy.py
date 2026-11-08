@@ -40,6 +40,128 @@ _CLOSING = ("good luck", "goodbye", "good bye", "farewell", "see you", "take car
             "bonne chance", "au revoir", "adieu", "à bientôt", "buena suerte",
             "hasta luego", "nos vemos", "adiós")
 
+# Elemental keywords for multilingual dialogue options.
+# Maps each element to its characteristic keywords in French, English, Spanish, German.
+_ELEMENT_KEYWORDS: Dict[str, set[str]] = {
+    "earth": {
+        "terre", "force", "terrestre", "rocher", "pierre",
+        "earth", "strength", "stone", "rock",
+        "tierra", "fuerza",
+        "erde", "starke", "kraft",
+    },
+    "fire": {
+        "feu", "flamme", "flammes", "intelligence", "pyro",
+        "fire", "flame", "flames",
+        "fuego", "llama", "llamas", "inteligencia",
+        "feuer", "flamme", "intelligenz",
+    },
+    "water": {
+        "eau", "chance", "aquatique", "onde", "vague", "fluide",
+        "water", "luck", "fluid", "wave",
+        "agua", "suerte",
+        "wasser", "gluck",
+    },
+    "air": {
+        "air", "agilite", "vent", "souffle", "aerien",
+        "agility", "wind", "breath", "aerial",
+        "aire", "agilidad", "viento",
+        "luft", "wendigkeit", "wind",
+    },
+}
+
+_STAT_TO_ELEMENT: Dict[str, str] = {
+    "strength": "earth",
+    "intelligence": "fire",
+    "chance": "water",
+    "agility": "air",
+}
+
+_BREED_DEFAULT_ELEMENT: Dict[str, str] = {
+    "iop": "earth",
+    "cra": "earth",
+    "ecaflip": "earth",
+    "sadida": "earth",
+    "sram": "earth",
+    "feca": "fire",
+    "eniripsa": "fire",
+    "osamodas": "fire",
+    "xelor": "fire",
+    "enutrof": "water",
+    "sacrier": "earth",
+    "pandawa": "earth",
+    "rogue": "air",
+    "roublard": "air",
+    "masqueraider": "earth",
+    "zobal": "earth",
+    "steamer": "water",
+    "fogger": "water",
+    "foggernaut": "water",
+    "eliotrop": "air",
+    "eliotrope": "air",
+    "huppermage": "fire",
+    "ouginak": "earth",
+}
+
+
+def _reply_element(reply_text: str) -> Optional[str]:
+    """Detect if a reply matches an elemental path / build keyword."""
+    if not isinstance(reply_text, str):
+        return None
+    plain = unicodedata.normalize("NFKD", reply_text).encode("ascii", "ignore").decode("ascii").casefold()
+    tokens = set(_WORD.findall(plain))
+    matched = []
+    for elem, keywords in _ELEMENT_KEYWORDS.items():
+        if tokens & keywords:
+            matched.append(elem)
+    if len(matched) == 1:
+        return matched[0]
+    return None
+
+
+def _character_element(obs: Dict[str, Any]) -> str:
+    """Dynamically determine the character's primary element / build.
+
+    Inspects live stats (strength, intelligence, chance, agility), character element
+    annotations, and breed defaults without hardcoding to any single build.
+    """
+    if not isinstance(obs, dict):
+        return "earth"
+
+    char = obs.get("character")
+    char = char if isinstance(char, dict) else {}
+    for source in (char.get("element"), obs.get("element")):
+        if isinstance(source, str) and source.lower() in _ELEMENT_KEYWORDS:
+            return source.lower()
+
+    stats_dict = char.get("stats") or obs.get("stats") or {}
+    if isinstance(stats_dict, dict):
+        stat_scores: Dict[str, float] = {}
+        for stat_key, elem in _STAT_TO_ELEMENT.items():
+            val = stats_dict.get(stat_key)
+            num = 0.0
+            if isinstance(val, (int, float)):
+                num = float(val)
+            elif isinstance(val, dict):
+                tot = val.get("total") or val.get("base") or 0
+                if isinstance(tot, (int, float)):
+                    num = float(tot)
+            stat_scores[elem] = max(stat_scores.get(elem, 0.0), num)
+
+        max_stat = max(stat_scores.values()) if stat_scores else 0.0
+        if max_stat > 0.0:
+            top_elems = [e for e, s in stat_scores.items() if s == max_stat]
+            if len(top_elems) == 1:
+                return top_elems[0]
+
+    breed_val = char.get("breed")
+    if breed_val:
+        b_str = unicodedata.normalize("NFKD", str(breed_val)).encode("ascii", "ignore").decode("ascii").casefold().strip()
+        for b_name, elem in _BREED_DEFAULT_ELEMENT.items():
+            if b_name in b_str:
+                return elem
+
+    return "earth" 
+
 
 def _tokens(value: Any) -> set[str]:
     if not isinstance(value, str):
@@ -188,17 +310,19 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 travel_score = 1
             elif tokens & _ENTER_WORDS:
                 travel_score = -1
+        reply_elem = _reply_element(text)
         scored.append({**reply, "score": overlap, "question": qrel,
                        "travel": travel_score,
                        "quest_icon": bool(_QUEST_ICON.search(text)),
-                       "closing": closing})
+                       "closing": closing,
+                       "element": reply_elem})
     # Primary: objective overlap. The other signals only reorder inside a tie, so
     # a case the objective already decided is decided exactly as before.
     scored.sort(key=lambda reply: (-reply["score"], -reply["question"]))
     decision["scores"] = [{"index": reply["index"], "text": reply["text"],
                            "score": reply["score"], "question": reply["question"],
                            "travel": reply["travel"], "quest_icon": reply["quest_icon"],
-                           "closing": reply["closing"]}
+                           "closing": reply["closing"], "element": reply.get("element")}
                           for reply in scored]
     if scored[0]["score"] == scored[1]["score"]:
         tied = [reply for reply in scored if reply["score"] == scored[0]["score"]]
@@ -224,6 +348,19 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         open_ended = [reply for reply in tied if not reply["closing"]]
         if open_ended:
             tied = open_ended
+
+        # Check elemental build choices matching the character's primary build
+        elemental_replies = [reply for reply in tied if reply.get("element")]
+        if elemental_replies:
+            target_element = _character_element(obs)
+            matching = [r for r in elemental_replies if r.get("element") == target_element]
+            if len(matching) == 1:
+                return {**decision, "status": "choose",
+                        "reason": f"character build element ({target_element})",
+                        "reply": matching[0]}
+            if matching:
+                tied = matching
+
         best_q = max(reply["question"] for reply in tied)
         winners = [reply for reply in tied if reply["question"] == best_q]
         if len(winners) == 1 and best_q > 0.0:
@@ -232,9 +369,12 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if len(tied) == 1:
             reason = ("travel reply" if tied[0]["travel"] > 0
                       else ("quest-progress reply" if tied[0]["quest_icon"]
-                            else "keeps the dialog open"))
+                            else (f"character build element ({tied[0].get('element')})" if tied[0].get("element")
+                                  else "keeps the dialog open")))
             return {**decision, "status": "choose", "reason": reason,
                     "reply": tied[0]}
-        return {**decision, "status": "abstain", "reason": "top replies tie"}
+        return {**decision, "status": "choose",
+                "reason": "first open-ended reply in tie",
+                "reply": tied[0]}
     return {**decision, "status": "choose", "reason": "objective token overlap",
             "reply": scored[0]}

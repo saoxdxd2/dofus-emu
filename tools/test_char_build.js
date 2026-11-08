@@ -48,6 +48,10 @@ check('the snapshot exposes unspent points',
     /snap\.points\s*=\s*\{[\s\S]{0,200}stats:/.test(src),
     'state.snapshot has no points block');
 
+check('the snapshot exposes character stats and element',
+    /snap\.character\.stats\s*=\s*charStats/.test(src) && /snap\.character\.element\s*=\s*primaryElem/.test(src),
+    'state.snapshot has no stats or element');
+
 check('autoBuild is defined and refuses mid-fight or when idle',
     (function () {
         const at = src.indexOf('autoBuild: function() {');
@@ -80,6 +84,10 @@ check('char.build stays out of the fixed 27-tool vocabulary',
     && caps.capabilities.length === 28, String(caps.capabilities.length));
 check('char.build is reachable through a directive alias',
     /'CHAR_BUILD': 'char\.build'/.test(src));
+
+check('dialogue reply plan resolves elemental build choices dynamically',
+    src.indexOf('elemental build choice') >= 0 && src.indexOf('_agentPrimaryElement(cStats, pd)') >= 0,
+    'elemental build choice fallback missing in _agentReplyPlan');
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

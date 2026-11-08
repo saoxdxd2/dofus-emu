@@ -80,15 +80,18 @@ var (
 )
 
 const (
+	warmMaxDests           = 6
+	prefetchMapJSONReadMax int64 = 4 << 20
+	prefetchNegativeTTL    = 10 * time.Minute
+)
+
+var (
 	hopIndexEvery          = 10 * time.Second
 	exitCooldown           = 90 * time.Second
-	warmMaxDests           = 6
 	assetCacheTTL          = 7 * 24 * time.Hour
 	prefetchCooldown       = 20 * time.Second
 	prefetchQueueSize      = 1024
 	prefetchMaxTilesPerMap = 600
-	prefetchMapJSONReadMax = 4 << 20
-	prefetchNegativeTTL    = 10 * time.Minute
 )
 
 func headerSet(keys ...string) map[string]struct{} {
@@ -3535,6 +3538,12 @@ func main() {
 		}
 		return fb
 	}
+	defDuration := func(k string, fb time.Duration) time.Duration {
+		if d, err := time.ParseDuration(cfg[k]); err == nil && cfg[k] != "" {
+			return d
+		}
+		return fb
+	}
 
 	port := flag.Int("port", defInt("port", 8880), "Local listening port for HTTP/CONNECT proxy")
 	host := flag.String("host", defStr("host", "127.0.0.1"), "Host address to bind the proxy server to")
@@ -3572,8 +3581,20 @@ func main() {
 	crawlTiles := flag.Bool("crawl-tiles", false, "Also warm tile images for every crawled map")
 	modsDir := flag.String("mods-dir", defStr("mods_dir", ""), "Directory containing a mods rules.json (default: <cache>/mods)")
 	loginHostFlag := flag.String("login-host", "", "Host that the client's virtual origin (dofus.local) is mapped to (default: the production login proxy)")
+	exitCooldownFlag := flag.Duration("exit-cooldown", defDuration("exit_cooldown", exitCooldown), "Cooldown before retrying a dead exit proxy")
+	assetCacheTTLFlag := flag.Duration("asset-cache-ttl", defDuration("asset_cache_ttl", assetCacheTTL), "TTL for cached static assets")
+	prefetchCooldownFlag := flag.Duration("prefetch-cooldown", defDuration("prefetch_cooldown", prefetchCooldown), "Cooldown between prefetch operations")
+	prefetchQueueSizeFlag := flag.Int("prefetch-queue-size", defInt("prefetch_queue_size", prefetchQueueSize), "Max items in the prefetch queue")
+	prefetchMaxTilesFlag := flag.Int("prefetch-max-tiles", defInt("prefetch_max_tiles", prefetchMaxTilesPerMap), "Max tiles prefetched per map")
+	hopIndexEveryFlag := flag.Duration("hop-index-every", defDuration("hop_index_every", hopIndexEvery), "Interval for proxy pool hop index refreshing")
 	flag.Parse()
 	loginHost = cmp.Or(*loginHostFlag, loginHost)
+	if *exitCooldownFlag > 0 { exitCooldown = *exitCooldownFlag }
+	if *assetCacheTTLFlag > 0 { assetCacheTTL = *assetCacheTTLFlag }
+	if *prefetchCooldownFlag > 0 { prefetchCooldown = *prefetchCooldownFlag }
+	if *prefetchQueueSizeFlag > 0 { prefetchQueueSize = *prefetchQueueSizeFlag }
+	if *prefetchMaxTilesFlag > 0 { prefetchMaxTilesPerMap = *prefetchMaxTilesFlag }
+	if *hopIndexEveryFlag > 0 { hopIndexEvery = *hopIndexEveryFlag }
 
 	// The relay is a loopback control plane. Binding it to 0.0.0.0 or a LAN
 	// address turns an admin API and a proxy into network services; refuse

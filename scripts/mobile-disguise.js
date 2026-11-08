@@ -39,7 +39,7 @@
     // egress/session pin.
     //
     // It is NOT `connectionManager.recordActivity()`. In this build the connection
-    // manager is module 105 and the tracker is module 64, and module 64's singleton is
+    // manager and tracker are internal webpack bundles, and the tracker singleton is
     // imported only as a module-local (`d`, `p`, `U`) by the tap, chat and fight
     // modules -- so that lookup resolved to undefined and every mark silently did
     // nothing. That is why a run with the bot plainly driving still died of
@@ -163,8 +163,12 @@
         // recovery, and a recovery that drops a live session is worse than no recovery.
         function _inWorld() {
             try {
-                var ch = window.gui && window.gui.playerData && window.gui.playerData.character;
-                return !!(ch && ch.id != null);
+                var pd = window.gui && window.gui.playerData;
+                var chId = (pd && pd.characterBaseInformations && pd.characterBaseInformations.id)
+                    || (pd && pd.characters && pd.characters.controlledCharacterId)
+                    || (pd && pd.id)
+                    || (pd && pd.character && pd.character.id);
+                return !!(chId != null);
             } catch (e) { return true; }
         }
 
@@ -744,10 +748,11 @@
 
     try {
         if (PeerConn && PeerConn.prototype) {
+            var _rePrivateIp = /(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}/g;
             ['createOffer', 'createAnswer'].forEach(function(name) {
                 var origFn = PeerConn.prototype[name];
                 if (origFn) PeerConn.prototype[name] = makeNative(function() {
-                    return origFn.apply(this, arguments).then(function(desc) { if (desc && desc.sdp) desc.sdp = desc.sdp.replace(/10\.0\.2\.15/g, _fakeLocalIp); return desc; });
+                    return origFn.apply(this, arguments).then(function(desc) { if (desc && desc.sdp) desc.sdp = desc.sdp.replace(_rePrivateIp, _fakeLocalIp); return desc; });
                 }, name);
             });
             ['localDescription', 'currentLocalDescription', 'pendingLocalDescription'].forEach(function(prop) {
@@ -756,8 +761,8 @@
                     Object.defineProperty(PeerConn.prototype, prop, {
                         get: makeNative(function() {
                             var val = desc.get.apply(this, arguments);
-                            if (val && val.sdp && val.sdp.indexOf('10.0.2.15') !== -1) {
-                                try { Object.defineProperty(val, 'sdp', { value: val.sdp.replace(/10\.0\.2\.15/g, _fakeLocalIp), configurable: true, enumerable: true }); } catch (e) {}
+                            if (val && val.sdp && /(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}/.test(val.sdp)) {
+                                try { Object.defineProperty(val, 'sdp', { value: val.sdp.replace(_rePrivateIp, _fakeLocalIp), configurable: true, enumerable: true }); } catch (e) {}
                             }
                             return val;
                         }, 'get ' + prop), configurable: true, enumerable: true
@@ -1236,7 +1241,18 @@
 
     // 21. Adjust SDK globals stub — prevent Adjust from initialising
     try {
-        var _adjustNoop = function() {};
+        var _adjustCallCount = 0;
+        var _adjustLogged = false;
+        var _adjustNoop = function(methodName) {
+            return function() {
+                _adjustCallCount++;
+                if (!_adjustLogged) {
+                    _adjustLogged = true;
+                    try { console.log('[AgentDiag] Adjust SDK stub intercepted invocation: ' + (methodName || 'unknown')); } catch (e) {}
+                }
+            };
+        };
+        window.__agentAdjustCallCount = function() { return _adjustCallCount; };
         // Every method, not a hand-written list. Build 1.74.9 calls
         // `Adjust.create(config)` during boot and the old literal did not define
         // `create`, so the init chain threw one step further along than before
@@ -1247,7 +1263,7 @@
                 if (key === 'then') return undefined;
                 if (key === 'isEnabled') return function() { return false; };
                 if (key === 'getAdid' || key === 'getAttribution') return function() { return null; };
-                return _adjustNoop;
+                return _adjustNoop(key);
             }
         });
         if (!window.Adjust) window.Adjust = _adjustNoopObj;
@@ -1967,6 +1983,27 @@
                 stamp('QuestStepInfoMessage', '__agentLastQuestSync');
                 stamp('QuestsUpdatedMessage', '__agentLastQuestSync');
                 stamp('QuestStepStartedMessage', '__agentLastQuestSync');
+                try {
+                    cm.on('CurrentMapMessage', function () {
+                        window.__mapQuestFlags = {};
+                    });
+                    cm.on('MapNpcsQuestStatusUpdateMessage', function (msg) {
+                        try {
+                            window.__agentLastQuestSync = Date.now();
+                            window.__mapQuestFlags = {};
+                            if (msg && msg.npcsIdsWithQuest && msg.questFlags) {
+                                for (var i = 0; i < msg.npcsIdsWithQuest.length; i++) {
+                                    var cid = msg.npcsIdsWithQuest[i];
+                                    var flag = msg.questFlags[i];
+                                    window.__mapQuestFlags[cid] = flag;
+                                    var am = window.actorManager || (window.isoEngine && window.isoEngine.actorManager);
+                                    var act = am && typeof am.getActor === 'function' ? am.getActor(cid) : null;
+                                    if (act) act._questFlag = flag;
+                                }
+                            }
+                        } catch (eQ) {}
+                    });
+                } catch (eMq) {}
                 // The disconnect path also answers as a message before the page
                 // reloads; recording here catches a kick even when the host-side
                 // disconnect wrapper is not the code that fires.
@@ -2511,7 +2548,7 @@
                 try {
                     if (action.type === 'cast') {
                         var usable = false;
-                        try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, action.spellId); } catch (e) {}
+                        try { usable = !!(ctx.fm && typeof ctx.fm.canCastThisSpell === 'function' && ctx.fm.canCastThisSpell(ctx.myId, action.spellId)); } catch (e) {}
                         if (!usable) { self._localTick(ctx, fighterId, tick); return; }
                         // The policy plans casts, not walks: executing a cast the
                         // client's own range check refuses spends the 8-step budget
@@ -2550,12 +2587,22 @@
                         // A teleport or a self buff targets a cell, not a
                         // fighter; the target form has no id to send. Damage
                         // and heal casts keep the target form.
-                        if (action.cell != null
-                            && (action.targetId == null || action.targetId === ctx.myId)) {
-                            ctx.fm.castSpell(action.spellId, action.cell, ctx.myId);
-                        } else {
-                            ctx.fm.castSpellOnTarget(action.spellId, action.targetId, ctx.myId);
-                        }
+                        try {
+                            if (action.cell != null
+                                && (action.targetId == null || action.targetId === ctx.myId)) {
+                                if (typeof ctx.fm.castSpell === 'function') {
+                                    ctx.fm.castSpell(action.spellId, action.cell, ctx.myId);
+                                } else if (typeof ctx.fm.castSpellOnTarget === 'function') {
+                                    ctx.fm.castSpellOnTarget(action.spellId, action.cell, ctx.myId);
+                                }
+                            } else {
+                                if (typeof ctx.fm.castSpellOnTarget === 'function') {
+                                    ctx.fm.castSpellOnTarget(action.spellId, action.targetId, ctx.myId);
+                                } else if (typeof ctx.fm.castSpell === 'function') {
+                                    ctx.fm.castSpell(action.spellId, action.cell != null ? action.cell : action.targetId, ctx.myId);
+                                }
+                            }
+                        } catch (eCast) {}
                         setTimeout(tick, 450);
                         return;
                     }
@@ -2805,7 +2852,7 @@
                     var spell = ctx.spells[k];
                     if (!this._damageSpell(spell)) continue;
                     var usable = false;
-                    try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, sid); } catch (e) {}
+                    try { usable = !!(ctx.fm && typeof ctx.fm.canCastThisSpell === 'function' && ctx.fm.canCastThisSpell(ctx.myId, sid)); } catch (e) {}
                     if (!usable) {
                         // Distinguish "this spell is broken" from "this spell waits
                         // for a state": only the second is fixable this turn.
@@ -2887,7 +2934,7 @@
                     }
                     if (!wanted) continue;
                     var usable = false;
-                    try { usable = !!ctx.fm.canCastThisSpell(ctx.myId, sid); } catch (e) {}
+                    try { usable = !!(ctx.fm && typeof ctx.fm.canCastThisSpell === 'function' && ctx.fm.canCastThisSpell(ctx.myId, sid)); } catch (e) {}
                     if (!usable) continue;
                     if (typeof window !== 'undefined') window.__agentLastFightStateEnabler = {
                         at: Date.now(), spell: sid, grants: st.grants,
@@ -3021,7 +3068,7 @@
         // was not fully restarted keeps the previous script, and the first
         // symptom is a fix that appears not to work; this makes that visible
         // in every recorded observation.
-        window.__agentBuild = AGENT_BUILD;
+        window.__agentBuild = (window.buildVersion || (window.Config && window.Config.buildVersion)) ? (AGENT_BUILD + '+' + (window.buildVersion || window.Config.buildVersion)) : AGENT_BUILD;
         var _agentResult = function(ok, data, error) {
             return JSON.stringify({ ok: !!ok, data: data || null, error: error || null, at: Date.now() });
         };
@@ -3416,6 +3463,25 @@
                         return out;
                     };
                 })(names[i]);
+            }
+            try {
+                var proto = Object.getPrototypeOf(ls);
+                if (proto && typeof proto.hasAccount === 'function' && !proto.__agentHasAccountGuarded) {
+                    proto.__agentHasAccountGuarded = true;
+                    var _protoHasAccount = proto.hasAccount;
+                    proto.hasAccount = function() {
+                        try { return _protoHasAccount.apply(this, arguments); }
+                        catch (eProtoHa) { return false; }
+                    };
+                }
+            } catch (eProto) {}
+            if (typeof ls.hasAccount === 'function' && !ls.__agentHasAccountGuarded) {
+                ls.__agentHasAccountGuarded = true;
+                var _origHasAccount = ls.hasAccount;
+                ls.hasAccount = function() {
+                    try { return _origHasAccount.apply(this, arguments); }
+                    catch (eHa) { return false; }
+                };
             }
             try { console.log('[AgentGuard] login screen wrapped for the login cooldown'); } catch (e) {}
             return true;
@@ -4158,6 +4224,19 @@
                     chars = (pd && pd.characters && pd.characters.mainCharacter
                         && pd.characters.mainCharacter.characteristics) || null;
                 } catch (e) {}
+                try {
+                    var charStats = _agentExtractStats(chars);
+                    var primaryElem = _agentPrimaryElement(charStats, pd);
+                    snap.character.stats = charStats;
+                    snap.character.element = primaryElem;
+                    snap.stats = charStats;
+                    snap.element = primaryElem;
+                } catch (eStats) {
+                    snap.character.stats = { strength: 0, intelligence: 0, chance: 0, agility: 0, vitality: 0, wisdom: 0 };
+                    snap.character.element = 'earth';
+                    snap.stats = snap.character.stats;
+                    snap.element = 'earth';
+                }
                 snap.hp = {
                     life: first([function(){ return chars && chars.lifePoints; },
                                  function(){ return pd.lifePoints; },
@@ -4571,6 +4650,7 @@
                 snap.current_objective = qs.current;
                 snap.ready_objectives = qs.ready;
                 snap.step_objectives = qs.step_objectives;
+                qs.completed = Math.max(0, Number(qs.completed) || 0);
                 snap.objectives_completed = qs.completed;
                 // The client's own quest graph (G29 capture). `quest_catalog_status` is
                 // the census a live run reads first: quests > 0 with objectives > 0 is
@@ -4788,6 +4868,19 @@
                                 ? __PriceCache.average[pgid] : null,
                             listings: prows
                         });
+                    }
+                    if (priceRows.length < 20 && __PriceCache.average) {
+                        var avgKeys = Object.keys(__PriceCache.average).slice(0, 20 - priceRows.length);
+                        for (var avi = 0; avi < avgKeys.length; avi++) {
+                            var agid = Number(avgKeys[avi]);
+                            if (!__PriceCache.listings || !__PriceCache.listings[agid]) {
+                                priceRows.push({
+                                    gid: agid,
+                                    avg: __PriceCache.average[agid],
+                                    listings: []
+                                });
+                            }
+                        }
                     }
                     snap.prices = priceRows;
                 } catch (ePrice) { snap.prices = []; }
@@ -5391,11 +5484,29 @@
                     : (a.contextualId != null ? a.contextualId
                     : (a.id != null ? a.id : k)));
                 var npcName = si.name || d.name || a.name || null;
+                // The client paints quest icons in a.icons[1] (ICON_CATEGORY_ENUM.QUEST).
+                // Symbols include 'questClip' (exclamation point / available quest)
+                // and 'questObjectiveClip' (question mark / quest objective turn-in).
+                var iconMap = (a.icons && a.icons[1]) || {};
+                var iconKeys = Object.keys(iconMap);
+                var qf = a._questFlag || d.questFlag || a.questFlag
+                    || (window.__mapQuestFlags && (window.__mapQuestFlags[cid] || window.__mapQuestFlags[Number(cid)]))
+                    || null;
+                var toStart = (qf && Array.isArray(qf.questsToStartId)) ? qf.questsToStartId : [];
+                var toValid = (qf && Array.isArray(qf.questsToValidId)) ? qf.questsToValidId : [];
+                var hasExclamation = toStart.length > 0 || iconKeys.some(function(k) { return k.indexOf('Objective') === -1; });
+                var hasQuestion = toValid.length > 0 || iconKeys.some(function(k) { return k.indexOf('Objective') >= 0; });
+                var hasQuest = (iconKeys.length > 0) || (toStart.length > 0) || (toValid.length > 0);
                 out.push({
                     templateId: Number(template),
                     contextualId: Number(cid),
                     cell: a.cellId != null ? a.cellId : (a.position && a.position.cell),
-                    name: typeof npcName === 'string' ? npcName.slice(0, 60) : null
+                    name: typeof npcName === 'string' ? npcName.slice(0, 60) : null,
+                    has_quest: hasQuest,
+                    has_exclamation: hasExclamation,
+                    has_question: hasQuestion,
+                    quests_to_start: toStart,
+                    quests_to_valid: toValid
                 });
             }
             return out;
@@ -5569,6 +5680,38 @@
                              fallback: { asked_text: String(args.reply_text),
                                          live_text: texts[0] != null
                                              ? String(texts[0]) : null } };
+                }
+                var elemWords = {
+                    earth: ['terre', 'force', 'earth', 'strength', 'tierra', 'fuerza', 'erde'],
+                    fire: ['feu', 'flamme', 'intelligence', 'fire', 'flame', 'fuego', 'feuer'],
+                    water: ['eau', 'chance', 'water', 'luck', 'agua', 'suerte', 'wasser'],
+                    air: ['air', 'agilite', 'agility', 'aire', 'agilidad', 'vent', 'wind', 'luft']
+                };
+                var elemIndices = {};
+                for (var ti = 0; ti < texts.length; ti++) {
+                    var normT = String(texts[ti] || '').toLowerCase();
+                    for (var elKey in elemWords) {
+                        var kws = elemWords[elKey];
+                        for (var ki = 0; ki < kws.length; ki++) {
+                            if (normT.indexOf(kws[ki]) !== -1) {
+                                elemIndices[elKey] = ti;
+                                break;
+                            }
+                        }
+                    }
+                }
+                var foundElems = Object.keys(elemIndices);
+                if (foundElems.length >= 2) {
+                    var pd = window.gui && window.gui.playerData;
+                    var chars = (pd && pd.characters && pd.characters.mainCharacter
+                        && pd.characters.mainCharacter.characteristics) || null;
+                    var cStats = (typeof _agentExtractStats === 'function') ? _agentExtractStats(chars) : {};
+                    var wantedElem = (typeof _agentPrimaryElement === 'function') ? _agentPrimaryElement(cStats, pd) : 'earth';
+                    var pickIdx = (elemIndices[wantedElem] != null) ? elemIndices[wantedElem] : elemIndices[foundElems[0]];
+                    return { want: pickIdx, error: null, data: null,
+                             fallback: { asked_text: String(args.reply_text),
+                                         live_text: texts[pickIdx],
+                                         reason: 'elemental build choice (' + wantedElem + ')' } };
                 }
                 return { want: null, fallback: null,
                          error: 'no dialog reply matches the given text',
@@ -6336,7 +6479,12 @@
             try {
                 npcs = _listNpcActors().slice(0, 20).map(function (n) {
                     return { npc_id: n.templateId, actor_id: n.contextualId,
-                             cell: n.cell, name: n.name || null };
+                             cell: n.cell, name: n.name || null,
+                             has_quest: !!n.has_quest,
+                             has_exclamation: !!n.has_exclamation,
+                             has_question: !!n.has_question,
+                             quests_to_start: n.quests_to_start || [],
+                             quests_to_valid: n.quests_to_valid || [] };
                 });
             } catch (e) {}
             var interactives = [];
@@ -6481,6 +6629,73 @@
             if (out.additional == null) out.additional = _agentNum(_agentPick(v, ['_additionnal', 'additionnal', '_additional']));
             return out;
         };
+        function _agentExtractStats(chars) {
+            var stats = { strength: 0, intelligence: 0, chance: 0, agility: 0, vitality: 0, wisdom: 0 };
+            if (!chars) return stats;
+            var readTotal = function(key) {
+                if (!chars[key]) return 0;
+                var r = _agentReadStat(chars[key]);
+                if (r) {
+                    if (r.total != null && !isNaN(r.total)) return Number(r.total);
+                    if (r.base != null && !isNaN(r.base)) return Number(r.base);
+                }
+                return 0;
+            };
+            stats.strength = readTotal('strength');
+            stats.intelligence = readTotal('intelligence');
+            stats.chance = readTotal('chance');
+            stats.agility = readTotal('agility');
+            stats.vitality = readTotal('vitality');
+            stats.wisdom = readTotal('wisdom');
+            return stats;
+        };
+        function _agentPrimaryElement(stats, pd) {
+            var s = stats || {};
+            var str = Number(s.strength) || 0;
+            var intl = Number(s.intelligence) || 0;
+            var cha = Number(s.chance) || 0;
+            var agi = Number(s.agility) || 0;
+            var maxVal = Math.max(str, intl, cha, agi);
+
+            var highest = [];
+            if (str === maxVal && maxVal > 0) highest.push({ elem: 'earth', stat: 'strength', val: str });
+            if (intl === maxVal && maxVal > 0) highest.push({ elem: 'fire', stat: 'intelligence', val: intl });
+            if (cha === maxVal && maxVal > 0) highest.push({ elem: 'water', stat: 'chance', val: cha });
+            if (agi === maxVal && maxVal > 0) highest.push({ elem: 'air', stat: 'agility', val: agi });
+
+            if (highest.length === 1) return highest[0].elem;
+
+            try {
+                var mc = pd && pd.characters && pd.characters.mainCharacter;
+                var sd = mc && mc.spellData;
+                if (sd && typeof sd.getSpellListDependingOnGameMode === 'function') {
+                    var elementOf = { 96: 'water', 97: 'earth', 98: 'air', 99: 'fire', 100: 'earth' };
+                    var spells = sd.getSpellListDependingOnGameMode() || {};
+                    var bestElem = null;
+                    var bestScore = -1;
+                    for (var k in spells) {
+                        if (!Object.prototype.hasOwnProperty.call(spells, k)) continue;
+                        var sp = spells[k];
+                        if (!sp || !sp.spellLevel) continue;
+                        var fx = sp.spellLevel.effects || [];
+                        for (var i = 0; i < fx.length; i++) {
+                            var e = fx[i] || {};
+                            var el = elementOf[Number(e.effectId)];
+                            if (!el) continue;
+                            var mid = ((Number(e.diceNum) || 0) + (Number(e.diceSide) || 0)) / 2;
+                            if (mid > bestScore) {
+                                bestScore = mid;
+                                bestElem = el;
+                            }
+                        }
+                    }
+                    if (bestElem) return bestElem;
+                }
+            } catch (eSpell) {}
+
+            if (highest.length > 0) return highest[0].elem;
+            return 'earth';
+        };
         var _agentEffectList = function(list) {
             var out = [];
             if (!list) return out;
@@ -6528,7 +6743,7 @@
             };
         };
         // superTypeId -> equippable positions, copied from the bundle's
-        // itemTypePositions table (module 488). This is the only reliable
+        // itemTypePositions table (the chat module). This is the only reliable
         // weapon/hat/cape test: superTypeId is the type family, typeId is the
         // concrete item type.
         var _agentTypePositions = {
@@ -10572,6 +10787,32 @@
                 // Without an npc_id the only honest answer is the list of NPCs here,
                 // so the caller can choose one instead of guessing.
                 var wantNpc = Number((args && (args.npc_id || args.npcId)) || 0) || null;
+                if (!wantNpc) {
+                    var hereActors = _listNpcActors().slice(0, 20);
+                    // If an NPC on this map has an active quest indicator for this quest or has question/exclamation:
+                    var questTarget = null;
+                    if (questId) {
+                        for (var iq = 0; iq < hereActors.length; iq++) {
+                            var ha = hereActors[iq];
+                            if ((ha.quests_to_valid && ha.quests_to_valid.indexOf(questId) >= 0) ||
+                                (ha.quests_to_start && ha.quests_to_start.indexOf(questId) >= 0)) {
+                                questTarget = ha;
+                                break;
+                            }
+                        }
+                    }
+                    if (!questTarget) {
+                        for (var iq2 = 0; iq2 < hereActors.length; iq2++) {
+                            if (hereActors[iq2].has_question || hereActors[iq2].has_exclamation) {
+                                questTarget = hereActors[iq2];
+                                break;
+                            }
+                        }
+                    }
+                    if (questTarget) {
+                        wantNpc = questTarget.templateId;
+                    }
+                }
                 if (!wantNpc) {
                     var hereNpcs = _listNpcActors().slice(0, 20).map(function (n) {
                         return { npc_id: n.templateId, actor_id: n.contextualId, cell: n.cell };

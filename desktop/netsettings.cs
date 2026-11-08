@@ -1,4 +1,4 @@
-﻿// netsettings.cs - one file decides how every instance leaves the machine.
+// netsettings.cs - one file decides how every instance leaves the machine.
 //
 // The proxy used to be hard-wired: "if wireproxy.exe exists, start it, point the
 // relay at 127.0.0.1:40000, fail closed". That is fine until the tunnel is what
@@ -91,6 +91,9 @@ namespace DofusFarm.Engine
         // Blank = <cache>\proxy.log
         public string LogPath = "";
 
+        // Ankama login proxy host. Configurable via network.ini (login_host=...)
+        public string LoginHost = "dt-proxy-production-login.ankama-games.com";
+
         private static readonly object _gate = new object();
         private static readonly Dictionary<string, NetworkSettings> _cache =
             new Dictionary<string, NetworkSettings>(StringComparer.OrdinalIgnoreCase);
@@ -102,6 +105,34 @@ namespace DofusFarm.Engine
                 try { return AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\'); }
                 catch { return Environment.CurrentDirectory; }
             }
+        }
+
+        public static string AppDataRoot
+        {
+            get
+            {
+                string env = Environment.GetEnvironmentVariable("DOFUS_APP_DATA_ROOT");
+                if (!string.IsNullOrEmpty(env)) return env;
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DofusFarm");
+            }
+        }
+
+        public string ResolvedWireproxyConf(string baseDir)
+        {
+            if (!string.IsNullOrEmpty(WireproxyConf))
+            {
+                return Path.IsPathRooted(WireproxyConf) ? WireproxyConf : Path.Combine(baseDir ?? AppBase, WireproxyConf);
+            }
+            return Path.Combine(baseDir ?? AppBase, "bin", "warp", "wireproxy.conf");
+        }
+
+        public string ResolvedLogPath(string baseDir)
+        {
+            if (!string.IsNullOrEmpty(LogPath))
+            {
+                return Path.IsPathRooted(LogPath) ? LogPath : Path.Combine(baseDir ?? AppBase, LogPath);
+            }
+            return Path.Combine(baseDir ?? AppBase, "asset_cache", "proxy.log");
         }
 
         public static string PathFor(string baseDir)
@@ -154,6 +185,7 @@ namespace DofusFarm.Engine
                         case "extra_args": s.ExtraArgs = val; break;
                         case "wireproxy_conf": s.WireproxyConf = val; break;
                         case "log_path": s.LogPath = val; break;
+                        case "login_host": s.LoginHost = (val ?? "").Trim(); break;
                     }
                 }
             }
@@ -186,6 +218,7 @@ namespace DofusFarm.Engine
                 sb.AppendLine("extra_args=" + (ExtraArgs ?? ""));
                 sb.AppendLine("wireproxy_conf=" + (WireproxyConf ?? ""));
                 sb.AppendLine("log_path=" + (LogPath ?? ""));
+                if (!string.IsNullOrEmpty(LoginHost)) sb.AppendLine("login_host=" + LoginHost);
                 // No BOM: the relay reads this file too, and a BOM turns the first
                 // line into a key it cannot match.
                 File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));

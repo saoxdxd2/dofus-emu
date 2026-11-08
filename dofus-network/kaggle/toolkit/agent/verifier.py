@@ -43,9 +43,10 @@ from agent.schema import TOOLS
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_HUMAN = Path(
-    os.environ.get("LOCALAPPDATA", str(Path.home()))
-) / "DofusFarm" / "verdicts_human.jsonl"
+DEFAULT_APP_DATA = Path(
+    os.environ.get("DOFUS_APP_DATA_ROOT") or os.environ.get("LOCALAPPDATA", str(Path.home()))
+) / "DofusFarm"
+DEFAULT_HUMAN = DEFAULT_APP_DATA / "verdicts_human.jsonl"
 
 VERDICTS = ("advanced", "noop", "failed", "blocked")
 
@@ -63,7 +64,8 @@ VERDICTS = ("advanced", "noop", "failed", "blocked")
 # and the controller then replanned, retired the quest, and gave up on a goal it had just
 # made progress on. `objectives_completed` covers the step-level version of the same thing.
 STATE_KEYS = ("cell", "map_id", "mapId", "kamas", "xp", "hp", "inventory_size",
-              "in_dialog", "in_fight", "ready_objectives", "objectives_completed",
+              "in_dialog", "dialog_message", "dialog_replies", "in_fight",
+              "ready_objectives", "objectives_completed",
               "quests_active", "quests_finished", "quest_steps")
 
 # Tool classes are declared in `agent/schema.py`, the one action-space source;
@@ -180,6 +182,8 @@ NESTED_ALIASES = {
     "cell": ("position", "cell"),
     "hp": ("hp", "life"),
     "inventory_size": ("inventory", "items"),
+    "dialog_message": ("dialog", "message"),
+    "dialog_replies": ("dialog", "replies"),
 }
 
 
@@ -197,6 +201,10 @@ def _get(obs: Optional[Dict[str, Any]], key: str) -> Any:
         if not isinstance(cur, dict):
             return None
         cur = cur.get(part)
+    if key == "dialog_replies":
+        if isinstance(cur, list):
+            return tuple((r.get("text") or r.get("reply_id") or r.get("id")) if isinstance(r, dict) else str(r) for r in cur)
+        return ()
     if isinstance(cur, list):
         return len(cur)
     return cur

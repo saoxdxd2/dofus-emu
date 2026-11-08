@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 using System.Collections.Concurrent;
 
@@ -2845,7 +2845,7 @@ namespace DofusFarm.UI
 
 
 
-                                string proxyDisplay = inst.Proxy ?? "127.0.0.1:8880";
+                                string proxyDisplay = inst.Proxy ?? ("127.0.0.1:" + (_engine != null ? NetworkSettings.For(_engine.AppBaseDir).BasePort : 8880));
 
 
 
@@ -3550,9 +3550,7 @@ namespace DofusFarm.UI
 
         {
 
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-
-                "DofusFarm", "webview2_profiles", slot);
+            return Path.Combine(NetworkSettings.AppDataRoot, "webview2_profiles", slot);
 
         }
 

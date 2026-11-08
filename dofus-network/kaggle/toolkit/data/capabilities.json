@@ -1,6 +1,6 @@
 {
  "version": 1,
- "note": "Capability registry: actions are DATA, not code. The encoder's action head is derived from these descriptions, so adding a capability means appending an entry and re-encoding it — no retraining, no new class id.",
+ "note": "Capability registry: actions are DATA, not code. The encoder's action head is derived from these descriptions, so adding a capability means appending an entry and re-encoding it \u2014 no retraining, no new class id.",
  "languages": [
   "en",
   "fr",
@@ -986,5 +986,20 @@
     }
    }
   }
+ ],
+ "objective_types": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  9,
+  10,
+  12,
+  14,
+  16,
+  17
  ]
 }

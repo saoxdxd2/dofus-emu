@@ -49,7 +49,11 @@ check('every local script and stylesheet carries ?v=', unburst.length === 0,
 function sha10(rel) {
     const abs = path.join(www, rel.replace(/\//g, path.sep));
     if (!fs.existsSync(abs)) return null;
-    return crypto.createHash('sha1').update(fs.readFileSync(abs)).digest('hex').slice(0, 10);
+    let b = fs.readFileSync(abs);
+    if (rel === 'build/script.js' && b.indexOf(0x0d) >= 0) {
+        b = Buffer.from(b.toString('utf8').replace(/\r\n/g, '\n'), 'utf8');
+    }
+    return crypto.createHash('sha1').update(b).digest('hex').slice(0, 10);
 }
 const wrong = [];
 refs.forEach((r) => {

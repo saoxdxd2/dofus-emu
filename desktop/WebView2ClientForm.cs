@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -900,7 +900,10 @@ namespace DofusFarm.Engine
                     "        var deadline = Date.now() + 300000;\n" +
                     "        var tId = setInterval(function() {{\n" +
                     "            if (fired || Date.now() > deadline) {{ clearInterval(tId); return; }}\n" +
-                    "            if (window.gui && window.gui.loginScreen && typeof window.gui.loginScreen.playWithGuest === 'function') {{\n" +
+                    "            var ls = window.gui && window.gui.loginScreen;\n" +
+                    "            var splash = window.gui && window.gui.splashScreen;\n" +
+                    "            var lsReady = ls && typeof ls.playWithGuest === 'function' && typeof ls.isVisible === 'function' && ls.isVisible() && (!splash || typeof splash.isVisible !== 'function' || !splash.isVisible());\n" +
+                    "            if (lsReady) {{\n" +
                     "                fired = true;\n" +
                     "                clearInterval(tId);\n" +
                     "                try {{\n" +
@@ -908,14 +911,16 @@ namespace DofusFarm.Engine
                     "                    sessionStorage.setItem('dfGuestLastAt', String(Date.now()));\n" +
                     "                }} catch(e) {{}}\n" +
                     "                console.log('[Auth] Automatically initiating direct guest socket login (attempt ' + (attempts + 1) + '/5)');\n" +
-                    "                setTimeout(function() {{ try {{ window.gui.loginScreen.playWithGuest(); }} catch(e) {{}} }}, 800);\n" +
+                    "                setTimeout(function() {{ try {{ window.gui.loginScreen.playWithGuest(); }} catch(e) {{ console.error('[Auth] playWithGuest failed:', e); }} }}, 800);\n" +
                 "                var _watchTicks = 0;\n" +
                 "                var _watch = setInterval(function() {{\n" +
                 "                    try {{\n" +
-                "                        var ch = window.gui && window.gui.playerData && window.gui.playerData.character;\n" +
-                "                        if (ch && ch.id != null) {{\n" +
+                "                        var pd = window.gui && window.gui.playerData;\n" +
+                "                        var chId = (pd && pd.characterBaseInformations && pd.characterBaseInformations.id) || (pd && pd.characters && pd.characters.controlledCharacterId) || (pd && pd.id) || (pd && pd.character && pd.character.id);\n" +
+                "                        if (chId != null) {{\n" +
                 "                            clearInterval(_watch);\n" +
-                "                            console.log('[Auth] Guest login succeeded as ' + ch.name + ' (id ' + ch.id + ')');\n" +
+                "                            var chName = (pd && pd.characterBaseInformations && pd.characterBaseInformations.name) || (pd && pd.character && pd.character.name) || '';\n" +
+                "                            console.log('[Auth] Guest login succeeded as ' + chName + ' (id ' + chId + ')');\n" +
                 "                            return;\n" +
                 "                        }}\n" +
                 "                        // The socket login can wedge without ever answering: two\n" +

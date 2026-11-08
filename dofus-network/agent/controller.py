@@ -581,6 +581,15 @@ class Controller:
                             "a close is not retried; the next observation says whether it took",
                             None, "replan", 0.6)
 
+        # Dialogue replies must never be replayed against a new observation.
+        # Retrying a past reply text/index against a changed dialogue page leads to
+        # refusal ('no dialog reply matches the given text') and stall loops.
+        if tool == "quest.advance" and isinstance(args, dict) and (args.get("reply") is not None or args.get("reply_text") is not None):
+            self._bump("continue", cause, False)
+            return Decision("continue", cause,
+                            "dialogue replies are not retried; the next observation determines the next reply",
+                            None, "continue", 0.7)
+
         # Pick the recovery the history says works best for this cause.
         strategy, score = self._best_strategy(cause)
         if self._retries.get(tool, 0) < self.max_retries and score < 0.5:
