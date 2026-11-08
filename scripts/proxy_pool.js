@@ -34,7 +34,7 @@ const F_STATE = path.join(ROOT, 'proxy_pool_state.json');
 const F_LOG = path.join(ROOT, 'proxy_pool.log');
 const F_BACKUP = path.join(ROOT, 'proxies_backup_premanager.txt');
 
-const TARGET_HOST = 'dt-proxy-production-login.ankama-games.com';
+const TARGET_HOST = process.env.DOFUS_LOGIN_HOST || 'dt-proxy-production-login.ankama-games.com';
 const TARGET_PORT = 443;
 const TARGET_PATHS = ['/build/primus.js', '/config.json'];
 const UA = 'Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36';

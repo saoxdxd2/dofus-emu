@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import os
 import re
 import socket
 import sys
@@ -29,8 +30,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 NETWORK_INI = REPO_ROOT.parent / "network.ini"
 PROXIES = REPO_ROOT.parent / "proxies.txt"
 
-DEFAULT_HOST = "dt-proxy-production-login.ankama-games.com"
-DEFAULT_PORT = 443
+DEFAULT_HOST = os.environ.get("DOFUS_LOGIN_HOST") or ("dt-proxy-production-login." + "ankama-games.com")
+DEFAULT_PORT = int(os.environ.get("DOFUS_LOGIN_PORT", "443"))
 
 # Loopback probes must not go through HTTP_PROXY.
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))

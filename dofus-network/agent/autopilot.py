@@ -78,7 +78,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOG = REPO_ROOT / "trajectories" / "autopilot.jsonl"
 DEFAULT_STOP = REPO_ROOT / "AUTOPILOT_STOP"
 SESSION_CLOSE_OFF = ("0", "off", "false", "no")
-SESSION_CLOSE_TIMEOUT_S = 300
+SESSION_CLOSE_TIMEOUT_S = int(os.environ.get("AUTOPILOT_SESSION_CLOSE_TIMEOUT_S", "300"))
 
 
 def session_close_enabled(environ: Optional[Dict[str, str]] = None,
@@ -95,7 +95,7 @@ def session_close_enabled(environ: Optional[Dict[str, str]] = None,
     env = os.environ if environ is None else environ
     return (str(env.get("AUTOPILOT_SESSION_CLOSE", "on")).strip().lower()
             not in SESSION_CLOSE_OFF)
-LOG_MAX_BYTES = 64 * 1024 * 1024
+LOG_MAX_BYTES = int(os.environ.get("AUTOPILOT_LOG_MAX_BYTES", str(64 * 1024 * 1024)))
 
 # Tools disabled by policy. Empty on purpose: the 28-tool research vocabulary
 # includes hdv.buy, inv.equip, hdv.prices and tap.interactive.
@@ -123,13 +123,13 @@ FIGHT_TOOLS = {"fight.join", "farm.start"}
 # decision input is well under this; only a long pause (`--interval`) or a
 # bridge that stopped answering makes the cache stale. An unknown age is not
 # fresh: it means nobody recorded when the snapshot was taken.
-OBS_FRESH_MS = 4000.0
+OBS_FRESH_MS = float(os.environ.get("AUTOPILOT_OBS_FRESH_MS", "4000.0"))
 
 # While a farm order is running, no fight/kill/kamas movement for this long
 # means the bot is idle (no group on this map, or waiting for a respawn). Resume
 # planning so the targeted farm can join the next matching group or explore;
 # the farm.start no-op guard caps a truly dead loop at three attempts.
-FARM_IDLE_S = 20.0
+FARM_IDLE_S = float(os.environ.get("AUTOPILOT_FARM_IDLE_S", "20.0"))
 
 # A crossing is a journey the client performs, not a command it answers. Measured on
 # the run of 2026-11-04/05: one border asked five times at 6.5 s spacing, and the
@@ -141,12 +141,12 @@ FARM_IDLE_S = 20.0
 # so the settle extends to this instead of handing the decision loop a reason to ask
 # again. A border that really refuses costs two waits of this length and then the
 # crossing bound retires it.
-CROSSING_IN_FLIGHT_S = 30.0
+CROSSING_IN_FLIGHT_S = float(os.environ.get("AUTOPILOT_CROSSING_IN_FLIGHT_S", "30.0"))
 
 # How long the settle waits, per poll, for a predicate tool's own promise: measured
 # live as a 6.07 s median gap after `nav.goto`, and a dialog page does not arrive in
 # less than the round trip that opened it.
-PROMISED_SETTLE_WINDOW_S = 6.0
+PROMISED_SETTLE_WINDOW_S = float(os.environ.get("AUTOPILOT_PROMISED_SETTLE_WINDOW_S", "6.0"))
 
 
 def settle_deadline(tool: str, started: float, last_change: float,
@@ -167,7 +167,7 @@ def settle_deadline(tool: str, started: float, last_change: float,
 # How many read-only steps a repair decision may wait for before its outcome is
 # considered unknowable. A recovery's own snapshot is one of them; twelve is roughly
 # one farm-poll generation, after which crediting the decision would be guessing.
-PENDING_CREDIT_STEPS = 12
+PENDING_CREDIT_STEPS = int(os.environ.get("AUTOPILOT_PENDING_CREDIT_STEPS", "12"))
 
 # There is no client *window* at all — the host has none open, so the bridge
 # answers without ever reaching a page. The words are the host's own
@@ -192,7 +192,7 @@ def client_absent(error: Any) -> bool:
 # loop's pacing, and 0.35 s reproduces it. Keeping the cadence matters more than the
 # exact number: the planner's wait gates count *passes*, so a different cadence
 # silently changes how long a scripted tutorial pause lasts.
-WAIT_POLL_S = 0.35
+WAIT_POLL_S = float(os.environ.get("AUTOPILOT_WAIT_POLL_S", "0.35"))
 
 # How many wait passes in a row are still a wait rather than a stall.
 #
@@ -208,26 +208,26 @@ WAIT_POLL_S = 0.35
 # Past the bound a read is dispatched as one real step per 40 passes, which hands the
 # spin back to the streak, refusal and stall machinery that already knows how to
 # retire a goal. Same wall-clock cost, one step row per ~15 s instead of per 0.374 s.
-MAX_CONSECUTIVE_WAITS = 40
+MAX_CONSECUTIVE_WAITS = int(os.environ.get("AUTOPILOT_MAX_CONSECUTIVE_WAITS", "40"))
 
 # Whole wait windows that may end with no actionable candidate before the run ends.
 # Live 2026-10-29: a 467-pass wait (172 s, ~11 windows) where every escalation was
 # gate-refused, so the loop could neither act nor stop. Four windows is ~56 s of
 # nothing -- long enough for a respawn, short enough that the session is not spent
 # staring at it. A real step resets the count.
-DEAD_WINDOW_LIMIT = 4
+DEAD_WINDOW_LIMIT = int(os.environ.get("AUTOPILOT_DEAD_WINDOW_LIMIT", "4"))
 
 # Passes one run may spend waiting for the client to publish its quest data before the
 # "no action for this goal" verdict is allowed to stand. Three is ~5 s: the quest block
 # arrives with the world, so a fourth empty reading is not a slow load, it is the truth.
-QUEST_DATA_WAIT_LIMIT = 3
+QUEST_DATA_WAIT_LIMIT = int(os.environ.get("AUTOPILOT_QUEST_DATA_WAIT_LIMIT", "3"))
 
 # Quests one run may retire because whole windows of waiting found no action
 # for them. Bounded so a broken plan cannot empty the log in one session.
-RETIRE_LIMIT = 3
+RETIRE_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_LIMIT", "3"))
 # Times the same quest may be retired before the loop concludes the policy will keep
 # choosing it anyway. Past this the retirement is not patience, it is a cycle.
-RETIRE_REPEAT_LIMIT = 3
+RETIRE_REPEAT_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_REPEAT_LIMIT", "3"))
 
 
 # How many candidates the wait escalation is allowed to skip while looking for one
@@ -235,7 +235,7 @@ RETIRE_REPEAT_LIMIT = 3
 # `state.snapshot` ("refresh the observation"), which is the very thing the wait exists
 # to stop dispatching -- taking it would reset the streak and double the spin instead of
 # breaking it. Three tries finds any real alternative and then gives up.
-ESCALATE_TRIES = 3
+ESCALATE_TRIES = int(os.environ.get("AUTOPILOT_ESCALATE_TRIES", "3"))
 
 # How long one scripted step is allowed to hold the loop. A tutorial step completes
 # when the game's own script says so, so waiting on it is correct -- what was wrong is
@@ -243,7 +243,7 @@ ESCALATE_TRIES = 3
 # `quest.advance {npc_id:3888,quest_id:3841}` and 120 `nav.goto {direction:left}`
 # no-ops in single sessions, roughly half of every step the farm took, and the client's
 # world never moved. Three minutes of real patience, then the run says so and stops.
-TUTORIAL_HOLD_S = 180
+TUTORIAL_HOLD_S = int(os.environ.get("AUTOPILOT_TUTORIAL_HOLD_S", "180"))
 
 # How long the tutorial may keep the stall guard switched off. The hold above bounds one
 # scripted step; this bounds the *exemption*. Measured live: one session talked to the
@@ -259,12 +259,12 @@ TUTORIAL_PATIENCE_S = 3 * TUTORIAL_HOLD_S
 # identical `state.snapshot` steps under an active tutorial -- 40 of a 239-step
 # session, two of which ended in `safe.stop`. Six is well past the one or two a
 # legitimate plan needs (arrive, look, act).
-READ_STREAK_LIMIT = 6
+READ_STREAK_LIMIT = int(os.environ.get("AUTOPILOT_READ_STREAK_LIMIT", "6"))
 
 # How many times a talk may open no dialog before the loop stops treating it as a
 # try-again. One is noise (the client can be mid-animation); two identical sends with
 # no answer is a server that is not responding to this NPC action.
-DEAD_TALK_TRIES = 2
+DEAD_TALK_TRIES = int(os.environ.get("AUTOPILOT_DEAD_TALK_TRIES", "2"))
 
 # Crossings the page sent and the server ignored before the run gives up on the map.
 # A ChangeMapMessage the server refuses is silent, so the only witness is "the map
@@ -272,7 +272,7 @@ DEAD_TALK_TRIES = 2
 # three times); past that the exit is scripted and currently unavailable, and each
 # repeated request is anti-bot signal with no upside (live 2026-10-29: the Albuera
 # solo area took ~100 refused crossings in two minutes before this bound existed).
-NAV_DECLINE_LIMIT = 12
+NAV_DECLINE_LIMIT = int(os.environ.get("AUTOPILOT_NAV_DECLINE_LIMIT", "12"))
 
 
 def fell_out_of_world(before: Any, after: Any) -> Optional[str]:

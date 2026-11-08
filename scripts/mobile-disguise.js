@@ -2136,8 +2136,38 @@
                         window.__agentLastMapInfo = { at: Date.now(),
                             map: msg && (msg.mapId != null ? msg.mapId : msg.map),
                             sub_area: msg && msg.subAreaId };
+                        try {
+                            if (msg && msg.actors && Array.isArray(msg.actors)) {
+                                window.__mapQuestFlags = window.__mapQuestFlags || {};
+                                for (var ai = 0; ai < msg.actors.length; ai++) {
+                                    var actInfo = msg.actors[ai];
+                                    if (actInfo && actInfo.questFlag) {
+                                        var acid = actInfo.contextualId != null ? actInfo.contextualId : actInfo.id;
+                                        if (acid != null) {
+                                            window.__mapQuestFlags[acid] = actInfo.questFlag;
+                                            window.__mapQuestFlags[Number(acid)] = actInfo.questFlag;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (eActors) {}
                     });
                 } catch (e) {}
+                try {
+                    cm.on('GameRolePlayShowActorMessage', function (msg) {
+                        try {
+                            var inf = msg && (msg.informations || msg.actorInfos);
+                            if (inf && inf.questFlag) {
+                                var sid = inf.contextualId != null ? inf.contextualId : inf.id;
+                                if (sid != null) {
+                                    window.__mapQuestFlags = window.__mapQuestFlags || {};
+                                    window.__mapQuestFlags[sid] = inf.questFlag;
+                                    window.__mapQuestFlags[Number(sid)] = inf.questFlag;
+                                }
+                            }
+                        } catch (eG) {}
+                    });
+                } catch (eShow) {}
                 // Incoming names too: a dialog that never opens and a map change
                 // that never lands both look like "nothing happened" from the
                 // snapshot, and the server's answer (or its absence) is the only
@@ -5487,6 +5517,14 @@
                 // The client paints quest icons in a.icons[1] (ICON_CATEGORY_ENUM.QUEST).
                 // Symbols include 'questClip' (exclamation point / available quest)
                 // and 'questObjectiveClip' (question mark / quest objective turn-in).
+                if (!a.__questFlagHooked && typeof a.addQuestIcon === 'function') {
+                    a.__questFlagHooked = true;
+                    var origAQ = a.addQuestIcon;
+                    a.addQuestIcon = function(qflag) {
+                        try { this._questFlag = qflag; } catch(e) {}
+                        return origAQ.apply(this, arguments);
+                    };
+                }
                 var iconMap = (a.icons && a.icons[1]) || {};
                 var iconKeys = Object.keys(iconMap);
                 var qf = a._questFlag || d.questFlag || a.questFlag

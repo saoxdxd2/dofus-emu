@@ -11,7 +11,10 @@ should subsume, not merely tune.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+from pathlib import Path
 import unicodedata
 from typing import Any, Dict, List, Optional
 
@@ -24,56 +27,59 @@ _WORD = re.compile(r"[a-z0-9]+")
 _QUEST_ICON = re.compile(
     r"\{icon:icon(?:Update|New)QuestMain\}|\{icon:iconStartFight\}", re.I)
 
-# A reply that moves the character between maps, split by direction. Both sets are
-# the words the client's own dialogs use in the three shipped languages; they only
-# matter when the objective needs a map other than this one (see `_needs_travel`).
-_LEAVE_WORDS = {"leave", "leaving", "exit", "out", "outside", "depart", "head",
-                "sortir", "partir", "dehors", "salir", "fuera", "irse", "salida"}
-_ENTER_WORDS = {"enter", "entering", "inside", "entrer", "entrez",
-                "entrar", "entro"}
+_DATA_PATH = Path(os.environ.get("DOFUS_DIALOG_KEYWORDS_PATH") or (Path(__file__).resolve().parent.parent / "data" / "dialog_keywords.json"))
 
-# Courtesy lines that end a conversation. While an objective is open they are the
-# worst choice: they close the only surface that can still offer the next step.
-# The live run answered "Wish him good luck." to a quest NPC, closed the dialog and
-# spent four wait windows on a map with nothing else to talk to.
-_CLOSING = ("good luck", "goodbye", "good bye", "farewell", "see you", "take care",
-            "bonne chance", "au revoir", "adieu", "à bientôt", "buena suerte",
-            "hasta luego", "nos vemos", "adiós")
 
-# Elemental keywords for multilingual dialogue options.
-# Maps each element to its characteristic keywords in French, English, Spanish, German.
-_ELEMENT_KEYWORDS: Dict[str, set[str]] = {
-    "earth": {
-        "terre", "force", "terrestre", "rocher", "pierre",
-        "earth", "strength", "stone", "rock",
-        "tierra", "fuerza",
-        "erde", "starke", "kraft",
-    },
-    "fire": {
-        "feu", "flamme", "flammes", "intelligence", "pyro",
-        "fire", "flame", "flames",
-        "fuego", "llama", "llamas", "inteligencia",
-        "feuer", "flamme", "intelligenz",
-    },
-    "water": {
-        "eau", "chance", "aquatique", "onde", "vague", "fluide",
-        "water", "luck", "fluid", "wave",
-        "agua", "suerte",
-        "wasser", "gluck",
-    },
-    "air": {
-        "air", "agilite", "vent", "souffle", "aerien",
-        "agility", "wind", "breath", "aerial",
-        "aire", "agilidad", "viento",
-        "luft", "wendigkeit", "wind",
-    },
+def _load_dialog_data() -> Dict[str, Any]:
+    if _DATA_PATH.exists():
+        try:
+            return json.loads(_DATA_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+_DIALOG_DATA = _load_dialog_data()
+
+_LEAVE_WORDS = set(_DIALOG_DATA.get("leave_words") or [
+    "leave", "leaving", "exit", "out", "outside", "depart", "head",
+    "sortir", "partir", "dehors", "salir", "fuera", "irse", "salida",
+])
+_ENTER_WORDS = set(_DIALOG_DATA.get("enter_words") or [
+    "enter", "entering", "inside", "entrer", "entrez",
+    "entrar", "entro",
+])
+_CLOSING = tuple(_DIALOG_DATA.get("closing_phrases") or [
+    "good luck", "goodbye", "good bye", "farewell", "see you", "take care",
+    "bonne chance", "au revoir", "adieu", "à bientôt", "buena suerte",
+    "hasta luego", "nos vemos", "adiós",
+])
+_RAW_ELEM = _DIALOG_DATA.get("element_keywords") or {
+    "earth": ["terre", "force", "terrestre", "rocher", "pierre", "earth", "strength", "stone", "rock", "tierra", "fuerza", "erde", "starke", "kraft"],
+    "fire": ["feu", "flamme", "flammes", "intelligence", "pyro", "fire", "flame", "flames", "fuego", "llama", "llamas", "inteligencia", "feuer", "intelligenz"],
+    "water": ["eau", "chance", "aquatique", "onde", "vague", "fluide", "water", "luck", "fluid", "wave", "agua", "suerte", "wasser", "gluck"],
+    "air": ["air", "agilite", "vent", "souffle", "aerien", "agility", "wind", "breath", "aerial", "aire", "agilidad", "viento", "luft", "wendigkeit", "wind"],
 }
+_ELEMENT_KEYWORDS: Dict[str, set[str]] = dict((k, set(v)) for k, v in _RAW_ELEM.items())
 
 _STAT_TO_ELEMENT: Dict[str, str] = {
     "strength": "earth",
+    "force": "earth",
+    "terre": "earth",
     "intelligence": "fire",
+    "feu": "fire",
     "chance": "water",
+    "eau": "water",
     "agility": "air",
+    "agilite": "air",
+    "air": "air",
+}
+
+_BREED_ID_DEFAULT_ELEMENT: Dict[int, str] = {
+    1: "fire", 2: "fire", 3: "water", 4: "earth", 5: "fire",
+    6: "earth", 7: "fire", 8: "earth", 9: "earth", 10: "earth",
+    11: "earth", 12: "earth", 13: "air", 14: "earth", 15: "water",
+    16: "air", 17: "fire", 18: "earth",
 }
 
 _BREED_DEFAULT_ELEMENT: Dict[str, str] = {
@@ -154,7 +160,13 @@ def _character_element(obs: Dict[str, Any]) -> str:
                 return top_elems[0]
 
     breed_val = char.get("breed")
-    if breed_val:
+    if breed_val is not None:
+        try:
+            bid = int(breed_val)
+            if bid in _BREED_ID_DEFAULT_ELEMENT:
+                return _BREED_ID_DEFAULT_ELEMENT[bid]
+        except (TypeError, ValueError):
+            pass
         b_str = unicodedata.normalize("NFKD", str(breed_val)).encode("ascii", "ignore").decode("ascii").casefold().strip()
         for b_name, elem in _BREED_DEFAULT_ELEMENT.items():
             if b_name in b_str:
@@ -286,12 +298,25 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             index = int(reply.get("index", position))
         except (TypeError, ValueError):
             continue
+        reply_elem = _reply_element(reply["text"])
         candidates.append({"index": index, "text": reply["text"],
-                           "reply_id": reply.get("reply_id")})
+                           "reply_id": reply.get("reply_id"),
+                           "element": reply_elem})
     if not candidates:
         return {**decision, "status": "abstain", "reason": "no usable reply rows"}
     if len(candidates) == 1:
         return {**decision, "status": "choose", "reason": "only reply", "reply": candidates[0]}
+
+    # Primary for build choices: when multiple replies offer distinct elemental paths,
+    # choose according to the character's dynamic element/build.
+    elemental_candidates = [reply for reply in candidates if reply.get("element")]
+    if len(elemental_candidates) >= 2:
+        target_element = _character_element(obs)
+        matching = [r for r in elemental_candidates if r.get("element") == target_element]
+        if matching:
+            return {**decision, "status": "choose",
+                    "reason": f"character build element ({target_element})",
+                    "reply": matching[0]}
 
     context = _tokens(_quest_context(obs))
     question = _question_tokens(dialog)

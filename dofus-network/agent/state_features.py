@@ -16,11 +16,20 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agent.observe import flatten
 
-ENTITY_DIM = 12
-GLOBAL_DIM = 20
-WORLD_KEYS = ("map_id", "cell", "in_dialog", "in_fight", "quest_steps",
+import os
+
+ENTITY_DIM = int(os.environ.get("DOFUS_ENTITY_DIM", "12"))
+GRID_CELLS_PER_ROW = int(os.environ.get("DOFUS_CELLS_PER_ROW", "14"))
+LEVEL_SCALE = float(os.environ.get("DOFUS_LEVEL_SCALE", "200.0"))
+AP_SCALE = float(os.environ.get("DOFUS_AP_SCALE", "12.0"))
+MP_SCALE = float(os.environ.get("DOFUS_MP_SCALE", "6.0"))
+KAMAS_SCALE = float(os.environ.get("DOFUS_KAMAS_SCALE", "100000.0"))
+INVENTORY_SCALE = float(os.environ.get("DOFUS_INVENTORY_SCALE", "60.0"))
+GLOBAL_DIM = int(os.environ.get("DOFUS_GLOBAL_DIM", "20"))
+_DEFAULT_KEYS = ("map_id", "cell", "in_dialog", "in_fight", "quest_steps",
               "objectives_completed", "inventory_size", "kamas",
               "ready_objectives", "quests_active")
+WORLD_KEYS = tuple(os.environ.get("DOFUS_WORLD_KEYS", "").split(",")) if os.environ.get("DOFUS_WORLD_KEYS") else _DEFAULT_KEYS
 
 
 def _cell_xy(cell: Any) -> Optional[Tuple[float, float]]:
@@ -30,7 +39,7 @@ def _cell_xy(cell: Any) -> Optional[Tuple[float, float]]:
         return None
     if value < 0:
         return None
-    return float(value % 14), float(value // 14)
+    return float(value % GRID_CELLS_PER_ROW), float(value // GRID_CELLS_PER_ROW)
 
 
 def _size(value: Any) -> float:
@@ -120,12 +129,12 @@ def global_vector(obs: Dict[str, Any]) -> List[float]:
     life = _num(hp.get("life"))
     maximum = _num(hp.get("max"), 1.0) or 1.0
     return [
-        _num(flat.get("level")) / 200.0,
+        _num(flat.get("level")) / LEVEL_SCALE,
         life / maximum,
-        _num(hp.get("ap")) / 12.0,
-        _num(hp.get("mp")) / 6.0,
-        min(1.0, _num(obs.get("kamas")) / 100000.0),
-        min(1.0, _size(obs.get("inventory")) / 60.0),
+        _num(hp.get("ap")) / AP_SCALE,
+        _num(hp.get("mp")) / MP_SCALE,
+        min(1.0, _num(obs.get("kamas")) / KAMAS_SCALE),
+        min(1.0, _size(obs.get("inventory")) / INVENTORY_SCALE),
         min(1.0, _size(flat.get("quests_active")) / 20.0),
         min(1.0, _size(obs.get("ready_objectives")) / 10.0),
         min(1.0, _size(flat.get("quest_steps")) / 40.0),

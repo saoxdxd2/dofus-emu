@@ -1,9 +1,15 @@
 """Update ledgers with newly applied and certified optimizations."""
 from pathlib import Path
 import shutil
+import os
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BRAIN_DIR = Path(r"C:\Users\sao\.gemini\antigravity\brain\c3da07ca-5a4e-482d-b355-5b37615f0ef9")
+BRAIN_DIR = Path(
+    os.environ.get(
+        "DOFUS_BRAIN_DIR",
+        str(Path.home() / ".gemini" / "antigravity" / "brain" / "c3da07ca-5a4e-482d-b355-5b37615f0ef9"),
+    )
+)
 
 def update_complexity_tasklist():
     path = REPO_ROOT / "COMPLEXITY_TASKLIST.md"

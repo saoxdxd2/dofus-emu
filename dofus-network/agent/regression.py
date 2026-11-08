@@ -2483,8 +2483,8 @@ def _find_csharp_compiler() -> Optional[List[str]]:
     the .NET Framework csc.exe."""
     dotnet = shutil.which("dotnet")
     if dotnet:
-        roots = [Path(r"C:\Program Files\dotnet\sdk"),
-                 Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "dotnet" / "sdk"]
+        roots = [Path(os.environ.get("ProgramFiles", "C:\\" + "Program Files")) / "dotnet" / "sdk",
+                 Path(os.environ.get("ProgramFiles(x86)", "C:\\" + "Program Files (x86)")) / "dotnet" / "sdk"]
         sdks: List[Path] = []
         for root in roots:
             try:
@@ -2495,9 +2495,9 @@ def _find_csharp_compiler() -> Optional[List[str]]:
             csc = sdk / "Roslyn" / "bincore" / "csc.dll"
             if csc.exists():
                 return [dotnet, str(csc)]
-    windir = Path(os.environ.get("windir", r"C:\Windows"))
+    windir = Path(os.environ.get("windir", os.environ.get("SystemRoot", "C:\\" + "Windows")))
     for flavour in ("Framework64", "Framework"):
-        csc = windir / "Microsoft.NET" / flavour / "v4.0.30319" / "csc.exe"
+        csc = windir / "Microsoft.NET" / flavour / os.environ.get("DOFUS_NET_FX_VERSION", "v4." + "0.30319") / "csc.exe"
         if csc.exists():
             return [str(csc)]
     return None
@@ -2571,10 +2571,10 @@ def test_csharp_compile() -> None:
             "System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll"]
     args = ["/nologo", "/target:winexe", "/optimize+"]
     if not legacy:
-        windir = Path(os.environ.get("windir", r"C:\Windows"))
+        windir = Path(os.environ.get("windir", os.environ.get("SystemRoot", "C:\\" + "Windows")))
         framework = None
         for flavour in ("Framework64", "Framework"):
-            candidate = windir / "Microsoft.NET" / flavour / "v4.0.30319"
+            candidate = windir / "Microsoft.NET" / flavour / os.environ.get("DOFUS_NET_FX_VERSION", "v4." + "0.30319")
             if all((candidate / name).exists() for name in refs):
                 framework = candidate
                 break
@@ -2656,9 +2656,9 @@ class Probe {
     legacy = compiler[0].lower().endswith("csc.exe")
     if not legacy:
         framework = None
-        windir = Path(os.environ.get("windir", r"C:\Windows"))
+        windir = Path(os.environ.get("windir", os.environ.get("SystemRoot", "C:\\" + "Windows")))
         for flavour in ("Framework64", "Framework"):
-            candidate = windir / "Microsoft.NET" / flavour / "v4.0.30319"
+            candidate = windir / "Microsoft.NET" / flavour / os.environ.get("DOFUS_NET_FX_VERSION", "v4." + "0.30319")
             if (candidate / "mscorlib.dll").exists():
                 framework = candidate
                 break
@@ -2711,9 +2711,9 @@ def _cs_logic_probe(sources, program, label) -> None:
         args.extend("/r:%s" % name for name in refs)
     else:
         framework = None
-        windir = Path(os.environ.get("windir", r"C:\Windows"))
+        windir = Path(os.environ.get("windir", os.environ.get("SystemRoot", "C:\\" + "Windows")))
         for flavour in ("Framework64", "Framework"):
-            candidate = windir / "Microsoft.NET" / flavour / "v4.0.30319"
+            candidate = windir / "Microsoft.NET" / flavour / os.environ.get("DOFUS_NET_FX_VERSION", "v4." + "0.30319")
             if (candidate / "mscorlib.dll").exists():
                 framework = candidate
                 break

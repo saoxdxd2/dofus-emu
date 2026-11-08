@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { requestThrough } = require('./proxy_tunnel');
 
-const TARGET_HOST = 'dt-proxy-production-login.ankama-games.com';
+const TARGET_HOST = process.env.DOFUS_LOGIN_HOST || 'dt-proxy-production-login.ankama-games.com';
 const TARGET_PORT = 443;
 const UA = 'Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36';
 

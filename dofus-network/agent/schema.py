@@ -671,6 +671,8 @@ def _coerce(type_name: str, value: Any) -> Tuple[bool, Any]:
     if type_name == "str":
         if isinstance(value, str):
             return True, value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return True, str(int(value) if isinstance(value, float) and value.is_integer() else value)
         return False, "expected a string"
     if type_name == "int":
         if isinstance(value, bool):

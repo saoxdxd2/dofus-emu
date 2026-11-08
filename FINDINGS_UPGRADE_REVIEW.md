@@ -19,6 +19,49 @@
 
 *(All 21 initial hardcoded items resolved and verified)*
 
+### Verification Status Across All Layers
+- **Hardcode Guard Tests:** 31 / 31 test suites passing in `tools/test_no_hardcoded_*.py`
+  - `test_no_hardcoded_advisor_constants.py`: PASS
+  - `test_no_hardcoded_agent_constants.py`: PASS
+  - `test_no_hardcoded_android_auth.py`: PASS
+  - `test_no_hardcoded_cdp_port.py`: PASS
+  - `test_no_hardcoded_chrome_ua.py`: PASS
+  - `test_no_hardcoded_combat_ports.py`: PASS
+  - `test_no_hardcoded_cs_constants.py`: PASS
+  - `test_no_hardcoded_cs_ports.py`: PASS
+  - `test_no_hardcoded_device_ids.py`: PASS
+  - `test_no_hardcoded_dialog_policy.py`: PASS
+  - `test_no_hardcoded_egress_defaults.py`: PASS
+  - `test_no_hardcoded_farmengine_constants.py`: PASS
+  - `test_no_hardcoded_feature_scaling.py`: PASS
+  - `test_no_hardcoded_foresight_constants.py`: PASS
+  - `test_no_hardcoded_gate_constants.py`: PASS
+  - `test_no_hardcoded_google_urls.py`: PASS
+  - `test_no_hardcoded_installer_ports.py`: PASS
+  - `test_no_hardcoded_knowledge_store.py`: PASS
+  - `test_no_hardcoded_memory_limit.py`: PASS
+  - `test_no_hardcoded_model_paths.py`: PASS
+  - `test_no_hardcoded_netsettings.py`: PASS
+  - `test_no_hardcoded_network_targets.py`: PASS
+  - `test_no_hardcoded_page_origin.py`: PASS
+  - `test_no_hardcoded_plan_stack.py`: PASS
+  - `test_no_hardcoded_pool_ua.py`: PASS
+  - `test_no_hardcoded_proxy_urls.py`: PASS
+  - `test_no_hardcoded_sdk_paths.py`: PASS
+  - `test_no_hardcoded_state_features.py`: PASS
+  - `test_no_hardcoded_verifier_thresholds.py`: PASS
+  - `test_no_hardcoded_webview_urls.py`: PASS
+  - `test_no_hardcoded_world_state.py`: PASS
+- **Live Gameplay & Dialogue Fixes:**
+  - `tools/test_tutorial_dialog_reply.py`: 8 / 8 tests PASS
+  - `tools/test_char_build.js`: 14 / 14 tests PASS
+  - `tools/test_npc_actor.js`: 8 / 8 tests PASS
+  - `dofus-network/tools/test_dialogue_fixes.py`: 3 / 3 tests PASS
+- **Agent Unit Tests:** 21 / 21 passing in `dofus-network/agent/`
+- **Tool Unit Tests:** 197 / 197 passing in `dofus-network/tools/`
+- **Kaggle Toolkit Parity:** Synchronized via `sync_kaggle_toolkit.py` (0 drift / 0 missing across 246 files)
+- **Compiler Release Suite:** Standalone compilation (`cmd /c compile.bat`) verified 100% green: `dofus-net-proxy.exe`, `DofusFarm.exe`, `uninstall.exe`, and standalone `setup.exe` (59.1 MB) generated with zero build errors.
+
 ## Open known gaps from `KNOWN_GAPS.md` that still block a real upgrade
 
 The project's own register (G1–G109) is the authoritative defect list. Items **not** marked fixed/closed and still upgrade-relevant:

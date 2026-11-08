@@ -17,6 +17,7 @@ the simulator score, and keep whichever is better.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,7 +26,7 @@ from agent.planner import TALK_TYPES, QuestPlanner, _params, args_for_tool
 from agent import consult_gate
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MODEL = REPO_ROOT / "models" / "tool_policy.onnx"
+DEFAULT_MODEL = Path(os.environ.get("DOFUS_TOOL_POLICY_MODEL") or (REPO_ROOT / "models" / "tool_policy.onnx"))
 
 
 class NNPlanner(QuestPlanner):

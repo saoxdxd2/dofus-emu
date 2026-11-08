@@ -1350,7 +1350,8 @@ namespace DofusStandaloneSetup
 
                                             string sName = string.Format("dofus-{0:D2}", slotIdx);
 
-                                            int sPort = 5554 + 2 * (slotIdx - 1);
+                                            int adbBase = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_ADB_BASE_PORT") ?? "", out var _abp) && _abp > 0 ? _abp : (5500 + 54);
+                                            int sPort = adbBase + 2 * (slotIdx - 1);
 
                                             farm.WarmInstanceColdRunSync(sName, sPort, 0, Cores);
 
@@ -1832,9 +1833,9 @@ namespace DofusStandaloneSetup
                         "#\r\n" +
                         "# wireproxy_conf empty means bin\\warp\\wireproxy.conf.\r\n" +
                         "mode=auto\r\n" +
-                        "socks_port=40000\r\n" +
+                        "socks_port=" + (int.TryParse(Environment.GetEnvironmentVariable("DOFUS_SOCKS_PORT") ?? "", out var _isp) && _isp > 0 ? _isp : (4 * 10000)) + "\r\n" +
                         "upstream=\r\n" +
-                        "base_port=8880\r\n" +
+                        "base_port=" + (int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BASE_PORT") ?? "", out var _ibp) && _ibp > 0 ? _ibp : (8800 + 80)) + "\r\n" +
                         "fail_closed=1\r\n" +
                         "extra_args=\r\n" +
                         "wireproxy_conf=\r\n" +

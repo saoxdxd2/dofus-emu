@@ -154,7 +154,7 @@ class TutorialDialogReply(unittest.TestCase):
             page = {"open": True, "npc_id": 3888, "message": "page 0",
                     "replies": [{"index": 0, "reply_id": 1}], "reply_count": 1}
             calls = []
-            for i in range(6):
+            for i in range(pl.DIALOG_STALL_LIMIT + 2):
                 page["message"] = "page %d" % i   # a new page every time, which defeats the memo
                 calls.append(planner._dialog_call(obs(page), "do all the quests"))
         finally:

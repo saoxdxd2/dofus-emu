@@ -44,8 +44,6 @@ from combat.damage_calculator import (
 )
 from data.game_data_extractor import DamageEffect, SpellInfo
 
-NB_CELLS = 560
-
 # Client action table, 1.74.9. Damage/steal ids carry their element by id; the
 # generic 95/100 ids are the element-less variants, treated as neutral.
 ELEMENT_BY_EFFECT: Dict[int, Tuple[str, str]] = {
@@ -95,20 +93,91 @@ PLANNED_MECHANIC_KINDS = frozenset({
     "teleport", "push", "pull", "ap_loss", "ap_steal",
     "mp_loss", "ap_gain", "mp_gain",
 })
-# Value of one denied AP/MP in expected-damage units. A lost AP denies roughly
-# half a basic attack next turn; a lost MP strands a melee attacker one cell
-# short more often than it denies a full action.
-AP_DENIAL_WEIGHT = 6.0
-MP_DENIAL_WEIGHT = 3.0
-# An AP gained now is spent on another cast this turn, so it is worth part of
-# an attack immediately (the cast it enables is scored on its own as well).
-AP_GAIN_WEIGHT = 5.0
-MP_GAIN_WEIGHT = 1.5
-# Displacement is worth less than damage: one cell forced on an enemy only
-# matters when it cannot pay the MP back.
-PUSH_WEIGHT = 0.75
-TELEPORT_POSITIONS = 8
 _EPS = 1e-9
+
+
+@dataclass
+class CombatConfig:
+    """All tunable combat constants. Derived from live board data where
+    possible; the values below are the 1.74.9 bundle defaults and may be
+    overridden via environment variables or a passed config before an upgrade.
+
+    Environment variables (all optional):
+      DOFUS_COMBAT_NB_CELLS          tactical grid cell count
+      DOFUS_COMBAT_TELEPORT_POSITIONS cast positions to keep per teleport
+      DOFUS_COMBAT_CAST_POSITIONS    cast positions to keep per spell/target
+      DOFUS_COMBAT_AP_DENIAL_WEIGHT  weight of one denied AP
+      DOFUS_COMBAT_MP_DENIAL_WEIGHT  weight of one denied MP
+      DOFUS_COMBAT_AP_GAIN_WEIGHT    weight of one gained AP
+      DOFUS_COMBAT_MP_GAIN_WEIGHT    weight of one gained MP
+      DOFUS_COMBAT_PUSH_WEIGHT       weight of one forced cell
+      DOFUS_COMBAT_HEAL_WEIGHT       weight of one healed HP
+      DOFUS_COMBAT_KILL_BONUS        bonus per kill
+      DOFUS_COMBAT_LRU_CACHE_LINE    lru_cache maxsize for line_points
+      DOFUS_COMBAT_LRU_CACHE_PATH    lru_cache maxsize for path finding
+    """
+
+    nb_cells: int = 560
+    teleport_positions: int = 8
+    cast_positions: int = 3
+    ap_denial_weight: float = 6.0
+    mp_denial_weight: float = 3.0
+    ap_gain_weight: float = 5.0
+    mp_gain_weight: float = 1.5
+    push_weight: float = 0.75
+    heal_weight: float = 0.8
+    kill_bonus: float = 0.35
+    lru_cache_line: int = 16384
+    lru_cache_path: int = 4096
+
+    @classmethod
+    def from_env(cls) -> "CombatConfig":
+        import os as _os
+
+        def _env_int(name: str, default: int) -> int:
+            try:
+                return int(_os.environ[name])
+            except (KeyError, ValueError):
+                return default
+
+        def _env_float(name: str, default: float) -> float:
+            try:
+                return float(_os.environ[name])
+            except (KeyError, ValueError):
+                return default
+
+        return cls(
+            nb_cells=_env_int("DOFUS_COMBAT_NB_CELLS", 560),
+            teleport_positions=_env_int("DOFUS_COMBAT_TELEPORT_POSITIONS", 8),
+            cast_positions=_env_int("DOFUS_COMBAT_CAST_POSITIONS", 3),
+            ap_denial_weight=_env_float("DOFUS_COMBAT_AP_DENIAL_WEIGHT", 6.0),
+            mp_denial_weight=_env_float("DOFUS_COMBAT_MP_DENIAL_WEIGHT", 3.0),
+            ap_gain_weight=_env_float("DOFUS_COMBAT_AP_GAIN_WEIGHT", 5.0),
+            mp_gain_weight=_env_float("DOFUS_COMBAT_MP_GAIN_WEIGHT", 1.5),
+            push_weight=_env_float("DOFUS_COMBAT_PUSH_WEIGHT", 0.75),
+            heal_weight=_env_float("DOFUS_COMBAT_HEAL_WEIGHT", 0.8),
+            kill_bonus=_env_float("DOFUS_COMBAT_KILL_BONUS", 0.35),
+            lru_cache_line=_env_int("DOFUS_COMBAT_LRU_CACHE_LINE", 16384),
+            lru_cache_path=_env_int("DOFUS_COMBAT_LRU_CACHE_PATH", 4096),
+        )
+
+
+# Single shared config instance; override with CombatConfig.from_env() or
+# construct a custom instance before an upgrade.
+COMBAT_CONFIG = CombatConfig.from_env()
+
+NB_CELLS = COMBAT_CONFIG.nb_cells
+TELEPORT_POSITIONS = COMBAT_CONFIG.teleport_positions
+CAST_POSITIONS = COMBAT_CONFIG.cast_positions
+AP_DENIAL_WEIGHT = COMBAT_CONFIG.ap_denial_weight
+MP_DENIAL_WEIGHT = COMBAT_CONFIG.mp_denial_weight
+AP_GAIN_WEIGHT = COMBAT_CONFIG.ap_gain_weight
+MP_GAIN_WEIGHT = COMBAT_CONFIG.mp_gain_weight
+PUSH_WEIGHT = COMBAT_CONFIG.push_weight
+HEAL_WEIGHT = COMBAT_CONFIG.heal_weight
+KILL_BONUS = COMBAT_CONFIG.kill_bonus
+LRU_CACHE_LINE = COMBAT_CONFIG.lru_cache_line
+LRU_CACHE_PATH = COMBAT_CONFIG.lru_cache_path
 
 
 _RAW_POINTS: Tuple[Tuple[int, int], ...] = tuple(
@@ -162,7 +231,7 @@ def _js_round(value: float) -> float:
     return math.floor(value + 0.5)
 
 
-@lru_cache(maxsize=16384)
+@lru_cache(maxsize=LRU_CACHE_LINE)
 def line_points(x1: int, y1: int, x2: int, y2: int) -> List[Tuple[int, int]]:
     """Port of the client's getLine: origin-exclusive, target-inclusive cells.
 
@@ -222,7 +291,7 @@ def line_points(x1: int, y1: int, x2: int, y2: int) -> List[Tuple[int, int]]:
     return out
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=LRU_CACHE_PATH)
 def _range_ring(limit: int, origin: int, min_range: int,
                 max_range: int, cast_in_line: bool,
                 cast_in_diagonal: bool) -> FrozenSet[int]:
@@ -1049,13 +1118,6 @@ class _Node:
     moved_targets: FrozenSet[int] = frozenset()
 
 
-KILL_BONUS = 0.35
-HEAL_WEIGHT = 0.8
-# How many cast positions to keep per spell/target when expanding a node.
-# Damage and AP do not depend on the position; the cheapest few are the ones
-# the beam can actually keep, and the live executor casts from the current
-# cell anyway.
-CAST_POSITIONS = 3
 _EMPTY_FROZENSET: FrozenSet[Any] = frozenset()
 
 

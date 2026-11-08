@@ -47,6 +47,10 @@ DEFAULT_APP_DATA = Path(
     os.environ.get("DOFUS_APP_DATA_ROOT") or os.environ.get("LOCALAPPDATA", str(Path.home()))
 ) / "DofusFarm"
 DEFAULT_HUMAN = DEFAULT_APP_DATA / "verdicts_human.jsonl"
+_DEFAULT_CONFIDENCE_HUMAN = float(os.environ.get("DOFUS_CONFIDENCE_HUMAN", "1.0"))
+_DEFAULT_MODEL_MIN_CONF = float(os.environ.get("DOFUS_MODEL_MIN_CONFIDENCE", "0.5"))
+_DEFAULT_VETO_THRESHOLD = float(os.environ.get("DOFUS_VETO_THRESHOLD", "0.0"))
+_DEFAULT_LATENCY_THRESHOLD_MS = float(os.environ.get("DOFUS_VERIFIER_LATENCY_MS", "2500"))
 
 VERDICTS = ("advanced", "noop", "failed", "blocked")
 
@@ -129,7 +133,7 @@ def features(tool: str, ok: bool, error: Optional[str],
     # timing
     import math
     vec.append(math.log1p(max(0.0, float(latency_ms or 0.0))))
-    vec.append(1.0 if (latency_ms or 0) > 2500 else 0.0)
+    vec.append(1.0 if (latency_ms or 0) > _DEFAULT_LATENCY_THRESHOLD_MS else 0.0)
 
     # state deltas
     cell_d = num(a, "cell") - num(b, "cell") if ("cell" in b and "cell" in a) else 0.0
@@ -308,7 +312,7 @@ class HumanLabels:
                     key = (str(row.get("session", "")), int(row.get("index", -1)))
                     self._cache[key] = Verdict(
                         verdict=verdict,
-                        confidence=1.0,
+                        confidence=_DEFAULT_CONFIDENCE_HUMAN,
                         source="human",
                         reasons=("human:" + str(row.get("note", "")),) if row.get("note") else ("human",),
                     )
@@ -340,13 +344,13 @@ class Verifier:
 
     def __init__(self, model_path: Optional[Path] = None,
                  human_path: Path = DEFAULT_HUMAN,
-                 veto_threshold: float = 0.0) -> None:
+                 veto_threshold: Optional[float] = None) -> None:
         self.human = HumanLabels(human_path)
-        self.veto_threshold = float(veto_threshold)
+        self.veto_threshold = float(veto_threshold) if veto_threshold is not None else _DEFAULT_VETO_THRESHOLD
         self._session: Any = None
         self._baseline: Optional[Dict[str, Any]] = None
         self._onnx_input: str = "features"
-        self.model_min_confidence = 0.5
+        self.model_min_confidence = _DEFAULT_MODEL_MIN_CONF
         self.model_error = ""
         self._model_note = "no verifier model (rules only)"
         if model_path:

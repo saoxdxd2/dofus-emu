@@ -44,7 +44,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent          # .../dofus-network
 BRAIN_SCRIPT = REPO_ROOT / "combat" / "combat_ai_server.py"
-BRAIN_PORT = 8891
+BRAIN_PORT = int(os.environ.get("DOFUS_BRAIN_PORT", "8891"))
 # The checkpoint declares 4 spell slots and loads a JAX graph; measured cold start on this
 # machine (import jax + load params + warm-up) was ~10 s. The bound is not a "give up" clock:
 # past it the loop continues either way, because the page's own fallback is still a decision.
@@ -70,7 +70,7 @@ def brain_is_up(port: int = BRAIN_PORT, timeout: float = 1.0) -> Optional[str]:
     URL: `ensure_brain` threads the port it was given through here, and handing an int to
     `urlopen` raises AttributeError rather than reporting a dead brain.
     """
-    target = "http://127.0.0.1:%d/health" % int(port)
+    target = "http://%s:%d/health" % (os.environ.get("DOFUS_BRAIN_HOST", "127.0.0.1"), int(port))
     try:
         with urllib.request.urlopen(target, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8", "replace"))
@@ -179,7 +179,7 @@ def brain_identity(port: int = BRAIN_PORT, timeout: float = 1.0) -> Optional[Dic
     Split on purpose: the existing gate asserts `brain_is_up` returns a model string, and every
     caller that only needs liveness should keep using it.
     """
-    target = "http://127.0.0.1:%d/health" % int(port)
+    target = "http://%s:%d/health" % (os.environ.get("DOFUS_BRAIN_HOST", "127.0.0.1"), int(port))
     try:
         with urllib.request.urlopen(target, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8", "replace"))

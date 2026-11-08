@@ -99,7 +99,7 @@
         get: function (success, error, keys) {
             if (typeof success === 'function') {
                 success({
-                    server: 'https://dt-proxy-production-login.ankama-games.com'
+                    server: 'https://' + (typeof NetworkSettings !== 'undefined' ? NetworkSettings.LoginHost : 'dt-proxy-production-login.ankama-games.com')
                 });
             }
         }
@@ -259,7 +259,7 @@
             setTimeout(function () {
                 if (!window.cordova || !window.cordova.callbackFromNative) return;
                 if (service === 'AppSettings' && action === 'get') {
-                    window.cordova.callbackFromNative(callbackId, true, 1, [{ server: 'https://dt-proxy-production-login.ankama-games.com' }], false);
+                    window.cordova.callbackFromNative(callbackId, true, 1, [{ server: 'https://' + (typeof NetworkSettings !== 'undefined' ? NetworkSettings.LoginHost : 'dt-proxy-production-login.ankama-games.com') }], false);
                 } else if (service === 'AppInfo' && action === 'getAppInfo') {
                     window.cordova.callbackFromNative(callbackId, true, 1, [{ version: '3.14.2', identifier: 'com.ankama.dofustouch', build: '3.14.2', versionCode: '3014002' }], false);
                 } else if (service === 'Device' && action === 'getDeviceInfo') {

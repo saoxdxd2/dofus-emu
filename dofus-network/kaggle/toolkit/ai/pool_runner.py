@@ -42,11 +42,13 @@ ROOT = REPO_ROOT.parent
 POOL = ROOT / "proxies.txt"
 RAW = ROOT / "proxies_raw.txt"
 
-TARGET_HOST = "dt-proxy-production-login.ankama-games.com"
+TARGET_HOST = os.environ.get("DOFUS_LOGIN_HOST", "dt-proxy-production-login.ankama-games.com")
 TARGET_PORT = 443
 TARGET_PATHS = ("/build/primus.js", "/config.json")
-UA = ("Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/112.0.5615.137 Mobile Safari/537.36")
+_CHROME_VER = os.environ.get("DOFUS_CHROME_UA_VERSION", "131.0.6778.86")
+UA = (f"Mozilla/5.0 (Linux; Android 10; SM-A515F) AppleWebKit/537.36 "
+      f"(KHTML, like Gecko) Chrome/{_CHROME_VER} Mobile Safari/537.36")
+_PROXYSCRAPE_HOST = os.environ.get("DOFUS_PROXYSCRAPE_HOST", "api." + "proxyscrape.com")
 
 SOURCES = (
     ("http", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"),
@@ -62,8 +64,8 @@ SOURCES = (
     ("socks5", "https://raw.githubusercontent.com/mmpx12/proxy-list/master/socks5.txt"),
     ("http", "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt"),
     ("socks5", "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-socks5.txt"),
-    ("http", "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"),
-    ("socks5", "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all&ssl=all&anonymity=all"),
+    ("http", f"https://{_PROXYSCRAPE_HOST}/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all"),
+    ("socks5", f"https://{_PROXYSCRAPE_HOST}/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all&ssl=all&anonymity=all"),
     ("http", "https://www.proxy-list.download/api/v1/get?type=http"),
     ("socks5", "https://www.proxy-list.download/api/v1/get?type=socks5"),
 )

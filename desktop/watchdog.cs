@@ -13,8 +13,8 @@ namespace DofusFarm.Engine
         private readonly Dictionary<string, int> _gameDownCount = new Dictionary<string, int>();
         private readonly Dictionary<string, List<DateTime>> _restartHistory = new Dictionary<string, List<DateTime>>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, DateTime> _lastRestartTime = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
-        private const int MaxRestartsPerHour = 3;
-        private const int RestartCooldownSeconds = 60;
+        private static readonly int MaxRestartsPerHour = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_MAX_RESTARTS_PER_HOUR") ?? "", out var _mrph) && _mrph > 0 ? _mrph : 3;
+        private static readonly int RestartCooldownSeconds = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_RESTART_COOLDOWN_SECONDS") ?? "", out var _rcs) && _rcs > 0 ? _rcs : 60;
         private readonly object _syncLock = new object();
         private Timer _timer;
         private int _runningState = 0;
@@ -130,7 +130,7 @@ namespace DofusFarm.Engine
             Thread.Sleep(1500);
             if (!Enabled) return;
 
-            string healProxy = !string.IsNullOrEmpty(inst.Proxy) ? inst.Proxy : "127.0.0.1:8880";
+            string healProxy = !string.IsNullOrEmpty(inst.Proxy) ? inst.Proxy : ("127.0.0.1:" + NetworkSettings.For().BasePort);
             _engine.LaunchInstance(inst.Name, inst.Port, inst.RamMb, inst.Cores, healProxy);
 
             Thread.Sleep(2500);

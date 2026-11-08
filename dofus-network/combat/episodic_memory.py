@@ -25,6 +25,20 @@ MEMORY_FILE = CACHE_DIR / "episodic_skills.json"
 # Hard cap on the number of stored skills so the cache file cannot grow forever.
 MAX_SKILLS = 512
 
+# Default breed ids for seed episodic skills — overridable via environment.
+DEFAULT_BREED_ID_IOP = 8    # Iop
+DEFAULT_BREED_ID_CRA = 9    # Cra
+
+for _name, _default in (
+    ("DEFAULT_BREED_ID_IOP", DEFAULT_BREED_ID_IOP),
+    ("DEFAULT_BREED_ID_CRA", DEFAULT_BREED_ID_CRA),
+):
+    try:
+        _val = int(os.environ[_name])
+        globals()[_name] = _val
+    except (KeyError, ValueError):
+        pass
+
 
 @dataclass
 class EpisodicSkill:
@@ -200,16 +214,16 @@ class EpisodicSkillMemory:
 
     def _seed_default_skills(self) -> None:
         # Iop against high HP mob -> Buff and burst
-        k1 = self._make_key(8, "chef_de_guerre_bouftou", "mid", False)
+        k1 = self._make_key(DEFAULT_BREED_ID_IOP, "chef_de_guerre_bouftou", "mid", False)
         self.skills[k1] = EpisodicSkill(
-            breed_id=8, target_pattern="Chef de Guerre Bouftou", stance="BUFF_AND_ENGAGE",
+            breed_id=DEFAULT_BREED_ID_IOP, target_pattern="Chef de Guerre Bouftou", stance="BUFF_AND_ENGAGE",
             proven_sequence=["Puissance", "Épée d'Iop", "Pression"], reward_achieved=14.5,
         )
 
         # Cra long range
-        k2 = self._make_key(9, "craqueleur_des_plaines", "range", False)
+        k2 = self._make_key(DEFAULT_BREED_ID_CRA, "craqueleur_des_plaines", "range", False)
         self.skills[k2] = EpisodicSkill(
-            breed_id=9, target_pattern="Craqueleur des Plaines", stance="BUFF_AND_ENGAGE",
+            breed_id=DEFAULT_BREED_ID_CRA, target_pattern="Craqueleur des Plaines", stance="BUFF_AND_ENGAGE",
             proven_sequence=["Tir Puissant", "Flèche d'Expiation", "Flèche Glacée"], reward_achieved=15.0,
         )
 

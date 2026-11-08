@@ -1431,13 +1431,13 @@ class QuestPlanner:
             except (TypeError, ValueError):
                 continue
             if 0 <= slot <= 16:
-                return str(slot)
+                return slot
         # Nothing of this template is worn, so the worn-copy answer does not exist. The
         # template's own `possiblePositions` is the client's next answer, and it is the
         # one the equip handler falls back to; publishing it in the bag row (2026-11-06)
         # means the caller can pass the slot instead of hoping the fallback chain fires.
         if declared:
-            return str(declared[0])
+            return declared[0]
         return None
 
     @staticmethod
@@ -2115,10 +2115,12 @@ class QuestPlanner:
             if stall_key != self._dialog_stall_key:
                 self._dialog_stall_key = stall_key
                 self._dialog_seen_messages.clear()
+                self._dialog_total_steps = 1
                 if msg_key:
                     self._dialog_seen_messages.add(msg_key)
                 self._dialog_stall = 1
             else:
+                self._dialog_total_steps = getattr(self, "_dialog_total_steps", 0) + 1
                 if msg_key and msg_key not in self._dialog_seen_messages:
                     self._dialog_seen_messages.add(msg_key)
                     if len(self._dialog_seen_messages) > 128:
@@ -2126,8 +2128,9 @@ class QuestPlanner:
                     self._dialog_stall = 1
                 else:
                     self._dialog_stall += 1
-            if self._dialog_stall > DIALOG_STALL_LIMIT:
+            if self._dialog_stall > DIALOG_STALL_LIMIT or getattr(self, "_dialog_total_steps", 0) > DIALOG_STALL_LIMIT:
                 self._dialog_stall = 0
+                self._dialog_total_steps = 0
                 self._dialog_stall_key = None
                 self._dialog_seen_messages.clear()
                 return ToolCall("quest.advance", {
@@ -2234,6 +2237,14 @@ class QuestPlanner:
         ("spell", {"menu": "Spell"}),
         ("inventory", {"menu": "Bag"}),
         ("characteristic", {"menu": "Carac"}),
+        ("inventaire", {"menu": "Bag"}),
+        ("sorts", {"menu": "Spell"}),
+        ("sort", {"menu": "Spell"}),
+        ("carte", {"menu": "Map"}),
+        ("caractéristique", {"menu": "Carac"}),
+        ("caracteristique", {"menu": "Carac"}),
+        ("livre de quête", {"menu": "Book"}),
+        ("livre de quete", {"menu": "Book"}),
         # The bundle maps this button to open("market", {tabId: "shop"}), and the
         # tutorial's shop step ends on SHOP_LOADED — fired when the shop opens and
         # its articles arrive. A market window left open from an earlier step makes
@@ -2431,7 +2442,21 @@ class QuestPlanner:
             # without it -- "quest is active but no npc_id was given" -- so carry it.
             # Measured live 2026-11-06: every tutorial reply failed on exactly this, and
             # the loop then guessed four NPCs in turn before going idle.
-            reply_args: Dict[str, Any] = {"quest_id": qid, "reply": 0}
+            chosen_reply = 0
+            rep_text = None
+            decision = rank_dialog(obs)
+            self.last_dialog_decision = decision
+            if decision and decision.get("status") == "choose" and isinstance(decision.get("reply"), dict):
+                rep_idx = decision["reply"].get("index")
+                if rep_idx is not None:
+                    try:
+                        chosen_reply = int(rep_idx)
+                    except (TypeError, ValueError):
+                        chosen_reply = 0
+                rep_text = decision["reply"].get("text")
+            reply_args: Dict[str, Any] = {"quest_id": qid, "reply": chosen_reply}
+            if rep_text:
+                reply_args["reply_text"] = rep_text
             try:
                 talking = int(dialog.get("npc_id") or 0)
             except (TypeError, ValueError):

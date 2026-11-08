@@ -18,6 +18,7 @@ invent prices; it only decomposes a goal into the existing tools.
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -25,8 +26,8 @@ from typing import Any, Dict, List, Optional
 from agent.features import DELIVER_TYPES, FIGHT_TYPES, MAP_TYPES, TALK_TYPES
 from agent.observe import flatten
 
-MAX_GOALS = 16
-MAX_BYTES = 2048
+MAX_GOALS = int(os.environ.get("DOFUS_MAX_GOALS", "16"))
+MAX_BYTES = int(os.environ.get("DOFUS_MAX_BYTES", "2048"))
 
 
 @dataclass

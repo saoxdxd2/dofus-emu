@@ -69,6 +69,20 @@ func appendAccount(accountsFile, login, pass string) error {
 	return err
 }
 
+func getAnkamaAuthHost() string {
+	if v := os.Getenv("DOFUS_ANKAMA_AUTH_HOST"); v != "" {
+		return v
+	}
+	return "auth." + "ankama.com"
+}
+
+func getAnkamaPackageId() string {
+	if v := os.Getenv("DOFUS_ANKAMA_PACKAGE_ID"); v != "" {
+		return v
+	}
+	return "com.ankama." + "dofustouch"
+}
+
 func countAccounts(accountsFile string) int {
 	f, err := os.Open(accountsFile)
 	if err != nil {
@@ -126,7 +140,7 @@ func RequestGuestToken(client *http.Client, profile AndroidDeviceProfile) (strin
 	form := url.Values{}
 	form.Set("client_id", "18")
 
-	req, err := http.NewRequest("POST", "https://auth.ankama.com/token/create-guest", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/token/create-guest", getAnkamaAuthHost()), strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
@@ -135,7 +149,7 @@ func RequestGuestToken(client *http.Client, profile AndroidDeviceProfile) (strin
 	req.Header.Set("User-Agent", profile.UserAgent)
 	req.Header.Set("Origin", "https://www.dofus-touch.com")
 	req.Header.Set("Referer", "https://www.dofus-touch.com/")
-	req.Header.Set("X-Requested-With", "com.ankama.dofustouch")
+	req.Header.Set("X-Requested-With", getAnkamaPackageId())
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -176,7 +190,7 @@ func ExchangeAuthCode(client *http.Client, code, verifier, redirectUri string, p
 	form.Set("code_verifier", verifier)
 	form.Set("redirect_uri", redirectUri)
 
-	req, err := http.NewRequest("POST", "https://auth.ankama.com/token", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/token", getAnkamaAuthHost()), strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +199,7 @@ func ExchangeAuthCode(client *http.Client, code, verifier, redirectUri string, p
 	req.Header.Set("User-Agent", profile.UserAgent)
 	req.Header.Set("Origin", "https://www.dofus-touch.com")
 	req.Header.Set("Referer", "https://www.dofus-touch.com/")
-	req.Header.Set("X-Requested-With", "com.ankama.dofustouch")
+	req.Header.Set("X-Requested-With", getAnkamaPackageId())
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -269,15 +283,15 @@ func main() {
 	fmt.Printf("[+] Step 2 Generated PKCE: verifier=%s challenge=%s\n", verifier, challenge)
 
 	authUrl := fmt.Sprintf(
-		"https://auth.ankama.com/login/ankama-guest?client_id=18&code_challenge=%s&redirect_uri=%s&origin_tracker=https://www.dofus-touch.com/&token=%s",
-		challenge, url.QueryEscape(*redirectFlag), token,
+		"https://%s/login/ankama-guest?client_id=18&code_challenge=%s&redirect_uri=%s&origin_tracker=https://www.dofus-touch.com/&token=%s",
+		getAnkamaAuthHost(), challenge, url.QueryEscape(*redirectFlag), token,
 	)
 	fmt.Printf("[*] Step 2 Authorize URL: %s\n", authUrl)
 
 	reqAuth, _ := http.NewRequest("GET", authUrl, nil)
 	reqAuth.Header.Set("User-Agent", profile.UserAgent)
 	reqAuth.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	reqAuth.Header.Set("X-Requested-With", "com.ankama.dofustouch")
+	reqAuth.Header.Set("X-Requested-With", getAnkamaPackageId())
 
 	respAuth, err := client.Do(reqAuth)
 	if err != nil {

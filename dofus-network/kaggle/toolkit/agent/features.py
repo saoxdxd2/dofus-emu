@@ -33,6 +33,16 @@ from agent.jsonio import loads as fast_loads
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = REPO_ROOT / "data" / "capabilities.json"
 
+QUEST_LEVEL_SCALE = float(os.environ.get("DOFUS_SCALE_QUEST_LEVEL", "200.0"))
+STEP_INDEX_SCALE = float(os.environ.get("DOFUS_SCALE_STEP_INDEX", "8.0"))
+INVENTORY_SCALE = float(os.environ.get("DOFUS_SCALE_INVENTORY", "20.0"))
+TRAVEL_HOPS_SCALE = float(os.environ.get("DOFUS_SCALE_TRAVEL_HOPS", "3.0"))
+LEVEL_SCALE = float(os.environ.get("DOFUS_SCALE_LEVEL", "200.0"))
+OBJECTIVES_SCALE = float(os.environ.get("DOFUS_SCALE_OBJECTIVES", "50.0"))
+QUESTS_COMPLETED_SCALE = float(os.environ.get("DOFUS_SCALE_QUESTS_COMPLETED", "20.0"))
+QUESTS_ACTIVE_SCALE = float(os.environ.get("DOFUS_SCALE_QUESTS_ACTIVE", "5.0"))
+STREAK_SCALE = float(os.environ.get("DOFUS_SCALE_STREAK", "5.0"))
+
 def _load_objective_types() -> List[int]:
     default_types = [0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 14, 16, 17]
     try:
@@ -520,8 +530,8 @@ def objective_features(obj: Dict[str, Any], quest_level: int, step_index: int,
     vec.append(1.0 if obj.get("map_id") else 0.0)
     vec.append(1.0 if obj.get("coords") else 0.0)
 
-    vec.append(min(1.0, quest_level / 200.0))
-    vec.append(min(1.0, step_index / 8.0))
+    vec.append(min(1.0, quest_level / QUEST_LEVEL_SCALE))
+    vec.append(min(1.0, step_index / STEP_INDEX_SCALE))
 
     inv = state.get("inventory") or {}
     # The item this objective needs, and whether it is already carried. Missing this
@@ -538,7 +548,7 @@ def objective_features(obj: Dict[str, Any], quest_level: int, step_index: int,
     if target_map and state.get("map_id"):
         on_target = 1.0 if int(state["map_id"]) == int(target_map) else 0.0
 
-    vec.append(min(1.0, len(inv) / 20.0))
+    vec.append(min(1.0, len(inv) / INVENTORY_SCALE))
     vec.append(has_needed)
     vec.append(on_target)
     # How far the objective is, not just whether we are on it. Once travel costs
@@ -546,19 +556,19 @@ def objective_features(obj: Dict[str, Any], quest_level: int, step_index: int,
     # distance, and a 0/1 on_target cannot tell one hop from three areas away — so a
     # model without this could not learn when travelling is worth it, and any negative
     # result about planning would be confounded by the missing input.
-    vec.append(min(1.0, travel_hops(state.get("map_id"), target_map) / 3.0))
+    vec.append(min(1.0, travel_hops(state.get("map_id"), target_map) / TRAVEL_HOPS_SCALE))
     vec.append(1.0 if state.get("map_id") else 0.0)
-    vec.append(min(1.0, (state.get("level") or 1) / 200.0))
+    vec.append(min(1.0, (state.get("level") or 1) / LEVEL_SCALE))
 
-    vec.append(min(1.0, (state.get("objectives_completed") or 0) / 50.0))
-    vec.append(min(1.0, (state.get("quests_completed") or 0) / 20.0))
-    vec.append(min(1.0, len(state.get("quests_active") or {}) / 5.0))
+    vec.append(min(1.0, (state.get("objectives_completed") or 0) / OBJECTIVES_SCALE))
+    vec.append(min(1.0, (state.get("quests_completed") or 0) / QUESTS_COMPLETED_SCALE))
+    vec.append(min(1.0, len(state.get("quests_active") or {}) / QUESTS_ACTIVE_SCALE))
 
     # History of its own attempts: the only way to learn "this keeps failing" is to
     # be told that it keeps failing.
     streak = float(ctx.get("streak") or 0)
     last_ok = ctx.get("last_ok")
-    vec.append(min(1.0, streak / 5.0))
+    vec.append(min(1.0, streak / STREAK_SCALE))
     vec.append(1.0 if last_ok is None else (1.0 if last_ok else 0.0))
     last_tool = ctx.get("last_tool")
     # Frozen divisor: the shipped head was trained on this scale. With 21 labels

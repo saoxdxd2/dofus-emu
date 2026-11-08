@@ -26,14 +26,34 @@ from data.game_data_extractor import (
     SpellInfo,
 )
 
+# Default character stats — overridable via environment before an upgrade.
+DEFAULT_BREED_ID = 8      # 1=Feca, 2=Osa, ..., 8=Iop, 9=Cra, etc.
+DEFAULT_LEVEL = 100
+DEFAULT_ACTION_POINTS = 10
+DEFAULT_MOVEMENT_POINTS = 4
+
+# Allow override from environment for balance patches / different servers.
+import os as _dmg_os
+for _name, _default in (
+    ("DEFAULT_BREED_ID", DEFAULT_BREED_ID),
+    ("DEFAULT_LEVEL", DEFAULT_LEVEL),
+    ("DEFAULT_ACTION_POINTS", DEFAULT_ACTION_POINTS),
+    ("DEFAULT_MOVEMENT_POINTS", DEFAULT_MOVEMENT_POINTS),
+):
+    try:
+        _val = int(_dmg_os.environ[_name])
+        globals()[_name] = _val
+    except (KeyError, ValueError):
+        pass
+
 
 @dataclass
 class CharacterStats:
     name: str = "Player"
-    breed_id: int = 8  # 1=Feca, 2=Osa, ..., 8=Iop, 9=Cra, etc.
-    level: int = 100
-    action_points: int = 10
-    movement_points: int = 4
+    breed_id: int = DEFAULT_BREED_ID  # 1=Feca, 2=Osa, ..., 8=Iop, 9=Cra, etc.
+    level: int = DEFAULT_LEVEL
+    action_points: int = DEFAULT_ACTION_POINTS
+    movement_points: int = DEFAULT_MOVEMENT_POINTS
     # Primary Stats
     strength: int = 0      # Earth & Neutral
     intelligence: int = 0  # Fire

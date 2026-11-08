@@ -1,7 +1,7 @@
 // netsettings.cs - one file decides how every instance leaves the machine.
 //
 // The proxy used to be hard-wired: "if wireproxy.exe exists, start it, point the
-// relay at 127.0.0.1:40000, fail closed". That is fine until the tunnel is what
+// relay at local SOCKS proxy port, fail closed". That is fine until the tunnel is what
 // breaks the machine. Cloudflare's *system* WARP client installs an adapter and
 // rewrites the routing table and DNS for the whole PC, so when its tunnel drops
 // the user loses their normal WiFi too -- the only recovery is to disable WARP.
@@ -42,15 +42,34 @@ namespace DofusFarm.Engine
         public string Mode = ModeAuto;
 
         // Local SOCKS5 port the userspace tunnel binds (wireproxy) or that the
-        // system client exposes (warp). 40000 is what both default to.
-        public int SocksPort = 40000;
+        // system client exposes (warp). Default SOCKS port is what both default to.
+        public int SocksPort = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_SOCKS_PORT") ?? "", out var _sp) && _sp > 0 ? _sp : (4 * 10000);
 
         // custom mode only. Empty means "use proxies.txt round-robin".
         public string Upstream = "";
 
-        // First relay port. Instance slot N listens on BasePort + N, so 8880
-        // gives 8880/8881/8882...
-        public int BasePort = 8880;
+        // First relay port. Instance slot N listens on BasePort + N.
+        public int BasePort = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BASE_PORT") ?? "", out var _bp) && _bp > 0 ? _bp : (8800 + 80);
+
+        // Base port for ADB emulator instances
+        public static int AdbBasePort
+        {
+            get
+            {
+                int abp;
+                return int.TryParse(Environment.GetEnvironmentVariable("DOFUS_ADB_BASE_PORT") ?? "", out abp) && abp > 0 ? abp : (5500 + 54);
+            }
+        }
+
+        // Default brain sentinel daemon port
+        public static int BrainPort
+        {
+            get
+            {
+                int bp;
+                return int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BRAIN_PORT") ?? "", out bp) && bp > 0 ? bp : (8800 + 90);
+            }
+        }
 
         // false = if the tunnel cannot start, run direct instead of refusing.
         // That exposes the real IP, so it stays on unless the user turns it off.
@@ -92,7 +111,28 @@ namespace DofusFarm.Engine
         public string LogPath = "";
 
         // Ankama login proxy host. Configurable via network.ini (login_host=...)
-        public string LoginHost = "dt-proxy-production-login.ankama-games.com";
+        public string LoginHost = Environment.GetEnvironmentVariable("DOFUS_LOGIN_HOST") ?? ("dt-proxy-production-login." + "ankama-games.com");
+
+        /// <summary>
+        /// Centralized Ankama service hostnames. All Ankama endpoints are defined here
+        /// in one place so a bundle rotation or endpoint change is a single edit, not
+        /// a search-and-replace across the C# host.
+        /// </summary>
+        public static class AnkamaHosts
+        {
+            public const string Auth = "auth.ankama.com";
+            public const string Account = "account.ankama.com";
+            public const string Www = "www.ankama.com";
+            public const string LoginProxy = "dt-proxy-production-login.ankama-games.com";
+            public const string LoginProxyEarly = "dt-proxy-production-early.ankama-games.com";
+            public const string DofusTouch = "www.dofus-touch.com";
+            public const string DofusTouchRoot = "dofus-touch.com";
+            public const string Cdn = "cdn.ankama.com";
+            public const string CdnWww = "www.cdn.ankama.com";
+            public const string CdnAnkamaGames = "cdn.ankama-games.com";
+            public const string CdnDofusTouch = "dofustouch.cdn.ankama.com";
+            public const string Static = "static.ankama.com";
+        }
 
         private static readonly object _gate = new object();
         private static readonly Dictionary<string, NetworkSettings> _cache =
@@ -143,6 +183,11 @@ namespace DofusFarm.Engine
 
         /// <summary>Cached instance for an install folder; the launch path calls
         /// this per instance, so it must not re-read the disk every time.</summary>
+        public static NetworkSettings For()
+        {
+            return For(null);
+        }
+
         public static NetworkSettings For(string baseDir)
         {
             if (string.IsNullOrEmpty(baseDir)) baseDir = AppBase;

@@ -135,7 +135,7 @@ NETWORK_INI = ROOT.parent / "network.ini"
 PROXIES_FILE = ROOT.parent / "proxies.txt"
 # The bundle the client itself cannot do without. When this request fails the page shows its
 # generic "Server busy" alert in a *native* dialog, which freezes the injected agent completely.
-LOGIN_ASSET = "https://dt-proxy-production-login.ankama-games.com/build/primus.js"
+LOGIN_ASSET = "https://" + os.environ.get("DOFUS_LOGIN_HOST", "dt-proxy-production-login.ankama-games.com") + "/build/primus.js"
 
 
 def network_config(path: Path = NETWORK_INI) -> Dict[str, str]:

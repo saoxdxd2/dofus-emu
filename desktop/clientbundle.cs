@@ -1,4 +1,4 @@
-﻿// clientbundle.cs - updating the client without breaking it.
+// clientbundle.cs - updating the client without breaking it.
 //
 // The client bundle is not shipped in the APK: Ankama serves manifest.json and
 // the app downloads script.js at runtime. The old updater did that correctly
@@ -549,7 +549,7 @@ namespace DofusFarm.Engine
                     wc.Agent = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36";
                     wc.Encoding = Encoding.UTF8;
 
-                    const string server = "https://dt-proxy-production-login.ankama-games.com";
+                    string server = "https://" + NetworkSettings.For().LoginHost;
                     string manifest = DownloadString(wc, server + "/manifest.json");
                     var files = new Dictionary<string, string>();
                     foreach (Match m in Regex.Matches(manifest,

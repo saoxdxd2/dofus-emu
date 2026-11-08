@@ -33,7 +33,7 @@ class VisitorAccountManager {
      */
     requestGuestToken() {
         return postForm({
-            hostname: 'auth.ankama.com',
+            hostname: process.env.DOFUS_LOGIN_HOST || 'auth.ankama.com',
             path: '/token/create-guest',
             headers: {
                 'Origin': 'https://www.dofus-touch.com',
@@ -51,7 +51,7 @@ class VisitorAccountManager {
     exchangeCode(code, verifier, redirectUri) {
         const postData = `grant_type=authorization_code&client_id=18&code=${encodeURIComponent(code)}&code_verifier=${encodeURIComponent(verifier)}&redirect_uri=${encodeURIComponent(redirectUri)}`;
         return postForm({
-            hostname: 'auth.ankama.com',
+            hostname: process.env.DOFUS_LOGIN_HOST || 'auth.ankama.com',
             path: '/token'
         }, postData, json => json, {
             http: 'Token exchange failed with HTTP ',

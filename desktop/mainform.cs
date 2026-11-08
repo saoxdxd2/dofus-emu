@@ -225,7 +225,7 @@ namespace DofusFarm.UI
         // Same port as AiPanel.BrainPort, restated because that const is private to another
         // class. If the two ever part, the file fallback still paints the pipeline's last real
         // report -- the pill goes amber, it does not lie green.
-        private const int NetDaemonPort = 8895;
+        private static readonly int NetDaemonPort = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_NET_DAEMON_PORT") ?? "", out var _ndp) && _ndp > 0 ? _ndp : (8800 + 95);
         private bool _aiPushedRunning;
         // Per-instance badge state: the id is the client, the bool is whether ITS
         // loop was running the last time we told it.
@@ -273,7 +273,7 @@ namespace DofusFarm.UI
 
         private int _logWritesSinceFlush = 0;
 
-        private const long LogMaxBytes = 64L * 1024 * 1024;
+        private static readonly long LogMaxBytes = long.TryParse(Environment.GetEnvironmentVariable("DOFUS_LOG_MAX_BYTES") ?? "", out var _lmb) && _lmb > 0 ? _lmb : (64L * 1024 * 1024);
 
         private long _logBytes = 0;
 
@@ -463,28 +463,18 @@ namespace DofusFarm.UI
                     _sentinelProcess = Process.Start(psi);
 
                     Thread.Sleep(900);
-
+                    int sentinelPort = NetworkSettings.BrainPort;
                     if (_sentinelProcess != null && _sentinelProcess.HasExited)
-
                     {
-
-                        if (IsLocalPortListening(8890))
-
+                        if (IsLocalPortListening(sentinelPort))
                         {
-
                             try { _sentinelProcess.Dispose(); } catch { }
-
                             _sentinelProcess = null;
-
-                            Log("🧠 Singleton AI Sentinel already running on port 8890 - reusing it.");
-
+                            Log(string.Format("🧠 Singleton AI Sentinel already running on port {0} - reusing it.", sentinelPort));
                         }
-
                         else Log("⚠ Singleton AI Sentinel exited immediately - check the dofus-network logs.");
-
                     }
-
-                    else Log("🧠 Singleton AI Sentinel daemon auto-started (Port 8890).");
+                    else Log(string.Format("🧠 Singleton AI Sentinel daemon auto-started (Port {0}).", sentinelPort));
 
                 }
 
@@ -1043,7 +1033,7 @@ namespace DofusFarm.UI
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-        private const int WM_HOTKEY = 0x0312;
+        private static readonly int WM_HOTKEY = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_WM_HOTKEY") ?? "", out var _wmh) && _wmh > 0 ? _wmh : 0x0312;
         private readonly Dictionary<int, string> _hotkeys = new Dictionary<int, string>();
 
         /// <summary>Register the AI panel's shortcuts as system-wide hotkeys.</summary>
@@ -1856,7 +1846,7 @@ namespace DofusFarm.UI
                 };
                 ProxySupervisor.Instance.Start();
 
-                _agentBridge = new AgentDirectiveBridge(_webViewBackend, GetInstanceIdFromSlot, Log, 8893);
+                _agentBridge = new AgentDirectiveBridge(_webViewBackend, GetInstanceIdFromSlot, Log);
 
                 _agentBridge.Start();
 
@@ -2845,7 +2835,7 @@ namespace DofusFarm.UI
 
 
 
-                                string proxyDisplay = inst.Proxy ?? ("127.0.0.1:" + (_engine != null ? NetworkSettings.For(_engine.AppBaseDir).BasePort : 8880));
+                                string proxyDisplay = inst.Proxy ?? ("127.0.0.1:" + (_engine != null ? NetworkSettings.For(_engine.AppBaseDir).BasePort : NetworkSettings.For(null).BasePort));
 
 
 
@@ -4063,7 +4053,7 @@ namespace DofusFarm.UI
             {
 
                 NetworkSettings net = NetworkSettings.For(_engine.AppBaseDir);
-                int slot = Math.Max(0, (inst.Port - 5554) / 2), localProxyPort = net.BasePort + slot;
+                int slot = Math.Max(0, (inst.Port - NetworkSettings.AdbBasePort) / 2), localProxyPort = net.BasePort + slot;
                 DeviceProfile profile = _engine.GetInstancePhoneModel(inst.Name);
                 // The same device every launch, not a new one.
                 //

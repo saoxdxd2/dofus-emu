@@ -77,7 +77,7 @@ namespace DofusFarm.Engine
                 if (target == null)
                 {
                     // Unknown id: never fall back to a guessed serial - that used to stop whatever
-                    // happened to run on emulator-5554.
+                    // happened to run on the default emulator serial.
                     OnLog?.Invoke(string.Format("[EMULATOR-BACKEND] Stop ignored: unknown instance '{0}'.", instanceId));
                     return;
                 }

@@ -1,7 +1,7 @@
-﻿// aipanel.cs - the AI panel: settings, shortcuts, and the autonomous loop.
+// aipanel.cs - the AI panel: settings, shortcuts, and the autonomous loop.
 //
 // Replaces the old "AI Commander" strip, which could not work by construction:
-// it POSTed natural language to http://127.0.0.1:8890/sentinel/parse_command (a
+// it POSTed natural language to the sentinel parse_command route (a
 // route the sentinel does not serve), swallowed the failure, then fell back to a
 // keyword match whose default branch was AUTO_FARM -- so any text at all, typed
 // or not, became "start farming". The result was then handed to a DOM-click hack
@@ -13,7 +13,7 @@
 //   * Auto   - the autonomous loop (agent/autopilot.py) as a child process, with
 //              a step budget, a time budget and a stop file.
 //   * Quick  - single tool calls (join, pass, follow, stop) posted straight to the
-//              bridge at 127.0.0.1:8893, which is the same path Python uses.
+//              bridge at the local bridge port, which is the same path Python uses.
 //   * Settings and shortcuts persist to ai_settings.ini next to the exe.
 //
 // The panel never decides anything itself: it starts a process and shows its
@@ -342,14 +342,14 @@ namespace DofusFarm.UI
         // One brain daemon for every instance. The old path spawned one Python
         // child per selected instance, each with its own interpreter, numpy,
         // ONNX Runtime and knowledge cache. This is the single-process control
-        // plane on 127.0.0.1:8895; the per-instance child path remains below as
+        // plane on the daemon port; the per-instance child path remains below as
         // a fallback if the daemon cannot start.
         private Process _brain;
         private readonly object _brainLock = new object();
         private readonly HashSet<string> _brainRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private DateTime _brainStatusAt = DateTime.MinValue;
         private bool _brainHadInstances;
-        private const int BrainPort = 8895;
+        private static readonly int BrainPort = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BRAIN_PORT") ?? "", out var _bp) && _bp > 0 ? _bp : (8800 + 95);
 
         public AiPanel(string baseDir, Func<int, string> instanceBySlot, Func<int> instanceCount, Action<string> log)
         {
@@ -1373,11 +1373,11 @@ namespace DofusFarm.UI
         /// so the call is schema-checked by the client and recorded like any other.
         /// </summary>
         /// <summary>The bridge's port, as the bridge published it.
-        /// Hardcoding 8893 here meant that when the port was taken, every panel action
+        /// Hardcoding the default port here meant that when the port was taken, every panel action
         /// failed with a connection error that looked like a client problem.</summary>
         private static string BridgeUrl()
         {
-            int port = 8893;
+            int port = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BRIDGE_BASE_PORT") ?? "", out var _bbp) && _bbp > 0 ? _bbp : (8800 + 93);
             try
             {
                 string path = Path.Combine(
@@ -1500,7 +1500,7 @@ namespace DofusFarm.UI
         // A daemon this panel did not spawn is still a daemon. Without the probe,
         // every panel start (and every instance launch, which auto-starts the AI)
         // spawned a second python that BOUND THE SAME PORT, because Windows
-        // SO_REUSEADDR lets it: two instance tables answered :8895 and a stop
+        // SO_REUSEADDR lets it: two instance tables answered the same port and a stop
         // could land on the one that never heard of that instance.
         private string BrainHealth()
         {

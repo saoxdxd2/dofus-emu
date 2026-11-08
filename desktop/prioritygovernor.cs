@@ -34,7 +34,7 @@ namespace DofusFarm.Engine
         private Dictionary<int, List<int>> _parentsCache;
         private DateTime _parentsCacheUtc = DateTime.MinValue;
         private BackendType? _parentsCacheBackend;
-        private const double ParentCacheSeconds = 4.0;
+        private static readonly double ParentCacheSeconds = double.TryParse(Environment.GetEnvironmentVariable("DOFUS_PARENT_CACHE_SECONDS") ?? "", out var _pcs) && _pcs > 0 ? _pcs : 4.0;
 
         // Precompiled once: GetInstanceSlot parses emulator command lines, and
         // re-parsing the pattern from source on every new PID was pure waste.
@@ -209,7 +209,8 @@ namespace DofusFarm.Engine
                     if (mp.Success)
                     {
                         int port = int.Parse(mp.Groups[1].Value);
-                        resolved = Math.Max(0, (port - 5554) / 2);
+                        int adbBase = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_ADB_BASE_PORT") ?? "", out var _abp) && _abp > 0 ? _abp : (5500 + 54);
+                        resolved = Math.Max(0, (port - adbBase) / 2);
                     }
                     var mc = RxCoresArg.Match(cmd);
                     if (mc.Success)

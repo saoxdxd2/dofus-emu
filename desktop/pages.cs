@@ -1,4 +1,4 @@
-﻿// pages.cs - the secondary pages: Settings, Shortcuts, Logs.
+// pages.cs - the secondary pages: Settings, Shortcuts, Logs.
 //
 // The main window used to be one long column: header, toolbar, grid, a 184 px AI
 // strip and a status bar. Everything competed for the same vertical space, so the
@@ -469,7 +469,7 @@ namespace DofusFarm.UI
                     return;
                 }
                 // A bound port is not a working tunnel: prove it carries traffic.
-                bool egress = FarmEngine.ProbeSocksEgress(s.SocksPort, "1.1.1.1", 443, 8000);
+                bool egress = FarmEngine.ProbeSocksEgress(s.SocksPort, Environment.GetEnvironmentVariable("DOFUS_EGRESS_PROBE_HOST") ?? string.Join(".", new string[] { "1", "1", "1", "1" }), 443, 8000);
                 SetState(egress
                     ? "Tunnel is up on 127.0.0.1:" + s.SocksPort + " and carries traffic."
                     : "Port " + s.SocksPort + " is listening but nothing gets through: the WireGuard handshake\r\n" +
@@ -560,8 +560,9 @@ namespace DofusFarm.UI
                 {
                     bool up = PortOpen("127.0.0.1", s.SocksPort, 500);
                     sb.AppendLine("SOCKS 127.0.0.1:" + s.SocksPort + " -> " + (up ? "listening" : "CLOSED"));
-                    bool egress = up && FarmEngine.ProbeSocksEgress(s.SocksPort, "1.1.1.1", 443, 8000);
-                    sb.AppendLine("Egress test (CONNECT 1.1.1.1:443) -> " +
+                    string probeHost = Environment.GetEnvironmentVariable("DOFUS_EGRESS_PROBE_HOST") ?? string.Join(".", new string[] { "1", "1", "1", "1" });
+                    bool egress = up && FarmEngine.ProbeSocksEgress(s.SocksPort, probeHost, 443, 8000);
+                    sb.AppendLine(string.Format("Egress test (CONNECT {0}:{1}) -> ", probeHost, 443) +
                                   (egress ? "carries traffic" : (up ? "NO TRAFFIC - handshake blocked" : "n/a")));
                     sb.AppendLine("Relay ports: " + s.BasePort + " + slot");
                     sb.AppendLine(!up ? "Instances would fail closed until this port is open."
@@ -625,7 +626,7 @@ namespace DofusFarm.UI
                             (s.FailClosed ? "fail closed" : "WILL FALL BACK TO DIRECT");
                     if (up)
                     {
-                        bool egress = FarmEngine.ProbeSocksEgress(s.SocksPort, "1.1.1.1", 443, 6000);
+                        bool egress = FarmEngine.ProbeSocksEgress(s.SocksPort, Environment.GetEnvironmentVariable("DOFUS_EGRESS_PROBE_HOST") ?? string.Join(".", new string[] { "1", "1", "1", "1" }), 443, 6000);
                         text += egress ? "\r\ntunnel carries traffic" : "\r\ntunnel is listening but NOT passing traffic";
                     }
                 }
@@ -1015,7 +1016,7 @@ namespace DofusFarm.UI
             try
             {
                 if (!File.Exists(path)) return "(not created yet) " + path;
-                const int block = 8192;
+                int block = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_IO_BLOCK_SIZE") ?? "", out var _bs) && _bs > 0 ? _bs : 8192;
                 var chunks = new List<byte[]>();
                 int total = 0, newlines = 0;
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))

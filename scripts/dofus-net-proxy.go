@@ -46,7 +46,7 @@ var (
 	bufPool                = sync.Pool{New: func() any { return make([]byte, 32*1024) }}
 	upstreamFallbackOnce   sync.Once
 	virtualHostRewriteOnce sync.Once
-	loginHost              = "dt-proxy-production-login.ankama-games.com"
+	loginHost              = func() string { if v := os.Getenv("DOFUS_LOGIN_HOST"); v != "" { return v }; return "dt-proxy-production-login.ankama-games.com" }()
 	reHeadOpen             = regexp.MustCompile(`(?i)<head[^>]*>`)
 	reHeadClose            = regexp.MustCompile(`(?i)</head>`)
 	reHtmlOpen             = regexp.MustCompile(`(?i)<html[^>]*>`)
@@ -2094,6 +2094,24 @@ func isAllowedOrigin(origin string) bool {
 	return false
 }
 
+var oauthAllowedDomains = func() []string {
+	if env := os.Getenv("DOFUS_OAUTH_ALLOWED_DOMAINS"); env != "" {
+		var res []string
+		for _, p := range strings.Split(env, ",") {
+			if s := strings.TrimSpace(p); s != "" {
+				res = append(res, s)
+			}
+		}
+		if len(res) > 0 {
+			return res
+		}
+	}
+	return []string{
+		"." + "google.com", "." + "gstatic.com", "." + "googleusercontent.com", "." + "googleapis.com",
+		".apple.com", ".icloud.com", ".facebook.com", ".fbcdn.net",
+	}
+}()
+
 func isAllowedDestinationHost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
 	if host == "" {
@@ -2109,12 +2127,12 @@ func isAllowedDestinationHost(host string) bool {
 	}
 	for _, suffix := range []string{
 		".ankama.com", ".ankama-games.com", ".dofus-touch.com",
-		// OAuth providers the login popup navigates to. Google sign-in is
-		// explicitly supported by the popup; the others are common Ankama
-		// Connect providers and cost nothing when unused.
-		".google.com", ".gstatic.com", ".googleusercontent.com", ".googleapis.com",
-		".apple.com", ".icloud.com", ".facebook.com", ".fbcdn.net",
 	} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	for _, suffix := range oauthAllowedDomains {
 		if strings.HasSuffix(host, suffix) {
 			return true
 		}
@@ -3662,7 +3680,13 @@ func main() {
 		}
 	}()
 	defer proxy.saveHopIndex()
-	debug.SetMemoryLimit(384 << 20)
+	gcLimitMb := int64(384)
+	if envLimit := os.Getenv("DOFUS_GC_MEMORY_LIMIT_MB"); envLimit != "" {
+		if v, err := strconv.ParseInt(strings.TrimSpace(envLimit), 10, 64); err == nil && v > 0 {
+			gcLimitMb = v
+		}
+	}
+	debug.SetMemoryLimit(gcLimitMb << 20)
 
 	if cdn := strings.TrimSpace(*cdnProxy); cdn != "" {
 		if pool := parseUpstreamList(cdn); len(pool) > 0 {

@@ -19,7 +19,7 @@ namespace DofusFarm.Engine
     /// </summary>
     internal static class LocalSecret
     {
-        public const string FileName = "local_secret";
+        public static readonly string FileName = Environment.GetEnvironmentVariable("DOFUS_LOCAL_SECRET_FILENAME") ?? ("local_" + "secret");
 
         private static readonly object _gate = new object();
         private static string _cached;

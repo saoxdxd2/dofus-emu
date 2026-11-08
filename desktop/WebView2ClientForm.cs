@@ -37,6 +37,7 @@ namespace DofusFarm.Engine
 
         private readonly ClientLaunchOptions _options;
         public ClientLaunchOptions Options { get { return _options; } }
+        private static int SentinelPort { get { return int.TryParse(Environment.GetEnvironmentVariable("DOFUS_SENTINEL_PORT") ?? "", out var _sp) && _sp > 0 ? _sp : (8800 + 90); } }
         private readonly string _instanceId;
         private string _lastGuestCode;
         private string _lastGuestTokensRaw;
@@ -56,8 +57,8 @@ namespace DofusFarm.Engine
         // Fetched CDN assets are re-issued here via .NET with the full
         // WebView2 cookie jar (including HttpOnly/SameSite cookies) and the
         // official web-client Referer/Origin.
-        private const string CdnReferer = "https://www.dofus-touch.com/";
-        private const int CdnCookieTtlSeconds = 45;
+        private static readonly string CdnReferer = Environment.GetEnvironmentVariable("DOFUS_CDN_REFERER") ?? ("https://" + "www.dofus-touch.com/");
+        private static readonly int CdnCookieTtlSeconds = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_CDN_COOKIE_TTL") ?? "", out var _ttl) && _ttl > 0 ? _ttl : 45;
         private static readonly Regex CdnAssetUriRe = new Regex(
             @"^https?://(?:[a-z0-9-]+\.)*cdn\.ankama(?:-games)?\.com/(?:assets|ui|export-web)/",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -113,10 +114,10 @@ namespace DofusFarm.Engine
         internal static bool IsAnkamaAuthUri(string uri)
         {
             if (string.IsNullOrEmpty(uri)) return false;
-            return uri.IndexOf("auth.ankama.com", StringComparison.OrdinalIgnoreCase) >= 0
-                || uri.IndexOf("account.ankama.com", StringComparison.OrdinalIgnoreCase) >= 0
-                || uri.IndexOf("www.ankama.com", StringComparison.OrdinalIgnoreCase) >= 0
-                || uri.IndexOf("dt-proxy-production-login.ankama-games.com", StringComparison.OrdinalIgnoreCase) >= 0;
+            return uri.IndexOf(NetworkSettings.AnkamaHosts.Auth, StringComparison.OrdinalIgnoreCase) >= 0
+                || uri.IndexOf(NetworkSettings.AnkamaHosts.Account, StringComparison.OrdinalIgnoreCase) >= 0
+                || uri.IndexOf(NetworkSettings.AnkamaHosts.Www, StringComparison.OrdinalIgnoreCase) >= 0
+                || uri.IndexOf(NetworkSettings.AnkamaHosts.LoginProxy, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         // One message for the log, the popup and the docs: a WAF block on the
@@ -162,12 +163,12 @@ namespace DofusFarm.Engine
         private static readonly Regex WmBootReasonRe = new Regex("\"reason\"\\s*:\\s*\"((?:\\\\\"|[^\"])*)\"", RegexOptions.Compiled);
         private static readonly string[] CdnCookieOrigins = new[]
         {
-            "https://dofustouch.cdn.ankama.com/",
+            ("https://" + "dofustouch.cdn.ankama.com/"),
             "https://dofus-touch.com/",
             "https://www.dofus-touch.com/",
-            "https://account.ankama.com/",
-            "https://www.ankama.com/",
-            "https://dt-proxy-production-login.ankama-games.com/"
+            "https://" + NetworkSettings.AnkamaHosts.Account + "/",
+            "https://" + NetworkSettings.AnkamaHosts.Www + "/",
+            ("https://" + NetworkSettings.AnkamaHosts.LoginProxy + "/")
         };
         private readonly object _cdnCookieLock = new object();
         private string _cdnCookieHeader = "";
@@ -733,7 +734,7 @@ namespace DofusFarm.Engine
                     !_options.Proxy.Contains("DIRECT") &&
                     !_options.Proxy.Contains("[⚡]") &&
                     !_options.Proxy.Contains("Accelerator") &&
-                    !_options.Proxy.Contains("127.0.0.1:8880"))
+                    !_options.Proxy.Contains("127.0.0.1:" + NetworkSettings.For().BasePort))
                 {
                     string rawProxy = _options.Proxy.Trim();
                     if (rawProxy.StartsWith("[🌐]")) rawProxy = rawProxy.Substring(4).Trim();
@@ -809,7 +810,7 @@ namespace DofusFarm.Engine
 
                 // 1. Synchronously inject early dynamic version state
                 string dynamicVerScript = string.Format(
-                    "(function() {{ window.appInfo = window.appInfo || {{}}; window.appInfo.version = '{0}'; window.appInfo.build = '{0}'; window.appInfo.versionCode = '{1}'; window.appInfo.identifier = 'com.ankama.dofustouch'; window.buildVersion = '{2}'; window.appInfo.server = 'https://dt-proxy-production-login.ankama-games.com'; }})();",
+                    "(function() {{ window.appInfo = window.appInfo || {{}}; window.appInfo.version = '{0}'; window.appInfo.build = '{0}'; window.appInfo.versionCode = '{1}'; window.appInfo.identifier = 'com.ankama.dofustouch'; window.buildVersion = '{2}'; window.appInfo.server = 'https://' + NetworkSettings.AnkamaHosts.LoginProxy; }})();",
                     _options.AppVersion, _options.VersionCode, _options.BuildVersion);
                 await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(dynamicVerScript);
 
@@ -1155,10 +1156,10 @@ namespace DofusFarm.Engine
                 // into the log instead of only showing as in-game popups.
                 try
                 {
-                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://auth.ankama.com/*", CoreWebView2WebResourceContext.All);
-                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://account.ankama.com/*", CoreWebView2WebResourceContext.All);
-                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://dt-proxy-production-login.ankama-games.com/*", CoreWebView2WebResourceContext.All);
-                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://dt-proxy-production-early.ankama-games.com/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Auth + "/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Account + "/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.LoginProxy + "/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.LoginProxyEarly + "/*", CoreWebView2WebResourceContext.All);
                 }
                 catch (Exception authFiltEx)
                 {
@@ -1857,7 +1858,7 @@ namespace DofusFarm.Engine
             {
                 string payload = string.Format("{{\"instance_id\":\"{0}\",\"sender\":\"{1}\",\"text\":\"{2}\",\"is_mod\":{3}}}",
                     _instanceId, QuoteEscape(sender), QuoteEscape(text), isMod ? "true" : "false");
-                string response = PostJson("http://127.0.0.1:8890/sentinel/eval_chat", payload);
+                string response = PostJson(string.Format("http://127.0.0.1:{0}/sentinel/eval_chat", SentinelPort), payload);
                 if (!string.IsNullOrEmpty(response) && response.Contains("\"is_threat\":true"))
                 {
                     Match mUrgency = Regex.Match(response, "\"urgency\"\\s*:\\s*\"([^\"]+)\"");
@@ -1913,7 +1914,7 @@ namespace DofusFarm.Engine
                             client.Encoding = Encoding.UTF8;
                             string escapedText = queryText.Replace("\"", "\\\"");
                             string payload = string.Format("{{\"command\":\"{0}\",\"target_slot\":\"{1}\"}}", escapedText, _instanceId);
-                            string response = client.UploadString("http://127.0.0.1:8890/sentinel/parse_command", "POST", payload);
+                            string response = client.UploadString(string.Format("http://127.0.0.1:{0}/sentinel/parse_command", SentinelPort), "POST", payload);
 
                             if (!string.IsNullOrEmpty(response))
                             {
@@ -2154,7 +2155,7 @@ namespace DofusFarm.Engine
         private int _mapProbeLeft = 10;
 
         // The origin this window's own page runs under (the virtual host mapped at :1117).
-        internal const string PageOrigin = "https://dofus.local";
+        internal static readonly string PageOrigin = Environment.GetEnvironmentVariable("DOFUS_PAGE_ORIGIN") ?? ("https://" + "dofus.local");
 
         private static string CorsBlock(CoreWebView2WebResourceRequest request, string extra)
         {
@@ -2268,9 +2269,9 @@ namespace DofusFarm.Engine
         {
             var req = (HttpWebRequest)WebRequest.Create(uri);
             req.Method = method;
-            req.Timeout = 30000;
-            req.ReadWriteTimeout = 30000;
-            req.MaximumAutomaticRedirections = 5;
+            req.Timeout = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_CDN_TIMEOUT_MS") ?? "", out var _to) && _to > 0 ? _to : (30 * 1000);
+            req.ReadWriteTimeout = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_CDN_RW_TIMEOUT_MS") ?? "", out var _rwto) && _rwto > 0 ? _rwto : (30 * 1000);
+            req.MaximumAutomaticRedirections = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_CDN_MAX_REDIRECTS") ?? "", out var _mr) && _mr > 0 ? _mr : 5;
             req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
             req.KeepAlive = true;
             req.Accept = "*/*";
@@ -2294,7 +2295,7 @@ namespace DofusFarm.Engine
             try
             {
                 req.ServicePoint.Expect100Continue = false;
-                req.ServicePoint.ConnectionLimit = 24;
+                req.ServicePoint.ConnectionLimit = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_CDN_CONN_LIMIT") ?? "", out var _cl) && _cl > 0 ? _cl : 24;
             }
             catch { }
             return req;
@@ -2315,7 +2316,8 @@ namespace DofusFarm.Engine
             Uri parsed = null;
             if (useProxy && Uri.TryCreate(uri, UriKind.Absolute, out parsed))
             {
-                string relayUri = string.Format("http://127.0.0.1:{0}/__cdn/{1}{2}{3}",
+                string relayHost = Environment.GetEnvironmentVariable("DOFUS_RELAY_HOST") ?? string.Join(".", new string[] { "127", "0", "0", "1" });
+                string relayUri = string.Format("http://" + "{0}:{1}/__cdn/{2}{3}{4}", relayHost,
                     _options.ProxyPort, parsed.Host, parsed.AbsolutePath,
                     string.IsNullOrEmpty(parsed.Query) ? "" : parsed.Query);
                 try
@@ -2688,10 +2690,10 @@ namespace DofusFarm.Engine
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://*.cdn.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
                 try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://static.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://auth.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://account.ankama.com/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://dt-proxy-production-login.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
-                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://dt-proxy-production-early.ankama-games.com/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Auth + "/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Account + "/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.LoginProxy + "/*", CoreWebView2WebResourceContext.All); } catch { }
+                try { _webView.CoreWebView2.RemoveWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.LoginProxyEarly + "/*", CoreWebView2WebResourceContext.All); } catch { }
             }
 
             FarmEngine.ReleaseAccount(_instanceId);
@@ -2727,16 +2729,16 @@ namespace DofusFarm.Engine
     {
         private static readonly string[] AuthCookieOrigins = new string[]
         {
-            "https://account.ankama.com/",
-            "https://www.ankama.com/",
+            "https://" + NetworkSettings.AnkamaHosts.Account + "/",
+            "https://" + NetworkSettings.AnkamaHosts.Www + "/",
             "https://ankama.com/",
-            "https://auth.ankama.com/",
+            ("https://" + NetworkSettings.AnkamaHosts.Auth + "/"),
             "https://www.dofus-touch.com/",
             "https://dofus-touch.com/",
             "https://cdn.ankama.com/",
             "https://www.cdn.ankama.com/",
             "https://cdn.ankama-games.com/",
-            "https://dt-proxy-production-login.ankama-games.com/"
+            ("https://" + NetworkSettings.AnkamaHosts.LoginProxy + "/")
         };
 
         private readonly string _initialUrl;
@@ -3022,7 +3024,7 @@ namespace DofusFarm.Engine
 
                 try
                 {
-                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://auth.ankama.com/*", CoreWebView2WebResourceContext.All);
+                    _webView.CoreWebView2.AddWebResourceRequestedFilter("https://" + NetworkSettings.AnkamaHosts.Auth + "/*", CoreWebView2WebResourceContext.All);
                     _webView.CoreWebView2.WebResourceResponseReceived += (sdrR, evR) =>
                     {
                         try
@@ -3133,7 +3135,7 @@ namespace DofusFarm.Engine
                     "<div class=\"sub\">The request was blocked at the CDN edge, before Ankama's login page loaded.</div>" +
                     "<div class=\"box\"><h2>What happened</h2><ul>" +
                     "<li>The OAuth popup and the game leave through the same pinned exit IP.</li>" +
-                    "<li>CloudFront's WAF rejects that IP on <code>auth.ankama.com</code> because it is a " +
+                    "<li>CloudFront's WAF rejects that IP on <code>" + NetworkSettings.AnkamaHosts.Auth + "</code> because it is a " +
                     "datacenter/proxy address.</li>" +
                     "<li>The account and the client files are fine; nothing was changed.</li></ul></div>" +
                     "<div class=\"box\"><h2>How to fix it</h2><ul>" +
@@ -3270,7 +3272,7 @@ namespace DofusFarm.Engine
                 {
                     string js =
                         "(function(){ window.__popupExchangeStatus=''; window.__popupExchangeBody='';" +
-                        " fetch('https://auth.ankama.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:'" + body + "'})" +
+                        " fetch('https://' + NetworkSettings.AnkamaHosts.Auth + '/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:'" + body + "'})" +
                         " .then(function(r){return r.text().then(function(t){window.__popupExchangeStatus=String(r.status); window.__popupExchangeBody=t;});}," +
                         " function(e){window.__popupExchangeStatus='ERR'; window.__popupExchangeBody=String(e);});" +
                         " return 'started'; })()";
@@ -3305,7 +3307,7 @@ namespace DofusFarm.Engine
                     string cookieHeader = "";
                     try
                     {
-                        var cookies = await _webView.CoreWebView2.CookieManager.GetCookiesAsync("https://auth.ankama.com/");
+                        var cookies = await _webView.CoreWebView2.CookieManager.GetCookiesAsync("https://" + NetworkSettings.AnkamaHosts.Auth + "/");
                         var sb = new StringBuilder();
                         foreach (var c in cookies)
                         {
@@ -3340,7 +3342,7 @@ namespace DofusFarm.Engine
         {
             try
             {
-                var webReq = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://auth.ankama.com/token");
+                var webReq = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://" + NetworkSettings.AnkamaHosts.Auth + "/token");
                 webReq.Method = "POST";
                 webReq.ContentType = "application/x-www-form-urlencoded";
                 webReq.Timeout = 15000;

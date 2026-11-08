@@ -25,6 +25,7 @@ to try harder.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -32,9 +33,9 @@ from agent.features import TOOLS, objective_features
 from agent.observe import flatten
 from agent.verifier import READ_ONLY_TOOLS
 
-DEPTH = 5
-HIDDEN = 128
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "foresight_v1"
+DEPTH = int(os.environ.get("DOFUS_FORESIGHT_DEPTH", "5"))
+HIDDEN = int(os.environ.get("DOFUS_FORESIGHT_HIDDEN", "128"))
+MODEL_PATH = Path(os.environ.get("DOFUS_FORESIGHT_MODEL_PATH") or (Path(__file__).resolve().parent.parent / "models" / "foresight_v1"))
 
 
 def np_shape(value: Any) -> List[int]:

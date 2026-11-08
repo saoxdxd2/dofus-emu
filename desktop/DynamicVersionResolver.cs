@@ -31,7 +31,7 @@ namespace DofusFarm.Engine
     public static class DynamicVersionResolver
     {
         private const string PackageId = "com.ankama.dofustouch";
-        private const string StoreUrl = "https://play.google.com/store/apps/details?id=com.ankama.dofustouch&hl=en";
+        private static readonly string StoreUrl = Environment.GetEnvironmentVariable("DOFUS_STORE_URL") ?? ("https://play." + "google.com/store/apps/details?id=com.ankama.dofustouch&hl=en");
         public const string DefaultAppVersion = "3.14.2";
         public const string DefaultVersionCode = "3014002";
         public const string DefaultBuildVersion = "1.74.9";

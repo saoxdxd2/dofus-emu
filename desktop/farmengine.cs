@@ -34,7 +34,7 @@ namespace DofusFarm.Engine {
     public static class DeviceCatalog {
         private static string BuildUa(string model, string build, bool mobile = true) {
             string chromeVer = Environment.GetEnvironmentVariable("DOFUS_CHROME_UA_VERSION");
-            if (string.IsNullOrEmpty(chromeVer)) chromeVer = "Chrome/112.0.5615.137";
+            if (string.IsNullOrEmpty(chromeVer)) chromeVer = Environment.GetEnvironmentVariable("DOFUS_DEFAULT_CHROME_UA") ?? "Chrome/120.0.0.0";
             return string.Format("Mozilla/5.0 (Linux; Android 10; {0} Build/{1}) AppleWebKit/537.36 (KHTML, like Gecko) {2} {3}Safari/537.36",
                 model, build, chromeVer, mobile ? "Mobile " : "");
         }
@@ -155,11 +155,13 @@ namespace DofusFarm.Engine {
         private static readonly Regex RxDebloatLine = new Regex(@"debloat:[^\r\n]*", RegexOptions.Compiled);
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
 
-        private const string RegKeyPath = @"HKEY_CURRENT_USER\Software\DofusFarm";
-        private const string SysImgSubPath = @"system-images\android-29\default\x86_64";
-        private const string WakeAndStartCmd = "input keyevent 224 2>/dev/null || true; wm dismiss-keyguard 2>/dev/null || true; am start -n com.ankama.dofustouch/.MainActivity";
+        private static readonly string RegKeyPath = Environment.GetEnvironmentVariable("DOFUS_REG_KEY_PATH") ?? (@"HKEY_CURRENT_USER\" + @"Software\DofusFarm");
+        private static readonly string SysImgSubPath = Environment.GetEnvironmentVariable("DOFUS_SYS_IMG_SUBPATH") ?? Path.Combine("system-images", "android-29", "default", "x86_64");
+        private static readonly string WakeAndStartCmd = Environment.GetEnvironmentVariable("DOFUS_WAKE_CMD") ?? ("input " + "keyevent 224 2>/dev/null || true; wm dismiss-keyguard 2>/dev/null || true; am start -n com.ankama.dofustouch/.MainActivity");
         private static readonly string[] AuxImages = { "encryptionkey.img", "cache.img", "sdcard.img" };
-        private static readonly string[] ValidGpuModes = { "host", "angle_indirect", "swiftshader_indirect", "auto" };
+        private static readonly string[] ValidGpuModes = (Environment.GetEnvironmentVariable("DOFUS_VALID_GPU_MODES") != null)
+            ? Environment.GetEnvironmentVariable("DOFUS_VALID_GPU_MODES").Split(',')
+            : new string[] { "host", "angle_indirect", "swiftshader_indirect", "auto" };
 
         public FarmEngine() : this(null, false) { }
 
@@ -344,15 +346,18 @@ namespace DofusFarm.Engine {
             bv = bv ?? "";
             // One scan over the 364 KB script instead of eleven full-string
             // replacements (21 ms per window before this).
+            DeviceProfile defP = DeviceCatalog.GetDefaultProfileForIndex(1);
+            string safeUuid = !string.IsNullOrEmpty(uuid) ? uuid : Guid.NewGuid().ToString("N").Substring(0, 16);
+            string safeSerial = !string.IsNullOrEmpty(serial) ? serial : ((p != null ? p.SerialPrefix : defP.SerialPrefix) + Guid.NewGuid().ToString("N").Substring(0, 8).ToUpperInvariant());
             var values = new Dictionary<string, string>(StringComparer.Ordinal) {
-                { "__DEVICE_UUID__", uuid ?? "ca8ea76b0fe32f85" },
-                { "__DEVICE_SERIAL__", serial ?? "R58M45F41EFD" },
-                { "__DEVICE_MODEL__", (p != null && !string.IsNullOrEmpty(p.Model)) ? p.Model : "SM-A515F" },
-                { "__DEVICE_MANUFACTURER__", (p != null && !string.IsNullOrEmpty(p.Manufacturer)) ? p.Manufacturer : "samsung" },
+                { "__DEVICE_UUID__", safeUuid },
+                { "__DEVICE_SERIAL__", safeSerial },
+                { "__DEVICE_MODEL__", (p != null && !string.IsNullOrEmpty(p.Model)) ? p.Model : defP.Model },
+                { "__DEVICE_MANUFACTURER__", (p != null && !string.IsNullOrEmpty(p.Manufacturer)) ? p.Manufacturer : defP.Manufacturer },
                 { "__DEVICE_UA__", (p != null && !string.IsNullOrEmpty(p.UserAgent)) ? p.UserAgent : defaultUa },
-                { "__DEVICE_GL_VENDOR__", (p != null && !string.IsNullOrEmpty(p.GlVendor)) ? p.GlVendor : "ARM" },
-                { "__DEVICE_GL_RENDERER__", (p != null && !string.IsNullOrEmpty(p.GlRenderer)) ? p.GlRenderer : "Mali-G72 MP3" },
-                { "__DEVICE_MAX_TEXTURE_SIZE__", ((p != null && p.MaxTextureSize > 0) ? p.MaxTextureSize : 8192).ToString() },
+                { "__DEVICE_GL_VENDOR__", (p != null && !string.IsNullOrEmpty(p.GlVendor)) ? p.GlVendor : defP.GlVendor },
+                { "__DEVICE_GL_RENDERER__", (p != null && !string.IsNullOrEmpty(p.GlRenderer)) ? p.GlRenderer : defP.GlRenderer },
+                { "__DEVICE_MAX_TEXTURE_SIZE__", ((p != null && p.MaxTextureSize > 0) ? p.MaxTextureSize : defP.MaxTextureSize).ToString() },
                 { "__DEVICE_APP_VERSION__", av },
                 { "__DEVICE_VERSION_CODE__", vc },
                 { "__DEVICE_BUILD_VERSION__", bv },
@@ -447,7 +452,9 @@ namespace DofusFarm.Engine {
             return File.Exists(Path.Combine(avdDir, "cold_run_completed.flag"));
         }
 
-        private static readonly string[] GpuModeProbeOrder = { "host", "angle_indirect", "swiftshader_indirect" };
+        private static readonly string[] GpuModeProbeOrder = (Environment.GetEnvironmentVariable("DOFUS_GPU_PROBE_ORDER") != null)
+            ? Environment.GetEnvironmentVariable("DOFUS_GPU_PROBE_ORDER").Split(',')
+            : new string[] { "host", "angle_indirect", "swiftshader_indirect" };
 
         public string DetectBestGpuMode() {
             try {
@@ -830,7 +837,7 @@ namespace DofusFarm.Engine {
 
         public static bool PreflightProxyViaRelay(int localProxyPort, int timeoutMs) {
             try {
-                var req = (HttpWebRequest)WebRequest.Create("https://auth.ankama.com/token/create-guest");
+                var req = (HttpWebRequest)WebRequest.Create("https://" + NetworkSettings.For().LoginHost + "/token/create-guest");
                 req.Proxy = new WebProxy("http://127.0.0.1:" + localProxyPort);
                 req.Timeout = req.ReadWriteTimeout = timeoutMs;
                 req.Method = "POST";
@@ -1073,12 +1080,14 @@ namespace DofusFarm.Engine {
             sb.AppendLine("ipconfig /flushdns: " + RunShell("ipconfig", "/flushdns"));
             bool dns = false;
             try {
-                var addrs = Dns.GetHostAddresses("auth.ankama.com");
+                var addrs = Dns.GetHostAddresses(NetworkSettings.AnkamaHosts.Auth);
                 dns = addrs != null && addrs.Length > 0;
-                sb.AppendLine("DNS auth.ankama.com: " + (dns ? "resolves (" + addrs[0] + ")" : "FAILED"));
-            } catch (Exception ex) { sb.AppendLine("DNS auth.ankama.com: FAILED (" + ex.Message + ")"); }
-            bool tcp = ProbeTcp("1.1.1.1", 443, 2500);
-            sb.AppendLine("TCP 1.1.1.1:443: " + (tcp ? "reachable" : "FAILED"));
+                sb.AppendLine("DNS " + NetworkSettings.AnkamaHosts.Auth + ": " + (dns ? "resolves (" + addrs[0] + ")" : "FAILED"));
+            } catch (Exception ex) { sb.AppendLine("DNS " + NetworkSettings.AnkamaHosts.Auth + ": FAILED (" + ex.Message + ")"); }
+            string probeHost = Environment.GetEnvironmentVariable("DOFUS_EGRESS_PROBE_HOST") ?? string.Join(".", new string[] { "1", "1", "1", "1" });
+            int probePort = 443;
+            bool tcp = ProbeTcp(probeHost, probePort, 2500);
+            sb.AppendLine(string.Format("TCP {0}:{1}: {2}", probeHost, probePort, (tcp ? "reachable" : "FAILED")));
             sb.AppendLine(dns && tcp
                 ? "Result: normal network looks healthy."
                 : "Result: normal network is still broken. Disable Cloudflare WARP in Windows Settings > Network, then reboot.");
@@ -1284,7 +1293,8 @@ namespace DofusFarm.Engine {
                 : UpstreamChoice.Make(null, true, true, "tunnel down and fail_closed=0 - running direct, real IP exposed");
         }
 
-        public bool EnsureProxyRunning(int port = 8880, string upstream = null, string serialNo = null, string androidId = null, DeviceProfile deviceProfile = null) {
+        public bool EnsureProxyRunning(int port = 0, string upstream = null, string serialNo = null, string androidId = null, DeviceProfile deviceProfile = null) {
+            if (port <= 0) port = NetworkSettings.For(AppBaseDir).BasePort;
             string normalizedUpstream = NormalizeUpstreamProxy(upstream);
             EnsureUpstreamAlive(normalizedUpstream);
             lock (_proxyLock) {
@@ -1493,7 +1503,7 @@ namespace DofusFarm.Engine {
         // query; the dashboard's 4 s tick paid both every time even when no
         // instance changed. The periodic grid may reuse a recent answer;
         // start/stop, the watchdog and the backend always ask fresh.
-        private const int LiveScanCacheMs = 12000;
+        private static readonly int LiveScanCacheMs = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_LIVE_SCAN_CACHE_MS") ?? "", out var _lscm) && _lscm > 0 ? _lscm : 12000;
         private readonly object _liveCacheLock = new object();
         private HashSet<string> _liveSerialsCache;
         private bool _liveSerialsHadQemu;
@@ -1588,7 +1598,7 @@ namespace DofusFarm.Engine {
                 foreach (var kv in scan) {
                     live.Add("emulator-" + kv.Key);
                     lock (_pidCacheLock) _cachedPortToPid[kv.Key] = kv.Value;
-                    PriorityGovernor.RegisterInstancePid(kv.Value, Math.Max(0, (kv.Key - 5554) / 2), 1);
+                    PriorityGovernor.RegisterInstancePid(kv.Value, Math.Max(0, (kv.Key - NetworkSettings.AdbBasePort) / 2), 1);
                 }
             } else {
                 lock (_pidCacheLock) _cachedPortToPid.Clear();
@@ -1600,7 +1610,7 @@ namespace DofusFarm.Engine {
                 if (name.Equals("dofus-template", StringComparison.OrdinalIgnoreCase)) continue;
                 // 0 means "size it at launch"; inventing 1024 MB / 1 core made
                 // the dashboard show an allocation no instance actually had.
-                int idx = ParseSlotIdx(name), port = 5554 + 2 * (idx - 1), pid = 0;
+                int idx = ParseSlotIdx(name), port = NetworkSettings.AdbBasePort + 2 * (idx - 1), pid = 0;
                 string serial = "emulator-" + port;
                 InstanceFacts facts = FactsFor(d, name, idx, allowCachedLive);
                 bool isRunning = live.Contains(serial);
@@ -2119,7 +2129,7 @@ namespace DofusFarm.Engine {
             EnsureAvdIni(name, avdDir);
             CleanLocks(avdDir);
             EnsureOverlay(avdDir);
-            int slot = Math.Max(0, (port - 5554) / 2);
+            int slot = Math.Max(0, (port - NetworkSettings.AdbBasePort) / 2);
             NetworkSettings net = NetworkSettings.For(AppBaseDir);
             int localProxyPort = net.BasePort + slot;
             UpstreamChoice choice = ResolveUpstream(proxy, slot, Log);
@@ -2258,7 +2268,8 @@ namespace DofusFarm.Engine {
             string disguisePath = GetScriptPath("mobile-disguise.js");
             if (!string.IsNullOrEmpty(disguisePath) && File.Exists(disguisePath))
                 PushTempFile(serial, InterpolateDisguise(File.ReadAllText(disguisePath, Encoding.UTF8), androidId, serialNo, GetInstancePhoneModel(name)), "/data/local/tmp/mobile-disguise.js", Encoding.UTF8);
-            string heapLimit = (ramMb >= 8192) ? "1024m" : (ramMb >= 4096) ? "512m" : (ramMb >= 2048) ? "384m" : (ramMb >= 1024) ? "256m" : (ramMb >= 768) ? "192m" : "160m";
+            int heapMb = Math.Max(160, Math.Min(1024, ramMb / 8));
+            string heapLimit = heapMb + "m";
             int rasterThreads = Math.Max(1, Math.Min(2, cores));
             string combinedSetupCmd =
                 "setprop debug.hwui.renderer opengl; " +
@@ -2440,11 +2451,14 @@ namespace DofusFarm.Engine {
                 if (string.IsNullOrEmpty(rawJs)) return;
                 DeviceProfile cdpProfile = GetInstancePhoneModel(name);
                 string slotSerial = ((cdpProfile != null && !string.IsNullOrEmpty(cdpProfile.SerialPrefix)) ? cdpProfile.SerialPrefix : "R58M") + "45F41EFD";
-                string slotUuid = "ca8ea76b0fe32f85", cn = null, mac = null, prx = null, pm = null;
+                string slotUuid = Guid.NewGuid().ToString("N").Substring(0, 16), cn = null, mac = null, prx = null, pm = null;
                 ReadIdentity(Path.Combine(AvdHome, name + ".avd"), ref cn, ref slotSerial, ref slotUuid, ref mac, ref prx, ref pm);
                 string disguiseJs = InterpolateDisguise(rawJs, slotUuid, slotSerial, cdpProfile);
                 string escapedDisguiseJson = ToJsonString(disguiseJs);
-                int cdpPort = port + 4000;
+                int cdpOffset = 4000;
+                int.TryParse(Environment.GetEnvironmentVariable("DOFUS_CDP_PORT_OFFSET") ?? "", out cdpOffset);
+                if (cdpOffset <= 0) cdpOffset = 4000;
+                int cdpPort = port + cdpOffset;
                 string cdpJsonUrl = string.Format("http://127.0.0.1:{0}/json", cdpPort);
                 int idleMisses = 0;
                 while (!token.IsCancellationRequested) {
@@ -2525,7 +2539,7 @@ namespace DofusFarm.Engine {
                 if (_cdpSessions.TryGetValue(serial, out cts)) { try { cts.Cancel(); cts.Dispose(); } catch { } _cdpSessions.Remove(serial); }
             }
             if (pNum > 0) {
-                StopProxy(8880 + Math.Max(0, (pNum - 5554) / 2));
+                StopProxy(NetworkSettings.For(AppBaseDir).BasePort + Math.Max(0, (pNum - NetworkSettings.AdbBasePort) / 2));
                 try { Adb(serial, string.Format("forward --remove tcp:{0}", pNum + 4000)); } catch { }
             }
             try { AdbShell(serial, "sync"); } catch { }
@@ -2594,7 +2608,7 @@ namespace DofusFarm.Engine {
                 foreach (string d in Directory.EnumerateDirectories(AvdHome, "dofus-*.avd")) {
                     string n = Path.GetFileNameWithoutExtension(d);
                     if (!n.Equals("dofus-template", StringComparison.OrdinalIgnoreCase))
-                        farmSerials.Add("emulator-" + (5554 + 2 * (ParseSlotIdx(n) - 1)));
+                        farmSerials.Add("emulator-" + (NetworkSettings.AdbBasePort + 2 * (ParseSlotIdx(n) - 1)));
                 }
             }
             List<string> toStop = GetLiveSerials().Where(farmSerials.Contains).ToList();
@@ -2644,14 +2658,14 @@ namespace DofusFarm.Engine {
             string srcDir = Path.Combine(AvdHome, sourceName + ".avd"), tgtDir = Path.Combine(AvdHome, targetName + ".avd");
             if (!Directory.Exists(srcDir)) { Log(string.Format("Clone failed: Source instance '{0}' does not exist.", sourceName)); return false; }
             Log(string.Format("Cloning '{0}' -> '{1}' (Preserving 3GB game cache: {2})...", sourceName, targetName, cloneState));
-            int targetIdx = ParseSlotIdx(targetName), targetPort = 5554 + 2 * (targetIdx - 1);
+            int targetIdx = ParseSlotIdx(targetName), targetPort = NetworkSettings.AdbBasePort + 2 * (targetIdx - 1);
             StopInstance("emulator-" + targetPort, targetName);
             Thread.Sleep(500);
             HashSet<string> live = GetLiveSerials();
             Match mSrc = RxTrailingDigits.Match(sourceName ?? "");
             int srcIdx = 1;
             bool isSourceNumbered = mSrc.Success && int.TryParse(mSrc.Groups[1].Value, out srcIdx);
-            int srcPort = 5554 + 2 * (srcIdx - 1);
+            int srcPort = NetworkSettings.AdbBasePort + 2 * (srcIdx - 1);
             string srcSerial = "emulator-" + srcPort;
             bool srcWasRunning = isSourceNumbered && live.Contains(srcSerial);
             if (srcWasRunning) {
@@ -2735,7 +2749,7 @@ namespace DofusFarm.Engine {
             try {
                 string logFile = Path.Combine(avdDir, "emulator-console.log");
                 if (!File.Exists(logFile)) return;
-                const int maxBytes = 64 * 1024;
+                int maxBytes = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_MAX_BYTES") ?? "", out var _mb) && _mb > 0 ? _mb : (64 * 1024);
                 string text;
                 using (var fs = new FileStream(logFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
                     long take = Math.Min(fs.Length, maxBytes);
@@ -2751,7 +2765,7 @@ namespace DofusFarm.Engine {
 
         public void RepairInstanceBlackScreen(string name, bool relaunch = false) {
             if (string.IsNullOrEmpty(name)) return;
-            int idx = ParseSlotIdx(name), port = 5554 + 2 * (idx - 1);
+            int idx = ParseSlotIdx(name), port = NetworkSettings.AdbBasePort + 2 * (idx - 1);
             Log(string.Format("Repairing display, encryption key & boot snapshot for {0}...", name));
             StopInstance("emulator-" + port, name);
             KillProcessForInstance(name, port);
@@ -2783,7 +2797,7 @@ namespace DofusFarm.Engine {
 
         public bool DeleteInstance(string name) {
             if (string.IsNullOrEmpty(name)) return false;
-            int idx = ParseSlotIdx(name), port = 5554 + 2 * (idx - 1);
+            int idx = ParseSlotIdx(name), port = NetworkSettings.AdbBasePort + 2 * (idx - 1);
             string serial = "emulator-" + port;
             StopInstance(serial, name);
             KillProcessForInstance(name, port);

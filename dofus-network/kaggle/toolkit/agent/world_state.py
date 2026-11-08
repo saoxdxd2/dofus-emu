@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,17 +43,22 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tupl
 
 from agent.jsonio import utf8_console
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = int(os.environ.get("DOFUS_WORLD_SCHEMA_VERSION", "2"))
 
 # The client's grid is 14 cells per row.
-CELLS_PER_ROW = 14
+CELLS_PER_ROW = int(os.environ.get("DOFUS_CELLS_PER_ROW", "14"))
 
 # Fixed slot counts. The measured maxima are 4 NPCs, 4 groups, 4 exits, 1
 # interactive, 10 doors, 1 quest, 1 ready objective; the slots are that plus
 # headroom. Anything beyond is counted in `coverage()["dropped"]`, never lost
 # quietly.
-SLOTS = {"npc": 8, "interactive": 8, "group": 8, "exit": 8, "door": 12,
+DEFAULT_SLOT_COUNTS = {"npc": 8, "interactive": 8, "group": 8, "exit": 8, "door": 12,
          "objective": 8, "quest": 8}
+SLOTS = (
+    json.loads(os.environ["DOFUS_WORLD_SLOTS"])
+    if os.environ.get("DOFUS_WORLD_SLOTS")
+    else dict(DEFAULT_SLOT_COUNTS)
+)
 
 # ---------------------------------------------------------------------------
 # named feature layouts

@@ -1,0 +1,41 @@
+{
+  "leave_words": [
+    "leave", "leaving", "exit", "out", "outside", "depart", "head",
+    "sortir", "partir", "dehors", "salir", "fuera", "irse", "salida"
+  ],
+  "enter_words": [
+    "enter", "entering", "inside", "entrer", "entrez",
+    "entrar", "entro"
+  ],
+  "closing_phrases": [
+    "good luck", "goodbye", "good bye", "farewell", "see you", "take care",
+    "bonne chance", "au revoir", "adieu", "à bientôt", "buena suerte",
+    "hasta luego", "nos vemos", "adiós"
+  ],
+  "element_keywords": {
+    "earth": [
+      "terre", "force", "terrestre", "rocher", "pierre",
+      "earth", "strength", "stone", "rock",
+      "tierra", "fuerza",
+      "erde", "starke", "kraft"
+    ],
+    "fire": [
+      "feu", "flamme", "flammes", "intelligence", "pyro",
+      "fire", "flame", "flames",
+      "fuego", "llama", "llamas", "inteligencia",
+      "feuer", "intelligenz"
+    ],
+    "water": [
+      "eau", "chance", "aquatique", "onde", "vague", "fluide",
+      "water", "luck", "fluid", "wave",
+      "agua", "suerte",
+      "wasser", "gluck"
+    ],
+    "air": [
+      "air", "agilite", "vent", "souffle", "aerien",
+      "agility", "wind", "breath",
+      "aire", "agilidad", "viento", "aliento",
+      "luft", "beweglichkeit", "atmen"
+    ]
+  }
+}

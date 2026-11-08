@@ -390,7 +390,12 @@ class ExclusiveHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
-def run_server(port: int = 8891,
+DEFAULT_BRAIN_PORT = int(os.environ.get("DOFUS_BRAIN_PORT", "8891"))
+DEFAULT_BRAIN_HOST = os.environ.get("DOFUS_BRAIN_HOST", "127.0.0.1")
+
+
+def run_server(port: int = DEFAULT_BRAIN_PORT,
+               host: str = DEFAULT_BRAIN_HOST,
                checkpoint: Optional[Path] = None,
                beam_width: int = 8,
                max_actions: int = 4,
@@ -425,7 +430,7 @@ def run_server(port: int = 8891,
         except Exception as exc:  # noqa: BLE001 - a warm-up must not block the API
             print(f"warm-up failed: {type(exc).__name__}: {exc}")
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", int(port)), CombatRequestHandler)
+        server = ThreadingHTTPServer((host, int(port)), CombatRequestHandler)
     except OSError as exc:
         print(f"[ERROR] cannot bind 127.0.0.1:{port}: {exc}")
         print(f"Stop the process already using 127.0.0.1:{port}, or start this "

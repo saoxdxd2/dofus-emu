@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -27,13 +28,16 @@ PROJECT = HERE.parent
 if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
-from agent.bridge import directive_url, opener_for  # noqa: E402
+from agent.bridge import directive_url, opener_for, state_dir  # noqa: E402
 
 from .models import CharacterSnapshot, MarketSnapshot  # noqa: E402
 from .report import build_report  # noqa: E402
 from .repository import Repository  # noqa: E402
 
-MAX_PAGE = 20000
+_DEFAULT_MAX_PAGE = int(os.environ.get("DOFUS_ADVISOR_MAX_PAGE", "20000"))
+MAX_PAGE = _DEFAULT_MAX_PAGE
+_DEFAULT_TIMEOUT = float(os.environ.get("DOFUS_ADVISOR_TIMEOUT", "30.0"))
+_DEFAULT_LISTING_LIMIT = int(os.environ.get("DOFUS_ADVISOR_LISTING_LIMIT", "500"))
 
 
 def _post(payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
@@ -51,7 +55,7 @@ def _post(payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
     except (urllib.error.URLError, OSError) as exc:
         raise RuntimeError(
             "bridge is not answering at %s (%s). Start the client and check "
-            "%%LOCALAPPDATA%%\\DofusFarm\\bridge_port.txt." % (url, exc)) from exc
+            "%s." % (url, exc, state_dir() / "bridge_port.txt")) from exc
     try:
         return json.loads(raw)
     except ValueError as exc:
@@ -80,7 +84,7 @@ def run_directive(
     tool: str,
     directive: str,
     args: Dict[str, Any],
-    timeout: float = 30.0,
+    timeout: float = _DEFAULT_TIMEOUT,
     instance: Optional[str] = None,
 ) -> Dict[str, Any]:
     payload = {
@@ -99,7 +103,7 @@ def run_directive(
 def capture_character(
     instance: Optional[str] = None,
     include_item_spells: bool = False,
-    timeout: float = 30.0,
+    timeout: float = _DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     data = run_directive(
         "debug.character", "CHARACTER_REPORT",
@@ -137,7 +141,7 @@ def capture_market(
     wait: float = 6.0,
     pages: int = 20,
     instance: Optional[str] = None,
-    timeout: float = 30.0,
+    timeout: float = _DEFAULT_TIMEOUT,
 ) -> Dict[str, Any]:
     """Page through the whole average-price table the server sent.
 
@@ -149,7 +153,7 @@ def capture_market(
         "refresh": bool(refresh),
         "offset": 0,
         "limit": MAX_PAGE,
-        "listing_limit": 500,
+        "listing_limit": _DEFAULT_LISTING_LIMIT,
     }
     first = run_directive("market.capture", "MARKET_CAPTURE", call,
                           timeout=timeout, instance=instance)

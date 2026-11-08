@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -21,7 +22,7 @@ from agent.commands import _valid_prediction, intent_tool, rule_parse
 from agent.planner import _goal_mode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MODEL = REPO_ROOT / "models" / "command_encoder30" / "heads.pt"
+DEFAULT_MODEL = Path(os.environ.get("DOFUS_COMMAND_MODEL") or (REPO_ROOT / "models" / "command_encoder30" / "heads.pt"))
 ROUTER_CONFIG = DEFAULT_MODEL.with_name("router.json")
 ONNX_CONFIG = DEFAULT_MODEL.with_name("command_onnx.json")
 

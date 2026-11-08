@@ -14,12 +14,16 @@ order; buying spends kamas with no undo, so the advisor stops at a signal.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from statistics import median
 from typing import Any, Dict, List, Optional, Sequence
 
 from .models import CharacterSnapshot, MarketListing, MarketSnapshot
 from .repository import Repository
+
+
+_DEFAULT_LEVEL_HEADROOM = int(os.environ.get("DOFUS_ADVISOR_LEVEL_HEADROOM", "10"))
 
 
 @dataclass
@@ -148,13 +152,13 @@ def analyze_market(
         "Listings are supply, not revenue. A cheap listing is not a sale and a high "
         "average is not a guaranteed buyer; item rolls are not visible in the prices.")
     if character.level and market.prices:
-        max_level = character.level + 10
+        max_level = character.level + _DEFAULT_LEVEL_HEADROOM
         priced = sum(1 for gid in market.prices
                      if (repo.item(gid) is not None and repo.item(gid).level <= max_level))
         if priced == 0:
             warnings.append(
                 "None of the cached average prices belong to known equipment at or "
-                "below the character's level + 10; the market table may be partial.")
+                "below the character's level + %d; the market table may be partial." % _DEFAULT_LEVEL_HEADROOM)
 
     signals: List[MarketSignal] = []
     for gid, average in market.prices.items():

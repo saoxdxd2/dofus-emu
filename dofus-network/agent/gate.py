@@ -12,26 +12,32 @@ the veto would force.
 from __future__ import annotations
 
 import json
+import os
 from collections import OrderedDict
 from typing import Any, Dict, Optional
 
 from agent.verifier import READ_ONLY_TOOLS
 
-VETO_AT = 2
+VETO_AT = int(os.environ.get("DOFUS_GATE_VETO_AT", "2"))
 
 # Upper bound on remembered miss keys. A live session never needs more than a
 # few thousand distinct (tool, args) signatures, but an open-ended one does:
 # measured 2026-11-07, 200k observations left 110,118 keys resident because
 # nothing was ever evicted. Streaks only matter at VETO_AT=2, so the oldest
 # entries are the least useful and go first.
-MAX_MISS_KEYS = 10_000
+MAX_MISS_KEYS = int(os.environ.get("DOFUS_GATE_MAX_MISS_KEYS", "10000"))
 
 # Fields that change between two attempts at the *same* intent. Measured 2026-10-29:
 # the three taps on element 513208 carry skill_uid 136137029/136137092/136137181, so
 # an exact-args key sees three different calls and never reaches a streak of two.
 # `lang` is a renderer hint on every nav.goto and `cell` on an element tap is where
 # the character happened to stand, not what was asked for.
-VOLATILE_ARGS = {"lang", "skill_uid", "cell"}
+_DEFAULT_VOLATILE = {"lang", "skill_uid", "cell"}
+VOLATILE_ARGS = (
+    set(os.environ["DOFUS_GATE_VOLATILE_ARGS"].split(","))
+    if os.environ.get("DOFUS_GATE_VOLATILE_ARGS")
+    else set(_DEFAULT_VOLATILE)
+)
 
 
 class RuleGate:

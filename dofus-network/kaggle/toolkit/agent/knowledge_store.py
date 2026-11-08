@@ -33,10 +33,11 @@ from typing import Any, Dict, List, Optional, Tuple
 # outranks what the loop inferred, and an observation outranks a guess.
 SOURCE_RANK = {"human": 3, "observed": 2, "derived": 1, "guess": 0}
 
-DEFAULT_TTL_DAYS = 45          # unused for this long and it is dropped
-DISPUTES_TO_DROP = 3           # contradicted this many times and it is dropped
-COMPACT_BYTES = 8 * 1024 * 1024
-COMPACT_EVERY = 512            # writes between size checks
+DEFAULT_TTL_DAYS = float(os.environ.get("DOFUS_KNOWLEDGE_TTL_DAYS", "45"))
+DEFAULT_FACT_CONFIDENCE = float(os.environ.get("DOFUS_KNOWLEDGE_CONFIDENCE", "0.5"))
+DISPUTES_TO_DROP = int(os.environ.get("DOFUS_KNOWLEDGE_DISPUTES_TO_DROP", "3"))
+COMPACT_BYTES = int(os.environ.get("DOFUS_KNOWLEDGE_COMPACT_BYTES", str(8 * 1024 * 1024)))
+COMPACT_EVERY = int(os.environ.get("DOFUS_KNOWLEDGE_COMPACT_EVERY", "512"))
 
 
 def _now() -> float:
@@ -49,7 +50,7 @@ class Fact:
     key: str                   # "npc:447", "item:1746", ...
     value: Any
     source: str = "observed"
-    confidence: float = 0.5
+    confidence: float = DEFAULT_FACT_CONFIDENCE
     first_seen: float = field(default_factory=_now)
     last_seen: float = field(default_factory=_now)
     hits: int = 0              # times the fact was used and not contradicted
@@ -139,7 +140,7 @@ class KnowledgeStore:
     # -- writing -----------------------------------------------------------
 
     def remember(self, kind: str, key: str, value: Any, source: str = "observed",
-                 confidence: float = 0.5) -> Tuple[bool, str]:
+                 confidence: float = DEFAULT_FACT_CONFIDENCE) -> Tuple[bool, str]:
         """Add or update a fact. Returns (changed, note)."""
         self._maybe_compact()
         if not kind or not key:

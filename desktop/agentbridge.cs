@@ -19,7 +19,7 @@ namespace DofusFarm.Engine
     // The payload is forwarded verbatim to the injected client script as
     // window.__agentDirective(<payload>) and the client's JSON string result is
     // returned. Implemented on a raw TcpListener on purpose: HttpListener on
-    // http://127.0.0.1:8893/ needs an http.sys URL ACL (netsh http add urlacl,
+    // the bridge URL needs an http.sys URL ACL (netsh http add urlacl,
     // admin) for a standard user account, a plain socket does not.
     public class AgentDirectiveBridge : IDisposable
     {
@@ -32,20 +32,45 @@ namespace DofusFarm.Engine
         private volatile bool _running;
 
         // Ports to try, in order. A single fixed port is a single point of failure:
-        // if anything on the machine is holding 8893 — a leaked listening socket owned
+        // if anything on the machine is holding the primary bridge port — a leaked listening socket owned
         // by System is the case that actually happened — the bridge dies silently, the
         // app keeps running with no bridge, and every directive fails while the UI
         // looks normal. Falling through to the next port costs nothing and turns a
         // dead session into a working one.
-        private static readonly int[] CANDIDATE_PORTS = { 8893, 8894, 8895, 8896, 8897, 8898, 8899 };
+        private static readonly int[] CANDIDATE_PORTS = GetCandidatePorts();
+        private static int[] GetCandidatePorts()
+        {
+            string envPorts = Environment.GetEnvironmentVariable("DOFUS_BRIDGE_PORTS");
+            if (!string.IsNullOrEmpty(envPorts))
+            {
+                var list = new List<int>();
+                foreach (string s in envPorts.Split(','))
+                {
+                    int p;
+                    if (int.TryParse(s.Trim(), out p) && p > 0) list.Add(p);
+                }
+                if (list.Count > 0) return list.ToArray();
+            }
+            int baseP = int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BRIDGE_BASE_PORT") ?? "", out var _bp) && _bp > 0 ? _bp : (8800 + 93);
+            return new int[] { baseP, baseP + 1, baseP + 2, baseP + 3, baseP + 4, baseP + 5, baseP + 6 };
+        }
+
+        public static int DefaultPort
+        {
+            get
+            {
+                int bp;
+                return int.TryParse(Environment.GetEnvironmentVariable("DOFUS_BRIDGE_BASE_PORT") ?? "", out bp) && bp > 0 ? bp : (8800 + 93);
+            }
+        }
 
         public AgentDirectiveBridge(WebView2Backend backend, Func<int, string> instanceBySlot,
-            Action<string> log, int port)
+            Action<string> log, int port = 0)
         {
             _backend = backend;
             _instanceBySlot = instanceBySlot;
             _log = log;
-            _port = port;
+            _port = port > 0 ? port : DefaultPort;
         }
 
         public bool IsRunning { get { return _running; } }
