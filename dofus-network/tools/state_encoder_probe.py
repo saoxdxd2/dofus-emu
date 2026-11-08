@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agent.state_features import (ENTITY_DIM, GLOBAL_DIM, entity_vectors,  # noqa: E402
                                   global_vector, world_delta)
 from agent.observe import flatten  # noqa: E402
+from agent import world_state as ws  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TRAJ = REPO_ROOT / "trajectories"
@@ -110,7 +111,15 @@ def build_dataset() -> Dict[str, Any]:
             })
             rules[rule] = 0 if met else streak + 1
     days = sorted({r["day"] for r in rows})
-    test_days = set(days[-2:]) if len(days) > 2 else set(days[-1:])
+    test_days = set()
+    acc = 0
+    for day in reversed(days):
+        test_days.add(day)
+        acc += sum(1 for r in rows if r["day"] == day)
+        if acc >= 300 and len(test_days) >= 2:
+            break
+    if not test_days and days:
+        test_days = set(days[-2:]) if len(days) > 2 else set(days[-1:])
     for r in rows:
         r["split"] = "test" if r["day"] in test_days else "train"
     return {"rows": rows, "tools": tools, "days": days, "test_days": sorted(test_days)}
@@ -179,6 +188,65 @@ def pooled_baseline(g, e, m):
     mx = (e + (m[..., None] - 1.0) * 1e6).max(axis=1)
     mx[m.sum(axis=1) == 0] = 0.0
     return np.concatenate([g, mean, mx, count / MAX_ENT], axis=1)
+
+
+def pool_blocks(enc: Dict[str, Any]) -> np.ndarray:
+    parts = [enc["global"]]
+    blocks = enc["blocks"]
+    for kind in ("npc", "interactive", "group", "exit", "door", "objective", "quest"):
+        rows_arr = np.array(blocks[kind], dtype=np.float32)
+        mask = (rows_arr != 0).any(axis=1)
+        cnt = float(mask.sum())
+        if cnt > 0:
+            mean = rows_arr[mask].mean(axis=0)
+            mx = rows_arr[mask].max(axis=0)
+        else:
+            width = len(ws.BLOCK_FEATURES[kind])
+            mean = np.zeros(width, dtype=np.float32)
+            mx = np.zeros(width, dtype=np.float32)
+        parts.extend([mean, mx, [cnt / ws.SLOTS[kind]]])
+    return np.concatenate(parts)
+
+
+class WorldStateEncoder:
+    def __init__(self, in_dim: int, hidden: int = 48, emb: int = 32) -> None:
+        import torch
+        from torch import nn
+        self.torch = torch
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, emb), nn.Tanh(),
+        )
+        self.pred = nn.Linear(emb + len(tools_ref) + len(ARG_KINDS), 10)
+
+    def embed(self, x):
+        t = self.torch
+        return self.net(t.as_tensor(x))
+
+    def fit_world_model(self, x_all, a_all, d_all, epochs: int = 120, lr: float = 1e-3, weight=None):
+        t = self.torch
+        opt = t.optim.Adam(list(self.net.parameters()) + list(self.pred.parameters()), lr=lr)
+        loss_fn = t.nn.functional.binary_cross_entropy_with_logits
+        xt, at, dt = (t.as_tensor(x) for x in (x_all, a_all, d_all))
+        wt = t.as_tensor(np.ones(len(x_all), dtype=np.float32) if weight is None
+                         else np.asarray(weight, dtype=np.float32))
+        n = len(xt)
+        for epoch in range(epochs):
+            perm = t.randperm(n)
+            total = 0.0
+            for start in range(0, n, 256):
+                idx = perm[start:start + 256]
+                emb = self.net(xt[idx])
+                logits = self.pred(t.cat([emb, at[idx]], dim=1))
+                per = loss_fn(logits, dt[idx], reduction="none").mean(dim=1)
+                w = wt[idx]
+                loss = (per * w).sum() / w.sum().clamp(min=1e-6)
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                total += float(loss.detach()) * float(w.sum())
+            if epoch % 30 == 0 or epoch == epochs - 1:
+                print("   [world-state] epoch %3d  bce %.4f" % (epoch, total / max(1.0, float(wt.sum()))))
 
 
 class Encoder:
@@ -320,6 +388,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     base_te = np.concatenate([pooled_baseline(g_te, e_te, m_te), a_te], axis=1)
     probe("hand-built + action", base_tr, y_tr, base_te, y_te, test)
 
+    # Typed World State representation (Schema v2 with terrain walkability)
+    ws_g_tr = np.array([ws.encode(ws.from_observation(r["obs"]))["global"] for r in train], dtype=np.float32)
+    ws_g_te = np.array([ws.encode(ws.from_observation(r["obs"]))["global"] for r in test], dtype=np.float32)
+    probe("world-state global(34)", np.concatenate([ws_g_tr, a_tr], axis=1), y_tr,
+          np.concatenate([ws_g_te, a_te], axis=1), y_te, test)
+
+    ws_p_tr = np.array([pool_blocks(ws.encode(ws.from_observation(r["obs"]))) for r in train], dtype=np.float32)
+    ws_p_te = np.array([pool_blocks(ws.encode(ws.from_observation(r["obs"]))) for r in test], dtype=np.float32)
+    probe("world-state pooled", np.concatenate([ws_p_tr, a_tr], axis=1), y_tr,
+          np.concatenate([ws_p_te, a_te], axis=1), y_te, test)
+
     # World-model floor: how predictable is the next state at all?
     delta_rate = d_tr.mean(axis=0)
     print("world-model target rates", [round(float(x), 3) for x in delta_rate])
@@ -353,6 +432,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     probe("encoder + deltas + action",
           np.concatenate([learned_tr, pred_tr], axis=1), y_tr,
           np.concatenate([learned_te, pred_te], axis=1), y_te, test)
+
+    # World-state neural world model: pretraining on typed world state substrate
+    ws_p_all = np.array([pool_blocks(ws.encode(ws.from_observation(r["obs"]))) for r in rows], dtype=np.float32)
+    ws_enc = WorldStateEncoder(in_dim=ws_p_tr.shape[1])
+    print("pretraining the world-state model on %d unlabelled pairs (%d held-out deltas masked)"
+          % (len(rows), int((weight == 0).sum())))
+    ws_enc.fit_world_model(ws_p_all, a_all, d_all, epochs=args.epochs, weight=weight)
+    with torch.no_grad():
+        ws_emb_tr = ws_enc.embed(ws_p_tr)
+        ws_emb_te = ws_enc.embed(ws_p_te)
+        ws_pred_tr = torch.sigmoid(ws_enc.pred(torch.cat([ws_emb_tr, torch.as_tensor(a_tr)], dim=1)))
+        ws_pred_te = torch.sigmoid(ws_enc.pred(torch.cat([ws_emb_te, torch.as_tensor(a_te)], dim=1)))
+    ws_emb_tr, ws_emb_te = ws_emb_tr.numpy(), ws_emb_te.numpy()
+    ws_pred_tr, ws_pred_te = ws_pred_tr.numpy(), ws_pred_te.numpy()
+    ws_learned_tr = np.concatenate([ws_emb_tr, a_tr], axis=1)
+    ws_learned_te = np.concatenate([ws_emb_te, a_te], axis=1)
+    probe("ws-encoder + action", ws_learned_tr, y_tr, ws_learned_te, y_te, test)
+    probe("ws world-model deltas", ws_pred_tr, y_tr, ws_pred_te, y_te, test)
+    probe("ws-enc + deltas + act",
+          np.concatenate([ws_learned_tr, ws_pred_tr], axis=1), y_tr,
+          np.concatenate([ws_learned_te, ws_pred_te], axis=1), y_te, test)
 
     # The counter as the floor, scored exactly like a model.
     rule = np.array([0.0 if (r["repeat_streak"] or 0) >= 2 else 1.0 for r in test])

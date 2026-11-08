@@ -653,6 +653,44 @@ def encode(state: WorldState) -> Dict[str, Any]:
     }
 
 
+BLOCK_ORDER: Tuple[str, ...] = ("npc", "interactive", "group", "exit", "door", "objective", "quest")
+FLAT_DIM: int = len(GLOBAL_FEATURES) + sum(SLOTS[k] * len(BLOCK_FEATURES[k]) for k in BLOCK_ORDER)
+
+
+def flat_names() -> List[str]:
+    """Names of all FLAT_DIM (482) features in flattened world-state order."""
+    names: List[str] = ["global." + f for f in GLOBAL_FEATURES]
+    for kind in BLOCK_ORDER:
+        feats = BLOCK_FEATURES[kind]
+        for slot in range(SLOTS[kind]):
+            for feat in feats:
+                names.append(f"{kind}_{slot}.{feat}")
+    return names
+
+
+def flatten(encoded: Dict[str, Any]) -> List[float]:
+    """Flatten an encoded world-state dictionary into a 1D float list of length FLAT_DIM (482).
+
+    Layout: global (34 floats) followed by fixed slot blocks in BLOCK_ORDER:
+    npc (48), interactive (72), group (88), exit (80), door (72), objective (56), quest (32).
+    """
+    out: List[float] = list(encoded.get("global") or [0.0] * len(GLOBAL_FEATURES))
+    blocks = encoded.get("blocks") or {}
+    for kind in BLOCK_ORDER:
+        expected_width = len(BLOCK_FEATURES[kind])
+        rows = blocks.get(kind) or []
+        for slot in range(SLOTS[kind]):
+            if slot < len(rows) and isinstance(rows[slot], list):
+                row = rows[slot]
+                if len(row) < expected_width:
+                    out.extend(row + [0.0] * (expected_width - len(row)))
+                else:
+                    out.extend(row[:expected_width])
+            else:
+                out.extend([0.0] * expected_width)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # closed-schema coverage
 

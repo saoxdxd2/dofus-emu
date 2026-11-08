@@ -110,6 +110,11 @@ KNOWN_DOORS: Dict[Tuple[int, int], int] = {
     (145490435, 146276352): 346,
     (146276352, 145490435): 451,
 }
+KNOWN_NPC_NAMES: Dict[str, int] = {
+    "great jarl ordyn": 3892,
+    "jarl ordyn": 3892,
+    "ordyn": 3892,
+}
 KNOWN_NPC_MAPS: Dict[int, int] = {
     3892: 146276352,  # Great Jarl Ordyn in Albuera house interior
 }
@@ -1447,10 +1452,28 @@ class QuestPlanner:
                     continue
                 for objective in step.get("objectives") or []:
                     add(objective)
+        def check_text(item: Any) -> None:
+            if not isinstance(item, dict):
+                return
+            text = str(item.get("text") or "").lower()
+            if not text:
+                return
+            for kw, nid in KNOWN_NPC_NAMES.items():
+                if kw in text:
+                    try:
+                        oid = int(item.get("id", item.get("objective_id")))
+                    except (TypeError, ValueError):
+                        oid = 0
+                    bucket = out.setdefault(nid, [])
+                    if oid and oid not in bucket:
+                        bucket.append(oid)
+
         for item in obs.get("ready_objectives") or []:
             add(item)
+            check_text(item)
         for item in obs.get("step_objectives") or []:
             add(item)
+            check_text(item)
         return out
 
     def _npc_talk_calls(self, quest: Dict[str, Any], obj: Dict[str, Any],
@@ -1782,6 +1805,23 @@ class QuestPlanner:
                             "names no neighbour" % (obj.get("type_id"), here)),
                 }
             route = route_first_hop(here, target)
+            if route is None:
+                # Target may be an interior room accessed through a known building door
+                door_entrance = next((src for (src, dest) in KNOWN_DOORS if dest == target), None)
+                if door_entrance is not None and door_entrance != here:
+                    route = route_first_hop(here, door_entrance)
+                elif (here, target) not in KNOWN_DOORS:
+                    # Current map may be an interior room with a known door leading back outside
+                    door_exit = next((dest for (src, dest) in KNOWN_DOORS if src == here), None)
+                    if door_exit is not None:
+                        exit_cell = KNOWN_DOORS.get((here, door_exit))
+                        return {
+                            "tool": "nav.goto",
+                            "args": {"map_id": door_exit},
+                            "why": ("objective %s: map %s is an interior room; door cell %s "
+                                    "leads outside to map %s towards %s"
+                                    % (obj.get("type_id"), here, exit_cell, door_exit, target)),
+                        }
             if route is not None:
                 hop_map, hop_dir, hops = route
                 live = next((e for e in exits if e["map_id"] == hop_map), None)
@@ -3263,8 +3303,14 @@ class QuestPlanner:
                 # interactive element; travelling is still honest when the objective
                 # names a place, and the ready scan moves to the entry behind it that
                 # can be acted on.
+                map_blk = obs.get("map") if isinstance(obs, dict) else None
+                doors_in_obs = (map_blk.get("doors") if isinstance(map_blk, dict) else None) or []
+                has_door_to_need = any(
+                    isinstance(d, dict) and d.get("to_map") is not None and int(d["to_map"]) == need
+                    for d in doors_in_obs
+                ) if need is not None else False
                 inside_objective_interior = (
-                    need is not None and (need, here) in KNOWN_DOORS
+                    need is not None and ((need, here) in KNOWN_DOORS or has_door_to_need)
                 )
                 if not travel or inside_objective_interior:
                     free = self._free_form_calls(obj, obs)
@@ -3291,6 +3337,16 @@ class QuestPlanner:
                         if isinstance(d, dict) and d.get("to_map") is not None
                         and int(d["to_map"]) not in neighbour_map_ids
                     ]
+                    target_npc_id = None
+                    text_lower = str(obj.get("text") or "").lower()
+                    for name_kw, nid in KNOWN_NPC_NAMES.items():
+                        if name_kw in text_lower:
+                            target_npc_id = nid
+                            break
+                    target_map = KNOWN_NPC_MAPS.get(target_npc_id) if target_npc_id else None
+                    if target_map and target_map in door_candidates:
+                        door_candidates.remove(target_map)
+                        door_candidates.insert(0, target_map)
                     for dest in door_candidates:
                         if (int(quest.get("id", 0)), int(obj.get("id", 0)), dest) not in self._exhausted_at:
                             return [self._travel_call(obj, dest, obs, key=travel_key)]

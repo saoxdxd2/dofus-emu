@@ -1,6 +1,6 @@
 {
- "action_move_rate": 31.38,
- "actions": 5631,
+ "action_move_rate": 31.37,
+ "actions": 5632,
  "actions_advance": 65,
  "actions_advance_by_lag": 1,
  "actions_moved": 1767,
@@ -19,9 +19,9 @@
   "4434148": 1199
  },
  "claim_rule": "the action's own promise, read from its args and the snapshot it returned: nav.goto at:<map> or a step, fight.join in_fight, quest.advance a talk opens a dialog / a reply moves the dialog to another node or changes quest state / accept activates the quest, tap.interactive an effect, inv.equip an inventory change; reads have no claim",
- "claims_derivable": 5352,
+ "claims_derivable": 5353,
  "claims_met": 1413,
- "context_rows": 9929,
+ "context_rows": 9930,
  "days": {
   "2026-10-22": 48,
   "2026-10-23": 280,
@@ -34,11 +34,12 @@
   "2026-11-04": 154,
   "2026-11-05": 9,
   "2026-11-06": 127,
-  "2026-11-07": 66
+  "2026-11-07": 66,
+  "2026-11-08": 1
  },
  "explored_actions": 0,
  "hours": 8.375,
- "instance_days": 28,
+ "instance_days": 29,
  "label_rule": "a change observed in a run of reads is credited to the last acting step; reads never claim a change; a directive the page refused before sending is always a miss (G65)",
  "label_version": 3,
  "labeler_sha": "cbd39ce2dd57",
@@ -92,8 +93,8 @@
    "direction": {
     "failed_pct": 0.8,
     "moved": 62,
-    "moved_pct": 26.2,
-    "n": 237
+    "moved_pct": 25.9,
+    "n": 239
    },
    "map": {
     "failed_pct": 0.0,
@@ -111,15 +112,15 @@
    },
    "direction": {
     "failed_pct": 0.0,
-    "moved": 330,
+    "moved": 331,
     "moved_pct": 24.5,
-    "n": 1348
+    "n": 1349
    },
    "map": {
     "failed_pct": 0.0,
     "moved": 210,
-    "moved_pct": 85.7,
-    "n": 245
+    "moved_pct": 85.4,
+    "n": 246
    }
   },
   "val": {
@@ -131,15 +132,15 @@
    },
    "direction": {
     "failed_pct": 0.4,
-    "moved": 86,
-    "moved_pct": 34.5,
-    "n": 249
+    "moved": 85,
+    "moved_pct": 34.6,
+    "n": 246
    },
    "map": {
     "failed_pct": 0.0,
     "moved": 81,
-    "moved_pct": 75.0,
-    "n": 108
+    "moved_pct": 75.7,
+    "n": 107
    }
   }
  },
@@ -149,7 +150,7 @@
   "1": 309,
   "4": 192,
   "6": 1415,
-  "None": 201
+  "None": 202
  },
  "per_tool": {
   "farm.start": {
@@ -213,13 +214,13 @@
    "time_pct": 33.7
   },
   "safe.stop": {
-   "advance_pct": 0.7,
+   "advance_pct": 0.6,
    "advance_per_hour": 8.05,
-   "claim_n": 153,
+   "claim_n": 154,
    "claim_pct": 0.0,
-   "failed_pct": 0.7,
-   "moved_pct": 2.0,
-   "n": 153,
+   "failed_pct": 0.6,
+   "moved_pct": 1.9,
+   "n": 154,
    "progress_pct": 1.3,
    "progress_per_hour": 16.11,
    "time_pct": 1.5
@@ -254,21 +255,21 @@
  "reads": 4298,
  "reads_that_saw_a_change": 192,
  "ready_multi_rows": 5451,
- "rows": 10043,
- "rows_built": 10043,
- "segments": 551,
+ "rows": 10044,
+ "rows_built": 10044,
+ "segments": 552,
  "span_days": 17,
  "split_actions": {
   "test": 845,
   "train": 3942,
-  "val": 844
+  "val": 845
  },
  "split_policy": "hash",
  "split_rows": {
-  "test": 1308,
-  "train": 7585,
-  "val": 1150
+  "test": 1311,
+  "train": 7589,
+  "val": 1144
  },
- "with_observation_pair": 9929,
+ "with_observation_pair": 9930,
  "x_coverage_pct": 98.0
 }

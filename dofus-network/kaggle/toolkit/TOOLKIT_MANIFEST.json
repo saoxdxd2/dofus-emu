@@ -365,9 +365,9 @@
       "missing": false,
       "path": "agent/planner.py",
       "source": "agent/planner.py",
-      "source_sha256": "0da19adf8a4b74441c79f4c70956fa8e9fbc02f66d6ff98c238528983e02c027",
+      "source_sha256": "563e54bd23023d1ca8d7c01dacef7ba8ba0b83def4248c8a219fa8c00d1ed46b",
       "status": "sync",
-      "toolkit_sha256": "0da19adf8a4b74441c79f4c70956fa8e9fbc02f66d6ff98c238528983e02c027"
+      "toolkit_sha256": "563e54bd23023d1ca8d7c01dacef7ba8ba0b83def4248c8a219fa8c00d1ed46b"
     },
     {
       "drift": false,
@@ -545,9 +545,9 @@
       "missing": false,
       "path": "agent/world_state.py",
       "source": "agent/world_state.py",
-      "source_sha256": "249a7be2fb6ae7701823041651a2cc2f141bf660f18d22b2c77b2190cb779378",
+      "source_sha256": "71511405bb6e59764bb0eef2d4f7db5b43c451ddb4e0eeed64c4938c3f5d326d",
       "status": "sync",
-      "toolkit_sha256": "249a7be2fb6ae7701823041651a2cc2f141bf660f18d22b2c77b2190cb779378"
+      "toolkit_sha256": "71511405bb6e59764bb0eef2d4f7db5b43c451ddb4e0eeed64c4938c3f5d326d"
     },
     {
       "drift": false,
@@ -1686,6 +1686,15 @@
     {
       "drift": false,
       "missing": false,
+      "path": "tools/build_world_state_dataset.py",
+      "source": "tools/build_world_state_dataset.py",
+      "source_sha256": "b058b1e20e5d450618a9d5f0c0f8261e4357f3e06fb6a276def63a149a3ed58f",
+      "status": "sync",
+      "toolkit_sha256": "b058b1e20e5d450618a9d5f0c0f8261e4357f3e06fb6a276def63a149a3ed58f"
+    },
+    {
+      "drift": false,
+      "missing": false,
       "path": "tools/cleanroom_probe.py",
       "source": "tools/cleanroom_probe.py",
       "source_sha256": "fbee5076ddedad8badf2e528fb6bd472e0bb9b8588b3c1f590e932a1f93ea9f9",
@@ -2066,9 +2075,9 @@
       "missing": false,
       "path": "tools/state_encoder_probe.py",
       "source": "tools/state_encoder_probe.py",
-      "source_sha256": "3adfc95c725b44bd763c935f96aa9d4f9c64e93c590881dbb651cc82ea047de4",
+      "source_sha256": "12478c545637a136ce7e6d49e110c179ac1bc579c9621f3f3bfef6e43dd8df7a",
       "status": "sync",
-      "toolkit_sha256": "3adfc95c725b44bd763c935f96aa9d4f9c64e93c590881dbb651cc82ea047de4"
+      "toolkit_sha256": "12478c545637a136ce7e6d49e110c179ac1bc579c9621f3f3bfef6e43dd8df7a"
     },
     {
       "drift": false,
@@ -2165,9 +2174,9 @@
       "missing": false,
       "path": "tools/test_world_state.py",
       "source": "tools/test_world_state.py",
-      "source_sha256": "7236119692a35c2280ccb0eef5da9dee3e25835ce9bbf9f8dd2b961a3b8895cc",
+      "source_sha256": "cc882e8fec8914511e1adbccf671dabe8848235eedc4d1ff78180a5ebdf79caf",
       "status": "sync",
-      "toolkit_sha256": "7236119692a35c2280ccb0eef5da9dee3e25835ce9bbf9f8dd2b961a3b8895cc"
+      "toolkit_sha256": "cc882e8fec8914511e1adbccf671dabe8848235eedc4d1ff78180a5ebdf79caf"
     },
     {
       "drift": false,
@@ -2197,7 +2206,7 @@
       "toolkit_sha256": "6ab3d0547e76d7d1d275270917d9f433488a65b01df2c3eaf2a0cd12d659b97b"
     }
   ],
-  "generated_at": "2026-11-07T22:57:15.930824+00:00",
+  "generated_at": "2026-11-08T06:15:28.844794+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }

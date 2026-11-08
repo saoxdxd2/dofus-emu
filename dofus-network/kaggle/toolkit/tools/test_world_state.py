@@ -225,5 +225,27 @@ class ClosedSchemaTests(unittest.TestCase):
         self.assertEqual(report["unknown_entity"]["npc.mood"], 1)
 
 
+class FlatLayoutTests(unittest.TestCase):
+    def test_flat_dimensions_match(self):
+        self.assertEqual(ws.FLAT_DIM, 482)
+        names = ws.flat_names()
+        self.assertEqual(len(names), ws.FLAT_DIM)
+        encoded = ws.encode(ws.from_observation(obs()))
+        flat = ws.flatten(encoded)
+        self.assertEqual(len(flat), ws.FLAT_DIM)
+
+    def test_flatten_preserves_global_and_block_order(self):
+        state = ws.from_observation(obs(
+            level=50,
+            map={"npcs": [{"npc_id": 1234, "cell": 10}]}
+        ))
+        encoded = ws.encode(state)
+        flat = ws.flatten(encoded)
+        self.assertAlmostEqual(flat[0], 50.0 / 200.0)
+        # NPC block starts after global (34)
+        npc_gid_idx = 34 + ws.NPC_FEATURES.index("gid_log")
+        self.assertGreater(flat[npc_gid_idx], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
