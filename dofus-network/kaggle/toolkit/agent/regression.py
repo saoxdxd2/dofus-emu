@@ -72,6 +72,14 @@ def section(title: str) -> None:
 # suites, the relay tests and the host compile were all absent (read at the four call
 # sites on 2026-10-31).
 _DELEGATIONS: List[Dict[str, Any]] = []
+# The host is WinForms + WebView2 + Win32 P/Invoke. There is no Linux build of it
+# to compile, so a Linux checkout has no compiler that could produce one, and
+# `_find_csharp_compiler` correctly returns None there. That is not the silent
+# vanish the delegation audit exists to catch -- so on a non-Windows host these
+# two are expected skips rather than missing evidence. Without this the Linux CI
+# job reports "no C# compiler found" as a regression on every single push, which
+# is how a gate teaches people to ignore it.
+_WINDOWS_TOOLCHAIN = frozenset({"C# host compile", "recorder regex probe"})
 # Wall time per test, recorded by `_run_test` as the gate runs: the only honest timing is
 # the one that does not run the test a second time.
 DURATIONS: Dict[str, float] = {}
@@ -17034,10 +17042,12 @@ def test_delegated_suites_cannot_silently_vanish() -> None:
     registering a check, so a host without node, `go` or a C# compiler reported
     "N checks, 0 failed, exit 0" with 40 page suites, the relay tests and the host
     compile all absent (read at the call sites 2026-10-31). Sources genuinely missing --
-    the Kaggle mirror has no `scripts/` -- stays a legitimate skip.
+    the Kaggle mirror has no `scripts/` -- stays a legitimate skip, and so does a
+    Windows-only toolchain on a host that cannot have it (see `_WINDOWS_TOOLCHAIN`).
     """
     section("Delegated suites cannot vanish quietly")
-    silent = [d for d in _DELEGATIONS if not d["ran"] and d["sources"]]
+    silent = [d for d in _DELEGATIONS if not d["ran"] and d["sources"]
+              and not (sys.platform != "win32" and d["name"] in _WINDOWS_TOOLCHAIN)]
     check("no delegated suite was skipped while its sources are in the tree",
           not silent, ["%s: %s" % (d["name"], d["detail"]) for d in silent])
     check("the registry covers every delegation the gate claims",
