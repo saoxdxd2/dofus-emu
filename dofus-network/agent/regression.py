@@ -607,8 +607,16 @@ def test_shared_resources() -> None:
     section("shared daemon resources")
     first = load_default_store()
     second = load_default_store()
-    check("the canonical store is cached per path",
-          first is not None and first is second)
+    # The canonical store is `data/knowledge/dofus_knowledge.sqlite`, 44 MB of built
+    # knowledge that is not tracked. `load_default_store` returns None when it is
+    # absent, which is the correct answer for a checkout that has not built it --
+    # asking whether the cache returns the same object is a question about a store
+    # this tree does not have.
+    if first is None:
+        print("   SKIP: no canonical knowledge store in this checkout "
+              "(data/knowledge/dofus_knowledge.sqlite is not tracked)")
+    else:
+        check("the canonical store is cached per path", first is second)
     if first is not None:
         errors: List[BaseException] = []
 
@@ -7868,19 +7876,27 @@ def test_installed_payload_and_dependencies() -> None:
     import subprocess
 
     tools = ROOT / "tools"
-    audit = subprocess.run([sys.executable, str(tools / "payload_audit.py"),
-                            str(ROOT / "setup.exe"), "--gate"],
-                           capture_output=True, text=True, timeout=600, cwd=str(ROOT))
-    lines = [l for l in audit.stdout.splitlines() if l.startswith("{")]
-    check("the payload audit parses setup.exe", bool(lines), (audit.stdout + audit.stderr)[-260:])
-    verdict = json.loads(lines[-1]) if lines else {}
-    check("setup.exe is inside the byte budget", bool(verdict) and not verdict.get("over_budget"),
-          verdict.get("setup_bytes"))
-    check("no excluded tree crossed the wire", not verdict.get("forbidden"), verdict.get("forbidden"))
-    check("every entry the installed app needs is present",
-          not verdict.get("missing_required"), verdict.get("missing_required"))
-    check("the stage left no empty folder placeholders behind",
-          verdict.get("empty_dir_entries") == 0, verdict.get("empty_dir_entries"))
+    setup = ROOT / "setup.exe"
+    # `/setup.exe` is gitignored: compile.bat builds it. `payload_audit.py` opens it
+    # without a guard, so a clean clone got a FileNotFoundError traceback and four
+    # red checks that all meant "this checkout has not been built yet".
+    if setup.is_file():
+        audit = subprocess.run([sys.executable, str(tools / "payload_audit.py"),
+                                str(setup), "--gate"],
+                               capture_output=True, text=True, timeout=600, cwd=str(ROOT))
+        lines = [l for l in audit.stdout.splitlines() if l.startswith("{")]
+        check("the payload audit parses setup.exe", bool(lines), (audit.stdout + audit.stderr)[-260:])
+        verdict = json.loads(lines[-1]) if lines else {}
+        check("setup.exe is inside the byte budget",
+              bool(verdict) and not verdict.get("over_budget"), verdict.get("setup_bytes"))
+        check("no excluded tree crossed the wire", not verdict.get("forbidden"),
+              verdict.get("forbidden"))
+        check("every entry the installed app needs is present",
+              not verdict.get("missing_required"), verdict.get("missing_required"))
+        check("the stage left no empty folder placeholders behind",
+              verdict.get("empty_dir_entries") == 0, verdict.get("empty_dir_entries"))
+    else:
+        print("   SKIP: setup.exe is not built in this checkout (compile.bat writes it)")
 
     deps = subprocess.run([sys.executable, str(tools / "shipped_deps.py")],
                           capture_output=True, text=True, timeout=300, cwd=str(ROOT))

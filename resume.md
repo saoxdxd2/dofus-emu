@@ -501,7 +501,7 @@ per-instance child path remains as a fallback. See `BRAIN_DAEMON.md`.
 ```
 
 **Line counts, re-measured 2026-10-30:** C# **24,033** (desktop 23,117 + `builder/build.cs`
-916), Go/JS **27,055<!--f:script_lines-->** (Go 5,288<!--f:go_lines--> + JS 21,767<!--f:js_lines--> across `scripts/` and `tools/`), Python
+916), Go/JS **27,060<!--f:script_lines-->** (Go 5,288<!--f:go_lines--> + JS 21,772<!--f:js_lines--> across `scripts/` and `tools/`), Python
 **99,335** in 259 files, docs **12,721**. The 2026-10-27 snapshot of this document claimed
 23,064 / 13,516 / 76,699 / ~10,500 — every one of those was understated, the Python figure
 by 22,636 lines, and part of the rest is this day's own work: the shadow, alternative and

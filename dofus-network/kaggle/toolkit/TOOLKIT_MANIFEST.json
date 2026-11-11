@@ -437,9 +437,9 @@
       "missing": false,
       "path": "agent/regression.py",
       "source": "agent/regression.py",
-      "source_sha256": "5421b2cb96a76441666ed9a12ed8b132f3bd215ce7a533a04dfac11533ec60cc",
+      "source_sha256": "0815b63ab3704c239f98c356257469b93be5049cc3ae2efd071257dc48f44744",
       "status": "sync",
-      "toolkit_sha256": "5421b2cb96a76441666ed9a12ed8b132f3bd215ce7a533a04dfac11533ec60cc"
+      "toolkit_sha256": "0815b63ab3704c239f98c356257469b93be5049cc3ae2efd071257dc48f44744"
     },
     {
       "drift": false,
@@ -2665,7 +2665,7 @@
       "toolkit_sha256": "6ab3d0547e76d7d1d275270917d9f433488a65b01df2c3eaf2a0cd12d659b97b"
     }
   ],
-  "generated_at": "2026-11-11T20:37:50.060849+00:00",
+  "generated_at": "2026-11-11T20:50:17.465601+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }
