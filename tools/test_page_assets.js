@@ -50,7 +50,12 @@ function sha10(rel) {
     const abs = path.join(www, rel.replace(/\//g, path.sep));
     if (!fs.existsSync(abs)) return null;
     let b = fs.readFileSync(abs);
-    if (rel === 'build/script.js' && b.indexOf(0x0d) >= 0) {
+    // A stamp is a hash of the bytes git stores, so it must not depend on how this
+    // checkout wrote them. `* text=auto` gives LF in the index and CRLF in a Windows
+    // working tree, and the shim's stamp was once computed on the CRLF copy -- it
+    // matched here and hashed differently in every clone. Normalise text assets
+    // before hashing so the same file gets the same stamp anywhere.
+    if (/\.(js|css)$/i.test(rel) && b.indexOf(0x0d) >= 0) {
         b = Buffer.from(b.toString('utf8').replace(/\r\n/g, '\n'), 'utf8');
     }
     return crypto.createHash('sha1').update(b).digest('hex').slice(0, 10);
