@@ -39,7 +39,7 @@ The binding constraints, in order:
 2. **Volume of lived outcomes.** `agent/gate.py`'s veto has produced zero shadow rows. Nothing
    actually vetoes yet.
 3. **Quest progress**, not combat. Combat decisions are now worth ~0.011 of an HP bar per turn
-   (§5 below); 100 quest advances cost ≈9,692 actions ≈ four days of sessions.
+   (§6 below); 100 quest advances cost ≈9,692 actions ≈ four days of sessions.
 
 Combat is the most *measured* part of the system and the least *valuable* part. That inversion is
 deliberate — it is where the instruments are good enough to settle arguments — but do not mistake
@@ -54,7 +54,7 @@ facts. Expected output is stated so a mismatch is visible.
 
 ```bash
 cd dofus-network
-python -m agent.regression                      # the gate: 2,216+ checks, exit 0 = green
+python -m agent.regression                      # the gate: 2,220 checks, exit 0 = green
 python scratch/chain_reachability.py            # which rankers are actually reached
 python tools/sync_kaggle_toolkit.py             # 288 sync, 8 pinned, 0 drift/missing
 python -m combat.duel_value --evaluate scratch/dv_rank_v3.pkl --bench-games 200
@@ -81,7 +81,8 @@ Two full runs, both recorded:
 | run | result | what it was |
 |---|---|---|
 | 18:05 | 2,187 checks, **5 failed** | the true starting state, never reported before this session |
-| 18:29 | 2,220 checks, **1 failed** | after three fixes below |
+| 18:29 | 2,220 checks, **1 failed** | after the three code fixes; the one left was a stale tagged number |
+| 18:42 | 2,220 checks, **0 failed**, exit 0 | **confirmed green**, 11m28s. Logs: `scratch/gate_full_2026-11-11{,b,c}.log` |
 
 The five failures of the first run, and what each actually was:
 
