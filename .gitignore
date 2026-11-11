@@ -181,3 +181,8 @@ AGENTS.MD
 !dofus-network/models/consult_gate.json
 !dofus-network/models/backups/tool_policy.807023112a4b.onnx
 !dofus-network/models/backups/tool_policy.807023112a4b.json
+# The shipped tool-stacking artifact (21 KB) and the cause-head metrics record
+# (8 KB). Both are read by agent.regression; without them a clean clone silently
+# loses five stack checks and the whole cause-head section.
+!dofus-network/models/tool_stack.json
+!dofus-network/models/cause_head.json

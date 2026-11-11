@@ -1,0 +1,973 @@
+{
+ "kind": "tool-stacking",
+ "version": 1,
+ "features": [
+  "policy_logp",
+  "policy_rank",
+  "gain_z",
+  "gain_rank",
+  "move_logit",
+  "curve_z",
+  "cluster_0",
+  "cluster_1",
+  "cluster_2",
+  "cluster_3"
+ ],
+ "model_type": "tree",
+ "weights": {},
+ "tree": {
+  "feature": 0,
+  "threshold": -0.6236487759489067,
+  "left": {
+   "feature": 1,
+   "threshold": 0.08333333333333333,
+   "left": {
+    "feature": 4,
+    "threshold": 5.834887393040992,
+    "left": {
+     "feature": 6,
+     "threshold": 5.179601632474952,
+     "left": {
+      "value": 0.14371581011064075,
+      "n": 139
+     },
+     "right": {
+      "feature": 9,
+      "threshold": 8.411442775983337,
+      "left": {
+       "value": 0.4995004019171249,
+       "n": 64
+      },
+      "right": {
+       "value": 0.23354124775930712,
+       "n": 56
+      }
+     }
+    },
+    "right": {
+     "value": 0.831320358074401,
+     "n": 35
+    }
+   },
+   "right": {
+    "feature": 0,
+    "threshold": -2.6303103744767458,
+    "left": {
+     "feature": 2,
+     "threshold": 0.8170807427484787,
+     "left": {
+      "feature": 4,
+      "threshold": 3.9867810644652018,
+      "left": {
+       "value": 0.049158896519379436,
+       "n": 3819
+      },
+      "right": {
+       "value": 0.02854654851069679,
+       "n": 11807
+      }
+     },
+     "right": {
+      "value": 0.2128537216554292,
+      "n": 116
+     }
+    },
+    "right": {
+     "feature": 0,
+     "threshold": -1.696759362507695,
+     "left": {
+      "feature": 6,
+      "threshold": 5.131066082307239,
+      "left": {
+       "value": 0.18698281526681462,
+       "n": 396
+      },
+      "right": {
+       "value": 0.08617331837762618,
+       "n": 554
+      }
+     },
+     "right": {
+      "feature": 9,
+      "threshold": 9.164761385000372,
+      "left": {
+       "value": 0.1481317831823053,
+       "n": 281
+      },
+      "right": {
+       "value": 0.31595044116397714,
+       "n": 71
+      }
+     }
+    }
+   }
+  },
+  "right": {
+   "feature": 0,
+   "threshold": -0.28805385264848626,
+   "left": {
+    "feature": 6,
+    "threshold": 5.05169428555525,
+    "left": {
+     "value": 0.23264089004681943,
+     "n": 87
+    },
+    "right": {
+     "feature": 2,
+     "threshold": 1.8017387628032715,
+     "left": {
+      "feature": 0,
+      "threshold": -0.48652773847384145,
+      "left": {
+       "value": 0.647743501377202,
+       "n": 35
+      },
+      "right": {
+       "value": 0.861257410206852,
+       "n": 41
+      }
+     },
+     "right": {
+      "feature": 4,
+      "threshold": 4.4583107655109355,
+      "left": {
+       "value": 0.4210430527574208,
+       "n": 52
+      },
+      "right": {
+       "value": 0.6182895838049813,
+       "n": 41
+      }
+     }
+    }
+   },
+   "right": {
+    "feature": 0,
+    "threshold": -0.0039566948330582285,
+    "left": {
+     "feature": 2,
+     "threshold": 2.2551690918653913,
+     "left": {
+      "feature": 0,
+      "threshold": -0.02382495307223316,
+      "left": {
+       "value": 0.8592588596283733,
+       "n": 1791
+      },
+      "right": {
+       "value": 0.9080341239493652,
+       "n": 1110
+      }
+     },
+     "right": {
+      "value": 0.5578252458629527,
+      "n": 65
+     }
+    },
+    "right": {
+     "feature": 0,
+     "threshold": -0.002323599532313466,
+     "left": {
+      "feature": 6,
+      "threshold": 5.84208915790988,
+      "left": {
+       "value": 0.6659048658895639,
+       "n": 88
+      },
+      "right": {
+       "value": 0.7695865711472161,
+       "n": 23
+      }
+     },
+     "right": {
+      "feature": 7,
+      "threshold": 6.381644370215474,
+      "left": {
+       "value": 0.5162459428320437,
+       "n": 46
+      },
+      "right": {
+       "value": 0.6854854322189718,
+       "n": 46
+      }
+     }
+    }
+   }
+  }
+ },
+ "forest": {},
+ "kmeans": {
+  "clusters": 4,
+  "centroids": [
+   [
+    0.8656194456707662,
+    0.6655608575751227,
+    -0.21635725898470304,
+    -0.7502935995415917,
+    0.3247127843707525,
+    0.0,
+    -0.2772846202719982,
+    -0.16029778930234728,
+    0.0,
+    -0.3229472136877732,
+    -0.16951478373059162,
+    -0.09024947533900664,
+    0.0,
+    0.0,
+    0.0,
+    -1.2421436500134833,
+    -1.242143650013592,
+    -0.14919476027047093,
+    0.049716205517881105,
+    -0.3233750556203621,
+    -0.04020713228459357,
+    0.08731756223350838,
+    -0.5036768077180844,
+    -0.3209120626453794,
+    0.25301601280622316,
+    0.0,
+    -0.32631028870453177,
+    0.07488716028088471,
+    -0.01849493296614086,
+    0.008261677020962144,
+    -0.00749421943241252,
+    0.03588556604299385,
+    -0.011295250388617778,
+    0.0,
+    0.0,
+    0.03358402776122519,
+    -0.12679778641965983,
+    0.12327231370788409,
+    -0.3735103849273715,
+    -0.029365721187646434,
+    0.12559451560761534,
+    -0.1743945275842711
+   ],
+   [
+    -0.5044584378565817,
+    -0.38786997241109405,
+    0.18778129438553637,
+    0.6511965623535445,
+    -0.18923339208119572,
+    0.0,
+    -0.277284620271994,
+    -0.1602977893023563,
+    0.0,
+    0.2802930952679401,
+    0.147125664541046,
+    0.07832953410622545,
+    0.0,
+    0.0,
+    0.0,
+    0.8050598656518393,
+    0.8050598656518517,
+    0.1308041945154849,
+    -0.039815478365181914,
+    0.20726884040128102,
+    0.003183154013249159,
+    -0.0723098967713209,
+    0.4371523439940263,
+    0.27271386754936927,
+    -0.22356583311103745,
+    0.0,
+    0.19506526337683036,
+    -0.027664616650778302,
+    0.008075746693093461,
+    0.026820096731961767,
+    0.002046306276868843,
+    -0.03245765821691534,
+    0.053847999519391496,
+    0.0,
+    0.0,
+    -0.023748272540921204,
+    0.11028144910065558,
+    -0.10771457969306095,
+    0.3160675130196018,
+    0.032239663552546975,
+    -0.10621215401223874,
+    0.12822522556980576
+   ],
+   [
+    -0.50445843785666,
+    -0.3878699724111801,
+    -0.21635725898471447,
+    -0.7502935995414922,
+    -0.1892333920812332,
+    0.0,
+    3.6064026883974467,
+    -0.1602977893023292,
+    0.0,
+    -0.32294721368782475,
+    -0.16951478373056972,
+    -0.09024947533899742,
+    0.0,
+    0.0,
+    0.0,
+    0.8050598656517441,
+    0.8050598656518244,
+    0.04414287816863798,
+    -0.2387016599475665,
+    0.323600404281424,
+    -0.07384039238946634,
+    0.04249327540417242,
+    -0.5036768077180828,
+    -0.2645062892964092,
+    0.33256907292526183,
+    0.0,
+    0.42629160108675124,
+    -0.3286069734334742,
+    0.08956207876283057,
+    0.06739031110513431,
+    0.03355842534924338,
+    0.06560586462341603,
+    -0.24648251960643422,
+    0.0,
+    0.0,
+    -0.02374827254092081,
+    -0.23123902527416307,
+    0.23258182344052464,
+    -0.36084434506817387,
+    -0.06519556734804784,
+    0.07685377052388136,
+    -0.012402026463416736
+   ],
+   [
+    -0.5044584378566497,
+    -0.38786997241117827,
+    -0.21635725898471367,
+    -0.7502935995415031,
+    -0.18923339208123022,
+    0.0,
+    -0.27728462027201395,
+    6.238389215173505,
+    0.0,
+    -0.3229472136878229,
+    -0.16951478373057022,
+    -0.09024947533899999,
+    0.0,
+    0.0,
+    0.0,
+    -1.2421436500134149,
+    -1.2421436500137135,
+    -0.7283028505011196,
+    0.8004525729155403,
+    -0.5987913916032539,
+    0.733365443799742,
+    0.14080678817550019,
+    -0.5036768077180884,
+    -0.35744738430400197,
+    0.11107714752514913,
+    0.0,
+    -0.5875302732290034,
+    0.4270686938860876,
+    -0.15600135403596183,
+    -0.8866338518296288,
+    -0.029224787274603484,
+    -0.020784664998056968,
+    -0.28224462625916474,
+    0.0,
+    0.0,
+    0.08158191292043483,
+    0.1659271206527299,
+    -0.17279245948693653,
+    -0.23628748731529572,
+    -0.07155155602072444,
+    0.2047950921057578,
+    -0.14166372582987716
+   ]
+  ],
+  "mean": [
+   0.20285589027368947,
+   0.13076971253209746,
+   0.04471722928540114,
+   0.36018037201728564,
+   0.03457130331308324,
+   0.0,
+   0.07139725684223712,
+   0.02505166906745162,
+   0.0,
+   0.0944447923842926,
+   0.027932611010208556,
+   0.008079163274253147,
+   0.0,
+   0.0,
+   1.0,
+   0.6067514248136782,
+   0.5355838082712412,
+   0.8198784994050229,
+   0.16377528652846496,
+   0.12084768585208405,
+   0.006075029748857017,
+   0.09008267050791531,
+   0.20235485689234045,
+   0.5930982651719171,
+   0.20926494227678483,
+   1.0,
+   0.22291914573810032,
+   0.24960355733699896,
+   0.166502786998185,
+   0.7931233168410011,
+   0.10640696436400424,
+   0.7761633368823198,
+   0.2569048662867008,
+   0.0,
+   0.0,
+   0.0005636625540176614,
+   0.07208617774159204,
+   0.9273501597043903,
+   0.41648399824638316,
+   0.0877434709087493,
+   0.0683284273814743,
+   0.5924400325671404
+  ],
+  "scale": [
+   0.4021260723392502,
+   0.33714832761910896,
+   0.20668236182711516,
+   0.4800525717364334,
+   0.18269134708658144,
+   1.0,
+   0.2574872590199796,
+   0.1562820621325137,
+   1.0,
+   0.2924465311398796,
+   0.16477979321617833,
+   0.08952033509231828,
+   1.0,
+   1.0,
+   1.0,
+   0.4884712205445228,
+   0.1628237401814789,
+   0.3842886228063626,
+   0.370071536396687,
+   0.09320472310507527,
+   0.034754119472941686,
+   0.24886818274988512,
+   0.4017553593724298,
+   0.49125626003343514,
+   0.29920697878643815,
+   1.0,
+   0.1662793394477936,
+   0.1860273155123655,
+   0.14825375805939187,
+   0.2764651003739284,
+   0.2534480163843979,
+   0.41681388096126193,
+   0.12033423015439935,
+   1.0,
+   1.0,
+   0.023734886528963915,
+   0.25863054869868246,
+   0.25956086184293853,
+   0.49297573718302923,
+   0.2829214629921654,
+   0.2523086470834083,
+   0.17340382954942446
+  ],
+  "inertia": 27.763924,
+  "rows": 15967
+ },
+ "shortlist": 6,
+ "active": true,
+ "chosen": {
+  "model_type": "tree",
+  "gain_capture": 0.9790544000000001,
+  "top1": 0.9113686,
+  "leaves": 23
+ },
+ "gate": {
+  "passed": true,
+  "forced": false,
+  "rule": "cross-validated gain_capture >= max(base) + 0.0005, top1 >= max(base) - 0.005, and a majority of folds ahead",
+  "best_base_gain_capture": 0.9773437999999999,
+  "stack_gain_capture": 0.9790544000000001,
+  "best_base_top1": 0.9059079999999999,
+  "stack_top1": 0.9113686,
+  "fold_wins": 3,
+  "folds": 5
+ },
+ "metrics": {
+  "fit": {
+   "policy": {
+    "states": 3520,
+    "gain_capture": 0.977359,
+    "top1": 0.905682,
+    "top_tools": {
+     "quest.advance": 1129,
+     "fight.join": 1111,
+     "nav.goto": 1072,
+     "farm.start": 197,
+     "inv.sell": 11
+    }
+   },
+   "foresight_gain": {
+    "states": 3520,
+    "gain_capture": 0.976928,
+    "top1": 0.903977,
+    "top_tools": {
+     "quest.advance": 1100,
+     "fight.join": 1086,
+     "nav.goto": 1067,
+     "farm.start": 204,
+     "quest.list": 26,
+     "inv.sell": 11
+    }
+   },
+   "linear": {
+    "states": 3520,
+    "gain_capture": 0.976578,
+    "top1": 0.903693,
+    "top_tools": {
+     "quest.advance": 1097,
+     "fight.join": 1089,
+     "nav.goto": 1070,
+     "farm.start": 202,
+     "quest.list": 27,
+     "inv.sell": 11
+    },
+    "leaves": 4
+   },
+   "tree": {
+    "states": 3520,
+    "gain_capture": 0.980629,
+    "top1": 0.914205,
+    "top_tools": {
+     "nav.goto": 1097,
+     "quest.advance": 1090,
+     "fight.join": 1000,
+     "farm.start": 191,
+     "inv.list": 77,
+     "quest.list": 26
+    },
+    "leaves": 23
+   },
+   "gbdt": {
+    "states": 3520,
+    "gain_capture": 0.977326,
+    "top1": 0.905682,
+    "top_tools": {
+     "quest.advance": 1129,
+     "fight.join": 1109,
+     "nav.goto": 1073,
+     "farm.start": 198,
+     "inv.sell": 11
+    },
+    "leaves": 307
+   }
+  },
+  "cv": {
+   "summary": {
+    "policy": {
+     "gain_capture": 0.9773437999999999,
+     "top1": 0.9059079999999999
+    },
+    "foresight_gain": {
+     "gain_capture": 0.9769638,
+     "top1": 0.9042876
+    },
+    "linear": {
+     "gain_capture": 0.9766269999999999,
+     "top1": 0.9040656
+    },
+    "tree": {
+     "gain_capture": 0.9790544000000001,
+     "top1": 0.9113686
+    },
+    "gbdt": {
+     "gain_capture": 0.9773504000000001,
+     "top1": 0.9056682
+    }
+   },
+   "folds": [
+    {
+     "policy": {
+      "states": 779,
+      "gain_capture": 0.973868,
+      "top1": 0.898588,
+      "top_tools": {
+       "quest.advance": 262,
+       "nav.goto": 238,
+       "fight.join": 221,
+       "farm.start": 57,
+       "inv.sell": 1
+      }
+     },
+     "foresight_gain": {
+      "states": 779,
+      "gain_capture": 0.974695,
+      "top1": 0.896021,
+      "top_tools": {
+       "quest.advance": 254,
+       "nav.goto": 235,
+       "fight.join": 220,
+       "farm.start": 61,
+       "quest.list": 7,
+       "inv.sell": 1
+      }
+     },
+     "linear": {
+      "states": 779,
+      "gain_capture": 0.973567,
+      "top1": 0.894737,
+      "top_tools": {
+       "quest.advance": 253,
+       "nav.goto": 237,
+       "fight.join": 218,
+       "farm.start": 61,
+       "quest.list": 7,
+       "inv.sell": 1
+      },
+      "leaves": 4
+     },
+     "tree": {
+      "states": 779,
+      "gain_capture": 0.977354,
+      "top1": 0.907574,
+      "top_tools": {
+       "nav.goto": 260,
+       "quest.advance": 259,
+       "fight.join": 203,
+       "farm.start": 56,
+       "inv.sell": 1
+      },
+      "leaves": 21
+     },
+     "gbdt": {
+      "states": 779,
+      "gain_capture": 0.973567,
+      "top1": 0.897304,
+      "top_tools": {
+       "quest.advance": 262,
+       "nav.goto": 238,
+       "fight.join": 220,
+       "farm.start": 58,
+       "inv.sell": 1
+      },
+      "leaves": 312
+     }
+    },
+    {
+     "policy": {
+      "states": 701,
+      "gain_capture": 0.975414,
+      "top1": 0.904422,
+      "top_tools": {
+       "quest.advance": 266,
+       "nav.goto": 199,
+       "fight.join": 180,
+       "farm.start": 55,
+       "inv.sell": 1
+      }
+     },
+     "foresight_gain": {
+      "states": 701,
+      "gain_capture": 0.975969,
+      "top1": 0.907275,
+      "top_tools": {
+       "quest.advance": 261,
+       "nav.goto": 197,
+       "fight.join": 178,
+       "farm.start": 58,
+       "quest.list": 3,
+       "hdv.list": 1
+      }
+     },
+     "linear": {
+      "states": 701,
+      "gain_capture": 0.975552,
+      "top1": 0.907275,
+      "top_tools": {
+       "quest.advance": 259,
+       "nav.goto": 199,
+       "fight.join": 179,
+       "farm.start": 56,
+       "quest.list": 5,
+       "inv.sell": 1
+      },
+      "leaves": 4
+     },
+     "tree": {
+      "states": 701,
+      "gain_capture": 0.977245,
+      "top1": 0.904422,
+      "top_tools": {
+       "quest.advance": 260,
+       "nav.goto": 200,
+       "fight.join": 166,
+       "farm.start": 54,
+       "inv.list": 12,
+       "quest.list": 5
+      },
+      "leaves": 23
+     },
+     "gbdt": {
+      "states": 701,
+      "gain_capture": 0.975469,
+      "top1": 0.902996,
+      "top_tools": {
+       "quest.advance": 265,
+       "nav.goto": 204,
+       "fight.join": 176,
+       "farm.start": 55,
+       "inv.sell": 1
+      },
+      "leaves": 308
+     }
+    },
+    {
+     "policy": {
+      "states": 748,
+      "gain_capture": 0.979657,
+      "top1": 0.90508,
+      "top_tools": {
+       "fight.join": 256,
+       "nav.goto": 234,
+       "quest.advance": 221,
+       "farm.start": 36,
+       "inv.sell": 1
+      }
+     },
+     "foresight_gain": {
+      "states": 748,
+      "gain_capture": 0.977241,
+      "top1": 0.90107,
+      "top_tools": {
+       "fight.join": 247,
+       "nav.goto": 234,
+       "quest.advance": 214,
+       "farm.start": 35,
+       "quest.list": 7,
+       "inv.list": 5
+      }
+     },
+     "linear": {
+      "states": 748,
+      "gain_capture": 0.977241,
+      "top1": 0.899733,
+      "top_tools": {
+       "fight.join": 248,
+       "nav.goto": 233,
+       "quest.advance": 213,
+       "farm.start": 35,
+       "quest.list": 8,
+       "inv.list": 4
+      },
+      "leaves": 4
+     },
+     "tree": {
+      "states": 748,
+      "gain_capture": 0.979606,
+      "top1": 0.907754,
+      "top_tools": {
+       "nav.goto": 234,
+       "fight.join": 232,
+       "quest.advance": 214,
+       "farm.start": 34,
+       "inv.list": 22,
+       "quest.list": 9
+      },
+      "leaves": 22
+     },
+     "gbdt": {
+      "states": 748,
+      "gain_capture": 0.979428,
+      "top1": 0.90508,
+      "top_tools": {
+       "fight.join": 249,
+       "nav.goto": 239,
+       "quest.advance": 217,
+       "farm.start": 36,
+       "quest.list": 3,
+       "knowledge.search": 2
+      },
+      "leaves": 310
+     }
+    },
+    {
+     "policy": {
+      "states": 630,
+      "gain_capture": 0.973834,
+      "top1": 0.9,
+      "top_tools": {
+       "quest.advance": 206,
+       "fight.join": 202,
+       "nav.goto": 176,
+       "farm.start": 41,
+       "inv.sell": 5
+      }
+     },
+     "foresight_gain": {
+      "states": 630,
+      "gain_capture": 0.975958,
+      "top1": 0.903175,
+      "top_tools": {
+       "quest.advance": 203,
+       "fight.join": 196,
+       "nav.goto": 177,
+       "farm.start": 41,
+       "inv.sell": 5,
+       "quest.list": 3
+      }
+     },
+     "linear": {
+      "states": 630,
+      "gain_capture": 0.97565,
+      "top1": 0.903175,
+      "top_tools": {
+       "quest.advance": 203,
+       "fight.join": 199,
+       "nav.goto": 177,
+       "farm.start": 41,
+       "inv.sell": 5,
+       "inv.list": 2
+      },
+      "leaves": 4
+     },
+     "tree": {
+      "states": 630,
+      "gain_capture": 0.976697,
+      "top1": 0.911111,
+      "top_tools": {
+       "quest.advance": 205,
+       "fight.join": 187,
+       "nav.goto": 183,
+       "farm.start": 41,
+       "inv.sell": 5,
+       "inv.list": 4
+      },
+      "leaves": 23
+     },
+     "gbdt": {
+      "states": 630,
+      "gain_capture": 0.973834,
+      "top1": 0.9,
+      "top_tools": {
+       "quest.advance": 206,
+       "fight.join": 202,
+       "nav.goto": 176,
+       "farm.start": 41,
+       "inv.sell": 5
+      },
+      "leaves": 310
+     }
+    },
+    {
+     "policy": {
+      "states": 662,
+      "gain_capture": 0.983946,
+      "top1": 0.92145,
+      "top_tools": {
+       "fight.join": 252,
+       "nav.goto": 225,
+       "quest.advance": 174,
+       "farm.start": 8,
+       "inv.sell": 3
+      }
+     },
+     "foresight_gain": {
+      "states": 662,
+      "gain_capture": 0.980956,
+      "top1": 0.913897,
+      "top_tools": {
+       "fight.join": 245,
+       "nav.goto": 224,
+       "quest.advance": 168,
+       "farm.start": 9,
+       "quest.list": 6,
+       "inv.sell": 3
+      }
+     },
+     "linear": {
+      "states": 662,
+      "gain_capture": 0.981125,
+      "top1": 0.915408,
+      "top_tools": {
+       "fight.join": 245,
+       "nav.goto": 224,
+       "quest.advance": 169,
+       "farm.start": 9,
+       "quest.list": 5,
+       "inv.sell": 3
+      },
+      "leaves": 4
+     },
+     "tree": {
+      "states": 662,
+      "gain_capture": 0.98437,
+      "top1": 0.925982,
+      "top_tools": {
+       "nav.goto": 262,
+       "fight.join": 222,
+       "quest.advance": 167,
+       "farm.start": 8,
+       "inv.sell": 3
+      },
+      "leaves": 23
+     },
+     "gbdt": {
+      "states": 662,
+      "gain_capture": 0.984454,
+      "top1": 0.922961,
+      "top_tools": {
+       "fight.join": 251,
+       "nav.goto": 225,
+       "quest.advance": 174,
+       "farm.start": 8,
+       "inv.sell": 3,
+       "inv.list": 1
+      },
+      "leaves": 315
+     }
+    }
+   ]
+  },
+  "selection": {
+   "chosen": "tree",
+   "reason": "highest mean cross-validated gain capture, then top1, then fewest leaves"
+  }
+ },
+ "provenance": {
+  "trained_at": "2026-10-27T20:51:17Z",
+  "corpus": {
+   "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\tool_sft_v3\\val.jsonl",
+   "sha256": "f1f76b0d86e8f262",
+   "bytes": 2581511
+  },
+  "cluster_corpus": {
+   "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\data\\tool_sft_v3\\train.jsonl",
+   "sha256": "b75722821c6ada9e",
+   "bytes": 11223340
+  },
+  "clusters": 4,
+  "shortlist": 6,
+  "policy": {
+   "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\models\\tool_policy.onnx",
+   "sha256": "807023112a4b5ab3",
+   "bytes": 199138
+  },
+  "policy_meta": {
+   "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\models\\tool_policy.json",
+   "sha256": "7d0eeca6b0df710d",
+   "bytes": 1024
+  },
+  "foresight": {
+   "path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\models\\foresight_v1\\foresight.json",
+   "sha256": "f1e8362f12816139",
+   "bytes": 695360
+  },
+  "split": "whole episodes, cross-validation",
+  "cv_folds": 5,
+  "seed": 17,
+  "states": 3719,
+  "episodes": 107,
+  "iters": 1600,
+  "l2": 0.02,
+  "tree_depth": 5,
+  "tree_min_leaf": 20,
+  "boosting_rounds": 40,
+  "boosting_depth": 3,
+  "boosting_min_leaf": 25,
+  "boosting_rate": 0.05,
+  "note": "Meta-rankers are cross-validated on whole episodes that were not used to fit either base model."
+ }
+}

@@ -1,0 +1,649 @@
+{
+ "train": {
+  "accuracy": 1.0,
+  "macro_f1": 1.0,
+  "ece": 0.0041,
+  "n": 1800,
+  "per_class": {
+   "none": {
+    "support": 225,
+    "recall": 1.0
+   },
+   "wrong_target": {
+    "support": 225,
+    "recall": 1.0
+   },
+   "stale_state": {
+    "support": 225,
+    "recall": 1.0
+   },
+   "incomplete": {
+    "support": 225,
+    "recall": 1.0
+   },
+   "invalid_assumption": {
+    "support": 225,
+    "recall": 1.0
+   },
+   "plan_wrong": {
+    "support": 225,
+    "recall": 1.0
+   },
+   "unavailable": {
+    "support": 225,
+    "recall": 1.0
+   },
+   "unknown": {
+    "support": 225,
+    "recall": 1.0
+   }
+  },
+  "confusion": [
+   [
+    225,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    225,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    225,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    225,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    225,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    225,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    225,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    225
+   ]
+  ]
+ },
+ "calib": {
+  "accuracy": 0.8725,
+  "macro_f1": 0.8634,
+  "ece": 0.0289,
+  "n": 400,
+  "per_class": {
+   "none": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "wrong_target": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "stale_state": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "incomplete": {
+    "support": 50,
+    "recall": 0.5
+   },
+   "invalid_assumption": {
+    "support": 50,
+    "recall": 0.98
+   },
+   "plan_wrong": {
+    "support": 50,
+    "recall": 0.5
+   },
+   "unavailable": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "unknown": {
+    "support": 50,
+    "recall": 1.0
+   }
+  },
+  "confusion": [
+   [
+    50,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    50,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    50,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    25,
+    0,
+    0,
+    0,
+    25
+   ],
+   [
+    0,
+    0,
+    1,
+    0,
+    49,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    23,
+    2,
+    0,
+    0,
+    25,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    50,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    50
+   ]
+  ]
+ },
+ "val": {
+  "accuracy": 0.855,
+  "macro_f1": 0.8573,
+  "ece": 0.0768,
+  "n": 400,
+  "per_class": {
+   "none": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "wrong_target": {
+    "support": 50,
+    "recall": 0.82
+   },
+   "stale_state": {
+    "support": 50,
+    "recall": 0.54
+   },
+   "incomplete": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "invalid_assumption": {
+    "support": 50,
+    "recall": 0.5
+   },
+   "plan_wrong": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "unavailable": {
+    "support": 50,
+    "recall": 0.98
+   },
+   "unknown": {
+    "support": 50,
+    "recall": 1.0
+   }
+  },
+  "confusion": [
+   [
+    50,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    41,
+    0,
+    0,
+    9,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    23,
+    27,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    50,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    22,
+    3,
+    0,
+    25,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    50,
+    0,
+    0
+   ],
+   [
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    49,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    50
+   ]
+  ]
+ },
+ "temperature": 1.15,
+ "majority_cause_baseline": {
+  "cause": "none",
+  "accuracy": 0.125
+ },
+ "best_calib_epoch": 30,
+ "split": "grouped_by_error_template",
+ "kind": "cause_head",
+ "labels": "constraint_synthetic (rule-distilled, live=false)",
+ "classes": [
+  "none",
+  "wrong_target",
+  "stale_state",
+  "incomplete",
+  "invalid_assumption",
+  "plan_wrong",
+  "unavailable",
+  "unknown"
+ ],
+ "features": 2118,
+ "train_rows": 1800,
+ "val_rows": 400,
+ "val_unseen_families": 16,
+ "train_families": 72,
+ "calib_rows": 400,
+ "gate_notes": "cause accuracy and ECE are measured on unseen error phrasings; the 'beats always continue on simulated regret' gate needs a repair-outcome simulator this corpus does not contain",
+ "mlp_val": {
+  "accuracy": 0.84,
+  "macro_f1": 0.8494,
+  "ece": 0.1029,
+  "n": 400,
+  "per_class": {
+   "none": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "wrong_target": {
+    "support": 50,
+    "recall": 0.72
+   },
+   "stale_state": {
+    "support": 50,
+    "recall": 0.68
+   },
+   "incomplete": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "invalid_assumption": {
+    "support": 50,
+    "recall": 0.5
+   },
+   "plan_wrong": {
+    "support": 50,
+    "recall": 1.0
+   },
+   "unavailable": {
+    "support": 50,
+    "recall": 0.82
+   },
+   "unknown": {
+    "support": 50,
+    "recall": 1.0
+   }
+  },
+  "confusion": [
+   [
+    50,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    36,
+    1,
+    0,
+    12,
+    0,
+    1,
+    0
+   ],
+   [
+    0,
+    16,
+    34,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    50,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    25,
+    0,
+    0,
+    25,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    50,
+    0,
+    0
+   ],
+   [
+    0,
+    9,
+    0,
+    0,
+    0,
+    0,
+    41,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    50
+   ]
+  ]
+ },
+ "ensemble": {
+  "weight": 0.5,
+  "temperature": 0.5,
+  "prototypes": "cause_head_prototypes.npz",
+  "k": 7,
+  "val": {
+   "accuracy": 0.855,
+   "macro_f1": 0.8573,
+   "ece": 0.0768,
+   "n": 400,
+   "per_class": {
+    "none": {
+     "support": 50,
+     "recall": 1.0
+    },
+    "wrong_target": {
+     "support": 50,
+     "recall": 0.82
+    },
+    "stale_state": {
+     "support": 50,
+     "recall": 0.54
+    },
+    "incomplete": {
+     "support": 50,
+     "recall": 1.0
+    },
+    "invalid_assumption": {
+     "support": 50,
+     "recall": 0.5
+    },
+    "plan_wrong": {
+     "support": 50,
+     "recall": 1.0
+    },
+    "unavailable": {
+     "support": 50,
+     "recall": 0.98
+    },
+    "unknown": {
+     "support": 50,
+     "recall": 1.0
+    }
+   },
+   "confusion": [
+    [
+     50,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     41,
+     0,
+     0,
+     9,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     23,
+     27,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     50,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     22,
+     3,
+     0,
+     25,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     0,
+     0,
+     50,
+     0,
+     0
+    ],
+    [
+     0,
+     1,
+     0,
+     0,
+     0,
+     0,
+     49,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     50
+    ]
+   ]
+  }
+ },
+ "prototypes_path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\models\\cause_head_prototypes.npz",
+ "onnx_parity_max_abs_diff": 9.5e-07,
+ "int8_path": "C:\\Users\\sao\\Documents\\dofus-emu\\dofus-network\\models\\cause_head_int8.onnx",
+ "retired": true,
+ "retired_reason": "features 2118 = 2048 hash + 25 tools + 8 flags + 5 causes + 32 markers, i.e. the 25-tool axis of its training run; the live registry is 28 tools (2121), so this head cannot be wired without retraining"
+}
