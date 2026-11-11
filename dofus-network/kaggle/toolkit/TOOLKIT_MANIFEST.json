@@ -671,9 +671,9 @@
       "missing": false,
       "path": "agent/weight_space.py",
       "source": "agent/weight_space.py",
-      "source_sha256": "7be73edf43880501a2865bb78766436bf13a7e15ee022238727364c94e40aca3",
+      "source_sha256": "614a326e28606c5152cb13502dbcdf8400f19d16b5b576914fb68c253bd4b44e",
       "status": "sync",
-      "toolkit_sha256": "7be73edf43880501a2865bb78766436bf13a7e15ee022238727364c94e40aca3"
+      "toolkit_sha256": "614a326e28606c5152cb13502dbcdf8400f19d16b5b576914fb68c253bd4b44e"
     },
     {
       "drift": false,
@@ -2665,7 +2665,7 @@
       "toolkit_sha256": "6ab3d0547e76d7d1d275270917d9f433488a65b01df2c3eaf2a0cd12d659b97b"
     }
   ],
-  "generated_at": "2026-11-11T19:50:16.569003+00:00",
+  "generated_at": "2026-11-11T19:57:34.776664+00:00",
   "generator": "tools/sync_kaggle_toolkit.py",
   "note": "pinned files are dataset-specific or legacy; a write never deletes or overwrites them"
 }

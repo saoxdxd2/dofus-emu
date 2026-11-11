@@ -868,6 +868,14 @@ def pin_provenance(path: Optional[Path] = None,
                              corpus_sha256=corpus["sha256"])
     metrics.pop("confusion_top", None)
     shipped = split_provenance(val)
+    # `split_provenance` reports a shipped report it cannot read as the string
+    # "unreadable (FileNotFoundError)". A clean clone has no
+    # models/tool_policy_report.json, and calling `.get` on that string raised
+    # AttributeError -- which took the whole suite down instead of recording one
+    # missing input. Keep the string as the note; it is the honest answer.
+    raw_report = shipped.get("base_report")
+    base_report = raw_report if isinstance(raw_report, dict) else {}
+    note = shipped.get("note") or (raw_report if isinstance(raw_report, str) else None)
     record = {
         "kind": "weight-space-provenance",
         "version": 1,
@@ -880,12 +888,11 @@ def pin_provenance(path: Optional[Path] = None,
         },
         "metrics": metrics,
         "shipped_report": {
-            "val_rows": shipped.get("base_report", {}).get("val_rows"),
-            "val_accuracy": shipped.get("base_report", {}).get("val_accuracy"),
-            "expected_gain_model":
-                shipped.get("base_report", {}).get("expected_gain_model"),
+            "val_rows": base_report.get("val_rows"),
+            "val_accuracy": base_report.get("val_accuracy"),
+            "expected_gain_model": base_report.get("expected_gain_model"),
             "comparable": shipped.get("comparable"),
-            "note": shipped.get("note"),
+            "note": note,
         },
     }
     Path(out).write_text(json.dumps(record, ensure_ascii=False, indent=2),
