@@ -48,6 +48,7 @@ userdata*.img
 *.lock
 *.iso
 *.7z
+*.pkl
 
 # Measured artifacts: large and reproducible from the dataset/training scripts
 /dofus-network/models/combat_grid/*.pkl

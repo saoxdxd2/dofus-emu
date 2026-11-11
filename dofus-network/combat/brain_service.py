@@ -42,6 +42,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from agent.bridge import opener_for
+
 REPO_ROOT = Path(__file__).resolve().parent.parent          # .../dofus-network
 BRAIN_SCRIPT = REPO_ROOT / "combat" / "combat_ai_server.py"
 BRAIN_PORT = int(os.environ.get("DOFUS_BRAIN_PORT", "8891"))
@@ -72,7 +74,12 @@ def brain_is_up(port: int = BRAIN_PORT, timeout: float = 1.0) -> Optional[str]:
     """
     target = "http://%s:%d/health" % (os.environ.get("DOFUS_BRAIN_HOST", "127.0.0.1"), int(port))
     try:
-        with urllib.request.urlopen(target, timeout=timeout) as response:
+        # `opener_for` is direct for a loopback target and the environment's opener
+        # otherwise. Without it, `urlopen` sends a loopback probe through HTTP_PROXY on any
+        # machine with a proxy client installed -- the request fails, `brain_is_up` answers
+        # None, and a live brain is declared dead and respawned (measured 2026-11-11:
+        # WinError 10054 through HTTP_PROXY=http://127.0.0.1:52004).
+        with opener_for(target).open(target, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8", "replace"))
     except (urllib.error.URLError, OSError, ValueError):
         return None
@@ -181,7 +188,8 @@ def brain_identity(port: int = BRAIN_PORT, timeout: float = 1.0) -> Optional[Dic
     """
     target = "http://%s:%d/health" % (os.environ.get("DOFUS_BRAIN_HOST", "127.0.0.1"), int(port))
     try:
-        with urllib.request.urlopen(target, timeout=timeout) as response:
+        # Same loopback/proxy reasoning as `brain_is_up` above.
+        with opener_for(target).open(target, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8", "replace"))
     except (urllib.error.URLError, OSError, ValueError):
         return None

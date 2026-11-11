@@ -2483,6 +2483,17 @@ def test_thinking_layer() -> None:
 def test_combat_suites() -> None:
     section("Combat suites (delegated, so '892 checks' includes them)")
     for module in ("combat.test_battle_solver", "combat.test_grid_model",
+                   # The encoder itself, which was missing from this list until
+                   # 2026-11-11 -- and a dead `0.0` fighter-feature slot survived
+                   # there unnoticed for as long as nothing ran its suite. The
+                   # model can only understand what the tensor carries.
+                   "combat.test_grid_dataset",
+                   # The trainer's input contract and loss. A corpus built for a
+                   # narrower encoder used to fail deep inside a jitted matmul,
+                   # and the loss silently changed from a hard label to a
+                   # distribution over the solver's tied-best set -- which makes
+                   # every older metric incomparable if it is ever misapplied.
+                   "combat.test_grid_train",
                    "combat.test_live_policy", "combat.test_normal_build_duel",
                    "combat.test_live_data", "combat.test_side_swap",
                    "combat.test_live_learn",
@@ -2495,7 +2506,34 @@ def test_combat_suites() -> None:
                    "agent.test_hunting",
                    # Which failure is this, and what fixed it last time. The net is
                    # allowed to have no opinion, and that path is most of the suite.
-                   "agent.test_problem_nn"):
+                   "agent.test_problem_nn",
+                   # The map as geometry rather than as twelve scalars: distance,
+                   # directed line of sight and reachability, each checked against
+                   # `CellMap`, which is the decoder the live client has been
+                   # exercised against.
+                   "combat.test_map_field",
+                   # The outcome-trained value and the one-step lookahead built on
+                   # it. Two failures it exists to catch already happened once: a
+                   # feature-width constant drifting from the encoder (a broadcast
+                   # error three frames inside a jitted matmul), and a value head
+                   # with no spread -- "inert" -- which made every value-vs-solver
+                   # duel measure the solver against itself.
+                   "combat.test_duel_value",
+                   # What a monster can actually cast. The live board sends an empty
+                   # spell list for every enemy, so without this the policy is asked
+                   # to avoid a reach nobody told it.
+                   "combat.test_monster_mech",
+                   # Wins, losses and draws kept apart, and a probability scored by
+                   # a proper rule. `network_win_rate: 0.4062` over 1 win and 157
+                   # draws is the score, not a win rate.
+                   "combat.test_outcome_stats",
+                   # A loopback probe must not be handed to HTTP_PROXY. This gate's own
+                   # `/health` check failed on 2026-11-11 with `WinError 10054` while the
+                   # brain was answering, because the probe went through the machine's
+                   # proxy -- and the same fault made `brain_is_up` declare a live brain
+                   # dead and respawn it. A false failure here accuses the product of the
+                   # harness's own fault, so the rule is a test, not a comment.
+                   "agent.test_bridge"):
         proc = subprocess.run([sys.executable, "-m", module], cwd=str(REPO_ROOT),
                               capture_output=True, text=True, timeout=300)
         text = (proc.stderr or "") + (proc.stdout or "")
@@ -8131,6 +8169,18 @@ def test_installed_payload_and_dependencies() -> None:
                                 cwd=str(REPO_ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True)
         import urllib.request
+        from agent.bridge import opener_for
+
+        # `urlopen` honours HTTP_PROXY from the environment, and on a machine running a VPN
+        # or a local proxy client that variable is set machine-wide. This probe asks a
+        # *loopback* port, so the request was sent through that proxy, which reset it, and
+        # the gate announced "the combat brain does not start on the interpreter that ships"
+        # while the brain was answering `status: ok` on that very port. Measured 2026-11-11:
+        # HTTP_PROXY=http://127.0.0.1:52004, `ConnectionResetError [WinError 10054]`, and the
+        # same probe hand-run with `--noproxy '*'` returned the full health body. A check that
+        # accuses the product of the harness's own fault is worse than no check.
+        health_url = "http://127.0.0.1:8899/health"
+        open_health = opener_for(health_url).open
 
         try:
             answered = None
@@ -8138,7 +8188,7 @@ def test_installed_payload_and_dependencies() -> None:
             for _wait in range(40):
                 time.sleep(1.5)
                 try:
-                    with urllib.request.urlopen("http://127.0.0.1:8899/health", timeout=4) as resp:
+                    with open_health(health_url, timeout=4) as resp:
                         answered = json.loads(resp.read().decode())
                         break
                 except Exception as exc:
@@ -8840,7 +8890,12 @@ def test_docs_command_blocks_state_their_directory() -> None:
     root = REPO_ROOT.parent
     docs = [root / "resume.md", root / "README.md", root / "rules.md",
             REPO_ROOT / "docs" / "CURRENT.md", REPO_ROOT / "docs" / "KNOWN_GAPS.md",
-            REPO_ROOT / "docs" / "AI_ARCHITECTURE.md"]
+            REPO_ROOT / "docs" / "AI_ARCHITECTURE.md",
+            # The onboarding document, added 2026-11-11. It exists to be the first thing a
+            # new session runs, so its six commands are the ones most likely to be copied
+            # by someone with no cwd of reference -- exactly the failure this rule was
+            # written for. It is a fenced block, not prose, for that reason.
+            REPO_ROOT / "docs" / "HANDOFF.md"]
     module_re = re.compile(r"python(?:3)?\s+(?:-\w+\s+)*-m\s+([A-Za-z0-9_.]+)")
     file_re = re.compile(r"(?:python(?:3)?|node|bash|sh)\s+(?:-\w+\s+)*([\w./-]+\.(?:py|js))")
     cd_re = re.compile(r"^\s*(?:cd|pushd)\s+(\S+)")
@@ -13045,13 +13100,23 @@ def test_brain_autostart() -> None:
             return False
 
     asked: Dict[str, Any] = {}
-    real_open = bs.urllib.request.urlopen
+    # The seam moved on 2026-11-11 and this test did not: `brain_is_up` now opens through
+    # `opener_for(target).open(...)` instead of `urllib.request.urlopen`, because a loopback
+    # probe sent through HTTP_PROXY fails (measured: WinError 10054 via
+    # HTTP_PROXY=http://127.0.0.1:52004) and a live brain was declared dead and respawned.
+    # Patching `urlopen` therefore intercepted nothing, `asked` never got a `url` key, and the
+    # suite died with KeyError instead of reporting the stale seam. Patch the opener.
+    real_opener_for = bs.opener_for
 
-    def fake_open(url, timeout=None):
-        asked["url"] = url
-        return _Resp(asked["payload"])
+    class _Opener:
+        def open(self, url, timeout=None):
+            asked["url"] = url
+            return _Resp(asked["payload"])
 
-    bs.urllib.request.urlopen = fake_open
+    def fake_opener_for(url):
+        return _Opener()
+
+    bs.opener_for = fake_opener_for
     try:
         asked["payload"] = {"status": "ok", "model": "encounter_ppo_pbt_actor"}
         check("a healthy brain is named by its checkpoint, which is the only proof "
@@ -13064,7 +13129,7 @@ def test_brain_autostart() -> None:
         check("a process that answers /health without 'ok' is not a brain",
               bs.brain_is_up(1234) is None, str(asked))
     finally:
-        bs.urllib.request.urlopen = real_open
+        bs.opener_for = real_opener_for
 
     # -- interpreter choice ---------------------------------------------------
     import os
@@ -15426,11 +15491,19 @@ def test_group_refusal_routing() -> None:
     # `summary()` is the last call a run makes, and it now reads the policy. A shim with no
     # runtime must still produce it: the gate caught exactly this as an AttributeError on the
     # first version, and a crash here would throw away the measurement criterion 5 depends on.
+    #
+    # It happened a second time, on 2026-11-11: `summary()` grew `self._fight_summary()` and this
+    # shim did not, so the suite died with AttributeError instead of reporting anything. The
+    # lesson is that a hand-built shim is a *contract* with `summary()` and has to be extended
+    # whenever `summary()` reads a new attribute. `lambda: {}` is not a dodge: it is exactly what
+    # the real method returns for an object with no `fight_log` ("an empty dict is the honest
+    # answer when there is nothing to report").
     shim = SimpleNamespace(
         controller=SimpleNamespace(save=lambda force=False: None, stats=lambda: {}),
         session=1, _step_total=0, _verdict_counts={}, _promise_counts={}, _source_counts={}, replan_requested=0,
         _intervention_total=0, _recoveries=0, _recoveries_ok=0, _recovery_wait_s=0.0,
         _waits=0, _dialogs=0, _dialog_stalls=0, _brain={}, _listing_total=0,
+        _fight_summary=lambda: {},
         log_path="gate", _last_step_at=0.0, _first_step_at=0.0)
     bare = Autopilot.summary(shim, "gate")
     check("a summary from a policy it cannot reach still closes the run",

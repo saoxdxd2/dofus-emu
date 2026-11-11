@@ -141,6 +141,81 @@ def _cell_distance(first: int, second: int) -> float:
 
 
 # ---------------------------------------------------------------------------
+# the client's own spellbook, read back from recorded fights
+# ---------------------------------------------------------------------------
+
+_CORPUS_REACH: Optional[Dict[str, Optional[int]]] = None
+
+
+def _corpus_reach(name: Optional[str], level: Any) -> Optional[int]:
+    """How far a named monster reaches, from the recorded fights, or ``None``.
+
+    Loaded once: `from_live_corpus` walks the board corpus, while `_profile` runs
+    once per enemy per priced cell, so a scan inside this function would turn one
+    decision into thousands of file reads.
+
+    Every failure returns ``None`` on purpose. This is an optional refinement of a
+    prior that already works, so a missing corpus, an unreadable file or an unknown
+    monster must all fall through to the prior rather than break a live decision --
+    a fight that cannot price its cells has no fallback at all.
+    """
+    global _CORPUS_REACH
+    if _CORPUS_REACH is None:
+        _CORPUS_REACH = {}
+        try:
+            from combat.monster_mech import MonsterMechanics
+            table = MonsterMechanics.from_live_corpus()
+        except (OSError, ValueError, ImportError):
+            table = None
+        if table is not None:
+            # `reach` takes a monster *reference* and keys it itself, so it must be
+            # handed the name, not the table's already-prefixed key. The loop variable
+            # is `grade_level` and not `level`: it shadowed the parameter, so the
+            # lookup below was keyed on whichever grade happened to be visited last
+            # (`Ayin Spyr` at 50) and every other monster missed.
+            for entry in getattr(table, "_monsters", {}).values():
+                label = str(entry.get("name") or "").strip().lower()
+                for grade in entry.get("grades") or ():
+                    grade_level = grade.get("level") or 1
+                    reach = table.reach(entry.get("name"), grade_level)
+                    if reach is not None and label:
+                        _CORPUS_REACH["%s@%s" % (label, grade_level)] = reach
+    if not name:
+        return None
+    return _CORPUS_REACH.get("%s@%s" % (str(name).strip().lower(), int(level or 1)))
+
+
+def reach_of(fighter: Any, memory: Optional["ThreatMemory"] = None) -> Optional[int]:
+    """How far this fighter can damage in one turn, in the order the price uses.
+
+    Board spells first (the client published them, so they are exact), then the
+    learned range once there is a pattern behind it, then the corpus, then the
+    level prior. ``None`` only when the fighter is not a threat at all.
+
+    This exists so the encoder and the price cannot disagree: `_fighters` in
+    `combat/grid_dataset` writes this into a feature slot that used to be a
+    hardcoded zero, and `ThreatModel._profile` prices cells from the same
+    decision. Two copies of this ladder would drift, and the drift would look
+    like a policy that walks into a reach the price already knew about.
+    """
+    mp = max(0, int(getattr(fighter, "mp", 0) or 0))
+    known = [s for s in (getattr(fighter, "spells", None) or ())
+             if getattr(s, "has_damage", False) and getattr(s, "castable", False)]
+    if known:
+        return int(max(int(s.max_range) for s in known) + mp)
+    row = memory.profile(getattr(fighter, "name", None)) if memory is not None else None
+    if row is not None:
+        seen = float(row.get("range", 0.0))
+        if float(row.get("samples", 0.0)) >= RANGE_SAMPLES and seen > 0:
+            return int(min(seen, PRIOR_RANGE + RANGE_SLACK) + mp)
+    observed = _corpus_reach(getattr(fighter, "name", None),
+                             getattr(fighter, "level", 1))
+    if observed is not None:
+        return int(observed)
+    return PRIOR_RANGE + mp
+
+
+# ---------------------------------------------------------------------------
 # learned per-monster damage
 # ---------------------------------------------------------------------------
 
@@ -355,6 +430,21 @@ class ThreatModel:
                 # through obstacles, which is the *safer* assumption: it keeps
                 # cover from being priced as free.
                 requires_los=False, source="learned", mp=mp)
+        # The client's own spellbook, read back out of the fights already recorded
+        # (`monster_mech.from_live_corpus`). This is the only step whose reach is
+        # *observed* rather than inferred: the client states the spell's range and the
+        # fighter's MP. Measured on the recorded corpus, `Merkaptan Leader` -- a
+        # level-5 monster with 0 MP -- reaches ten cells, where the level prior below
+        # assumed five. Only the reach is taken from here; the payload's damage scale
+        # could not be verified against a measured hit, so damage keeps its prior.
+        observed = _corpus_reach(fighter.name, fighter.level)
+        if observed is not None:
+            level = max(1, int(fighter.level or 1))
+            return EnemyThreat(
+                fighter_id=fighter.id, name=fighter.name, cell=fighter.cell,
+                damage=max(PRIOR_MIN_DAMAGE, level * PRIOR_DAMAGE_PER_LEVEL),
+                reach=int(observed), hits=1, requires_los=False,
+                source="corpus", mp=mp)
         level = max(1, int(fighter.level or 1))
         return EnemyThreat(
             fighter_id=fighter.id, name=fighter.name, cell=fighter.cell,

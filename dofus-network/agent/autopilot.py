@@ -4020,6 +4020,11 @@ class Autopilot:
             "group_refusals": dict(getattr(policy, "_group_refusals", {}) or {}),
             "group_read_broken": bool(getattr(policy, "_group_read_broken", False)),
             "controller": self.controller.stats(),
+            # What the fights actually did. Reported as wins/losses/draws/open with
+            # a Wilson interval, because the session used to have no fight verdict
+            # at all: `wins / fights` is unreadable at 13 of 13, and a fight the
+            # session abandoned is neither a win nor a draw.
+            "fights": self._fight_summary(),
             "open_listings": self._listing_total,
             "log": str(self.log_path),
             "elapsed_s": (round(self._last_step_at - self._first_step_at, 1)
@@ -4027,7 +4032,32 @@ class Autopilot:
         }
         print(f"[autopilot] done: {reason} | {self._verdict_counts} | "
               f"{self._listing_total} open listing(s)")
+        fights = data.get("fights") or {}
+        if fights.get("games") or fights.get("unresolved"):
+            print(f"[autopilot] fights: {self._fight_line()}")
         return data
+
+    def _fight_summary(self) -> Dict[str, Any]:
+        """This session's fights, from the outcome log. Never raises.
+
+        `summary()` is what ends a run, and a missing or half-written log must not
+        turn the end of a session into a traceback. An empty dict is the honest
+        answer when there is nothing to report.
+        """
+        log = getattr(self, "fight_log", None)
+        if log is None or not hasattr(log, "summary"):
+            return {}
+        try:
+            return dict(log.summary())
+        except Exception:  # noqa: BLE001 - a report must not fail a shutdown
+            return {}
+
+    def _fight_line(self) -> str:
+        log = getattr(self, "fight_log", None)
+        try:
+            return log.line() if log is not None else "no fight log"
+        except Exception:  # noqa: BLE001
+            return "unreadable"
 
     def _remembered_call(self, before: Any, goal: str) -> Optional["ToolCall"]:
         """The call that advanced this exact situation before, if replaying it is safe.

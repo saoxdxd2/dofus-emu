@@ -106,6 +106,8 @@ def run_matchup(cells, solver: BattleSolver, boss: str, policy_name: str,
     else:
         player_policy = solver_policy
     wins = 0
+    losses = 0
+    draws = 0
     rounds: List[int] = []
     hp_left: List[float] = []
     played = 0
@@ -119,15 +121,34 @@ def run_matchup(cells, solver: BattleSolver, boss: str, policy_name: str,
         state, _records = play_game(state, policies, solver, rng, k=6)
         player = state.by_id(1)
         won = state.winner == 1 and player.alive
-        wins += 1 if won else 0
+        if won:
+            wins += 1
+        elif state.winner == 2:
+            losses += 1
+        else:
+            draws += 1
         rounds.append(state.turns)
         hp_left.append(max(0.0, player.hp) / max(1.0, player.max_hp))
+    # `wins / played` is a real rate here (draws are in the denominator), but on
+    # its own it cannot be read: 3/10 could be three wins and seven losses, or
+    # three wins and seven fights nobody finished. The interval and the split say
+    # which, and the decided rate answers "when it ends, does it end in a win".
+    from combat.outcome_stats import Tally, wilson_interval
+
+    tally = Tally(wins=wins, losses=losses, draws=draws)
+    low, high = wilson_interval(wins, played)
     return {
         "boss": boss,
         "policy": policy_name,
         "games": played,
         "wins": wins,
+        "losses": losses,
+        "draws": draws,
         "win_rate": round(wins / played, 3) if played else None,
+        "win_rate_ci95": [round(low, 3), round(high, 3)] if played else None,
+        "win_rate_decided": (round(tally.win_rate, 3)
+                             if tally.win_rate is not None else None),
+        "draw_rate": round(tally.draw_rate, 3),
         "mean_turns": round(sum(rounds) / len(rounds), 2) if rounds else None,
         "mean_hp_left": round(sum(hp_left) / len(hp_left), 3) if hp_left else None,
     }
@@ -152,8 +173,10 @@ def run(args: argparse.Namespace) -> int:
             row = run_matchup(cells, solver, boss, policy, args.games, args.seed,
                               model=model)
             rows.append(row)
-            print("%-18s %-8s wins %2d/%-2d (%s) turns %s hp_left %s"
-                  % (boss, policy, row["wins"], row["games"], row["win_rate"],
+            print("%-18s %-8s wins %2d/%-2d (%.2f, ci %s) lost %d drew %d turns %s hp_left %s"
+                  % (boss, policy, row["wins"], row["games"],
+                     row.get("win_rate") or 0.0, row.get("win_rate_ci95"),
+                     row.get("losses") or 0, row.get("draws") or 0,
                      row["mean_turns"], row["mean_hp_left"]))
     verdict: Dict[str, Any] = {"matchups": rows,
                                "seconds": round(time.time() - started, 1)}

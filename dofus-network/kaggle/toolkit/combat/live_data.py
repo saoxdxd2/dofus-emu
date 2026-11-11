@@ -180,10 +180,25 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
                 if fighter.get("team") != "enemy":
                     continue
                 creature_id = fighter.get("creature_generic_id")
-                if not creature_id:
-                    continue
-                entry = monsters.setdefault(int(creature_id), {
-                    "creature_generic_id": int(creature_id),
+                if creature_id:
+                    slot = int(creature_id)
+                else:
+                    # The client has never sent a species id: measured on the 333
+                    # recorded boards, `creature_generic_id` is null for all 1,396
+                    # enemy fighters. Requiring it threw away the 287 that *do*
+                    # carry their spell list, so this extractor reported zero
+                    # monsters over a corpus that contains some.
+                    #
+                    # The name is the only identity a board offers, and it is
+                    # written with a `name:` prefix so it can never be mistaken
+                    # for a numeric id once the client starts sending those.
+                    label = str(fighter.get("name") or "").strip()
+                    if not label:
+                        continue
+                    slot = "name:%s" % label
+                entry = monsters.setdefault(slot, {
+                    "creature_generic_id": int(creature_id) if creature_id else None,
+                    "key": slot,
                     "names": set(),
                     "levels": set(),
                     "is_boss": False,

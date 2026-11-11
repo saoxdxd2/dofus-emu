@@ -96,9 +96,19 @@ python -m combat.grid_dataset --out data\combat_grid_live
 
 `actionable` is the count that decides whether GPU time is worth spending. Today it is 3.
 The gates in front of it are named in the output (`not_my_turn`, `pass_only`,
-`tied_top_plan`), so the next fix follows from whichever one is largest rather than from a
+`tied_boards`), so the next fix follows from whichever one is largest rather than from a
 guess. A corpus worth training on needs engagements where the solver has at least two
 non-pass options — that is a property of *which mobs are fought*, not of the trainer.
+
+`tied_boards` used to be a rejection bucket (`tied_top_plan`) and it was the largest one by
+far: measured on 2026-11-11, the solver is indifferent on 2795 of 3996 live boards and 699
+of 783 duel boards, because a turn's damage often does not depend on the cell the cast is
+made from. Rejecting those left 159 rows from a file that had once produced 1318, which is
+why the ranker could not be refitted. A tie is a statement, not noise, so it is now carried
+as a *uniform target over the winning set* and the trainer minimises cross-entropy against
+it. `mean_best_set` in the manifest is how large that set is; `uniform_guess_floor` is the
+`top1` a random pick from it would score, and it is the baseline any reported `top1` has to
+beat.
 
 ## What would falsify all of this
 

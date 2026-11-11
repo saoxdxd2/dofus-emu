@@ -16,7 +16,12 @@ class GridModelTests(unittest.TestCase):
         count = grid_model.param_count(params)
         self.assertGreaterEqual(count, 28_000_000)
         self.assertLessEqual(count, 34_000_000)
-        self.assertEqual(count, 30_766_081)
+        # 30,766,081 was the count with CELL_FEATS=12. The encoder gained two
+        # spatial channels on 2026-11-11 -- enemy coverage and reachable-this-turn
+        # -- which is exactly 2 * hidden = 2 * 768 = 1,536 more inputs to
+        # `cell_in`. Any other movement here means the architecture changed and
+        # the shipped checkpoint no longer matches it.
+        self.assertEqual(count, 30_767_617)
 
     def test_forward_shapes_are_finite(self):
         params = grid_model.init_params(

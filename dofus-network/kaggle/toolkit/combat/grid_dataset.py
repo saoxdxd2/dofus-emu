@@ -27,6 +27,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
+from combat import threat
 from combat.battle_solver import (NB_CELLS, BattleSolver, Board, Fighter,
                                   cell_point)
 from combat.grid_model import (CELL_FEATS, FIGHTER_FEATS, MAX_FIGHTERS,
@@ -62,6 +63,31 @@ def _resist(fighter: Fighter, name: str) -> float:
 
 
 def _cells(board: Board, me: Fighter) -> np.ndarray:
+    """The 560-cell spatial tensor: what each cell *is* and what it *exposes*.
+
+    Two channels were added on 2026-11-11 because the tensor could describe the
+    map but not the fight on it. Before that, the only positional channels were
+    ``los_from_me`` and ``distance`` -- so the model could see whether it could
+    cast at a cell, and never whether standing there got it hit. A monster's
+    reach lives in the fighter tensor (slot 18), and without a per-cell coverage
+    channel the two could not be combined.
+
+        index 11  covered_by_enemy   a living enemy has line of sight to this
+                                     cell and can reach it -- i.e. standing here
+                                     invites damage. LOS is directed (measured:
+                                     the client's own `getLine` is
+                                     origin-exclusive, and 5.8% of sampled pairs
+                                     disagree with their reverse), so this cannot
+                                     be derived from `los_from_me`.
+        index 12  reachable_now      inside the character's MP budget this turn.
+                                     `walkable` is not the same statement: a
+                                     walkable cell nine MP away is not somewhere
+                                     the character can stand and still act.
+
+    The coordinate channels were also wrong: x and y were divided by 20 while the
+    grid spans x 0-32 and y 0-33, so they reached 1.6 and 1.65 -- outside the
+    [0, 1] every other channel is written in.
+    """
     out = np.zeros((NB_CELLS, CELL_FEATS), dtype=np.float32)
     by_cell: Dict[int, int] = {}
     for fighter in board.fighters:
@@ -69,6 +95,29 @@ def _cells(board: Board, me: Fighter) -> np.ndarray:
             continue
         by_cell[fighter.cell] = 1 if fighter.team == me.team else -1
     occupied = frozenset(by_cell)
+
+    # Coverage is computed once per enemy cell, not once per (enemy, cell) pair
+    # inside the loop: `has_los` walks the line, and 560 of those per enemy per
+    # board is the whole cost of this function (measured 2.1 ms per enemy).
+    threats = []
+    for fighter in board.fighters:
+        if fighter.team == me.team or not fighter.alive or fighter.cell is None:
+            continue
+        reach = threat.reach_of(fighter) or 0
+        threats.append((fighter.cell, reach))
+    covered = np.zeros(NB_CELLS, dtype=np.float32)
+    for enemy_cell, reach in threats:
+        for cell in range(NB_CELLS):
+            if covered[cell]:
+                continue
+            if board.cells.distance(enemy_cell, cell) > reach:
+                continue
+            if board.cells.has_los(enemy_cell, cell, occupied):
+                covered[cell] = 1.0
+
+    movable = (board.cells.reachable(me.cell, me.mp, occupied)
+               if me.cell is not None else {})
+
     for cell in range(NB_CELLS):
         flags = board.cells.flags[cell] if board.cells.flags else 0
         walkable = board.cells.walkable(cell)
@@ -83,11 +132,13 @@ def _cells(board: Board, me: Fighter) -> np.ndarray:
             float(by_cell.get(cell, 0)),
             1.0 if cell == me.cell else 0.0,
             0.0 if distance is None else min(1.0, distance / 30.0),
-            x / 20.0,
-            y / 20.0,
+            x / 32.0,
+            y / 33.0,
             1.0 if walkable and not by_cell.get(cell) else 0.0,
             1.0 if flags & 4 else 0.0,
             1.0 if flags & 8 else 0.0,
+            float(covered[cell]),
+            1.0 if cell in movable else 0.0,
         ], dtype=np.float32)
     return out
 
@@ -119,29 +170,38 @@ def _fighters(board: Board, me: Fighter) -> Tuple[np.ndarray, np.ndarray]:
             y / 20.0,
             0.0 if distance is None else min(1.0, distance / 30.0),
             1.0 if fighter.team == me.team and fighter.id == me.id else 0.0,
-            0.0,
+            # How far this fighter can damage in one turn, /30 like the distance
+            # above. This slot was a hardcoded 0.0 until 2026-11-11, so the encoder
+            # could see the distance to an enemy and never its reach: a monster 6
+            # cells away with 5 MP and range 6 read exactly like a melee one, and
+            # the policy had no input that could tell them apart. Filling it cannot
+            # disturb an existing checkpoint -- a constant-zero input has no gradient,
+            # so every weight trained against it is still at its init and the term
+            # contributes nothing until the net is retrained.
+            (0.0 if fighter.team == me.team
+             else min(1.0, (threat.reach_of(fighter) or 0) / 30.0)),
             1.0 if fighter.team != me.team and fighter.alive else 0.0,
         ], dtype=np.float32)
     return out, mask
 
 
-def _plans(board: Board, plans: Optional[List[Any]] = None,
-           permutation_key: str = "") -> Tuple[np.ndarray, np.ndarray, np.ndarray, int, List[str], bool, str]:
-    """Build candidate tensors in a board-stable random candidate order.
+def plan_rows(board: Board, plans: Optional[List[Any]] = None
+              ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:
+    """Feature rows for these plans, in the order they were given.
 
-    `plan_candidates` returns plans already sorted by solver score. Writing those rows verbatim
-    makes every CE label zero and lets "always choose row 0" score 100%. Candidate order is shuffled
-    and boards without one unique best plan are rejected: a random tie-break would teach noise.
+    Deliberately *not* `_plans`. That function exists for training and does two
+    things that are right there and wrong here: it shuffles the candidates so a
+    label cannot be learned from row order, and it rejects a board whose best plan
+    is tied. At inference a shuffle attaches every score to the wrong plan, and a
+    rejection returns nothing to rank at all.
+
+    The split matters because the two drifted: `grid_infer._padded` called `_plans`
+    and unpacked five values from a seven-tuple, so the ranker raised on every call
+    and `live_policy` swallowed it -- the trained grid policy never scored a plan.
     """
-    empty = (np.zeros((0, PLAN_FEATS), np.float32), np.zeros((0,), bool),
-             np.zeros((0,), np.float32), 0, [], False)
     if plans is None:
         plans = BattleSolver(beam_width=16).plan_candidates(board, MAX_PLANS)
     plans = list(plans)
-    action_plans = [plan for plan in plans
-                    if plan.actions and plan.actions[0].kind != "pass"]
-    if len(action_plans) <= 1:
-        return (*empty, "pass_only")
     out = np.zeros((MAX_PLANS, PLAN_FEATS), dtype=np.float32)
     mask = np.zeros((MAX_PLANS,), dtype=bool)
     scores = np.zeros((MAX_PLANS,), dtype=np.float32)
@@ -174,11 +234,49 @@ def _plans(board: Board, plans: Optional[List[Any]] = None,
         ], dtype=np.float32)
         scores[index] = float(plan.score)
         notes.extend(plan.notes)
+    return out, mask, scores, notes
+
+
+def _plans(board: Board, plans: Optional[List[Any]] = None,
+           permutation_key: str = "") -> Tuple[np.ndarray, np.ndarray, np.ndarray,
+                                               np.ndarray, List[str], bool, str]:
+    """Candidate tensors, a board-stable shuffle, and a *soft* label.
+
+    `plan_candidates` returns plans already sorted by solver score, so writing the rows
+    verbatim makes every CE label zero and lets "always choose row 0" score 100%. The
+    candidate order is therefore shuffled with a seed derived from the board.
+
+    The label is a distribution, not an index. This function used to reject any board
+    whose best plan was tied, on the grounds that a random tie-break teaches noise. The
+    premise was right and the remedy was catastrophic: measured on 2026-11-11, the solver
+    is indifferent on 96% of boards (2795 tied out of 3996 from live boards; 699 of 783
+    from duels), because a turn's damage often does not depend on which cell the cast is
+    made from. Rejecting those boards threw away almost the entire corpus -- the shipped
+    set had 1318 rows when it was built and the same file yields 159 today -- and left
+    the ranker starving for exactly the map variety it needed.
+
+    A tied set is not noise, it is a *statement*: these plans are equally good. So it
+    becomes a uniform target over the winners, and the trainer minimises cross-entropy
+    against that distribution. Plans outside the winning set get zero mass; plans inside
+    it are interchangeable, which is what the solver actually said. Nothing is invented
+    and nothing is discarded.
+    """
+    empty = (np.zeros((0, PLAN_FEATS), np.float32), np.zeros((0,), bool),
+             np.zeros((0,), np.float32), np.zeros((0,), np.float32), [], False)
+    if plans is None:
+        plans = BattleSolver(beam_width=16).plan_candidates(board, MAX_PLANS)
+    plans = list(plans)
+    action_plans = [plan for plan in plans
+                    if plan.actions and plan.actions[0].kind != "pass"]
+    if len(action_plans) <= 1:
+        # One non-pass plan is not a choice. Not a tie: there is nothing to rank.
+        return (*empty, "pass_only")
+    out, mask, scores, notes = plan_rows(board, plans)
     count = min(MAX_PLANS, len(plans))
     legal_scores = scores[:count]
-    best = int(np.argmax(legal_scores))
-    if int(np.sum(legal_scores == legal_scores[best])) > 1:
-        return (*empty, "tied_top_plan")
+    winners = np.flatnonzero(legal_scores == legal_scores.max())
+    target = np.zeros((MAX_PLANS,), dtype=np.float32)
+    target[winners] = 1.0 / float(len(winners))
     permuted = False
     if count > 1:
         seed = int(hashlib.sha256(permutation_key.encode("utf-8")).hexdigest()[:16], 16)
@@ -187,14 +285,15 @@ def _plans(board: Board, plans: Optional[List[Any]] = None,
         rows = np.zeros_like(out)
         shuffled_scores = np.zeros_like(scores)
         shuffled_mask = np.zeros_like(mask)
+        shuffled_target = np.zeros_like(target)
         for new_index, old_index in enumerate(order):
             rows[new_index] = out[old_index]
             shuffled_scores[new_index] = scores[old_index]
             shuffled_mask[new_index] = mask[old_index]
-        out, scores, mask = rows, shuffled_scores, shuffled_mask
+            shuffled_target[new_index] = target[old_index]
+        out, scores, mask, target = rows, shuffled_scores, shuffled_mask, shuffled_target
         permuted = True
-    label = int(np.argmax(scores[:count]))
-    return out, mask, scores, label, notes, permuted, ""
+    return out, mask, scores, target, notes, permuted, ""
 
 
 def build(rows: Iterable[Dict[str, Any]]) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
@@ -205,9 +304,11 @@ def build(rows: Iterable[Dict[str, Any]]) -> Tuple[Dict[str, np.ndarray], Dict[s
     plans: List[np.ndarray] = []
     plan_masks: List[np.ndarray] = []
     scores: List[np.ndarray] = []
+    targets: List[np.ndarray] = []
     labels: List[int] = []
     groups: List[str] = []
     stats = Counter()
+    best_sizes: List[int] = []
     permutation_count = 0
     for payload_index, payload in enumerate(rows):
         stats["boards"] += 1
@@ -226,7 +327,7 @@ def build(rows: Iterable[Dict[str, Any]]) -> Tuple[Dict[str, np.ndarray], Dict[s
         group = "%s:%s:%s:%s" % (payload_index, payload.get("fight_id") or "fight",
                                  payload.get("round") or 0,
                                  payload.get("my_cell") or payload.get("my_id") or "cell")
-        plan_rows, plan_mask, plan_scores, label, notes, permuted, skip_reason = _plans(board, permutation_key=group)
+        plan_rows, plan_mask, plan_scores, target, notes, permuted, skip_reason = _plans(board, permutation_key=group)
         if skip_reason:
             stats[skip_reason] += 1
             continue
@@ -244,9 +345,13 @@ def build(rows: Iterable[Dict[str, Any]]) -> Tuple[Dict[str, np.ndarray], Dict[s
         plans.append(plan_rows)
         plan_masks.append(plan_mask)
         scores.append(plan_scores)
-        labels.append(int(label))
+        targets.append(target)
+        labels.append(int(np.argmax(target)))
         groups.append(group)
         stats["actionable"] += 1
+        best_sizes.append(int(np.count_nonzero(target)))
+        if best_sizes[-1] > 1:
+            stats["tied_boards"] += 1
         if permuted:
             permutation_count += 1
         if notes:
@@ -260,6 +365,12 @@ def build(rows: Iterable[Dict[str, Any]]) -> Tuple[Dict[str, np.ndarray], Dict[s
     label_values = np.asarray(labels)
     distribution = np.bincount(label_values, minlength=MAX_PLANS).tolist()
     floor = float(max(distribution) / len(cells))
+    # With a soft label the "always pick row 0" baseline is no longer the argmax
+    # frequency: a tied board gives row 0 mass 1/k for a random k, so the argmax
+    # is spread by the shuffle and the floor falls towards 1/MAX_PLANS. The
+    # honest description of the corpus is how large the winning sets are, and
+    # that is what a uniform-guess baseline has to be compared against.
+    mean_best = float(np.mean(best_sizes)) if best_sizes else 1.0
     verdict = "actionable"
     if permutation_count > len(cells) // 2 and len(set(labels)) < 2:
         verdict = "degenerate candidate order: labels do not vary; rerun corpus generation"
@@ -271,6 +382,7 @@ def build(rows: Iterable[Dict[str, Any]]) -> Tuple[Dict[str, np.ndarray], Dict[s
         "plans": np.stack(plans).astype(np.float32),
         "plan_mask": np.stack(plan_masks),
         "scores": np.stack(scores).astype(np.float32),
+        "targets": np.stack(targets).astype(np.float32),
         "labels": label_values,
         "groups": np.asarray(groups),
     }, {
@@ -279,6 +391,8 @@ def build(rows: Iterable[Dict[str, Any]]) -> Tuple[Dict[str, np.ndarray], Dict[s
         "permuted_boards": permutation_count,
         "label_distribution": distribution,
         "majority_label_floor": floor,
+        "mean_best_set": mean_best,
+        "uniform_guess_floor": 1.0 / mean_best if mean_best > 0 else 1.0,
         "verdict": verdict,
     })
 

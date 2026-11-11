@@ -512,5 +512,85 @@ class LogObserverTests(unittest.TestCase):
             self.assertEqual(observer.observe(None), 0)
 
 
+class CorpusReachTests(unittest.TestCase):
+    """The reach the client stated, replacing the one this module assumed.
+
+    `combat/monster_mech` can read a monster's spellbook back out of the fights
+    already recorded, and `_profile` consults it between the board's own spell
+    list and the level prior. These tests pin that order and the price it
+    produces, because a prior that is half the real reach tells the policy a
+    fight is safe at a distance the monster hits from -- which is the complaint
+    this whole module exists to answer.
+    """
+
+    def setUp(self):
+        # The table is a process-wide cache built on first use; reset it so a
+        # test that stubs it cannot leak into the next one.
+        self._saved = threat._CORPUS_REACH
+        threat._CORPUS_REACH = None
+
+    def tearDown(self):
+        threat._CORPUS_REACH = self._saved
+
+    def test_the_lookup_is_case_insensitive_and_level_exact(self):
+        threat._CORPUS_REACH = {"merkaptan leader@5": 10}
+        self.assertEqual(threat._corpus_reach("Merkaptan Leader", 5), 10)
+        self.assertEqual(threat._corpus_reach("MERKAPTAN LEADER", 5), 10)
+        self.assertIsNone(threat._corpus_reach("Merkaptan Leader", 6))
+        self.assertIsNone(threat._corpus_reach("", 5))
+        self.assertIsNone(threat._corpus_reach(None, 5))
+
+    def test_a_monster_in_the_corpus_is_priced_from_its_own_spellbook(self):
+        threat._CORPUS_REACH = {"merkaptan leader@5": 10}
+        board = board_with([me(cell=cell(20, 20)),
+                            monster(name="Merkaptan Leader", level=5, mp=0,
+                                    cell=cell(20, 23))])
+        model = threat.build(board, memory=threat.ThreatMemory())
+        self.assertEqual(len(model.enemies), 1)
+        self.assertEqual(model.enemies[0].source, "corpus")
+        self.assertEqual(model.enemies[0].reach, 10)
+
+    def test_a_monster_outside_the_corpus_keeps_the_level_prior(self):
+        threat._CORPUS_REACH = {}
+        board = board_with([me(cell=cell(20, 20)),
+                            monster(name="Nobody", level=8, mp=3, cell=cell(20, 23))])
+        model = threat.build(board, memory=threat.ThreatMemory())
+        self.assertEqual(model.enemies[0].source, "prior")
+        self.assertEqual(model.enemies[0].reach, threat.PRIOR_RANGE + 3)
+
+    def test_the_corpus_reach_costs_more_than_the_prior_did(self):
+        """The price, not just the field: a cell eight from the monster is not free."""
+        foe_cell = cell(20, 23)
+        target = away(foe_cell, 8)          # inside reach 10, outside the prior 5
+        board = board_with([me(cell=cell(20, 20)),
+                            monster(name="Merkaptan Leader", level=5, mp=0,
+                                    cell=foe_cell)])
+        threat._CORPUS_REACH = {}
+        cheap = threat.build(board, memory=threat.ThreatMemory()).at(target)
+        threat._CORPUS_REACH = {"merkaptan leader@5": 10}
+        dear = threat.build(board, memory=threat.ThreatMemory()).at(target)
+        self.assertEqual(cheap, 0.0, "the prior reach of 5 should not cover a cell 8 away")
+        self.assertGreater(dear, 0.0, "a reach of 10 must cover a cell 8 away")
+
+    def test_a_corpus_that_cannot_be_read_falls_through_to_the_prior(self):
+        """A refinement of a working prior must never break the decision."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def refuse(name, *args, **kwargs):
+            if name == "combat.monster_mech":
+                raise ImportError("pretend the corpus is unreadable")
+            return real_import(name, *args, **kwargs)
+
+        threat._CORPUS_REACH = None
+        builtins.__import__ = refuse
+        try:
+            self.assertIsNone(threat._corpus_reach("Merkaptan Leader", 5))
+            self.assertEqual(threat._CORPUS_REACH, {})
+        finally:
+            builtins.__import__ = real_import
+
+
 if __name__ == "__main__":
     unittest.main()

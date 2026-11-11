@@ -1,19 +1,32 @@
 # Docs map
 
-Sixteen documents in `dofus-network/docs/` besides this map. The benchmark/eval JSON the
+Twenty documents in `dofus-network/docs/` besides this map. The benchmark/eval JSON the
 architecture docs cite live in `dofus-network/docs/benchmarks/`; those are data, not documentation.
+
+**New session? Read `HANDOFF.md` first.** It is the only document written to be sufficient on its
+own: what the project is, how to verify it in six commands, the private vocabulary that makes the
+rest of these files readable, and the traps that each cost a session. This map is for the second
+visit, when you know the vocabulary and need to find one specific thing.
 
 **"How do I run it / what's actually wired?" → `CURRENT.md`.**
 **"What is broken or unproven?" → `KNOWN_GAPS.md`.**
 **"What is true right now, and what happened this session?" → `resume.md`** (repo root).
 **"What is the AI, shipped vs target?" → `AI_ARCHITECTURE.md`.**
 
+**Precedence, because these files disagree.** A number is trusted only from the section that
+measured it, with its date. `resume.md` §0 is a summary and summaries drift; when it and the
+measuring section disagree, the measuring section wins and §0 gets corrected. That rule was earned
+on 2026-11-11, when §0 carried two mutually exclusive residuals (+0.0229 unpaired, +0.0113 paired)
+in the same table.
+
 | document | what it answers | still current? |
 |---|---|---|
+| **`HANDOFF.md`** | Onboarding: what this is, what state it is in, how to verify, the vocabulary, the traps | **yes — read first (2026-11-11)** |
 | **`CURRENT.md`** | How to run it: services/ports, the 7-stage loop, think-token pacing, policy modes, model inventory, combat pipeline, the 28 tools | **yes — the running-system map** |
 | **`KNOWN_GAPS.md`** | What is *not* true yet, each with evidence (forecaster dark, no vision, live fight, test-gate history) | **yes — honest limits** |
 | **`AI_ARCHITECTURE.md`** | What the AI is: what a default run loads (§A), the opt-in lanes (§B), and the frozen research that can be ignored (§C) | **yes — live/opt-in/frozen map (2026-11-07)** |
-| `ARCH_REASSESSMENT.md` | The architectural argument: evidence, nine sections, ordered work list | reasoning; its status column is superseded by `CURRENT.md` |
+| **`COMBAT_POLICY_PLAN.md`** | What to do next about the per-turn planner: five established facts, what is ruled out *with the number that rules it out*, and the one remaining lever with a mechanism (policy iteration), plus six measurement rules | **yes — the only plan with an acceptance criterion (2026-11-11)** |
+| `ARCH_REASSESSMENT.md` | The architectural argument: evidence, sections A–XIII plus subsections L.1–L.43, ordered work list | reasoning; its status column is superseded by `CURRENT.md` |
 | `BASELINE.md` | The recorded live baseline required by criterion (5) of Full Auto | yes — a measurement, not status |
 | `BRAIN_DAEMON.md` | One Python process for all instances: `/brain/*` API, per-instance threads, locks, host integration | yes — implemented 2026-10-27 |
 | `PLANNING.md` | **How the agent is meant to think** — planner tiers and the RAM budget, then the strategist plan (two brains, many heads), economy and the strategy bandit. Two documents merged 2026-11-07 | design, not shipped — read `CURRENT.md` for what runs; the `hdv.buy` example predates the 28-tool vocabulary |
@@ -23,6 +36,8 @@ architecture docs cite live in `dofus-network/docs/benchmarks/`; those are data,
 | `PROJECT_LOG.md` | Why each decision was made, and what would change our mind (D1–D24) | yes — reasoning, not status |
 | `PROTOCOL_NOTES.md` | Exact wire format of every action, captured from real sessions | yes — grows with each capture |
 | `LEARNING.md` | **What the system learns from** — outcomes → posteriors, failures → gate labels, facts vs constants, latent reasoning and online updates. Four documents merged 2026-11-07; its contents list names the originals | yes — active |
+| `LEARNING_RUN.md` | One session, two arms: what the machine already holds (11,388 decided steps at 50.6% advanced, 146 objectives ≈ one per 78 steps) and what the run was meant to move | measurement + design, 2026-11-10 |
+| `LITERATURE_2026.md` | Six 2026 papers read against failures already measured here; each states the claim, then what it explains. Two of them say a design choice in this repo is wrong | yes — read before inventing a method |
 | `OBJECTIVE_LEDGER.md` | Confirmation at the level of the objective: hypotheses, sweeps, stale premises | yes — ledger design |
 | `CAPABILITY_REGISTRY.md` | The tools as data: names, params, descriptions | prose count predates the live 28; `data/capabilities.json` is authoritative |
 | `WIRING_AUDIT.md` | What the running loop actually uses, checked at construction sites | yes — audited 2026-11-06 |
@@ -31,10 +46,12 @@ architecture docs cite live in `dofus-network/docs/benchmarks/`; those are data,
 
 ## Reading order by question
 
+- *"I am new here and know nothing."* → `HANDOFF.md`, all of it, before touching anything
 - *"How do I actually run this, and on what port?"* → `CURRENT.md` §1–4
 - *"What is the AI, and which parts ship?"* → `AI_ARCHITECTURE.md`, then `CURRENT.md` §5
 - *"What is broken / why did a run die?"* → `KNOWN_GAPS.md`
-- *"What do I build next?"* → `CURRENT.md` §6, then `WIRING_AUDIT.md`
+- *"What do I build next?"* → `COMBAT_POLICY_PLAN.md` for combat, `CURRENT.md` §6 then
+  `WIRING_AUDIT.md` otherwise
 - *"How does this message look on the wire?"* → `PROTOCOL_NOTES.md`
 - *"Why is it designed this way?"* → `ARCH_REASSESSMENT.md`, then `PROJECT_LOG.md`
 - *"How does the model train and serve?"* → `PIPELINE.md` → `CURRENT.md` §5

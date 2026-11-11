@@ -23,12 +23,16 @@ from __future__ import annotations
 import argparse
 from typing import Any, Dict, Optional, Tuple
 
-from combat.grid_backend import (XP, f32, relu, softmax, rsqrt, tree_map,
-                                 tree_leaves, random, HAS_JAX, BACKEND)
+try:
+    from combat.grid_backend import (XP, f32, relu, softmax, rsqrt, tree_map,
+                                     tree_leaves, random, HAS_JAX, BACKEND)
+except ImportError:  # Kaggle standalone: grid_backend.py sits beside this file
+    from grid_backend import (XP, f32, relu, softmax, rsqrt, tree_map,
+                              tree_leaves, random, HAS_JAX, BACKEND)
 
 NEG = f32(-1.0e9)
 
-CELL_FEATS = 12
+CELL_FEATS = 14
 FIGHTER_FEATS = 20
 PLAN_FEATS = 16
 MAX_FIGHTERS = 16

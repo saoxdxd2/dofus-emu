@@ -1505,6 +1505,39 @@ class FightOutcomeLog:
         self.pending = None
         self._write(row)
 
+    def rows(self) -> List[Dict[str, Any]]:
+        """Every row this log has written, oldest first. Unreadable lines skipped."""
+        out: List[Dict[str, Any]] = []
+        if not self.path.exists():
+            return out
+        with self.path.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+        return out
+
+    def summary(self) -> Dict[str, Any]:
+        """Wins, losses, draws and open fights -- with an interval, not a ratio.
+
+        A bare `wins / fights` cannot be read: 13 of 13 is not 100%, and an
+        unresolved fight is neither a win nor a draw. `Tally` keeps the four
+        buckets apart and puts a Wilson interval on the decided ones, which is
+        the number an unattended session should be planned against.
+        """
+        from combat.outcome_stats import Tally
+
+        return Tally.from_outcome_rows(self.rows()).summary()
+
+    def line(self) -> str:
+        from combat.outcome_stats import Tally
+
+        return Tally.from_outcome_rows(self.rows()).line()
+
     def _write(self, row: Dict[str, Any]) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)

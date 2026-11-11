@@ -6525,3 +6525,106 @@ Evidence: `tools/test_fight_state_fields.js` 61 checks (6 new behavioural ones: 
 `last_actions`, the field names survive the remap, the damage numbers survive, the stack fallback,
 and the ring winning over a stale stack); `combat/test_live_data.py` 7 tests; two new gate checks in
 `agent/regression.py::test_battle_log_and_challenges` that name both defects.
+
+---
+
+## XIII. The turn planner had no improvement operator, and the instrument that would have said so was broken (measured 2026-11-11)
+
+§L.22 priced the learned critic at 0.4062 against the solver and left the reason open: a distilled
+ranker can only reproduce its teacher, so it can match the solver or lose to it, never beat it. This
+section builds the missing piece — a genuine improvement operator, ranking the solver's candidate
+plans by a learned value of the successor state — and reports that **the network lost while the
+measurement found a one-line rule that wins**.
+
+**The measuring instruments were wrong, in three ways.** None of the numbers below could be trusted
+until these were fixed, and each had been quietly producing a null.
+
+1. `duel_value.evaluate` computed `paired[0] - paired[1]`, where both terms are *a*'s own margin —
+   with *a* in seat 1 and in seat 2. Their difference is **seat bias**, which is zero by
+   construction, so every comparison returned `p 1.0` and `no_measurable_difference`. The 20/20
+   split previously reported on a 0.1696 mean was manufactured by the estimator. It now sums
+   (`(m1 + m2) / 2`) and reports a paired t-test, a seeded bootstrap CI, `boards_differed` as the
+   effective n, and `mean_seat_gap` as the diagnostic that the swap did its job.
+2. The two games of a pair were **not the same board**: `make_duel` draws its engagement cells from
+   the rng, and the loop advanced that stream between the two calls. Unbiased, but most of the
+   variance of the paired difference was board sampling. Both games now share a board seed and an
+   in-game seed, so they differ only in which policy holds which seat.
+3. The ranker was trained on **turn 1 and deployed on every turn**. `_ranked_chunk` took
+   `plans_for(state, ...)` at the opening and never advanced the walk. Measured, that model lost to
+   the solver by 0.2646 of an HP bar while its turn-1 regret was *better* than the solver's — a
+   clean signature of a correction applied out of distribution. The corpus now walks one
+   solver-vs-solver trajectory per duel and snapshots evenly spaced decision points (rounds 1–6,
+   64% beyond round 1); the loss fell to 0.1463. Right diagnosis, insufficient fix.
+
+**Ground truth instead of agreement.** `scratch/rank_by_truth.py` applies each of the solver's k
+candidate plans and plays the rest of the duel out with the solver on both sides; that final HP
+differential is what the plan actually caused. Regret — best truth minus the truth of the chosen
+plan — is the decision metric. 300 boards:
+
+| ranker | regret | top-1 | mean rho |
+|---|---|---|---|
+| solver score (incumbent) | 0.0209 | 0.847 | 0.731 |
+| successor HP differential | 0.0209 | 0.847 | 0.790 |
+| absolute value (`dv_v3`) | 0.0250 | 0.843 | 0.543 |
+| conditional logit (`dv_rank_v1`) | 0.0210 | 0.853 | 0.588 |
+| conditional logit + residual (`dv_rank_v2`) | **0.0189** | **0.870** | 0.601 |
+| blind choice | 0.0653 | – | – |
+
+The first two rows are the finding that reframed the problem: the solver's weighted score and the
+successor's HP differential choose the **same top plan** on every board, so the score has no
+positional content at all. And the whole improvement available from re-ranking the solver's six
+candidates is **0.021 of an HP bar — about 1%** — which is why duels cannot resolve it and why every
+previous comparison read as null.
+
+**The estimand was wrong, not the model.** On 60 boards the between-board standard deviation of a
+board's mean outcome is 0.3766 and the within-board standard deviation across plans is 0.0990, so
+**93.5% of the target variance is the board offset** — the part that cancels when you rank. The
+absolute-value model spent its capacity there. The fix is McFadden's conditional logit,
+`P(p|s) = softmax_p f(s,p)` against `q = softmax(t / temp)` within a board: adding any constant
+`c(s)` to every score on a board leaves `P` unchanged, so the offset is unrepresentable. Data must be
+counterfactual — every candidate rolled out on the same decision point, which `generate` never did.
+Regret moved 0.0250 → 0.0210 → 0.0189; the first step took the model from significantly worse than
+the solver to parity.
+
+Two things that are **not** the bottleneck, measured so they stop being candidates: continuation
+noise is 0.0107 against a within-board spread of 0.0941 (the signal is real and nine times the
+noise), and widening the candidate set to 28 plans (beam 32) raises available regret only from 0.021
+to 0.030. The learned LayerScale gains also end at `0.0094, -0.0213, 0.0013`, so the three-layer net
+is effectively one layer — depth buys nothing here, in either direction.
+
+**The network loses; the residual wins.** 600 paired duels against the solver, level-200 builds:
+
+| policy | boards | mean HP diff | 95% CI | better / worse |
+|---|---|---|---|---|
+| `dv_rank_v2`, residual + MLP, openings only | 200 | -0.2646 | [-0.2848, -0.2454] | 2 / 198 |
+| `dv_rank_v3`, residual + MLP, all depths | 200 | -0.1463 | [-0.1626, -0.1305] | 7 / 160 |
+| residual only (`argmax` successor HP diff) | 600 | **+0.0113** | **[+0.0072, +0.0154]** | **104 / 17** |
+
+The residual alone beats the solver at `t = 5.4`. Adding the network turns +0.011 into -0.265. The
+mechanism is not noise: the value is trained on continuations where **both** sides play the solver,
+and the policy then deviates on 84% of boards, so it optimises against a future that does not occur.
+A conservative margin gate confirms the direction of the error rather than fixing it — margins of 1.0
+and 2.0 left `boards_differed` at 164 and 159 of 200 (against 167 unrestricted) and made the mean
+slightly worse, so the model's *high-confidence* deviations are the harmful ones. One-step lookahead
+with a fixed-policy value is only valid while the continuation policy is the one the value was
+trained on; fixing it means policy iteration, not capacity.
+
+**What ships is the rule, not the network.** `LivePolicy._hp_choice` re-ranks the solver's candidates
+by the HP differential implied by `plan.final_hp` — a number the search already computes and then
+discards in favour of its weighted score. No model, no simulation, O(k), and it sits in
+`_solver_turn` after the value and grid rankers and before the bare `plans[0]`. `HP_RANK_ENABLED`
+defaults **on** (`DOFUS_COMBAT_HP_RANK=off` restores the old choice), unlike `GRID_RANKER_ENABLED`,
+because this one was measured winning. Its scope limit is written next to the constant: the evidence
+is 1v1 duels, and the sum over each side generalises to multi-enemy fights but has not been measured
+there.
+
+**Evidence.** `combat/duel_value.py` (encoder, two-hot/symlog transforms, conditional logit,
+counterfactual corpus with process-parallel generation, paired benchmark); `combat/test_duel_value.py`
+18 checks, in `agent/regression.py::test_combat_suites`; `combat/live_policy.py::_hp_choice` with
+`HpRankTests` 3 checks in `combat/test_live_policy.py` (35 total); `scratch/rank_by_truth.py`,
+`scratch/rollout_noise.py`; corpora `scratch/corpus_4k.npz` (3797 decision points) and
+`scratch/corpus_snap.npz` (6954 decision points, 41033 rows). The four tests that each caught a real
+defect: the encoder width, the untrained-score-head invariant, the fit that must ignore a board
+offset, and the benchmark's ability to see a policy that only passes — the last one fails on the old
+estimator, which is the point of it.
+

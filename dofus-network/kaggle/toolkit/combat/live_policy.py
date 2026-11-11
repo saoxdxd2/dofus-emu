@@ -39,6 +39,44 @@ from combat.plan_value import (board_encounter, _empty_spell_row,
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CHECKPOINT = REPO_ROOT / "models" / "encounter_selfplay.pkl"
 
+# The 30M grid ranker is OFF by default, and that is a measured decision rather
+# than caution. On 121 distinct recorded boards, against the solver it was
+# distilled from (scratch/measure_ranker_quality.py, 2026-11-11):
+#
+#   picks the solver's own top plan     77.7%
+#   picks any plan the solver ties best 90.9%   (a random pick gets 49.4%)
+#   strictly worse pick                  9.1% of boards
+#   aggregate solver score              -3.31%
+#   Spearman against the teacher         +0.77
+#   cost                                292 ms/board vs 0.4 ms for the solver
+#
+# So it is a 78%-faithful copy of its teacher that is 3.3% worse and ~700x more
+# expensive. A distilled ranker cannot beat the model that produced its labels,
+# and this one does not: it can only match the solver or lose to it. It stays
+# behind this switch until a benchmark shows it winning, and the checkpoint
+# loading is not evidence of that -- loading only means the tensor widths agree.
+GRID_RANKER_ENABLED = (os.environ.get("DOFUS_GRID_RANKER", "")
+                       .strip().lower() in ("1", "on", "true", "yes"))
+
+# Re-rank the solver's candidate plans by the HP differential they produce,
+# instead of by its weighted score. No model involved: `plan.final_hp` is already
+# the search's own projection, so this only changes which projection is maximised.
+#
+# Measured, 600 paired duels against the solver's own choice on level-200 builds
+# (`python -m combat.duel_value --evaluate`, side-swapped and board-paired):
+#
+#   boards where the two policies differ   121 / 600
+#   boards the HP ranking wins              104
+#   boards it loses                          17
+#   mean final HP differential            +0.0113   (95% CI +0.0072 .. +0.0154)
+#
+# On by default because unlike the grid ranker this one was measured *winning*.
+# The caveat is scope: those are 1v1 duels on the duel harness. The sum over each
+# side generalises to multi-enemy fights, but it has not been measured there, so
+# `DOFUS_COMBAT_HP_RANK=off` restores the old choice exactly.
+HP_RANK_ENABLED = (os.environ.get("DOFUS_COMBAT_HP_RANK", "on")
+                   .strip().lower() not in ("0", "off", "false", "no"))
+
 # What one point of expected damage is worth against one cell of closing distance
 # when the actor's cast already decides the turn and only the cell is open.
 #
@@ -573,6 +611,11 @@ class LivePolicy:
         """
         if len(plans) < 2:
             return None
+        if not GRID_RANKER_ENABLED:
+            # Measured worse than the solver and ~700x slower; see the constant.
+            # Returning None is the caller's fall-through to the solver's own
+            # order, which is never worse than the teacher by definition.
+            return None
         self._gc_asked = getattr(self, "_gc_asked", 0) + 1
         try:
             ranked = grid_rank_plans(board, plans)
@@ -580,7 +623,12 @@ class LivePolicy:
             return None
         if ranked is None:
             return None
-        picked = ranked[0][1] if ranked else None
+        # `rank_plans` answers `(list of (score, plan), metadata)`. This read
+        # `ranked[0][1]`, which is the *second* entry of that list -- a `(score, plan)`
+        # tuple, not a plan -- so even with the ranker working it would have handed the
+        # caller a tuple where a `TurnPlan` belongs.
+        order, _meta = ranked
+        picked = order[0][1] if order else None
         self._gc_fired = getattr(self, "_gc_fired", 0) + int(picked is not None)
         return picked
 
@@ -706,11 +754,74 @@ class LivePolicy:
         if picked is None:
             picked = self._grid_choice(board, plans)
         if picked is None:
+            picked = self._hp_choice(board, plans)
+        if picked is None:
             picked = plans[0]
         # Kept for the decision record. "He walked into the enemy" has to be a
         # number in the log, not an impression from watching the character.
         self._last_plan = picked
         return self._emit(board, picked, False, "solver", "solver_move")
+
+    @property
+    def hp_choice_stats(self) -> Dict[str, int]:
+        """How often the HP re-ranking was asked, and how often it changed the plan.
+
+        Same reason as `value_choice_stats`: "the branch never ran" and "the branch
+        ran and agreed with the solver" are different findings, and only the
+        counters tell them apart. `changed` is the number that matters for the
+        0.0113 measurement -- in the duels it fired on 121 of 600 boards, so a
+        live run where it never changes a plan means the live boards are not the
+        boards it was measured on.
+        """
+        return {"asked": int(getattr(self, "_hp_asked", 0)),
+                "changed": int(getattr(self, "_hp_changed", 0))}
+
+    def _hp_choice(self, board: Board,
+                   plans: Sequence[TurnPlan]) -> Optional[TurnPlan]:
+        """Re-rank the solver's plans by the HP differential they produce.
+
+        No model, no simulation: `plan.final_hp` is already the solver's own
+        projection of every fighter's HP after the plan, so this is a read of a
+        number the search computed and then discarded in favour of a weighted
+        score.
+
+        Measured, 600 paired duels on level-200 builds against the solver's own
+        choice (`combat/duel_value.py --evaluate`, 104 boards better to 17 worse,
+        mean +0.0113 of an HP bar, t = 5.4). The weighted score is a *worse*
+        objective than the differential it is built from, which is why a learned
+        ranker trained on top of the same candidates could not beat it either.
+
+        Two honest limits. The evidence is 1v1 duels on the duel harness, not
+        live multi-enemy fights -- the sum over each side generalises, but it has
+        not been measured there. And the effect is small: 0.011 of a bar, so it
+        is a better tie-break among near-equivalent plans rather than a change of
+        strategy.
+        """
+        if not HP_RANK_ENABLED or len(plans) < 2:
+            return None
+        me = board.me
+        if me is None:
+            return None
+        living = [f for f in board.fighters if f.alive]
+        if len(living) < 2:
+            return None
+        self._hp_asked = getattr(self, "_hp_asked", 0) + 1
+
+        def margin(plan: TurnPlan) -> float:
+            mine = theirs = 0.0
+            for fighter in living:
+                hp = float(plan.final_hp.get(fighter.id, fighter.hp))
+                share = max(0.0, min(1.0, hp / max(1.0, fighter.max_hp)))
+                if fighter.team == me.team:
+                    mine += share
+                else:
+                    theirs += share
+            return mine - theirs
+
+        picked = max(plans, key=margin)
+        if picked is not plans[0]:
+            self._hp_changed = getattr(self, "_hp_changed", 0) + 1
+        return picked
 
     def _position_report(self, board: Board) -> Optional[Dict[str, Any]]:
         """What the chosen plan costs in exposure, and what is doing the pricing.

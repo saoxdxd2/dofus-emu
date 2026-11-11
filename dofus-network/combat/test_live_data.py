@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from combat.live_data import ATTRIBUTION, build_from_boards  # noqa: E402
 
 
-def _board(actions, creature_id=123, name="Barbakle", level=5):
+def _board(actions, creature_id=123, name="Barbakle", level=5, spells=()):
     return {
         "kind": "fight_board",
         "run": "r1",
@@ -37,7 +37,7 @@ def _board(actions, creature_id=123, name="Barbakle", level=5):
                  "max_hp": 500, "level": 5},
                 {"id": -1, "team": "enemy", "cell": 320, "hp": 140, "max_hp": 140,
                  "level": level, "name": name,
-                 "creature_generic_id": creature_id, "spells": []},
+                 "creature_generic_id": creature_id, "spells": list(spells)},
             ],
             "last_actions": actions,
         },
@@ -50,6 +50,52 @@ CAST = {"type": "GameActionFightSpellCastMessage", "action_id": 41,
 LOSS = {"type": "GameActionFightLifePointsLostMessage", "action_id": 41,
         "source_id": -1, "target_id": 4434090, "spell_id": 6908,
         "loss": 47, "delta": -47}
+
+
+class NameKeyedMonsterTests(unittest.TestCase):
+    """The client has never sent a species id.
+
+    Measured on the 333 recorded boards: `creature_generic_id` is null for all
+    1,396 enemy fighters, while 287 of them do carry their spell list. Keying
+    the monster table on the species id therefore discarded the only monster
+    mechanics the corpus contains, and the extractor reported zero monsters over
+    a corpus that has some.
+    """
+
+    def _build(self, rows):
+        with tempfile.TemporaryDirectory(prefix="live-data-") as tmp:
+            path = Path(tmp) / "boards.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows) + "\n",
+                            encoding="utf-8")
+            return build_from_boards(path)
+
+    def test_a_monster_without_a_species_id_is_keyed_by_name(self):
+        board = _board([], creature_id=None, name="Merkaptan Leader",
+                       spells=[{"id": 6908, "name": "Kremashun", "ap_cost": 4,
+                                "min_range": 1, "range": 1}])
+        monsters, _actions, _fights, _observed = self._build([board])
+        self.assertEqual(len(monsters), 1)
+        entry = monsters[0]
+        self.assertEqual(entry["key"], "name:Merkaptan Leader")
+        self.assertIsNone(entry["creature_generic_id"])
+        self.assertEqual(entry["spell_ids"], ["6908"])
+
+    def test_the_name_key_cannot_be_mistaken_for_a_numeric_id(self):
+        board = _board([], creature_id=None, name="Merkaptan Leader")
+        monsters, _a, _f, _o = self._build([board])
+        self.assertTrue(monsters[0]["key"].startswith("name:"))
+        self.assertNotEqual(monsters[0]["key"], "Merkaptan Leader")
+
+    def test_a_monster_with_neither_id_nor_name_is_skipped(self):
+        board = _board([], creature_id=None, name="")
+        monsters, _a, _f, _o = self._build([board])
+        self.assertEqual(monsters, [])
+
+    def test_a_numeric_id_still_wins_when_the_client_sends_one(self):
+        board = _board([], creature_id=123, name="Barbakle")
+        monsters, _a, _f, _o = self._build([board])
+        self.assertEqual(monsters[0]["key"], 123)
+        self.assertEqual(monsters[0]["creature_generic_id"], 123)
 
 
 class ObservedDamageTests(unittest.TestCase):

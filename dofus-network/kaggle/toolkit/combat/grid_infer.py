@@ -68,6 +68,28 @@ def load_model(path: Path = DEFAULT_MODEL
         payload = pickle.load(handle)
     params = tree_map(XP.asarray, payload["params"])
     config = dict(payload.get("config") or {})
+    # A checkpoint carries the input width it was trained with, and `forward` would
+    # fail deep inside a dense layer if the encoder has since grown. Refusing here
+    # turns that into the answer the caller already handles -- `rank_plans` returns
+    # None, `live_policy._grid_choice` falls through to the solver -- instead of an
+    # exception on the first fight turn after an upgrade.
+    #
+    # Measured 2026-11-11: the shipped checkpoint was trained on CELL_FEATS=12 and
+    # the encoder now writes 14 (enemy coverage and reachability were added), so
+    # this checkpoint is stale until `combat.grid_dataset` rebuilds the tensors and
+    # `combat.grid_train` refits. That is a deliberate cost: the two channels are
+    # the difference between a model that can see the map and one that can see the
+    # fight on it.
+    cell_in = params.get("cell_in") if isinstance(params, dict) else None
+    # `cell_in` is a `(weight, bias)` pair, not a bare array -- `_dense_apply` takes
+    # both. Reading `.shape` off the tuple returns None, which is how the first
+    # version of this guard silently passed a stale checkpoint through.
+    if isinstance(cell_in, (tuple, list)) and cell_in:
+        cell_in = cell_in[0]
+    width = getattr(cell_in, "shape", None)
+    if width is not None and int(width[0]) != int(grid_model.CELL_FEATS):
+        _CACHE[key] = None
+        return None
     _CACHE[key] = (params, config)
     return params, config
 
@@ -81,7 +103,14 @@ def _padded(board, plans: Sequence[Any]):
     me = board.me
     cells = grid_dataset._cells(board, me)
     fighters, fighter_mask = grid_dataset._fighters(board, me)
-    rows, mask, scores, label, notes = grid_dataset._plans(board, plans=plans)
+    # `plan_rows`, not `_plans`: `_plans` is the training featuriser, it shuffles the
+    # candidates so a label cannot be read off row order, and it rejects a board whose
+    # best plan is tied. Either one alone makes ranking wrong here -- a shuffle attaches
+    # every score to a different plan than the one it was computed for. This call used
+    # to be `_plans` unpacked as five values from a seven-tuple, so it raised
+    # `ValueError` on every invocation and `live_policy._grid_choice` caught it and
+    # returned None: the trained grid policy never ranked a single plan.
+    rows, mask, _scores, _notes = grid_dataset.plan_rows(board, plans)
     if rows.shape[0] == 0:
         return None
     pad = grid_model.MAX_PLANS - rows.shape[0]
@@ -129,17 +158,29 @@ def rank_plans(board, plans: Sequence[Any],
 
 
 def _check() -> int:
-    data = Path(__file__).resolve().parent.parent / "data" / "combat_grid_synth" / "val.npz"
-    if not data.is_file() or not DEFAULT_MODEL.is_file():
-        print("need data/combat_grid_synth/val.npz and models/combat_grid/model.pkl")
-        return 2
+    """Report whether the shipped checkpoint can serve the current encoder.
+
+    This used to require `data/combat_grid_synth/val.npz` to exist and never read
+    it, so it reported on a corpus the encoder had already outgrown while saying
+    nothing about the only thing that can break a fight turn: whether the saved
+    `cell_in` width still matches `grid_model.CELL_FEATS`.
+    """
     loaded = load_model()
     if loaded is None:
-        print("grid model unavailable: %s backend could not load the checkpoint" % BACKEND)
+        print("grid model unavailable: %s backend could not load %s"
+              % (BACKEND, DEFAULT_MODEL))
+        print("  (a checkpoint trained on an older encoder is refused by design)")
         return 2
     deps = _deps()
-    print("model", DEFAULT_MODEL, "params", deps["grid_model"].param_count(loaded[0]),
-          "config", loaded[1], "backend", BACKEND)
+    params, config = loaded
+    width = int(np.asarray(params["cell_in"][0]).shape[0])
+    print("model", DEFAULT_MODEL, "params", deps["grid_model"].param_count(params),
+          "backend", BACKEND)
+    print("encoder cell width", width, "live CELL_FEATS",
+          deps["grid_model"].CELL_FEATS, "config", config)
+    if width != int(deps["grid_model"].CELL_FEATS):
+        print("MISMATCH: the ranker would be refused at load time")
+        return 1
     return 0
 
 

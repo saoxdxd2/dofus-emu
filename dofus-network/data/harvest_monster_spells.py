@@ -28,17 +28,35 @@ What this writes
 and the same two tables into ``data/knowledge/dofus_knowledge.sqlite`` so a
 query can join a monster to its reach without loading the JSON.
 
-Provenance
-----------
-The source is ``api.dofusdb.fr``, the same mirror the monster cache already
-came from. That it is the Touch dataset is checked rather than assumed: the
-harvester compares every monster's grade-1 stats against the existing cache and
-reports how many disagree. A source that drifts from the client's own numbers
-is a source that will teach the model the wrong reach.
+Provenance, and its limit
+-------------------------
+The source is ``api.dofusdb.fr``. It is **not** the Dofus Touch roster, and that
+was measured rather than assumed: of the eight distinct enemy species in the
+333 recorded boards, exactly one ("Barbakle") is present in this mirror. The
+names the client actually fights -- Merkaptan Leader, Harrizarre, Weaselraff,
+Boorbear, Tran Spyr, Aggressive Raccoon -- are absent. So this harvester fills
+the spell table for the monsters the *cache* knows, which is a Dofus 2 extract,
+and cannot resolve most live fights.
 
-    python -m data.harvest_monster_spells --check      # compare only, no write
-    python -m data.harvest_monster_spells --write
-    python -m data.harvest_monster_spells --write --limit 300
+The other candidate sources were checked and do not solve it either:
+
+* the official Touch bestiary (``dofus-touch.com/en/mmorpg/encyclopedia/
+  monsters/<id>-<slug>``) has level, HP, AP, MP and resistances per monster but
+  **no spell list** -- verified on ``4192-aggressive-merkaptan``;
+* the client bundle carries no game data (no monster name appears in it);
+* the live board itself has ``spells`` for only 287 of 1,396 enemy fighters,
+  ``mp`` for 134, and ``creature_generic_id`` for none.
+
+The reliable source is therefore the client at ``GameFightShowFighterMessage``,
+which must carry the monster's spell list for the client to render its casts.
+Capturing it there is a bridge change, not a harvest.
+
+Run to completion or nothing
+----------------------------
+The payload is written once, at the end, so a run that dies half way leaves no
+partial file to be mistaken for a complete one. A full pass is about 100 monster
+pages and 320 spell-level batches; the batch size is pinned below because the
+API silently truncates a larger one.
 """
 
 from __future__ import annotations
@@ -59,7 +77,12 @@ OUT_FILE = CACHE_DIR / "monster_spells.json"
 
 BASE = "https://api.dofusdb.fr"
 PAGE = 50
-SPELL_BATCH = 40
+# The `$in` filter silently drops ids as the list grows. Measured on the same 40
+# spell ids: batch 5 returns 39, batch 10 returns 39, batch 20 returns 26, batch
+# 40 returns 11. A batch of 40 does not error -- it returns a short page, which
+# looks exactly like "those spells have no levels" and would have shipped
+# monsters with unknown reach and no warning.
+SPELL_BATCH = 10
 
 # The client reaches the internet through a SOCKS tunnel; a direct connection is
 # refused by the host. An empty value means "go direct", which is what a CI box
@@ -174,23 +197,49 @@ def _level_row(level: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def harvest(limit: Optional[int] = None, log=print) -> Dict[str, Any]:
+def harvest(limit: Optional[int] = None, log=print,
+            only_known: bool = False) -> Dict[str, Any]:
+    known: Optional[set] = None
+    if only_known:
+        path = CACHE_DIR / "monsters_full.json"
+        known = {str(row.get("id")) for row in json.loads(path.read_text(encoding="utf-8"))}
+        log("restricting to the %d monsters the client's cache knows" % len(known))
+
     monsters: Dict[str, Any] = {}
     spell_ids: set = set()
     log("harvesting monsters ...")
-    for index, row in enumerate(_paged("/monsters", limit)):
-        mid = str(row.get("id"))
-        name = (row.get("name") or {}).get("en") or (row.get("name") or {}).get("fr") or mid
-        spells = [int(s) for s in (row.get("spells") or [])]
-        spell_ids.update(spells)
-        monsters[mid] = {
-            "name": name,
-            "is_boss": bool(row.get("isBoss")),
-            "grades": [_grade_row(g) for g in (row.get("grades") or [])],
-            "spells": spells,
-        }
-        if index % 500 == 0 and index:
-            log("  %d monsters, %d distinct spells" % (index, len(spell_ids)))
+    skip = 0
+    while True:
+        page = fetch("/monsters", [("$limit", str(PAGE)), ("$skip", str(skip))])
+        rows = page.get("data") or []
+        if not rows:
+            break
+        for row in rows:
+            mid = str(row.get("id"))
+            if known is not None and mid not in known:
+                continue
+            name = (row.get("name") or {}).get("en") or (row.get("name") or {}).get("fr") or mid
+            spells = [int(s) for s in (row.get("spells") or [])]
+            spell_ids.update(spells)
+            monsters[mid] = {
+                "name": name,
+                "is_boss": bool(row.get("isBoss")),
+                "grades": [_grade_row(g) for g in (row.get("grades") or [])],
+                "spells": spells,
+            }
+        skip += PAGE
+        if len(monsters) % 500 == 0 and monsters:
+            log("  %d monsters, %d distinct spells" % (len(monsters), len(spell_ids)))
+        # Paging the whole catalogue to discover that the known set is complete
+        # cost four extra minutes on the first attempt. Once every id the cache
+        # knows has been seen there is nothing left to find.
+        if known is not None and len(monsters) >= len(known):
+            log("  all %d known monsters found at skip=%d" % (len(monsters), skip))
+            break
+        if limit is not None and len(monsters) >= limit:
+            break
+        if skip >= int(page.get("total") or 0):
+            break
     log("monsters: %d, distinct spells: %d" % (len(monsters), len(spell_ids)))
 
     ids = sorted(spell_ids)
@@ -206,7 +255,7 @@ def harvest(limit: Optional[int] = None, log=print) -> Dict[str, Any]:
         for row in page.get("data") or []:
             sid = str(row.get("spellId"))
             levels.setdefault(sid, []).append(_level_row(row))
-        if start % (SPELL_BATCH * 10) == 0:
+        if start % (SPELL_BATCH * 5) == 0:
             log("  %d/%d spell ids, %d level rows"
                 % (start + len(batch), len(ids), sum(len(v) for v in levels.values())))
     for rows in levels.values():
@@ -221,7 +270,13 @@ def harvest(limit: Optional[int] = None, log=print) -> Dict[str, Any]:
 
 
 def compare(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Check the harvested stats against the cache the client already trusts."""
+    """Check the harvested stats against the cache already in the tree.
+
+    This is a *consistency* check, not a provenance check. Both sides come from
+    the same mirror, so agreement proves the harvester parsed the fields the
+    same way -- it does not prove the mirror matches Dofus Touch. The roster
+    comparison in the module docstring is the one that shows it does not.
+    """
     existing = {}
     path = CACHE_DIR / "monsters_full.json"
     if path.exists():
@@ -315,9 +370,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--write", action="store_true", help="write the cache and the tables")
     parser.add_argument("--check", action="store_true", help="compare against the existing cache")
     parser.add_argument("--limit", type=int, default=None, help="stop after N monsters")
+    parser.add_argument("--only-known", action="store_true",
+                        help="skip monsters absent from data/cache/monsters_full.json")
     args = parser.parse_args(argv)
 
-    payload = harvest(limit=args.limit)
+    payload = harvest(limit=args.limit, log=lambda m: print(m, flush=True),
+                      only_known=args.only_known)
     report = compare(payload)
     print("\n=== provenance check against data/cache/monsters_full.json")
     print("  monsters compared        : %d" % (report["agree"] + report["disagree"]))

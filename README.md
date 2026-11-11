@@ -815,7 +815,7 @@ rule/model/human disagreement is a training sample.
 
 ```bash
 cd dofus-network
-python -m agent.regression                         # 2,213<!--f:gate_checks--> checks / 0 failed, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + label reader + brain autostart + readiness + board replay + calibration/worker gates incl. the enforced promotion bar + the gate-shadow wiring + the priced alternative; delegates node JS suites, `go test` for the relay, the C# host compile and the Kaggle-mirror drift check)
+python -m agent.regression                         # 2,220<!--f:gate_checks--> checks / 0 failed, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + label reader + brain autostart + readiness + board replay + calibration/worker gates incl. the enforced promotion bar + the gate-shadow wiring + the priced alternative; delegates node JS suites, `go test` for the relay, the C# host compile and the Kaggle-mirror drift check)
 python -m advisor selftest                         # 91 check sites, offline (knowledge repo only)
 python -m agent.verifier --stats
 python -m agent.verifier --label 98106503 4 failed "the listing never appeared"

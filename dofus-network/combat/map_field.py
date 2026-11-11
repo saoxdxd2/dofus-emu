@@ -76,6 +76,11 @@ LOS_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "map_los"
 # spell, small enough to stay inside int16.
 UNREACHABLE = 999
 
+# Bumped whenever the meaning of the cached matrix changes. Version 1 omitted
+# the diagonal, so every cell that is not see-through was recorded as unable to
+# see itself; a cache written by that build is silently wrong and is rejected.
+LOS_VERSION = 2
+
 # Spectral channels kept per cell. Eight is the point where the eigenvalue gap
 # of a 560-cell Dofus map stops being informative; more coordinates fit noise.
 SPECTRAL_DIM = 8
@@ -200,14 +205,18 @@ class EnemyThreat:
     spells: Tuple[Tuple[int, int, float], ...]  # (min_range, max_range, weight)
 
     @classmethod
-    def from_fighter(cls, fighter: Any) -> "EnemyThreat":
-        """Build from a live ``Fighter``, weighting each spell by its damage.
+    def from_fighter(cls, fighter: Any) -> Optional["EnemyThreat"]:
+        """Build from a live ``Fighter``, or ``None`` when it cannot be built.
 
-        The weight is the mean of every damage roll on the spell, which is the
-        expected damage of one cast against a target with no resistance. That
-        is deliberately crude: resistance is a property of *who* is hit, and
-        this object describes the threat, not its outcome.
+        A live board sends ``mp: null`` and ``spell_ids: []`` for every monster,
+        so this path is normally closed; ``monster_mech.threat_for`` is what
+        opens it, by looking the monster up by id. The ``None`` matters: reading
+        a missing MP as zero here would mark every cell safe against a monster
+        that reaches eight, which is the one error that loses a fight silently.
         """
+        mp = getattr(fighter, "mp", None)
+        if mp is None:
+            return None
         spells: List[Tuple[int, int, float]] = []
         for spell in getattr(fighter, "spells", ()) or ():
             weight = 0.0
@@ -216,8 +225,9 @@ class EnemyThreat:
             if weight <= 0:
                 continue
             spells.append((int(spell.min_range), int(spell.max_range), float(weight)))
-        return cls(cell=int(fighter.cell), mp=int(fighter.mp or 0),
-                   spells=tuple(spells))
+        if not spells:
+            return None
+        return cls(cell=int(fighter.cell), mp=int(mp), spells=tuple(spells))
 
 
 @dataclass
@@ -236,6 +246,7 @@ class MapField:
     openness: np.ndarray              # float32[560,4] within 2,4,6,8 steps
     resistance: np.ndarray            # float32[560,560]
     spectral: np.ndarray              # float32[560,SPECTRAL_DIM]
+    spectral_values: np.ndarray       # float32[SPECTRAL_DIM], ascending
     _los: Optional[np.ndarray] = dc_field(default=None, repr=False)
 
     # -- construction -------------------------------------------------------
@@ -268,7 +279,8 @@ class MapField:
                    adjacency=adjacency, dist=dist, components=components,
                    ecc=ecc, closeness=closeness.astype(np.float32),
                    openness=openness, resistance=resistance,
-                   spectral=spectral.astype(np.float32))
+                   spectral=spectral.astype(np.float32),
+                   spectral_values=_values.astype(np.float32))
 
     @classmethod
     def from_map_id(cls, map_id: int) -> "MapField":
@@ -539,6 +551,8 @@ def _load_los(map_id: Optional[int]) -> Optional[np.ndarray]:
         return None
     try:
         with np.load(path) as data:
+            if int(data["version"]) != LOS_VERSION:
+                return None
             out = data["los"]
         return out if out.shape == (NB_CELLS, NB_CELLS) else None
     except Exception:
@@ -551,7 +565,7 @@ def _store_los(map_id: Optional[int], los: np.ndarray) -> None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(path, los=los)
+        np.savez_compressed(path, los=los, version=np.int32(LOS_VERSION))
     except Exception:
         # A read-only tree is not a reason to fail a decision.
         pass

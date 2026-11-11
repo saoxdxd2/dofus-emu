@@ -1,0 +1,27 @@
+{
+ "config": {
+  "batch": 8,
+  "cell_layers": 3,
+  "epochs": 1,
+  "fighter_layers": 2,
+  "hidden": 768,
+  "lr": 0.0003,
+  "plan_layers": 1
+ },
+ "history": [
+  {
+   "epoch": 1,
+   "loss": 7.62437903881073,
+   "val": {
+    "ce": 10.17809534072876,
+    "rows": 32,
+    "top1": 0.96875
+   }
+  }
+ ],
+ "test": {
+  "ce": 6.916239976882935,
+  "rows": 32,
+  "top1": 1.0
+ }
+}

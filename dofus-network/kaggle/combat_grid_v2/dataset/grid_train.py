@@ -2,8 +2,12 @@
 
 This trains the grid encoder to rank the solver's legal plans on the synthetic
 solver-distillation corpus (`combat.grid_synth`). It is not live combat: the
-labels are the solver's own plan scores. The live gate is still one actionable
-fight and a side-swapped win.
+labels are the solver's own plan scores.
+
+The label is a distribution over plans, not an index. Where the solver has one
+best plan that is a one-hot; where it is indifferent over a set the target is
+uniform on that set and the loss is the KL to it. See `grid_dataset._plans` for
+why the corpus no longer drops tied boards -- they are 96% of it.
 
     python -m combat.grid_train --hidden 64 --cell-layers 1 \
         --fighter-layers 1 --plan-layers 1 --epochs 1 --batch 8
@@ -31,15 +35,64 @@ DEFAULT_DATA = Path(__file__).resolve().parent.parent / "data" / "combat_grid_sy
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "models" / "combat_grid"
 
 
+#: (array key, trailing width, name of the constant that sets it)
+_WIDTHS = (
+    ("cells", grid_model.CELL_FEATS, "CELL_FEATS"),
+    ("fighters", grid_model.FIGHTER_FEATS, "FIGHTER_FEATS"),
+    ("plans", grid_model.PLAN_FEATS, "PLAN_FEATS"),
+)
+
+
 def _load(path: Path, limit: int = 0) -> Dict[str, jax.Array]:
+    """Load one split, refusing a tensor whose last axis the model cannot eat.
+
+    The width check exists because the failure it prevents is invisible. A
+    12-wide corpus fed to a 14-input ``cell_in`` does not raise here; it raises
+    deep inside a jitted matmul, after the params are built and the first batch
+    is resident, with a shape message that names neither the file nor the
+    encoder. Worse, if the widths happened to agree by accident (say a corpus
+    built for a 12-channel encoder and a model widened to 12 for some other
+    reason) it would train happily on misaligned channels and simply score
+    worse -- a silent regression with no traceback at all.
+
+    So: fail on read, name the file, name the constant, and print the command
+    that regenerates the corpus. ``combat.grid_synth`` is the only thing that
+    writes these tensors, and it reads the width from ``grid_dataset._cells``,
+    so re-running it is always the correct repair.
+    """
     data = np.load(path)
     out = {}
+    for key, width, const in _WIDTHS:
+        if key not in data:
+            raise SystemExit("%s has no %r array; regenerate the corpus:\n"
+                             "  python -m combat.grid_synth --out %s"
+                             % (path, key, path.parent))
+        got = data[key].shape[-1]
+        if int(got) != int(width):
+            raise SystemExit(
+                "%s: %s is %d-wide but grid_model.%s is %d.\n"
+                "The corpus predates the encoder. Regenerate it:\n"
+                "  python -m combat.grid_synth --out %s"
+                % (path, key, got, const, width, path.parent))
     for key in ("cells", "cell_mask", "fighters", "fighter_mask",
                 "plans", "plan_mask", "scores", "labels"):
         value = data[key]
         if limit and value.shape[0] > limit:
             value = value[:limit]
         out[key] = jnp.asarray(value)
+    # A corpus written before the soft label existed carries only the hard one.
+    # Treat it as a one-hot target rather than refusing the file: the arithmetic
+    # is identical for a unique best plan, which is all such a corpus contains.
+    if "targets" in data:
+        targets = data["targets"]
+        if limit and targets.shape[0] > limit:
+            targets = targets[:limit]
+        out["targets"] = jnp.asarray(targets, dtype=jnp.float32)
+    else:
+        hard = np.asarray(out["labels"])
+        onehot = np.zeros((hard.shape[0], grid_model.MAX_PLANS), dtype=np.float32)
+        onehot[np.arange(hard.shape[0]), hard.astype(np.int32)] = 1.0
+        out["targets"] = jnp.asarray(onehot)
     return out
 
 
@@ -78,13 +131,41 @@ def _loss(params, batch) -> Tuple[jax.Array, Dict[str, jax.Array]]:
         batch["fighters"], batch["fighter_mask"],
         batch["plans"], batch["plan_mask"])
     logp = jax.nn.log_softmax(out["scores"], axis=-1)
-    rows = jnp.arange(logp.shape[0])
-    ce = -jnp.mean(logp[rows, batch["labels"]])
-    best = jnp.take_along_axis(batch["scores"], batch["labels"][:, None], axis=1)[:, 0]
+    # Cross-entropy against the solver's *soft* label. When the solver has one
+    # best plan this is the ordinary -log p(label); when it is indifferent over a
+    # set of k plans the target is uniform on that set and the loss is the KL
+    # between the model's distribution and "any of these is fine". That is the
+    # whole reason the corpus stopped rejecting ties: 96% of boards are tied, and
+    # a hard label there would have to invent a preference.
+    ce = -jnp.mean(jnp.sum(batch["targets"] * logp, axis=-1))
+    best = jnp.sum(batch["targets"] * batch["scores"], axis=-1)
     value_target = jnp.tanh(best / 1000.0)
     vloss = jnp.mean(jnp.square(out["value"] - value_target))
-    top1 = jnp.mean((out["scores"].argmax(axis=-1) == batch["labels"]).astype(jnp.float32))
+    rows = jnp.arange(logp.shape[0])
+    picked = out["scores"].argmax(axis=-1)
+    top1 = jnp.mean((batch["targets"][rows, picked] > 0.0).astype(jnp.float32))
     return ce + 0.1 * vloss, {"ce": ce, "vloss": vloss, "top1": top1}
+
+
+@jax.jit
+def _eval_step(params, cells, cell_mask, fighters, fighter_mask,
+               plans, plan_mask, targets):
+    """One evaluation batch, compiled.
+
+    Eager `grid_model.forward` over 30.7 M parameters costs tens of seconds per
+    batch on CPU: attention over 560 cells is dispatched one op at a time. The
+    training step was jitted and this was not, so validation -- which runs every
+    epoch and again at the end -- dominated a run that was assumed to be
+    compute-bound on the gradients. Measured: a 16-step training run with 128
+    rows per split did not finish in 15 minutes, almost all of it here.
+    """
+    out = grid_model.forward(params, cells, cell_mask, fighters, fighter_mask,
+                             plans, plan_mask)
+    logp = jax.nn.log_softmax(out["scores"], axis=-1)
+    ce = -jnp.sum(jnp.sum(targets * logp, axis=-1))
+    picked = out["scores"].argmax(-1)
+    hit = jnp.sum(targets[jnp.arange(logp.shape[0]), picked] > 0.0)
+    return ce, hit
 
 
 def evaluate(params, data: Dict[str, jax.Array], batch_size: int) -> Dict[str, float]:
@@ -95,14 +176,12 @@ def evaluate(params, data: Dict[str, jax.Array], batch_size: int) -> Dict[str, f
     rows = int(data["labels"].shape[0])
     for start in range(0, rows, batch_size):
         batch = _batch(data, np.arange(start, min(rows, start + batch_size)))
-        out = grid_model.forward(
-            params, batch["cells"], batch["cell_mask"],
-            batch["fighters"], batch["fighter_mask"],
-            batch["plans"], batch["plan_mask"])
-        logp = jax.nn.log_softmax(out["scores"], axis=-1)
-        indices = jnp.arange(logp.shape[0])
-        total += float(-jnp.sum(logp[indices, batch["labels"]]))
-        top1 += float(jnp.sum(out["scores"].argmax(-1) == batch["labels"]))
+        ce, hit = _eval_step(params, batch["cells"], batch["cell_mask"],
+                             batch["fighters"], batch["fighter_mask"],
+                             batch["plans"], batch["plan_mask"],
+                             batch["targets"])
+        total += float(ce)
+        top1 += float(hit)
     return {"rows": rows, "ce": total / rows, "top1": top1 / rows}
 
 

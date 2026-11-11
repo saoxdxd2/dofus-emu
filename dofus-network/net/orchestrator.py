@@ -38,6 +38,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from agent.bridge import opener_for
+
 REPO_ROOT = Path(__file__).resolve().parent.parent          # .../dofus-network
 TOKEN_FILE = REPO_ROOT / "data" / "run_token.json"
 TOKEN_MAX_AGE_S = 6 * 3600.0
@@ -237,8 +239,11 @@ def probe_relay(port: int = 8880, timeout: float = 1.5) -> Dict[str, Any]:
         # `/__cdn/health`, which the CDN handler parses as a target with no slash and
         # answers 400 "Bad relay target" -- so a perfectly healthy relay was recorded as
         # `http_status: 400` and read as broken by anyone looking at the table.
-        with urllib.request.urlopen("http://127.0.0.1:%d/__cdn/__probe" % int(port),
-                                    timeout=timeout) as response:
+        # The relay is on this machine, so the probe must not be handed to HTTP_PROXY: on a
+        # machine with a proxy client the request is reset and a healthy relay reads as
+        # `answering: False` (same fault as agent/bridge.py documents, 2026-11-11).
+        probe_url = "http://127.0.0.1:%d/__cdn/__probe" % int(port)
+        with opener_for(probe_url).open(probe_url, timeout=timeout) as response:
             code = response.status
     except urllib.error.HTTPError as exc:      # 404 still proves an HTTP server is there
         code = exc.code
