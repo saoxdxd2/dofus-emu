@@ -627,8 +627,17 @@ def summarise(path: Path, gap_s: float = 180.0) -> Dict[str, Any]:
         "maps": sum(s["maps"] for s in summaries),
         "manual_interventions": manual_interventions,
         "intervention_rows": len(interventions),
+        # `recover` is the controller's *hint*, not a recovery: it means "that step did
+        # nothing, read the state again" (`controller.RECOVERY` maps wrong_target,
+        # stale_state, incomplete and unknown all to `state.snapshot`). Printed under the
+        # bare word "recoveries" it read as 1,385 rescues in a run whose only real ones
+        # were 15 login-screen returns -- 1,373 of those rows were reads. The key stays
+        # for the doc-fact pipeline that quotes it, and the run's own counter is now
+        # beside it under a name that cannot be mistaken for the same thing.
         "recoveries": {k: v for k, v in decision_actions.items()
                        if k in RECOVERY_ACTIONS},
+        "world_recoveries": sum(int(s.get("recoveries") or 0) for s in summaries),
+        "world_recoveries_ok": sum(int(s.get("recoveries_ok") or 0) for s in summaries),
         "witnesses": witnesses(rows),
         "proofs": proofs(rows),
         # A reporting tool must not take the gate down with it: an arithmetic error in
@@ -659,12 +668,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("  sessions %d, wall %.1f min, steps %d, ok %d, failed %d"
               % (report["sessions"], report["wall_minutes"], report["steps"],
                  report["ok"], report["failed"]))
-        print("  objectives %+d, quests completed %+d, maps %d, manual interventions %d, "
-              "recoveries %s"
+        print("  objectives %+d, quests completed %+d, maps %d, manual interventions %d"
               % (report["objectives_completed"], report["quests_completed"],
                  report["maps"],
-                 report.get("manual_interventions", 0),
-                 report["recoveries"] or "{}"))
+                 report.get("manual_interventions", 0)))
+        # Two different things used to print under one word. The controller's decision
+        # histogram is named for what it is; the run's own counter -- waiting for the
+        # world to come back -- is the one that answers "did it recover".
+        print("  controller decisions %s, world recoveries %d/%d"
+              % (report["recoveries"] or "{}",
+                 report.get("world_recoveries_ok", 0),
+                 report.get("world_recoveries", 0)))
         for line in (report.get("witnesses") or {}).get("verdicts") or []:
             print("  " + line)
         play = report.get("play") or {}

@@ -82,6 +82,13 @@ DURATIONS: Dict[str, float] = {}
 # "this suite stopped answering".
 CHECK_COUNTS: Dict[str, int] = {}
 
+# Wheels this repository treats as optional. `tools/gate.py` already carries the same
+# list for the suites it dispatches ("reported as blocked, not failed, so the gate's exit
+# status still means something regressed rather than this machine lacks a wheel"); the
+# harness needs it too because it runs most tests in-process, where there is no fallback
+# interpreter to hand a suite that needs one.
+OPTIONAL_IMPORTS = ("jax", "sklearn")
+
 
 def _delegation(name: str, ran: bool, sources: Path, detail: str = "") -> None:
     """Record that a delegated suite ran, or why it could not."""
@@ -316,9 +323,23 @@ def test_tool_vocabulary() -> None:
               sorted(set(shipped) - set(tool_names)))
         # The head's input width is the featuriser's; a new feature in
         # `objective_features` silently feeds the shipped graph the wrong shape.
+        # `dedicated-v1` declares the *concatenated* row -- base state plus the
+        # history window -- so its width is `feature_count_history()`, not
+        # `FEATURE_COUNT`. Comparing both against 42 read a correct 266 as drift.
+        expected_width = (features.feature_count_history()
+                          if policy.get("arch") == "dedicated-v1"
+                          else features.FEATURE_COUNT)
         check("the shipped policy's feature width equals the featuriser's",
-              int(policy.get("features") or 0) == features.FEATURE_COUNT,
-              (policy.get("features"), features.FEATURE_COUNT))
+              int(policy.get("features") or 0) == expected_width,
+              (policy.get("features"), expected_width, policy.get("arch")))
+        if policy.get("arch") == "dedicated-v1":
+            declared = policy.get("history") or {}
+            check("and the width it declares is the history window it declares",
+                  (declared.get("steps"), declared.get("token"))
+                  == (features.HISTORY_STEPS, features.HISTORY_TOKEN)
+                  and expected_width == features.FEATURE_COUNT
+                  + int(declared.get("steps") or 0) * int(declared.get("token") or 0),
+                  (declared, features.HISTORY_STEPS, features.HISTORY_TOKEN))
 
     # The 30M encoder is opt-in (`--policy encoder`) and carries its own frozen
     # 16-label head. It cannot be widened here, but a label it emits must still
@@ -887,6 +908,30 @@ def test_artifact_rollback() -> None:
            "errors": result.errors})
 
 
+def test_forever_supervisor() -> None:
+    """The run must survive every component failing, forever.
+
+    The supervisor's whole contract is "a failure never ends the run, only the operator
+    does", so the tests that matter are the ones where everything is broken and the
+    loop still has to be running at the end of them.
+    """
+    import unittest
+    from tools.test_forever import (BackoffTests, DryRunTests, FarmingCheckTests,
+                                    NeverStopsTests, RealComponentTests,
+                                    RemedyChoiceTests, StopTests)
+
+    section("Supervisor (a failure never ends the run)")
+    suite = unittest.TestSuite()
+    for case in (NeverStopsTests, StopTests, BackoffTests, DryRunTests,
+                 FarmingCheckTests, RealComponentTests, RemedyChoiceTests):
+        suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(case))
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    check("the supervisor survives failure and stops only when told",
+          result.testsRun >= 28 and result.wasSuccessful(),
+          {"tests": result.testsRun, "failures": result.failures,
+           "errors": result.errors})
+
+
 def test_pointer_coverage_gate() -> None:
     import unittest
     from tools.test_entity_pointer_gate import PointerCoverageTests
@@ -1024,9 +1069,11 @@ def test_objective_buckets() -> None:
 
     section("objective-type buckets")
     check("talk types are {1, 9}", features.TALK_TYPES == {1, 9}, features.TALK_TYPES)
-    check("kill types cover {0, 6, 14, 16}", features.KILL_TYPES == {0, 6, 14, 16},
+    # 45 = QuestObjectiveWinMonsterInDungeon ("Defeat Belladonna in this boss's
+    # dungeon"): a real fight objective, routed through the kill/fight planner.
+    check("kill types cover {0, 6, 14, 16, 45}", features.KILL_TYPES == {0, 6, 14, 16, 45},
           features.KILL_TYPES)
-    check("fight type is {6}", features.FIGHT_TYPES == {6}, features.FIGHT_TYPES)
+    check("fight types are {6, 45}", features.FIGHT_TYPES == {6, 45}, features.FIGHT_TYPES)
     check("discover-map type is {4}", features.MAP_TYPES == {4}, features.MAP_TYPES)
     check("a talk type is not also a kill type",
           not (features.TALK_TYPES & features.KILL_TYPES))
@@ -1277,7 +1324,8 @@ def test_spawn_wait_is_bounded() -> None:
           'candidate.tool == "farm.start" and not self._farm_allowed(goal, obs)'
           in ap_src)
     check("and a run whose windows have nothing left ends instead of waiting forever",
-          "DEAD_WINDOW_LIMIT = 4" in ap_src
+          'DEAD_WINDOW_LIMIT = int(os.environ.get("AUTOPILOT_DEAD_WINDOW_LIMIT", "4"))'
+          in ap_src
           and "self._dead_windows >= DEAD_WINDOW_LIMIT" in ap_src
           and "ending the run -- the step needs a human" in ap_src)
     check("only a real step clears the dead-window count",
@@ -1345,8 +1393,14 @@ def test_stuck_objective_retired() -> None:
           < src.index("ending the run -- the step needs a human"))
     from agent import autopilot as _apm
     module_src = inspect.getsource(_apm)
+    # The bound moved behind an environment override (`AUTOPILOT_RETIRE_LIMIT`, default 3)
+    # when the constants became tunable; the property this pins is unchanged -- a default
+    # of three and a counter that is actually incremented -- so it reads the default out
+    # of the declaration instead of matching one spelling of it.
     check("retirements are bounded per run",
-          "RETIRE_LIMIT = 3" in module_src and "self._retired += 1" in src)
+          'RETIRE_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_LIMIT", "3"))' in module_src
+          and "self._retired += 1" in src,
+          "the per-run retirement bound is not declared or not counted")
     check("the bound still ends a run whose quests are all stuck",
           "DEAD_WINDOW_LIMIT" in src and "return False" in src)
     check("a goal the policy cannot express retires the quest instead of ending the run",
@@ -2242,11 +2296,20 @@ def test_dialog_ranking() -> None:
           and tied["reason"] == "question tie-break",
           tied)
 
-    # (3) nothing to go on (no overlap, no question match) => abstain, unchanged
+    # (3) nothing to go on (no overlap, no question match) => the first reply, not an
+    # abstain. This check used to demand `abstain`, and `status: abstain` is not the
+    # neutral choice it reads as: the planner's wait path (planner.py:2092) closes the
+    # dialog when the reply list is definitively empty, and six observations later it
+    # answers reply 0 regardless. `tools/test_dialog_policy.test_open_ended_tie_never_abstains`
+    # pins the same decision from the other side, and
+    # `test_planner_dialog_fallback_never_closes_when_replies_exist` is the row that
+    # exists because abstaining once closed a dialog with replies on screen.
     ambiguous = rank_dialog(obs("quel temps fait-il ?",
                                 [rp(0, "alpha"), rp(1, "beta")]))
-    check("no signal abstains instead of guessing",
-          ambiguous.get("status") == "abstain", ambiguous)
+    check("a tie with no signal takes the first reply rather than idling on it",
+          ambiguous.get("status") == "choose"
+          and ambiguous["reply"]["index"] == 0
+          and ambiguous.get("reason") == "first open-ended reply in tie", ambiguous)
 
     # (4) a dialog that is not ready waits rather than choosing
     not_ready = rank_dialog({"dialog": {"open": True, "text_ready": False,
@@ -2421,11 +2484,33 @@ def test_combat_suites() -> None:
     section("Combat suites (delegated, so '892 checks' includes them)")
     for module in ("combat.test_battle_solver", "combat.test_grid_model",
                    "combat.test_live_policy", "combat.test_normal_build_duel",
-                   "combat.test_online_learn", "combat.test_env_math"):
+                   "combat.test_live_data", "combat.test_side_swap",
+                   "combat.test_live_learn",
+                   "combat.test_online_learn", "combat.test_env_math",
+                   # The positional half of the turn: what a cell costs to stand
+                   # on, learned from the fights themselves.
+                   "combat.test_threat",
+                   # The engagement ladder the supervisor repairs with. It is the
+                   # difference between a repair that works and one that logs ok=True.
+                   "agent.test_hunting",
+                   # Which failure is this, and what fixed it last time. The net is
+                   # allowed to have no opinion, and that path is most of the suite.
+                   "agent.test_problem_nn"):
         proc = subprocess.run([sys.executable, "-m", module], cwd=str(REPO_ROOT),
                               capture_output=True, text=True, timeout=300)
+        text = (proc.stderr or "") + (proc.stdout or "")
+        absent = next((m for m in OPTIONAL_IMPORTS
+                       if "No module named '%s'" % m in text), None) \
+            if proc.returncode != 0 else None
+        if absent:
+            # Same policy as `tools/gate.py`: a wheel this box lacks is not a regression.
+            print("   SKIP: %s needs %r, which this interpreter does not ship"
+                  % (module, absent))
+            check("%s is skipped for a missing optional wheel (%s)" % (module, absent),
+                  True, absent)
+            continue
         check("%s passes" % module, proc.returncode == 0,
-              (proc.stderr or proc.stdout).strip()[-300:])
+              text.strip()[-300:])
 
 
 def test_env_scatter_and_mask_are_witnessed() -> None:
@@ -3015,11 +3100,23 @@ def test_cleanroom_harness_is_falsifiable() -> None:
     check("the equal-budget bar is recorded, not remembered", base.exists(), str(base))
     if base.exists():
         doc = json.loads(base.read_text(encoding="utf-8"))
-        from agent.weight_space import evaluate, export_manifest, manifest_weights, read_val_rows
+        from agent.weight_space import (evaluate, export_manifest, manifest_weights,
+                                        model_by_sha, read_val_rows)
 
+        # The bar is quoted for the 42-wide head, which `models/tool_policy.onnx`
+        # stopped being on 2026-11-10 when the 266-wide dedicated head replaced it.
+        # `export_manifest()` with no argument reads whatever is installed now, so
+        # this re-derived the bar on a different model -- and crashed on the width
+        # rather than reporting a stale baseline. The baseline names its artifact.
+        measured_on = model_by_sha(str(doc.get("target_sha256") or ""))
+        check("the baseline names the artifact it was measured on, and it is here",
+              measured_on is not None, str(doc.get("target_sha256"))[:16])
+        if measured_on is None:
+            return
+        manifest = export_manifest(measured_on, measured_on.with_suffix(".json"))
         rows = read_val_rows()
-        now = evaluate(manifest_weights(export_manifest()), rows,
-                       export_manifest()["base"]["tools"])["val_accuracy"]
+        now = evaluate(manifest_weights(manifest), rows,
+                       manifest["base"]["tools"])["val_accuracy"]
         check("the incumbent's bar still measures the corpus that is on disk",
               abs(float(doc["incumbent_head_val_accuracy"]) - now) < 0.005,
               str((doc["incumbent_head_val_accuracy"], now, len(rows))))
@@ -3582,15 +3679,51 @@ def test_measured_sizes_say_their_unit() -> None:
         rows = re.findall(r'"bundleChars":\s*(\d+),\s*"bundleBytes":\s*(\d+)', table_text)
         check("every recorded build carries both counts",
               len(rows) >= 1 and '"bundleBytes"' in table_text, str(rows))
-        bundle = ROOT / "desktop" / "client" / "www" / "build" / "script.js"
-        if bundle.exists() and rows:
-            raw = bundle.read_bytes()
-            chars = len(raw.decode("utf-8"))
-            check("and the recorded byte count is the file's own size",
-                  any(int(b) == len(raw) for _c, b in rows),
-                  "table=%s file=%d bytes / %d chars" % (rows, len(raw), chars))
-            check("the two counts differ exactly as often as the bundle holds non-ASCII",
-                  chars <= len(raw), "%d chars vs %d bytes" % (chars, len(raw)))
+        # A row is checked against the artifact of the build it *names*. The probe resolves
+        # hooks against `PRISTINE` -- the vendor bundle -- and records `build/script.js.bak`,
+        # which is the current build's original. But the client updates itself (2026-11-10:
+        # 3.3.11 -> the next build), and an update replaces `.bak`; the displaced vendor bytes
+        # are kept beside it as `script.js.vendor-<version>`. Comparing every row against
+        # `.bak` therefore read a correct 3.3.11 row as stale the moment the bundle moved --
+        # which is what this check reported for a day, and it was the table that was right.
+        build_dir = ROOT / "desktop" / "client" / "www" / "build"
+        rows_by_build = [
+            (m.group(1), int(m.group(2)), int(m.group(3)))
+            for m in re.finditer(r'"(\d+\.\d+\.\d+)_[^"]*":\s*\{[^}]*?"bundleChars":\s*(\d+),'
+                                 r'\s*"bundleBytes":\s*(\d+)', table_text, re.S)
+        ]
+        check("every row names the build it was measured on",
+              len(rows_by_build) == len(rows), (len(rows_by_build), len(rows)))
+        wrong = []
+        checked = 0
+        for version, chars, byts in rows_by_build:
+            archive = build_dir / ("script.js.vendor-%s" % version)
+            src = archive if archive.exists() else build_dir / "script.js.bak"
+            if not src.exists():
+                # Both are runtime state the updater leaves behind and `.gitignore` covers,
+                # so a fresh clone has neither. Skipping keeps that from reading as a lie;
+                # a row whose artifact *is* present is always checked.
+                continue
+            checked += 1
+            raw = src.read_bytes()
+            text = raw.decode("utf-8", "replace")
+            # `bundleChars` is what `text.length` returns in the probe, and that is UTF-16
+            # code units -- not code points. The bundle holds one astral character, so
+            # len(text) is 5,362,737 against a recorded 5,362,738. Comparing the two
+            # definitions is how a correct row reads as off-by-one.
+            units = len(text.encode("utf-16-le")) // 2
+            if byts != len(raw) or chars != units or len(text) > len(raw):
+                wrong.append((version, src.name, "recorded", chars, byts,
+                              "measured", units, len(raw)))
+        check("every recorded build's counts are its own artifact's size",
+              not wrong, wrong[:3] or "checked %d of %d rows" % (checked, len(rows_by_build)))
+        # A build with no row is not rejected -- the shim reports it and runs the contracts
+        # that the *live* object graph supports. What must not drift is the declared default:
+        # claiming `hooked` for a build nobody probed would install a hook set on faith.
+        default_mode = re.search(r'"defaultMode":\s*"(\w+)"', table_text)
+        check("an unlisted build falls back to pristine, not to an unverified hook set",
+              bool(default_mode) and default_mode.group(1) == "pristine",
+              default_mode.group(1) if default_mode else "no defaultMode")
 
     builder = (ROOT / "builder" / "Build.cs").read_text(encoding="utf-8", errors="replace")
     check("the builder's patched-size line reads the file, not the string",
@@ -3618,8 +3751,16 @@ def test_consult_gate_is_fitted_and_live() -> None:
 
     gate = consult_gate.load()
     check("the artifact exists and states its provenance",
-          bool(gate) and gate.get("fit_split_sha256_prefix") and gate.get("evidence"),
+          bool(gate) and bool(gate.get("model_sha256")) and bool(gate.get("fitted_on"))
+          and bool(gate.get("fit_split_sha256")) and isinstance(gate.get("evidence"), dict),
           str(sorted((gate or {}).keys()))[:150])
+    # The floor is a property of one model's logit scale, so the artifact must name
+    # an artifact that is actually in the repository -- a sha nobody can resolve is
+    # a provenance claim that can never be checked again.
+    from agent.weight_space import model_by_sha as _model_by_sha
+    pinned = _model_by_sha(str((gate or {}).get("model_sha256") or ""))
+    check("and the model it is bound to is one this repository still holds",
+          pinned is not None, str((gate or {}).get("model_sha256"))[:16])
     floor = consult_gate.floor()
     check("the arms can fail: a sure head keeps its call, an unsure one defers",
           consult_gate.should_defer(gap=0.30) and not consult_gate.should_defer(gap=3.0),
@@ -3663,6 +3804,13 @@ def test_consult_gate_is_fitted_and_live() -> None:
         nn.session = StubSession(logits)
         nn.input_name = "features"
         nn.expected_features = 42
+        # The stub stands in for the artifact the shipped gate was fitted on, so it
+        # carries that artifact's identity: the gate only speaks for the model it
+        # measured, and a stub with no identity would exercise the "no gate" branch.
+        nn.arch = "mlp"
+        nn.history_steps = 0
+        nn.model_sha256 = (gate or {}).get("model_sha256")
+        nn.last_value = None
         nn.tool_penalty = {}
         nn.stack = None
         nn.stack_mode = "off"
@@ -3690,8 +3838,15 @@ def test_consult_gate_is_fitted_and_live() -> None:
     from agent.weight_space import (export_manifest, manifest_weights, read_val_rows,
                                 forward)
 
+    # Replay the measurement on the artifact the gate is *bound to*, not on whatever
+    # is installed now. `export_manifest()` with no argument reads `models/tool_policy.onnx`,
+    # which has been the 266-wide dedicated head since 2026-11-10; feeding it the
+    # 42-wide validation rows raised a matmul mismatch instead of reproducing 0.9043.
     rows = read_val_rows()
-    m = export_manifest()
+    m = export_manifest(pinned, pinned.with_suffix(".json"))
+    check("the bound artifact's input width is the width of the rows it is scored on",
+          int(m["base"]["features"] or 0) == len(rows[0]["x"]),
+          (m["base"]["features"], len(rows[0]["x"])))
     tl = m["base"]["tools"]
     logits = forward(manifest_weights(m), np.asarray([r["x"] for r in rows]))
     srt = np.sort(logits, 1)
@@ -3925,6 +4080,107 @@ def test_equip_slot_from_template() -> None:
           "if (args && args.close && !(pd0 && pd0.isInDialog))" in page
           and "'no dialog was open'" in page,
           "a retried close was refused for having no npc_id")
+
+
+def test_border_exits_without_change_flags() -> None:
+    section("Exits on a map that publishes no change-map flags")
+    # Live 2026-11-10, map 146540544: every cell came back `{l: 66}` or `{l: 67}` --
+    # walkability present, the change-map bitfield `c` absent -- so the client's
+    # `getChangeMapFlags` answered false for all 560 cells, `exits` was empty, and
+    # every crossing fell through to a `ChangeMapMessage` sent from an interior cell.
+    # The session sent 958 of those for 128 map changes and most of the changes were
+    # reconnects; the supervisor's own words were "nowhere to go". The border is
+    # geometry, so the page now derives it when the flags are missing.
+    page = code_only((ROOT / "scripts" / "mobile-disguise.js").read_text(
+        encoding="utf-8", errors="replace"))
+    check("the border set is derived when no cell carries a flag",
+          "var _agentBorderCells = function (dir, cells, isWalkable) {" in page
+          and "borderCache[d] = _agentBorderCells(d, map.cells, walkTest);" in page,
+          "an empty exits list is the difference between travelling and stalling")
+    check("a derived exit is labelled as derived",
+          "inferred: inferred," in page,
+          "a caller must be able to tell a published exit from a reconstructed one")
+    check("only a walkable border cell is an exit",
+          "ok = !!(c && (Number(c.l) & 1));" in page
+          and "try { ok = !!isWalkable(i); } catch (eW) { ok = false; }" in page,
+          "a border cell nobody can stand on cannot be walked to")
+    check("a reached border cell that does not transition is not retried forever",
+          "var _agentEdgeTry = {};" in page
+          and "lastNav.stage === 'change_requested_at_edge'" in page
+          and "idx = (idx + 1) % pool.length;" in page,
+          "a geometric exit lists several cells and only one of them crosses")
+    # The rule is not a guess: replay it over every map the tree ships and compare
+    # with the cells the real `c` flags call exits. The geometry must be a strict
+    # superset (no true exit may fall outside it) and must stay a border rather than
+    # degrading into "every walkable cell".
+    width, total = 14, 560
+
+    def flags(cell_index: int, bits: int) -> Dict[str, bool]:
+        # The client's own formulas, transcribed from script.js `getChangeMapFlags`.
+        top = (bool(bits & 64) if cell_index <= 2 * width
+               else cell_index < width and bool(bits & 32 or bits & 128))
+        right = (bool(bits & 1) if cell_index % width == width - 1
+                 else (cell_index + 1) % (2 * width) == 0
+                 and bool(bits & 2 or bits & 128))
+        bottom = (bool(bits & 4) if cell_index >= total - 2 * width
+                  else cell_index >= total - width and bool(bits & 2 or bits & 8))
+        left = (bool(bits & 16) if cell_index % width == 0
+                else cell_index % (2 * width) == 0 and bool(bits & 8 or bits & 32))
+        return {"left": bool(left), "right": bool(right),
+                "top": bool(top), "bottom": bool(bottom)}
+
+    def on_border(cell_index: int, direction: str) -> bool:
+        if direction == "left":
+            return cell_index % width == 0
+        if direction == "right":
+            return cell_index % width == width - 1
+        if direction == "top":
+            return cell_index <= 2 * width
+        return cell_index >= total - 2 * width
+
+    maps = sorted((REPO_ROOT / "data" / "maps").glob("*.json"))
+    check("the shipped map corpus is readable", len(maps) > 1000, len(maps))
+    outside: List[str] = []
+    ratios: Dict[str, List[float]] = {d: [] for d in ("left", "right", "top", "bottom")}
+    seen = 0
+    for path in maps[:400]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+        cells = data.get("cells") or []
+        if len(cells) != total:
+            continue
+        seen += 1
+        for direction in ("left", "right", "top", "bottom"):
+            true_cells = 0
+            for index, cell in enumerate(cells):
+                if not isinstance(cell, dict):
+                    continue
+                if not flags(index, int(cell.get("c") or 0))[direction]:
+                    continue
+                true_cells += 1
+                if not on_border(index, direction):
+                    outside.append("%s:%d:%s" % (path.stem, index, direction))
+            if not true_cells:
+                continue
+            candidates = sum(
+                1 for index, cell in enumerate(cells)
+                if isinstance(cell, dict) and int(cell.get("l") or 0) & 1
+                and on_border(index, direction))
+            ratios[direction].append(candidates / float(true_cells))
+    check("the corpus replay covered real maps", seen > 300, seen)
+    check("no published exit cell falls outside the derived border",
+          not outside, outside[:5])
+
+    def median(values: List[float]) -> float:
+        ordered = sorted(values)
+        return ordered[len(ordered) // 2] if ordered else 0.0
+
+    for direction in ("left", "right", "top", "bottom"):
+        med = median(ratios[direction])
+        check("the derived %s border stays a border, not the whole map" % direction,
+              med <= 2.5, round(med, 2))
 
 
 def test_door_cell_memory() -> None:
@@ -4604,6 +4860,44 @@ def test_intervention_instrument() -> None:
     check("summary reports manual_interventions",
           "manual_interventions" in inspect.getsource(Autopilot.summary))
 
+    # What the counter is allowed to call an intervention. The page used to increment
+    # `during_run` on every trusted event it observed -- `wheel` and `keydown` included --
+    # so scrolling a spell list and typing in chat both counted as a human takeover.
+    # Measured 2026-11-10 on dofus-01: 1,078 "interventions" from 99 rows whose own
+    # breakdown read mousedown 200 / keydown 1491 / wheel 152. A goal stated as "zero
+    # manual interventions" cannot be measured by a number that a scroll wheel moves.
+    wide = Stub()
+    Autopilot._record_interventions(wide, {"user_input": {
+        "during_run": 4, "during_run_all": 11, "trusted": 11,
+        "by_type": {"pointerdown": 4, "wheel": 5, "keydown": 2}, "last_ts": 2}})
+    # Assert on the parsed row, not on its spacing. The blob is written with compact
+    # separators (`"events_all":11`), and a check that pinned the spaced form turned a
+    # correct row into a red gate the day the writer changed how it serializes -- the same
+    # way `"DEAD_WINDOW_LIMIT = 4"` went stale. The property is that both counts survive.
+    try:
+        wide_row = json.loads(wide.rows[0]) if wide.rows else {}
+    except ValueError:
+        wide_row = {}
+    check("the row keeps both counts, so the narrowing is auditable",
+          wide._intervention_total == 4 and wide_row.get("events") == 4
+          and wide_row.get("events_all") == 11,
+          wide.rows[0][:200] if wide.rows else "no row")
+
+    page = Path(ROOT) / "scripts" / "mobile-disguise.js"
+    if page.exists():
+        js = page.read_text(encoding="utf-8", errors="replace")
+        # A takeover is a pointer landing on the client, and one press is one takeover:
+        # a browser with PointerEvent fires pointerdown *and* mousedown for the same
+        # click, so counting both doubled every click.
+        check("the page counts a takeover as a pointer press, not any trusted event",
+              "takeoverEvent" in js
+              and "{ pointerdown: true }" in js
+              and "if (takeoverEvent[String(ev.type)]) ui.during_run++;" in js,
+              "the takeover rule is gone")
+        check("and a scroll wheel is still observed, just not counted as a takeover",
+              "'wheel'" in js and "ui.during_run_all++" in js,
+              "the wider count was dropped instead of separated")
+
 
 def test_claim_quarantine() -> None:
     section("Claim quarantine (criterion 3: never re-send a packet that cost a connection)")
@@ -4751,11 +5045,17 @@ def test_failure_causes() -> None:
                         {}, {}, args={"quest_id": 3841, "close": True})
     check("a failed close is not retried", dc.action == "replan",
           "%s/%s" % (dc.action, dc.cause))
+    # A reply is not a close: the page answers a *page*, and by the time the
+    # failure comes back the dialog may have moved on. `retry` re-issues the same
+    # call with the same arguments (autopilot:3851), which is precisely the
+    # replay the controller refuses at :587 -- "no dialog reply matches the given
+    # text" was 38 rows of it. `continue` falls through to a fresh plan, so the
+    # next reply is chosen against the dialog that is actually on screen.
     replier = Controller(state_dir=Path(tempfile.gettempdir()), session="")
     dr = replier.on_step("failed", "quest.advance", False, "no dialog reply matches",
                          {}, {}, args={"quest_id": 3841, "reply": 0})
-    check("an ordinary refused reply still gets its one retry", dr.action == "retry",
-          "%s/%s" % (dr.action, dr.cause))
+    check("a refused reply re-reads the page instead of replaying the same answer",
+          dr.action == "continue", "%s/%s" % (dr.action, dr.cause))
 
     exploring = Controller(state_dir=Path(tempfile.gettempdir()), session="",
                            explore=1.0)
@@ -5722,6 +6022,27 @@ def test_battle_log_and_challenges() -> None:
           and "state.challenges = _challenges()" in page
           and "snap.challenges = _challenges()" in page,
           "the observation has no battle log or challenge list")
+    # The two page-side defects that kept the monster-spell table empty
+    # (ARCH_REASSESSMENT XII.18): the enemy's casts were read from a stack the client
+    # clears, and the monster id was read off `data` instead of the fighter object.
+    check("last_actions reads the tap ring, not only the client stack",
+          "__agentBattleRing || []" in page and "actionRing" in page,
+          "the stack is cleared at fight end, so the enemy's casts stayed invisible "
+          "on all 333 recorded boards")
+    check("the monster id is read where this build exposes it -- the group, not the fighter",
+          "monster_ids: ids," in page
+          and "m.creatureGenericId != null ? m.creatureGenericId" in page,
+          "the fighter object carries no creatureGenericId in 1.74.12 (measured live "
+          "2026-11-10: null on every enemy), so the id has to come from the monster group")
+    # Measured live 2026-11-10: a fight that ended with the character dead and two
+    # monsters alive still paid 518 xp. `closeFight` used "no xp means lost" as the
+    # verdict, so that loss was counted as a win -- the session reported 2 fights and
+    # 2 wins against one real victory, inflating every win rate the farm loop reports.
+    check("the farm session takes its outcome from the server verdict, not from xp",
+          "typeof end.won === 'boolean'" in page
+          and "s._openedAt" in page,
+          "a lost fight still pays xp, so an outcome inferred from the xp delta "
+          "counts losses as wins")
     check("the fight-end capture carries challenge verdicts and the log",
           "challenges: _challenges()," in page
           and "battle_log: _battleLog(800)" in page,
@@ -5957,9 +6278,12 @@ def test_tool_ensemble() -> None:
           all(('"%s"' % mode) in planner for mode in ("off", "shadow", "act")))
     auto = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8",
                                                              errors="replace")
-    check("the CLI can select the ensemble without changing the default policy",
+    check("the CLI defaults to the learned planner and still offers the rules",
           '"--ensemble"' in auto and '"--policy"' in auto
-          and 'default="rule"' in auto)
+          and 'default="planner"' in auto
+          and '"rule"' in auto)
+    check("the planner's model is loaded before the startup line is printed",
+          "planner._ensure_model()" in auto)
     check("a live step records the stack proposal and the policy baseline",
           "ensemble=ensemble" in auto
           and 'getattr(self.runtime.policy, "last_stack", None)' in auto
@@ -6526,8 +6850,16 @@ def test_check_helper_survives_a_tuple_detail() -> None:
     section("The check() formatter itself")
     before = len(_FAILURES)
     crashed = None
+    # The probe's FAIL line is captured rather than printed. It is evidence about the
+    # formatter, not a gate failure, and on stdout it was indistinguishable from one:
+    # reading a run's log, `FAIL a tuple detail is formatted, not fatal` appears in
+    # every list of real failures, and 2026-11-10 it was reported as one of 28.
+    import io as _io
+    import contextlib as _contextlib
+    printed = _io.StringIO()
     try:
-        check("a tuple detail is formatted, not fatal", False, (1, 2))
+        with _contextlib.redirect_stdout(printed):
+            check("a tuple detail is formatted, not fatal", False, (1, 2))
     except TypeError as exc:
         crashed = exc
     # The probe's own failure line is evidence about the formatter, not a gate failure,
@@ -6542,6 +6874,9 @@ def test_check_helper_survives_a_tuple_detail() -> None:
         check("and the recorded failure keeps both the label and the detail",
               len(probe) == 1 and probe[0].startswith("a tuple detail is formatted")
               and "(1, 2)" in probe[0], probe[:1])
+        check("and the line it printed carries the same label and detail",
+              printed.getvalue().startswith("FAIL a tuple detail is formatted")
+              and "(1, 2)" in printed.getvalue(), printed.getvalue()[:120])
 
 
 def test_mutation_journal_recovery() -> None:
@@ -7754,14 +8089,28 @@ def test_installed_payload_and_dependencies() -> None:
                                   if out.is_file() else {"_rc": done.returncode,
                                                          "_err": (done.stderr or "")[-240:]})
             jax_leaves, numpy_leaves = reports["jax"], reports["numpy"]
-            moved = sorted(key for key in jax_leaves
-                           if key not in VOLATILE and numpy_leaves.get(key) != jax_leaves[key])
-            check("the fight policy answers identically on the numpy backend it ships with",
-                  bool(jax_leaves) and bool(numpy_leaves) and not moved,
-                  (len(jax_leaves), moved[:6]) if moved else (jax_leaves, numpy_leaves))
-            check("and the numpy fallback is not quietly the solver answering twice",
-                  jax_leaves.get("/boards") not in (None, 0),
-                  jax_leaves.get("/boards"))
+            # `combat/plan_benchmark.py` imports jax at module level, so on an interpreter
+            # without it *both* arms exit non-zero and each report holds only `_rc`/`_err`.
+            # Two identical error dicts compare equal, so "the policy answers identically on
+            # both backends" passed on nothing at all, and the only symptom was the second
+            # check reading `/boards` as None. Measured 2026-11-10 on the dev venv.
+            if "/boards" not in jax_leaves or "/boards" not in numpy_leaves:
+                err = (jax_leaves.get("_err") or "") + (numpy_leaves.get("_err") or "")
+                absent = next((m for m in OPTIONAL_IMPORTS
+                               if "No module named '%s'" % m in err), None)
+                print("   SKIP: the two-backend benchmark needs %s; both arms exited %s/%s"
+                      % (absent or "a working backend", jax_leaves.get("_rc"),
+                         numpy_leaves.get("_rc")))
+                check("the two-backend benchmark is skipped for a missing wheel, not "
+                      "passed vacuously", absent is not None, err[-160:])
+            else:
+                moved = sorted(key for key in jax_leaves
+                               if key not in VOLATILE and numpy_leaves.get(key) != jax_leaves[key])
+                check("the fight policy answers identically on the numpy backend it ships with",
+                      not moved, (len(jax_leaves), moved[:6]) if moved else (jax_leaves, numpy_leaves))
+                check("and the numpy fallback is not quietly the solver answering twice",
+                      jax_leaves.get("/boards") not in (None, 0),
+                      jax_leaves.get("/boards"))
 
         # The invariant that makes the above reachable on an installed copy: none of the fight
         # modules may import jax at module level again. A single stray `import jax` puts the whole
@@ -7858,6 +8207,21 @@ def test_docs_quote_measurements_by_tag() -> None:
                   bundle.exists() and bak.exists()
                   and bundle.read_bytes() == bak.read_bytes(),
                   "script.js differs from script.js.bak while client-patches.quarantine is set")
+            # `.bak` is a file the tree owns, so the comparison above can be satisfied by
+            # copying the served bundle onto it -- `cp script.js script.js.bak` would go green
+            # while shipping the very patch the quarantine exists to keep off the wire. The
+            # selftest is the independent opinion: it applies the shipped rules to `.bak`, so
+            # under quarantine its two counts must DIFFER. Equality means what we serve *is*
+            # the rules' output, whatever the bytes on disk are named.
+            #
+            # Measured 2026-11-11: the client updated itself to a newer build and left `.bak`
+            # one build behind, so this pair read "differs" for a day -- not because anyone
+            # patched the live file, but because the comparison crossed builds. `.bak` is now
+            # refreshed to the served build (`script.js.vendor-3.3.11` keeps the old one), and
+            # the rule above is what makes that refresh safe to trust.
+            check("quarantined: and the shipped rules do not reproduce it (so it is not a patch)",
+                  bool(found) and found.group(1) != found.group(2),
+                  found.groups() if found else "no selftest line")
         else:
             check("the served bundle is the patched one",
                   bool(found) and found.group(1) == found.group(2), found.groups() if found else None)
@@ -9688,9 +10052,16 @@ def test_live_ready() -> None:
           and ready.last_log_build(default_log) == "2026-10-27s",
           f"{ready.last_log_build(instance_log)} / {ready.last_log_build(default_log)}")
     shutil.rmtree(dir_pair, ignore_errors=True)
-    check("the repo page carries the 2026-10-31a build",
-          ready.page_build(REPO_ROOT.parent / "scripts" / "mobile-disguise.js")
-          == "2026-10-31a")
+    # Pinned against the file's own constant, not a literal: `AGENT_BUILD` moves every
+    # time the page agent changes, and a hard-coded generation here turns each of those
+    # into a red gate that says nothing about the reader. What must hold is that
+    # `page_build` reads the marker the file declares.
+    page = REPO_ROOT.parent / "scripts" / "mobile-disguise.js"
+    declared = re.search(r"var AGENT_BUILD = '([^']+)'",
+                         page.read_text(encoding="utf-8", errors="replace"))
+    check("the repo page carries the build its own constant declares",
+          bool(declared) and ready.page_build(page) == declared.group(1),
+          (declared.group(1) if declared else None, ready.page_build(page)))
 
 
 def test_sim_planner_runs() -> None:
@@ -11294,11 +11665,15 @@ def test_menu_window_learning_suite() -> None:
 
     # The surface phrase table had the same disease one level down: a French→menu-key map in
     # Python. The client publishes `menu_icons: [{key, label}]`; the loop learns the label,
-    # stores it and the planner matches objective text against it.
-    check("the French surface table is gone, replaced by a seed",
+    # stores it and the planner matches objective text against it. The seed stays -- a first
+    # run has no `menu_icons` to learn from -- so the property worth pinning is precedence,
+    # not absence. This check used to forbid `("inventaire", {"menu": "Bag"})` anywhere in
+    # the file, which the seed itself contains; it asserted the seed could not exist.
+    check("the French surface table is a seed under what the client teaches",
           "_UI_SURFACES = (" not in source and "_UI_SURFACES_SEED" in source
-          and '("inventaire", {"menu": "Bag"})' not in source,
-          "a language-specific table in Python is the thing this replaced")
+          and source.index("self._surface_labels.items()")
+          < source.index("for word, args in self._UI_SURFACES_SEED"),
+          "the seed answered before the labels the client publishes")
     check("the planner learns and adopts client labels",
           "def learn_surface_label" in source and "def load_surface_labels" in source
           and "self._surface_labels" in source,
@@ -11344,7 +11719,9 @@ def test_quest_data_wait() -> None:
     source = (REPO_ROOT / "agent" / "autopilot.py").read_text(encoding="utf-8")
     check("the wait is bounded, so a questless character still ends the run",
           "self._quest_data_waits < QUEST_DATA_WAIT_LIMIT" in source
-          and "QUEST_DATA_WAIT_LIMIT = 3" in source, "an unbounded wait is a spin")
+          and 'QUEST_DATA_WAIT_LIMIT = int(os.environ.get('
+              '"AUTOPILOT_QUEST_DATA_WAIT_LIMIT", "3"))' in source,
+          "an unbounded wait is a spin")
     check("and the branch waits instead of falling through to the retirement",
           "instead of retiring the goal" in source
           and source.index("_quest_data_pending(before)")
@@ -13504,6 +13881,73 @@ def test_a_return_to_the_objective_map_is_granted_once() -> None:
           "marks %s granted %s" % (sorted(step_reset._exhausted_at),
                                    sorted(step_reset._return_granted)))
 
+
+def test_a_crossing_does_not_reopen_a_retired_quest() -> None:
+    """The two retirement clocks have to agree on what a crossing is.
+
+    `QuestPlanner` un-retires a quest in two places. `_reopen` asks each quest's own
+    `_situation_sig`, which carries the tracker step, the objective, the tutorial step and
+    the gate -- and deliberately *not* the map, because a crossing is not a new situation
+    for a quest (the 2026-10-29 note at `_situation_sig`). `_note_situation` clears
+    `_skipped` wholesale whenever `quest_key` moves, and `quest_key` carried `map_id`. So
+    the coarse
+    clock fired on exactly the event the fine one was built to ignore, and it fired first:
+    cross a border, the retirement is wiped, the same quest returns with the same nothing
+    to do, forty waits, retire again. That is the 94% "no action" figure -- 47,000 wait
+    rows against 4,200 steps -- read from the other end.
+
+    Pinned here as the property rather than the mechanism: a crossing leaves a retirement
+    alone, and a new scripted gate is still a new situation for it.
+    """
+    from agent.planner import QuestPlanner
+
+    section("A crossing is not a new situation for a retired quest")
+
+    def obs(map_id: int, gate: Optional[dict] = None) -> dict:
+        block = {"map_id": map_id, "cell": 331, "groups": [], "npcs": [],
+                 "exits": [], "neighbours": {}, "doors": []}
+        out = {"cell": 331, "level": 11, "in_world": True,
+               "quests_active": {"4262": 0},
+               "position": {"map_id": map_id, "cell": 331},
+               "map": block}
+        if gate is not None:
+            out["tutorial"] = {"active": True, "quest_id": 4262, "step_id": 3,
+                               "can_change_map": gate}
+        return out
+
+    planner = QuestPlanner()
+    here = obs(145489920)
+    planner._note_situation(here)
+    planner._retire(4262, here)
+    check("the quest is retired on the map it had nothing to do on",
+          4262 in planner._skipped, str(sorted(planner._skipped)))
+
+    planner._note_situation(obs(145489921))          # the crossing, and nothing else
+    check("crossing a border does not reopen it",
+          4262 in planner._skipped,
+          "the crossing wiped the retirement: %s" % sorted(planner._skipped))
+    check("and the quest's own signature agrees, so the two clocks now say the same thing",
+          planner._situation_sig(obs(145489921), 4262)
+          == planner._skip_sigs.get(4262),
+          "sig moved on a crossing")
+
+    planner._note_situation(obs(145489921, gate={"left": False}))
+    check("but a gate that closes is a new situation, and the coarse clock still sees it",
+          4262 not in planner._skipped, str(sorted(planner._skipped)))
+
+    # The other half of the same disagreement: a retirement has to survive an unrelated
+    # crossing *and* still be reopened by the fine clock when the tracker actually moves.
+    survivor = QuestPlanner()
+    survivor._note_situation(here)
+    survivor._retire(4262, here)
+    moved = obs(145489921)
+    moved["current_objective"] = {"quest_id": 4262, "objective_id": 13958, "step": 4}
+    survivor._note_situation(moved)
+    survivor._reopen(moved)
+    check("a tracker step that really moved reopens it through the per-quest signature",
+          4262 not in survivor._skipped, str(sorted(survivor._skipped)))
+
+
 def test_a_silent_house_map_is_left_by_the_crossings_it_knows() -> None:
     """Where the character is, and how it gets out -- on the live observation shape.
 
@@ -14497,7 +14941,7 @@ def test_session_close_hook() -> None:
           'self.fight_log.flush("session_end")\n            self._close_session()'
           in source, "the finally block does not hand off")
     check("the close runs out of process",
-          '"tools.session_close"' in source,
+          "session_close.py" in source and "import tools.session_close" not in source,
           "the pipeline would be imported into the loop thread")
 
     from agent import brain_daemon as daemon_module
@@ -16081,6 +16525,16 @@ def _run_test(fn) -> None:
     "checks, failed" line, so the run looked like a pass with a stray exit
     code. A raising test is now a failure the summary counts.
 
+    A test that cannot import an *optional* wheel is not a regression, and the gate
+    already says so for the suites it dispatches itself (`tools/gate.py`:
+    OPTIONAL_IMPORTS, "reported as blocked, not failed, so the gate's exit status
+    still means something regressed rather than this machine lacks a wheel"). This
+    harness runs its own tests in-process, where there is no such fallback, so a
+    dev box without sklearn reported three green tests as three failures --
+    measured 2026-11-10: `test_lexical_command_policy`, `test_live_within_segment_eval`
+    and `test_worker_headroom_layer` all died on `No module named 'sklearn'`.
+    They are skipped by name instead, so the tally says what was actually checked.
+
     Each test's own wall time is recorded on the way through, because timing a
     test again to measure it perturbs the number (measured 2026-11-01: the JS
     suites read 6.4 s on their first pass and 30.3 s when a ratchet re-ran
@@ -16093,16 +16547,162 @@ def _run_test(fn) -> None:
     try:
         fn()
     except Exception as exc:  # noqa: BLE001 - the gate must survive its own tests
-        import traceback
-        traceback.print_exc()
-        check("test %s ran to completion" % getattr(fn, "__name__", fn),
-              False, "%s: %s" % (type(exc).__name__, exc))
+        name = getattr(fn, "__name__", str(fn))
+        absent = None
+        if isinstance(exc, ModuleNotFoundError):
+            absent = (exc.name or "").split(".")[0]
+        if absent and absent in OPTIONAL_IMPORTS:
+            # A recorded skip, not a silent one: `test_no_suite_stops_answering` reads a
+            # suite whose check count fell to zero as a suite that went quiet, so the
+            # row has to exist. The label is the record of what did not run and why.
+            print("   SKIP: %s needs %r, which this interpreter does not ship"
+                  % (name, absent))
+            check("test %s is skipped for a missing optional wheel (%s)"
+                  % (name, absent), absent in OPTIONAL_IMPORTS, absent)
+        else:
+            import traceback
+            traceback.print_exc()
+            check("test %s ran to completion" % name,
+                  False, "%s: %s" % (type(exc).__name__, exc))
     name = getattr(fn, "__name__", str(fn))
     CHECK_COUNTS[name] = _CHECKS - before
     DURATIONS[name] = round(time.perf_counter() - started, 2)
 
 
+def test_durable_memory() -> None:
+    """A solution found in one session is replayed in the next -- and only once.
+
+    The requirement this pins, in the operator's words: "if it's a learned thing he
+    always redo in the online training not having to solve it every time". That is a
+    claim about *across* processes, so the test has to cross one: the first store is
+    written by a memory object that is then thrown away, and the replay is asked of a
+    fresh pilot that never saw the episode.
+    """
+    import tempfile
+
+    from agent.action_memory import ActionMemory, context_signature
+    from agent.autopilot import Autopilot
+    from agent.persistent_memory import PersistentMemory
+    from agent.tool_dataset import _observation_text
+
+    section("A solution survives the session that found it")
+
+    tmp = Path(tempfile.mkdtemp())
+    store = tmp / "learned.json"
+    obs = {"map_id": 145752833, "in_world": True, "cell": 300,
+           "current_objective": {"id": 4262, "type_id": 6, "step_id": 3},
+           "quests_active": {"4262": {"step_id": 3}},
+           "ready_objectives": [{"id": 4262}]}
+    ctx = context_signature(obs["current_objective"], obs)
+
+    mem = PersistentMemory(store)
+    mem.observe(ctx, "quest.advance", {"quest_id": 4262, "npc_id": 3888}, "advanced")
+    check("a solution is written to disk", mem.save() is not None)
+    check("and the file actually holds it",
+          "quest.advance" in store.read_text(encoding="utf-8"))
+
+    class _Rt:
+        instance = "dofus-00"
+        policy = None
+        def current_observation(self):
+            return {}, 0.0, "cache"
+        def observe(self, obs, source="live"):
+            return None
+
+    def pilot(path, replay=True):
+        return Autopilot(runtime=_Rt(), goals=["do all the quests"],
+                         log_path=tmp / "a.jsonl", stop_file=tmp / "STOP",
+                         max_steps=1, preflight=False, minutes=0, interval=0.0,
+                         steps_per_goal=1, memory_path=path, memory_replay=replay)
+
+    ap = pilot(store)
+    check("the pilot reads the store it was given",
+          isinstance(ap._memory, PersistentMemory), type(ap._memory).__name__)
+    ap._mem_ctx = ctx
+    call = ap._remembered_call(obs, "do all the quests")
+    check("a context that already worked is answered from memory, not from the policy",
+          call is not None and call.tool == "quest.advance", call)
+    check("with the arguments that worked",
+          call is not None and call.args.get("quest_id") == 4262, call)
+    check("replaying it is recorded in the step log, so the run can be read back",
+          "memory_replay" in (tmp / "a.jsonl").read_text(encoding="utf-8"))
+    again = ap._remembered_call(obs, "do all the quests")
+    check("but only once per context, so a wrong memory cannot become a loop",
+          again is None, again)
+
+    # A different map is a different situation: the memory must not generalise the
+    # solution to everywhere, which is the failure mode that makes durable memory
+    # dangerous rather than useful.
+    elsewhere = dict(obs, map_id=1)
+    ap._mem_ctx = context_signature(obs["current_objective"], elsewhere)
+    check("the same objective on another map is not the same context",
+          ap._remembered_call(elsewhere, "do all the quests") is None)
+
+    # A row written by an older build is a stale claim, not a solution.
+    stale = PersistentMemory(store)
+    stale.observe(ctx, "tool.that.was.removed", {}, "advanced")
+    stale.save()
+    ap2 = pilot(store)
+    ap2._mem_ctx = ctx
+    got = ap2._remembered_call(obs, "do all the quests")
+    check("a solution naming a tool the registry no longer has is skipped",
+          got is not None and got.tool == "quest.advance", got)
+
+    # A dead end outlives the session too -- that is what makes it a wall.
+    ap3 = pilot(store)
+    ap3._mem_ctx = ctx
+    ap3._memory.observe(ctx, "quest.advance", {"quest_id": 4262, "npc_id": 3888}, "failed")
+    check("a call that failed here is vetoed even though it once worked",
+          ap3._remembered_call(obs, "do all the quests") is None)
+
+    # A remembered move is not a remembered answer. Measured on a holdout session: the
+    # memory's top call matched what the agent did on 0.5% of navigation steps (4/785)
+    # against 5.0% for quests, because walking left and walking right are the same
+    # situation with alternating right answers.
+    nav_obs = dict(obs, map_id=145490435)
+    nav_ctx = context_signature(obs["current_objective"], nav_obs)
+    nav_mem = PersistentMemory(tmp / "nav.json")
+    nav_mem.observe(nav_ctx, "nav.goto", {"direction": "left"}, "advanced")
+    nav_mem.save()
+    ap5 = pilot(tmp / "nav.json")
+    ap5._mem_ctx = nav_ctx
+    check("a remembered navigation move is never replayed over the policy",
+          ap5._remembered_call(nav_obs, "go") is None)
+
+    # Without a path the loop keeps the old episodic behaviour, so a test or an
+    # evaluation run cannot inherit what a previous run learned.
+    ap4 = pilot(None)
+    ap4._mem_ctx = ctx
+    check("no path means episodic memory, not a shared file",
+          isinstance(ap4._memory, ActionMemory)
+          and not isinstance(ap4._memory, PersistentMemory), type(ap4._memory).__name__)
+    check("and such a pilot replays nothing", ap4._remembered_call(obs, "go") is None)
+
+    # The A/B control arm: the store still records, so a control session loses nothing,
+    # but it never dispatches a remembered call. Two runs that differ in one behaviour
+    # must be distinguishable from their own logs, which is what memory_arm is for.
+    ap_ctl = pilot(store, replay=False)
+    ap_ctl._mem_ctx = ctx
+    check("the control arm is labelled on the pilot",
+          ap_ctl.memory_arm == "record-only", ap_ctl.memory_arm)
+    check("the replay arm is labelled too", ap.memory_arm == "record+replay", ap.memory_arm)
+    check("the control arm never replays",
+          ap_ctl._remembered_call(obs, "do all the quests") is None)
+    check("but it still knows what worked here, as text",
+          ap_ctl._memory.describe_solution(ctx) is not None)
+
+    # The line the policy reads: what worked here, next to what is exhausted.
+    text = _observation_text(dict(obs, known_solution="worked here before: "
+                                  "quest.advance(quest_id=4262) x2"))
+    check("the model is told what already worked here",
+          text is not None and "worked here before" in text, text)
+    text2 = _observation_text(dict(obs, already_failed="already failed here: nav.goto"))
+    check("and the dead-end line still renders on its own",
+          text2 is not None and "already failed here" in text2, text2)
+
+
 def run() -> Tuple[int, List[str]]:
+    _run_test(test_durable_memory)
     _run_test(test_verdict_vocabulary)
     _run_test(test_verifier_rules)
     _run_test(test_verifier_model_contract)
@@ -16126,6 +16726,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_patch_rules_are_idempotent)
     _run_test(test_live_collection_lifecycle)
     _run_test(test_pointer_coverage_gate)
+    _run_test(test_forever_supervisor)
     _run_test(test_constraint_corpus)
     _run_test(test_objective_buckets)
     _run_test(test_objective_parameter_table)
@@ -16240,6 +16841,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_talk_needs_resolved_actor)
     _run_test(test_equip_slot_from_template)
     _run_test(test_door_cell_memory)
+    _run_test(test_border_exits_without_change_flags)
     _run_test(test_combined_objectives)
     _run_test(test_objective_travel_is_bounded)
     _run_test(test_search_prefers_fresh_maps)
@@ -16250,6 +16852,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_the_session_end_row_names_the_reason)
     _run_test(test_the_plan_reason_reaches_the_action_row)
     _run_test(test_a_return_to_the_objective_map_is_granted_once)
+    _run_test(test_a_crossing_does_not_reopen_a_retired_quest)
     _run_test(test_a_silent_house_map_is_left_by_the_crossings_it_knows)
     _run_test(test_no_call_is_explained)
     _run_test(test_ready_set_ranking)

@@ -314,6 +314,42 @@ class PayloadParsingTests(unittest.TestCase):
         self.assertEqual(hit.effects[0].kind, "damage")
         self.assertEqual(hit.effects[0].element, "EARTH")
 
+    def test_own_ap_is_recovered_from_the_stat_and_the_turn_spend(self):
+        """The client sends `ap: null` on our own fighter; `my_stats` has the budget.
+
+        Measured 2026-11-10 on the captured corpus: 106 of 160 boards taken on our own
+        turn read `ap: 0`, and the grid dataset builder dropped 198 of 333 boards as
+        `no_positive_ap` because of it. The stat is the turn's budget and
+        `spell_cast_counts` resets each round, so the remaining AP is derivable.
+        """
+        payload = self.payload()
+        payload["my_stats"]["action_points"] = 6
+        payload["my_stats"]["movement_points"] = 3
+        payload["fighters"][0]["ap"] = None
+        payload["fighters"][0]["mp"] = None
+        board = Board.from_fight_state(payload)
+        self.assertEqual(board.my_ap, 6, "the budget is the turn's, from my_stats")
+        self.assertEqual(board.my_mp, 3)
+        self.assertEqual(board.me.ap, 6, "the fighter row must agree with my_ap")
+
+        # Two casts of a 3-AP spell spend the whole turn: the board is genuinely empty
+        # and must say so instead of being rescued to full.
+        payload["spell_cast_counts"] = {"10": 2}
+        board = Board.from_fight_state(payload)
+        self.assertEqual(board.my_ap, 0)
+
+        # One cast leaves half the turn, and the fighter's own ap agrees.
+        payload["spell_cast_counts"] = {"10": 1}
+        board = Board.from_fight_state(payload)
+        self.assertEqual(board.my_ap, 3)
+        self.assertEqual(board.me.ap, 3)
+
+        # A published AP is never overridden by the stat.
+        payload["fighters"][0]["ap"] = 2
+        payload["spell_cast_counts"] = {}
+        board = Board.from_fight_state(payload)
+        self.assertEqual(board.my_ap, 2, "the client's own number wins when it is there")
+
     def test_roll_encoding_matches_the_client(self):
         self.assertEqual(_roll({"dice_num": 10, "dice_side": 15}), (10, 15))
         self.assertEqual(_roll({"dice_num": 20, "dice_side": 0}), (20, 20))
@@ -692,6 +728,45 @@ class LegalityTests(unittest.TestCase):
 
 
 class SearchTests(unittest.TestCase):
+    def test_a_turn_with_nothing_in_range_walks_instead_of_passing(self):
+        """The common turn: a target too far to cast at, MP to close some of it.
+
+        Measured on the captured corpus (2026-11-10): 114 of 152 turns on our own side
+        came back as a single `pass`, because the beam folds a walk into a cast and a
+        turn with no reachable cast therefore had no candidate plan at all. The live
+        policy hands those turns to the actor, which is the half measured 0.0875 worse.
+        """
+        board = board_with(cell(20, 20), cell(26, 20), my_mp=3, my_ap=6,
+                           spells=[live_spell(max_range=2)])
+        plans = BattleSolver().plan_candidates(board, 5)
+        kinds = [p.actions[0].kind for p in plans if p.actions]
+        self.assertIn("move", kinds, "a turn that can only walk must offer a walk")
+        walk = next(p for p in plans if p.actions and p.actions[0].kind == "move")
+        action = walk.actions[0]
+        self.assertEqual(action.from_cell, cell(20, 20))
+        self.assertLess(board.cells.distance(action.move_to, cell(26, 20)),
+                        board.cells.distance(cell(20, 20), cell(26, 20)),
+                        "the walk must close distance, not wander")
+        self.assertGreater(walk.remaining_mp, -1)
+        # The pass is still offered: walking is a choice, not a compulsion.
+        self.assertIn("pass", kinds)
+
+    def test_a_walk_never_outranks_a_cast_that_lands(self):
+        """`APPROACH_VALUE` is below one point of damage for exactly this reason."""
+        board = board_with(cell(20, 20), cell(22, 20), my_mp=3, my_ap=6,
+                           spells=[live_spell(max_range=3)])
+        plans = BattleSolver().plan_candidates(board, 5)
+        cast = next(p for p in plans if p.actions and p.actions[0].kind == "cast")
+        self.assertGreater(cast.score, 0.0)
+        self.assertEqual(plans[0].actions[0].kind, "cast")
+
+    def test_an_adjacent_target_with_no_castable_spell_is_a_real_pass(self):
+        """Nothing to do is a verdict, not a failure: 30 of the 51 remaining passes."""
+        board = board_with(cell(20, 20), cell(21, 20), my_mp=3, my_ap=6,
+                           spells=[live_spell(max_range=1, castable=False)])
+        plans = BattleSolver().plan_candidates(board, 5)
+        self.assertEqual([p.actions[0].kind for p in plans if p.actions], ["pass"])
+
     def test_a_walk_into_range_then_cast_is_planned(self):
         board = board_with(cell(20, 20), cell(24, 20), my_mp=1, my_ap=3,
                            spells=[live_spell(max_range=3)])
@@ -837,6 +912,48 @@ class RealMapTests(unittest.TestCase):
         self.assertTrue(ring)
         for target in ring:
             self.assertIn(self.cell_map.distance(origin, target), (2, 3))
+
+
+class SpellGradeTests(unittest.TestCase):
+    """A spell level lists the same effect id once per grade; the client casts one.
+
+    Measured 2026-11-10 on the live spell 61: three `effect_id 97` rows (18-20,
+    21-23, 24-26) were summed into 66 base damage, the caster's stats folded that to
+    117.65, and the live cast dealt 39. Every plan the solver ranked was built on a
+    number three times too large, so it believed one cast finished a 120-hp monster
+    and left three enemies standing.
+    """
+
+    def test_repeated_effect_ids_are_grades_not_extra_hits(self):
+        spell = live_spell(effects=(LiveEffect(97, 18, 20), LiveEffect(97, 21, 23),
+                                    LiveEffect(97, 24, 26)))
+        lines = spell.damage_effects
+        self.assertEqual(len(lines), 1)
+        self.assertEqual((lines[0].min_roll, lines[0].max_roll), (24, 26))
+
+    def test_the_highest_grade_wins_regardless_of_order(self):
+        spell = live_spell(effects=(LiveEffect(97, 24, 26), LiveEffect(97, 18, 20)))
+        self.assertEqual(spell.damage_effects[0].min_roll, 24)
+
+    def test_different_effect_ids_stay_separate(self):
+        spell = live_spell(effects=(LiveEffect(97, 18, 20), LiveEffect(99, 13, 16)))
+        self.assertEqual(len(spell.damage_effects), 2)
+
+    def test_an_unknown_effect_id_is_not_a_damage_line(self):
+        # `kind` is derived from the effect id, so id 0 is "other" -- it is dropped
+        # before the grade collapse rather than being merged into a real line.
+        spell = live_spell(effects=(LiveEffect(0, 10, 10), LiveEffect(97, 4, 4)))
+        self.assertEqual([e.effect_id for e in spell.damage_effects], [97])
+
+    def test_the_estimate_drops_by_the_grade_factor(self):
+        target = fighter(2, "Foe", cell(21, 20), "enemy")
+        board = board_with(cell(20, 20), target.cell, spells=[])
+        summed = live_spell(effects=(LiveEffect(97, 18, 20), LiveEffect(97, 21, 23),
+                                     LiveEffect(97, 24, 26)))
+        result = BattleSolver._estimate(
+            board, summed, board.character_stats(), target, "damage")
+        self.assertEqual(result.total_min, 24)
+        self.assertEqual(result.total_max, 26)
 
 
 class SelfCheckTests(unittest.TestCase):

@@ -1,0 +1,4829 @@
+{
+ "dead": {
+  "\u001f\u001f\u001f145490435": {
+   "quest.advance|{\"quest_id\": 584}": {
+    "args": {
+     "quest_id": 584
+    },
+    "count": 1,
+    "last": 1794324406.638,
+    "tool": "quest.advance"
+   }
+  },
+  "\u001f\u001f\u001f147064834": {
+   "farm.start|{\"monster\": 698229}": {
+    "args": {
+     "monster": 698229
+    },
+    "count": 17,
+    "last": 1794324403.916,
+    "tool": "farm.start"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "count": 89,
+    "last": 1794324403.914,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13507, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13507,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324403.914,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13922, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13922,
+     "quest_id": 3841
+    },
+    "count": 2,
+    "last": 1794324403.914,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841}": {
+    "args": {
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324403.914,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4533\u001f147062786": {
+   "farm.start|{}": {
+    "args": {},
+    "count": 7,
+    "last": 1794324390.337,
+    "tool": "farm.start"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "count": 5,
+    "last": 1794324406.961,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4545\u001f147063812": {
+   "quest.advance|{\"objective_id\": 13505, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13505,
+     "quest_id": 3841
+    },
+    "count": 2,
+    "last": 1794324405.837,
+    "tool": "quest.advance"
+   },
+   "ui.tap|{\"cycle\": true, \"menu\": \"Spell\"}": {
+    "args": {
+     "cycle": true,
+     "menu": "Spell"
+    },
+    "count": 3,
+    "last": 1794324405.636,
+    "tool": "ui.tap"
+   }
+  },
+  "3841\u001f0\u001f4547\u001f147064834": {
+   "inv.equip|{\"object_uid\": 150469308}": {
+    "args": {
+     "object_uid": 150469308
+    },
+    "count": 4,
+    "last": 1794324390.367,
+    "tool": "inv.equip"
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324405.846,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13507, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13507,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324405.847,
+    "tool": "quest.advance"
+   },
+   "ui.tap|{\"client_target\": \"close:equipment\"}": {
+    "args": {
+     "client_target": "close:equipment"
+    },
+    "count": 2,
+    "last": 1794324390.371,
+    "tool": "ui.tap"
+   },
+   "ui.tap|{\"cycle\": true, \"menu\": \"Bag\"}": {
+    "args": {
+     "cycle": true,
+     "menu": "Bag"
+    },
+    "count": 5,
+    "last": 1794324405.658,
+    "tool": "ui.tap"
+   }
+  },
+  "3841\u001f0\u001f4573\u001f147064834": {
+   "quest.advance|{\"objective_id\": 13531, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13531,
+     "quest_id": 3841
+    },
+    "count": 5,
+    "last": 1794324405.858,
+    "tool": "quest.advance"
+   },
+   "tap.interactive|{\"element_id\": 513203}": {
+    "args": {
+     "element_id": 513203
+    },
+    "count": 2,
+    "last": 1794324405.861,
+    "tool": "tap.interactive"
+   },
+   "ui.tap|{\"client_target\": \"charac_update\"}": {
+    "args": {
+     "client_target": "charac_update"
+    },
+    "count": 1,
+    "last": 1794324390.375,
+    "tool": "ui.tap"
+   },
+   "ui.tap|{\"index\": 0, \"selector\": \".upgradeButton\"}": {
+    "args": {
+     "index": 0,
+     "selector": ".upgradeButton"
+    },
+    "count": 2,
+    "last": 1794324390.374,
+    "tool": "ui.tap"
+   }
+  },
+  "3841\u001f0\u001f4579\u001f145490435": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "count": 2,
+    "last": 1794324406.714,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324406.715,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13537, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13537,
+     "quest_id": 3841
+    },
+    "count": 2,
+    "last": 1794324406.714,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask what's next. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask what's next. {icon:iconUpdateQuestMain}"
+    },
+    "count": 1,
+    "last": 1794324406.026,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Bow and take your leave.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Bow and take your leave."
+    },
+    "count": 2,
+    "last": 1794324406.025,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Raise one eyebrow questioningly. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Raise one eyebrow questioningly. {icon:iconUpdateQuestMain}"
+    },
+    "count": 2,
+    "last": 1794324405.996,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Show enthusiasm for both ideas.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Show enthusiasm for both ideas."
+    },
+    "count": 1,
+    "last": 1794324406.026,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4579\u001f146276352": {
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "count": 10,
+    "last": 1794324406.02,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 10,
+    "last": 1794324406.017,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "count": 7,
+    "last": 1794324406.959,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 3841
+    },
+    "count": 5,
+    "last": 1794324406.959,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3894, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3894,
+     "quest_id": 3841
+    },
+    "count": 6,
+    "last": 1794324406.959,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3966, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3966,
+     "quest_id": 3841
+    },
+    "count": 5,
+    "last": 1794324406.959,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13537, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13537,
+     "quest_id": 3841
+    },
+    "count": 6,
+    "last": 1794324406.737,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 1946, \"reply\": 0, \"reply_text\": \"Enter. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 1946,
+     "reply": 0,
+     "reply_text": "Enter. {icon:iconUpdateQuestMain}"
+    },
+    "count": 1,
+    "last": 1794324406.735,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask for an explanation.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask for an explanation."
+    },
+    "count": 1,
+    "last": 1794324406.022,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Bow respectfully. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Bow respectfully. {icon:iconUpdateQuestMain}"
+    },
+    "count": 3,
+    "last": 1794324406.021,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Keep listening.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Keep listening."
+    },
+    "count": 1,
+    "last": 1794324406.022,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Offer to go and kick Belladonna's backside.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Offer to go and kick Belladonna's backside."
+    },
+    "count": 1,
+    "last": 1794324406.022,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Offer to help.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Offer to help."
+    },
+    "count": 1,
+    "last": 1794324406.023,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4581\u001f145490435": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "count": 1,
+    "last": 1794324406.027,
+    "tool": "nav.goto"
+   }
+  },
+  "3841\u001f0\u001f4581\u001f146276352": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "count": 8,
+    "last": 1794324406.034,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"map_id\": 145490946}": {
+    "args": {
+     "map_id": 145490946
+    },
+    "count": 1,
+    "last": 1794324406.034,
+    "tool": "nav.goto"
+   }
+  },
+  "3841\u001f0\u001f4970\u001f146276352": {
+   "nav.goto|{\"direction\": \"bottom\", \"map_id\": 146276353}": {
+    "args": {
+     "direction": "bottom",
+     "map_id": 146276353
+    },
+    "count": 4,
+    "last": 1794324406.079,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"left\", \"map_id\": 146407936}": {
+    "args": {
+     "direction": "left",
+     "map_id": 146407936
+    },
+    "count": 8,
+    "last": 1794324406.078,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"right\", \"map_id\": 146276864}": {
+    "args": {
+     "direction": "right",
+     "map_id": 146276864
+    },
+    "count": 6,
+    "last": 1794324406.08,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"top\", \"map_id\": 146276609}": {
+    "args": {
+     "direction": "top",
+     "map_id": 146276609
+    },
+    "count": 5,
+    "last": 1794324406.079,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "count": 3,
+    "last": 1794324406.04,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"map_id\": 145490946}": {
+    "args": {
+     "map_id": 145490946
+    },
+    "count": 3,
+    "last": 1794324406.042,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask what he means by that.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask what he means by that."
+    },
+    "count": 2,
+    "last": 1794324406.071,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Find out more about libraries.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Find out more about libraries."
+    },
+    "count": 1,
+    "last": 1794324406.072,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145489922": {
+   "farm.start|{\"monster\": 715354}": {
+    "args": {
+     "monster": 715354
+    },
+    "count": 1,
+    "last": 1794324406.405,
+    "tool": "farm.start"
+   },
+   "nav.goto|{\"direction\": \"bottom\"}": {
+    "args": {
+     "direction": "bottom"
+    },
+    "count": 1,
+    "last": 1794324406.405,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "count": 1,
+    "last": 1794324406.405,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"objective_id\": 14070, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14070,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324406.404,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145489923": {
+   "farm.start|{\"monster\": 715354}": {
+    "args": {
+     "monster": 715354
+    },
+    "count": 39,
+    "last": 1794324406.429,
+    "tool": "farm.start"
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "count": 123,
+    "last": 1794324406.656,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "count": 4,
+    "last": 1794324406.453,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 7,
+    "last": 1794324405.291,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3932, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3932,
+     "quest_id": 3841
+    },
+    "count": 12,
+    "last": 1794324406.454,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 14070, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14070,
+     "quest_id": 3841
+    },
+    "count": 18,
+    "last": 1794324406.656,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145490434": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 3,
+    "last": 1794324405.227,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Notice how exhausted he looks.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Notice how exhausted he looks."
+    },
+    "count": 3,
+    "last": 1794324405.225,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Point to the large axe stuck in the trunk.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Point to the large axe stuck in the trunk."
+    },
+    "count": 1,
+    "last": 1794324405.189,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145490435": {
+   "farm.start|{\"monster\": 715354}": {
+    "args": {
+     "monster": 715354
+    },
+    "count": 11,
+    "last": 1794324406.402,
+    "tool": "farm.start"
+   },
+   "inv.equip|{\"object_uid\": 161132736}": {
+    "args": {
+     "object_uid": 161132736
+    },
+    "count": 1,
+    "last": 1794324390.385,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 161132738}": {
+    "args": {
+     "object_uid": 161132738
+    },
+    "count": 1,
+    "last": 1794324390.39,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 68720787}": {
+    "args": {
+     "object_uid": 68720787
+    },
+    "count": 6,
+    "last": 1794324405.249,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 68720788}": {
+    "args": {
+     "object_uid": 68720788
+    },
+    "count": 7,
+    "last": 1794324405.25,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 69386241}": {
+    "args": {
+     "object_uid": 69386241
+    },
+    "count": 6,
+    "last": 1794324405.25,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 69386242}": {
+    "args": {
+     "object_uid": 69386242
+    },
+    "count": 6,
+    "last": 1794324405.25,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 70331924}": {
+    "args": {
+     "object_uid": 70331924
+    },
+    "count": 4,
+    "last": 1794324405.313,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 70331925}": {
+    "args": {
+     "object_uid": 70331925
+    },
+    "count": 4,
+    "last": 1794324405.314,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 70331926}": {
+    "args": {
+     "object_uid": 70331926
+    },
+    "count": 4,
+    "last": 1794324405.315,
+    "tool": "inv.equip"
+   },
+   "inv.equip|{\"object_uid\": 70331927}": {
+    "args": {
+     "object_uid": 70331927
+    },
+    "count": 4,
+    "last": 1794324405.319,
+    "tool": "inv.equip"
+   },
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "count": 13,
+    "last": 1794324406.663,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "count": 27,
+    "last": 1794324406.663,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "count": 18,
+    "last": 1794324406.482,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 175,
+    "last": 1794324406.657,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Head out. {icon:iconUpdateQuestMain} {icon:iconNewQuestMain}\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Head out. {icon:iconUpdateQuestMain} {icon:iconNewQuestMain}"
+    },
+    "count": 2,
+    "last": 1794324390.381,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841, \"reply\": 0}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841,
+     "reply": 0
+    },
+    "count": 2,
+    "last": 1794324390.383,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "count": 91,
+    "last": 1794324406.713,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3920, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3920,
+     "quest_id": 3841
+    },
+    "count": 155,
+    "last": 1794324406.656,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3932, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3932,
+     "quest_id": 3841
+    },
+    "count": 9,
+    "last": 1794324406.478,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3934, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3934,
+     "quest_id": 3841
+    },
+    "count": 3,
+    "last": 1794324406.448,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 14070, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14070,
+     "quest_id": 3841
+    },
+    "count": 252,
+    "last": 1794324406.713,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask who he is. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask who he is. {icon:iconUpdateQuestMain}"
+    },
+    "count": 1,
+    "last": 1794324406.661,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Give your humble thanks.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Give your humble thanks."
+    },
+    "count": 3,
+    "last": 1794324406.662,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go and equip your new items.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go and equip your new items."
+    },
+    "count": 3,
+    "last": 1794324406.662,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go back and equip the offered items.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go back and equip the offered items."
+    },
+    "count": 87,
+    "last": 1794324406.713,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Head out. {icon:iconUpdateQuestMain} {icon:iconNewQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Head out. {icon:iconUpdateQuestMain} {icon:iconNewQuestMain}"
+    },
+    "count": 4,
+    "last": 1794324405.993,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Introduce yourself.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Introduce yourself."
+    },
+    "count": 2,
+    "last": 1794324406.661,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Keep listening.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Keep listening."
+    },
+    "count": 2,
+    "last": 1794324406.662,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145490947": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "count": 2,
+    "last": 1794324406.667,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "count": 1,
+    "last": 1794324406.667,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324405.182,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3968, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3968,
+     "quest_id": 3841
+    },
+    "count": 7,
+    "last": 1794324406.666,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 14070, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14070,
+     "quest_id": 3841
+    },
+    "count": 9,
+    "last": 1794324406.667,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Find out more.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Find out more."
+    },
+    "count": 12,
+    "last": 1794324406.666,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go back and equip the offered items.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go back and equip the offered items."
+    },
+    "count": 1,
+    "last": 1794324406.664,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go back to what you were doing.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go back to what you were doing."
+    },
+    "count": 7,
+    "last": 1794324406.667,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4974\u001f147064834": {
+   "farm.start|{\"monster\": 715354}": {
+    "args": {
+     "monster": 715354
+    },
+    "count": 8,
+    "last": 1794324406.397,
+    "tool": "farm.start"
+   },
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "count": 9,
+    "last": 1794324406.397,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 6,
+    "last": 1794324405.097,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 14070, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14070,
+     "quest_id": 3841
+    },
+    "count": 6,
+    "last": 1794324406.395,
+    "tool": "quest.advance"
+   },
+   "tap.interactive|{\"element_id\": 513203}": {
+    "args": {
+     "element_id": 513203
+    },
+    "count": 4,
+    "last": 1794324405.981,
+    "tool": "tap.interactive"
+   }
+  },
+  "3841\u001f0\u001f4976\u001f145489920": {
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask what's wrong.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask what's wrong."
+    },
+    "count": 1,
+    "last": 1794324405.354,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Get to work.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Get to work."
+    },
+    "count": 2,
+    "last": 1794324405.356,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Introduce yourself. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Introduce yourself. {icon:iconUpdateQuestMain}"
+    },
+    "count": 3,
+    "last": 1794324405.353,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4976\u001f145489922": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324405.343,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Talk about your adventure.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Talk about your adventure."
+    },
+    "count": 2,
+    "last": 1794324405.344,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4976\u001f145490435": {
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask what's next. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask what's next. {icon:iconUpdateQuestMain}"
+    },
+    "count": 1,
+    "last": 1794324405.337,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Bow and take your leave.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Bow and take your leave."
+    },
+    "count": 2,
+    "last": 1794324405.337,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Show enthusiasm for both ideas.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Show enthusiasm for both ideas."
+    },
+    "count": 1,
+    "last": 1794324405.338,
+    "tool": "quest.advance"
+   },
+   "ui.tap|{\"cycle\": true, \"selector\": \".shopBtn\"}": {
+    "args": {
+     "cycle": true,
+     "selector": ".shopBtn"
+    },
+    "count": 2,
+    "last": 1794324405.339,
+    "tool": "ui.tap"
+   }
+  },
+  "3841\u001f0\u001f4976\u001f146276352": {
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "count": 3,
+    "last": 1794324405.33,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask for an explanation.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask for an explanation."
+    },
+    "count": 1,
+    "last": 1794324405.332,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Bow respectfully. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Bow respectfully. {icon:iconUpdateQuestMain}"
+    },
+    "count": 2,
+    "last": 1794324405.331,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Keep listening.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Keep listening."
+    },
+    "count": 1,
+    "last": 1794324405.332,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Offer to go and kick Belladonna's backside.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Offer to go and kick Belladonna's backside."
+    },
+    "count": 1,
+    "last": 1794324405.332,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Offer to help.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Offer to help."
+    },
+    "count": 1,
+    "last": 1794324405.333,
+    "tool": "quest.advance"
+   },
+   "ui.tap|{\"cycle\": true, \"selector\": \".shopBtn\"}": {
+    "args": {
+     "cycle": true,
+     "selector": ".shopBtn"
+    },
+    "count": 2,
+    "last": 1794324405.327,
+    "tool": "ui.tap"
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145489920": {
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask what's wrong.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask what's wrong."
+    },
+    "count": 1,
+    "last": 1794324406.098,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Get to work.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Get to work."
+    },
+    "count": 2,
+    "last": 1794324406.1,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Introduce yourself. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Introduce yourself. {icon:iconUpdateQuestMain}"
+    },
+    "count": 2,
+    "last": 1794324406.097,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145489922": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324406.107,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Talk about your adventure.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Talk about your adventure."
+    },
+    "count": 2,
+    "last": 1794324406.108,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490434": {
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Notice how exhausted he looks.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Notice how exhausted he looks."
+    },
+    "count": 2,
+    "last": 1794324406.09,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490946": {
+   "quest.advance|{\"objective_id\": 14074, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14074,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324405.591,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Approve and go back and fight.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Approve and go back and fight."
+    },
+    "count": 2,
+    "last": 1794324406.129,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask what Ek's problem is.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask what Ek's problem is."
+    },
+    "count": 3,
+    "last": 1794324406.113,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Introduce yourself. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Introduce yourself. {icon:iconUpdateQuestMain}"
+    },
+    "count": 3,
+    "last": 1794324406.118,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Look pleadingly at Ayin Spyr.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Look pleadingly at Ayin Spyr."
+    },
+    "count": 1,
+    "last": 1794324406.119,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Say you were victorious. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Say you were victorious. {icon:iconUpdateQuestMain}"
+    },
+    "count": 1,
+    "last": 1794324406.129,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 1, \"reply_text\": \"Apologise awkwardly and leave.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 1,
+     "reply_text": "Apologise awkwardly and leave."
+    },
+    "count": 4,
+    "last": 1794324406.173,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4978\u001f146276352": {
+   "tap.interactive|{\"element_id\": 513196}": {
+    "args": {
+     "element_id": 513196,
+     "skill_uid": 136133918
+    },
+    "count": 2,
+    "last": 1794324406.085,
+    "tool": "tap.interactive"
+   }
+  },
+  "3841\u001f0\u001f4980\u001f145489921": {
+   "ui.tap|{\"cycle\": true, \"menu\": \"Help\"}": {
+    "args": {
+     "cycle": true,
+     "menu": "Help"
+    },
+    "count": 2,
+    "last": 1794324404.301,
+    "tool": "ui.tap"
+   }
+  },
+  "3841\u001f0\u001f4980\u001f145490434": {
+   "ui.tap|{\"cycle\": true, \"menu\": \"Help\"}": {
+    "args": {
+     "cycle": true,
+     "menu": "Help"
+    },
+    "count": 2,
+    "last": 1794324406.256,
+    "tool": "ui.tap"
+   }
+  },
+  "3841\u001f0\u001f4980\u001f145490946": {
+   "quest.advance|{\"objective_id\": 14076, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14076,
+     "quest_id": 3841
+    },
+    "count": 5,
+    "last": 1794324405.593,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f0\u001f4982\u001f147064834": {
+   "quest.advance|{\"objective_id\": 13531, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13531,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324403.994,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 14080, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14080,
+     "quest_id": 3841
+    },
+    "count": 3,
+    "last": 1794324405.915,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Head out. {icon:iconUpdateQuestMain} {icon:iconNewQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Head out. {icon:iconUpdateQuestMain} {icon:iconNewQuestMain}"
+    },
+    "count": 1,
+    "last": 1794324390.377,
+    "tool": "quest.advance"
+   },
+   "tap.interactive|{\"element_id\": 513203}": {
+    "args": {
+     "element_id": 513203
+    },
+    "count": 2,
+    "last": 1794324405.917,
+    "tool": "tap.interactive"
+   }
+  },
+  "3841\u001f1\u001f4948\u001f147064834": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 3,
+    "last": 1794324405.846,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Agree. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Agree. {icon:iconUpdateQuestMain}"
+    },
+    "count": 4,
+    "last": 1794324405.643,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f1\u001f4950\u001f147063812": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324405.839,
+    "tool": "quest.advance"
+   },
+   "ui.tap|{\"client_target\": \"close:grimoire\"}": {
+    "args": {
+     "client_target": "close:grimoire"
+    },
+    "count": 3,
+    "last": 1794324405.639,
+    "tool": "ui.tap"
+   }
+  },
+  "3841\u001f1\u001f4966\u001f147064834": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 2,
+    "last": 1794324404.271,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13507, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13507,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324403.916,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 14056, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14056,
+     "quest_id": 3841
+    },
+    "count": 1,
+    "last": 1794324403.917,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 1973, \"reply\": 0, \"reply_text\": \"Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}\"}": {
+    "args": {
+     "quest_id": 1973,
+     "reply": 0,
+     "reply_text": "Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}"
+    },
+    "count": 1,
+    "last": 1794324403.917,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Take the hammer. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Take the hammer. {icon:iconUpdateQuestMain}"
+    },
+    "count": 4,
+    "last": 1794324405.848,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f4\u001f4585\u001f147063812": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 3,
+    "last": 1794324405.841,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f6\u001f4539\u001f147063810": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "count": 2,
+    "last": 1794324405.633,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "count": 41,
+    "last": 1794324404.238,
+    "tool": "quest.advance"
+   }
+  },
+  "3841\u001f6\u001f4587\u001f147064834": {
+   "quest.advance|{\"objective_id\": 13543, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13543,
+     "quest_id": 3841
+    },
+    "count": 2,
+    "last": 1794324403.943,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 1946, \"reply\": 0, \"reply_text\": \"Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}\"}": {
+    "args": {
+     "quest_id": 1946,
+     "reply": 0,
+     "reply_text": "Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}"
+    },
+    "count": 1,
+    "last": 1794324403.993,
+    "tool": "quest.advance"
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145489920": {
+   "quest.advance|{\"npc_id\": 3950, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3950,
+     "quest_id": 4262
+    },
+    "count": 2,
+    "last": 1794324404.318,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Make your report. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Make your report. {icon:iconUpdateQuestMain}"
+    },
+    "count": 2,
+    "last": 1794324406.261,
+    "tool": "quest.advance"
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490432": {
+   "quest.advance|{\"objective_id\": 13948, \"quest_id\": 4262}": {
+    "args": {
+     "objective_id": 13948,
+     "quest_id": 4262
+    },
+    "count": 1,
+    "last": 1794324405.594,
+    "tool": "quest.advance"
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490434": {
+   "nav.goto|{\"map_id\": 145490432}": {
+    "args": {
+     "map_id": 145490432
+    },
+    "count": 3,
+    "last": 1794324406.384,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"map_id\": 145490946}": {
+    "args": {
+     "map_id": 145490946
+    },
+    "count": 6,
+    "last": 1794324406.39,
+    "tool": "nav.goto"
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490435": {
+   "quest.advance|{\"objective_id\": 13958, \"quest_id\": 4262}": {
+    "args": {
+     "objective_id": 13958,
+     "quest_id": 4262
+    },
+    "count": 1,
+    "last": 1794324404.427,
+    "tool": "quest.advance"
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490944": {
+   "quest.advance|{\"objective_id\": 13950, \"quest_id\": 4262}": {
+    "args": {
+     "objective_id": 13950,
+     "quest_id": 4262
+    },
+    "count": 1,
+    "last": 1794324405.61,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13956, \"quest_id\": 4262}": {
+    "args": {
+     "objective_id": 13956,
+     "quest_id": 4262
+    },
+    "count": 3,
+    "last": 1794324405.627,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Listen to Roki's reply.\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Listen to Roki's reply."
+    },
+    "count": 2,
+    "last": 1794324404.358,
+    "tool": "quest.advance"
+   },
+   "tap.interactive|{\"element_id\": 513212}": {
+    "args": {
+     "element_id": 513212
+    },
+    "count": 2,
+    "last": 1794324405.628,
+    "tool": "tap.interactive"
+   }
+  },
+  "4262\u001f0\u001f4954\u001f146276352": {
+   "nav.goto|{\"direction\": \"left\", \"map_id\": 146407936}": {
+    "args": {
+     "direction": "left",
+     "map_id": 146407936
+    },
+    "count": 2,
+    "last": 1794324404.465,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"right\", \"map_id\": 146276864}": {
+    "args": {
+     "direction": "right",
+     "map_id": 146276864
+    },
+    "count": 2,
+    "last": 1794324404.462,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "count": 2,
+    "last": 1794324404.461,
+    "tool": "nav.goto"
+   }
+  },
+  "4262\u001f1\u001f4954\u001f145489920": {
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Fight the animal. {icon:iconUpdateQuestMain} {icon:iconStartFight}\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Fight the animal. {icon:iconUpdateQuestMain} {icon:iconStartFight}"
+    },
+    "count": 2,
+    "last": 1794324406.269,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Hurry after the raccoon.\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Hurry after the raccoon."
+    },
+    "count": 4,
+    "last": 1794324406.265,
+    "tool": "quest.advance"
+   }
+  },
+  "4262\u001f1\u001f4954\u001f145490944": {
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Express surprise that a raccoon can talk. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Express surprise that a raccoon can talk. {icon:iconUpdateQuestMain}"
+    },
+    "count": 6,
+    "last": 1794324405.619,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Suggest looking for a compromise.\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Suggest looking for a compromise."
+    },
+    "count": 1,
+    "last": 1794324404.342,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Turn towards Ayin Spyr.\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Turn towards Ayin Spyr."
+    },
+    "count": 2,
+    "last": 1794324405.623,
+    "tool": "quest.advance"
+   }
+  },
+  "4276\u001f0\u001f4958\u001f146276352": {
+   "nav.goto|{\"direction\": \"right\", \"map_id\": 146276864}": {
+    "args": {
+     "direction": "right",
+     "map_id": 146276864
+    },
+    "count": 1,
+    "last": 1794324404.478,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"top\", \"map_id\": 146276609}": {
+    "args": {
+     "direction": "top",
+     "map_id": 146276609
+    },
+    "count": 1,
+    "last": 1794324404.481,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Head out for real this time.\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Head out for real this time."
+    },
+    "count": 1,
+    "last": 1794324404.479,
+    "tool": "quest.advance"
+   }
+  },
+  "4276\u001f45\u001f4958\u001f145752833": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4280}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4280
+    },
+    "count": 1,
+    "last": 1794324404.571,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4276, \"reply\": 1, \"reply_text\": \"Ask to leave the dungeon.\"}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4276,
+     "reply": 1,
+     "reply_text": "Ask to leave the dungeon."
+    },
+    "count": 1,
+    "last": 1794324404.54,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13984, \"quest_id\": 4278}": {
+    "args": {
+     "objective_id": 13984,
+     "quest_id": 4278
+    },
+    "count": 5,
+    "last": 1794324404.595,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"objective_id\": 13998, \"quest_id\": 4276}": {
+    "args": {
+     "objective_id": 13998,
+     "quest_id": 4276
+    },
+    "count": 5,
+    "last": 1794324404.599,
+    "tool": "quest.advance"
+   }
+  },
+  "4276\u001f45\u001f4958\u001f145752835": {
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4280}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4280
+    },
+    "count": 1,
+    "last": 1794324404.576,
+    "tool": "quest.advance"
+   }
+  },
+  "4276\u001f45\u001f4958\u001f146538496": {
+   "nav.goto|{\"direction\": \"bottom\", \"map_id\": 146538497}": {
+    "args": {
+     "direction": "bottom",
+     "map_id": 146538497
+    },
+    "count": 4,
+    "last": 1794324404.758,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"left\", \"map_id\": 146670080}": {
+    "args": {
+     "direction": "left",
+     "map_id": 146670080
+    },
+    "count": 6,
+    "last": 1794324404.783,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"right\", \"map_id\": 146539008}": {
+    "args": {
+     "direction": "right",
+     "map_id": 146539008
+    },
+    "count": 6,
+    "last": 1794324404.757,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"direction\": \"top\", \"map_id\": 146538753}": {
+    "args": {
+     "direction": "top",
+     "map_id": 146538753
+    },
+    "count": 7,
+    "last": 1794324404.78,
+    "tool": "nav.goto"
+   },
+   "nav.goto|{\"map_id\": 145752833}": {
+    "args": {
+     "map_id": 145752833
+    },
+    "count": 5,
+    "last": 1794324404.778,
+    "tool": "nav.goto"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Use the bunch of keys.\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Use the bunch of keys."
+    },
+    "count": 1,
+    "last": 1794324404.532,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276
+    },
+    "count": 11,
+    "last": 1794324404.774,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4280}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4280
+    },
+    "count": 4,
+    "last": 1794324404.642,
+    "tool": "quest.advance"
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4280}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4280
+    },
+    "count": 1,
+    "last": 1794324404.566,
+    "tool": "quest.advance"
+   }
+  }
+ },
+ "saved_at": 1794324406.961,
+ "solutions": {
+  "\u001f\u001f\u001f145490944": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4262
+    },
+    "last": 1794324405.621,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3900, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3900,
+     "quest_id": 4262
+    },
+    "last": 1794324404.353,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4531\u001f147062786": {
+   "nav.goto|{}": {
+    "args": {
+     "cell": 289
+    },
+    "last": 1794324405.661,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4533\u001f147062786": {
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324405.807,
+    "tool": "nav.goto",
+    "wins": 18
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324406.959,
+    "tool": "quest.advance",
+    "wins": 21
+   }
+  },
+  "3841\u001f0\u001f4545\u001f147063812": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324405.637,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"objective_id\": 13505, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13505,
+     "quest_id": 3841
+    },
+    "last": 1794324405.835,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4547\u001f147064834": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324405.659,
+    "tool": "nav.goto",
+    "wins": 5
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324405.647,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.658,
+    "tool": "quest.advance",
+    "wins": 5
+   },
+   "quest.advance|{\"npc_id\": 3918, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3918,
+     "quest_id": 3841
+    },
+    "last": 1794324405.65,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3976, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3976,
+     "quest_id": 3841
+    },
+    "last": 1794324405.648,
+    "tool": "quest.advance",
+    "wins": 8
+   },
+   "quest.advance|{\"npc_id\": 3982, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3982,
+     "quest_id": 3841
+    },
+    "last": 1794324405.649,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"objective_id\": 13507, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13507,
+     "quest_id": 3841
+    },
+    "last": 1794324405.846,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "ui.tap|{\"cycle\": true, \"menu\": \"Bag\"}": {
+    "args": {
+     "cycle": true,
+     "menu": "Bag"
+    },
+    "last": 1794324405.644,
+    "tool": "ui.tap",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4573\u001f147064834": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324390.376,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"objective_id\": 13531, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 13531,
+     "quest_id": 3841
+    },
+    "last": 1794324404.805,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4579\u001f145490435": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4260}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4260
+    },
+    "last": 1794324405.995,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4274}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4274
+    },
+    "last": 1794324406.024,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"quest_id\": 1946, \"reply\": 0, \"reply_text\": \"Enter. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 1946,
+     "reply": 0,
+     "reply_text": "Enter. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324406.715,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Enter. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Enter. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324405.997,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Head out. {icon:iconNewQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Head out. {icon:iconNewQuestMain}"
+    },
+    "last": 1794324406.027,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "tap.interactive|{\"element_id\": 513196}": {
+    "args": {
+     "element_id": 513196,
+     "skill_uid": 136120667
+    },
+    "last": 1794324406.023,
+    "tool": "tap.interactive",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4579\u001f146276352": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324406.016,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 3841
+    },
+    "last": 1794324406.021,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3894, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3894,
+     "quest_id": 3841
+    },
+    "last": 1794324406.02,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3966, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3966,
+     "quest_id": 3841
+    },
+    "last": 1794324406.006,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Bow and take your leave.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Bow and take your leave."
+    },
+    "last": 1794324406.023,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 1, \"reply_text\": \"Wish him good luck.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 1,
+     "reply_text": "Wish him good luck."
+    },
+    "last": 1794324406.007,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4581\u001f146276352": {
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 3841
+    },
+    "last": 1794324406.032,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3894, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3894,
+     "quest_id": 3841
+    },
+    "last": 1794324406.03,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3966, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3966,
+     "quest_id": 3841
+    },
+    "last": 1794324406.028,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 1, \"reply_text\": \"Wish him good luck.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 1,
+     "reply_text": "Wish him good luck."
+    },
+    "last": 1794324406.029,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4970\u001f146276352": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324406.067,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 3841
+    },
+    "last": 1794324406.054,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3894, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3894,
+     "quest_id": 3841
+    },
+    "last": 1794324406.067,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3966, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3966,
+     "quest_id": 3841
+    },
+    "last": 1794324406.07,
+    "tool": "quest.advance",
+    "wins": 4
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Show an interest in books.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Show an interest in books."
+    },
+    "last": 1794324406.072,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 1, \"reply_text\": \"Wish him good luck.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 1,
+     "reply_text": "Wish him good luck."
+    },
+    "last": 1794324406.056,
+    "tool": "quest.advance",
+    "wins": 3
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145489923": {
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "last": 1794324405.307,
+    "tool": "nav.goto",
+    "wins": 88
+   },
+   "quest.advance|{\"npc_id\": 3932, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3932,
+     "quest_id": 3841
+    },
+    "last": 1794324406.443,
+    "tool": "quest.advance",
+    "wins": 6
+   },
+   "tap.interactive|{\"element_id\": 513195}": {
+    "args": {
+     "element_id": 513195,
+     "skill_uid": 136122302
+    },
+    "last": 1794324405.177,
+    "tool": "tap.interactive",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145490434": {
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "last": 1794324405.228,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3946, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3946,
+     "quest_id": 3841
+    },
+    "last": 1794324405.224,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3954, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3954,
+     "quest_id": 3841
+    },
+    "last": 1794324405.226,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Leave.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Leave."
+    },
+    "last": 1794324405.19,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145490435": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324405.306,
+    "tool": "nav.goto",
+    "wins": 87
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324405.216,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324406.473,
+    "tool": "nav.goto",
+    "wins": 28
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go back and equip the offered items.\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go back and equip the offered items."
+    },
+    "last": 1794324390.39,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.315,
+    "tool": "quest.advance",
+    "wins": 11
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4260}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4260
+    },
+    "last": 1794324405.992,
+    "tool": "quest.advance",
+    "wins": 9
+   },
+   "quest.advance|{\"npc_id\": 3920, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3920,
+     "quest_id": 3841
+    },
+    "last": 1794324405.317,
+    "tool": "quest.advance",
+    "wins": 9
+   },
+   "quest.advance|{\"npc_id\": 3920, \"quest_id\": 4260}": {
+    "args": {
+     "npc_id": 3920,
+     "quest_id": 4260
+    },
+    "last": 1794324405.288,
+    "tool": "quest.advance",
+    "wins": 4
+   },
+   "quest.advance|{\"npc_id\": 3932, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3932,
+     "quest_id": 3841
+    },
+    "last": 1794324406.473,
+    "tool": "quest.advance",
+    "wins": 28
+   },
+   "quest.advance|{\"npc_id\": 3934, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3934,
+     "quest_id": 3841
+    },
+    "last": 1794324405.313,
+    "tool": "quest.advance",
+    "wins": 9
+   },
+   "quest.advance|{\"npc_id\": 3934, \"quest_id\": 4260}": {
+    "args": {
+     "npc_id": 3934,
+     "quest_id": 4260
+    },
+    "last": 1794324405.287,
+    "tool": "quest.advance",
+    "wins": 4
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go and equip your new items.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go and equip your new items."
+    },
+    "last": 1794324405.143,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Raise one eyebrow questioningly. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Raise one eyebrow questioningly. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324406.714,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 1, \"reply_text\": \"Say you're satisfied with your class.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 1,
+     "reply_text": "Say you're satisfied with your class."
+    },
+    "last": 1794324405.318,
+    "tool": "quest.advance",
+    "wins": 8
+   },
+   "tap.interactive|{\"element_id\": 513196}": {
+    "args": {
+     "element_id": 513196,
+     "skill_uid": 136403271
+    },
+    "last": 1794324405.991,
+    "tool": "tap.interactive",
+    "wins": 13
+   },
+   "ui.tap|{\"cycle\": true, \"selector\": \".shopBtn\"}": {
+    "args": {
+     "cycle": true,
+     "selector": ".shopBtn"
+    },
+    "last": 1794324405.322,
+    "tool": "ui.tap",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4974\u001f145490947": {
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "last": 1794324405.221,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3890, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3890,
+     "quest_id": 3841
+    },
+    "last": 1794324405.182,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3968, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3968,
+     "quest_id": 3841
+    },
+    "last": 1794324405.217,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Ask to go to Kanojedo Island.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Ask to go to Kanojedo Island."
+    },
+    "last": 1794324405.184,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go back to what you were doing.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go back to what you were doing."
+    },
+    "last": 1794324405.22,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4974\u001f147064834": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324405.098,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.096,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3976, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3976,
+     "quest_id": 3841
+    },
+    "last": 1794324405.095,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3982, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3982,
+     "quest_id": 3841
+    },
+    "last": 1794324405.094,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Head out. {icon:iconUpdateQuestMain} {icon:iconNewQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Head out. {icon:iconUpdateQuestMain} {icon:iconNewQuestMain}"
+    },
+    "last": 1794324405.991,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4976\u001f145489920": {
+   "nav.goto|{\"map_id\": 145490946}": {
+    "args": {
+     "map_id": 145490946
+    },
+    "last": 1794324405.389,
+    "tool": "nav.goto",
+    "wins": 18
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324405.371,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.364,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4262
+    },
+    "last": 1794324405.357,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3896, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3896,
+     "quest_id": 3841
+    },
+    "last": 1794324405.366,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3896, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3896,
+     "quest_id": 4262
+    },
+    "last": 1794324405.355,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3962, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3962,
+     "quest_id": 3841
+    },
+    "last": 1794324405.37,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3962, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3962,
+     "quest_id": 4262
+    },
+    "last": 1794324405.361,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Agree.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Agree."
+    },
+    "last": 1794324405.36,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Get to work.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Get to work."
+    },
+    "last": 1794324405.354,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go back and fight.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go back and fight."
+    },
+    "last": 1794324405.367,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4976\u001f145489921": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324405.39,
+    "tool": "nav.goto",
+    "wins": 19
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324405.346,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3960, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3960,
+     "quest_id": 3841
+    },
+    "last": 1794324405.345,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4976\u001f145489922": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324405.345,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3956, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3956,
+     "quest_id": 3841
+    },
+    "last": 1794324405.342,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4976\u001f145489923": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324405.341,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "tap.interactive|{\"element_id\": 513195}": {
+    "args": {
+     "element_id": 513195,
+     "skill_uid": 136123269
+    },
+    "last": 1794324405.341,
+    "tool": "tap.interactive",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4976\u001f145490435": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324405.34,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324405.34,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.325,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4260}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4260
+    },
+    "last": 1794324405.323,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4274}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4274
+    },
+    "last": 1794324405.335,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3934, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3934,
+     "quest_id": 3841
+    },
+    "last": 1794324405.339,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3934, \"quest_id\": 4260}": {
+    "args": {
+     "npc_id": 3934,
+     "quest_id": 4260
+    },
+    "last": 1794324405.323,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"objective_id\": 14072, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14072,
+     "quest_id": 3841
+    },
+    "last": 1794324406.714,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Enter. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Enter. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324405.326,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Head out. {icon:iconNewQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Head out. {icon:iconNewQuestMain}"
+    },
+    "last": 1794324405.338,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "tap.interactive|{\"element_id\": 513196}": {
+    "args": {
+     "element_id": 513196,
+     "skill_uid": 136122926
+    },
+    "last": 1794324405.334,
+    "tool": "tap.interactive",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4976\u001f146276352": {
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324405.33,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.327,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 3841
+    },
+    "last": 1794324405.33,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3894, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3894,
+     "quest_id": 3841
+    },
+    "last": 1794324405.329,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Bow and take your leave.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Bow and take your leave."
+    },
+    "last": 1794324405.333,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145489920": {
+   "nav.goto|{\"direction\": \"bottom\"}": {
+    "args": {
+     "direction": "bottom"
+    },
+    "last": 1794324404.293,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324406.193,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145489921}": {
+    "args": {
+     "map_id": 145489921
+    },
+    "last": 1794324406.104,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324406.096,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4262
+    },
+    "last": 1794324406.101,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3896, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3896,
+     "quest_id": 4262
+    },
+    "last": 1794324406.099,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3962, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3962,
+     "quest_id": 3841
+    },
+    "last": 1794324406.095,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3962, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3962,
+     "quest_id": 4262
+    },
+    "last": 1794324406.103,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Agree.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Agree."
+    },
+    "last": 1794324406.102,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Get to work.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Get to work."
+    },
+    "last": 1794324406.098,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go back and fight.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go back and fight."
+    },
+    "last": 1794324406.1,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145489921": {
+   "fight.join|{\"group_id\": -51383}": {
+    "args": {
+     "group_id": -51383
+    },
+    "last": 1794324404.298,
+    "tool": "fight.join",
+    "wins": 4
+   },
+   "fight.join|{\"group_id\": -51385}": {
+    "args": {
+     "group_id": -51385
+    },
+    "last": 1794324404.299,
+    "tool": "fight.join",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324406.192,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145489922}": {
+    "args": {
+     "map_id": 145489922
+    },
+    "last": 1794324406.198,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324406.105,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3960, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3960,
+     "quest_id": 3841
+    },
+    "last": 1794324406.104,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145489922": {
+   "nav.goto|{\"map_id\": 145490434}": {
+    "args": {
+     "map_id": 145490434
+    },
+    "last": 1794324406.199,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3956, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3956,
+     "quest_id": 3841
+    },
+    "last": 1794324406.106,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490432": {
+   "fight.join|{\"group_id\": -114193}": {
+    "args": {
+     "group_id": -114193
+    },
+    "last": 1794324404.292,
+    "tool": "fight.join",
+    "wins": 2
+   },
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324404.292,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324406.194,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324406.095,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324406.094,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3950, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3950,
+     "quest_id": 3841
+    },
+    "last": 1794324406.094,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490433": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324406.197,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "nav.goto|{\"map_id\": 145490432}": {
+    "args": {
+     "map_id": 145490432
+    },
+    "last": 1794324406.093,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3952, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3952,
+     "quest_id": 3841
+    },
+    "last": 1794324406.092,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490434": {
+   "fight.join|{\"group_id\": -34472}": {
+    "args": {
+     "group_id": -34472
+    },
+    "last": 1794324406.248,
+    "tool": "fight.join",
+    "wins": 1
+   },
+   "fight.join|{\"group_id\": -34473}": {
+    "args": {
+     "group_id": -34473
+    },
+    "last": 1794324406.254,
+    "tool": "fight.join",
+    "wins": 1
+   },
+   "fight.join|{\"group_id\": -34474}": {
+    "args": {
+     "group_id": -34474
+    },
+    "last": 1794324406.252,
+    "tool": "fight.join",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145490433}": {
+    "args": {
+     "map_id": 145490433
+    },
+    "last": 1794324406.092,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145490946}": {
+    "args": {
+     "map_id": 145490946
+    },
+    "last": 1794324406.25,
+    "tool": "nav.goto",
+    "wins": 33
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324406.091,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3946, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3946,
+     "quest_id": 3841
+    },
+    "last": 1794324406.088,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3954, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3954,
+     "quest_id": 3841
+    },
+    "last": 1794324406.109,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490435": {
+   "nav.goto|{\"map_id\": 145490434}": {
+    "args": {
+     "map_id": 145490434
+    },
+    "last": 1794324406.087,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "tap.interactive|{\"element_id\": 513196}": {
+    "args": {
+     "element_id": 513196,
+     "skill_uid": 136133918
+    },
+    "last": 1794324406.083,
+    "tool": "tap.interactive",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490944": {
+   "nav.goto|{\"direction\": \"bottom\"}": {
+    "args": {
+     "direction": "bottom"
+    },
+    "last": 1794324406.195,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490945": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324406.196,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "nav.goto|{\"map_id\": 145490946}": {
+    "args": {
+     "map_id": 145490946
+    },
+    "last": 1794324406.188,
+    "tool": "nav.goto",
+    "wins": 13
+   },
+   "quest.advance|{\"npc_id\": 3924, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3924,
+     "quest_id": 3841
+    },
+    "last": 1794324406.147,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3936, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3936,
+     "quest_id": 3841
+    },
+    "last": 1794324406.143,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Point out how he's dressed.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Point out how he's dressed."
+    },
+    "last": 1794324406.147,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f145490946": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324406.247,
+    "tool": "nav.goto",
+    "wins": 7
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324406.155,
+    "tool": "nav.goto",
+    "wins": 4
+   },
+   "nav.goto|{\"map_id\": 145490434}": {
+    "args": {
+     "map_id": 145490434
+    },
+    "last": 1794324406.244,
+    "tool": "nav.goto",
+    "wins": 21
+   },
+   "nav.goto|{\"map_id\": 145490945}": {
+    "args": {
+     "map_id": 145490945
+    },
+    "last": 1794324406.189,
+    "tool": "nav.goto",
+    "wins": 11
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324406.175,
+    "tool": "quest.advance",
+    "wins": 6
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324406.162,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4264}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4264
+    },
+    "last": 1794324406.124,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3902, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3902,
+     "quest_id": 3841
+    },
+    "last": 1794324406.174,
+    "tool": "quest.advance",
+    "wins": 4
+   },
+   "quest.advance|{\"npc_id\": 3902, \"quest_id\": 4264}": {
+    "args": {
+     "npc_id": 3902,
+     "quest_id": 4264
+    },
+    "last": 1794324406.123,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3904, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3904,
+     "quest_id": 3841
+    },
+    "last": 1794324406.166,
+    "tool": "quest.advance",
+    "wins": 4
+   },
+   "quest.advance|{\"npc_id\": 3904, \"quest_id\": 4264}": {
+    "args": {
+     "npc_id": 3904,
+     "quest_id": 4264
+    },
+    "last": 1794324406.127,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3906, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3906,
+     "quest_id": 3841
+    },
+    "last": 1794324406.171,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Adopt a fighting stance. {icon:iconUpdateQuestMain} {icon:iconStartFight}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Adopt a fighting stance. {icon:iconUpdateQuestMain} {icon:iconStartFight}"
+    },
+    "last": 1794324406.122,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Approve and go back and fight.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Approve and go back and fight."
+    },
+    "last": 1794324406.127,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go and see Brytnee Spyr.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go and see Brytnee Spyr."
+    },
+    "last": 1794324406.13,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Go and see Tran Spyr.\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Go and see Tran Spyr."
+    },
+    "last": 1794324406.12,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4978\u001f146276352": {
+   "nav.goto|{\"direction\": \"left\", \"map_id\": 146407936}": {
+    "args": {
+     "direction": "left",
+     "map_id": 146407936
+    },
+    "last": 1794324406.086,
+    "tool": "nav.goto",
+    "wins": 2
+   }
+  },
+  "3841\u001f0\u001f4980\u001f145489921": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324404.304,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4980\u001f145490434": {
+   "nav.goto|{\"map_id\": 145490433}": {
+    "args": {
+     "map_id": 145490433
+    },
+    "last": 1794324406.257,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4980\u001f145490946": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324405.091,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"objective_id\": 14076, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14076,
+     "quest_id": 3841
+    },
+    "last": 1794324404.276,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f0\u001f4982\u001f147064834": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324405.92,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"objective_id\": 14080, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14080,
+     "quest_id": 3841
+    },
+    "last": 1794324404.806,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}"
+    },
+    "last": 1794324390.377,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f1\u001f4948\u001f147064834": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.845,
+    "tool": "quest.advance",
+    "wins": 6
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Take the hammer. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Take the hammer. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324405.844,
+    "tool": "quest.advance",
+    "wins": 3
+   }
+  },
+  "3841\u001f1\u001f4950\u001f147063812": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.838,
+    "tool": "quest.advance",
+    "wins": 5
+   }
+  },
+  "3841\u001f1\u001f4966\u001f147064834": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.847,
+    "tool": "quest.advance",
+    "wins": 4
+   },
+   "quest.advance|{\"npc_id\": 3976, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3976,
+     "quest_id": 3841
+    },
+    "last": 1794324405.848,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"objective_id\": 14056, \"quest_id\": 3841}": {
+    "args": {
+     "objective_id": 14056,
+     "quest_id": 3841
+    },
+    "last": 1794324390.372,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}"
+    },
+    "last": 1794324404.805,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  },
+  "3841\u001f4\u001f4535\u001f147062786": {
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324405.833,
+    "tool": "nav.goto",
+    "wins": 6
+   }
+  },
+  "3841\u001f4\u001f4585\u001f147063812": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324405.843,
+    "tool": "nav.goto",
+    "wins": 6
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324405.844,
+    "tool": "nav.goto",
+    "wins": 4
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 3841}": {
+    "args": {
+     "close": true,
+     "quest_id": 3841
+    },
+    "last": 1794324405.64,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Agree. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Agree. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324390.33,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "3841\u001f4\u001f4585\u001f147064834": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324404.801,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "3841\u001f6\u001f4539\u001f147063810": {
+   "fight.join|{\"monster\": 4192}": {
+    "args": {
+     "monster": 4192
+    },
+    "last": 1794324405.834,
+    "tool": "fight.join",
+    "wins": 3
+   },
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324405.632,
+    "tool": "nav.goto",
+    "wins": 34
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324404.243,
+    "tool": "nav.goto",
+    "wins": 10
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324404.238,
+    "tool": "quest.advance",
+    "wins": 12
+   },
+   "quest.advance|{\"npc_id\": 3970, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3970,
+     "quest_id": 3841
+    },
+    "last": 1794324404.241,
+    "tool": "quest.advance",
+    "wins": 14
+   },
+   "quest.advance|{\"npc_id\": 3978, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3978,
+     "quest_id": 3841
+    },
+    "last": 1794324404.239,
+    "tool": "quest.advance",
+    "wins": 13
+   },
+   "quest.advance|{\"npc_id\": 3980, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3980,
+     "quest_id": 3841
+    },
+    "last": 1794324404.237,
+    "tool": "quest.advance",
+    "wins": 15
+   }
+  },
+  "3841\u001f6\u001f4587\u001f147064834": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324405.854,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 3841}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 3841
+    },
+    "last": 1794324405.853,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 3841, \"reply\": 0, \"reply_text\": \"Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}\"}": {
+    "args": {
+     "quest_id": 3841,
+     "reply": 0,
+     "reply_text": "Fight the Merkaptan leader. {icon:iconUpdateQuestMain} {icon:iconStartFight}"
+    },
+    "last": 1794324405.854,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "ui.tap|{\"cycle\": true, \"menu\": \"Carac\"}": {
+    "args": {
+     "cycle": true,
+     "menu": "Carac"
+    },
+    "last": 1794324390.373,
+    "tool": "ui.tap",
+    "wins": 1
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145489920": {
+   "nav.goto|{\"direction\": \"bottom\"}": {
+    "args": {
+     "direction": "bottom"
+    },
+    "last": 1794324406.327,
+    "tool": "nav.goto",
+    "wins": 4
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324404.309,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145490432}": {
+    "args": {
+     "map_id": 145490432
+    },
+    "last": 1794324406.358,
+    "tool": "nav.goto",
+    "wins": 4
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 4262}": {
+    "args": {
+     "close": true,
+     "quest_id": 4262
+    },
+    "last": 1794324404.308,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4262
+    },
+    "last": 1794324404.306,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3896, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3896,
+     "quest_id": 4262
+    },
+    "last": 1794324406.26,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3962, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3962,
+     "quest_id": 4262
+    },
+    "last": 1794324404.307,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Hurry after the raccoon.\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Hurry after the raccoon."
+    },
+    "last": 1794324406.262,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Make your report. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Make your report. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324404.32,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145489921": {
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324406.328,
+    "tool": "nav.goto",
+    "wins": 7
+   },
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324406.357,
+    "tool": "nav.goto",
+    "wins": 2
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145489922": {
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324406.303,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145489921}": {
+    "args": {
+     "map_id": 145489921
+    },
+    "last": 1794324406.356,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145489923}": {
+    "args": {
+     "map_id": 145489923
+    },
+    "last": 1794324404.432,
+    "tool": "nav.goto",
+    "wins": 3
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145489923": {
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324404.43,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324404.432,
+    "tool": "nav.goto",
+    "wins": 3
+   },
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "last": 1794324404.438,
+    "tool": "nav.goto",
+    "wins": 8
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490432": {
+   "nav.goto|{\"direction\": \"bottom\"}": {
+    "args": {
+     "direction": "bottom"
+    },
+    "last": 1794324405.605,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324406.327,
+    "tool": "nav.goto",
+    "wins": 5
+   },
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324405.605,
+    "tool": "nav.goto",
+    "wins": 3
+   },
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324406.259,
+    "tool": "nav.goto",
+    "wins": 6
+   },
+   "nav.goto|{\"map_id\": 145490433}": {
+    "args": {
+     "map_id": 145490433
+    },
+    "last": 1794324406.364,
+    "tool": "nav.goto",
+    "wins": 4
+   },
+   "nav.goto|{\"map_id\": 145490944}": {
+    "args": {
+     "map_id": 145490944
+    },
+    "last": 1794324405.609,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3950, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3950,
+     "quest_id": 4262
+    },
+    "last": 1794324406.361,
+    "tool": "quest.advance",
+    "wins": 6
+   },
+   "tap.interactive|{\"element_id\": 513208}": {
+    "args": {
+     "element_id": 513208,
+     "skill_uid": 136211817
+    },
+    "last": 1794324406.36,
+    "tool": "tap.interactive",
+    "wins": 4
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490433": {
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324406.324,
+    "tool": "nav.goto",
+    "wins": 4
+   },
+   "nav.goto|{\"map_id\": 145490432}": {
+    "args": {
+     "map_id": 145490432
+    },
+    "last": 1794324406.329,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "nav.goto|{\"map_id\": 145490434}": {
+    "args": {
+     "map_id": 145490434
+    },
+    "last": 1794324406.367,
+    "tool": "nav.goto",
+    "wins": 4
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490434": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324406.354,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "nav.goto|{\"map_id\": 145490432}": {
+    "args": {
+     "map_id": 145490432
+    },
+    "last": 1794324406.382,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "nav.goto|{\"map_id\": 145490946}": {
+    "args": {
+     "map_id": 145490946
+    },
+    "last": 1794324406.351,
+    "tool": "nav.goto",
+    "wins": 24
+   },
+   "quest.advance|{\"npc_id\": 3944, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3944,
+     "quest_id": 4262
+    },
+    "last": 1794324406.386,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3952, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3952,
+     "quest_id": 4262
+    },
+    "last": 1794324406.391,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490435": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324404.427,
+    "tool": "nav.goto",
+    "wins": 6
+   },
+   "nav.goto|{\"map_id\": 145489923}": {
+    "args": {
+     "map_id": 145489923
+    },
+    "last": 1794324404.437,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 146276352}": {
+    "args": {
+     "map_id": 146276352
+    },
+    "last": 1794324404.46,
+    "tool": "nav.goto",
+    "wins": 3
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 4262}": {
+    "args": {
+     "close": true,
+     "quest_id": 4262
+    },
+    "last": 1794324404.436,
+    "tool": "quest.advance",
+    "wins": 6
+   },
+   "quest.advance|{\"npc_id\": 3920, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3920,
+     "quest_id": 4262
+    },
+    "last": 1794324404.439,
+    "tool": "quest.advance",
+    "wins": 10
+   },
+   "quest.advance|{\"npc_id\": 3934, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3934,
+     "quest_id": 4262
+    },
+    "last": 1794324404.44,
+    "tool": "quest.advance",
+    "wins": 9
+   },
+   "tap.interactive|{\"element_id\": 513196}": {
+    "args": {
+     "element_id": 513196,
+     "skill_uid": 136217410
+    },
+    "last": 1794324404.439,
+    "tool": "tap.interactive",
+    "wins": 9
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490944": {
+   "fight.join|{\"group_id\": -4336}": {
+    "args": {
+     "group_id": -4336
+    },
+    "last": 1794324405.611,
+    "tool": "fight.join",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324406.326,
+    "tool": "nav.goto",
+    "wins": 4
+   },
+   "nav.goto|{\"map_id\": 145490432}": {
+    "args": {
+     "map_id": 145490432
+    },
+    "last": 1794324405.601,
+    "tool": "nav.goto",
+    "wins": 2
+   },
+   "nav.goto|{\"map_id\": 145490945}": {
+    "args": {
+     "map_id": 145490945
+    },
+    "last": 1794324404.375,
+    "tool": "nav.goto",
+    "wins": 17
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4262
+    },
+    "last": 1794324404.355,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "tap.interactive|{\"element_id\": 513212}": {
+    "args": {
+     "element_id": 513212,
+     "skill_uid": 136211826
+    },
+    "last": 1794324404.33,
+    "tool": "tap.interactive",
+    "wins": 1
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490945": {
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324406.325,
+    "tool": "nav.goto",
+    "wins": 4
+   },
+   "nav.goto|{\"map_id\": 145490946}": {
+    "args": {
+     "map_id": 145490946
+    },
+    "last": 1794324404.376,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490946": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324406.352,
+    "tool": "nav.goto",
+    "wins": 23
+   },
+   "nav.goto|{\"map_id\": 145490947}": {
+    "args": {
+     "map_id": 145490947
+    },
+    "last": 1794324404.378,
+    "tool": "nav.goto",
+    "wins": 2
+   }
+  },
+  "4262\u001f0\u001f4954\u001f145490947": {
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "last": 1794324404.379,
+    "tool": "nav.goto",
+    "wins": 2
+   }
+  },
+  "4262\u001f0\u001f4954\u001f146276352": {
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "last": 1794324404.46,
+    "tool": "nav.goto",
+    "wins": 5
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 4262}": {
+    "args": {
+     "close": true,
+     "quest_id": 4262
+    },
+    "last": 1794324404.459,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Choose Earth (increases Strength {icon:iconStrength}).\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Choose Earth (increases Strength {icon:iconStrength})."
+    },
+    "last": 1794324404.477,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Confirm that you want to put an end to Belladonna's misdeeds.\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Confirm that you want to put an end to Belladonna's misdeeds."
+    },
+    "last": 1794324404.475,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Explain what you've recently discovered. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Explain what you've recently discovered. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324404.473,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Head out. {icon:iconNewQuestMain}\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Head out. {icon:iconNewQuestMain}"
+    },
+    "last": 1794324404.476,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Keep listening.\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Keep listening."
+    },
+    "last": 1794324404.474,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Nod in approval.\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Nod in approval."
+    },
+    "last": 1794324404.475,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4262
+    },
+    "last": 1794324404.472,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3894, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3894,
+     "quest_id": 4262
+    },
+    "last": 1794324404.47,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3966, \"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Ask what he means by that.\"}": {
+    "args": {
+     "npc_id": 3966,
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Ask what he means by that."
+    },
+    "last": 1794324404.463,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3966, \"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Find out more about libraries.\"}": {
+    "args": {
+     "npc_id": 3966,
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Find out more about libraries."
+    },
+    "last": 1794324404.464,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3966, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3966,
+     "quest_id": 4262
+    },
+    "last": 1794324404.463,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Confirm that you want to put an end to Belladonna's misdeeds.\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Confirm that you want to put an end to Belladonna's misdeeds."
+    },
+    "last": 1794324404.458,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "4262\u001f1\u001f4954\u001f145489920": {
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4262
+    },
+    "last": 1794324406.266,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3898, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3898,
+     "quest_id": 4262
+    },
+    "last": 1794324406.263,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Fight the animal. {icon:iconUpdateQuestMain} {icon:iconStartFight}\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Fight the animal. {icon:iconUpdateQuestMain} {icon:iconStartFight}"
+    },
+    "last": 1794324406.265,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Run after the blueprints. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Run after the blueprints. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324406.27,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  },
+  "4262\u001f1\u001f4954\u001f145490944": {
+   "quest.advance|{\"close\": true, \"quest_id\": 4262}": {
+    "args": {
+     "close": true,
+     "quest_id": 4262
+    },
+    "last": 1794324404.333,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4262
+    },
+    "last": 1794324405.622,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3900, \"quest_id\": 4262}": {
+    "args": {
+     "npc_id": 3900,
+     "quest_id": 4262
+    },
+    "last": 1794324405.616,
+    "tool": "quest.advance",
+    "wins": 4
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Listen to Roki's reply.\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Listen to Roki's reply."
+    },
+    "last": 1794324405.624,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"quest_id\": 4262, \"reply\": 0, \"reply_text\": \"Turn towards Ayin Spyr.\"}": {
+    "args": {
+     "quest_id": 4262,
+     "reply": 0,
+     "reply_text": "Turn towards Ayin Spyr."
+    },
+    "last": 1794324405.621,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  },
+  "4262\u001f4\u001f4954\u001f145490946": {
+   "nav.goto|{\"map_id\": 145489920}": {
+    "args": {
+     "map_id": 145489920
+    },
+    "last": 1794324405.593,
+    "tool": "nav.goto",
+    "wins": 3
+   }
+  },
+  "4264\u001f6\u001f4956\u001f145489920": {
+   "nav.goto|{\"map_id\": 145489921}": {
+    "args": {
+     "map_id": 145489921
+    },
+    "last": 1794324406.271,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "4276\u001f0\u001f4958\u001f145490434": {
+   "nav.goto|{\"map_id\": 145490435}": {
+    "args": {
+     "map_id": 145490435
+    },
+    "last": 1794324404.489,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "4276\u001f0\u001f4958\u001f145490435": {
+   "nav.goto|{\"map_id\": 145490947}": {
+    "args": {
+     "map_id": 145490947
+    },
+    "last": 1794324404.49,
+    "tool": "nav.goto",
+    "wins": 2
+   }
+  },
+  "4276\u001f0\u001f4958\u001f145490946": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324404.488,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145490947}": {
+    "args": {
+     "map_id": 145490947
+    },
+    "last": 1794324404.488,
+    "tool": "nav.goto",
+    "wins": 2
+   }
+  },
+  "4276\u001f0\u001f4958\u001f145490947": {
+   "nav.goto|{\"direction\": \"left\"}": {
+    "args": {
+     "direction": "left"
+    },
+    "last": 1794324404.491,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324404.487,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3890, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Climb aboard. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "npc_id": 3890,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Climb aboard. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324404.493,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3890, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Show Ordyn's letter. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "npc_id": 3890,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Show Ordyn's letter. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324404.493,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3890, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3890,
+     "quest_id": 4276
+    },
+    "last": 1794324404.492,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3968, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3968,
+     "quest_id": 4276
+    },
+    "last": 1794324404.491,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "4276\u001f0\u001f4958\u001f146276352": {
+   "nav.goto|{\"direction\": \"bottom\", \"map_id\": 146276353}": {
+    "args": {
+     "direction": "bottom",
+     "map_id": 146276353
+    },
+    "last": 1794324404.482,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "quest.advance|{\"close\": true, \"quest_id\": 4276}": {
+    "args": {
+     "close": true,
+     "quest_id": 4276
+    },
+    "last": 1794324404.484,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Ask to change the element of your Albueran honorary set.\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Ask to change the element of your Albueran honorary set."
+    },
+    "last": 1794324404.48,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Choose Earth (increases Strength {icon:iconStrength}).\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Choose Earth (increases Strength {icon:iconStrength})."
+    },
+    "last": 1794324404.483,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Choose Fire (increases Intelligence {icon:iconIntelligence}).\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Choose Fire (increases Intelligence {icon:iconIntelligence})."
+    },
+    "last": 1794324404.48,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Head out for real this time.\"}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Head out for real this time."
+    },
+    "last": 1794324404.477,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3892, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3892,
+     "quest_id": 4276
+    },
+    "last": 1794324404.478,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3894, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3894,
+     "quest_id": 4276
+    },
+    "last": 1794324404.484,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "4276\u001f1\u001f4958\u001f145752576": {
+   "nav.goto|{\"map_id\": 145752833}": {
+    "args": {
+     "map_id": 145752833
+    },
+    "last": 1794324404.519,
+    "tool": "nav.goto",
+    "wins": 8
+   }
+  },
+  "4276\u001f1\u001f4958\u001f145752833": {
+   "nav.goto|{\"direction\": \"bottom\"}": {
+    "args": {
+     "direction": "bottom"
+    },
+    "last": 1794324404.516,
+    "tool": "nav.goto",
+    "wins": 3
+   },
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324404.515,
+    "tool": "nav.goto",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Accept the bunch of keys.\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Accept the bunch of keys."
+    },
+    "last": 1794324404.523,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Ask where you can find such keys. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Ask where you can find such keys. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324404.522,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Climb aboard. {icon:iconUpdateQuestMain}\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Climb aboard. {icon:iconUpdateQuestMain}"
+    },
+    "last": 1794324404.521,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276
+    },
+    "last": 1794324404.521,
+    "tool": "quest.advance",
+    "wins": 5
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4276
+    },
+    "last": 1794324404.514,
+    "tool": "quest.advance",
+    "wins": 3
+   }
+  },
+  "4276\u001f4\u001f4958\u001f145752064": {
+   "nav.goto|{\"direction\": \"right\"}": {
+    "args": {
+     "direction": "right"
+    },
+    "last": 1794324404.494,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "4276\u001f4\u001f4958\u001f145752576": {
+   "nav.goto|{\"map_id\": 145752833}": {
+    "args": {
+     "map_id": 145752833
+    },
+    "last": 1794324404.495,
+    "tool": "nav.goto",
+    "wins": 1
+   }
+  },
+  "4276\u001f45\u001f4958\u001f145752833": {
+   "nav.goto|{\"direction\": \"top\"}": {
+    "args": {
+     "direction": "top"
+    },
+    "last": 1794324404.594,
+    "tool": "nav.goto",
+    "wins": 11
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Say thank you.\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Say thank you."
+    },
+    "last": 1794324404.523,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276
+    },
+    "last": 1794324404.546,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Ask where you can find a key. {icon:iconNewQuestRepeat}\"}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Ask where you can find a key. {icon:iconNewQuestRepeat}"
+    },
+    "last": 1794324404.542,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Head out to fight the monsters.\"}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Head out to fight the monsters."
+    },
+    "last": 1794324404.543,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Resume exploring Belladonna's Castle from where you left off.\"}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Resume exploring Belladonna's Castle from where you left off."
+    },
+    "last": 1794324404.598,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4276, \"reply\": 0, \"reply_text\": \"Use the bunch of keys.\"}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4276,
+     "reply": 0,
+     "reply_text": "Use the bunch of keys."
+    },
+    "last": 1794324404.527,
+    "tool": "quest.advance",
+    "wins": 1
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4276
+    },
+    "last": 1794324404.597,
+    "tool": "quest.advance",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 3908, \"quest_id\": 4280}": {
+    "args": {
+     "npc_id": 3908,
+     "quest_id": 4280
+    },
+    "last": 1794324404.564,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "4276\u001f45\u001f4958\u001f145752835": {
+   "nav.goto|{\"direction\": \"bottom\"}": {
+    "args": {
+     "direction": "bottom"
+    },
+    "last": 1794324404.592,
+    "tool": "nav.goto",
+    "wins": 7
+   },
+   "nav.goto|{\"map_id\": 145752833}": {
+    "args": {
+     "map_id": 145752833
+    },
+    "last": 1794324404.578,
+    "tool": "nav.goto",
+    "wins": 3
+   },
+   "quest.advance|{\"npc_id\": 4737, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 4737,
+     "quest_id": 4276
+    },
+    "last": 1794324404.577,
+    "tool": "quest.advance",
+    "wins": 1
+   }
+  },
+  "4276\u001f45\u001f4958\u001f146538496": {
+   "nav.goto|{\"direction\": \"top\", \"map_id\": 146538753}": {
+    "args": {
+     "direction": "top",
+     "map_id": 146538753
+    },
+    "last": 1794324404.53,
+    "tool": "nav.goto",
+    "wins": 1
+   },
+   "nav.goto|{\"map_id\": 145752833}": {
+    "args": {
+     "map_id": 145752833
+    },
+    "last": 1794324404.759,
+    "tool": "nav.goto",
+    "wins": 6
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276, \"reply\": 1, \"reply_text\": \"Ask to leave the dungeon.\"}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276,
+     "reply": 1,
+     "reply_text": "Ask to leave the dungeon."
+    },
+    "last": 1794324404.57,
+    "tool": "quest.advance",
+    "wins": 2
+   },
+   "quest.advance|{\"npc_id\": 3888, \"quest_id\": 4276}": {
+    "args": {
+     "npc_id": 3888,
+     "quest_id": 4276
+    },
+    "last": 1794324404.569,
+    "tool": "quest.advance",
+    "wins": 2
+   }
+  }
+ },
+ "version": 1
+}

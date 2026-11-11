@@ -1,42 +1,43 @@
 {
- "kind": "cleanroom-baselines",
- "measured": "2026-11-04",
- "target": "models/tool_policy.onnx (49,365 params, 42 features -> 21 tools)",
- "rows_held_out": 3719,
- "incumbent_head_val_accuracy": 0.9043,
- "equal_budget_controls": {
-  "sgd_100_queries_at_head_answers": {
-   "trained_on": "head",
-   "train_rows": 100,
-   "probe_budget": 100,
-   "agreement_with_target": 0.9637,
-   "accuracy_on_labels": 0.8895
+  "kind": "cleanroom-baselines",
+  "measured": "2026-11-04",
+  "target": "models/backups/tool_policy.807023112a4b.onnx (49,365 params, 42 features -> 21 tools)",
+  "target_sha256": "807023112a4b5ab35384ebeaa00fc5425d1b3085307c440f2f36cd353efccf77",
+  "rows_held_out": 3719,
+  "incumbent_head_val_accuracy": 0.9043,
+  "note": "the head is the incumbent, not the ceiling. Two headrooms are measured and they are not the same quantity: 6.6 points of label accuracy between the incumbent (0.9043) and the best predictor that could exist over these 42 features (0.9702), and 2.9% of expected *gain* between it and the oracle (0.7977 -> 0.8209), which is the one that shows up in play because the rows are not worth equally. 1,655 of 3,719 val rows share a feature vector with another row, and the bound says that ambiguity costs only 3.0 points -- the featuriser is mostly sufficient, and the gap is the head's to give back. SGD on 100 queries already imitates the head at 0.9637 agreement, so agreement is not the claim; label accuracy at equal budget (0.8639) is the bar a hand-compiled rule has to clear.",
+  "bar_for_a_deduced_rule": {
+    "must_beat_sgd_same_budget_label_accuracy": 0.8639,
+    "must_beat_sgd_same_budget_agreement": 0.9637,
+    "incumbent_to_exceed_in_play": 0.9043,
+    "cannot_exceed_feature_conditioned_bound": 0.9702
   },
-  "sgd_100_queries_at_task_labels": {
-   "trained_on": "labels",
-   "train_rows": 100,
-   "probe_budget": 100,
-   "agreement_with_target": 0.929,
-   "accuracy_on_labels": 0.8639
+  "equal_budget_controls": {
+    "sgd_100_queries_at_head_answers": {
+      "trained_on": "head",
+      "train_rows": 100,
+      "probe_budget": 100,
+      "agreement_with_target": 0.9637,
+      "accuracy_on_labels": 0.8895
+    },
+    "sgd_100_queries_at_task_labels": {
+      "trained_on": "labels",
+      "train_rows": 100,
+      "probe_budget": 100,
+      "agreement_with_target": 0.929,
+      "accuracy_on_labels": 0.8639
+    }
+  },
+  "feature_conditioned_bound": {
+    "rows": 3719,
+    "distinct_states": 2064,
+    "rows_sharing_a_state": 1655,
+    "feature_conditioned_ceiling": 0.9702
+  },
+  "hostile_arm": {
+    "selftest_arms": 6,
+    "all_passed": true,
+    "decoy_or_rule_agreement": 0.8333,
+    "decoy_constant_agreement": 0.675
   }
- },
- "bar_for_a_deduced_rule": {
-  "must_beat_sgd_same_budget_label_accuracy": 0.8639,
-  "must_beat_sgd_same_budget_agreement": 0.9637,
-  "incumbent_to_exceed_in_play": 0.9043,
-  "cannot_exceed_feature_conditioned_bound": 0.9702
- },
- "hostile_arm": {
-  "selftest_arms": 6,
-  "all_passed": true,
-  "decoy_or_rule_agreement": 0.8333,
-  "decoy_constant_agreement": 0.675
- },
- "note": "the head is the incumbent, not the ceiling. Two headrooms are measured and they are not the same quantity: 6.6 points of label accuracy between the incumbent (0.9043) and the best predictor that could exist over these 42 features (0.9702), and 2.9% of expected *gain* between it and the oracle (0.7977 -> 0.8209), which is the one that shows up in play because the rows are not worth equally. 1,655 of 3,719 val rows share a feature vector with another row, and the bound says that ambiguity costs only 3.0 points -- the featuriser is mostly sufficient, and the gap is the head's to give back. SGD on 100 queries already imitates the head at 0.9637 agreement, so agreement is not the claim; label accuracy at equal budget (0.8639) is the bar a hand-compiled rule has to clear.",
- "feature_conditioned_bound": {
-  "rows": 3719,
-  "distinct_states": 2064,
-  "rows_sharing_a_state": 1655,
-  "feature_conditioned_ceiling": 0.9702
- }
 }

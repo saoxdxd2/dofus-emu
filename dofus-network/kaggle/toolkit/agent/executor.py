@@ -502,6 +502,56 @@ def _obs_blocked_directions(observation: Optional[Dict[str, Any]]) -> set:
     return blocked
 
 
+def _obs_door_cell(observation: Optional[Dict[str, Any]],
+                   target: int) -> Optional[int]:
+    """A remembered door cell on the current map that leads to ``target``.
+
+    A house or dungeon interior is entered by stepping on a painted door cell,
+    not by crossing a border. The page records those transitions (learned walks
+    and the static ``_KNOWN_DOORS`` table) and reports them in ``map.doors`` as
+    ``{"cell": N, "to_map": M}``. When one exists, the target is reachable by a
+    single cell step, so routing it through the exported neighbour graph is
+    wrong: the graph carries stale edges and sends the bot to a border it
+    cannot cross (measured 2026-11-08: interior 146538496 -> boss room 145752833
+    via door cell 331 was rewritten to neighbour 145752576, then refused with
+    "map 145752576 is not adjacent to 146538496").
+    """
+    if not isinstance(observation, dict):
+        return None
+    try:
+        want = int(target)
+    except (TypeError, ValueError):
+        return None
+    map_block = observation.get("map")
+    doors: Any = None
+    if isinstance(map_block, dict):
+        doors = map_block.get("doors")
+    if doors is None:
+        doors = observation.get("doors")
+    if not isinstance(doors, list):
+        return None
+    best = None
+    for door in doors:
+        if not isinstance(door, dict) or door.get("cell") is None:
+            continue
+        try:
+            if int(door.get("to_map")) != want:
+                continue
+            cell = int(door["cell"])
+        except (TypeError, ValueError):
+            continue
+        via = str(door.get("via") or "walk")
+        # A door you have *walked* (or that is statically known) actually performs
+        # the transition; an "arrival" cell is only where a transition lands you,
+        # and stepping on it does nothing. Prefer the former so the client's door
+        # walk fires instead of a no-op walk to the room you are already in.
+        if via in ("walk", "known"):
+            return cell
+        if best is None:
+            best = cell
+    return best
+
+
 class _KnowledgeIndex:
     """Lazy, thread-safe index over the DofusDB cache files."""
 
@@ -1067,6 +1117,30 @@ class ToolExecutor:
                      observation_age_ms, observation_source, meta)
         return result
 
+    def directive(self, tool: str, args: Optional[Dict[str, Any]] = None,
+                  instance: Optional[str] = None,
+                  source: str = "directive") -> ToolResult:
+        """Call a page directive that is deliberately not in the planner's vocabulary.
+
+        `TOOLS` is the planner's *action space*, not a list of everything the page can
+        do: its order is the encoder's label encoding and its width is baked into the
+        shipped command head, so a read added for a supervisor must not join it. The
+        page publishes such reads (`debug.groups`, `debug.map`, ...) and the bridge
+        accepts them by name, so the only thing missing is a caller that does not go
+        through `validate_call`.
+
+        Same transport, same timeout, same auth and the same stall circuit as
+        `execute`; the difference is only that the name is not validated against the
+        schema. Nothing here is recorded as a training step: an observation the planner
+        never chose must not appear in the corpus as a decision.
+        """
+        args = dict(args or {})
+        try:
+            return self._directive(tool, tool, args, source, instance)
+        except Exception as exc:  # noqa: BLE001 - a probe must never raise to its caller
+            return ToolResult(tool=tool, ok=False, source=source,
+                              error=f"{type(exc).__name__}: {exc}")
+
     def snapshot(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Read the current game state without recording it as a step.
 
@@ -1248,6 +1322,20 @@ class ToolExecutor:
         from combat.battle_solver import BattleSolver, Board
         from combat.observation import live_view
 
+        def _threat_memory():
+            """The learned per-monster table, or None when it cannot be read.
+
+            Imported here, not at module scope: `agent.executor` is loaded by the
+            page bridge before the combat stack is guaranteed to be installed, and a
+            missing table has to mean "use the level prior", not "no planner".
+            """
+            try:
+                from combat import threat
+
+                return threat.default_memory
+            except Exception:  # noqa: BLE001
+                return None
+
         payload = self.fight_state()
         if not payload:
             return ToolResult(
@@ -1269,6 +1357,10 @@ class ToolExecutor:
             solver = BattleSolver(
                 beam_width=int(args.get("beam_width", 16) or 16),
                 max_actions=int(args.get("max_actions", 4) or 4),
+                # This is the live path, so it gets the learned table. The solver's
+                # own default is the level prior, which is what keeps benchmarks and
+                # tests from depending on a file a live fight filled in.
+                memory=_threat_memory(),
             )
             top_k = int(args.get("top_k", 1) or 1)
             checkpoint = None
@@ -1477,6 +1569,15 @@ class ToolExecutor:
                             "direction": direction, "next_map_id": target,
                             "hops_remaining": 1, "source": "observation"}
 
+        # A remembered door cell reaches the target in one step. Pass the target
+        # map through unchanged so the client walks onto that cell and performs
+        # the transition; a graph hop here sends the bot toward a stale edge and
+        # the client refuses it ("map X is not adjacent to Y").
+        door_cell = _obs_door_cell(observation, target)
+        if door_cell is not None:
+            return args, {"requested_map_id": target, "from_map_id": here,
+                          "routable": True, "via_door": door_cell,
+                          "source": "observation_door"}
         step = self._maps.hop(here, target, blocked_first=_obs_blocked_directions(observation))
         if step is None:
             # Not adjacent and not in the exported graph: send the call anyway so

@@ -9,6 +9,8 @@ replays it before it may act. This module is that substrate:
 * unit manifest: which input features / output tools each hidden unit serves;
 * edit applier: validates shape, range, budget and base hash, then applies;
 * replay: forward pass + accuracy / F1 / ECE / expected-gain on val rows;
+* pin / verify: freeze the val corpus identity (rows + sha256) and the base
+  model's numbers on it, so the gate is not scored against a moving target;
 * skill spec: a user prompt is first compiled to a fixed, validated spec --
   never directly to weights;
 * publish / rollback: a candidate lives in models/weight_edits/<id>/ and the
@@ -30,6 +32,7 @@ import json
 import math
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -42,10 +45,21 @@ BASE_ONNX = MODELS_DIR / "tool_policy.onnx"
 BASE_SIDECAR = MODELS_DIR / "tool_policy.json"
 BASE_REPORT = MODELS_DIR / "tool_policy_report.json"
 EDITS_DIR = MODELS_DIR / "weight_edits"
+BACKUPS_DIR = MODELS_DIR / "backups"
 DEFAULT_VAL = REPO_ROOT / "data" / "tool_sft_v3" / "val.jsonl"
+PROVENANCE_PATH = MODELS_DIR / "tool_policy_provenance.json"
 MANIFEST_KIND = "weight-space-manifest"
 MANIFEST_VERSION = 1
 COMMON_SUPPORT = 50
+
+# Absolute floor on all-class macro F1. `macro_f1_common` is already guarded
+# relative to the base (-0.01), but a candidate can buy common-class accuracy by
+# abandoning every rare tool and still pass that check: at the pinned baseline
+# (macro_f1 0.2058 over 21 tools, 15 of them rare) collapsing the tail drives the
+# all-class figure to roughly 0.06. This floor rejects that trade outright. It is
+# deliberately below the baseline so ordinary drift is not blocked -- it exists to
+# catch collapse, not to freeze the metric.
+MIN_MACRO_F1 = 0.15
 
 
 def sha256_file(path: Path) -> str:
@@ -54,6 +68,34 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def model_by_sha(prefix: str, root: Optional[Path] = None) -> Optional[Path]:
+    """The artifact whose sha256 starts with `prefix`, or None.
+
+    A floor, a baseline and a promotion bar are all properties of *one* artifact.
+    Every one of them records the sha it was measured on, and an artifact that is
+    replaced stops matching -- which is the whole point. This turns that sha back
+    into a file so a check can re-derive the number instead of quoting it, and so
+    "the model this was measured on" is a claim that can be answered.
+
+    The retired artifacts live in `models/backups/` under their own sha prefix, so
+    the search covers both the installed path and the backups.
+    """
+    key = str(prefix or "").strip().lower()
+    if len(key) < 8:
+        return None
+    base = Path(root or MODELS_DIR)
+    for folder in (base, base / "backups"):
+        if not folder.is_dir():
+            continue
+        for candidate in sorted(folder.glob("*.onnx")):
+            try:
+                if sha256_file(candidate).startswith(key):
+                    return candidate
+            except OSError:
+                continue
+    return None
 
 
 def load_sidecar(path: Path = BASE_SIDECAR) -> Dict[str, Any]:
@@ -66,6 +108,21 @@ def feature_names() -> List[str]:
         return list(FEATURE_NAMES)
     except Exception:
         return []
+
+
+def feature_names_for(width: Optional[int]) -> List[str]:
+    """Names for an artifact of this width, not for the 42-wide head.
+
+    `feature_names()` describes the base featuriser. Reporting those 42 names for a
+    266-wide input would label two thirds of the vector as nothing, and an inventory
+    that cannot say what the model reads is not an inventory.
+    """
+    names = feature_names()
+    if not width:
+        return names
+    if width <= len(names):
+        return names[:width]
+    return names + ["history_%d" % i for i in range(width - len(names))]
 
 
 def onnx_tensor_shapes(path: Path) -> List[Tuple[str, Tuple[int, ...]]]:
@@ -93,7 +150,8 @@ def inventory(onnx_path: Path = BASE_ONNX,
         "tools": sidecar.get("tools") or [],
         "hidden": sidecar.get("hidden"),
         "depth": sidecar.get("depth"),
-        "feature_names": feature_names(),
+        "arch": sidecar.get("arch") or "mlp",
+        "feature_names": feature_names_for(sidecar.get("features")),
         "tensors": [{"name": name, "shape": list(shape)} for name, shape in tensors],
         "params_match_sidecar": params == sidecar.get("params"),
     }
@@ -126,7 +184,9 @@ def export_manifest(onnx_path: Path = BASE_ONNX,
             "params": sum(math.prod(t["shape"]) for t in tensors),
             "features": sidecar.get("features"),
             "tools": sidecar.get("tools") or [],
-            "feature_names": feature_names(),
+            "arch": sidecar.get("arch") or "mlp",
+            "history": sidecar.get("history"),
+            "feature_names": feature_names_for(sidecar.get("features")),
             "input": model.graph.input[0].name if model.graph.input else "features",
             "output": model.graph.output[0].name if model.graph.output else "logits",
             "node_types": [node.op_type for node in model.graph.node],
@@ -173,18 +233,31 @@ def validate_manifest(manifest: Dict[str, Any]) -> List[str]:
     if len(weights) != len(biases):
         problems.append("%d weight tensors vs %d biases" % (len(weights), len(biases)))
     tools, features = base.get("tools") or [], base.get("features")
-    for name in weights:
-        if len(shapes[name]) != 2:
-            problems.append("%s is not a matrix: %s" % (name, shapes[name]))
-    if weights:
-        ordered = sorted(weights)
-        first, last = ordered[0], ordered[-1]
-        if features and shapes[first][1] != features:
-            problems.append("first weight in=%d, sidecar features=%d"
-                            % (shapes[first][1], features))
-        if tools and shapes[last][0] != len(tools):
-            problems.append("last weight out=%d, tools=%d"
-                            % (shapes[last][0], len(tools)))
+    # The dense-stack shape checks describe an MLP: first matrix consumes the
+    # features, last matrix emits the tools. A recurrent policy has neither, so
+    # applying them would report a shape error for a correct graph. Its width is
+    # checked against the graph input instead.
+    if (base.get("arch") or "mlp") == "mlp":
+        for name in weights:
+            if len(shapes[name]) != 2:
+                problems.append("%s is not a matrix: %s" % (name, shapes[name]))
+        if weights:
+            ordered = sorted(weights)
+            first, last = ordered[0], ordered[-1]
+            if features and shapes[first][1] != features:
+                problems.append("first weight in=%d, sidecar features=%d"
+                                % (shapes[first][1], features))
+            if tools and shapes[last][0] != len(tools):
+                problems.append("last weight out=%d, tools=%d"
+                                % (shapes[last][0], len(tools)))
+    elif features:
+        import onnx as _onnx
+        graph = _onnx.load(str(BASE_ONNX)).graph
+        dims = graph.input[0].type.tensor_type.shape.dim
+        width = int(dims[-1].dim_value) if dims and dims[-1].dim_value else 0
+        if width and width != int(features):
+            problems.append("graph input is %d wide, sidecar features=%d"
+                            % (width, int(features)))
     for tensor in manifest.get("tensors") or []:
         flat = _flatten(tensor["values"])
         if len(flat) != math.prod(tensor["shape"]):
@@ -289,15 +362,36 @@ def read_val_rows(path: Path = DEFAULT_VAL) -> List[Dict[str, Any]]:
     return rows
 
 
-def evaluate(weights: Dict[str, Any], rows: Sequence[Dict[str, Any]],
-             tools: Sequence[str]) -> Dict[str, Any]:
-    """Accuracy / F1 / ECE / expected-gain -- the promotion gate's numbers."""
+def gain_of_row(row: Dict[str, Any], tool_name: str) -> float:
+    """The counterfactual gain the corpus recorded for choosing `tool_name`.
+
+    Module-level so the gate's trade-off probe reads the same number the gate
+    reads; a second copy of this lookup would be a second definition of "gain".
+    """
+    gains = row.get("gains") or {}
+    return float(gains.get(tool_name, 0.0)) if isinstance(gains, dict) else 0.0
+
+
+def metrics_from_logits(logits, rows: Sequence[Dict[str, Any]],
+                        tools: Sequence[str],
+                        corpus_sha256: Optional[str] = None,
+                        return_correct: bool = False) -> Dict[str, Any]:
+    """Accuracy / F1 / ECE / expected-gain -- the promotion gate's numbers.
+
+    Deliberately independent of how the logits were produced. `evaluate` is the
+    MLP path; a sequence policy with a recurrent encoder is scored by this same
+    function, because a metric that depends on the architecture cannot judge a
+    change of architecture.
+
+    `corpus_sha256` stamps which bytes were scored. Two corpora with the same row
+    count are otherwise indistinguishable to `gate_decision`, which used to compare
+    only `rows`.
+    """
     import numpy as np
     if not rows:
         return {"rows": 0}
-    x = np.array([r["x"] for r in rows], dtype="float64")
     y = np.array([int(r["y"]) for r in rows])
-    logits = forward(weights, x)
+    logits = np.asarray(logits, dtype="float64")
     probs = _softmax(logits)
     pred = logits.argmax(axis=1)
     correct = pred == y
@@ -332,18 +426,32 @@ def evaluate(weights: Dict[str, Any], rows: Sequence[Dict[str, Any]],
             ece += float(mask.mean()) * abs(float(correct[mask].mean())
                                              - float(confidence[mask].mean()))
 
-    def gain_of_row(r: Dict[str, Any], tool_name: str) -> float:
-        gains = r.get("gains") or {}
-        return float(gains.get(tool_name, 0.0)) if isinstance(gains, dict) else 0.0
-
     model_gain = sum(gain_of_row(r, tools[int(p)]) for r, p in zip(rows, pred.tolist())) / len(rows)
     teacher_gain = sum(gain_of_row(r, str(r.get("teacher") or "")) for r in rows) / len(rows)
     oracle_gain = sum(gain_of_row(r, str(r.get("tool") or "")) for r in rows) / len(rows)
     capture = ((model_gain - teacher_gain) / (oracle_gain - teacher_gain)
                if oracle_gain != teacher_gain else 0.0)
-    return {
+
+    # Task optimality, not label agreement. On 22% of rows several tools sit at the
+    # same maximum gain, so the stored label is one of several equally good answers
+    # and the tie-break was the teacher's. A model that picks a different tied-optimal
+    # tool is right about the world and wrong about the label; this is the metric that
+    # tells those two apart, and it is the one a policy trained on outcomes is
+    # actually optimising.
+    optimal = []
+    for r, p in zip(rows, pred.tolist()):
+        gains = r.get("gains") or {}
+        if not gains:
+            optimal.append(True)
+            continue
+        best_gain = max(gains.values())
+        optimal.append(abs(gain_of_row(r, tools[int(p)]) - best_gain) < 1e-9)
+    optimal_arr = np.asarray(optimal, dtype=bool)
+
+    out = {
         "rows": len(rows),
         "val_accuracy": round(float(correct.mean()), 4),
+        "optimal": round(float(optimal_arr.mean()), 4),
         "macro_f1": round(float(sum(f1s) / len(f1s)), 4) if f1s else 0.0,
         "macro_f1_common": round(float(sum(common) / len(common)), 4) if common else 0.0,
         "ece": round(ece, 4),
@@ -356,14 +464,101 @@ def evaluate(weights: Dict[str, Any], rows: Sequence[Dict[str, Any]],
             "gain_capture": round(capture, 4),
         },
     }
+    # A tool the head never ranks first is unreachable no matter what it scores:
+    # no amount of accuracy on the other classes makes it selectable. Tracked
+    # separately from accuracy because the two failures are not the same failure.
+    out["reachable_tools"] = sorted({tools[int(p)] for p in pred.tolist()})
+    out["unreachable_tools"] = sorted(set(tools) - set(out["reachable_tools"]))
+    if corpus_sha256:
+        out["corpus_sha256"] = corpus_sha256
+    if return_correct:
+        out["_correct"] = correct.tolist()
+        out["_optimal_correct"] = optimal_arr.tolist()
+    return out
+
+
+def evaluate(weights: Dict[str, Any], rows: Sequence[Dict[str, Any]],
+             tools: Sequence[str],
+             corpus_sha256: Optional[str] = None,
+             return_correct: bool = False) -> Dict[str, Any]:
+    """Score the manifest-weights MLP. Definitions live in `metrics_from_logits`."""
+    import numpy as np
+    if not rows:
+        return {"rows": 0}
+    x = np.array([r["x"] for r in rows], dtype="float64")
+    return metrics_from_logits(forward(weights, x), rows, tools,
+                               corpus_sha256=corpus_sha256,
+                               return_correct=return_correct)
+
+
+def paired_bootstrap(base_correct: Sequence[bool],
+                     cand_correct: Sequence[bool],
+                     *, iters: int = 2000, seed: int = 0) -> Dict[str, Any]:
+    """Paired bootstrap of the accuracy delta on the same rows.
+
+    The gate otherwise compares point estimates, and on 3,719 rows a point estimate
+    moves by several tenths of a point for no reason: a retrain that gained 76 rows
+    and lost 72 (+0.0011) promoted on a CI of [-0.0054, +0.0075]. Pairing the same
+    rows and resampling them removes the shared difficulty that makes the two
+    numbers correlated, which is the only way this delta can be read.
+    """
+    import numpy as np
+    b = np.asarray(base_correct, dtype=bool)
+    c = np.asarray(cand_correct, dtype=bool)
+    if b.shape != c.shape or b.size == 0:
+        return {"comparable": False, "rows": int(min(b.size, c.size))}
+    delta = c.astype(np.float64) - b.astype(np.float64)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, b.size, size=(iters, b.size))
+    means = delta[idx].mean(axis=1)
+    lo, hi = np.percentile(means, [2.5, 97.5])
+    return {"comparable": True, "rows": int(b.size),
+            "delta": round(float(delta.mean()), 5),
+            "lo": round(float(lo), 5), "hi": round(float(hi), 5),
+            "gained": int((c & ~b).sum()), "lost": int((b & ~c).sum()),
+            "significant": bool(lo > 0.0)}
 
 
 def gate_decision(base_metrics: Dict[str, Any],
-                  cand_metrics: Dict[str, Any]) -> Dict[str, Any]:
-    """Promote only on measured improvement, never on one metric alone."""
+                  cand_metrics: Dict[str, Any],
+                  *, min_macro_f1: Optional[float] = None,
+                  paired: Optional[Dict[str, Any]] = None,
+                  paired_optimal: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Promote only on measured improvement, never on one metric alone.
+
+    Two guards here exist because the comparison is only meaningful when both
+    sides were scored on the same bytes:
+
+    * corpus identity -- `rows` alone let a candidate be compared against a base
+      measured on a different corpus of equal length. When both metrics carry a
+      `corpus_sha256`, a mismatch rejects the candidate.
+    * absolute macro-F1 floor -- `macro_f1_common` only guards the common classes,
+      so trading the whole rare tail for common accuracy used to pass.
+    * paired significance -- a point-estimate delta of +0.0011 on 3,719 rows is
+      noise. When `paired` is supplied (see `paired_bootstrap`), a candidate whose
+      paired 95% interval includes zero is rejected no matter how the point
+      estimates compare.
+
+    Significance is required on **either** label accuracy or task optimality. They
+    are not the same question: 22% of rows have several tools at the same maximum
+    gain, so the stored label is one of several equally good answers, and a policy
+    trained on outcomes can be reliably better at the task while being no better at
+    reproducing the teacher's tie-break. Demanding label agreement alone would
+    reject exactly the model that learns the world instead of the label.
+    """
     reasons: List[str] = []
     if cand_metrics.get("rows", 0) < base_metrics.get("rows", 1):
         reasons.append("candidate evaluated on fewer rows")
+    base_corpus = base_metrics.get("corpus_sha256")
+    cand_corpus = cand_metrics.get("corpus_sha256")
+    if base_corpus and cand_corpus and base_corpus != cand_corpus:
+        reasons.append("candidate scored on a different corpus (%s vs %s)"
+                       % (cand_corpus[:12], base_corpus[:12]))
+    base_reach = set(base_metrics.get("reachable_tools") or [])
+    cand_reach = set(cand_metrics.get("reachable_tools") or [])
+    lost = base_reach - cand_reach
+    if lost:
+        reasons.append("tools became unreachable: %s" % ", ".join(sorted(lost)))
     if cand_metrics.get("val_accuracy", 0) < base_metrics.get("val_accuracy", 0):
         reasons.append("accuracy regressed")
     if cand_metrics.get("decision", {}).get("expected_gain_model", 0) \
@@ -374,7 +569,28 @@ def gate_decision(base_metrics: Dict[str, Any],
     if cand_metrics.get("macro_f1_common", 0) \
             < base_metrics.get("macro_f1_common", 0) - 0.01:
         reasons.append("common-class F1 regressed beyond tolerance")
-    return {"promote": not reasons, "reasons": reasons}
+    floor = MIN_MACRO_F1 if min_macro_f1 is None else min_macro_f1
+    if floor and "macro_f1" in cand_metrics \
+            and cand_metrics["macro_f1"] < floor:
+        reasons.append("all-class macro F1 %.4f below floor %.4f"
+                       % (cand_metrics["macro_f1"], floor))
+    verdict: Dict[str, Any] = {"promote": not reasons, "reasons": reasons}
+    if paired and paired.get("comparable") and paired.get("delta", 0.0) >= 0.0:
+        # Only the noise case: a negative paired delta is already "accuracy
+        # regressed", and calling a loss "a gain that is not significant" reads
+        # like the candidate merely failed to improve.
+        exact_sig = bool(paired.get("significant", False))
+        optimal_sig = bool(paired_optimal and paired_optimal.get("comparable")
+                           and paired_optimal.get("significant"))
+        verdict["significant"] = {"accuracy": exact_sig, "optimal": optimal_sig}
+        if not (exact_sig or optimal_sig):
+            reasons.append(
+                "no significant improvement in label accuracy (%+.5f, 95%% CI "
+                "[%+.5f, %+.5f]) or task optimality"
+                % (paired.get("delta", 0.0), paired.get("lo", 0.0),
+                   paired.get("hi", 0.0)))
+    verdict["promote"] = not reasons
+    return verdict
 
 
 class EditRejected(ValueError):
@@ -467,7 +683,8 @@ def publish_candidate(delta_id: str, manifest: Dict[str, Any],
                       cand_metrics: Dict[str, Any],
                       edits: Sequence[Dict[str, Any]],
                       *, base_onnx: Path = BASE_ONNX,
-                      edits_dir: Path = EDITS_DIR) -> Dict[str, Any]:
+                      edits_dir: Path = EDITS_DIR,
+                      paired: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     safe_id = "".join(c if c.isalnum() or c in "-_" else "_" for c in delta_id)
     folder = Path(edits_dir) / safe_id
     folder.mkdir(parents=True, exist_ok=True)
@@ -475,7 +692,7 @@ def publish_candidate(delta_id: str, manifest: Dict[str, Any],
     (folder / "edit.json").write_text(json.dumps(
         {"delta_id": safe_id, "edits": list(edits), "diff": diff_report},
         ensure_ascii=False, indent=2), encoding="utf-8")
-    decision = gate_decision(base_metrics, cand_metrics)
+    decision = gate_decision(base_metrics, cand_metrics, paired=paired)
     record = {
         "delta_id": safe_id,
         "base_sha256": manifest["base"]["sha256"],
@@ -483,6 +700,7 @@ def publish_candidate(delta_id: str, manifest: Dict[str, Any],
         "candidate": str(candidate),
         "base_metrics": base_metrics,
         "candidate_metrics": cand_metrics,
+        "paired": paired,
         "gate": decision,
         "status": "accepted" if decision["promote"] else "rejected",
     }
@@ -586,7 +804,8 @@ def split_provenance(path: Optional[Path] = None) -> Dict[str, Any]:
     val = DEFAULT_VAL if path is None else Path(path)
     out: Dict[str, Any] = {"val": str(val), "val_rows": 0, "val_sha256": None}
     try:
-        out["val_rows"] = sum(1 for line in val.open(encoding="utf-8") if line.strip())
+        with val.open(encoding="utf-8") as handle:
+            out["val_rows"] = sum(1 for line in handle if line.strip())
         out["val_sha256"] = sha256_file(val)
     except OSError as exc:
         out["error"] = "%s: %s" % (type(exc).__name__, exc)
@@ -614,6 +833,285 @@ def split_provenance(path: Optional[Path] = None) -> Dict[str, Any]:
     return out
 
 
+def corpus_identity(path: Optional[Path] = None) -> Dict[str, Any]:
+    """Which bytes are being scored: path, row count, sha256. A path is not a dataset."""
+    val = DEFAULT_VAL if path is None else Path(path)
+    out: Dict[str, Any] = {"path": str(val), "rows": 0, "sha256": None}
+    try:
+        with val.open(encoding="utf-8") as handle:
+            out["rows"] = sum(1 for line in handle if line.strip())
+        out["sha256"] = sha256_file(val)
+    except OSError as exc:
+        out["error"] = "%s: %s" % (type(exc).__name__, exc)
+    return out
+
+
+def pin_provenance(path: Optional[Path] = None,
+                   out: Optional[Path] = None) -> Dict[str, Any]:
+    """Freeze the corpus identity and the base model's numbers on it.
+
+    Before this existed, `apply` recomputed `base_metrics` live on every run, so
+    the baseline silently followed whatever `val.jsonl` happened to contain that
+    day. The shipped report scored 8,453 rows; the path now holds 3,719. Pinning
+    makes the comparison explicit: the gate is scored against the bytes recorded
+    here, and `apply` refuses to run when the corpus no longer matches.
+    """
+    val = DEFAULT_VAL if path is None else Path(path)
+    out = PROVENANCE_PATH if out is None else Path(out)
+    corpus = corpus_identity(val)
+    if corpus.get("sha256") is None:
+        raise ValueError("cannot pin an unreadable corpus: %s"
+                         % corpus.get("error", corpus["path"]))
+    manifest = export_manifest()
+    rows = read_val_rows(val)
+    metrics = score_artifact(manifest, rows, BASE_ONNX,
+                             corpus_sha256=corpus["sha256"])
+    metrics.pop("confusion_top", None)
+    shipped = split_provenance(val)
+    record = {
+        "kind": "weight-space-provenance",
+        "version": 1,
+        "pinned_at": datetime.now().isoformat(timespec="seconds"),
+        "corpus": corpus,
+        "base": {
+            "onnx": str(BASE_ONNX),
+            "onnx_sha256": manifest["base"]["sha256"],
+            "params": manifest["base"]["params"],
+        },
+        "metrics": metrics,
+        "shipped_report": {
+            "val_rows": shipped.get("base_report", {}).get("val_rows"),
+            "val_accuracy": shipped.get("base_report", {}).get("val_accuracy"),
+            "expected_gain_model":
+                shipped.get("base_report", {}).get("expected_gain_model"),
+            "comparable": shipped.get("comparable"),
+            "note": shipped.get("note"),
+        },
+    }
+    Path(out).write_text(json.dumps(record, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+    return record
+
+
+def check_pin(path: Optional[Path] = None,
+              pin_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Does the corpus on disk still match the pinned bytes?"""
+    live = corpus_identity(path)
+    pin_path = PROVENANCE_PATH if pin_path is None else Path(pin_path)
+    try:
+        pin = json.loads(Path(pin_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"pinned": False, "match": False, "corpus": live,
+                "reasons": ["no provenance pin recorded at %s" % pin_path]}
+    expected = pin.get("corpus") or {}
+    reasons: List[str] = []
+    if live.get("sha256") is None:
+        reasons.append("corpus unreadable: %s" % live.get("error"))
+    elif live.get("sha256") != expected.get("sha256"):
+        reasons.append("corpus sha256 drifted: pinned %s, found %s"
+                       % (str(expected.get("sha256"))[:12],
+                          str(live.get("sha256"))[:12]))
+    if live.get("rows") != expected.get("rows"):
+        reasons.append("corpus rows drifted: pinned %s, found %s"
+                       % (expected.get("rows"), live.get("rows")))
+    return {"pinned": True, "match": not reasons, "corpus": live,
+            "expected": expected, "pinned_at": pin.get("pinned_at"),
+            "reasons": reasons}
+
+
+def score_artifact(manifest: Dict[str, Any], rows: Sequence[Dict[str, Any]],
+                   onnx_path: Path = BASE_ONNX,
+                   corpus_sha256: Optional[str] = None,
+                   return_correct: bool = False) -> Dict[str, Any]:
+    """Score whatever artifact the manifest describes.
+
+    `evaluate` reimplements a dense stack in numpy, which is exact for the MLP and
+    wrong for anything else -- a GRU would be silently scored by the wrong function.
+    The arch field in the sidecar decides, so installing a different architecture
+    cannot quietly produce a number about a model that is not running.
+    """
+    base = manifest["base"]
+    tools = list(base["tools"])
+    if (base.get("arch") or "mlp") != "mlp":
+        logits = _onnx_logits(Path(onnx_path), rows, base)
+        return metrics_from_logits(logits, rows, tools,
+                                   corpus_sha256=corpus_sha256,
+                                   return_correct=return_correct)
+    return evaluate(manifest_weights(manifest), rows, tools,
+                    corpus_sha256=corpus_sha256, return_correct=return_correct)
+
+
+def _history_rows(rows: Sequence[Dict[str, Any]], obs: bool = False,
+                  derived: bool = False) -> List[List[float]]:
+    """The history block for each row, aligned to `rows` order.
+
+    Rebuilt with the same function the trainer and the runtime tracker use, so a
+    candidate is scored on exactly the input it was trained on. Rows are grouped by
+    episode and read in step order, because the file order is not a contract.
+
+    `obs` selects the widened token: each record then carries the observation summary
+    of the row it followed, read out of that row's own state vector. The runtime gets
+    the same numbers from `ObsTracker.note_observation`, which reads the identical
+    indices, so the two sides cannot disagree about what a past step looked like.
+    """
+    from agent.features import (HISTORY_DIM, HISTORY_DIM_OBS_DERIVED, HISTORY_STEPS,
+                                _err_slot, history_tokens, obs_summary)
+    from agent.features import HISTORY_DIM_OBS
+    width = (HISTORY_DIM_OBS_DERIVED if derived
+             else (HISTORY_DIM_OBS if obs else HISTORY_DIM))
+    grouped: Dict[Any, List[Tuple[int, int]]] = {}
+    for i, row in enumerate(rows):
+        grouped.setdefault(row.get("ep", i), []).append((int(row.get("t", 0)), i))
+    out: List[Optional[List[float]]] = [None] * len(rows)
+    for items in grouped.values():
+        items.sort()
+        window: List[Dict[str, Any]] = []
+        for _, i in items:
+            out[i] = history_tokens(window, obs=obs, derived=derived)
+            row = rows[i]
+            rec = {"tool": row.get("tool"), "ok": bool(row.get("ok")),
+                   "err": _err_slot(row.get("note"))}
+            if obs:
+                rec["summary"] = obs_summary(row.get("x") or [])
+            window.append(rec)
+            if len(window) > HISTORY_STEPS:
+                window = window[-HISTORY_STEPS:]
+    return [v if v is not None else [0.0] * width for v in out]
+
+
+def _onnx_logits(onnx_path: Path, rows: Sequence[Dict[str, Any]],
+                 base: Dict[str, Any]) -> Any:
+    """Run a candidate graph over the corpus, whatever its architecture.
+
+    `forward` is a numpy reimplementation of a dense stack, so it can only score the
+    MLP it was written for. A sequence policy has a GRU in it; the honest way to
+    score that is to run the graph that will actually be deployed.
+    """
+    import numpy as np
+    import onnxruntime as ort
+    hist = base.get("history") or {}
+    steps = int(hist.get("steps") or 0)
+    # The token width is read from the artifact, not assumed: 28 is the shipped
+    # action-only token and 33 adds the per-step observation summary. A graph scored
+    # with the wrong width would either fail loudly or, worse, line up by accident.
+    from agent.features import HISTORY_TOKEN, HISTORY_TOKEN_OBS
+    obs = int(hist.get("token") or HISTORY_TOKEN) == HISTORY_TOKEN_OBS
+    derived = bool(hist.get("derived"))
+    state = np.array([r["x"] for r in rows], dtype="float32")
+    if steps:
+        X = np.hstack([state, np.array(_history_rows(rows, obs=obs, derived=derived),
+                                       dtype="float32")])
+    else:
+        X = state
+    session = ort.InferenceSession(str(onnx_path),
+                                   providers=["CPUExecutionProvider"])
+    name = session.get_inputs()[0].name
+    return session.run(["logits"], {name: X})[0]
+
+
+def candidate_verdict(cand_onnx: Path, val: Path = DEFAULT_VAL) -> Dict[str, Any]:
+    """Score a separately trained artifact and decide, without printing.
+
+    `_replay_candidate` is the CLI around this; `promote` is the install step. Both
+    must reach the same verdict from the same numbers, so the comparison lives here
+    once.
+    """
+    try:
+        pin = json.loads(PROVENANCE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"error": "no provenance pin; run `pin` first",
+                "pin": str(PROVENANCE_PATH)}
+    base_metrics = pin.get("metrics") or {}
+    if not base_metrics:
+        return {"error": "pin carries no metrics"}
+
+    sidecar = cand_onnx.with_suffix(".json")
+    if not sidecar.is_file():
+        sidecar = BASE_SIDECAR
+    manifest = export_manifest(cand_onnx, sidecar)
+    tools = list(manifest["base"]["tools"])
+    base_tools = list(export_manifest()["base"]["tools"])
+    if set(tools) != set(base_tools):
+        return {"error": "candidate tool set differs from the baseline",
+                "only_candidate": sorted(set(tools) - set(base_tools)),
+                "only_base": sorted(set(base_tools) - set(tools))}
+
+    corpus = corpus_identity(val)
+    rows = read_val_rows(val)
+    arch = (manifest["base"].get("arch") or "mlp")
+    cand_eval = score_artifact(manifest, rows, Path(cand_onnx),
+                               corpus_sha256=corpus.get("sha256"),
+                               return_correct=True)
+    base_eval = score_artifact(export_manifest(), rows, BASE_ONNX,
+                               return_correct=True)
+    paired = paired_bootstrap(base_eval["_correct"], cand_eval["_correct"])
+    paired_optimal = paired_bootstrap(base_eval.get("_optimal_correct") or [],
+                                      cand_eval.get("_optimal_correct") or [])
+    gate = gate_decision(base_metrics, cand_eval, paired=paired,
+                         paired_optimal=paired_optimal)
+    base_reach = set(base_metrics.get("reachable_tools") or [])
+    cand_reach = set(cand_eval["reachable_tools"])
+    return {
+        "candidate": str(cand_onnx),
+        "candidate_sha256": manifest["base"]["sha256"],
+        "arch": arch,
+        "params": manifest["base"].get("params"),
+        "corpus": {"rows": corpus.get("rows"), "sha256": corpus.get("sha256")},
+        "base": {k: base_metrics.get(k) for k in
+                 ("rows", "val_accuracy", "optimal", "macro_f1",
+                  "macro_f1_common", "ece")},
+        "candidate_metrics": {k: cand_eval[k] for k in
+                              ("rows", "val_accuracy", "optimal", "macro_f1",
+                               "macro_f1_common", "ece")},
+        "paired": paired,
+        "paired_optimal": paired_optimal,
+        "decision": cand_eval["decision"],
+        "reachable": {"count": len(cand_reach),
+                      "gained": sorted(cand_reach - base_reach),
+                      "lost": sorted(base_reach - cand_reach)},
+        "gate": gate,
+    }
+
+
+def _replay_candidate(cand_onnx: Path, val: Path) -> int:
+    """Score a separately trained head against the pinned baseline.
+
+    A retrain is not an edit: it has a new base hash and no edit budget. It is
+    still gated on the same corpus, the same thresholds and the same reachability
+    rule, so a retrain cannot be promoted on a metric an edit would be denied.
+    """
+    verdict = candidate_verdict(cand_onnx, val)
+    print(json.dumps(verdict, ensure_ascii=False, indent=2))
+    if "error" in verdict:
+        return 3 if "pin" in verdict["error"] else 4
+    return 0 if verdict["gate"]["promote"] else 2
+
+
+def install_candidate(cand_onnx: Path, *, base_onnx: Path = BASE_ONNX,
+                      base_sidecar: Path = BASE_SIDECAR,
+                      backup_dir: Path = BACKUPS_DIR) -> Dict[str, Any]:
+    """Replace the shipped artifact, keeping the old one byte-identical.
+
+    Nothing is overwritten in place: the current model is copied into
+    `models/backups/tool_policy.<sha12>.onnx` first, so `restore` can always put the
+    previous one back without a rebuild.
+    """
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = sha256_file(base_onnx)[:12]
+    saved_onnx = backup_dir / ("tool_policy.%s.onnx" % stamp)
+    saved_side = backup_dir / ("tool_policy.%s.json" % stamp)
+    shutil.copy2(base_onnx, saved_onnx)
+    if Path(base_sidecar).is_file():
+        shutil.copy2(base_sidecar, saved_side)
+    shutil.copy2(cand_onnx, base_onnx)
+    cand_side = Path(cand_onnx).with_suffix(".json")
+    if cand_side.is_file():
+        shutil.copy2(cand_side, base_sidecar)
+    return {"installed": str(base_onnx), "backup": str(saved_onnx),
+            "backup_sidecar": str(saved_side) if saved_side.is_file() else None,
+            "installed_sha256": sha256_file(base_onnx)}
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     from agent.jsonio import utf8_console
 
@@ -625,10 +1123,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sub.add_parser("inventory")
     p = sub.add_parser("export"); p.add_argument("--out", default="models/tool_policy.manifest.json")
     p = sub.add_parser("replay"); p.add_argument("--val", default=str(DEFAULT_VAL))
+    p.add_argument("--candidate", default=None,
+                   help="score this ONNX against the pinned baseline and print the gate verdict")
+    p = sub.add_parser("pin"); p.add_argument("--val", default=str(DEFAULT_VAL))
+    p.add_argument("--out", default=str(PROVENANCE_PATH))
+    p = sub.add_parser("verify"); p.add_argument("--val", default=str(DEFAULT_VAL))
     p = sub.add_parser("apply")
     p.add_argument("edit_file"); p.add_argument("--delta-id", required=True)
     p.add_argument("--max-changes", type=int, default=20)
+    p.add_argument("--allow-unpinned", action="store_true",
+                   help="score against the live corpus even if it drifted from the pin")
     p = sub.add_parser("rollback"); p.add_argument("delta_id")
+    p = sub.add_parser("promote")
+    p.add_argument("onnx")
+    p.add_argument("--val", default=str(DEFAULT_VAL))
+    p.add_argument("--force", action="store_true",
+                   help="install even if the gate rejects it (recorded in the pin)")
+    p = sub.add_parser("restore")
+    p.add_argument("--backup", default=None,
+                   help="backup file to restore; default is the newest")
     p = sub.add_parser("editor-prompt")
     p.add_argument("spec_file")
     p.add_argument("--out", default="models/weight_edits/editor_prompt.json")
@@ -647,30 +1160,127 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               % (len(manifest["tensors"]), manifest["base"]["params"], args.out))
         return 0
     if args.command == "replay":
+        if args.candidate:
+            return _replay_candidate(Path(args.candidate), Path(args.val))
         manifest = export_manifest()
         rows = read_val_rows(args.val)
-        metrics = evaluate(manifest_weights(manifest), rows, manifest["base"]["tools"])
+        corpus = corpus_identity(Path(args.val))
+        metrics = score_artifact(manifest, rows, BASE_ONNX,
+                                 corpus_sha256=corpus.get("sha256"))
         replay = {k: metrics[k] for k in
-                  ("rows", "val_accuracy", "macro_f1", "macro_f1_common",
-                   "ece", "decision", "confusion_top")}
+                  ("rows", "val_accuracy", "optimal", "macro_f1", "macro_f1_common",
+                   "ece", "decision", "confusion_top",
+                   "reachable_tools", "unreachable_tools")}
         replay["split"] = split_provenance(Path(args.val))
+        replay["pin"] = check_pin(Path(args.val))
         print(json.dumps(replay, ensure_ascii=False, indent=2))
         return 0
+    if args.command == "promote":
+        verdict = candidate_verdict(Path(args.onnx), Path(args.val))
+        if "error" in verdict:
+            print(json.dumps(verdict, ensure_ascii=False, indent=2))
+            return 3
+        passed = bool(verdict["gate"]["promote"])
+        if not passed and not args.force:
+            print(json.dumps({
+                "promoted": False, "gate": verdict["gate"],
+                "hint": "the gate rejected this artifact; --force installs it "
+                        "anyway and records that it was forced",
+            }, ensure_ascii=False, indent=2))
+            return 2
+        installed = install_candidate(Path(args.onnx))
+        record = pin_provenance(Path(args.val), Path(PROVENANCE_PATH))
+        print(json.dumps({
+            "promoted": True, "forced": not passed,
+            "arch": verdict.get("arch"), "params": verdict.get("params"),
+            "gate": verdict["gate"], **installed,
+            "new_baseline": {k: record["metrics"][k] for k in
+                             ("val_accuracy", "optimal", "macro_f1", "ece")},
+        }, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "restore":
+        backups = sorted(BACKUPS_DIR.glob("tool_policy.*.onnx"),
+                         key=lambda p: p.stat().st_mtime)
+        if not backups:
+            print(json.dumps({"error": "no backups in %s" % BACKUPS_DIR}, indent=2))
+            return 3
+        target = Path(args.backup) if args.backup else backups[-1]
+        if not target.is_file():
+            print(json.dumps({"error": "no such backup: %s" % target}, indent=2))
+            return 3
+        side = target.with_suffix(".json")
+        shutil.copy2(target, BASE_ONNX)
+        if side.is_file():
+            shutil.copy2(side, BASE_SIDECAR)
+        record = pin_provenance(Path(args.val), Path(PROVENANCE_PATH))
+        print(json.dumps({"restored": str(target), "to": str(BASE_ONNX),
+                          "baseline": {k: record["metrics"][k] for k in
+                                       ("val_accuracy", "optimal", "macro_f1")}},
+                         ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "pin":
+        record = pin_provenance(Path(args.val), Path(args.out))
+        print(json.dumps({
+            "pinned_at": record["pinned_at"],
+            "corpus": record["corpus"],
+            "metrics": {k: record["metrics"][k] for k in
+                        ("rows", "val_accuracy", "macro_f1",
+                         "macro_f1_common", "ece")},
+            "out": str(args.out),
+        }, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "verify":
+        status = check_pin(Path(args.val))
+        print(json.dumps(status, ensure_ascii=False, indent=2))
+        return 0 if status["match"] else 1
     if args.command == "apply":
         payload = json.loads(Path(args.edit_file).read_text(encoding="utf-8"))
         edits = payload.get("edits") if isinstance(payload, dict) else payload
         manifest = export_manifest()
+        pin = check_pin()
+        if not pin["match"] and not args.allow_unpinned:
+            print(json.dumps({
+                "delta_id": args.delta_id, "status": "blocked",
+                "reason": "validation corpus does not match the pinned baseline",
+                "pin": pin,
+                "fix": "run `python -m agent.weight_space pin` to re-baseline, "
+                       "or pass --allow-unpinned to score against the live corpus",
+            }, ensure_ascii=False, indent=2))
+            return 3
         rows = read_val_rows()
-        base_metrics = evaluate(manifest_weights(manifest), rows, manifest["base"]["tools"])
+        # Weight-space editing writes coordinates of a dense stack. A recurrent
+        # policy has no such coordinate system, so an edit applied to it would be a
+        # silent no-op dressed up as a promotion. Say so instead.
+        if (manifest["base"].get("arch") or "mlp") != "mlp":
+            print(json.dumps({
+                "error": "base artifact is %s, not a dense MLP"
+                         % manifest["base"].get("arch"),
+                "hint": "weight-space edits do not apply to a sequence policy; "
+                        "retrain and score it with `replay --candidate`",
+            }, indent=2))
+            return 5
+        # Stamp the bytes actually scored: the pin's hash only describes these
+        # rows when the pin matched, otherwise --allow-unpinned is scoring the
+        # live corpus and the record must say so.
+        corpus_sha = (pin["corpus"].get("sha256") if pin["match"]
+                      else corpus_identity().get("sha256"))
+        base_metrics = evaluate(manifest_weights(manifest), rows,
+                                manifest["base"]["tools"], corpus_sha256=corpus_sha,
+                                return_correct=True)
         candidate, diff = apply_edits(manifest, edits, max_changes=args.max_changes,
                                       base_sha256=manifest["base"]["sha256"])
-        cand_metrics = evaluate(manifest_weights(candidate), rows, manifest["base"]["tools"])
+        cand_metrics = evaluate(manifest_weights(candidate), rows,
+                                manifest["base"]["tools"], corpus_sha256=corpus_sha,
+                                return_correct=True)
+        paired = paired_bootstrap(base_metrics.pop("_correct"),
+                                  cand_metrics.pop("_correct"))
         record = publish_candidate(args.delta_id, candidate, diff, base_metrics,
-                                   cand_metrics, edits)
+                                   cand_metrics, edits, paired=paired)
         print(json.dumps({"delta_id": record["delta_id"], "status": record["status"],
-                          "gate": record["gate"],
+                          "gate": record["gate"], "paired": paired,
                           "base": base_metrics["val_accuracy"],
-                          "candidate": cand_metrics["val_accuracy"]},
+                          "candidate": cand_metrics["val_accuracy"],
+                          "corpus_sha256": corpus_sha},
                          ensure_ascii=False, indent=2))
         return 0 if record["status"] == "accepted" else 2
     if args.command == "rollback":

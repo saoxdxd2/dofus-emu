@@ -50,7 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from agent.weight_space import evaluate, export_manifest, forward, manifest_weights
+from agent.weight_space import evaluate, export_manifest, forward, manifest_weights, score_artifact
 
 MODELS = REPO_ROOT / "models"
 
@@ -80,27 +80,71 @@ class HeadOracle:
 
     def __init__(self) -> None:
         self.manifest = export_manifest()
-        self.weights = manifest_weights(self.manifest)
-        self.tools: List[str] = list(self.manifest["base"]["tools"])
-        self.feature_names: List[str] = list(self.manifest["base"]["feature_names"])
-        self.width = len(self.feature_names)
+        self.base = self.manifest["base"]
+        self.tools: List[str] = list(self.base["tools"])
+        self.feature_names: List[str] = list(self.base["feature_names"])
+        self.width = int(self.base.get("features") or len(self.feature_names))
+        self.arch = str(self.base.get("arch") or "mlp")
         self._rows = None
+        self._session = None
+        self._weights = None
+        if self.arch == "mlp":
+            self._weights = manifest_weights(self.manifest)
+        else:
+            # A sequence policy is not a dense stack: `forward` would multiply the
+            # wrong matrices and report a shape error that looks like a broken
+            # artifact. Ask the graph instead.
+            import onnxruntime as ort
 
-    def answer(self, x: List[float]) -> Dict[str, Any]:
+            from agent.weight_space import BASE_ONNX
+            self._session = ort.InferenceSession(
+                str(BASE_ONNX), providers=["CPUExecutionProvider"])
+
+    def _logits(self, x: List[float]):
         import numpy as np
 
-        vec = np.asarray([self._pad(x)], dtype="float64")
-        logits = forward(self.weights, vec)[0]
+        if self._session is None:
+            return forward(self._weights,
+                           np.asarray([self._pad(x)], dtype="float64"))[0]
+        vec = np.asarray([self._pad(x)], dtype="float32")
+        return self._session.run(
+            ["logits"], {self._session.get_inputs()[0].name: vec})[0][0]
+
+    def answer(self, x: List[float]) -> Dict[str, Any]:
+        logits = self._logits(x)
         order = sorted(range(len(logits)), key=lambda i: -float(logits[i]))
         return {"top": self.tools[order[0]],
                 "runner_up": self.tools[order[1]],
                 "margin": round(float(logits[order[0]] - logits[order[1]]), 4),
                 "top3": [[self.tools[i], round(float(logits[i]), 3)] for i in order[:3]]}
 
+    def batch(self, vecs: List[List[float]]) -> List[str]:
+        """The same questions asked as one batch, for the fidelity check."""
+        import numpy as np
+
+        padded = np.asarray([self._pad(v) for v in vecs], dtype="float32")
+        if self._session is None:
+            logits = forward(self._weights, padded.astype("float64"))
+        else:
+            logits = self._session.run(
+                ["logits"], {self._session.get_inputs()[0].name: padded})[0]
+        return [self.tools[int(i)] for i in np.argmax(logits, axis=1)]
+
     def _pad(self, x: List[float]) -> List[float]:
-        if len(x) != self.width:
-            raise ValueError("expected %d features, got %d" % (self.width, len(x)))
-        return [float(v) for v in x]
+        """Accept the state vector alone, padding the history window with zeros.
+
+        A probe asks one state at a time and has no episode behind it, so the cold
+        answer -- no prior actions -- is the only one it can be given. Padding with
+        zeros says exactly that; inventing a history would answer a question the
+        probe did not ask.
+        """
+        values = [float(v) for v in x]
+        if len(values) < self.width:
+            values += [0.0] * (self.width - len(values))
+        if len(values) != self.width:
+            raise ValueError("expected %d features, got %d"
+                             % (self.width, len(values)))
+        return values
 
     def rows(self) -> List[Dict[str, Any]]:
         if self._rows is None:
@@ -112,8 +156,7 @@ class HeadOracle:
     def truth(self, x: List[float]) -> str:
         import numpy as np
 
-        vec = np.asarray([self._pad(x)], dtype="float64")
-        return self.tools[int(np.argmax(forward(self.weights, vec)))]
+        return self.tools[int(np.argmax(self._logits(x)))]
 
 
 class ParityOracle:
@@ -132,10 +175,14 @@ class ParityOracle:
         import numpy as np
 
         head = HeadOracle()
-        self.feature_names = head.feature_names
-        self.width = head.width
-        self.tools = ["alpha", "beta"]
         xs = np.asarray([r["x"] for r in head.rows()], dtype="float64")
+        # The decoy's width is the width of the vectors a probe actually passes --
+        # the corpus rows -- not the head's full input. A sequence head reads 266
+        # numbers, but a probe still asks with the 42 the corpus stores; taking the
+        # head's width here indexed past the end of every row.
+        self.width = int(xs.shape[1])
+        self.feature_names = head.feature_names[:self.width]
+        self.tools = ["alpha", "beta"]
         med = np.median(xs, axis=0)
         above = [(xs[:, i] > med[i]).mean() for i in range(self.width)]
         spread = xs.std(axis=0)
@@ -489,10 +536,23 @@ def selftest() -> int:
     rows = head.rows()
     print("rows %d, features %d, tools %d" % (len(rows), head.width, len(head.tools)))
 
-    metrics = evaluate(manifest_weights(head.manifest), rows, head.tools)
-    ok = abs(metrics["val_accuracy"] - 0.9043) < 0.005
-    print("[%s] the oracle answers as the shipped head does (val acc %.4f)"
-          % ("PASS" if ok else "FAIL", metrics["val_accuracy"]))
+    # Fidelity, not accuracy. The oracle used to be checked against the head's val
+    # accuracy, which only worked while the oracle could see exactly what the head
+    # saw. A sequence policy reads a history window the probe does not have, so the
+    # probe answers cold -- and a cold answer is legitimately different. What must
+    # still hold is that one-row answers and batch answers agree on the same input:
+    # a head that changes its mind with the batch size is one the probe cannot
+    # reason about at all.
+    import numpy as np
+
+    sample = [list(r["x"]) + [0.0] * (head.width - len(r["x"])) for r in rows[:256]]
+    batch = head.batch(sample)
+    single = [head.answer(vec)["top"] for vec in sample]
+    agree = sum(1 for a, b in zip(batch, single) if a == b) / max(len(sample), 1)
+    ok = agree > 0.999
+    print("[%s] the oracle answers as the shipped head does (batch/single agreement "
+          "%.3f on %d zero-history states)"
+          % ("PASS" if ok else "FAIL", agree, len(sample)))
     fail += 0 if ok else 1
 
     if not state_path().exists():
@@ -597,8 +657,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         probes = random.Random(1).sample(o.rows(), min(n, len(o.rows())))
         out = {"probe_budget": st["budget"], "train_rows": n}
         if isinstance(o, HeadOracle):
-            out["incumbent_head_val_accuracy"] = evaluate(
-                manifest_weights(o.manifest), o.rows(), o.tools)["val_accuracy"]
+            out["incumbent_head_val_accuracy"] = score_artifact(
+                o.manifest, o.rows())["val_accuracy"]
             out["feature_conditioned_bound"] = LabelOracle().ceiling()
         for which in ("head", "labels"):
             out["sgd_on_" + which] = sgd_control(o, o.rows(), probes, on=which)

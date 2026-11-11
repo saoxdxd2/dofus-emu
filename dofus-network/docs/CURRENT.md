@@ -192,7 +192,7 @@ must diagnose the short terminations. The command shadow is deployable: `command
 head sets) + `command_onnx.json` + tokenizer, loaded by `agent/command_onnx.py`; the FP32
 graph/torch heads are excluded from the installer. INT8 parity is 0/59 effective rows and the
 torch-free wrapper matches torch on 0/76 texts. `live_ready` reports the ONNX shadow + router
-ready; the release build is green (`setup.exe` **61,692,928<!--f:setup_bytes--> B**, measured
+ready; the release build is green (`setup.exe` **61,991,936<!--f:setup_bytes--> B**, measured
 2026-11-03, after `tools/payload_audit.py --gate` cut the JAX grid weights the shipped runtime cannot load,
 stopped the installer carrying this machine's credentials, dropped the files nothing in the tree reads
 (ARCH_REASSESSMENT.md §L.6), stopped installing the torch tier the product does not start with (§L.8)
@@ -304,7 +304,7 @@ passes a finite forward check. The first Kaggle run (synthetic solver distillati
 `models/combat_grid/model.pkl`; it is **not** a live combat policy. It is wired as an
 opt-in read-only ranker (`fight.plan ranker=grid`), default is still `solver`, and
 it refuses when the board has no positive AP or the artifact is absent. The live
-gate is one actionable fight on the current page build (`2026-10-31a`; `2026-10-29bf` is still the
+gate is one actionable fight on the current page build (`2026-11-10a`; `2026-10-29bf` is still the
 newest one actually recorded), then a side-swapped win. Note that fights are now won live
 (§6 above) — what has not been seen is a board with positive AP reaching the grid ranker, so
 the model is still validated only on synthetic distillation (`data/combat_grid_synth_v2`:

@@ -288,10 +288,44 @@ def _observation_text(observation: Any, limit: int = 1200) -> Optional[str]:
             shown += f"; +{len(interactives) - 6} more"
         lines.append("interactives here: " + shown)
 
+    # World shape the model must reason over but that this renderer used to omit:
+    # interior vs open map, remembered door cells (a dungeon/house transition is a
+    # painted cell, not a border) and visible mob groups (is a fight available?).
+    # The line comes from agent.world_context so there is one source of truth and
+    # nothing here decides an action -- it only describes what the client reports.
+    try:
+        from agent.world_context import describe_world_text
+        world_line = describe_world_text(observation)
+        if world_line:
+            lines.append("world: " + world_line)
+    except Exception:  # noqa: BLE001 - perception must never break rendering
+        pass
+
     last_nav = observation.get("last_nav")
     if isinstance(last_nav, dict) and last_nav:
         lines.append("last nav: " + _obs_brief(last_nav, 180))
         rendered.add("last_nav")
+
+    already_failed = observation.get("already_failed")
+    if isinstance(already_failed, str) and already_failed:
+        lines.append(already_failed)
+        rendered.add("already_failed")
+
+    # What worked here in a previous session. Rendered separately from the dead ends
+    # because the two ask for opposite behaviour: avoid one, replay the other.
+    known_solution = observation.get("known_solution")
+    if isinstance(known_solution, str) and known_solution:
+        lines.append(known_solution)
+        rendered.add("known_solution")
+
+    try:
+        from agent.quest_manager import describe as _qws_describe
+        qws = _qws_describe(observation)
+        if qws:
+            lines.append(qws)
+            rendered.add("quest_working_set")
+    except Exception:  # noqa: BLE001 - perception must never break rendering
+        pass
 
     inventory = observation.get("inventory")
     if isinstance(inventory, dict):

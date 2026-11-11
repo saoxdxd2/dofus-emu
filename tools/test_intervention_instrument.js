@@ -45,27 +45,52 @@ check('exposed in state.snapshot', /snap\.user_input\s*=/.test(src) && /__agentU
 check('counts only while the loop runs', /self\.aiRunning/.test(installBlock));
 
 // behavioural: run the real handler with a fake ui + self
-function harness(aiRunning) {
-    const ui = { trusted: 0, during_run: 0, by_type: {}, last_ts: 0 };
+function harness(aiRunning, takeoverEvent) {
+    const ui = { trusted: 0, during_run: 0, during_run_all: 0, by_type: {}, last_ts: 0 };
     const self = { aiRunning: aiRunning };
-    const note = new Function('ui', 'self', 'Date', 'Object',
-        'return ' + handlerSrc)(ui, self, Date, Object);
+    const note = new Function('ui', 'self', 'Date', 'Object', 'takeoverEvent',
+        'return ' + handlerSrc)(ui, self, Date, Object,
+                                takeoverEvent || { pointerdown: true });
     return { ui, note };
 }
 
 let h = harness(true);
-h.note({ isTrusted: false, type: 'mousedown' });          // the agent's own click
+h.note({ isTrusted: false, type: 'pointerdown' });        // the agent's own click
 check('synthetic agent input is not counted', h.ui.trusted === 0, JSON.stringify(h.ui));
-h.note({ isTrusted: true, type: 'mousedown' });           // a human
+h.note({ isTrusted: true, type: 'pointerdown' });         // a human
 check('trusted input is counted', h.ui.trusted === 1 && h.ui.during_run === 1, JSON.stringify(h.ui));
-check('event type is recorded', h.ui.by_type.mousedown === 1, JSON.stringify(h.ui.by_type));
+check('event type is recorded', h.ui.by_type.pointerdown === 1, JSON.stringify(h.ui.by_type));
 h.note({ isTrusted: true, type: 'keydown' });
 h.note({ isTrusted: true, type: 'keydown' });
 check('per-type tallies accumulate', h.ui.by_type.keydown === 2 && h.ui.trusted === 3, JSON.stringify(h.ui));
 check('last_ts stamped', typeof h.ui.last_ts === 'number' && h.ui.last_ts > 0, String(h.ui.last_ts));
 
-h = harness(false);                                        // paused / human driving alone
+// A takeover is a pointer landing on the client. Scrolling a spell list and typing in
+// chat are real human input and stay in the per-type tally, but counting them as
+// takeovers is what made "zero manual interventions" unmeasurable: dofus-01 accumulated
+// 1,078 of them from 99 rows whose own breakdown read mousedown 200 / keydown 1491 /
+// wheel 152. Both counts are kept so the narrowing stays auditable.
+check('a keypress is not a takeover',
+    h.ui.during_run === 1, JSON.stringify(h.ui));
+check('but it is still counted in the wider tally',
+    h.ui.during_run_all === 3, JSON.stringify(h.ui));
+
+h = harness(true);
+h.note({ isTrusted: true, type: 'wheel' });
+check('a scroll wheel does not count as an intervention',
+    h.ui.during_run === 0 && h.ui.during_run_all === 1, JSON.stringify(h.ui));
+
+h = harness(true);
 h.note({ isTrusted: true, type: 'mousedown' });
+check('a browser without PointerEvent still counts its mouse button',
+    h.ui.during_run === 0, 'pointerdown is the takeover here');
+h = harness(true, { mousedown: true, touchstart: true });
+h.note({ isTrusted: true, type: 'mousedown' });
+check('the mousedown fallback counts when it is the takeover event',
+    h.ui.during_run === 1, JSON.stringify(h.ui));
+
+h = harness(false);                                        // paused / human driving alone
+h.note({ isTrusted: true, type: 'pointerdown' });
 check('input while the loop is stopped is NOT an intervention',
     h.ui.trusted === 1 && h.ui.during_run === 0, JSON.stringify(h.ui));
 

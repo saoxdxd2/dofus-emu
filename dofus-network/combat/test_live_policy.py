@@ -11,6 +11,7 @@ cast, and padding must be identifiable without looking at the id.
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from combat.battle_solver import NB_CELLS, Board, _POINTS
 from combat.encounter.env import Config
@@ -70,6 +71,45 @@ def policy_stub() -> LivePolicy:
     policy = LivePolicy.__new__(LivePolicy)
     policy.cfg = Config()
     return policy
+
+
+class SolverOwnsTheWalkTests(unittest.TestCase):
+    """A turn with nothing in range used to leave the solver's hands entirely.
+
+    `_solver_turn` returns None when the candidate list holds no action plan, and the
+    caller then falls back to the actor -- measured 0.0875 worse than the solver
+    (brain_service §L.31). On the captured corpus that was 114 of 152 turns, so the
+    common case was the fallback case. The solver now offers a walk, and this pins that
+    the walk reaches the page as a move instead of a pass.
+    """
+
+    def solver_only(self) -> LivePolicy:
+        from combat.battle_solver import BattleSolver
+
+        policy = policy_stub()
+        policy.solver = BattleSolver(beam_width=8, max_actions=4)
+        policy.plan_k = 8
+        # The rankers need a checkpoint; this test is about what the solver offers,
+        # so both are made to abstain and the first plan is taken.
+        policy._value_choice = lambda board, plans: None
+        policy._grid_choice = lambda board, plans: None
+        return policy
+
+    def test_a_turn_with_nothing_in_range_walks_instead_of_passing(self):
+        payload = board_payload()
+        payload["fighters"][1]["cell"] = _POINTS[(14, 10)]
+        board = Board.from_fight_state(payload)
+        action, _fallback, reason = self.solver_only()._solver_turn(board)
+        self.assertEqual(action["type"], "move", action)
+        self.assertLess(board.cells.distance(action["cell"], _POINTS[(14, 10)]),
+                        board.cells.distance(MY_CELL, _POINTS[(14, 10)]))
+        self.assertTrue(action.get("path"), "the page needs the path, not just the cell")
+        self.assertEqual(reason, "solver_move")
+
+    def test_a_turn_that_can_cast_still_casts(self):
+        board = Board.from_fight_state(board_payload())
+        action, _fallback, _reason = self.solver_only()._solver_turn(board)
+        self.assertEqual(action["type"], "cast", action)
 
 
 class SlotBindingTests(unittest.TestCase):
@@ -294,6 +334,69 @@ class MoveDirectionTests(unittest.TestCase):
             board.cells.distance(board.my_cell, FOE_CELL))
 
 
+class PlanCellChoiceTests(unittest.TestCase):
+    """Which castable cell a plan ends on, when the cast itself is already chosen.
+
+    `_realize` collects one plan per reachable cell that executes the actor's spell and
+    target, then asks `_move_score` to pick one. The two branches for the actor's own
+    direction codes (0 toward, 2 away -- the codes `_walk_action` reads) were written
+    the other way round, so a retreating turn was ranked by how far it *closed* and the
+    character ended next to the enemy it had just decided to leave. Pinned here on the
+    scoring function itself, because the boards that reach it need a real cast to be
+    legal and a stub cannot exercise that.
+    """
+
+    def board(self):
+        return Board.from_fight_state(board_payload())
+
+    def plan(self, cell, exposure=0.0):
+        return SimpleNamespace(final_cell=cell, exposure=exposure)
+
+    def test_toward_ends_on_the_nearer_cell(self):
+        board, policy = self.board(), policy_stub()
+        near = self.plan(_POINTS[(10, 10)])
+        far = self.plan(_POINTS[(10, 13)])
+        self.assertLess(board.cells.distance(near.final_cell, FOE_CELL),
+                        board.cells.distance(far.final_cell, FOE_CELL))
+        self.assertGreater(policy._move_score(board, near, {"cell": FOE_CELL,
+                                                            "fighter_id": -1}, 0),
+                           policy._move_score(board, far, {"cell": FOE_CELL,
+                                                           "fighter_id": -1}, 0))
+
+    def test_away_ends_on_the_farther_cell(self):
+        board, policy = self.board(), policy_stub()
+        near = self.plan(_POINTS[(10, 10)])
+        far = self.plan(_POINTS[(10, 13)])
+        self.assertGreater(policy._move_score(board, far, {"cell": FOE_CELL,
+                                                           "fighter_id": -1}, 2),
+                           policy._move_score(board, near, {"cell": FOE_CELL,
+                                                            "fighter_id": -1}, 2))
+
+    def test_hold_keeps_the_distance_and_lets_exposure_decide(self):
+        board, policy = self.board(), policy_stub()
+        first = self.plan(_POINTS[(10, 10)], exposure=40.0)
+        second = self.plan(_POINTS[(12, 10)], exposure=5.0)
+        self.assertEqual(board.cells.distance(first.final_cell, FOE_CELL),
+                         board.cells.distance(second.final_cell, FOE_CELL))
+        self.assertGreater(policy._move_score(board, second, {"cell": FOE_CELL,
+                                                              "fighter_id": -1}, 1),
+                           policy._move_score(board, first, {"cell": FOE_CELL,
+                                                             "fighter_id": -1}, 1))
+
+    def test_exposure_cannot_overrule_the_direction_it_was_asked_for(self):
+        # The term is a tie-break: even the threat model's capped swing has to lose
+        # to one cell of the direction the actor chose.
+        from combat.threat import MAX_PRICED_SWING
+
+        board, policy = self.board(), policy_stub()
+        near = self.plan(_POINTS[(10, 10)], exposure=MAX_PRICED_SWING)
+        far = self.plan(_POINTS[(10, 13)], exposure=0.0)
+        self.assertGreater(policy._move_score(board, near, {"cell": FOE_CELL,
+                                                            "fighter_id": -1}, 0),
+                           policy._move_score(board, far, {"cell": FOE_CELL,
+                                                           "fighter_id": -1}, 0))
+
+
 class ValueChoiceTests(unittest.TestCase):
     """The trained critic ranks realizations only when its inputs are complete.
 
@@ -344,6 +447,136 @@ class ValueChoiceTests(unittest.TestCase):
         source = inspect.getsource(Policy.decide)
         self.assertIn('self._value_ready = bool(contract.get("value_ready"))',
                       source)
+
+
+class UnspentApRescueTests(unittest.TestCase):
+    """A turn that ends with AP in hand and a legal cast on the board is a lost turn.
+
+    Measured on the 1009 live decisions in `trajectories/live_policy_decisions.jsonl`:
+    of the 850 turns that had a castable spell, 355 (42%) ended in a pass, and 146 of
+    those were holding a 38-damage spell at the time. The path is ordinary -- the
+    actor chose to walk, the walk was impossible because the MP was already spent, and
+    the solver had no plan left.
+
+    The rescue runs only when the answer is already a pass, so these tests also pin
+    that it can never override a real decision.
+    """
+
+    def setUp(self) -> None:
+        self.policy = policy_stub()
+
+    def bind(self, payload):
+        board = Board.from_fight_state(payload)
+        slots, _rows = self.policy._bind_slots(board)
+        targets = self.policy._bind_targets(board)
+        return board, slots, targets
+
+    def two_foes(self, near_hp=50, far_hp=50):
+        payload = board_payload()
+        payload["fighters"][1]["hp"] = near_hp
+        payload["fighters"][1]["max_hp"] = near_hp
+        payload["fighters"].append(
+            {"id": -2, "name": "foe2", "cell": _POINTS[(10, 11)], "team": "enemy",
+             "hp": far_hp, "max_hp": far_hp, "ap": 4, "max_ap": 4, "mp": 3,
+             "max_mp": 3, "level": 5, "alive": True, "spells": []})
+        return payload
+
+    def test_a_turn_with_ap_left_casts_instead_of_passing(self):
+        board, slots, targets = self.bind(board_payload())
+        action = self.policy._last_resort_cast(board, slots, targets)
+        self.assertIsNotNone(action, "a legal cast existed and the rescue passed anyway")
+        self.assertEqual(action["type"], "cast")
+        self.assertEqual(action["targetId"], -1)
+
+    def test_a_kill_is_taken_over_a_bigger_hit(self):
+        # 12 damage finishes the 10-hp foe; the 30-damage spell would only dent the
+        # healthy one. Removing an enemy deletes a whole enemy turn from the fight.
+        payload = board_payload([spell(13, "Nuke", 3, 1, 3,
+                                       [damage_effect(97, 30, 30)])])
+        payload["fighters"][1]["hp"] = 10
+        payload["fighters"][1]["max_hp"] = 50
+        payload["fighters"].append(
+            {"id": -2, "name": "tank", "cell": _POINTS[(10, 11)], "team": "enemy",
+             "hp": 400, "max_hp": 400, "ap": 4, "max_ap": 4, "mp": 3,
+             "max_mp": 3, "level": 5, "alive": True, "spells": []})
+        board, slots, targets = self.bind(payload)
+        action = self.policy._last_resort_cast(board, slots, targets)
+        self.assertEqual(action["targetId"], -1)
+        self.assertLessEqual(action["spellId"], 13)
+
+    def test_the_weakest_reachable_enemy_is_focused(self):
+        payload = self.two_foes(near_hp=50, far_hp=8)
+        board, slots, targets = self.bind(payload)
+        action = self.policy._last_resort_cast(board, slots, targets)
+        self.assertEqual(action["targetId"], -2)
+
+    def test_nothing_legal_is_still_nothing(self):
+        # Out of AP: every cast is refused, so the rescue must return None and let
+        # the turn end rather than inventing an action the client would reject.
+        payload = board_payload()
+        for fighter in payload["fighters"]:
+            if fighter.get("is_me"):
+                fighter["ap"] = 0
+        payload["my_stats"]["action_points"] = 0
+        board, slots, targets = self.bind(payload)
+        self.assertIsNone(self.policy._last_resort_cast(board, slots, targets))
+
+    def test_an_out_of_range_enemy_is_not_cast_at(self):
+        # Every spell in the fixture reaches 3 cells, so a foe across the map is
+        # not a target. Picked by the board's own distance, not by raw cell id.
+        payload = board_payload()
+        probe = Board.from_fight_state(payload)
+        far = max(_POINTS.values(),
+                  key=lambda cell: probe.cells.distance(MY_CELL, cell))
+        payload["fighters"][1]["cell"] = far
+        board, slots, targets = self.bind(payload)
+        self.assertGreater(board.cells.distance(MY_CELL, far), 3)
+        self.assertIsNone(self.policy._last_resort_cast(board, slots, targets))
+
+    def test_the_rescue_never_overrides_a_real_decision(self):
+        import inspect
+
+        from combat.live_policy import LivePolicy as Policy
+
+        source = inspect.getsource(Policy.decide)
+        self.assertIn('action.get("type") == "pass"', source)
+        self.assertIn('"unspent_ap_cast"', source)
+
+
+class SpentMovementTests(unittest.TestCase):
+    """`mp: 0` is a spent budget; `mp: null` is a client that does not publish one.
+
+    Collapsing the two re-priced a fighter that had walked at its full movement
+    budget, so every plan after the first move of a turn was built on movement the
+    character no longer had -- the solver kept emitting walks the client refused, and
+    the AP was never spent.
+    """
+
+    def me_row(self, payload):
+        return next(f for f in payload["fighters"] if f.get("is_me"))
+
+    def test_a_published_zero_is_a_spent_budget(self):
+        payload = board_payload()
+        self.me_row(payload)["mp"] = 0
+        self.assertEqual(Board.from_fight_state(payload).my_mp, 0)
+
+    def test_a_missing_value_falls_back_to_the_budget(self):
+        payload = board_payload()
+        self.me_row(payload)["mp"] = None
+        payload["my_stats"]["movement_points"] = 3
+        self.assertEqual(Board.from_fight_state(payload).my_mp, 3)
+
+    def test_a_fighter_that_has_walked_is_not_planned_another_walk(self):
+        payload = board_payload()
+        payload["fighters"][1]["cell"] = _POINTS[(14, 10)]
+        self.me_row(payload)["mp"] = 0
+        board = Board.from_fight_state(payload)
+        policy = policy_stub()
+        action = policy._last_resort_cast(
+            board, *[f(board) for f in (
+                lambda b: policy._bind_slots(b)[0],
+                lambda b: policy._bind_targets(b))])
+        self.assertIsNone(action, "out of reach with no MP: nothing to cast")
 
 
 if __name__ == "__main__":

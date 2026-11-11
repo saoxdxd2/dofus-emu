@@ -112,6 +112,24 @@ namespace DofusFarm.Engine
             if (string.IsNullOrEmpty(options.BuildVersion)) options.BuildVersion = verInfo.BuildVersion;
             if (string.IsNullOrEmpty(options.VersionCode)) options.VersionCode = verInfo.VersionCode;
 
+            // The bundle reports its own build number and the login server checks that
+            // one, not ours: script.js assigns window.buildVersion unconditionally at
+            // load, so the URL parameter below is ignored by the page. Prefer the served
+            // bundle's value so the two cannot disagree -- and say so when they do, since
+            // a stale bundle otherwise surfaces only as "A new version is available!".
+            string servedBuild = ClientBundle.ServedBuildVersion();
+            if (!string.IsNullOrEmpty(servedBuild))
+            {
+                if (!string.IsNullOrEmpty(options.BuildVersion) &&
+                    !string.Equals(options.BuildVersion, servedBuild, StringComparison.Ordinal))
+                {
+                    OnLog?.Invoke(string.Format(
+                        "[BUNDLE] served script.js reports build {0}; resolver had {1} (bundle wins)",
+                        servedBuild, options.BuildVersion));
+                }
+                options.BuildVersion = servedBuild;
+            }
+
             // Prepare mobile disguise script to close the blackbox completely
             if (string.IsNullOrEmpty(options.DisguiseScript))
             {

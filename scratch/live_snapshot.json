@@ -1,0 +1,1423 @@
+{
+ "connected": true,
+ "in_fight": false,
+ "character": {
+  "id": 4404438,
+  "name": "Myai",
+  "level": 12,
+  "breed": 4,
+  "stats": {
+   "strength": 55,
+   "intelligence": 0,
+   "chance": 0,
+   "agility": 0,
+   "vitality": 30,
+   "wisdom": 0
+  },
+  "element": "earth"
+ },
+ "position": {
+  "cell": 176,
+  "x": 9,
+  "y": -57,
+  "map_id": 146538496
+ },
+ "in_world": true,
+ "login": {
+  "banned": false
+ },
+ "stats": {
+  "strength": 55,
+  "intelligence": 0,
+  "chance": 0,
+  "agility": 0,
+  "vitality": 30,
+  "wisdom": 0
+ },
+ "element": "earth",
+ "hp": {
+  "life": 140,
+  "max": 140,
+  "ap": 6,
+  "mp": 3
+ },
+ "alive": true,
+ "life_state": 0,
+ "points": {
+  "stats": 0,
+  "spells": 5
+ },
+ "last_fight_end": null,
+ "fight_id": null,
+ "challenges": [],
+ "battle_log_tail": [],
+ "in_dialog": false,
+ "dialog": {
+  "open": false
+ },
+ "agent_build": "2026-10-31a+1.74.12",
+ "login_cooldown": null,
+ "last_disconnect": null,
+ "last_nav": null,
+ "keep_alive": {
+  "marks": 2,
+  "failed": 0,
+  "present": true,
+  "via": "setInterval-owner",
+  "last_source": "directive",
+  "idle_ms": 1,
+  "age_ms": 1,
+  "inactive": false
+ },
+ "geometry": {
+  "boot": {
+   "w": 1350,
+   "h": 729
+  },
+  "now": {
+   "w": 1350,
+   "h": 729
+  },
+  "dpr": 1,
+  "drifted": false,
+  "in_world": true,
+  "pending": false,
+  "reloads_last_2min": 0
+ },
+ "user_input": {
+  "trusted": 0,
+  "during_run": 0,
+  "by_type": {},
+  "last_ts": 0
+ },
+ "map": {
+  "map_id": 146538496,
+  "cell": 176,
+  "x": 9,
+  "y": -57,
+  "terrain": "0000000000000000000000000000000000000200c000700e108b00730cd18370ed1cb30fe0ef18b707f0cd38370cd10b308e00e100700c000200000000000000000000000000",
+  "neighbours": {
+   "left": 146670080,
+   "right": 146539008,
+   "top": 146538753,
+   "bottom": 146538497
+  },
+  "exits": [],
+  "doors": [
+   {
+    "cell": 176,
+    "to_map": 145752833,
+    "at": 1794171266502,
+    "via": "walk"
+   },
+   {
+    "cell": 289,
+    "to_map": 145752833,
+    "at": 1794173457448,
+    "via": "arrival"
+   },
+   {
+    "cell": 331,
+    "to_map": 145752833,
+    "at": 1794169914907,
+    "via": "arrival"
+   }
+  ],
+  "npcs": [
+   {
+    "npc_id": 3888,
+    "actor_id": -1,
+    "cell": 147,
+    "name": null,
+    "has_quest": false,
+    "has_exclamation": false,
+    "has_question": false,
+    "quests_to_start": [],
+    "quests_to_valid": []
+   }
+  ],
+  "interactives": [],
+  "groups": [
+   {
+    "group_id": -1689,
+    "contextualId": -1689,
+    "cell": 272,
+    "monster_ids": [
+     4223,
+     4225,
+     4219
+    ],
+    "members": [
+     {
+      "monster_id": 4223,
+      "level": 8,
+      "is_boss": false,
+      "is_mini_boss": false
+     },
+     {
+      "monster_id": 4225,
+      "level": 8,
+      "is_boss": false,
+      "is_mini_boss": false
+     },
+     {
+      "monster_id": 4219,
+      "level": 8,
+      "is_boss": false,
+      "is_mini_boss": false
+     }
+    ],
+    "member_count": 3,
+    "levels_known": 3,
+    "total_level": 24,
+    "max_level": 8,
+    "is_boss": false,
+    "scale_level": 0,
+    "static_keys": [
+     "_type",
+     "mainCreatureLightInfos",
+     "underlings",
+     "alternatives"
+    ]
+   }
+  ],
+  "group_count": 1,
+  "groups_scan": {
+   "manager": true,
+   "path": "actors",
+   "seen": 2,
+   "matched": 1,
+   "types": {
+    "GameRolePlayNpcInformations": 1,
+    "GameRolePlayGroupMonsterInformations": 1
+   }
+  },
+  "transition": {
+   "outgoing": [
+    {
+     "at": 1794330732432,
+     "name": "ServerSelectionMessage",
+     "args": {
+      "serverId": 533
+     }
+    },
+    {
+     "at": 1794330733729,
+     "name": "AuthenticationTicketMessage",
+     "args": {
+      "lang": "en"
+     }
+    },
+    {
+     "at": 1794330733990,
+     "name": "CharactersListRequestMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734179,
+     "name": "CharacterSelectionMessage",
+     "args": {
+      "id": 4404438
+     }
+    },
+    {
+     "at": 1794330734406,
+     "name": "QuestListRequestMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734407,
+     "name": "FriendsGetListMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734407,
+     "name": "IgnoredGetListMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734407,
+     "name": "SpouseGetInformationsMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734407,
+     "name": "InviteCodeRequestMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734414,
+     "name": "OfflineOptionsUpdateRequestMessage",
+     "args": {
+      "options": "1,0,NON"
+     }
+    },
+    {
+     "at": 1794330734430,
+     "name": "ClientKeyMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734430,
+     "name": "GameContextCreateRequestMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734547,
+     "name": "SequenceNumberMessage",
+     "args": {
+      "number": 1
+     }
+    },
+    {
+     "at": 1794330734789,
+     "name": "ObjectAveragePricesGetMessage",
+     "args": {}
+    },
+    {
+     "at": 1794330734801,
+     "name": "MapInformationsRequestMessage",
+     "args": {
+      "mapId": 146538496
+     }
+    },
+    {
+     "at": 1794330789227,
+     "name": "BasicPingMessage",
+     "args": {
+      "quiet": true
+     }
+    }
+   ],
+   "incoming": [
+    {
+     "at": 1794330779129,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330779129,
+     "name": "ChatServerMessage",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330780687,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330780687,
+     "name": "ChatServerMessage",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330789227,
+     "name": "send",
+     "keys": [
+      "call",
+      "data"
+     ]
+    },
+    {
+     "at": 1794330789227,
+     "name": "send:sendMessage",
+     "keys": [
+      "call",
+      "data"
+     ]
+    },
+    {
+     "at": 1794330789393,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "seq",
+      "lastPacketId",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1794330789393,
+     "name": "BasicAckMessage",
+     "keys": [
+      "_messageType",
+      "seq",
+      "lastPacketId",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1794330789393,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "quiet",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1794330789393,
+     "name": "BasicPongMessage",
+     "keys": [
+      "_messageType",
+      "quiet",
+      "_isInitialized"
+     ]
+    },
+    {
+     "at": 1794330789467,
+     "name": "data",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1794330789467,
+     "name": "BasicNoOperationMessage",
+     "keys": [
+      "_messageType"
+     ]
+    },
+    {
+     "at": 1794330801009,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330801010,
+     "name": "ChatServerMessage",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330805953,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330805953,
+     "name": "ChatServerMessage",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330806519,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330806519,
+     "name": "ChatServerWithObjectMessage",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330807657,
+     "name": "data",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    },
+    {
+     "at": 1794330807657,
+     "name": "ChatServerMessage",
+     "keys": [
+      "_messageType",
+      "id",
+      "channel",
+      "content",
+      "urls",
+      "timestamp",
+      "fingerprint",
+      "senderId"
+     ]
+    }
+   ],
+   "map_info": {
+    "at": 1794330735114,
+    "map": 146538496,
+    "sub_area": 848
+   },
+   "no_move": null,
+   "last_nav": null
+  }
+ },
+ "tutorial": {
+  "active": false,
+  "quest_id": null,
+  "step_id": null,
+  "special_step_id": null,
+  "step_checkpoint": null,
+  "hint_target": null,
+  "interactive_hint": null,
+  "menu_hint": null,
+  "open_window": null,
+  "tap_anywhere": false,
+  "ending_conditions": null,
+  "behaviour_ids": null,
+  "can_change_map": {
+   "left": true,
+   "right": true,
+   "top": true,
+   "bottom": true
+  },
+  "unblocked_cells": null,
+  "unblocked_npc_id": null
+ },
+ "client_errors": [
+  {
+   "at": 1794330734548,
+   "text": "Welcome to DOFUS Touch! Feel free to visit the <a href=\"https://discord.gg/7gwKsSEDRp\">game Discord or</a> <a href=\"https://www.dofus-touch.com/en/forum\">the official forum</a> if you have questions o"
+  }
+ ],
+ "quests_active": {
+  "4276": 0,
+  "4278": 0,
+  "4280": 0
+ },
+ "quest_steps": {
+  "4276": 4958,
+  "4278": 4960,
+  "4280": 4962
+ },
+ "quests_finished": 5,
+ "current_objective": {
+  "quest_id": "4276",
+  "step": 0,
+  "objective_id": 13998,
+  "status": 2,
+  "type_id": 45,
+  "type": "QuestObjectiveWinMonsterInDungeon",
+  "map_id": 145752833,
+  "params": {
+   "parameter0": 4227
+  },
+  "text": "Defeat Belladonna in this boss's dungeon",
+  "step_id": 4958
+ },
+ "ready_objectives": [
+  {
+   "quest_id": "4276",
+   "objective_id": 13998,
+   "type_id": 45,
+   "type": "QuestObjectiveWinMonsterInDungeon",
+   "map_id": 145752833,
+   "params": {
+    "parameter0": 4227
+   },
+   "text": "Defeat Belladonna in this boss's dungeon",
+   "step_id": 4958
+  },
+  {
+   "quest_id": "4278",
+   "objective_id": 13984,
+   "type_id": 45,
+   "type": "QuestObjectiveWinMonsterInDungeon",
+   "map_id": 145752833,
+   "params": {
+    "parameter0": 4227
+   },
+   "text": "Defeat Belladonna in this boss's dungeon",
+   "step_id": 4960
+  },
+  {
+   "quest_id": "4280",
+   "objective_id": 13988,
+   "type_id": 6,
+   "type": "QuestObjectiveFightMonster",
+   "params": {
+    "parameter0": 4225,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Dolomanus in a single fight.",
+   "step_id": 4962
+  },
+  {
+   "quest_id": "4280",
+   "objective_id": 13990,
+   "type_id": 6,
+   "type": "QuestObjectiveFightMonster",
+   "params": {
+    "parameter0": 4223,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Ragnarock in a single fight.",
+   "step_id": 4962
+  },
+  {
+   "quest_id": "4280",
+   "objective_id": 13992,
+   "type_id": 6,
+   "type": "QuestObjectiveFightMonster",
+   "params": {
+    "parameter0": 4219,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Clobberstone in a single fight.",
+   "step_id": 4962
+  },
+  {
+   "quest_id": "4280",
+   "objective_id": 13994,
+   "type_id": 6,
+   "type": "QuestObjectiveFightMonster",
+   "params": {
+    "parameter0": 4221,
+    "parameter1": 1
+   },
+   "text": "Defeat 1 Marbmour in a single fight.",
+   "step_id": 4962
+  }
+ ],
+ "step_objectives": [
+  {
+   "id": 13978,
+   "done": true,
+   "status": 0,
+   "type_id": 0,
+   "type": "QuestObjectiveFreeForm",
+   "map_id": 145490947,
+   "params": {
+    "parameter0": 727566
+   },
+   "text": "Give Great Jarl Ordyn's letter to his mariner.",
+   "step_id": 4958
+  },
+  {
+   "id": 13980,
+   "done": true,
+   "status": 0,
+   "type_id": 4,
+   "type": "QuestObjectiveDiscoverMap",
+   "map_id": 145752833,
+   "params": {
+    "parameter0": 709662
+   },
+   "text": "Find the map: Belladonna's Dungeon entrance.",
+   "step_id": 4958
+  },
+  {
+   "id": 13982,
+   "done": true,
+   "status": 0,
+   "type_id": 1,
+   "type": "QuestObjectiveGoToNpc",
+   "map_id": 145752833,
+   "params": {
+    "parameter0": 3888
+   },
+   "text": "Talk to Ayin Spyr",
+   "step_id": 4958
+  },
+  {
+   "id": 13998,
+   "done": false,
+   "status": 2,
+   "type_id": 45,
+   "type": "QuestObjectiveWinMonsterInDungeon",
+   "map_id": 145752833,
+   "params": {
+    "parameter0": 4227
+   },
+   "text": "Defeat Belladonna in this boss's dungeon",
+   "step_id": 4958
+  }
+ ],
+ "objectives_completed": 0,
+ "quests_catalog": [
+  {
+   "id": 4276,
+   "steps": [
+    {
+     "id": 4958,
+     "objectives": [
+      {
+       "id": 13978,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490947,
+       "params": {
+        "parameter0": 727566
+       },
+       "step_id": 4958
+      },
+      {
+       "id": 13980,
+       "type_id": 4,
+       "type": "QuestObjectiveDiscoverMap",
+       "map_id": 145752833,
+       "params": {
+        "parameter0": 709662
+       },
+       "step_id": 4958
+      },
+      {
+       "id": 13982,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145752833,
+       "params": {
+        "parameter0": 3888
+       },
+       "step_id": 4958
+      },
+      {
+       "id": 13998,
+       "type_id": 45,
+       "type": "QuestObjectiveWinMonsterInDungeon",
+       "map_id": 145752833,
+       "params": {
+        "parameter0": 4227
+       },
+       "step_id": 4958
+      },
+      {
+       "id": 14000,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145752833,
+       "params": {
+        "parameter0": 3910
+       },
+       "step_id": 4958
+      },
+      {
+       "id": 14002,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145752833,
+       "params": {
+        "parameter0": 3888
+       },
+       "step_id": 4958
+      },
+      {
+       "id": 14004,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145490435,
+       "params": {
+        "parameter0": 727570
+       },
+       "step_id": 4958
+      },
+      {
+       "id": 14006,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145489923,
+       "params": {
+        "parameter0": 716856
+       },
+       "step_id": 4958
+      },
+      {
+       "id": 14008,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 145489923,
+       "params": {
+        "parameter0": 716858
+       },
+       "step_id": 4958
+      }
+     ],
+     "name": "Witch Hunt",
+     "description": "Great Jarl Ordyn has agreed to let you leave to find Belladonna, the terrible witch responsible for all of Albuera's torments. Now all you have to do is pay her a \"convincing\" visit..."
+    }
+   ],
+   "truncated": false,
+   "name": "Witch Hunt",
+   "step_ids": [
+    4958
+   ],
+   "step_index": 0,
+   "step_id": 4958
+  },
+  {
+   "id": 4278,
+   "steps": [
+    {
+     "id": 4960,
+     "objectives": [
+      {
+       "id": 13984,
+       "type_id": 45,
+       "type": "QuestObjectiveWinMonsterInDungeon",
+       "map_id": 145752833,
+       "params": {
+        "parameter0": 4227
+       },
+       "step_id": 4960
+      },
+      {
+       "id": 14068,
+       "type_id": 5,
+       "type": "QuestObjectiveDiscoverSubArea",
+       "params": {
+        "parameter0": 95
+       },
+       "step_id": 4960
+      },
+      {
+       "id": 13986,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 148374535,
+       "params": {
+        "parameter0": 811
+       },
+       "step_id": 4960
+      },
+      {
+       "id": 14090,
+       "type_id": 0,
+       "type": "QuestObjectiveFreeForm",
+       "map_id": 148374535,
+       "params": {
+        "parameter0": 769274
+       },
+       "step_id": 4960
+      }
+     ],
+     "name": "Slay Dungeons for Glory!",
+     "description": "Ayin Spyr has suggested you head out to find the World of Twelve's dungeons. Get a glorious start by defeating Belladonna, then head out to see Metamunch Kin in Astrub!"
+    }
+   ],
+   "truncated": false,
+   "name": "Slay Dungeons for Glory!",
+   "step_ids": [
+    4960
+   ],
+   "step_index": 0,
+   "step_id": 4960
+  },
+  {
+   "id": 4280,
+   "steps": [
+    {
+     "id": 4962,
+     "objectives": [
+      {
+       "id": 13988,
+       "type_id": 6,
+       "type": "QuestObjectiveFightMonster",
+       "params": {
+        "parameter0": 4225,
+        "parameter1": 1
+       },
+       "step_id": 4962
+      },
+      {
+       "id": 13990,
+       "type_id": 6,
+       "type": "QuestObjectiveFightMonster",
+       "params": {
+        "parameter0": 4223,
+        "parameter1": 1
+       },
+       "step_id": 4962
+      },
+      {
+       "id": 13992,
+       "type_id": 6,
+       "type": "QuestObjectiveFightMonster",
+       "params": {
+        "parameter0": 4219,
+        "parameter1": 1
+       },
+       "step_id": 4962
+      },
+      {
+       "id": 13994,
+       "type_id": 6,
+       "type": "QuestObjectiveFightMonster",
+       "params": {
+        "parameter0": 4221,
+        "parameter1": 1
+       },
+       "step_id": 4962
+      },
+      {
+       "id": 13996,
+       "type_id": 1,
+       "type": "QuestObjectiveGoToNpc",
+       "map_id": 145752833,
+       "params": {
+        "parameter0": 3908
+       },
+       "step_id": 4962
+      }
+     ],
+     "name": "Quick Clean",
+     "description": "The keeper of Belladonna's dungeon has asked you to defeat monsters on the island in exchange for a key to the dungeon. That seems fair."
+    }
+   ],
+   "truncated": false,
+   "name": "Quick Clean",
+   "step_ids": [
+    4962
+   ],
+   "step_index": 0,
+   "step_id": 4962
+  }
+ ],
+ "quest_catalog_status": {
+  "quests": 3,
+  "steps": 3,
+  "objectives": 18,
+  "truncated": false
+ },
+ "open_windows": [],
+ "menu_icons": [
+  {
+   "key": "Carac",
+   "label": null,
+   "class": "vibrate anim8 menuIconCarac menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1107,
+   "y": 533
+  },
+  {
+   "key": "Spell",
+   "label": null,
+   "class": "vibrate anim6 menuIconSpell menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1107,
+   "y": 575
+  },
+  {
+   "key": "Bag",
+   "label": null,
+   "class": "vibrate anim7 menuIconBag menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1107,
+   "y": 617
+  },
+  {
+   "key": "Book",
+   "label": null,
+   "class": "vibrate anim3 menuIconBook menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1153,
+   "y": 533
+  },
+  {
+   "key": "Map",
+   "label": null,
+   "class": "vibrate anim0 menuIconMap menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1153,
+   "y": 575
+  },
+  {
+   "key": "Help",
+   "label": null,
+   "class": "vibrate anim5 menuIconHelp menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1153,
+   "y": 617
+  },
+  {
+   "key": "BidHouse",
+   "label": null,
+   "class": "vibrate anim5 menuIconBidHouse menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1199,
+   "y": 533
+  },
+  {
+   "key": "DailyQuest",
+   "label": null,
+   "class": "vibrate anim0 menuIconDailyQuest menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1199,
+   "y": 575
+  },
+  {
+   "key": "Friend",
+   "label": null,
+   "class": "vibrate anim8 menuIconFriend menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1199,
+   "y": 617
+  },
+  {
+   "key": "Conquest",
+   "label": null,
+   "class": "vibrate anim0 menuIconConquest menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1245,
+   "y": 533
+  },
+  {
+   "key": "Goultine",
+   "label": null,
+   "class": "vibrate anim1 menuIconGoultine menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1245,
+   "y": 577
+  },
+  {
+   "key": "EquipEntity",
+   "label": null,
+   "class": "vibrate anim3 menuIconEquipEntity menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1245,
+   "y": 617
+  },
+  {
+   "key": "Job",
+   "label": null,
+   "class": "vibrate anim6 menuIconJob menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1291,
+   "y": 533
+  },
+  {
+   "key": "Guild",
+   "label": null,
+   "class": "vibrate anim2 menuIconGuild menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1291,
+   "y": 575
+  },
+  {
+   "key": "Mount",
+   "label": null,
+   "class": "vibrate anim3 menuIconMount menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1291,
+   "y": 617
+  },
+  {
+   "key": "Directory",
+   "label": null,
+   "class": "vibrate anim5 menuIconDirectory menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1337,
+   "y": 533
+  },
+  {
+   "key": "Alignment",
+   "label": null,
+   "class": "vibrate anim1 menuIconAlignment menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1337,
+   "y": 575
+  },
+  {
+   "key": "Bestiary",
+   "label": null,
+   "class": "vibrate anim0 menuIconBestiary menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1337,
+   "y": 617
+  },
+  {
+   "key": "Title",
+   "label": null,
+   "class": "vibrate anim5 menuIconTitle menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1383,
+   "y": 533
+  },
+  {
+   "key": "Achievement",
+   "label": null,
+   "class": "vibrate anim6 menuIconAchievement menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1383,
+   "y": 575
+  },
+  {
+   "key": "Alliance",
+   "label": null,
+   "class": "vibrate anim4 menuIconAlliance menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1383,
+   "y": 617
+  },
+  {
+   "key": "Spouse",
+   "label": null,
+   "class": "vibrate anim5 menuIconSpouse menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1429,
+   "y": 533
+  },
+  {
+   "key": "TOA",
+   "label": null,
+   "class": "vibrate anim0 menuIconTOA menuBarIcon Button scaleOnPress",
+   "disabled": false,
+   "x": 1429,
+   "y": 575
+  },
+  {
+   "key": "Zaap",
+   "label": null,
+   "class": "vibrate anim3 menuIconZaap menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1429,
+   "y": 617
+  },
+  {
+   "key": "GroupSeeker",
+   "label": null,
+   "class": "vibrate anim3 menuIconGroupSeeker menuBarIcon Button scaleOnPress disabled",
+   "disabled": true,
+   "x": 1475,
+   "y": 533
+  }
+ ],
+ "xp": 39481,
+ "xp_level": 12,
+ "kamas": 129,
+ "auto_fight": false,
+ "farm_state": {
+  "inFight": false,
+  "myTurn": false,
+  "placement": null,
+  "readied": false,
+  "readying": false,
+  "lastTurnId": null,
+  "turnStartedAt": 0
+ },
+ "farm_session": {
+  "fights": 0,
+  "wins": 0,
+  "losses": 0,
+  "kills": 0,
+  "drops": {},
+  "drop_count": 0,
+  "xp": 0,
+  "kamas": 0,
+  "minutes": 0,
+  "kills_per_minute": null,
+  "xp_per_minute": null,
+  "kamas_per_minute": null
+ },
+ "inventory": {
+  "kamas": 129,
+  "items": [
+   {
+    "gid": 18848,
+    "qty": 1,
+    "object_uid": 12810984
+   },
+   {
+    "gid": 18844,
+    "qty": 1,
+    "object_uid": 12810985
+   },
+   {
+    "gid": 18846,
+    "qty": 1,
+    "object_uid": 12810986
+   },
+   {
+    "gid": 18974,
+    "qty": 1,
+    "object_uid": 12810987
+   },
+   {
+    "gid": 9638,
+    "qty": 1,
+    "object_uid": 12810988
+   },
+   {
+    "gid": 1512,
+    "qty": 1,
+    "object_uid": 12810989
+   },
+   {
+    "gid": 18852,
+    "qty": 1,
+    "object_uid": 12810990
+   },
+   {
+    "gid": 18850,
+    "qty": 1,
+    "object_uid": 12810991
+   },
+   {
+    "gid": 18854,
+    "qty": 1,
+    "object_uid": 12810992
+   },
+   {
+    "gid": 18856,
+    "qty": 1,
+    "object_uid": 12810993
+   },
+   {
+    "gid": 18860,
+    "qty": 1,
+    "object_uid": 12810994
+   },
+   {
+    "gid": 18858,
+    "qty": 1,
+    "object_uid": 12810995
+   },
+   {
+    "gid": 18862,
+    "qty": 1,
+    "object_uid": 12810996
+   },
+   {
+    "gid": 18864,
+    "qty": 1,
+    "object_uid": 12810997
+   },
+   {
+    "gid": 10207,
+    "qty": 1,
+    "object_uid": 12810998
+   },
+   {
+    "gid": 19006,
+    "qty": 1,
+    "object_uid": 12810999
+   }
+  ],
+  "raw_keys": null,
+  "equipped_entry_keys": [
+   "eventHandlers",
+   "isItemInstance",
+   "exchangeAllowed",
+   "isInitialised",
+   "effectsMap",
+   "shortName",
+   "_type",
+   "position",
+   "objectGID",
+   "effects",
+   "isShiny",
+   "objectUID",
+   "quantity",
+   "exchangeable",
+   "weight",
+   "item",
+   "id"
+  ],
+  "equipped": [
+   {
+    "slot": 1,
+    "gid": 18844,
+    "object_uid": 12810985
+   },
+   {
+    "slot": 6,
+    "gid": 18846,
+    "object_uid": 12810986
+   },
+   {
+    "slot": 7,
+    "gid": 18848,
+    "object_uid": 12810984
+   }
+  ],
+  "presets": [],
+  "item_sets": [],
+  "preset_blocked": false,
+  "in_fight_inventory": false
+ },
+ "prices": [
+  {
+   "gid": 42,
+   "avg": 82,
+   "listings": []
+  },
+  {
+   "gid": 47,
+   "avg": 3714,
+   "listings": []
+  },
+  {
+   "gid": 53,
+   "avg": 14200,
+   "listings": []
+  },
+  {
+   "gid": 58,
+   "avg": 37981,
+   "listings": []
+  },
+  {
+   "gid": 60,
+   "avg": 1400,
+   "listings": []
+  },
+  {
+   "gid": 65,
+   "avg": 31043,
+   "listings": []
+  },
+  {
+   "gid": 66,
+   "avg": 47204,
+   "listings": []
+  },
+  {
+   "gid": 67,
+   "avg": 34265,
+   "listings": []
+  },
+  {
+   "gid": 74,
+   "avg": 10,
+   "listings": []
+  },
+  {
+   "gid": 82,
+   "avg": 612,
+   "listings": []
+  },
+  {
+   "gid": 89,
+   "avg": 383,
+   "listings": []
+  },
+  {
+   "gid": 95,
+   "avg": 49,
+   "listings": []
+  },
+  {
+   "gid": 101,
+   "avg": 45,
+   "listings": []
+  },
+  {
+   "gid": 110,
+   "avg": 1756,
+   "listings": []
+  },
+  {
+   "gid": 119,
+   "avg": 59,
+   "listings": []
+  },
+  {
+   "gid": 127,
+   "avg": 132456,
+   "listings": []
+  },
+  {
+   "gid": 129,
+   "avg": 9503,
+   "listings": []
+  },
+  {
+   "gid": 130,
+   "avg": 13363,
+   "listings": []
+  },
+  {
+   "gid": 132,
+   "avg": 24,
+   "listings": []
+  },
+  {
+   "gid": 138,
+   "avg": 11,
+   "listings": []
+  }
+ ]
+}

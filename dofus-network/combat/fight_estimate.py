@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,12 +69,22 @@ MAX_CALIBRATION_ERROR = 0.10
 # exclude or reweight it. A missing monster catalogue row is tolerated because
 # the group itself reports each member's level and boss flag; its HP costs a
 # pessimistic level heuristic, never zero.
-BOOTSTRAP_MAX_MEMBERS = 3
-BOOTSTRAP_MAX_LEVEL_GAP = 0        # the player may not be below the group
-BOOTSTRAP_MIN_HP_RATIO = 0.80
-BOOTSTRAP_MIN_RAW_SCORE = 0.65
-BOOTSTRAP_MAX_HP_LOSS_FRACTION = 0.30
-BOOTSTRAP_MAX_EXPECTED_TURNS = 20.0
+# Tunable so a dungeon the operator intends to run is not blocked by the
+# conservative no-calibrator envelope. A 1v4 floor fight is 4 members and can
+# cost ~45% HP; the defaults below authorise that, and every env var can be
+# tightened (or loosened) without editing code.
+# Safe by default: live 2026-11-08 a level-12 character joined a forest-dungeon
+# 1v4 at a 44% estimated HP cost and DIED (0/128) -- the estimate is optimistic
+# pre-calibration (no monster HP rows), so the envelope must stay conservative to
+# avoid suicide. Every bound is env-tunable so an operator with a stronger
+# character can opt into riskier floors deliberately, e.g.
+#   DOFUS_BOOTSTRAP_MAX_HP_LOSS=0.55 DOFUS_BOOTSTRAP_MAX_MEMBERS=4
+BOOTSTRAP_MAX_MEMBERS = int(os.environ.get("DOFUS_BOOTSTRAP_MAX_MEMBERS", "3"))
+BOOTSTRAP_MAX_LEVEL_GAP = int(os.environ.get("DOFUS_BOOTSTRAP_LEVEL_GAP", "0"))
+BOOTSTRAP_MIN_HP_RATIO = float(os.environ.get("DOFUS_BOOTSTRAP_MIN_HP_RATIO", "0.80"))
+BOOTSTRAP_MIN_RAW_SCORE = float(os.environ.get("DOFUS_BOOTSTRAP_MIN_RAW_SCORE", "0.65"))
+BOOTSTRAP_MAX_HP_LOSS_FRACTION = float(os.environ.get("DOFUS_BOOTSTRAP_MAX_HP_LOSS", "0.30"))
+BOOTSTRAP_MAX_EXPECTED_TURNS = float(os.environ.get("DOFUS_BOOTSTRAP_MAX_TURNS", "20.0"))
 BOOTSTRAP_TOLERATED_MISSING = (
     "monster:",          # no cached row for this monster id
     "monster_hp:",       # row exists but has no HP

@@ -1,5 +1,5 @@
 {
- "checked_at": "2026-11-08T21:56:09",
+ "checked_at": "2026-11-11T01:08:44",
  "logs": [
   {
    "name": "dofus-01.20261108-205337-063447.jsonl",
@@ -8,8 +8,8 @@
   },
   {
    "name": "dofus-01.jsonl",
-   "size": 5435749,
-   "mtime": 1794171320
+   "size": 20667863,
+   "mtime": 1794326341
   },
   {
    "name": "dofus-02.20261029-022349-419629.jsonl",
@@ -48,8 +48,8 @@
   },
   {
    "name": "default.jsonl",
-   "size": 50741823,
-   "mtime": 1793786139
+   "size": 50742576,
+   "mtime": 1794325804
   }
  ],
  "rows": 73,
@@ -106,5 +106,5 @@
   "current": 38,
   "step": 44
  },
- "index_sha256": "27898eb5b1f85b57fa072de347249a47a77171c167e351795037bb6f0e45219e"
+ "index_sha256": "bc5c4963fe7f14afc2d635c290ee02cd7ec45c7cf7282e92331eb5b7fa1d64c3"
 }

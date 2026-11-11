@@ -33,6 +33,12 @@ STAT_KEYS = (
 VALUE_CRITICAL_WARNINGS = frozenset({
     "self_stats_missing", "self_effects_missing", "self_dead",
     "enemy_spells_missing", "enemy_effects_missing",
+    # A missing maximum is not a missing board. The learned actor normalises HP by the
+    # maximum, so it must not guess one; the deterministic solver prices damage against
+    # the *current* HP and needs no maximum at all. Treating this as an error refused the
+    # board to both, and measured on the captured corpus that was 85 of 160 turns on our
+    # own side -- every one of them handed to the page's heuristic instead of the solver.
+    "self_max_hp_missing",
 })
 
 
@@ -337,7 +343,9 @@ def validate_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
             errors.append("self_level_missing")
         max_hp = me.get("max_hp")
         if max_hp is None or max_hp <= 0:
-            errors.append("self_max_hp_missing")
+            # A warning, not an error: the solver plans from current HP. See
+            # VALUE_CRITICAL_WARNINGS for why this used to refuse the whole board.
+            warnings.append("self_max_hp_missing")
         if me.get("hp") is None:
             errors.append("self_hp_missing")
         spells = me.get("spells") or []
@@ -382,7 +390,7 @@ def validate_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
     for enemy in live_enemies:
         ident = enemy.get("id")
         if enemy.get("max_hp") in (None, 0):
-            errors.append(f"enemy_max_hp_missing:{ident}")
+            warnings.append(f"enemy_max_hp_missing:{ident}")
         if enemy.get("hp") is None:
             errors.append(f"enemy_hp_missing:{ident}")
         if enemy.get("level") in (None, 0):
@@ -408,6 +416,7 @@ def validate_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
         warning in VALUE_CRITICAL_WARNINGS
         or warning.startswith("enemy_spells_missing:")
         or warning.startswith("enemy_effects_missing:")
+        or warning.startswith("enemy_max_hp_missing")
         for warning in warnings)
     ok = not errors
     return {
@@ -463,7 +472,9 @@ def contract_from_board(board: Board) -> Dict[str, Any]:
             errors.append("self_level_missing")
         max_hp = int(me.max_hp)
         if max_hp is None or max_hp <= 0:
-            errors.append("self_max_hp_missing")
+            # A warning, not an error: the solver plans from current HP (see
+            # VALUE_CRITICAL_WARNINGS).
+            warnings.append("self_max_hp_missing")
         if me.hp is None:
             errors.append("self_hp_missing")
         if not self_spells:
@@ -505,7 +516,7 @@ def contract_from_board(board: Board) -> Dict[str, Any]:
     for enemy in live_enemies:
         ident = enemy.id
         if int(enemy.max_hp) in (None, 0):
-            errors.append(f"enemy_max_hp_missing:{ident}")
+            warnings.append(f"enemy_max_hp_missing:{ident}")
         if enemy.hp is None:
             errors.append(f"enemy_hp_missing:{ident}")
         if enemy.level in (None, 0):
@@ -538,6 +549,7 @@ def contract_from_board(board: Board) -> Dict[str, Any]:
         warning in VALUE_CRITICAL_WARNINGS
         or warning.startswith("enemy_spells_missing:")
         or warning.startswith("enemy_effects_missing:")
+        or warning.startswith("enemy_max_hp_missing")
         for warning in warnings)
     ok = not errors
     return {

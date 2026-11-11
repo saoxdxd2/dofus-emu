@@ -111,7 +111,13 @@ def init_params(key: Any,
     p["plan_type"] = XP.zeros((hidden,))
     p["plan_blocks"] = [_block(next(keys), hidden)
                         for _ in range(plan_layers)]
-    p["grid_query"] = _dense(next(keys), 2 * hidden, hidden)
+    # `grid_query` reads the *sum* of the two pools, not their concatenation -- `forward`
+    # calls `_dense_apply(grid + fighter_pool, ...)`. It was declared `2 * hidden` wide, so
+    # every forward pass died on `dot_general requires contracting dimensions to have the
+    # same shape, got (64,) and (128,)` and the parameter count read 31,355,905 against the
+    # pinned 30,766,081; the difference is exactly one `hidden * hidden` (768 * 768).
+    # `value1` is the head that concatenates, and it keeps `2 * hidden`.
+    p["grid_query"] = _dense(next(keys), hidden, hidden)
     p["plan_query"] = _dense(next(keys), hidden, hidden)
     p["value1"] = _dense(next(keys), 2 * hidden, hidden)
     p["value2"] = _dense(next(keys), hidden, 1, scale=1.0)

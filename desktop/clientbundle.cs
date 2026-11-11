@@ -420,6 +420,49 @@ namespace DofusFarm.Engine
             catch { return ""; }
         }
 
+        /// <summary>
+        /// The build number the served bundle will actually report to the login server.
+        ///
+        /// `build/script.js` hardcodes `window.buildVersion="1.74.12"` and assigns it
+        /// unconditionally at module load, so it wins over anything the host sets
+        /// beforehand -- including the `buildVersion=` query parameter the host puts on
+        /// the URL, which the bundle never reads. Reading the number from the resolver
+        /// instead therefore answered a different question than the one the server asks:
+        /// the resolver's build version is only ever its compiled-in default (Google Play
+        /// publishes an app version, not a build), so it drifts stale the moment Ankama
+        /// ships a bundle.
+        ///
+        /// That drift is not cosmetic. A stale number is rejected at login with
+        /// INCOMPATIBLE_BUILD_VERSION, which the client renders as "A new version is
+        /// available!" -- an error that names neither the bundle nor the number, so the
+        /// only visible symptom is a login that never happens. Taking the value from the
+        /// bytes being served means the host and the page cannot disagree, and a stale
+        /// bundle is visible in the log before the login is attempted.
+        /// </summary>
+        public static string ServedBuildVersion()
+        {
+            try
+            {
+                string dir = BundleDir();
+                if (dir == null) return "";
+                string p = Path.Combine(Path.Combine(dir, "build"), "script.js");
+                if (!File.Exists(p)) return "";
+                // The assignment sits near the top of the bundle; 64 KB is plenty and
+                // keeps this off the hot path for a 5 MB file.
+                string head;
+                using (var fs = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var sr = new StreamReader(fs, Encoding.UTF8))
+                {
+                    var buf = new char[64 * 1024];
+                    int n = sr.Read(buf, 0, buf.Length);
+                    head = new string(buf, 0, n < 0 ? 0 : n);
+                }
+                Match m = Regex.Match(head, "window\\.buildVersion\\s*=\\s*\"([^\"]+)\"");
+                return m.Success ? m.Groups[1].Value : "";
+            }
+            catch { return ""; }
+        }
+
         /// <summary>The stamp whose patched bundle has not reported a boot, or "".</summary>
         private static string PendingStamp()
         {

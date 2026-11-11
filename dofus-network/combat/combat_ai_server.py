@@ -27,7 +27,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 for _path in (REPO_ROOT, REPO_ROOT / "dofus-network"):
@@ -244,7 +244,153 @@ def _flush_decision_log() -> None:
         _close_log_locked()
 
 
+_LEARNER = None
+_LEARNER_LOCK = threading.Lock()
+
+
+def _learner():
+    """The process-wide live learner, created on first use.
+
+    Imported lazily for the same reason the policy is: the brain has to start even
+    when the combat data stack is not installed, and a missing learner must degrade
+    to "not learning" rather than "no brain".
+    """
+    global _LEARNER
+    if _LEARNER is None:
+        with _LEARNER_LOCK:
+            if _LEARNER is None:
+                from combat.live_learn import LiveLearner
+                _LEARNER = LiveLearner()
+    return _LEARNER
+
+
+def _learning_report() -> Dict[str, Any]:
+    """The learner's state, or the reason it is not learning.
+
+    Never raises: /health is what the manager uses to decide whether the brain is
+    answering, and an exception here would turn "not learning" into "not running".
+    """
+    try:
+        return _learner().report()
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "unavailable", "error": "%s: %s" % (type(exc).__name__, exc)}
+
+
+class _ThreatObserver:
+    """Folds each fight's message log into `models/threat_model.json`.
+
+    The threat model needs one number the client does not publish: how hard a
+    given monster hits, and from how far. The fight's own message log carries
+    both -- a cast by a monster, then the life it took off the character -- and
+    it arrives on every board, so this costs no extra request.
+
+    The log is cumulative and rolls: it grows while the fight lasts and then
+    keeps only the tail. Re-reading it whole would count the same hit on every
+    turn (the fight would "teach" the same twelve points forty times), so the
+    already-seen part is matched by overlap and only the new suffix is folded
+    in.
+    """
+
+    def __init__(self, path: Optional[Path] = None) -> None:
+        from combat import threat as _threat
+
+        self._threat = _threat
+        self.path = Path(path or _threat.DEFAULT_MEMORY)
+        self.memory = _threat.ThreatMemory.load(self.path)
+        self.learned = 0
+        self._fight: Any = None
+        self._log: List[Any] = []
+        self._lock = threading.Lock()
+
+    def observe(self, payload: Dict[str, Any]) -> int:
+        if not isinstance(payload, dict):
+            return 0
+        log = payload.get("battle_log")
+        if not isinstance(log, list):
+            log = payload.get("last_actions")
+        if not isinstance(log, list) or not log:
+            return 0
+        fight = payload.get("fight_id")
+        with self._lock:
+            if fight != self._fight:
+                self._fight, self._log = fight, []
+            fresh = _new_messages(self._log, log)
+            self._log = list(log)
+            if not fresh:
+                return 0
+            names: Dict[int, str] = {}
+            for fighter in payload.get("fighters") or []:
+                if not isinstance(fighter, dict):
+                    continue
+                try:
+                    names[int(fighter.get("id"))] = str(fighter.get("name") or "")
+                except (TypeError, ValueError):
+                    continue
+            learned = self.memory.observe(fresh, payload.get("my_id"), names)
+            if learned:
+                self.learned += learned
+                self.memory.save(self.path)
+            return learned
+
+    def report(self) -> Dict[str, Any]:
+        return {"learned_hits": self.learned, "monsters": len(self.memory.monsters),
+                "path": str(self.path)}
+
+
+def _new_messages(previous: List[Any], current: List[Any]) -> List[Any]:
+    """The part of ``current`` that is not already in ``previous``.
+
+    Matched by overlap from the tail, not by length: the log both grows and
+    rolls, and a length comparison would report "nothing new" forever once the
+    cap was reached.
+    """
+    if not previous:
+        return list(current)
+    limit = min(len(previous), len(current))
+    for overlap in range(limit, 0, -1):
+        if previous[-overlap:] == current[:overlap]:
+            return list(current[overlap:])
+    return list(current)
+
+
+_THREAT_OBSERVER: Optional[_ThreatObserver] = None
+_THREAT_LOCK = threading.Lock()
+
+
+def _threat_observer() -> _ThreatObserver:
+    global _THREAT_OBSERVER
+    if _THREAT_OBSERVER is None:
+        with _THREAT_LOCK:
+            if _THREAT_OBSERVER is None:
+                _THREAT_OBSERVER = _ThreatObserver()
+    return _THREAT_OBSERVER
+
+
+def _threat_report() -> Dict[str, Any]:
+    try:
+        return _threat_observer().report()
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "unavailable", "error": "%s: %s" % (type(exc).__name__, exc)}
+
+
 def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # Learn before deciding. The page posts a board every turn, so the board arriving    # now is the label for the turn that just finished: the drop in our own life is
+    # what the enemies cost us, and it needs no spell id to be trustworthy (see
+    # combat/live_learn.py for why the per-spell join cannot work on this payload).
+    # Doing it first also means learning continues when the policy fails to load --
+    # a brain that cannot act can still get better at pricing the fight.
+    credit = None
+    try:
+        credit = _learner().observe(payload)
+    except Exception:  # noqa: BLE001 - a learner must never stop a fight
+        pass
+    # Same ordering, different question: the learner prices a whole enemy turn,
+    # this prices one monster. Both have to run before the decision, because the
+    # solver reads the per-monster table to decide where to stand this turn.
+    try:
+        _threat_observer().observe(payload)
+    except Exception:  # noqa: BLE001 - a threat model must never stop a fight
+        pass
     if POLICY is None:
         return {"ok": False, "action": None, "reason": "policy_not_loaded",
                 "latency_ms": 0.0}
@@ -253,6 +399,10 @@ def decide(payload: Dict[str, Any]) -> Dict[str, Any]:
         decision = POLICY.decide(payload)
     decision["server_latency_ms"] = round(
         (time.perf_counter() - started) * 1000.0, 1)
+    if credit is not None:
+        # Recorded on the row that ended the turn, so the ledger shows what the model
+        # was told as well as what it answered.
+        decision["credited_damage"] = credit.damage
     _log_decision(payload, decision)
     return decision
 
@@ -324,6 +474,17 @@ class CombatRequestHandler(BaseHTTPRequestHandler):
                 # one. Only when no policy loaded at all is the answer "solver-only".
                 "backend": _policy_backend() if POLICY is not None
                            else "solver-only (no array backend installed)",
+                # What the live learner has picked up so far. Reported here rather
+                # than behind a separate endpoint because "is it learning?" is the
+                # first question asked of a brain that is supposed to improve, and a
+                # number nobody looks at is a number that stays wrong.
+                "learning": _learning_report(),
+                # The per-monster half of the same question. The solver reads
+                # this table to price a cell, so a run where it stays at zero
+                # rows is a run where every cell is still priced by the level
+                # prior -- which is exactly what "he walks into the enemy"
+                # looks like from the inside.
+                "threat": _threat_report(),
                 # Who is answering. A socket that replies only proves *a* server exists; on
                 # 2026-11-04 the server answering :8891 was started 50 minutes and three app
                 # restarts earlier, on the dev interpreter instead of the shipped one. The run

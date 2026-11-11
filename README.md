@@ -52,7 +52,7 @@ Edge renders it, and a shim makes the browser look like an Android phone.
 
 ### Install (end user)
 
-1. Run `setup.exe` (61,692,928<!--f:setup_bytes--> B, measured 2026-11-03). It unpacks the
+1. Run `setup.exe` (61,991,936<!--f:setup_bytes--> B, measured 2026-11-03). It unpacks the
    runtime, the client bundle, the relay, the proxy binaries, a standalone Edge
    WebView2 payload and the Python agent into the install folder.
    The pip step installs `requirements.txt` only -- numpy and requests, ~32 MB installed. It does
@@ -135,7 +135,7 @@ topology and entry points: `dofus-network/docs/CURRENT.md` §1.)
 /
 ├─ DofusFarm.exe              host (built)
 ├─ dofus-net-proxy.exe        relay (built from scripts/dofus-net-proxy.go)
-├─ setup.exe                  installer (61,692,928<!--f:setup_bytes--> B, measured 2026-11-03)
+├─ setup.exe                  installer (61,991,936<!--f:setup_bytes--> B, measured 2026-11-03)
 ├─ uninstall.exe
 ├─ compile.bat                one-click build
 ├─ network.ini                egress configuration (see §13)
@@ -417,16 +417,21 @@ Proof, not trust:
 DofusFarm.exe --bundle-selftest
 :: rules: 23
 :: matched: 0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 20 … 31
-:: patched 5,362,738<!--f:bundle_chars--> chars, live 5,362,738<!--f:bundle_chars--> chars
-:: RESULT: IDENTICAL
+:: patched 5,365,614 chars, live 5,362,362<!--f:bundle_chars--> chars
+:: RESULT: DIFFERENT
 ```
 
-That is the current file (`bundle-selftest.txt`, re-read 2026-10-30): **all 23 rules
+That is the current file (`bundle-selftest.txt`, re-run 2026-11-11): **all 23 rules
 match and nothing is skipped**. The `rules: 13 / skipped: 4…` sample this section used to
 show was the 1.74.9 bundle; a "16 matched, 7 skipped" figure also circulated and is
 equally out of date.
 
-`IDENTICAL` means: applying the shipped rules to the unpatched backup reproduces
+`DIFFERENT` is the quarantined state, not a drift. `client-patches.quarantine` keeps the
+**vendor's** bundle on the wire because on 2026-11-04 the 23 rules matched build 3.3.11
+byte-for-byte and still black-screened it (a double-fired series callback). So the two
+counts are meant to disagree until the rules are re-derived and proven in-game.
+
+`IDENTICAL` would mean: applying the shipped rules to the unpatched backup reproduces
 the live patched bundle character for character. If a future client build moves
 the code a rule targets, that rule is skipped, the count is logged, and the
 bundle is still adopted (with a warning) — a degraded patch set still runs the
@@ -810,7 +815,7 @@ rule/model/human disagreement is a training sample.
 
 ```bash
 cd dofus-network
-python -m agent.regression                         # 2,157<!--f:gate_checks--> checks / 0 failed, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + label reader + brain autostart + readiness + board replay + calibration/worker gates incl. the enforced promotion bar + the gate-shadow wiring + the priced alternative; delegates node JS suites, `go test` for the relay, the C# host compile and the Kaggle-mirror drift check)
+python -m agent.regression                         # 2,213<!--f:gate_checks--> checks / 0 failed, offline (loop + verifier + tools + dialog + prompt/mob + recovery + waits + dialog labels + label reader + brain autostart + readiness + board replay + calibration/worker gates incl. the enforced promotion bar + the gate-shadow wiring + the priced alternative; delegates node JS suites, `go test` for the relay, the C# host compile and the Kaggle-mirror drift check)
 python -m advisor selftest                         # 91 check sites, offline (knowledge repo only)
 python -m agent.verifier --stats
 python -m agent.verifier --label 98106503 4 failed "the listing never appeared"
@@ -857,8 +862,8 @@ created — because the policy has to learn from play, not from descriptions of 
 
 **Payload** — read out of the built artifact with `python tools/payload_audit.py setup.exe`, which
 parses the central directory of the zip embedded in the binary rather than trusting the staging
-source: `setup.exe` = 61,692,928<!--f:setup_bytes--> B, all but the self-extractor stub being
-archive payload: 582<!--f:payload_files--> files and 198,904,139<!--f:payload_unpacked--> B unpacked, measured
+source: `setup.exe` = 61,991,936<!--f:setup_bytes--> B, all but the self-extractor stub being
+archive payload: 604<!--f:payload_files--> files and 214,911,730<!--f:payload_unpacked--> B unpacked, measured
 2026-11-03 -- all three tags are re-read from the binary, because the previous sentence carried a
 hand-typed file count that had drifted by 110. Largest contributors: `dofus-network/models` 47.5 MB
 (two INT8 graphs + the lexical policy), `dofus-network/data` 21.2 MB (knowledge sqlite 10.9 +

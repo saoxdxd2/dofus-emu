@@ -147,6 +147,19 @@ IGNORED_TOP: Dict[str, str] = {
     "client_errors": "recorder health, not world state",
     "cell": "legacy duplicate of position.cell",
     "map_id": "legacy duplicate of position.map_id",
+    # Named 2026-11-10 by the gate's coverage sample, which found all four in the
+    # recorded corpus and none in this table. Naming them does not make them
+    # encoded; it makes the gap reviewable instead of invisible, which is the
+    # whole reason this dict exists.
+    "stats": "the character sheet. Decision-relevant for combat, and deliberately "
+             "deferred: encoding it widens the encoder's input, which is pinned by "
+             "the shipped 266-wide policy. Revisit with the next policy refit.",
+    "element": "the character's build element. Not a per-step feature: the dialog "
+               "ranker reads it directly (`dialog_policy._character_element`), so "
+               "encoding it here would be a second definition of the same fact.",
+    "menu_icons": "the client's own menu labels `{key, label}`. The planner learns "
+                  "these as surface labels (a knowledge fact that outlives the step), "
+                  "so they are not a feature of this observation.",
 }
 
 ENCODED_MAP = frozenset({
@@ -172,7 +185,19 @@ ENCODED_ENTITY = {
 }
 
 IGNORED_ENTITY = {
-    "npc": {"actor_id": "contextual id changes per spawn; not stable across sessions"},
+    "npc": {"actor_id": "contextual id changes per spawn; not stable across sessions",
+            # Named 2026-11-10 by the gate's coverage sample. Both are the quest
+            # marker the client draws over an NPC, and the fact behind it is already
+            # in the graph: a talk / go-to-NPC objective's `parameter0` is the NPC's
+            # template id (`QuestPlanner._quest_target_npcs`). Encoding the paint
+            # would add a column that duplicates a lookup the planner already does.
+            "has_quest": "quest marker; the objective's parameter0 already names the NPC",
+            "has_exclamation": "the same marker drawn differently",
+            "has_question": "the same marker for a dialog that is ready to continue",
+            "quests_to_start": "how many quests the client would offer here. The graph "
+                               "is the authority on which quest an NPC gives; a marker "
+                               "count would be a second, staler answer",
+            "quests_to_valid": "the same count for turn-ins"},
     "interactive": {"skill_uid": "instance id, not a property of the element"},
     "group": {"group_id": "contextual id; the composition is the signal",
               "contextualId": "same as group_id",

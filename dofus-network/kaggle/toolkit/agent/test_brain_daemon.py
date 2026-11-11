@@ -78,6 +78,79 @@ class BrainLifecycleTests(unittest.TestCase):
             os.environ.pop("DOFUS_RUN_TOKEN", None)
         else:
             os.environ["DOFUS_RUN_TOKEN"] = self._saved_secret
+
+    # -- the self-reload guard ------------------------------------------------
+
+    def test_a_daemon_built_by_a_test_does_not_re_exec_the_test(self):
+        """Re-exec replaces the process that *constructed* the daemon, not the daemon.
+
+        Measured 2026-11-10: `agent.regression` builds a daemon to check the
+        40-instance cap. A later suite rewrote a source file and restored it,
+        which bumped its mtime past `PROCESS_START`; the watcher then re-exec'd
+        the harness 15 s later. The run ended at 55 lines and exited 0 -- a
+        truncated gate reporting success.
+        """
+        import sys
+        entry = getattr(sys.modules.get("__main__"), "__file__", None) or ""
+        self.assertNotIn(Path(entry).name, self.daemon.SERVICE_ENTRYPOINTS,
+                         "this suite runs under %s; the guard's own premise is wrong" % entry)
+        self.assertFalse(self.daemon._owns_this_process())
+
+    def test_the_service_entrypoint_owns_its_process(self):
+        """The production host is the one process the watcher may replace.
+
+        `run_brain.py` is the entrypoint the host starts (it imports `agent.serve`
+        and calls `main`), so a guard that only knew `serve.py` would have blocked
+        the self-reload in the one process it exists for.
+        """
+        import sys
+        saved = sys.modules.get("__main__")
+        try:
+            for name in ("run_brain.py", "serve.py", "brain_daemon.py"):
+                stub = type(sys)("__main__")
+                stub.__file__ = str(self.root / name)
+                sys.modules["__main__"] = stub
+                self.assertTrue(self.daemon._owns_this_process(), name)
+            stub = type(sys)("__main__")
+            stub.__file__ = str(self.root / "regression.py")
+            sys.modules["__main__"] = stub
+            self.assertFalse(self.daemon._owns_this_process())
+        finally:
+            if saved is not None:
+                sys.modules["__main__"] = saved
+
+    def test_a_process_the_daemon_does_not_own_never_re_execs(self):
+        """The watcher must return, not fall through to `os.execv`."""
+        import sys
+        from unittest import mock
+        saved = sys.modules.get("__main__")
+        stub = type(sys)("__main__")
+        stub.__file__ = str(self.root / "regression.py")
+        sys.modules["__main__"] = stub
+        calls, slept = [], []
+
+        def fake_sleep(_seconds):
+            slept.append(1)
+            if len(slept) > 3:
+                # The guard returns after one window; four means it kept looping
+                # with a mocked execv, i.e. the guard did not fire at all.
+                raise RuntimeError("the watcher looped instead of returning")
+
+        try:
+            with mock.patch("agent.brain_daemon.stale_modules",
+                            return_value=[{"module": "agent.planner"}]), \
+                    mock.patch("agent.brain_daemon.time.sleep", side_effect=fake_sleep), \
+                    mock.patch("agent.brain_daemon.os.execv",
+                               side_effect=lambda *a: calls.append(a)):
+                try:
+                    self.daemon._reload_watch()
+                except RuntimeError as exc:
+                    self.fail(str(exc))
+            self.assertEqual(calls, [], "the watcher re-exec'd a process it does not own")
+            self.assertEqual(len(slept), 1, "it should decide on the first stale window")
+        finally:
+            if saved is not None:
+                sys.modules["__main__"] = saved
         self.temp.cleanup()
 
     def start(self, *names):

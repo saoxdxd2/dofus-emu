@@ -37,7 +37,7 @@ from agent.jsonio import loads as fast_loads
 from agent.dialog_policy import rank_dialog
 from agent.awareness import quest_key, scene_key
 from agent.plan_stack import PlanStack, child_for_objective
-from agent.features import (CRAFT_TYPES, DELIVER_TYPES,  # noqa: E402
+from agent.features import (CRAFT_TYPES, DELIVER_TYPES, FIGHT_TYPES,  # noqa: E402
                             KILL_TYPES, MAP_TYPES, OBJECTIVE_TYPES,
                             ObsTracker, TALK_TYPES,
                             _params, declares_monster_target, direction_hint,
@@ -1068,6 +1068,17 @@ class QuestPlanner:
         }
 
     @staticmethod
+    def _groups_here(obs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The monster groups the snapshot shows on the current map."""
+        block = obs.get("map") if isinstance(obs, dict) else None
+        raw = None
+        if isinstance(block, dict):
+            raw = block.get("groups")
+        if raw is None and isinstance(obs, dict):
+            raw = obs.get("groups")
+        return [row for row in (raw or []) if isinstance(row, dict)]
+
+    @staticmethod
     def _visible_target(obs: Optional[Dict[str, Any]],
                         monster: Any) -> Optional[bool]:
         """Whether the map snapshot shows a group containing `monster`.
@@ -1431,13 +1442,13 @@ class QuestPlanner:
             except (TypeError, ValueError):
                 continue
             if 0 <= slot <= 16:
-                return slot
+                return str(slot)
         # Nothing of this template is worn, so the worn-copy answer does not exist. The
         # template's own `possiblePositions` is the client's next answer, and it is the
         # one the equip handler falls back to; publishing it in the bag row (2026-11-06)
         # means the caller can pass the slot instead of hoping the fallback chain fires.
         if declared:
-            return declared[0]
+            return str(declared[0])
         return None
 
     @staticmethod
@@ -2099,9 +2110,17 @@ class QuestPlanner:
                 if isinstance(replies, list) and replies:
                     first_reply = replies[0]
                     idx = first_reply.get("index", 0) if isinstance(first_reply, dict) else 0
+                    # `reply`, not `reply_index`. The page's quest.advance reads
+                    # `reply` (and cross-checks the optional `reply_text`); a call
+                    # carrying `reply_index` matches none of its branches, falls
+                    # through to the NPC-talk one and is refused with "quest is active
+                    # but no npc_id was given" -- which is the 34-count reject cluster
+                    # in the live report, not a missing NPC. `tools/test_dialog_policy`
+                    # pinned the misspelled argument, so the gate was green while the
+                    # call could never be answered.
                     return ToolCall("quest.advance", {
                         "quest_id": int(quest_id or 0),
-                        "reply_index": int(idx),
+                        "reply": int(idx),
                     }, goal)
                 return ToolCall("quest.advance", {
                     "quest_id": int(quest_id or 0), "close": True,
@@ -3169,8 +3188,10 @@ class QuestPlanner:
         tutorial = self._tutorial(obs)
         if tutorial is not None:
             # A retired quest is reopened only when its situation changed -- the
-            # per-quest signature below already carries the tutorial step, the
-            # tracker's step, the map and the gate. Reopening every active quest
+            # per-quest signature below already carries the tutorial step, the tracker's
+            # step, the objective and the gate. It does not carry the map: a crossing is
+            # not a new situation for a quest, and `_exhausted_at` owns that question.
+            # Reopening every active quest
             # just because a step is running defeated the loop's own retirement:
             # the live run retired the stuck tutorial quest and the very next
             # step put it back, so four wait windows later nothing had moved.
@@ -3342,7 +3363,15 @@ class QuestPlanner:
             # objective; the active-quest path plans the same objective and used to
             # walk back there anyway. Live 2026-10-29: quests 4262 and 4264 bounced
             # 145489920 <-> 145489921 for twenty steps for exactly this reason.
-            if travel_key is not None and self._visit_is_exhausted(travel_key, need):
+            #
+            # The one exception is a fight objective: "the group was not on that map"
+            # is the state of a spawn, not a verdict on the map, and the dungeon rooms
+            # are only ever left by winning in them. `FIGHT_TYPES` and not
+            # `KILL_TYPES`, because the latter carries type 0 -- the FreeForm wrapper,
+            # whose 18,654 corpus entries are deliveries and talks, and which is the
+            # exact objective the bar exists to keep bounded (13958, "give a report").
+            if t not in FIGHT_TYPES and travel_key is not None \
+                    and self._visit_is_exhausted(travel_key, need):
                 return []
         if need is not None and here != need:
             # The same A->B->A budget the ready scan applies. This funnel serves
@@ -3374,7 +3403,14 @@ class QuestPlanner:
                     self._returns[travel_key] = spent + 1
                 else:
                     self._returns[travel_key] = 0
-            travel = [self._travel_call(obj, need, obs, key=travel_key)]
+            # The visit record is consulted once, above, for every `need` -- including
+            # the pass that stands on the objective's own map. A second consult here
+            # could only read a mark the first one already spent, so it would never
+            # answer True; it would just be a second place for the rule to drift.
+            call = self._travel_call(obj, need, obs, key=travel_key)
+            # `_travel_ask` is allowed to answer nothing; a list holding None reads as
+            # a plan to the caller and crashes the encoder downstream.
+            travel = [call] if isinstance(call, dict) else []
 
         if t in MAP_TYPES:
             if need is not None:
@@ -3513,6 +3549,21 @@ class QuestPlanner:
             spawn_key = (quest.get("id") if isinstance(quest, dict) else None,
                          obj.get("id"), monster)
             if visible is False:
+                # A dungeon floor (interior: no crossable exit) is cleared by
+                # fighting the group that is standing on it. Waiting for one
+                # specific monster id that lives in a later room never fights
+                # the 1v4 in front of it. If the map is interior and a group is
+                # here, join it; a named boss is still handled below when visible.
+                room = self._groups_here(obs)
+                if room and not self._observed_exits(obs) and map_id_of(obs):
+                    gid = room[0].get("group_id")
+                    fargs: Dict[str, Any] = {}
+                    if gid is not None and len(room) > 1:
+                        fargs["group_id"] = gid
+                    return calls + [{
+                        "tool": "fight.join", "args": fargs,
+                        "why": ("objective %d: fight the dungeon group on this floor "
+                                "(%d group(s) here)" % (t, len(room)))}]
                 npc_calls = self._npc_talk_calls(quest, obj, obs, t)
                 if npc_calls:
                     return calls + npc_calls
@@ -4399,8 +4450,9 @@ class QuestPlanner:
             # A ready objective still has to happen where it happens. Status 2 is the
             # client's opinion that the conditions are met; the server is the one that
             # decides, and being on the wrong map is a precondition it will not waive.
+            _otype = obj.get("type_id")
             if need and here != need and not self._npc_here(obj, obs):
-                if self._visit_is_exhausted((quest_id, objective_id), need):
+                if _otype not in FIGHT_TYPES and self._visit_is_exhausted((quest_id, objective_id), need):
                     # Already stood on that map for this objective and nothing
                     # there could act, and the one granted return found the same.
                     continue

@@ -279,5 +279,59 @@ if (guardBlock) {
         runGuard({}) === false, 'forEach over an undefined list');
 }
 
+// --- last_actions: the enemy's casts, which is where a monster's spells come from
+// `last_actions` was [] on all 333 recorded boards while `battle_log` held up to 52 rows
+// from the same fight, because this block read `fm.fightMessagesStack` directly and the
+// client clears that stack. The block must prefer the tap ring, like `_battleLog` does.
+const ACTIONS_START = 'var lastActions = [];';
+const ACTIONS_END = 'state.last_actions = lastActions;';
+const actionsBlock = between(ACTIONS_START, ACTIONS_END, true);
+check('the last_actions assembly is present in fight.state', !!actionsBlock,
+    ACTIONS_START + ' not found');
+if (actionsBlock) {
+    const runActions = (win, fm) => new Function(
+        'window', 'fm', 'text', 'num', '_agentHarvestStack',
+        'var state = {};\n' + actionsBlock + '\nreturn state.last_actions;')(
+            win, fm, (v) => (v == null ? '' : String(v)), num, () => 0);
+
+    // The shape the tap produces: `spell`/`source`/`target`, not `spell_id`/`source_id`.
+    const ringRows = runActions({
+        __agentBattleRing: [
+            {type: 'GameActionFightSpellCastMessage', at_action: 41, source: -1,
+             target: 4434090, spell: 6908, spell_level: 5, destination_cell: 322,
+             critical: 0, value: null, delta: null, effect: null, cell: null,
+             loss: null, permanent_damages: null, shield_loss: null},
+            {type: 'GameActionFightLifePointsLostMessage', at_action: 41, source: -1,
+             target: 4434090, spell: 6908, cell: null, effect: 96, loss: 33,
+             delta: -33, permanent_damages: 0, shield_loss: 0}
+        ]
+    }, {fightMessagesStack: []});
+    check('the tap ring reaches last_actions, not just battle_log',
+        Array.isArray(ringRows) && ringRows.length === 2, JSON.stringify(ringRows));
+    check('a ring row keeps the names live_data and battle_solver read',
+        ringRows && ringRows[0].spell_id === 6908 && ringRows[0].source_id === -1
+        && ringRows[0].target_id === 4434090 && ringRows[0].spell_level === 5
+        && ringRows[0].action_id === 41 && ringRows[0].destination_cell === 322,
+        JSON.stringify(ringRows && ringRows[0]));
+    check('the damage numbers survive the remap',
+        ringRows && ringRows[1].loss === 33 && ringRows[1].delta === -33
+        && ringRows[1].effect_id === 96, JSON.stringify(ringRows && ringRows[1]));
+
+    // A build with no tap still reads the client stack.
+    const stackRows = runActions({}, {fightMessagesStack: [
+        {_messageType: 'GameActionFightSpellCastMessage', actionId: 9, sourceId: -1,
+         spellId: 6942, targetId: 7}
+    ]});
+    check('an empty ring still falls back to the client stack',
+        stackRows && stackRows.length === 1 && stackRows[0].spell_id === 6942,
+        JSON.stringify(stackRows));
+
+    // The ring wins when both exist, because the stack may already be cleared.
+    const both = runActions({__agentBattleRing: [{type: 'X', spell: 1}]},
+                            {fightMessagesStack: [{_messageType: 'Y', spellId: 2}]});
+    check('the ring wins over a stale stack',
+        both && both.length === 1 && both[0].spell_id === 1, JSON.stringify(both));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

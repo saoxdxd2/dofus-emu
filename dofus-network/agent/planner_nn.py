@@ -16,7 +16,9 @@ the simulator score, and keep whichever is better.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -40,6 +42,13 @@ class NNPlanner(QuestPlanner):
         self.session = None
         self.input_name = "features"
         self.expected_features = 0
+        self.arch = "mlp"
+        self.history_steps = 0
+        # Whether each history token also carries that step's observation summary.
+        # Read from the sidecar, never inferred: a 33-wide token and a 28-wide one
+        # both fit a float32 row, so a wrong guess would score silently.
+        self.history_obs = False
+        self.model_sha256: Optional[str] = None
         self._warned = False
         self._model_loaded = False
         self.model_path = Path(model_path or DEFAULT_MODEL)
@@ -64,6 +73,9 @@ class NNPlanner(QuestPlanner):
         # can say how sure the head was and that the rules took it over.
         self.last_margin: Optional[float] = None
         self.last_deferral: Optional[float] = None
+        # Predicted probability that the next action advances the objective, when the
+        # loaded model has a value head. None for the shipped 21-logit MLP.
+        self.last_value: Optional[float] = None
 
     def _ensure_model(self) -> None:
         if self._model_loaded:
@@ -76,6 +88,7 @@ class NNPlanner(QuestPlanner):
         try:
             from agent.model_cache import onnx_session
             self.session = onnx_session(str(path))
+            self.model_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
             self.input_name = self.session.get_inputs()[0].name
             self.expected_features = int(self.session.get_inputs()[0].shape[1])
             meta = path.with_suffix(".json")
@@ -84,7 +97,18 @@ class NNPlanner(QuestPlanner):
                 self.tools = payload.get("tools") or []
                 self.expected_features = int(payload.get("features")
                                              or self.expected_features)
-            self.note = "tool policy %s (%d tools)" % (path.name, len(self.tools))
+                # A sidecar that declares an architecture is the only thing allowed
+                # to change the input contract: the 42-wide head and a 266-wide
+                # sequence policy must not be distinguishable by guesswork.
+                self.arch = str(payload.get("arch") or "mlp")
+                self.history_steps = int((payload.get("history") or {}).get("steps") or 0)
+                from agent.features import HISTORY_TOKEN_OBS
+                self.history_obs = (
+                    int((payload.get("history") or {}).get("token") or 0)
+                    == HISTORY_TOKEN_OBS)
+            self.note = "tool policy %s (%d tools%s)" % (
+                path.name, len(self.tools),
+                ", +history" if self.history_steps else "")
         except Exception as exc:  # noqa: BLE001
             self.note = "model unusable (%s); deterministic fallback" % exc
 
@@ -147,12 +171,38 @@ class NNPlanner(QuestPlanner):
             import numpy as np
             from agent.features import objective_features
             level = int(quest.get("level_min") or 1)
-            x = np.asarray([objective_features(obj, level, step_idx, obs,
-                                               self.tracker.ctx())], dtype="float32")
+            ctx = self.tracker.ctx()
+            if self.history_steps:
+                # The sequence contract: state vector followed by the decision
+                # window. `records()` is the same buffer the trainer replays, so the
+                # model sees at serving time what it saw during training.
+                from agent.features import objective_features_history
+                x = np.asarray([objective_features_history(
+                    obj, level, step_idx, obs, ctx, self.tracker.records(),
+                    obs=self.history_obs)],
+                    dtype="float32")
+                # Attach this step's observation to the record that `note_result`
+                # will append, taken from the vector just scored rather than from the
+                # later `obs`, so the token matches the corpus one exactly.
+                self.tracker.note_observation(x[0])
+            else:
+                x = np.asarray([objective_features(obj, level, step_idx, obs, ctx)],
+                               dtype="float32")
             if x.shape[1] != self.expected_features:
                 raise ValueError("model wants %d features, featuriser gives %d"
                                  % (self.expected_features, x.shape[1]))
-            logits = self.session.run(None, {self.input_name: x})[0][0]
+            outputs = self.session.run(None, {self.input_name: x})
+            logits = outputs[0][0]
+            # The dedicated model also predicts whether this step advances the
+            # objective. It is not used to decide here -- it is recorded, because a
+            # value that is logged can be calibrated against outcomes later, and a
+            # value that is never read is decoration.
+            if len(outputs) > 1 and getattr(outputs[1], "size", 0):
+                try:
+                    raw = float(outputs[1].reshape(-1)[0])
+                    self.last_value = 1.0 / (1.0 + math.exp(-raw))
+                except (TypeError, ValueError, OverflowError):
+                    self.last_value = None
             scores = list(logits)
             if self.tool_penalty:
                 for name, cost in self.tool_penalty.items():
@@ -177,7 +227,12 @@ class NNPlanner(QuestPlanner):
             # scores 0.8884 -- so the second opinion is what pays, not the gate).
             # Returning no tool hands the objective to QuestPlanner's own rules.
             self.last_margin = consult_gate.margin(logits)
-            if consult_gate.should_defer(gap=self.last_margin):
+            # Only a gate fitted for *this* artifact is allowed to defer. The floor
+            # is a property of one model's logit scale; `applies_to` checks the hash
+            # so a new architecture acts on its own answer instead of being judged
+            # by a threshold nobody measured for it.
+            if consult_gate.applies_to(self.model_sha256, self.arch) \
+                    and consult_gate.should_defer(gap=self.last_margin):
                 self.last_deferral = self.last_margin
                 return None
             return policy_tool

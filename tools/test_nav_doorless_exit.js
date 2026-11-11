@@ -58,7 +58,7 @@ if (body) {
         const calls = [];
         global._agentMapDetails = function () {
             return {
-                map_id: 100, cell: 5, x: 0, y: 0,
+                map_id: 100, cell: opts.cell === undefined ? 5 : opts.cell, x: 0, y: 0,
                 exits: opts.exits || [],
                 neighbours: opts.neighbours || {},
                 npcs: [], interactives: [], groups: [], transition: {},
@@ -79,7 +79,14 @@ if (body) {
                 return cell;
             },
         };
-        global.__agentLastNav = null;
+        // No cell to step off to: the edge branch falls through to the client's own
+        // transition, which is what this suite is about. The step-off walk itself is
+        // `test_nav_edge_step_off.js`.
+        global._agentStepOffCell = function () { return null; };
+        // Which border cell this map tried last, per "<map>:<direction>". Page
+        // state, so the suite decides it, exactly like the door memory above.
+        global._agentEdgeTry = {};
+        global.__agentLastNav = opts.lastNav || null;
         return { out: nav(args || {}), calls: calls };
     }
 
@@ -135,6 +142,31 @@ if (body) {
             { direction: 'left' });
     check('a published exit still walks instead of requesting',
           r.out.ok === true && r.calls.length === 1 && r.calls[0][0] === 'walk',
+          JSON.stringify([r.out, r.calls]));
+
+    // 6. Live 2026-11-10, map 146540544: the exit is derived from the border, so it
+    //    lists every walkable cell on that edge and only one of them crosses. A cell
+    //    the character reached and the map still did not change must not be retried.
+    r = run({ neighbours: { left: 200 },
+              exits: [{ direction: 'left', map_id: 200, cells: [9, 23] }],
+              cell: 9,
+              lastNav: { stage: 'walk_then_change', from_map: 100,
+                         direction: 'left', cell: 9 } },
+            { direction: 'left' });
+    check('a border cell that was reached and did not transition is skipped',
+          r.out.ok === true && global._agentEdgeTry['100:left'] === 1,
+          JSON.stringify([r.out, r.calls, global._agentEdgeTry]));
+
+    // 6b. A walk still in flight is not a refusal: the caller polling faster than
+    //     the character can walk must not skip a cell that may be the right one.
+    r = run({ neighbours: { left: 200 },
+              exits: [{ direction: 'left', map_id: 200, cells: [9, 23] }],
+              cell: 7,
+              lastNav: { stage: 'walk_then_change', from_map: 100,
+                         direction: 'left', cell: 9 } },
+            { direction: 'left' });
+    check('a walk that has not arrived yet keeps its cell',
+          r.out.ok === true && r.calls.length === 1 && Number(r.calls[0][2]) === 9,
           JSON.stringify([r.out, r.calls]));
 }
 

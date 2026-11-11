@@ -398,6 +398,15 @@ def rank_dialog(obs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                                   else "keeps the dialog open")))
             return {**decision, "status": "choose", "reason": reason,
                     "reply": tied[0]}
+        # Nothing distinguishes these replies -- same score, same question overlap,
+        # same travel / quest-marker / closing status -- so the first one is taken.
+        # Abstaining here looks safer and is not: `status: abstain` sends the planner
+        # down its wait path (planner.py:2092), where a *definitively empty* reply
+        # list closes the dialog outright, and `test_planner_dialog_fallback_never_closes_when_replies_exist`
+        # exists because that happened. Six observations later the wait path answers
+        # reply 0 anyway, so abstaining buys the same answer at the price of six
+        # steps. The page has already declared `text_ready`/`ids_ready` by the time a
+        # tie is scored, so there is nothing left for a re-read to load.
         return {**decision, "status": "choose",
                 "reason": "first open-ended reply in tie",
                 "reply": tied[0]}

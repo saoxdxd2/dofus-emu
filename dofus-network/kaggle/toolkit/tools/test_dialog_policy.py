@@ -176,8 +176,11 @@ class TestDialogPolicy(unittest.TestCase):
         call = planner._dialog_call(obs, goal="quest")
         self.assertIsNotNone(call)
         self.assertEqual(call.tool, "quest.advance")
-        # Must answer the reply rather than closing!
-        self.assertEqual(call.args.get("reply_index"), 0)
+        # Must answer the reply rather than closing! The argument has to be the one the
+        # page reads (`reply`); `reply_index` matched no branch and fell through to the
+        # NPC-talk path, which is where the "no npc_id was given" refusals came from.
+        self.assertEqual(call.args.get("reply"), 0)
+        self.assertNotIn("reply_index", call.args)
         self.assertNotIn("close", call.args)
 
     def test_planner_dialog_closes_when_definitive_empty(self):
@@ -202,6 +205,36 @@ class TestDialogPolicy(unittest.TestCase):
         self.assertIsNotNone(call)
         self.assertEqual(call.tool, "quest.advance")
         self.assertTrue(call.args.get("close"))
+
+    def test_no_call_names_a_dialog_argument_the_page_does_not_read(self):
+        """An argument name the handler never looks at is a call with no answer.
+
+        Measured live (dofus-01, 2026-11-10): 34 steps failed with "quest is active but
+        no npc_id was given; npcs on this map: ..." while four NPCs stood on the map.
+        The NPC list was not the problem. The planner was sending `reply_index`, a name
+        the page's quest.advance does not read -- it reads `reply` -- so the call matched
+        no branch, fell through to the NPC-talk one and was refused for the one thing it
+        had never meant to ask. `agent/schema.py` declares `reply`; the call was outside
+        the contract the whole time, and the unit test above pinned the misspelling.
+        """
+        source = (Path(__file__).resolve().parent.parent / "agent" / "planner.py"
+                  ).read_text(encoding="utf-8")
+        # Quoted, so the note in `_dialog_call` that names the old argument stays legal:
+        # what must not exist is a *key*, not the word.
+        self.assertNotIn('"reply_index"', source,
+                         "the page reads `reply`; `reply_index` matches no branch")
+        self.assertNotIn("'reply_index'", source,
+                         "the page reads `reply`; `reply_index` matches no branch")
+        page = (Path(__file__).resolve().parent.parent.parent
+                / "scripts" / "mobile-disguise.js")
+        if page.exists():
+            js = page.read_text(encoding="utf-8", errors="replace")
+            # `reply_index` does exist in the page -- as a field the dialog *links* it
+            # reports back carry, which is why the name looked plausible enough to send
+            # as an argument. What must not exist is a handler reading it as one.
+            for name in ("args.reply_index", "args.replyIndex"):
+                self.assertNotIn(name, js,
+                                 "the handler never reads this argument")
 
 
 if __name__ == "__main__":

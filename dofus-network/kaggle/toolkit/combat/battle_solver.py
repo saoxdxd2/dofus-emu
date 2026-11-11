@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property, lru_cache
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
@@ -43,6 +43,7 @@ from combat.damage_calculator import (
     TargetStats,
 )
 from data.game_data_extractor import DamageEffect, SpellInfo
+from combat import threat
 
 # Client action table, 1.74.9. Damage/steal ids carry their element by id; the
 # generic 95/100 ids are the element-less variants, treated as neutral.
@@ -176,6 +177,17 @@ MP_GAIN_WEIGHT = COMBAT_CONFIG.mp_gain_weight
 PUSH_WEIGHT = COMBAT_CONFIG.push_weight
 HEAL_WEIGHT = COMBAT_CONFIG.heal_weight
 KILL_BONUS = COMBAT_CONFIG.kill_bonus
+# What one cell of closing distance is worth when nothing can be cast this turn.
+#
+# The beam folds a walk into a cast, so a turn with no reachable cast produced no plan
+# at all -- measured on the captured corpus: 114 of 152 turns on our own side came back
+# as a single `pass`, and the live policy then hands the turn to the actor, which is the
+# half measured 0.0875 worse. A level-2 character spends most of its turns closing
+# distance, so "nothing to do" is the common case, not the edge.
+#
+# Kept below one point of damage on purpose: a walk must never outrank a cast that
+# actually lands, it only has to beat standing still.
+APPROACH_VALUE = 0.5
 LRU_CACHE_LINE = COMBAT_CONFIG.lru_cache_line
 LRU_CACHE_PATH = COMBAT_CONFIG.lru_cache_path
 
@@ -531,11 +543,11 @@ class LiveSpell:
     # the first answer is the only answer.
     @cached_property
     def damage_effects(self) -> Tuple[LiveEffect, ...]:
-        return tuple(e for e in self.effects if e.kind in ("damage", "steal"))
+        return tuple(self._effect_lines(("damage", "steal")))
 
     @cached_property
     def heal_effects(self) -> Tuple[LiveEffect, ...]:
-        return tuple(e for e in self.effects if e.kind == "heal")
+        return tuple(self._effect_lines(("heal",)))
 
     @cached_property
     def mechanic_effects(self) -> Tuple[LiveEffect, ...]:
@@ -576,8 +588,40 @@ class LiveSpell:
                 pull += value
         return ap_gain, mp_gain, ap_loss, mp_loss, push, pull
 
+    def _effect_lines(self, wanted: Tuple[str, ...]) -> List[LiveEffect]:
+        """One effect per damage/heal line, not one per data row.
+
+        A spell level lists the same effect id several times -- once per grade -- and
+        the client applies exactly one of them. Measured 2026-11-10 on spell 61: three
+        `effect_id 97` rows (18-20, 21-23, 24-26) were summed into 66 base damage, the
+        caster's stats folded that to 117.65, and the live cast dealt 39. Every plan
+        was therefore ranked against a number three times too large: the solver
+        believed one cast finished a 120-hp monster, and fight 1559 ended with three
+        enemies still standing after nine casts and 186 damage.
+
+        Identical `(kind, effect_id)` rows are the same line at different grades, so
+        the highest one is kept. A different effect id stays separate, so a genuine
+        multi-line spell keeps every line. No zero-id guard is needed: `kind` is
+        derived from the effect id itself, so anything that reaches this loop has a
+        real one.
+        """
+        kept: Dict[Tuple[str, int], LiveEffect] = {}
+        order: List[Tuple[str, int]] = []
+        for effect in self.effects:
+            if effect.kind not in wanted:
+                continue
+            key = (effect.kind, int(effect.effect_id))
+            previous = kept.get(key)
+            if previous is None:
+                kept[key] = effect
+                order.append(key)
+            elif (effect.min_roll + effect.max_roll) > (previous.min_roll
+                                                       + previous.max_roll):
+                kept[key] = effect
+        return [kept[key] for key in order]
+
     def _damage_info(self, wanted: Tuple[str, ...]) -> Optional[SpellInfo]:
-        normal = [e for e in self.effects if e.kind in wanted]
+        normal = self._effect_lines(wanted)
         if not normal:
             return None
         critical: Dict[str, List[LiveEffect]] = {}
@@ -740,6 +784,53 @@ class Board:
         if me is None:
             me = next((f for f in fighters if f.by_me), None)
         my_cell = me.cell if me is not None else _int(payload.get("my_cell"), 0)
+        spells = [cls._spell(raw) for raw in payload.get("spells") or []]
+        stats = dict(payload.get("my_stats") or {})
+        # Whether the client actually published a value, which is a different
+        # question from what the value is. `mp: 0` is a character that has spent its
+        # movement; `mp: null` is a client that does not publish it. Collapsing the
+        # two is what made the solver chase cells it could not walk to: measured on
+        # the live boards of 2026-11-10, a fighter with `mp: 0` was re-priced at the
+        # full `my_stats.movement_points` budget, so every plan after the first move
+        # of a turn was built on movement the character no longer had.
+        raw_me = None
+        for raw in payload.get("fighters") or []:
+            if not isinstance(raw, dict):
+                continue
+            if _int(raw.get("id")) == my_id or raw.get("is_me"):
+                raw_me = raw
+                break
+        mp_published = isinstance(raw_me, dict) and raw_me.get("mp") is not None
+        if me is not None and (me.ap <= 0 or me.mp <= 0):
+            # Our own fighter's AP/MP arrive null: the client publishes them on the
+            # *active* fighter, and fills our row in only for the fields it has.
+            # Measured 2026-11-10: 106 of 160 boards captured on our own turn read
+            # `ap: 0`, and the grid dataset builder drops those as `no_positive_ap`
+            # (198 of 333 boards) -- which is why the whole live corpus yielded three
+            # actionable rows. The numbers are in `my_stats`, so they are recoverable
+            # rather than absent.
+            #
+            # AP is derived, not assumed: the stat is the turn's budget and
+            # `spell_cast_counts` resets each round (verified across five rounds of
+            # fight 3977), so spent AP comes off the budget. MP spending is not
+            # published in `spell_cast_counts` either, so the budget is used only
+            # when the fighter's own `mp` is missing -- never to overwrite a 0.
+            budget_ap = _int(stats.get("action_points"), 0) or 0
+            budget_mp = _int(stats.get("movement_points"), 0) or 0
+            ap, mp = me.ap, me.mp
+            if ap <= 0 and budget_ap > 0:
+                cost = {spell.id: spell.ap_cost for spell in spells}
+                spent = 0
+                for spell_id, count in (payload.get("spell_cast_counts") or {}).items():
+                    spent += cost.get(_int(spell_id, -1), 0) * (_int(count, 0) or 0)
+                ap = max(0, budget_ap - spent)
+            if mp <= 0 and budget_mp > 0 and not mp_published:
+                mp = budget_mp
+            if ap != me.ap or mp != me.mp:
+                me = replace(me, ap=ap, mp=mp,
+                             max_ap=me.max_ap or budget_ap,
+                             max_mp=me.max_mp or budget_mp)
+                fighters = [me if fighter.id == me.id else fighter for fighter in fighters]
         return cls(
             map_id=_int(payload.get("map_id")),
             in_fight=bool(payload.get("in_fight")),
@@ -750,8 +841,8 @@ class Board:
             my_ap=me.ap if me is not None else _int(payload.get("my_ap"), 0),
             my_mp=me.mp if me is not None else _int(payload.get("my_mp"), 0),
             fighters=fighters,
-            spells=[cls._spell(raw) for raw in payload.get("spells") or []],
-            my_stats=dict(payload.get("my_stats") or {}),
+            spells=spells,
+            my_stats=stats,
             cells=CellMap.from_board(payload),
             round=_int(payload.get("round")),
             fight_id=_int(payload.get("fight_id")),
@@ -1062,6 +1153,11 @@ class TurnPlan:
     notes: List[str] = field(default_factory=list)
     final_hp: Dict[int, int] = field(default_factory=dict)
     bucket: str = "damage"
+    # Expected damage on `final_cell` from the living enemies before the
+    # character acts again. Recorded rather than only scored: a plan's position
+    # is otherwise invisible in the decision log, and "he walked into the open"
+    # has to be a measurement, not an impression.
+    exposure: float = 0.0
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -1076,6 +1172,7 @@ class TurnPlan:
             "notes": self.notes,
             "final_hp": {str(k): int(v) for k, v in self.final_hp.items()},
             "bucket": self.bucket,
+            "exposure": round(self.exposure, 2),
         }
 
 
@@ -1125,15 +1222,33 @@ class BattleSolver:
     """One-turn beam search over legal moves and casts."""
 
     def __init__(self, beam_width: int = 16, max_actions: int = 4,
-                 max_nodes: int = 20000) -> None:
+                 max_nodes: int = 20000,
+                 memory: Optional[Any] = None) -> None:
         self.beam_width = max(1, beam_width)
         self.max_actions = max(0, max_actions)
         self.max_nodes = max(1, max_nodes)
+        # A callable returning the learned per-monster damage table, or None.
+        #
+        # None is the default and means "the level prior only", which is what keeps
+        # the solver a pure function of its board: a benchmark, a duel or a test must
+        # not change its answer because a file in `models/` was filled in by a live
+        # fight. The live entry points (`LivePolicy`, `agent.executor`) pass
+        # `threat.default_memory`, which re-reads the file when it changes.
+        self.memory = memory
         self.last_candidates: List[TurnPlan] = []
         # Per-bucket counts from the last stratified search. A learner can see
         # whether the beam actually explored setup/displacement/boss plans or
         # collapsed onto direct damage.
         self.last_buckets: Dict[str, int] = {}
+
+    def _table(self) -> Optional[Any]:
+        """The learned table for this turn, or None for the level prior."""
+        if self.memory is None:
+            return None
+        try:
+            return self.memory() if callable(self.memory) else self.memory
+        except Exception:  # noqa: BLE001 - an unreadable table is the prior
+            return None
 
     def plan_candidates(self, board: Board, k: int = 5) -> List[TurnPlan]:
         """The top-k distinct turn plans from the last search, pass included.
@@ -1142,6 +1257,11 @@ class BattleSolver:
         alternatives next to it so a learned ranker can choose between them.
         The pass plan is always kept as an option, even when the search found
         more action plans than ``k``.
+
+        When the search found nothing to cast, approach plans are offered in place of
+        an empty list. Without them a turn spent walking has no candidate at all, and
+        the caller's only options are "pass" or whatever fallback it keeps -- which is
+        how 114 of 152 captured turns left the solver's hands entirely.
         """
         self.plan_turn(board)
         plans = self.last_candidates
@@ -1151,8 +1271,80 @@ class BattleSolver:
             self._pass_plan(board, []))
         action_plans = [plan for plan in plans
                         if plan.actions and plan.actions[0].kind != "pass"]
+        if not action_plans:
+            action_plans = self._approach_plans(board, max(0, int(k) - 1))
         limit = max(1, int(k))
         return (action_plans[:max(0, limit - 1)] + [pass_plan])[:limit]
+
+    def _approach_plans(self, board: Board, limit: int) -> List[TurnPlan]:
+        """Walk plans, one per reachable position that closes distance to an enemy.
+
+        The destination is the reachable cell nearest to each living enemy, so the
+        list is a real choice when several enemies are on the board: approach the
+        nearest one, or the one that is nearly dead. Each is scored by the distance it
+        closes (``APPROACH_VALUE``), which keeps it below any cast that lands while
+        still beating a pass.
+        """
+        if limit <= 0:
+            return []
+        me = board.me
+        if me is None or not board.cells.valid(me.cell):
+            return []
+        enemies = [f for f in board.fighters
+                   if f.alive and f.team != "player" and f.id != me.id]
+        if not enemies or board.my_mp <= 0:
+            return []
+        occupied = frozenset(f.cell for f in board.fighters
+                             if f.alive and f.id != me.id)
+        try:
+            reach = board.cells.reachable(me.cell, float(board.my_mp), occupied)
+        except Exception:  # noqa: BLE001 - a path search must not cost the turn
+            return []
+        if not reach:
+            return []
+        hp = {f.id: f.hp for f in board.fighters if f.alive}
+        nearest_now = min(board.cells.distance(me.cell, enemy.cell) for enemy in enemies)
+        danger = threat.build(board, memory=self._table(), occupied=occupied)
+        plans: List[TurnPlan] = []
+        taken: set = set()
+        # Nearest enemies first: the closest one is the approach a player would take,
+        # and the second is the alternative worth showing when it differs.
+        for enemy in sorted(enemies, key=lambda f: board.cells.distance(me.cell, f.cell)):
+            if len(plans) >= limit:
+                break
+            best_cell, best_gap = None, None
+            for cell, cost in reach.items():
+                if cell == me.cell or cell in occupied:
+                    continue
+                gap = board.cells.distance(cell, enemy.cell)
+                # Same closing distance, quieter cell. The gap is an integer and
+                # many cells tie on it, so this picks the covered side of the
+                # approach instead of the first cell the walk happened to reach --
+                # which is what walked the character into the open on every
+                # "nothing castable" turn.
+                key = (gap, round(danger.at(cell), 3), cost)
+                if best_gap is None or key < best_gap:
+                    best_cell, best_gap = cell, key
+            if best_cell is None or best_cell in taken:
+                continue
+            gap, _exposure, cost = best_gap
+            if gap >= nearest_now:
+                # Nothing gained: this enemy is already as close as any reachable
+                # cell gets, so walking there is not progress.
+                continue
+            taken.add(best_cell)
+            plans.append(TurnPlan(
+                actions=[PlannedAction(kind="move", from_cell=me.cell,
+                                       move_to=best_cell, mp_cost=float(cost))],
+                final_cell=best_cell, remaining_ap=board.my_ap,
+                remaining_mp=max(0.0, float(board.my_mp) - float(cost)),
+                expected_damage=0.0, expected_healing=0.0, kills=[],
+                score=APPROACH_VALUE * float(nearest_now - gap),
+                notes=["close distance to fighter %s (%d -> %d cells)"
+                       % (enemy.id, nearest_now, gap)],
+                final_hp=dict(hp), bucket="approach",
+                exposure=danger.at(best_cell)))
+        return plans
 
     def plan_for_action(self, board: Board,
                         action: Dict[str, Any]) -> Optional[TurnPlan]:
@@ -1284,6 +1476,9 @@ class BattleSolver:
         targets = [f for f in board.fighters if f.alive]
         melee = any(spell.has_damage and spell.max_range <= 1
                     for spell in board.spells)
+        # What standing on a cell costs. Built once per turn and priced lazily,
+        # because every candidate cell is asked about from several nodes.
+        danger = threat.build(board, memory=self._table(), occupied=occupied)
 
         def templates(cell: int) -> List[_CastTemplate]:
             if cell in template_cache:
@@ -1500,10 +1695,17 @@ class BattleSolver:
                                 - node.healed_by_target.get(me.id, 0)),
                         )
                     gained = direct_gain + steal_gain
-                    step_score = dealt + (KILL_BONUS * template.target_max_hp if kill else 0.0)
-                    step_score += HEAL_WEIGHT * gained + template.utility
-                    if step_score <= 0:
+                    base_score = dealt + (KILL_BONUS * template.target_max_hp if kill else 0.0)
+                    base_score += HEAL_WEIGHT * gained + template.utility
+                    if base_score <= 0:
                         continue
+                    # The half of the turn the search used to ignore: a cast
+                    # from the open and the same cast from behind a wall scored
+                    # the same, so nothing kept the character out of reach. The
+                    # price rises as health runs out, so a hurt fighter trades
+                    # damage for cover while a healthy one keeps attacking.
+                    step_score = base_score - threat.weight_for(me) * danger.swing(
+                        node.cell, cell)
                     if template.damage_int > 0:
                         new_hp = dict(node.hp)
                         new_hp[template.target_id] = max(
@@ -1599,6 +1801,7 @@ class BattleSolver:
             return self._pass(board, notes)
         plan = self._to_plan(best, notes)
         plan.bucket = self._classify_plan(plan, board)
+        plan.exposure = danger.at(plan.final_cell)
         nodes = [best] + [node for node in frontier if node.actions]
         plans: List[TurnPlan] = []
         seen_plans = set()
@@ -1609,8 +1812,11 @@ class BattleSolver:
             if signature in seen_plans:
                 continue
             seen_plans.add(signature)
-            plans.append(self._to_plan(node, notes))
+            candidate = self._to_plan(node, notes)
+            candidate.exposure = danger.at(node.cell)
+            plans.append(candidate)
         plans.append(self._pass_plan(board, notes))
+        plans[-1].exposure = danger.at(plans[-1].final_cell)
         self.last_candidates = self._stratify(plans, board, self.beam_width)
         return plan
 

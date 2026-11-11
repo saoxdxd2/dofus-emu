@@ -35,7 +35,8 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from agent.autopilot import COMMAND_SHADOW_MODEL, Autopilot, _build_policy
+from agent.autopilot import (COMMAND_SHADOW_MODEL, MEMORY_PATH as DEFAULT_MEMORY_PATH,
+                            Autopilot, _build_policy)
 from agent.bridge import state_dir
 from agent.recorder import TrajectoryRecorder
 from agent.executor import ToolExecutor
@@ -238,6 +239,16 @@ class BrainDaemon:
         self._ingest_lock = threading.Lock()
         self._ingest_last = 0.0
         self._ingest_thread: Optional[threading.Thread] = None
+        # Self-reload: this process runs the code it imported at start, and a
+        # stale daemon silently keeps serving old behaviour through every app
+        # restart (measured repeatedly: /brain/health `code_stale` non-empty
+        # while the run behaved like the previous build). When its modules are
+        # older than the files on disk AND no instance is running, re-exec so the
+        # next /brain/start uses current code. Idle-only: it never cuts a run.
+        if str(os.environ.get("DOFUS_BRAIN_AUTORELOAD", "on")).strip().lower() \
+                not in ("0", "off", "false", "no"):
+            threading.Thread(target=self._reload_watch, daemon=True,
+                             name="stale-reload").start()
 
     # -- live ingest ---------------------------------------------------------
 
@@ -295,6 +306,71 @@ class BrainDaemon:
                                     proc.returncode, (proc.stderr or "")[-300:])
             except Exception as exc:  # noqa: BLE001 - an ingest must never kill the daemon
                 logging.warning("live ingest %s raised: %s", label, exc)
+
+    # The entrypoints that *are* the service. `run_brain.py` is the one the host
+    # actually starts (`docs`: "run_brain.py -> agent.serve --brain"); `serve.py`
+    # and `brain_daemon.py` cover `python -m` and a direct run. Anything else that
+    # constructs a daemon -- a test harness, a notebook, an ad-hoc script -- is
+    # somebody else's process, and re-exec would replace it with a copy of itself.
+    SERVICE_ENTRYPOINTS = ("run_brain.py", "serve.py", "brain_daemon.py")
+
+    def _owns_this_process(self) -> bool:
+        """Whether re-exec would replace the daemon, or somebody else's process.
+
+        ``os.execv(sys.executable, [sys.executable] + sys.argv)`` does not restart
+        the daemon -- it restarts *the process that constructed this object*.
+        That is the service when one of `SERVICE_ENTRYPOINTS` owns it, and it is a
+        hijack when a test harness, a notebook or the GUI's main thread owns it.
+
+        Measured 2026-11-10: ``agent.regression``'s ``test_brain_scaling_40``
+        constructs a ``BrainDaemon`` to check the 40-instance cap, which armed the
+        watcher; a later suite rewrote a source file and restored it, bumping its
+        mtime past ``PROCESS_START``, so fifteen seconds later the harness
+        re-exec'd itself. The run died at 55 lines and exited **0** -- a truncated
+        gate reporting success, which is the one failure mode a gate must never
+        have. Nothing in that run was the daemon's to replace.
+        """
+        entry = getattr(sys.modules.get("__main__"), "__file__", None) or ""
+        return Path(entry).name in self.SERVICE_ENTRYPOINTS
+
+    def _reload_watch(self) -> None:
+        """Re-exec this daemon when its code is stale and nothing is running.
+
+        The host reuses a live daemon across app restarts, so an edit on disk is
+        invisible until the process is replaced. This replaces it itself rather
+        than trusting an operator to notice `code_stale` in /brain/health.
+        """
+        while True:
+            time.sleep(15.0)
+            try:
+                stale = stale_modules()
+            except Exception:  # noqa: BLE001 - a broken scan is not a reason to die
+                stale = []
+            if not stale:
+                continue
+            with self._lock:
+                busy = any(item.alive() for item in self._instances.values())
+            if busy:
+                continue
+            names = ", ".join(row["module"] for row in stale[:6])
+            if not self._owns_this_process():
+                # Say what is true: this process is not reloading, and telling the
+                # log that it did would hide the reason the edits never landed.
+                logging.warning(
+                    "brain daemon code is stale (%s) but this process is %s, not "
+                    "the daemon; it will not re-exec",
+                    names,
+                    getattr(sys.modules.get("__main__"), "__file__", "<unknown>"))
+                return
+            logging.warning(
+                "brain daemon code is stale (%s) and no instance is running; "
+                "reloading to pick up the edits", names)
+            try:
+                os.execv(sys.executable, [sys.executable] + list(sys.argv))
+            except Exception as exc:  # noqa: BLE001 - fall back to staying up
+                logging.warning("self-reload failed (restart DofusFarm to load "
+                                "the edits): %s", exc)
+                return
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -375,6 +451,15 @@ class BrainDaemon:
             command_shadow=str(config.get("command_shadow") or "off"),
             command_shadow_model=Path(config.get("command_shadow_model"))
             if config.get("command_shadow_model") else COMMAND_SHADOW_MODEL,
+            # The daemon is the long-lived path, so it is the one that must keep what
+            # it learns. A config with `memory: false` still gets a clean run.
+            memory_path=(Path(config.get("memory_path") or DEFAULT_MEMORY_PATH)
+                         if config.get("memory", True) else None),
+            # Same switch as the CLI, so the app can be put in the control arm without
+            # a rebuild: AUTOPILOT_MEMORY_REPLAY=off in the environment that starts it.
+            memory_replay=bool(config.get(
+                "memory_replay",
+                os.environ.get("AUTOPILOT_MEMORY_REPLAY", "").lower() != "off")),
         )
 
     def start(self, config: Dict[str, Any]) -> Dict[str, Any]:

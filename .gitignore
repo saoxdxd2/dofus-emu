@@ -90,6 +90,9 @@ user_data/
 dofus-network/data/credentials/
 dofus-network/data/logs/
 *.bak
+# The vendor bundle an update displaced. Runtime state, like `.bak`; the bytes are
+# recoverable from the commit that served them (`git show HEAD:...build/script.js`).
+desktop/client/www/build/script.js.vendor-*
 *.orig
 *.rej
 

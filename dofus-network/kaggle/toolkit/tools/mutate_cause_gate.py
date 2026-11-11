@@ -705,11 +705,13 @@ MUTATIONS = [
      "        self._exhausted_at.discard(triple)",
      "        self._exhausted_at.discard(triple)  # mutated: a bounce is unbounded again"),
     ("return grant: the travel funnel ignores the visit record", PLAN,
-     "            if travel_key is not None and self._visit_is_exhausted(travel_key, need):",
-     "            if travel_key is not None and False:"),
+     "            if t not in FIGHT_TYPES and travel_key is not None \\\n"
+     "                    and self._visit_is_exhausted(travel_key, need):",
+     "            if t not in FIGHT_TYPES and travel_key is not None \\\n"
+     "                    and False:  # mutated: the funnel ignores the visit record"),
     ("return grant: the ready scan ignores the visit record", PLAN,
-     "                if self._visit_is_exhausted((quest_id, objective_id), need):",
-     "                if False:"),
+     "                if _otype not in FIGHT_TYPES and self._visit_is_exhausted((quest_id, objective_id), need):",
+     "                if False:  # mutated: the ready scan ignores the visit record"),
     ("return grant: the end-of-scenario reset keeps a spent grant", PLAN,
      "            self._exhausted_at.clear()\n            self._return_granted.clear()",
      "            self._exhausted_at.clear()  # mutated: the grant survives the scenario"),
@@ -777,8 +779,8 @@ MUTATIONS = [
      "            if self._stall_unretired >= RETIRE_REPEAT_LIMIT:",
      "            if False:"),
     ("stall: the repeat limit is unreachable", AUTO,
-     "RETIRE_REPEAT_LIMIT = 3",
-     "RETIRE_REPEAT_LIMIT = 99999"),
+     'RETIRE_REPEAT_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_REPEAT_LIMIT", "3"))',
+     'RETIRE_REPEAT_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_REPEAT_LIMIT", "99999"))'),
     ("stall: the tutorial exemption never expires", AUTO,
      "                    elif now - self._tutorial_since > TUTORIAL_PATIENCE_S:",
      "                    elif False:"),
@@ -855,7 +857,8 @@ MUTATIONS = [
      '                if (False and call is not None\n'
      '                        and self._consecutive_waits < MAX_CONSECUTIVE_WAITS):'),
     ("the wait budget is removed, so a spin is invisible", AUTO,
-     "MAX_CONSECUTIVE_WAITS = 40", "MAX_CONSECUTIVE_WAITS = 0"),
+     'MAX_CONSECUTIVE_WAITS = int(os.environ.get("AUTOPILOT_MAX_CONSECUTIVE_WAITS", "40"))',
+     'MAX_CONSECUTIVE_WAITS = int(os.environ.get("AUTOPILOT_MAX_CONSECUTIVE_WAITS", "0"))'),
     ("a wait row is written as a step row", AUTO,
      '            "kind": "wait",', '            "kind": "wait_disabled",'),
     ("a step leaves the wait streak running", AUTO,
@@ -863,7 +866,8 @@ MUTATIONS = [
      '        if step.tool not in READ_ONLY_TOOLS and step.tool not in LISTING_TOOLS:',
      '        if step.tool not in READ_ONLY_TOOLS and step.tool not in LISTING_TOOLS:'),
     ("the wait paces faster than the loop it replaces", AUTO,
-     "WAIT_POLL_S = 0.35", "WAIT_POLL_S = 0.0"),
+     'WAIT_POLL_S = float(os.environ.get("AUTOPILOT_WAIT_POLL_S", "0.35"))',
+     'WAIT_POLL_S = float(os.environ.get("AUTOPILOT_WAIT_POLL_S", "0.0"))'),
     ("the wait ignores --interval", AUTO,
      "time.sleep(max(WAIT_POLL_S, self.interval))", "time.sleep(WAIT_POLL_S)"),
     ("a dry run sleeps on a wait with no world", AUTO,
@@ -891,7 +895,8 @@ MUTATIONS = [
      "            if recovered:\n                pass"),
     # ---- wait escalation and the goal boundary
     ("the escalation never happens", AUTO,
-     "ESCALATE_TRIES = 3", "ESCALATE_TRIES = 0"),
+     'ESCALATE_TRIES = int(os.environ.get("AUTOPILOT_ESCALATE_TRIES", "3"))',
+     'ESCALATE_TRIES = int(os.environ.get("AUTOPILOT_ESCALATE_TRIES", "0"))'),
     ("the escalation is not recorded in the wait row", AUTO,
      '"escalated": thought.tool if thought is not None else None',
      '"escalated": None'),
@@ -974,8 +979,8 @@ MUTATIONS = [
      '    if not isinstance(body, dict) or body.get("status") != "ok":\n        return None',
      '    if not isinstance(body, dict):\n        return None'),
     ("the health probe dials a hardcoded port instead of the one it was given", BRAIN,
-     '    target = "http://127.0.0.1:%d/health" % int(port)',
-     '    target = "http://127.0.0.1:%d/health" % BRAIN_PORT'),
+     '    target = "http://%s:%d/health" % (os.environ.get("DOFUS_BRAIN_HOST", "127.0.0.1"), int(port))',
+     '    target = "http://%s:%d/health" % (os.environ.get("DOFUS_BRAIN_HOST", "127.0.0.1"), BRAIN_PORT)'),
     ("one interpreter spelled two ways is probed twice", BRAIN,
      "        if key in seen:\n            continue",
      "        if False:\n            continue"),
@@ -1338,12 +1343,12 @@ MUTATIONS = [
      '              "quests_active", "quests_finished", "quest_steps")',
      '              "quests_active")'),
     ("progress: the report stops counting finished quests", SREPORT,
-     '        print("  objectives %+d, quests completed %+d, maps %d, manual interventions %d, "\n'
-     '              "recoveries %s"\n'
-     '              % (report["objectives_completed"], report["quests_completed"],\n',
-     '        print("  objectives %+d, maps %d, manual interventions %d, "\n'
-     '              "recoveries %s"\n'
-     '              % (report["objectives_completed"],\n'),
+     '        print("  objectives %+d, quests completed %+d, maps %d, manual interventions %d"\n'
+     '              % (report["objectives_completed"], report["quests_completed"],\n'
+     '                 report["maps"],\n',
+     '        print("  objectives %+d, maps %d, manual interventions %d"\n'
+     '              % (report["objectives_completed"],\n'
+     '                 report["maps"],\n'),
     # ---- G27: the client's declared objective-parameter table decides targeting
     ("param: the free-form class declares a monster", FEATURES,
      '    "QuestObjectiveFreeForm": (("getText", "GetText"),),',
@@ -1569,8 +1574,8 @@ MUTATIONS = [
      '            if offered == current or offered == wanted or takes_new:',
      '            if False:'),
     ("accept: the tutorial sends a bare start inside a dialog", PLAN,
-     'reply_args: Dict[str, Any] = {"quest_id": qid, "reply": 0}',
-     'reply_args: Dict[str, Any] = {"quest_id": qid}'),
+     '                                {"quest_id": offered, "accept": True}, goal)',
+     '                                {"quest_id": offered}, goal)'),
     ("accept: the tool contract forgets the argument", SCHEMA,
      '"accept": _p("bool", "Accept the quest this dialog is offering. The page "',
      '"_unused": _p("bool", "Accept the quest this dialog is offering. The page "'),
@@ -1756,7 +1761,7 @@ MUTATIONS = [
      "    var AGENT_BUILD = '%s';" % _PAGE_STAMP,
      "    var AGENT_BUILD = '2026-10-25d';"),
     ("build: the marker is set from a stale literal", PAGE,
-     "        window.__agentBuild = AGENT_BUILD;",
+     "        window.__agentBuild = (window.buildVersion || (window.Config && window.Config.buildVersion)) ? (AGENT_BUILD + '+' + (window.buildVersion || window.Config.buildVersion)) : AGENT_BUILD;",
      "        window.__agentBuild = '2026-10-25d';"),
     ("build: a debug fallback bypasses the constant", PAGE,
      "                    build: window.__agentBuild || AGENT_BUILD,",
@@ -2072,7 +2077,8 @@ MUTATIONS = [
      '    return f > 0 and gap < f',
      '    return False'),
     ("gate: the encoder arm stops consulting on a low margin", NNPLAN,
-     '            if consult_gate.should_defer(gap=self.last_margin):',
+     '            if consult_gate.applies_to(self.model_sha256, self.arch) \\\n'
+     '                    and consult_gate.should_defer(gap=self.last_margin):',
      '            if False:'),
     # ---- patch-rule idempotence (a second adoption must not wrap twice)
     ("patch: the guard reverts to the blunt version that dropped a rule", APRULES,
@@ -2674,8 +2680,8 @@ MUTATIONS = [
      '    _delegation("log CLIs executed in script mode", True, REPO_ROOT / "tools",',
      '    _delegation("log CLIs run somewhere else", True, REPO_ROOT / "tools",'),
     ("close: the loop's close timeout drops below the measured pipeline", AUTO,
-     "SESSION_CLOSE_TIMEOUT_S = 300",
-     "SESSION_CLOSE_TIMEOUT_S = 60"),
+     'SESSION_CLOSE_TIMEOUT_S = int(os.environ.get("AUTOPILOT_SESSION_CLOSE_TIMEOUT_S", "300"))',
+     'SESSION_CLOSE_TIMEOUT_S = int(os.environ.get("AUTOPILOT_SESSION_CLOSE_TIMEOUT_S", "60"))'),
     ("close: the live capture stops recording what its read costs", CLOSE,
      '    out["capture_seconds"] = round(time.perf_counter() - started, 2)',
      "    pass  # mutated: the row says it happened but not how long it took"),

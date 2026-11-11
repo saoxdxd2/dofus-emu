@@ -178,7 +178,20 @@ def scene_key(obs: Optional[Dict[str, Any]]) -> str:
 
 
 def quest_key(obs: Optional[Dict[str, Any]]) -> str:
-    """Fingerprint of the quest/script state that can reopen a retired quest."""
+    """Fingerprint of the quest/script state that can reopen a retired quest.
+
+    The map is deliberately absent. `QuestPlanner._observe` clears `_skipped` wholesale
+    when this key moves, and `QuestPlanner._situation_sig` -- the per-quest signature that
+    `_reopen` reads -- also leaves the map out, for the reason recorded there: a crossing
+    is not a new situation for a quest. With `map_id` in this key the two disagreed, and
+    the disagreement is what produced the live cycle -- retire, cross, `_skipped` wiped,
+    the same quest back with the same nothing to do, forty waits, retire again. The
+    per-quest signature is the mechanism that decides a reopening; a coarse global clear
+    that fires on a border is not a second opinion, it is the first one being undone.
+
+    The map visit has its own record (`_exhausted_at`, keyed by objective and map), so
+    nothing is lost by not carrying it here.
+    """
     if not isinstance(obs, dict):
         return ""
     tutorial = _block(obs, "tutorial")
@@ -193,8 +206,13 @@ def quest_key(obs: Optional[Dict[str, Any]]) -> str:
             "active": bool(tutorial.get("active")),
             "quest_id": tutorial.get("quest_id"),
             "step_id": tutorial.get("step_id"),
+            # The gate is what a scripted step forbids ("do not change map"). A step whose
+            # gate lifts is a new situation for every quest it was blocking, and this is
+            # the only coarse event that has to survive the crossing rule above.
+            "gate": sorted((str(key), bool(value)) for key, value
+                           in (tutorial.get("can_change_map") or {}).items())
+            if isinstance(tutorial.get("can_change_map"), dict) else [],
         },
-        "map_id": _map_id(obs),
     })
 
 

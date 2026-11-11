@@ -1,0 +1,465 @@
+............
+----------------------------------------------------------------------
+Ran 12 tests in 1.770s
+
+OK
+.................................................
+----------------------------------------------------------------------
+Ran 49 tests in 0.204s
+
+OK
+.............
+----------------------------------------------------------------------
+Ran 13 tests in 0.068s
+
+OK
+[planner] objective 1 (Find the map: Dam worksite.): nav.goto {'map_id': 200, 'direction': 'left'} -- objective 4: map 100 publishes no crossable border; ask the server for the left neighbour 200
+[planner] objective 1 (Find the map: Dam worksite.): nav.goto {'map_id': 201, 'direction': 'right'} -- objective 4: map 100 publishes no crossable border; ask the server for the right neighbour 201
+[planner] objective 1 (Find the map: Dam worksite.): nav.goto {'map_id': 200, 'direction': 'left'} -- objective 4: map 100 publishes no crossable border; ask the server for the left neighbour 200
+........
+----------------------------------------------------------------------
+Ran 8 tests in 0.097s
+
+OK
+Traceback (most recent call last):
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 16096, in _run_test
+    fn()
+    ~~^^
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 7885, in test_docs_owed_session_names_the_current_build
+    from tools import live_ready as ready
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\tools\live_ready.py", line 138, in <module>
+    LOGIN_ASSET = "https://" + os.environ.get("DOFUS_LOGIN_HOST", "dt-proxy-production-login.ankama-games.com") + "/build/primus.js"
+                               ^^
+NameError: name 'os' is not defined. Did you forget to import 'os'?
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.084s
+
+OK
+[planner] objective 14070 (): quest.advance {'quest_id': 4266, 'npc_id': 3888} -- objective 1: talk
+Traceback (most recent call last):
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 16096, in _run_test
+    fn()
+    ~~^^
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 9590, in test_live_ready
+    spec.loader.exec_module(ready)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 763, in exec_module
+  File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\tools\live_ready.py", line 138, in <module>
+    LOGIN_ASSET = "https://" + os.environ.get("DOFUS_LOGIN_HOST", "dt-proxy-production-login.ankama-games.com") + "/build/primus.js"
+                               ^^
+NameError: name 'os' is not defined. Did you forget to import 'os'?
+[planner] objective 3805 ({'fr': 'Ramener à {npc,1280} : x1 {item,): nav.goto {'map_id': 54165306} -- objective 3: go to map 54165306
+[planner] objective 3805 ({'fr': 'Ramener à {npc,1280} : x1 {item,): farm.start {'resource': 11106} -- objective 3: need item 11106 first
+[planner] objective 3805 ({'fr': 'Ramener à {npc,1280} : x1 {item,): quest.advance {'quest_id': 584, 'npc_id': 1280} -- objective 3: deliver
+[planner] objective 4757 ({'fr': 'Ramener à {npc,1461} : x20 {item): farm.start {'resource': 12456} -- objective 3: need item 12456 first
+[planner] objective 4757 ({'fr': 'Ramener à {npc,1461} : x20 {item): quest.advance {'quest_id': 720, 'npc_id': 1461} -- objective 3: deliver
+[planner] objective 4684 ({'fr': 'Aller voir {npc,1455}', 'en': 'T): quest.advance {'quest_id': 724, 'npc_id': 1455} -- objective 1: talk
+[planner] objective 4717 ({'fr': "Vous devez obtenir au moins 80 p): fight.join {'monster': 885462} -- objective 0: fight
+[planner] objective 4713 ({'fr': 'Ramasser des coquillages et les ): fight.join {'monster': 885460} -- objective 0: fight
+[planner] objective 4724 ({'fr': 'Récupérer 30 langues de krokille): nav.goto {'map_id': 76288008} -- objective 0: go to map 76288008
+[planner] objective 4724 ({'fr': 'Récupérer 30 langues de krokille): fight.join {'monster': 885444} -- objective 0: fight
+[planner] objective 4725 ({'fr': 'Ramener à {npc,1458} : x30 {item): farm.start {'resource': 12498} -- objective 3: need item 12498 first
+[planner] objective 4725 ({'fr': 'Ramener à {npc,1458} : x30 {item): quest.advance {'quest_id': 743, 'npc_id': 1458} -- objective 3: deliver
+[planner] objective 4817 ({'fr': 'Aller voir {npc,1451}', 'en': 'T): quest.advance {'quest_id': 756, 'npc_id': 1451} -- objective 1: talk
+[planner] objective 4805 ({'fr': 'Ramener à {npc,1456} : x1 {item,): farm.start {'resource': 12580} -- objective 3: need item 12580 first
+[planner] objective 4805 ({'fr': 'Ramener à {npc,1456} : x1 {item,): quest.advance {'quest_id': 759, 'npc_id': 1456} -- objective 3: deliver
+[planner] objective 4818 ({'fr': "Implorer Osamodas sur l'Îlot Zam): nav.goto {'map_id': 76416012} -- objective 0: go to map 76416012
+[planner] objective 4818 ({'fr': "Implorer Osamodas sur l'Îlot Zam): fight.join {'monster': 885465} -- objective 0: fight
+[planner] objective 5618 ({'fr': 'Vaincre Grozilla et Grasmera, so): fight.join {'monster': 885463} -- objective 0: fight
+[planner] objective 6724 ({'fr': 'Ramener à {npc,1625} : x1 {item,): farm.start {'resource': 13481} -- objective 3: need item 13481 first
+[planner] objective 6724 ({'fr': 'Ramener à {npc,1625} : x1 {item,): quest.advance {'quest_id': 1066, 'npc_id': 1625} -- objective 3: deliver
+[planner] objective 18595 ({'fr': 'Ramener à {npc,6777} : x5 {item,): nav.goto {'map_id': 218105856} -- objective 3: go to map 218105856
+[planner] objective 18595 ({'fr': 'Ramener à {npc,6777} : x5 {item,): farm.start {'resource': 27068} -- objective 3: need item 27068 first
+[planner] objective 18595 ({'fr': 'Ramener à {npc,6777} : x5 {item,): quest.advance {'quest_id': 2456, 'npc_id': 6777} -- objective 3: deliver
+[planner] objective 9970 ({'fr': 'Ramener à {npc,2888} : x3 {item,): nav.goto {'map_id': 153880325} -- objective 3: go to map 153880325
+[planner] objective 9970 ({'fr': 'Ramener à {npc,2888} : x3 {item,): farm.start {'resource': 16999} -- objective 3: need item 16999 first
+[planner] objective 9970 ({'fr': 'Ramener à {npc,2888} : x3 {item,): quest.advance {'quest_id': 1655, 'npc_id': 2888} -- objective 3: deliver
+[planner] objective 3147 ({'fr': 'Vaincre x1 {monster,168} en un s): nav.goto {'map_id': 183765002} -- objective 6: go to map 183765002
+[planner] objective 3147 ({'fr': 'Vaincre x1 {monster,168} en un s): fight.join {'monster': 168} -- objective 6: fight
+[planner] objective 3160 ({'fr': 'Vaincre x1 {monster,165} en un s): nav.goto {'map_id': 183766020} -- objective 6: go to map 183766020
+[planner] objective 3160 ({'fr': 'Vaincre x1 {monster,165} en un s): fight.join {'monster': 165} -- objective 6: fight
+[planner] objective 3162 ({'fr': 'Vaincre x1 {monster,167} en un s): nav.goto {'map_id': 183762956} -- objective 6: go to map 183762956
+[planner] objective 3162 ({'fr': 'Vaincre x1 {monster,167} en un s): fight.join {'monster': 167} -- objective 6: fight
+[planner] objective 3164 ({'fr': 'Vaincre x1 {monster,161} en un s): nav.goto {'map_id': 183762944} -- objective 6: go to map 183762944
+[planner] objective 3164 ({'fr': 'Vaincre x1 {monster,161} en un s): fight.join {'monster': 161} -- objective 6: fight
+[planner] objective 3166 ({'fr': 'Vaincre x1 {monster,166} en un s): nav.goto {'map_id': 183763974} -- objective 6: go to map 183763974
+[planner] objective 3166 ({'fr': 'Vaincre x1 {monster,166} en un s): fight.join {'monster': 166} -- objective 6: fight
+[planner] objective 3168 ({'fr': 'Vaincre x1 {monster,455} en un s): nav.goto {'map_id': 183767050} -- objective 6: go to map 183767050
+[planner] objective 3168 ({'fr': 'Vaincre x1 {monster,455} en un s): fight.join {'monster': 455} -- objective 6: fight
+[planner] objective 3170 ({'fr': 'Vaincre x1 {monster,162} en un s): nav.goto {'map_id': 17048578} -- objective 6: go to map 17048578
+[planner] objective 3170 ({'fr': 'Vaincre x1 {monster,162} en un s): fight.join {'monster': 162} -- objective 6: fight
+[planner] objective 3172 ({'fr': 'Vaincre x1 {monster,169} en un s): nav.goto {'map_id': 183768076} -- objective 6: go to map 183768076
+[planner] objective 3172 ({'fr': 'Vaincre x1 {monster,169} en un s): fight.join {'monster': 169} -- objective 6: fight
+[planner] objective 3174 ({'fr': 'Vaincre x1 {monster,2691} en un ): nav.goto {'map_id': 183769090} -- objective 6: go to map 183769090
+[planner] objective 3174 ({'fr': 'Vaincre x1 {monster,2691} en un ): fight.join {'monster': 2691} -- objective 6: fight
+[planner] objective 3176 ({'fr': 'Vaincre x1 {monster,163} en un s): nav.goto {'map_id': 183768066} -- objective 6: go to map 183768066
+[planner] objective 3176 ({'fr': 'Vaincre x1 {monster,163} en un s): fight.join {'monster': 163} -- objective 6: fight
+[planner] objective 3178 ({'fr': 'Vaincre x1 {monster,164} en un s): nav.goto {'map_id': 183763980} -- objective 6: go to map 183763980
+[planner] objective 3178 ({'fr': 'Vaincre x1 {monster,164} en un s): fight.join {'monster': 164} -- objective 6: fight
+[planner] objective 3180 ({'fr': 'Vaincre x1 {monster,160} en un s): nav.goto {'map_id': 183764994} -- objective 6: go to map 183764994
+[planner] objective 3180 ({'fr': 'Vaincre x1 {monster,160} en un s): fight.join {'monster': 160} -- objective 6: fight
+[planner] objective 4571 ({'fr': 'Vaincre x1 {monster,3111} en un ): nav.goto {'map_id': 67109888} -- objective 6: go to map 67109888
+[planner] objective 4571 ({'fr': 'Vaincre x1 {monster,3111} en un ): fight.join {'monster': 3111} -- objective 6: fight
+[planner] objective 4594 ({'fr': 'Vaincre x1 {monster,3132} en un ): nav.goto {'map_id': 69207040} -- objective 6: go to map 69207040
+[planner] objective 4594 ({'fr': 'Vaincre x1 {monster,3132} en un ): fight.join {'monster': 3132} -- objective 6: fight
+[planner] objective 5719 ({'fr': 'Vaincre x1 {monster,3286} en un ): nav.goto {'map_id': 96471552} -- objective 6: go to map 96471552
+[planner] objective 5719 ({'fr': 'Vaincre x1 {monster,3286} en un ): fight.join {'monster': 3286} -- objective 6: fight
+[planner] objective 9510 ({'fr': 'Vaincre x1 {monster,3976} en un ): nav.goto {'map_id': 148636161} -- objective 6: go to map 148636161
+[planner] objective 9510 ({'fr': 'Vaincre x1 {monster,3976} en un ): fight.join {'monster': 3976} -- objective 6: fight
+[planner] objective 10322 ({'fr': 'Vaincre x1 {monster,4290} en un ): nav.goto {'map_id': 163053570} -- objective 6: go to map 163053570
+[planner] objective 10322 ({'fr': 'Vaincre x1 {monster,4290} en un ): fight.join {'monster': 4290} -- objective 6: fight
+[planner] objective 12178 ({'fr': 'Vaincre x1 {monster,4777} en un ): nav.goto {'map_id': 177210626} -- objective 6: go to map 177210626
+[planner] objective 12178 ({'fr': 'Vaincre x1 {monster,4777} en un ): fight.join {'monster': 4777} -- objective 6: fight
+[planner] objective 18677 ({'fr': 'Vaincre x1 {monster,7226} en un ): nav.goto {'map_id': 226493185} -- objective 6: go to map 226493185
+[planner] objective 18677 ({'fr': 'Vaincre x1 {monster,7226} en un ): fight.join {'monster': 7226} -- objective 6: fight
+[planner] objective 4590 ({'fr': 'Prendre le cadeau dans les geôle): fight.join {'monster': 886484} -- objective 0: fight
+[planner] objective 4592 ({'fr': "Trouver une Boîte de Coeur et l'): nav.goto {'map_id': 191102978} -- objective 0: go to map 191102978
+[planner] objective 4592 ({'fr': "Trouver une Boîte de Coeur et l'): fight.join {'monster': 79123} -- objective 0: fight
+[planner] objective 5316 ({'fr': 'Ramener à {npc,1522} : x30 {item): farm.start {'resource': 12872} -- objective 3: need item 12872 first
+[planner] objective 5316 ({'fr': 'Ramener à {npc,1522} : x30 {item): quest.advance {'quest_id': 848, 'npc_id': 1522} -- objective 3: deliver
+[planner] objective 5344 ({'fr': 'Aider les Was Mages à se protége): fight.join {'monster': 886554} -- objective 0: fight
+[planner] objective 5454 ({'fr': 'Obtenir 20 Points de côté puis p): nav.goto {'map_id': 66062850} -- objective 0: go to map 66062850
+[planner] objective 5454 ({'fr': 'Obtenir 20 Points de côté puis p): fight.join {'monster': 76427} -- objective 0: fight
+[planner] objective 5317 ({'fr': 'Obtenir 7 Bons Points puis parle): fight.join {'monster': 76406} -- objective 0: fight
+[planner] objective 5456 ({'fr': 'Finir la quête Préparatifs de No): nav.goto {'map_id': 88082199} -- objective 0: go to map 88082199
+[planner] objective 5456 ({'fr': 'Finir la quête Préparatifs de No): fight.join {'monster': 886571} -- objective 0: fight
+[planner] objective 5770 ({'fr': 'Ramener à {npc,1625} : x365 {ite): farm.start {'resource': 13345} -- objective 3: need item 13345 first
+[planner] objective 5770 ({'fr': 'Ramener à {npc,1625} : x365 {ite): quest.advance {'quest_id': 954, 'npc_id': 1625} -- objective 3: deliver
+[planner] objective 8006 ({'fr': 'Former une recrue puis faire un ): nav.goto {'map_id': 121897984} -- objective 0: go to map 121897984
+[planner] objective 8006 ({'fr': 'Former une recrue puis faire un ): fight.join {'monster': 884857} -- objective 0: fight
+[planner] objective 8337 ({'fr': 'Découvrir la carte : Comptoir de): nav.goto {'map_id': 128452097} -- objective 4: go to map 128452097
+[planner] objective 19134 ({'fr': 'Aller voir {npc,7428}', 'en': 'T): nav.goto {'map_id': 139724293} -- objective 1: go to map 139724293
+[planner] objective 19134 ({'fr': 'Aller voir {npc,7428}', 'en': 'T): quest.advance {'quest_id': 2499, 'npc_id': 7428} -- objective 1: talk
+[planner] objective 19525 ({'fr': 'Trouver et ouvrir le coffre du j): fight.join {'monster': 1154226} -- objective 0: fight
+[planner] objective 19526 ({'fr': 'Trouver et ouvrir un coffre de G): fight.join {'monster': 1154270} -- objective 0: fight
+[planner] objective 19527 ({'fr': 'Trouver et ouvrir un coffre de S): fight.join {'monster': 1154275} -- objective 0: fight
+[planner] objective 19528 ({'fr': 'Trouver et ouvrir un coffre de S): fight.join {'monster': 1154281} -- objective 0: fight
+[planner] objective 19529 ({'fr': 'Trouver et ouvrir un coffre de M): fight.join {'monster': 1154287} -- objective 0: fight
+[planner] objective 19540 ({'fr': 'Ramener à {npc,8014} : x1 {item,): farm.start {'resource': 34467} -- objective 3: need item 34467 first
+[planner] objective 19540 ({'fr': 'Ramener à {npc,8014} : x1 {item,): quest.advance {'quest_id': 2546, 'npc_id': 8014} -- objective 3: deliver
+[planner] objective 5340 ({'fr': 'Ramener à {npc,1416} : x7 {item,): farm.start {'resource': 12901} -- objective 3: need item 12901 first
+[planner] objective 5340 ({'fr': 'Ramener à {npc,1416} : x7 {item,): quest.advance {'quest_id': 853, 'npc_id': 1416} -- objective 3: deliver
+[planner] objective 5733 ({'fr': 'Ramener à {npc,1598} : x15 {item): farm.start {'resource': 13288} -- objective 3: need item 13288 first
+[planner] objective 5733 ({'fr': 'Ramener à {npc,1598} : x15 {item): quest.advance {'quest_id': 943, 'npc_id': 1598} -- objective 3: deliver
+[planner] objective 5734 ({'fr': 'Ramener à {npc,1598} : x15 {item): farm.start {'resource': 13290} -- objective 3: need item 13290 first
+[planner] objective 5734 ({'fr': 'Ramener à {npc,1598} : x15 {item): quest.advance {'quest_id': 944, 'npc_id': 1598} -- objective 3: deliver
+[planner] objective 5735 ({'fr': 'Ramener à {npc,1598} : x10 {item): farm.start {'resource': 13289} -- objective 3: need item 13289 first
+[planner] objective 5735 ({'fr': 'Ramener à {npc,1598} : x10 {item): quest.advance {'quest_id': 945, 'npc_id': 1598} -- objective 3: deliver
+[planner] objective 5736 ({'fr': 'Ramener à {npc,1598} : x15 {item): farm.start {'resource': 13292} -- objective 3: need item 13292 first
+[planner] objective 5736 ({'fr': 'Ramener à {npc,1598} : x15 {item): quest.advance {'quest_id': 946, 'npc_id': 1598} -- objective 3: deliver
+[planner] objective 5737 ({'fr': 'Ramener à {npc,1598} : x10 {item): farm.start {'resource': 13291} -- objective 3: need item 13291 first
+[planner] objective 5737 ({'fr': 'Ramener à {npc,1598} : x10 {item): quest.advance {'quest_id': 947, 'npc_id': 1598} -- objective 3: deliver
+[planner] objective 5738 ({'fr': 'Ramener à {npc,1598} : x10 {item): farm.start {'resource': 13293} -- objective 3: need item 13293 first
+[planner] objective 5738 ({'fr': 'Ramener à {npc,1598} : x10 {item): quest.advance {'quest_id': 948, 'npc_id': 1598} -- objective 3: deliver
+[planner] objective 842 ({'fr': 'À qui allez-vous donner votre lo): fight.join {'monster': 77209} -- objective 0: fight
+[planner] objective 3466 ({'fr': 'Percer à jour le secret des Flaq): fight.join {'monster': 55071} -- objective 0: fight
+[planner] objective 5731 ({'fr': 'Ramener à {npc,1600} : x10 {item): farm.start {'resource': 13285} -- objective 3: need item 13285 first
+[planner] objective 5731 ({'fr': 'Ramener à {npc,1600} : x10 {item): quest.advance {'quest_id': 941, 'npc_id': 1600} -- objective 3: deliver
+[planner] objective 1483 ({'fr': 'Ramener à {npc,6309} : x20 {item): nav.goto {'map_id': 217318404} -- objective 3: go to map 217318404
+[planner] objective 1483 ({'fr': 'Ramener à {npc,6309} : x20 {item): farm.start {'resource': 524} -- objective 3: need item 524 first
+[planner] objective 1483 ({'fr': 'Ramener à {npc,6309} : x20 {item): quest.advance {'quest_id': 57, 'npc_id': 6309} -- objective 3: deliver
+[planner] objective 1543 ({'fr': 'Ramener à {npc,6401} : x20 {item): nav.goto {'map_id': 216530944} -- objective 3: go to map 216530944
+[planner] objective 1543 ({'fr': 'Ramener à {npc,6401} : x20 {item): farm.start {'resource': 16404} -- objective 3: need item 16404 first
+[planner] objective 1543 ({'fr': 'Ramener à {npc,6401} : x20 {item): quest.advance {'quest_id': 377, 'npc_id': 6401} -- objective 3: deliver
+[planner] objective 1484 ({'fr': 'Extraire des dents de Chafer et ): nav.goto {'map_id': 212601865} -- objective 0: go to map 212601865
+[planner] objective 1484 ({'fr': 'Extraire des dents de Chafer et ): fight.join {'monster': 928340} -- objective 0: fight
+[planner] objective 1546 ({'fr': 'Amener toutes les caisses', 'en'): nav.goto {'map_id': 216530944} -- objective 0: go to map 216530944
+[planner] objective 1546 ({'fr': 'Amener toutes les caisses', 'en'): fight.join {'monster': 887757} -- objective 0: fight
+[planner] objective 1489 ({'fr': 'Apporter les badges des milicien): nav.goto {'map_id': 217318404} -- objective 0: go to map 217318404
+[planner] objective 1489 ({'fr': 'Apporter les badges des milicien): fight.join {'monster': 891146} -- objective 0: fight
+[planner] objective 1549 ({'fr': 'Ramener à {npc,6401} : x1 {item,): nav.goto {'map_id': 216530944} -- objective 3: go to map 216530944
+[planner] objective 1549 ({'fr': 'Ramener à {npc,6401} : x1 {item,): farm.start {'resource': 2085} -- objective 3: need item 2085 first
+[planner] objective 1549 ({'fr': 'Ramener à {npc,6401} : x1 {item,): quest.advance {'quest_id': 383, 'npc_id': 6401} -- objective 3: deliver
+[planner] objective 551 ({'fr': 'Ramener à {npc,807} : x20 {item,): nav.goto {'map_id': 188746241} -- objective 3: go to map 188746241
+[planner] objective 551 ({'fr': 'Ramener à {npc,807} : x20 {item,): farm.start {'resource': 13153} -- objective 3: need item 13153 first
+[planner] objective 551 ({'fr': 'Ramener à {npc,807} : x20 {item,): quest.advance {'quest_id': 147, 'npc_id': 807} -- objective 3: deliver
+[planner] objective 699 ({'fr': 'Ramener à {npc,842} : x3 {item,2): farm.start {'resource': 2264} -- objective 3: need item 2264 first
+[planner] objective 699 ({'fr': 'Ramener à {npc,842} : x3 {item,2): quest.advance {'quest_id': 168, 'npc_id': 842} -- objective 3: deliver
+[planner] objective 5732 ({'fr': 'Ramener à {npc,1600} : x5 {item,): farm.start {'resource': 13287} -- objective 3: need item 13287 first
+[planner] objective 5732 ({'fr': 'Ramener à {npc,1600} : x5 {item,): quest.advance {'quest_id': 942, 'npc_id': 1600} -- objective 3: deliver
+[planner] objective 8106 ({'fr': 'Aller voir {npc,2205}', 'en': 'T): nav.goto {'map_id': 122421248} -- objective 1: go to map 122421248
+[planner] objective 8106 ({'fr': 'Aller voir {npc,2205}', 'en': 'T): quest.advance {'quest_id': 1462, 'npc_id': 2205} -- objective 1: talk
+[planner] objective 11465 ({'fr': 'Rencontrer Otomaï', 'en': 'Meet ): nav.goto {'map_id': 88604676} -- objective 0: go to map 88604676
+[planner] objective 11465 ({'fr': 'Rencontrer Otomaï', 'en': 'Meet ): fight.join {'monster': 699702} -- objective 0: fight
+[planner] objective 12244 ({'fr': "Répondre correctement aux questi): nav.goto {'map_id': 164102659} -- objective 0: go to map 164102659
+[planner] objective 12244 ({'fr': "Répondre correctement aux questi): fight.join {'monster': 721118} -- objective 0: fight
+[planner] objective 13792 ({'fr': 'Ramener à {npc,4366} : x15 {item): nav.goto {'map_id': 191105028} -- objective 3: go to map 191105028
+[planner] objective 13792 ({'fr': 'Ramener à {npc,4366} : x15 {item): farm.start {'resource': 19630} -- objective 3: need item 19630 first
+[planner] objective 13792 ({'fr': 'Ramener à {npc,4366} : x15 {item): quest.advance {'quest_id': 1983, 'npc_id': 4366} -- objective 3: deliver
+[planner] objective 14929 ({'fr': 'Ramener à {npc,4803} : x5 {item,): nav.goto {'map_id': 196870144} -- objective 3: go to map 196870144
+[planner] objective 14929 ({'fr': 'Ramener à {npc,4803} : x5 {item,): farm.start {'resource': 20984} -- objective 3: need item 20984 first
+[planner] objective 14929 ({'fr': 'Ramener à {npc,4803} : x5 {item,): quest.advance {'quest_id': 2072, 'npc_id': 4803} -- objective 3: deliver
+[planner] objective 950 ({'fr': 'Ramener à {npc,926} : x1 {item,8): nav.goto {'map_id': 155667} -- objective 3: go to map 155667
+[planner] objective 950 ({'fr': 'Ramener à {npc,926} : x1 {item,8): farm.start {'resource': 8913} -- objective 3: need item 8913 first
+[planner] objective 950 ({'fr': 'Ramener à {npc,926} : x1 {item,8): quest.advance {'quest_id': 234, 'npc_id': 926} -- objective 3: deliver
+[planner] objective 7840 ({'fr': 'Faire une partie de Kama Baraka'): nav.goto {'map_id': 103547392} -- objective 0: go to map 103547392
+[planner] objective 7840 ({'fr': 'Faire une partie de Kama Baraka'): fight.join {'monster': 452870} -- objective 0: fight
+[planner] objective 14528 ({'fr': 'Trouver et ouvrir le coffre des ): fight.join {'monster': 768481} -- objective 0: fight
+[planner] objective 4758 ({'fr': 'Ramener à {npc,1461} : x20 {item): farm.start {'resource': 12457} -- objective 3: need item 12457 first
+[planner] objective 4758 ({'fr': 'Ramener à {npc,1461} : x20 {item): quest.advance {'quest_id': 721, 'npc_id': 1461} -- objective 3: deliver
+[planner] objective 4714 ({'fr': 'Ramasser des coquillages et les ): fight.join {'monster': 885453} -- objective 0: fight
+[planner] objective 4726 ({'fr': 'Ramener à {npc,1458} : x30 {item): nav.goto {'map_id': 76288008} -- objective 3: go to map 76288008
+[planner] objective 4726 ({'fr': 'Ramener à {npc,1458} : x30 {item): farm.start {'resource': 12499} -- objective 3: need item 12499 first
+[planner] objective 4726 ({'fr': 'Ramener à {npc,1458} : x30 {item): quest.advance {'quest_id': 744, 'npc_id': 1458} -- objective 3: deliver
+[planner] objective 1557 ({'fr': 'Ramener à {npc,6401} : x15 {item): nav.goto {'map_id': 216530944} -- objective 3: go to map 216530944
+[planner] objective 1557 ({'fr': 'Ramener à {npc,6401} : x15 {item): farm.start {'resource': 2065} -- objective 3: need item 2065 first
+[planner] objective 1557 ({'fr': 'Ramener à {npc,6401} : x15 {item): quest.advance {'quest_id': 389, 'npc_id': 6401} -- objective 3: deliver
+[planner] objective 5739 ({'fr': 'Ramener à {npc,1601} : x10 {item): nav.goto {'map_id': 90703360} -- objective 3: go to map 90703360
+[planner] objective 5739 ({'fr': 'Ramener à {npc,1601} : x10 {item): farm.start {'resource': 13294} -- objective 3: need item 13294 first
+[planner] objective 5739 ({'fr': 'Ramener à {npc,1601} : x10 {item): quest.advance {'quest_id': 949, 'npc_id': 1601} -- objective 3: deliver
+[planner] objective 1500 ({'fr': 'Ramener à {npc,6309} : x15 {item): nav.goto {'map_id': 217318404} -- objective 3: go to map 217318404
+[planner] objective 1500 ({'fr': 'Ramener à {npc,6309} : x15 {item): farm.start {'resource': 2065} -- objective 3: need item 2065 first
+[planner] objective 1500 ({'fr': 'Ramener à {npc,6309} : x15 {item): quest.advance {'quest_id': 71, 'npc_id': 6309} -- objective 3: deliver
+[planner] objective 541 ({'fr': 'Ramener à {npc,803} : x1 {item,3): nav.goto {'map_id': 68551682} -- objective 3: go to map 68551682
+[planner] objective 541 ({'fr': 'Ramener à {npc,803} : x1 {item,3): farm.start {'resource': 33001} -- objective 3: need item 33001 first
+[planner] objective 541 ({'fr': 'Ramener à {npc,803} : x1 {item,3): quest.advance {'quest_id': 143, 'npc_id': 803} -- objective 3: deliver
+[planner] objective 543 ({'fr': 'Ramener à {npc,6453} : x1 {item,): nav.goto {'direction': 'right'} -- objective 3: discover a map by walking the right edge (-> 68551170)
+[planner] objective 543 ({'fr': 'Ramener à {npc,6453} : x1 {item,): nav.goto {'map_id': 217317382} -- objective 3: go to map 217317382
+[planner] objective 543 ({'fr': 'Ramener à {npc,6453} : x1 {item,): farm.start {'resource': 33063} -- objective 3: need item 33063 first
+[planner] objective 543 ({'fr': 'Ramener à {npc,6453} : x1 {item,): quest.advance {'quest_id': 144, 'npc_id': 6453} -- objective 3: deliver
+[planner] objective 544 ({'fr': 'Ramener à {npc,805} : x1 {item,3): nav.goto {'map_id': 216531202} -- objective 3: go to map 216531202
+[planner] objective 544 ({'fr': 'Ramener à {npc,805} : x1 {item,3): farm.start {'resource': 33063} -- objective 3: need item 33063 first
+[planner] objective 544 ({'fr': 'Ramener à {npc,805} : x1 {item,3): quest.advance {'quest_id': 145, 'npc_id': 805} -- objective 3: deliver
+[planner] objective 7890 ({'fr': 'Ramener à {npc,140} : x10 {item,): nav.goto {'map_id': 99614727} -- objective 3: go to map 99614727
+[planner] objective 7890 ({'fr': 'Ramener à {npc,140} : x10 {item,): farm.start {'resource': 14503} -- objective 3: need item 14503 first
+[planner] objective 7890 ({'fr': 'Ramener à {npc,140} : x10 {item,): quest.advance {'quest_id': 844, 'npc_id': 140} -- objective 3: deliver
+[planner] objective 14830 ({'fr': 'Ramener à {npc,4816} : x10 {item): nav.goto {'map_id': 196870152} -- objective 3: go to map 196870152
+[planner] objective 14830 ({'fr': 'Ramener à {npc,4816} : x10 {item): farm.start {'resource': 20821} -- objective 3: need item 20821 first
+[planner] objective 14830 ({'fr': 'Ramener à {npc,4816} : x10 {item): quest.advance {'quest_id': 2061, 'npc_id': 4816} -- objective 3: deliver
+[planner] objective 14886 ({'fr': 'Trouver Charli', 'en': 'Find Wal): fight.join {'monster': 788387} -- objective 0: fight
+[planner] objective 14899 ({'fr': 'Ramener à {npc,4810} : x10 {item): nav.goto {'map_id': 196608004} -- objective 3: go to map 196608004
+[planner] objective 14899 ({'fr': 'Ramener à {npc,4810} : x10 {item): farm.start {'resource': 20904} -- objective 3: need item 20904 first
+[planner] objective 14899 ({'fr': 'Ramener à {npc,4810} : x10 {item): quest.advance {'quest_id': 2067, 'npc_id': 4810} -- objective 3: deliver
+[planner] objective 4803 ({'fr': "Obtenir les aveux de la personne): fight.join {'monster': 55310} -- objective 0: fight
+[planner] objective 4804 ({'fr': 'Retourner voir {npc,1451}', 'en'): quest.advance {'quest_id': 749, 'npc_id': 1451} -- objective 9: talk
+[planner] objective 5623 ({'fr': 'Souiller le drapeau de Lantamaï'): nav.goto {'map_id': 76286989} -- objective 0: go to map 76286989
+[planner] objective 5623 ({'fr': 'Souiller le drapeau de Lantamaï'): fight.join {'monster': 885478} -- objective 0: fight
+[planner] objective 5624 ({'fr': 'Aller voir {npc,1607}', 'en': 'T): nav.goto {'map_id': 76284416} -- objective 1: go to map 76284416
+[planner] objective 5624 ({'fr': 'Aller voir {npc,1607}', 'en': 'T): quest.advance {'quest_id': 934, 'npc_id': 1607} -- objective 1: talk
+[planner] objective 5625 ({'fr': 'Souiller le drapeau de Kohrog', ): fight.join {'monster': 885483} -- objective 0: fight
+[planner] objective 5626 ({'fr': 'Aller voir {npc,1606}', 'en': 'T): nav.goto {'map_id': 76286989} -- objective 1: go to map 76286989
+[planner] objective 5626 ({'fr': 'Aller voir {npc,1606}', 'en': 'T): quest.advance {'quest_id': 935, 'npc_id': 1606} -- objective 1: talk
+[planner] objective 18601 ({'fr': 'Choisir un altéré auprès de Prof): fight.join {'monster': 954792} -- objective 0: fight
+[planner] objective 18602 ({'fr': 'Poursuivre votre aventure en vou): fight.join {'monster': 954793} -- objective 0: fight
+[planner] objective 9850 ({'fr': 'Vaincre x1 {monster,4097} en un ): nav.goto {'map_id': 153879040} -- objective 6: go to map 153879040
+[planner] objective 9850 ({'fr': 'Vaincre x1 {monster,4097} en un ): fight.join {'monster': 4097} -- objective 6: fight
+[planner] objective 9851 ({'fr': 'Retourner voir {npc,2880}', 'en'): nav.goto {'map_id': 153356294} -- objective 9: go to map 153356294
+[planner] objective 9851 ({'fr': 'Retourner voir {npc,2880}', 'en'): quest.advance {'quest_id': 1647, 'npc_id': 2880} -- objective 9: talk
+[planner] objective 13769 ({'fr': 'Aller voir {npc,4361}', 'en': 'T): nav.goto {'map_id': 192413696} -- objective 1: go to map 192413696
+[planner] objective 13769 ({'fr': 'Aller voir {npc,4361}', 'en': 'T): quest.advance {'quest_id': 1978, 'npc_id': 4361} -- objective 1: talk
+[planner] objective 13770 ({'fr': 'Ramener à {npc,4323} : x1 {item,): nav.goto {'map_id': 192413706} -- objective 3: go to map 192413706
+[planner] objective 13770 ({'fr': 'Ramener à {npc,4323} : x1 {item,): farm.start {'resource': 19623} -- objective 3: need item 19623 first
+[planner] objective 13770 ({'fr': 'Ramener à {npc,4323} : x1 {item,): quest.advance {'quest_id': 1978, 'npc_id': 4323} -- objective 3: deliver
+[planner] objective 3533 ({'fr': 'Vaincre x1 {monster,147} en un s): fight.join {'monster': 147} -- objective 6: fight
+[planner] objective 3534 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): nav.goto {'map_id': 88082199} -- objective 1: go to map 88082199
+[planner] objective 3534 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): quest.advance {'quest_id': 495, 'npc_id': 1232} -- objective 1: talk
+[planner] objective 3535 ({'fr': 'Vaincre x1 {monster,799} en un s): nav.goto {'map_id': 190318592} -- objective 6: go to map 190318592
+[planner] objective 3535 ({'fr': 'Vaincre x1 {monster,799} en un s): fight.join {'monster': 799} -- objective 6: fight
+[planner] objective 3536 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): nav.goto {'map_id': 88082199} -- objective 1: go to map 88082199
+[planner] objective 3536 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): quest.advance {'quest_id': 496, 'npc_id': 1232} -- objective 1: talk
+[planner] objective 3537 ({'fr': 'Vaincre x1 {monster,928} en un s): fight.join {'monster': 928} -- objective 6: fight
+[planner] objective 3538 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): quest.advance {'quest_id': 497, 'npc_id': 1232} -- objective 1: talk
+[planner] objective 3539 ({'fr': 'Vaincre x1 {monster,800} en un s): nav.goto {'map_id': 96209922} -- objective 6: go to map 96209922
+[planner] objective 3539 ({'fr': 'Vaincre x1 {monster,800} en un s): fight.join {'monster': 800} -- objective 6: fight
+[planner] objective 3540 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): nav.goto {'map_id': 88082199} -- objective 1: go to map 88082199
+[planner] objective 3540 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): quest.advance {'quest_id': 498, 'npc_id': 1232} -- objective 1: talk
+[planner] objective 3543 ({'fr': 'Vaincre x1 {monster,797} en un s): fight.join {'monster': 797} -- objective 6: fight
+[planner] objective 3544 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): quest.advance {'quest_id': 500, 'npc_id': 1232} -- objective 1: talk
+[planner] objective 5345 ({'fr': 'Ramener à {npc,1531} : x1 {item,): farm.start {'resource': 12931} -- objective 3: need item 12931 first
+[planner] objective 5345 ({'fr': 'Ramener à {npc,1531} : x1 {item,): quest.advance {'quest_id': 871, 'npc_id': 1531} -- objective 3: deliver
+[planner] objective 5346 ({'fr': 'Ramener à {npc,1531} : x10 {item): farm.start {'resource': 12932} -- objective 3: need item 12932 first
+[planner] objective 5346 ({'fr': 'Ramener à {npc,1531} : x10 {item): quest.advance {'quest_id': 871, 'npc_id': 1531} -- objective 3: deliver
+[planner] objective 5371 ({'fr': 'Vaincre x1 {monster,252} en un s): fight.join {'monster': 252} -- objective 6: fight
+[planner] objective 5372 ({'fr': 'Aller voir {npc,1232}', 'en': 'T): quest.advance {'quest_id': 882, 'npc_id': 1232} -- objective 1: talk
+[planner] objective 10335 ({'fr': 'Localiser et neutraliser Sam Sag): fight.join {'monster': 884727} -- objective 0: fight
+[planner] objective 10336 ({'fr': "Ramener Sam Sagaz à la milice po): fight.join {'monster': 884728} -- objective 0: fight
+[planner] objective 19144 ({'fr': 'Lancer le dé de Minawax et décou): nav.goto {'map_id': 200807426} -- objective 0: go to map 200807426
+[planner] objective 19144 ({'fr': 'Lancer le dé de Minawax et décou): fight.join {'monster': 1084087} -- objective 0: fight
+[planner] objective 19143 ({'fr': 'Ramener à {npc,7467} : x10 {item): farm.start {'resource': 30169} -- objective 3: need item 30169 first
+[planner] objective 19143 ({'fr': 'Ramener à {npc,7467} : x10 {item): quest.advance {'quest_id': 2501, 'npc_id': 7467} -- objective 3: deliver
+[planner] objective 19272 ({'fr': "Fabriquer une unique pierre d'âm): fight.join {'monster': 1124304} -- objective 0: fight
+[planner] objective 19273 ({'fr': "Rapporter une pierre d'âme spéci): nav.goto {'map_id': 81789952} -- objective 0: go to map 81789952
+[planner] objective 19273 ({'fr': "Rapporter une pierre d'âme spéci): fight.join {'monster': 1122076} -- objective 0: fight
+[planner] objective 674 ({'fr': 'Vaincre x1 {monster,950} en un s): fight.join {'monster': 950} -- objective 6: fight
+[planner] objective 697 ({'fr': 'Aller voir {npc,831}', 'en': 'Ta): quest.advance {'quest_id': 164, 'npc_id': 831} -- objective 1: talk
+[planner] objective 675 ({'fr': 'Vaincre x1 {monster,951} en un s): fight.join {'monster': 951} -- objective 6: fight
+[planner] objective 696 ({'fr': 'Retourner voir {npc,832}', 'en':): quest.advance {'quest_id': 165, 'npc_id': 832} -- objective 9: talk
+[planner] objective 7947 ({'fr': 'Localiser et neutraliser les Gum): fight.join {'monster': 884700} -- objective 0: fight
+[planner] objective 7948 ({'fr': "Ramener les Guman à la Garde des): nav.goto {'map_id': 121900032} -- objective 0: go to map 121900032
+[planner] objective 7948 ({'fr': "Ramener les Guman à la Garde des): fight.join {'monster': 884701} -- objective 0: fight
+[planner] objective 10337 ({'fr': 'Localiser et neutraliser Maître ): fight.join {'monster': 884703} -- objective 0: fight
+[planner] objective 10338 ({'fr': "Ramener Maître Boulet à la milic): fight.join {'monster': 884704} -- objective 0: fight
+[planner] objective 12023 ({'fr': 'Ramener à {npc,3666} : x5 {item,): nav.goto {'map_id': 91751941} -- objective 3: go to map 91751941
+[planner] objective 12023 ({'fr': 'Ramener à {npc,3666} : x5 {item,): farm.start {'resource': 379} -- objective 3: need item 379 first
+[planner] objective 12023 ({'fr': 'Ramener à {npc,3666} : x5 {item,): quest.advance {'quest_id': 1824, 'npc_id': 3666} -- objective 3: deliver
+[planner] objective 12024 ({'fr': 'Ramener à {npc,3666} : x10 {item): farm.start {'resource': 18470} -- objective 3: need item 18470 first
+[planner] objective 12024 ({'fr': 'Ramener à {npc,3666} : x10 {item): quest.advance {'quest_id': 1824, 'npc_id': 3666} -- objective 3: deliver
+[planner] objective 13793 ({'fr': 'Aller voir {npc,735}', 'en': 'Ta): nav.goto {'map_id': 188743684} -- objective 1: go to map 188743684
+[planner] objective 13793 ({'fr': 'Aller voir {npc,735}', 'en': 'Ta): quest.advance {'quest_id': 1994, 'npc_id': 735} -- objective 1: talk
+[planner] objective 13794 ({'fr': 'Aller voir {npc,734}', 'en': 'Ta): nav.goto {'map_id': 188746757} -- objective 1: go to map 188746757
+[planner] objective 13794 ({'fr': 'Aller voir {npc,734}', 'en': 'Ta): quest.advance {'quest_id': 1994, 'npc_id': 734} -- objective 1: talk
+[planner] objective 18911 ({'fr': "Découvrir la carte : Intérieur d): nav.goto {'map_id': 229900288} -- objective 4: go to map 229900288
+[planner] objective 18912 ({'fr': 'Aller voir {npc,7037}', 'en': 'T): nav.goto {'map_id': 229901312} -- objective 1: go to map 229901312
+[planner] objective 18912 ({'fr': 'Aller voir {npc,7037}', 'en': 'T): quest.advance {'quest_id': 2483, 'npc_id': 7037} -- objective 1: talk
+[planner] objective 1480 ({'fr': 'Vaincre x1 {monster,286} en un s): nav.goto {'map_id': 217319426} -- objective 6: go to map 217319426
+[planner] objective 1480 ({'fr': 'Vaincre x1 {monster,286} en un s): fight.join {'monster': 286} -- objective 6: fight
+[planner] objective 9602 ({'fr': 'Ramener à {npc,6309} : x1 {item,): nav.goto {'map_id': 217318404} -- objective 3: go to map 217318404
+[planner] objective 9602 ({'fr': 'Ramener à {npc,6309} : x1 {item,): farm.start {'resource': 1726} -- objective 3: need item 1726 first
+[planner] objective 9602 ({'fr': 'Ramener à {npc,6309} : x1 {item,): quest.advance {'quest_id': 55, 'npc_id': 6309} -- objective 3: deliver
+[planner] objective 1541 ({'fr': 'Vaincre x1 {monster,369} en un s): nav.goto {'map_id': 216530944} -- objective 6: go to map 216530944
+[planner] objective 1541 ({'fr': 'Vaincre x1 {monster,369} en un s): fight.join {'monster': 369} -- objective 6: fight
+[planner] objective 9612 ({'fr': 'Ramener à {npc,6401} : x1 {item,): farm.start {'resource': 2042} -- objective 3: need item 2042 first
+[planner] objective 9612 ({'fr': 'Ramener à {npc,6401} : x1 {item,): quest.advance {'quest_id': 375, 'npc_id': 6401} -- objective 3: deliver
+[planner] objective 1481 ({'fr': 'Aller voir {npc,6404}', 'en': 'T): nav.goto {'map_id': 217058304} -- objective 1: go to map 217058304
+[planner] objective 1481 ({'fr': 'Aller voir {npc,6404}', 'en': 'T): quest.advance {'quest_id': 56, 'npc_id': 6404} -- objective 1: talk
+[planner] objective 1482 ({'fr': 'Ramener à {npc,6309} : x1 {item,): nav.goto {'map_id': 217318404} -- objective 3: go to map 217318404
+[planner] objective 1482 ({'fr': 'Ramener à {npc,6309} : x1 {item,): farm.start {'resource': 1727} -- objective 3: need item 1727 first
+[planner] objective 1482 ({'fr': 'Ramener à {npc,6309} : x1 {item,): quest.advance {'quest_id': 56, 'npc_id': 6309} -- objective 3: deliver
+[planner] objective 1544 ({'fr': 'Aller voir {npc,6387}', 'en': 'T): nav.goto {'map_id': 213648388} -- objective 1: go to map 213648388
+[planner] objective 1544 ({'fr': 'Aller voir {npc,6387}', 'en': 'T): quest.advance {'quest_id': 378, 'npc_id': 6387} -- objective 1: talk
+[planner] objective 9615 ({'fr': 'Extraire des dents de Chafer et ): nav.goto {'map_id': 216530944} -- objective 0: go to map 216530944
+[planner] objective 9615 ({'fr': 'Extraire des dents de Chafer et ): fight.join {'monster': 888008} -- objective 0: fight
+[planner] objective 1485 ({'fr': 'Vaincre x1 {monster,314} en un s): nav.goto {'map_id': 217058304} -- objective 6: go to map 217058304
+[planner] objective 1485 ({'fr': 'Vaincre x1 {monster,314} en un s): fight.join {'monster': 314} -- objective 6: fight
+[planner] objective 9603 ({'fr': 'Ramener à {npc,6309} : x1 {item,): nav.goto {'map_id': 217318404} -- objective 3: go to map 217318404
+[planner] objective 9603 ({'fr': 'Ramener à {npc,6309} : x1 {item,): farm.start {'resource': 1744} -- objective 3: need item 1744 first
+[planner] objective 9603 ({'fr': 'Ramener à {npc,6309} : x1 {item,): quest.advance {'quest_id': 59, 'npc_id': 6309} -- objective 3: deliver
+[planner] objective 1545 ({'fr': 'Vaincre x1 {monster,370} en un s): nav.goto {'map_id': 216530944} -- objective 6: go to map 216530944
+[planner] objective 1545 ({'fr': 'Vaincre x1 {monster,370} en un s): fight.join {'monster': 370} -- objective 6: fight
+[planner] objective 9616 ({'fr': 'Ramener à {npc,6401} : x1 {item,): farm.start {'resource': 2042} -- objective 3: need item 2042 first
+[planner] objective 9616 ({'fr': 'Ramener à {npc,6401} : x1 {item,): quest.advance {'quest_id': 379, 'npc_id': 6401} -- objective 3: deliver
+Traceback (most recent call last):
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 16096, in _run_test
+    fn()
+    ~~^^
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 15767, in test_egress_preflight
+    spec.loader.exec_module(live_ready)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 763, in exec_module
+  File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\tools\live_ready.py", line 138, in <module>
+    LOGIN_ASSET = "https://" + os.environ.get("DOFUS_LOGIN_HOST", "dt-proxy-production-login.ankama-games.com") + "/build/primus.js"
+                               ^^
+NameError: name 'os' is not defined. Did you forget to import 'os'?
+Traceback (most recent call last):
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 16096, in _run_test
+    fn()
+    ~~^^
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 15855, in test_host_launch_guard
+    _host_launch_cases(hc)
+    ~~~~~~~~~~~~~~~~~~^^^^
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\agent\regression.py", line 15901, in _host_launch_cases
+    spec2.loader.exec_module(ready)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 763, in exec_module
+  File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed
+  File "C:\Users\sao\Documents\dofus-emu\dofus-network\tools\live_ready.py", line 138, in <module>
+    LOGIN_ASSET = "https://" + os.environ.get("DOFUS_LOGIN_HOST", "dt-proxy-production-login.ankama-games.com") + "/build/primus.js"
+                               ^^
+NameError: name 'os' is not defined. Did you forget to import 'os'?
+no such log file: definitely-not-here.jsonl
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.014s
+
+OK
+........
+----------------------------------------------------------------------
+Ran 8 tests in 0.050s
+
+OK
+.........................
+----------------------------------------------------------------------
+Ran 25 tests in 0.043s
+
+OK
+...........................
+----------------------------------------------------------------------
+Ran 27 tests in 0.016s
+
+OK
+..................
+----------------------------------------------------------------------
+Ran 18 tests in 0.247s
+
+OK
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 1.179s
+
+OK
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 0.007s
+
+OK
+...........
+----------------------------------------------------------------------
+Ran 11 tests in 0.009s
+
+OK
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.025s
+
+OK
+2026-11-09 13:37:49,804 [ERROR] another dofus agent service already answers on 127.0.0.1:25263; refusing to start a second control plane on the same port
+[planner] objective 13926 (Talk to Great Jarl Ordyn): nav.goto {'map_id': 145490435} -- objective 1: map 145490435 is 1 crossing(s) away; walk the first crossing to 145490435
+[planner] objective 13926 (Talk to Great Jarl Ordyn): nav.goto {'map_id': 145490435} -- objective 1: map 145490435 is 1 crossing(s) away; walk the first crossing to 145490435
+[planner] objective 13926 (Talk to Great Jarl Ordyn): nav.goto {'map_id': 145489924, 'direction': 'bottom'} -- objective 1: map 145489923 publishes no crossable border; ask the server for the bottom neighbour 145489924
+[planner] objective 13926 (Talk to Great Jarl Ordyn): nav.goto {'map_id': 145489922, 'direction': 'top'} -- objective 1: map 145489923 publishes no crossable border; ask the server for the top neighbour 145489922
+[planner] objective 13926 (Talk to Great Jarl Ordyn): nav.goto {'map_id': 145621507, 'direction': 'left'} -- objective 1: map 145489923 publishes no crossable border; ask the server for the left neighbour 145621507
+[planner] objective 13926 (Talk to Great Jarl Ordyn): state.snapshot {} -- objective 1: 5 travel attempts never came nearer to map 145490435 (1 crossings away, budget 12); the crossing refused
+[planner] objective 13926 (Talk to Great Jarl Ordyn): state.snapshot {} -- objective 1: 6 travel attempts never came nearer to map 145490435 (1 crossings away, budget 12); the crossing refused
+[planner] objective 13926 (Talk to Great Jarl Ordyn): state.snapshot {} -- objective 1: 7 travel attempts never came nearer to map 145490435 (1 crossings away, budget 12); the crossing refused
+[planner] objective 13926 (Talk to Great Jarl Ordyn): state.snapshot {} -- objective 1: 8 travel attempts never came nearer to map 145490435 (1 crossings away, budget 12); the crossing refused
+[planner] objective 914074 (Reach level 10.): fight.join {'group_id': -34016} -- level gate 990001/914074: the character is level 8 and only a fight moves it; this map's smallest allowed group
+[planner] objective 914074 (Reach level 10.): fight.join {'group_id': -34017} -- level gate 990001/914074 is open at level 8 and objective 990002/913966 names monster 4212, which this group holds: one fight advances both
+[planner] objective 914074 (Reach level 10.): nav.goto {'map_id': 145490946} -- level gate 990001/914074 and objective 990002/913966 both need map 145490946; one trip, then the fight pays both
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group on this map and the step forbids crossing; waiting
+[planner] objective 914074 (Reach level 10.): nav.goto {'direction': 'right'} -- level gate 990001/914074: no group on this map and no map is known to have one; look for one
+[planner] objective 914074 (Reach level 10.): fight.join {'group_id': -34016} -- level gate 990001/914074: the character is level 8 and only a fight moves it; this map's smallest allowed group
+[planner] objective 914074 (Reach level 10.): nav.goto {'map_id': 145490434} -- level gate 990001/914074: map 145490434 is where groups were last seen; go back and fight there
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group found and no edge left to try; waiting
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group found and no edge left to try; waiting
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group found and no edge left to try; waiting
+[planner] level gate 990001/914074: map 145490946 has been empty on 3 look(s); not travelling back there until a group is seen
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group found and no edge left to try; waiting
+[planner] objective 914074 (Reach level 10.): nav.goto {'direction': 'left'} -- level gate 990001/914074: no group on this map and no map is known to have one; look for one
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group found and no edge left to try; waiting
+[planner] objective 914074 (Reach level 10.): nav.goto {'map_id': 145490946} -- level gate 990001/914074 and objective 990002/913966 both need map 145490946; one trip, then the fight pays both
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group found and no edge left to try; waiting
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group found and no edge left to try; waiting
+[planner] level gate 990001/914074: map 145490946 has been empty on 3 look(s); not travelling back there until a group is seen
+[planner] objective 914074 (Reach level 10.): state.snapshot {} -- level gate 990001/914074: no group found and no edge left to try; waiting
+[planner] objective 914074 (Reach level 10.): fight.join {'group_id': -34016} -- level gate 990001/914074: the character is level 8 and only a fight moves it; this map's smallest allowed group
+[planner] objective 914074 (Reach level 10.): nav.goto {'map_id': 145490946} -- level gate 990001/914074 and objective 990002/913966 both need map 145490946; one trip, then the fight pays both
+[planner] objective 13958 (Give a report to Great Jarl Ordyn.): nav.goto {'map_id': 145490435} -- objective 0: go to map 145490435
+[planner] objective 13958 (Give a report to Great Jarl Ordyn.): nav.goto {'map_id': 145490435} -- objective 0: go to map 145490435
+[planner] objective 13958 (Give a report to Great Jarl Ordyn.): nav.goto {'map_id': 145490435} -- objective 0: go to map 145490435
+[planner] objective 13958 (Give a report to Great Jarl Ordyn.): state.snapshot {} -- objective 0: 2 travel attempts never came nearer to map 145490435 (1 crossings away, budget 12); the right edge -> 145490435
+[planner] objective 913948 (Recover the first page of the aqueduct b): nav.goto {'map_id': 145490433} -- objective 0: map 145490432 is 2 crossing(s) away; the top exit to 145490433 is the first
+[planner] objective 913966 (Defeat 1 Brytnee Spyr in a single fight.): nav.goto {'map_id': 145490946} -- objective 6: go to map 145490946
+[planner] objective 913948 (Recover the first page of the aqueduct b): nav.goto {'map_id': 145490433} -- objective 0: map 145490432 is 2 crossing(s) away; the top exit to 145490433 is the first
+[planner] objective 913948 (Recover the first page of the aqueduct b): nav.goto {'map_id': 145490433} -- objective 0: map 145490432 is 2 crossing(s) away; the top exit to 145490433 is the first
+2026-11-09 13:37:56,954 [INFO] Unable to initialize backend 'tpu': UNIMPLEMENTED: LoadPjrtPlugin is not implemented on windows yet.
+2026-11-09 13:37:56,977 [INFO] Unable to initialize backend 'proxy': The 'proxy' backend requires the address of an IFRT Proxy server. Set it via the JAX_BACKEND_TARGET environment variable or the jax_backend_target config option, e.g. JAX_BACKEND_TARGET=grpc://localhost:29000.
+2026-11-09 13:37:58,589 [INFO] RulePolicy: DofusNLPEngine loaded
+[planner] objective 13940 (Go back and see Foreman Kosh once the mo): nav.goto {'map_id': 145489920} -- objective 0: map 145489920 is 1 crossing(s) away; walk the first crossing to 145489920
+[planner] objective 13960 (Talk to Lieutenant.): nav.goto {'map_id': 145489921} -- objective 0: map 145490946 is 4 crossing(s) away; walk the first crossing to 145489921
+[planner] objective 13940 (Go back and see Foreman Kosh once the mo): nav.goto {'map_id': 145490945} -- objective 0: map 145489920 is 4 crossing(s) away; walk the first crossing to 145490945
+[planner] objective 13960 (Talk to Lieutenant.): nav.goto {'map_id': 145489921} -- objective 0: map 145490946 is 4 crossing(s) away; walk the first crossing to 145489921
+[planner] objective 13940 (Go back and see Foreman Kosh once the mo): nav.goto {'map_id': 145489920} -- objective 0: map 145489920 is 1 crossing(s) away; walk the first crossing to 145489920
+[planner] objective 13940 (Go back and see Foreman Kosh once the mo): nav.goto {'map_id': 145489920} -- objective 0: map 145489920 is 1 crossing(s) away; walk the first crossing to 145489920
+[planner] objective 13960 (Talk to Lieutenant.): nav.goto {'map_id': 145489921} -- objective 0: map 145490946 is 4 crossing(s) away; the bottom exit to 145489921 is the first
+[planner] objective 13960 (Talk to Lieutenant.): nav.goto {'map_id': 145489922} -- objective 0: map 145490946 is 3 crossing(s) away; the bottom exit to 145489922 is the first
+[planner] objective 13930 (Find the map: Dam worksite.): nav.goto {'map_id': 145490945} -- objective 4: map 145489920 is 4 crossing(s) away; the top exit to 145490945 is the first
+[planner] objective 13930 (Find the map: Dam worksite.): nav.goto {'map_id': 145490945} -- objective 4: map 145489920 is 4 crossing(s) away; the top exit to 145490945 is the first
+[planner] objective 913966 (Defeat 1 Brytnee Spyr.): nav.goto {'map_id': 145490946} -- objective 6: go to map 145490946
+[planner] objective 913966 (Defeat 1 Brytnee Spyr.): nav.goto {'map_id': 145490946} -- objective 6: go to map 145490946
+[planner] objective 913966 (Defeat 1 Brytnee Spyr.): nav.goto {'map_id': 145490946} -- objective 6: go to map 145490946
+[planner] objective 913966 (Defeat 1 Brytnee Spyr.): state.snapshot {} -- objective 6: 2 travel attempts never came nearer to map 145490946 (3 crossings away, budget 12); the crossing refused
+[planner] objective 913966 (Defeat 1 Brytnee Spyr.): state.snapshot {} -- objective 6: 3 travel attempts never came nearer to map 145490946 (3 crossings away, budget 12); the crossing refused
+[planner] objective 913966 (Defeat 1 Brytnee Spyr.): nav.goto {'map_id': 145490946} -- objective 6: go to map 145490946

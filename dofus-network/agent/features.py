@@ -26,7 +26,7 @@ import unicodedata
 from collections import deque
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agent.jsonio import loads as fast_loads
 
@@ -85,14 +85,14 @@ MAP_TYPES = {4}
 # the comment above enumerates every type, and a reader who finds no consumer should be
 # able to learn why in one line instead of hunting for a missing branch.
 AREA_TYPES = {5}
-KILL_TYPES = {0, 6, 14, 16}
+KILL_TYPES = {0, 6, 14, 16, 45}   # 45 = QuestObjectiveWinMonsterInDungeon (win monster in a dungeon room)
 DELIVER_TYPES = {2, 3, 12}
 CRAFT_TYPES = {17}
 
 # Type 6 says "defeat X *in a fight*"; the open-world types do not. Keeping them
 # apart is what gives fight.join a job that farm.start cannot do, and a tool that
 # cannot be told from another tool is not a decision, it is noise in the label space.
-FIGHT_TYPES = {6}
+FIGHT_TYPES = {6, 45}             # 45 is a fight objective: reach the room, fight the group
 OPEN_KILL_TYPES = KILL_TYPES - FIGHT_TYPES
 
 # What each objective type's parameters *are*, copied from the client's own
@@ -629,6 +629,147 @@ def feature_count_full() -> int:
     return FEATURE_COUNT + len(WORLD_FEATURE_NAMES)
 
 
+# --- decision-history block (opt-in; the shipped 42-wide head stays 42) ------
+# The 42-wide vector is stateless. It carries `last_tool`, `fail_streak` and one
+# error slot: everything the agent has already tried is compressed into three
+# numbers, so "nav.goto failed twice, then nav.follow" and "nav.goto once" are the
+# same input. The corpus is 479 episodes with a median of 31 steps, and the model
+# reads each row as if it were the first -- which is why a decision that is only
+# wrong in context cannot be learned from it.
+#
+# This block gives the policy the sequence it was discarding. Each of the last
+# HISTORY_STEPS actions is one token: the tool, whether it worked, its error class,
+# and whether it repeated the action before it. The runtime tracker and the corpus
+# builder both go through `history_tokens`, so they cannot disagree about what the
+# past looked like -- the same rule the rest of this module lives by.
+
+HISTORY_STEPS = 8
+HISTORY_TOKEN = len(LEARNED_TOOLS) + 1 + len(ERROR_SLOTS) + 1
+HISTORY_DIM = HISTORY_STEPS * HISTORY_TOKEN
+
+# The token above says what the policy *did*. It says nothing about what it *saw*, and
+# that turns out to be the whole remaining error: 26% of rows carry a stale observation
+# and the policy is 0.791 optimal on them against 0.960 on fresh ones. Under staleness
+# the position features (`on_target`, `hops_to_target`) are computed from the stale page,
+# so they describe where the player was, not where they are, and the policy cannot tell
+# the two apart from a single frame.
+#
+# 95.4% of stale rows have a fresh observation somewhere in the preceding 8 steps, so the
+# true position is recoverable -- it is simply not in the input. These fields append that
+# per-step observation summary to each token, read out of the same 42-wide vector the
+# policy already receives, so the corpus builder and the runtime tracker extract them the
+# same way and cannot drift.
+#
+# This is opt-in: `HISTORY_TOKEN` stays the shipped width and every reader takes the
+# width from the artifact's sidecar, so an older artifact keeps loading unchanged.
+OBS_SUMMARY_NAMES = ("on_target", "hops_to_target", "obs_stale", "map_known", "has_needed")
+OBS_SUMMARY_INDEX = tuple(FEATURE_NAMES.index(n) for n in OBS_SUMMARY_NAMES)
+HISTORY_TOKEN_OBS = HISTORY_TOKEN + len(OBS_SUMMARY_NAMES)
+
+# The per-step summary above still leaves the encoder to work out *which* step was the
+# fresh one, and to reconstruct position from it. That is a sequence problem it solves
+# only partly: the first attempt moved the stale stratum 1.36pp and left the fresh one
+# flat, which is the right shape but short of significance. So the same window is also
+# collapsed into the three numbers the decision actually needs -- where the player was
+# last seen, and how long ago. The information is already in the window (95.4% of stale
+# rows have a fresh step inside it), so this adds no new state, only a better encoding
+# of state that is already present.
+LAST_FRESH_DIM = 3
+
+
+def last_fresh_dims(records: Sequence[Dict[str, Any]]) -> List[float]:
+    """Position as of the newest fresh observation in the window, and its age.
+
+    Returns `[on_target, hops_to_target, age_fraction]`, where age is measured in
+    fractions of the window and 1.0 means "no fresh observation in the window" -- a
+    distinct state from "fresh and on target", which a zero would have collided with.
+    """
+    window = list(records)[-HISTORY_STEPS:]
+    for back, rec in enumerate(reversed(window)):
+        summary = rec.get("summary")
+        if not summary or len(summary) < 3:
+            continue
+        if float(summary[2]) <= 0.5:  # obs_stale flag
+            age = back / float(HISTORY_STEPS)
+            return [float(summary[0]), float(summary[1]), age]
+    return [0.0, 0.0, 1.0]
+
+
+HISTORY_DIM_OBS = HISTORY_STEPS * HISTORY_TOKEN_OBS
+HISTORY_DIM_OBS_DERIVED = HISTORY_DIM_OBS + LAST_FRESH_DIM
+
+
+def obs_summary(x: Sequence[float]) -> List[float]:
+    """The observation part of one 42-wide state vector, for the history token."""
+    return [float(x[i]) for i in OBS_SUMMARY_INDEX]
+
+
+def history_token(tool: Optional[str], ok: Optional[bool], err_slot: str,
+                  previous_tool: Optional[str] = None,
+                  summary: Optional[Sequence[float]] = None) -> List[float]:
+    """One past action, as a fixed-width token. An unknown tool is all-zero.
+
+    `summary` appends the observation that was current at that step; passing None keeps
+    the shipped 28-wide token, so the width is decided by the caller and not by a
+    default that could silently change under an existing artifact.
+    """
+    vec = [0.0] * len(LEARNED_TOOLS)
+    idx = LEARNED_TOOL_INDEX.get(tool or "")
+    if idx is not None:
+        vec[idx] = 1.0
+    vec.append(1.0 if ok else 0.0)
+    slot = err_slot if err_slot in ERROR_SLOTS else "other"
+    for name in ERROR_SLOTS:
+        vec.append(1.0 if slot == name else 0.0)
+    vec.append(1.0 if (tool and tool == previous_tool) else 0.0)
+    if summary is not None:
+        vec.extend([float(v) for v in summary][:len(OBS_SUMMARY_NAMES)])
+    return vec
+
+
+def history_tokens(records: Sequence[Dict[str, Any]],
+                   obs: bool = False, derived: bool = False) -> List[float]:
+    """The last HISTORY_STEPS records, oldest first, left-padded with zeros.
+
+    Left padding puts the newest action at a fixed offset, so a recurrent encoder
+    reads the window in time order without having to be told how full it is.
+
+    `derived` appends the collapsed last-fresh numbers after the window. It is a
+    separate switch rather than part of `obs` because it measured worse (0.9172
+    optimal against 0.9204 for the per-step form on the same split), so it stays
+    reproducible without being the default.
+    """
+    window = list(records)[-HISTORY_STEPS:]
+    tokens: List[float] = []
+    prev: Optional[str] = None
+    for rec in window:
+        tokens.extend(history_token(
+            rec.get("tool"), rec.get("ok"), rec.get("err") or "none", prev,
+            rec.get("summary") if obs else None))
+        prev = rec.get("tool")
+    span = HISTORY_STEPS * HISTORY_TOKEN_OBS if obs else HISTORY_DIM
+    block = [0.0] * (span - len(tokens)) + tokens
+    if derived:
+        block.extend(last_fresh_dims(window))
+    return block
+
+
+def objective_features_history(obj: Dict[str, Any], quest_level: int,
+                               step_index: int, state: Dict[str, Any],
+                               ctx: Optional[Dict[str, Any]] = None,
+                               records: Optional[Sequence[Dict[str, Any]]] = None,
+                               obs: bool = False, derived: bool = False) -> List[float]:
+    """The 42 base features followed by the history block -- for a sequence head."""
+    return (objective_features(obj, quest_level, step_index, state, ctx)
+            + history_tokens(records or [], obs=obs, derived=derived))
+
+
+def feature_count_history(obs: bool = False, derived: bool = False) -> int:
+    if derived:
+        return FEATURE_COUNT + HISTORY_DIM_OBS_DERIVED
+    return FEATURE_COUNT + (HISTORY_DIM_OBS if obs else HISTORY_DIM)
+
+
 def self_check() -> None:
     """Fail loudly if the vector and the names ever disagree."""
     probe = objective_features({"type_id": 1, "params": "{}"}, 60, 0,
@@ -658,6 +799,22 @@ class ObsTracker:
         self.last_tool: Optional[str] = None
         self.last_note: Optional[str] = None
         self.kind = "fresh"
+        # The history block's source. Bounded, because a policy only ever reads a
+        # fixed window and an unbounded list would grow with the session.
+        self.history: deque = deque(maxlen=HISTORY_STEPS)
+        # The observation summary for the step being decided, captured from the exact
+        # vector handed to the model and attached when the outcome is reported. Taking
+        # it from the input vector rather than from the later `obs` argument is what
+        # keeps the runtime token equal to the corpus token: both are the state the
+        # decision was made on, not the state it produced.
+        self.pending_summary: Optional[List[float]] = None
+
+    def note_observation(self, x: Sequence[float]) -> None:
+        """Capture the observation summary of the vector about to be scored."""
+        try:
+            self.pending_summary = obs_summary(x)
+        except (IndexError, TypeError, ValueError):
+            self.pending_summary = None
 
     def observe(self, obs: Dict[str, Any]) -> str:
         kind = "fresh"
@@ -679,6 +836,13 @@ class ObsTracker:
         self.last_note = note
         self.streak = 0 if ok else self.streak + 1
         self.prev_objectives = obs.get("objectives_completed")
+        self.history.append({"tool": tool, "ok": bool(ok),
+                             "err": _err_slot(note),
+                             "summary": self.pending_summary})
+
+    def records(self) -> List[Dict[str, Any]]:
+        """The window the history block reads, oldest first."""
+        return list(self.history)
 
     def ctx(self) -> Dict[str, Any]:
         return {"streak": self.streak, "last_ok": self.last_ok,

@@ -129,6 +129,9 @@ def describe_world_text(observation: Any) -> Optional[str]:
         parts.append("interior map (no crossable exit)")
     elif d["n_exits"]:
         parts.append("open map with crossable exits")
+    neighbours = block.get("neighbours") if isinstance(block.get("neighbours"), dict) else {}
+    if neighbours:
+        parts.append("connected to %d adjacent map(s)" % len(neighbours))
     doors = [x for x in (block.get("doors") or []) if isinstance(x, dict)]
     if doors:
         seg = ", ".join("cell %s->map %s" % (x.get("cell"), x.get("to_map"))

@@ -17,6 +17,7 @@ fallback when no candidate plan can express the chosen spell/target.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 from pathlib import Path
@@ -31,11 +32,24 @@ from combat.encounter import model
 from combat.encounter.checkpoint import load_params_config
 from combat.encounter.env import action_masks, initial_state, observe
 from combat.observation import live_view
+from combat.grid_infer import rank_plans as grid_rank_plans
 from combat.plan_value import (board_encounter, _empty_spell_row,
                                _player_spell_rows)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CHECKPOINT = REPO_ROOT / "models" / "encounter_selfplay.pkl"
+
+# What one point of expected damage is worth against one cell of closing distance
+# when the actor's cast already decides the turn and only the cell is open.
+#
+# 0.01 keeps the term under a full cell even at `threat.MAX_PRICED_SWING` (60 points
+# -> 0.6), so the direction the policy asked for is never overruled by cover: this is
+# a tie-break between cells at the same distance, not a second engagement decision.
+# The beam search prices the same quantity at `threat.POSITION_WEIGHT` (0.45) per
+# point against `APPROACH_VALUE` (0.5) per cell, which is where "do not walk into the
+# turn" is enforced; by the time a plan reaches here that choice has been made and
+# the question is only which of several castable cells to end on.
+EXPOSURE_TIEBREAK = 0.01
 
 
 class LivePolicy:
@@ -45,8 +59,15 @@ class LivePolicy:
                  beam_width: int = 8, max_actions: int = 4) -> None:
         self.checkpoint = Path(checkpoint or DEFAULT_CHECKPOINT)
         self.params, self.cfg = load_params_config(self.checkpoint)
+        # The learned per-monster table, passed as a callable rather than a value so
+        # the solver sees the rows this fight has just taught it. `battle_solver`
+        # defaults to the level prior, which is what keeps every benchmark and test
+        # independent of whatever `models/threat_model.json` happens to contain.
+        from combat import threat as _threat
+
         self.solver = BattleSolver(beam_width=int(beam_width),
-                                   max_actions=int(max_actions))
+                                   max_actions=int(max_actions),
+                                   memory=_threat.default_memory)
         self.plan_k = max(2, int(beam_width))
         # Set per request from the observation contract; False until then.
         self._value_ready = False
@@ -239,11 +260,23 @@ class LivePolicy:
         old = board.cells.distance(board.my_cell, int(target["cell"]))
         new = board.cells.distance(int(plan.final_cell), int(target["cell"]))
         delta = new - old
-        if move == 2:
-            return -float(delta)
-        if move == 0:
-            return float(delta)
-        return -float(abs(delta))
+        # The direction is the actor's intent and stays dominant; the exposure
+        # of the cell the plan ends on only decides between plans that keep the
+        # same distance. Capped below one cell of distance on purpose.
+        exposure = EXPOSURE_TIEBREAK * float(getattr(plan, "exposure", 0.0) or 0.0)
+        # 0 is approach and 2 is retreat -- the same codes `_walk_action` reads, where
+        # approach keeps the hops with `distance < here` and retreat the ones with
+        # `distance > here`. These two branches were written the other way round, so a
+        # plan that was asked to back off was scored by how far it *closed*: the actor
+        # chose retreat, `matching` offered one plan per reachable cell, and this picked
+        # the cell nearest the enemy. Measured live 2026-11-10 on the board that lost the
+        # fight: `move` 2 with a covered cell two hops back, and the character walked
+        # into the two-monster turn instead.
+        if move == 0:                       # approach: end nearer
+            return -float(delta) - exposure
+        if move == 2:                       # retreat: end farther
+            return float(delta) - exposure
+        return -float(abs(delta)) - exposure
 
     def _castable_pair(self, board: Board, slot: Dict[str, Any],
                        target: Dict[str, Any]
@@ -291,6 +324,64 @@ class LivePolicy:
             return False
         return not spell.requires_los or board.cells.has_los(
             origin, target_cell, occupied)
+
+    def _last_resort_cast(self, board: Board, slots: Sequence[Dict[str, Any]],
+                          targets: Sequence[Dict[str, Any]]
+                          ) -> Optional[Dict[str, Any]]:
+        """The best cast that lands from where the character is already standing.
+
+        Called only when a turn was about to end without spending any AP. Measured
+        on the 1009 live decisions in `trajectories/live_policy_decisions.jsonl`:
+        of the 850 turns that had a castable spell in hand, **355 (42%) ended in a
+        pass**, and 146 of those were holding a 38-damage spell at the time. The
+        path that produced them is ordinary -- the actor head chose to walk, the
+        walk was impossible because the MP was already spent, and the solver had no
+        plan left -- and every one of those turns threw away the whole AP pool.
+
+        Two rules, in this order:
+
+        1. **A kill beats a hit.** Among all legal (spell, target) pairs, take one
+           that finishes a target, cheapest first so the AP left over still buys a
+           second cast. Removing an enemy deletes a whole enemy turn from the rest
+           of the fight, which is worth more than any single damage number.
+        2. **Otherwise focus.** Hit the enemy with the least life left, with the
+           strongest spell that reaches it. Spreading damage across three monsters
+           is what the fallback did on the live fight of 2026-11-10: 233 damage
+           dealt, three enemies still standing, and a loss.
+        """
+        enemies = [t for t in targets
+                   if t.get("fighter_id") is not None and t.get("alive")
+                   and t.get("cell") is not None
+                   and int(t["fighter_id"]) != int(board.my_id)]
+        if not enemies:
+            return None
+        ranked_slots = sorted(slots, key=lambda s: -float(s.get("damage") or 0.0))
+
+        kills: List[Tuple[float, float, Dict[str, Any]]] = []
+        for target in enemies:
+            hp = target.get("hp")
+            if hp is None:
+                continue
+            for slot in ranked_slots:
+                if float(slot.get("damage") or 0.0) < float(hp):
+                    continue
+                action = self._direct_cast(board, slot, target)
+                if action is not None:
+                    kills.append((float(slot.get("ap") or 0.0), float(hp), action))
+        if kills:
+            kills.sort(key=lambda row: (row[0], row[1]))
+            return kills[0][2]
+
+        weakest = sorted(enemies, key=lambda t: (t.get("hp") is None,
+                                                 t.get("hp") or 0))
+        for target in weakest:
+            for slot in ranked_slots:
+                if float(slot.get("damage") or 0.0) <= 0.0:
+                    continue
+                action = self._direct_cast(board, slot, target)
+                if action is not None:
+                    return action
+        return None
 
     def _direct_cast(self, board: Board, slot: Dict[str, Any],
                      target: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -354,8 +445,15 @@ class LivePolicy:
         occupied = frozenset(f.cell for f in board.fighters
                              if f.alive and f.id != board.my_id)
         here = board.cells.distance(board.my_cell, cell)
+        try:
+            from combat import threat as _threat
+
+            danger = _threat.build(board, memory=_threat.default_memory(),
+                                   occupied=occupied)
+        except Exception:  # noqa: BLE001 - a missing price must not cost the move
+            danger = None
         best: Optional[int] = None
-        best_distance: Optional[int] = None
+        best_key: Optional[tuple] = None
         for hop in board.cells.reachable(board.my_cell, board.my_mp, occupied):
             if hop == board.my_cell:
                 continue
@@ -363,13 +461,19 @@ class LivePolicy:
             if move == 0:
                 if distance >= here:
                     continue
-                if best_distance is None or distance < best_distance:
-                    best, best_distance = hop, distance
+                direction = distance
             else:
                 if distance <= here:
                     continue
-                if best_distance is None or distance > best_distance:
-                    best, best_distance = hop, distance
+                direction = -distance
+            # Same direction, quieter cell. Several cells usually tie on the
+            # distance the actor asked for, and taking the first one is what
+            # walked the character into the open: on the recorded boards two of
+            # four enemies had no line of sight to it when it decided to close.
+            quiet = danger.at(hop) if danger is not None else 0.0
+            key = (direction, quiet)
+            if best_key is None or key < best_key:
+                best, best_key = hop, key
         return best
 
     @staticmethod
@@ -454,6 +558,32 @@ class LivePolicy:
         self._vc_fired = getattr(self, "_vc_fired", 0) + int(picked is not None)
         return picked
 
+
+    def _grid_choice(self, board: Board,
+                     plans: Sequence[TurnPlan]) -> Optional[TurnPlan]:
+        """The realization the 560-cell grid ranker expects to win.
+
+        The grid model (``models/combat_grid/model.pkl``) scores each legal plan
+        from the full board layout -- cell occupancy, LoS, distance, visibility --
+        which is complementary to the encounter value head (fighter tokens only).
+        It loads through the numpy backend on the embedded runtime, so no jax
+        wheel is required. Returns None when the checkpoint is absent or the
+        backend is unavailable; the caller falls through to the distance heuristic.
+        The ranker is an upgrade, never a dependency.
+        """
+        if len(plans) < 2:
+            return None
+        self._gc_asked = getattr(self, "_gc_asked", 0) + 1
+        try:
+            ranked = grid_rank_plans(board, plans)
+        except Exception:  # noqa: BLE001 - a ranker failure must not cost the turn
+            return None
+        if ranked is None:
+            return None
+        picked = ranked[0][1] if ranked else None
+        self._gc_fired = getattr(self, "_gc_fired", 0) + int(picked is not None)
+        return picked
+
     def _realize(self, board: Board, spell_slot: int, target_slot: int,
                  move: int, slots: Sequence[Dict[str, Any]],
                  targets: Sequence[Dict[str, Any]]
@@ -529,8 +659,10 @@ class LivePolicy:
         if matching:
             picked = self._value_choice(board, matching)
             if picked is None:
-                picked = max(matching, key=lambda plan: self._move_score(
-                    board, plan, target, move))
+                picked = self._grid_choice(board, matching)
+                if picked is None:
+                    picked = max(matching, key=lambda plan: self._move_score(
+                        board, plan, target, move))
             return self._emit(board, picked, False, "policy", "policy_move")
 
         fallback = next((plan for plan in plans
@@ -544,6 +676,67 @@ class LivePolicy:
                         "policy_approach" if move == 0 else "policy_retreat")
             return {"type": "pass"}, True, "no_legal_plan"
         return self._emit(board, fallback, True, "solver_fallback", "solver_move")
+
+    @staticmethod
+    def _solver_first() -> bool:
+        """Whether the deterministic solver drives the turn (default on).
+
+        The solver encodes the simple winning strategy -- maximum damage, line
+        of sight, AP/MP budget, finishing kills -- and is measured 0.0875 ABOVE
+        the learned actor it would otherwise displace (brain_service.py, section L.31).
+        So the actor choosing the spell/target is the losing half; the solver
+        choosing the whole turn is what a competent player does. Set
+        DOFUS_COMBAT_SOLVER_FIRST=off to fall back to actor-first.
+        """
+        return str(os.environ.get("DOFUS_COMBAT_SOLVER_FIRST", "on")).strip().lower() \
+            not in ("0", "off", "false", "no")
+
+    def _solver_turn(self, board: Board
+                     ) -> Optional[Tuple[Dict[str, Any], bool, str]]:
+        """The best legal solver plan for this turn, value/grid re-ranked."""
+        try:
+            plans = self.solver.plan_candidates(board, max(2, int(self.plan_k)))
+        except Exception:  # noqa: BLE001 - a solver failure must not cost the turn
+            return None
+        plans = [plan for plan in plans
+                 if plan.actions and plan.actions[0].kind != "pass"]
+        if not plans:
+            return None
+        picked = self._value_choice(board, plans)
+        if picked is None:
+            picked = self._grid_choice(board, plans)
+        if picked is None:
+            picked = plans[0]
+        # Kept for the decision record. "He walked into the enemy" has to be a
+        # number in the log, not an impression from watching the character.
+        self._last_plan = picked
+        return self._emit(board, picked, False, "solver", "solver_move")
+
+    def _position_report(self, board: Board) -> Optional[Dict[str, Any]]:
+        """What the chosen plan costs in exposure, and what is doing the pricing.
+
+        Recorded per decision so the two halves are separable: a plan that walks
+        into the open, and a threat table that failed to notice the enemy doing
+        it. Without the second half, a wrong price looks exactly like a wrong
+        choice.
+        """
+        plan = getattr(self, "_last_plan", None)
+        if plan is None:
+            return None
+        try:
+            from combat import threat
+
+            model = threat.build(board, memory=threat.default_memory())
+            return {
+                "cell": int(plan.final_cell),
+                "exposure": round(float(plan.exposure), 2),
+                "here": round(model.at(board.my_cell), 2),
+                "enemies": [{"id": t.fighter_id, "damage": round(t.damage, 1),
+                             "reach": int(t.reach), "source": t.source}
+                            for t in model.enemies],
+            }
+        except Exception:  # noqa: BLE001 - a report must never cost the turn
+            return None
 
     def _emit(self, board: Board, plan: TurnPlan, fallback: bool, reason: str,
               walk_reason: str) -> Tuple[Dict[str, Any], bool, str]:
@@ -628,6 +821,25 @@ class LivePolicy:
                          "action": None, "latency_ms": round(
                              (time.perf_counter() - started) * 1000.0, 1)})
             return base
+        # Solver-first: play the deterministic plan a good player would. The
+        # actor path below is the fallback for a turn the solver cannot express.
+        if self._solver_first():
+            st = self._solver_turn(board)
+            if st is not None:
+                action, fallback, reason = st
+                base["policy"] = {"move": None, "spell_slot": None,
+                                  "target_slot": None, "spell_id": None,
+                                  "target_id": None, "probability": None,
+                                  "value": None, "fallback": bool(fallback),
+                                  "reason": reason}
+                position = self._position_report(board)
+                if position is not None:
+                    base["position"] = position
+                base.update({"ok": action is not None, "action": action,
+                             "reason": reason,
+                             "latency_ms": round(
+                                 (time.perf_counter() - started) * 1000.0, 1)})
+                return base
         try:
             plan = self._current_plan(board)
             tables, spec = board_encounter(
@@ -644,6 +856,15 @@ class LivePolicy:
             self._value_ready = bool(contract.get("value_ready"))
             action, fallback, reason = self._realize(
                 board, spell_slot, target_slot, move, slots, targets)
+            # A turn that ends with AP in hand and a legal cast on the board is a
+            # lost turn, whatever the reason it was declined for. Measured: 42% of
+            # the live turns that had a spell available ended in a pass. The rescue
+            # runs only when the answer is a pass, so it can add a cast but can
+            # never override one.
+            if action is None or action.get("type") == "pass":
+                rescue = self._last_resort_cast(board, slots, targets)
+                if rescue is not None:
+                    action, fallback, reason = rescue, True, "unspent_ap_cast"
             base["policy"] = {
                 "move": move, "spell_slot": spell_slot,
                 "target_slot": target_slot,

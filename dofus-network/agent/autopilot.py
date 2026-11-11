@@ -68,6 +68,11 @@ from agent.verifier import (LISTING_TOOLS, READ_ONLY_TOOLS, Verdict, Verifier, c
 from agent.gate import RuleGate
 from agent.action_memory import (ActionMemory, context_signature,
                                 call_signature as _mem_sig)
+try:  # durable memory is an upgrade, not a dependency: the loop must start without it
+    from agent.persistent_memory import DEFAULT_PATH as MEMORY_PATH, PersistentMemory
+except Exception:  # noqa: BLE001
+    MEMORY_PATH = Path(__file__).resolve().parent.parent / "data" / "learned_memory.json"
+    PersistentMemory = None  # type: ignore[assignment]
 from agent.schema import TOOL_SCHEMA, validate_call
 from agent.recorder import _redact
 from agent.command_shadow import (DEFAULT_MODEL as COMMAND_SHADOW_MODEL,
@@ -218,6 +223,10 @@ MAX_CONSECUTIVE_WAITS = int(os.environ.get("AUTOPILOT_MAX_CONSECUTIVE_WAITS", "4
 # nothing -- long enough for a respawn, short enough that the session is not spent
 # staring at it. A real step resets the count.
 DEAD_WINDOW_LIMIT = int(os.environ.get("AUTOPILOT_DEAD_WINDOW_LIMIT", "4"))
+# How many extra idle windows the run may stay alive, with objectives still
+# pending, before it finally gives up. Each window is MAX_CONSECUTIVE_WAITS
+# passes, so this is minutes, not a spin.
+IDLE_WINDOW_LIMIT = int(os.environ.get("AUTOPILOT_IDLE_WINDOW_LIMIT", "30"))
 
 # Passes one run may spend waiting for the client to publish its quest data before the
 # "no action for this goal" verdict is allowed to stand. Three is ~5 s: the quest block
@@ -230,6 +239,43 @@ RETIRE_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_LIMIT", "3"))
 # Times the same quest may be retired before the loop concludes the policy will keep
 # choosing it anyway. Past this the retirement is not patience, it is a cycle.
 RETIRE_REPEAT_LIMIT = int(os.environ.get("AUTOPILOT_RETIRE_REPEAT_LIMIT", "3"))
+
+
+def _work_remains(obs: Any) -> bool:
+    """Whether the character still has a quest this run could move.
+
+    The question the idle grace asks before spending another dead window: not "is the
+    session alive" (it is, the loop is running) but "is there anything left that a
+    later observation could turn into an action". A ready objective is the strongest
+    answer; an active quest without one is weaker -- the step may simply be
+    unavailable -- but it is still work, and the grace is bounded either way.
+    """
+    if not isinstance(obs, dict):
+        return False
+    if obs.get("ready_objectives"):
+        return True
+    active = obs.get("quests_active")
+    return bool(active)
+
+# Steps between durable-memory writes. A run is normally killed rather than ended, so
+# waiting for the exit path would lose everything a session learned. Forty steps is
+# short enough that a kill costs little and long enough that the write never shows up
+# in the step timing; the file is small (one row per solved context).
+MEMORY_SAVE_EVERY = int(os.environ.get("AUTOPILOT_MEMORY_SAVE_EVERY", "40"))
+
+# Tool families a remembered call is never replayed for.
+#
+# Measured on a holdout session (seed from six logs, score the seventh): 76.8% of decided
+# steps land in a context the memory already knows, but the memory's top call matches what
+# the agent actually did on only 1.2% of them -- and the split explains it. Navigation is
+# 0.5% (4/785): walking left and walking right are both "the same situation" and the right
+# answer alternates, so one remembered move is a control input replayed out of phase.
+# Quests are 5.0%, and the agreements there are exact keys (`quest.advance` with the same
+# npc, a dialog reply with the same text) -- a discrete answer that works again.
+#
+# So the memory is allowed to answer a puzzle and not allowed to steer. A replay that
+# fights the policy's own movement is worse than the silence it replaced.
+MEMORY_REPLAY_EXCLUDE = frozenset({"nav", "ui"})
 
 
 # How many candidates the wait escalation is allowed to skip while looking for one
@@ -486,6 +532,14 @@ class Autopilot:
         # the rule for each goal; the rule still chooses. "off" removes the probe.
         command_shadow: str = "off",
         command_shadow_model: Path = COMMAND_SHADOW_MODEL,
+        # Where the durable memory lives. None means "the default file"; an empty
+        # string disables it, which is what a clean-room evaluation needs: a memory
+        # that carries solutions between runs changes what is being measured.
+        memory_path: Optional[Path] = None,
+        # Whether a remembered call may be dispatched when the policy is silent. The
+        # store keeps recording either way, so the two arms differ in exactly one
+        # behaviour and a session can be run under either without losing data.
+        memory_replay: bool = True,
     ) -> None:
         self.runtime = runtime
         self.fight_boards = fight_boards
@@ -735,8 +789,31 @@ class Autopilot:
         self._gate = RuleGate()
         # Episode-scoped memory of dead ends: never repeat an action that
         # already failed for this objective on this map (learned, not a rule).
-        self._memory = ActionMemory()
+        #
+        # Durable memory is the same store, kept on disk: a wall does not stop being
+        # a wall between runs, and a solution that took a whole session to find should
+        # not have to be found again. It is opt-in by path -- a caller that passes
+        # nothing gets the episodic store, so a test or an evaluation run cannot
+        # inherit what a previous run learned.
+        self.memory_path: Optional[Path] = (
+            Path(memory_path) if memory_path else None)
+        if PersistentMemory is not None and self.memory_path is not None:
+            self._memory = PersistentMemory(self.memory_path)
+        else:
+            self._memory = ActionMemory()
+        # Solutions already replayed this run, so a memory that is wrong cannot loop:
+        # each context gets one replay, then the loop's own repair takes over.
+        self._memory_replays: Dict[str, int] = {}
+        # Which arm this run belongs to. Recorded in the session row, because two runs
+        # that differ in one behaviour must be distinguishable from their logs alone --
+        # otherwise the comparison is between two files nobody can label.
+        self.memory_replay = bool(memory_replay)
+        self.memory_arm = ("record+replay" if self.memory_replay else "record-only") \
+            if self.memory_path is not None else "off"
         self._mem_veto: Dict[str, int] = {}
+        # The context the current step is being judged in, so the no-call branch can
+        # ask the same store the perception line came from.
+        self._mem_ctx: Optional[Tuple] = None
         # Patience with a scripted step, timed once per action signature. See
         # _tutorial_hold: a wait must be spent as a wait, and it must end.
         self._hold_key: Optional[str] = None
@@ -1251,6 +1328,14 @@ class Autopilot:
     def _prepare_obs(self, observation: Dict[str, Any]) -> Dict[str, Any]:
         prepared = self._annotate_fights(
             enrich_observation(observation, self.knowledge))
+        # Keep the quest stack plannable at scale: trim to the prioritised
+        # working set so the per-step cost does not grow with the number of
+        # stacked quests (agent.quest_manager). No-op on a small stack.
+        try:
+            from agent.quest_manager import apply as _apply_qws
+            prepared = _apply_qws(prepared)
+        except Exception:  # noqa: BLE001 - the working set must never break a step
+            pass
         self._prepared_obs = prepared
         return prepared
 
@@ -1486,6 +1571,13 @@ class Autopilot:
             "kind": "intervention",
             "session": self.session,
             "events": delta,
+            # The page now counts a takeover as a pointer landing on the client, not as
+            # any trusted event: `wheel` and `keydown` used to be included, which made a
+            # scroll wheel an "intervention" and left the "zero manual interventions"
+            # goal unmeasurable on any instance somebody had touched. `events_all` keeps
+            # the old wider count in the row so the two can be compared rather than the
+            # change being invisible.
+            "events_all": ui.get("during_run_all"),
             "by_type": ui.get("by_type") or {},
             "client_last_ts": ui.get("last_ts"),
             "at": time.time(),
@@ -1761,6 +1853,7 @@ class Autopilot:
             self._gate.clear()
             self._memory.reset()
             self._mem_veto.clear()
+            self._idle_windows = 0
             # Shadow only: the model's parse is written beside the rule, and the
             # rule below still owns every decision.
             self._log_command_shadow(goal)
@@ -1805,10 +1898,20 @@ class Autopilot:
                 # planner ignores it and the bounded veto below still applies.
                 if isinstance(before, dict):
                     _mem_ctx = context_signature(before.get("current_objective"), before)
-                    _dead = self._memory.describe(_mem_ctx)
-                    if _dead:
+                    self._mem_ctx = _mem_ctx
+                    # Two lines, two lifetimes: the failures are the episode's and the
+                    # solution is every session's. Keeping them apart matters because
+                    # they call for opposite behaviour -- avoid one, replay the other.
+                    _fail = getattr(self._memory, "describe_failures", None)
+                    _dead = _fail(_mem_ctx) if _fail else self._memory.describe(_mem_ctx)
+                    _worked = getattr(self._memory, "describe_solution", None)
+                    _solution = _worked(_mem_ctx) if _worked else None
+                    if _dead or _solution:
                         before = dict(before)
+                    if _dead:
                         before["already_failed"] = _dead
+                    if _solution:
+                        before["known_solution"] = _solution
                 if isinstance(before, dict) and (before.get("quests_active")
                                                  or before.get("ready_objectives")):
                     self._quest_data_waits = 0
@@ -1868,6 +1971,12 @@ class Autopilot:
                     self._hold_wait(goal, before)
                     taken -= 1
                     continue
+                if call is None:
+                    # Before this is called a dead end, ask the durable store. The
+                    # situation may be one the agent already solved -- in this run or
+                    # in a previous one -- and re-deriving it is exactly the cost this
+                    # memory exists to remove.
+                    call = self._remembered_call(before, goal)
                 if call is None:
                     # A character standing in the world with a bag and no quest block at all is
                     # not a character with nothing to do -- it is a snapshot taken before the
@@ -2061,18 +2170,6 @@ class Autopilot:
                 _meta = (call.record_meta() if hasattr(call, "record_meta")
                          else getattr(call, "meta", None))
                 _meta = dict(_meta) if isinstance(_meta, dict) else {}
-                _mem_ctx2 = context_signature(
-                    before.get("current_objective") if isinstance(before, dict) else None,
-                    before if isinstance(before, dict) else None)
-                _msig = _mem_sig(call.tool, call.args)
-                if (self._memory.is_failed(_mem_ctx2, call.tool, call.args)
-                        and self._mem_veto.get(_msig, 0) < 2):
-                    self._mem_veto[_msig] = self._mem_veto.get(_msig, 0) + 1
-                    call = ToolCall("state.snapshot", {}, goal)
-                    _meta["memory_veto"] = True
-                if self._gate.streak(call.tool, call.args) >= self._gate.veto_at:
-                    call = ToolCall("state.snapshot", {}, goal)
-                    _meta["gate_veto"] = True
                 _meta["gate"] = self._gate.shadow(call.tool, call.args)
                 result = self.runtime.executor.execute(
                     call.tool, call.args, instance=self.runtime.instance,
@@ -2183,6 +2280,12 @@ class Autopilot:
                         before.get('current_objective') if isinstance(before, dict) else None,
                         before if isinstance(before, dict) else None),
                     call.tool, call.args, verdict)
+                # Persist what was just learned before the next decision, not only at
+                # exit: this loop is usually stopped by a kill or a stop file, and a
+                # solution that only exists in a dead process is not a memory.
+                if (self._index % MEMORY_SAVE_EVERY == 0
+                        and getattr(self._memory, "_dirty", False)):
+                    self._save_memory()
 
                 # Report the outcome back to the policy. `note_result` existed and was
                 # never called, so the planner's attempt history was always empty — it
@@ -3392,6 +3495,23 @@ class Autopilot:
                                   "quest %s; retiring it for this run and taking the "
                                   "next objective" % (DEAD_WINDOW_LIMIT, qid))
                             return True
+                    # The grace this file declared and never spent: `IDLE_WINDOW_LIMIT`
+                    # and `self._idle_windows` existed, were reset in two places, and
+                    # were read in none -- so a run with objectives still pending ended
+                    # on the fourth dead window exactly like one with nothing left. The
+                    # standing rule is that a failure is not the end of a run; this is
+                    # where that rule is bounded. Each window is MAX_CONSECUTIVE_WAITS
+                    # passes, so the extra life is minutes, it is logged, and it is
+                    # spent only while there is a quest the run could still move.
+                    if self._idle_windows < IDLE_WINDOW_LIMIT and _work_remains(before):
+                        self._idle_windows += 1
+                        self._dead_windows = 0
+                        self._consecutive_waits = 0
+                        print("[autopilot] %d dead windows with objectives still "
+                              "pending; idle window %d/%d before the run gives up"
+                              % (DEAD_WINDOW_LIMIT, self._idle_windows,
+                                 IDLE_WINDOW_LIMIT))
+                        return True
                     print("[autopilot] %d full wait windows ended with nothing to do "
                           "(%d passes, %s); ending the run -- the step needs a human "
                           "or a new plan" % (self._dead_windows, self._consecutive_waits,
@@ -3399,6 +3519,7 @@ class Autopilot:
                     return False
             else:
                 self._dead_windows = 0
+                self._idle_windows = 0
         self._append_log_line(_fast_dumps({
             "kind": "wait",
             "session": self.session,
@@ -3908,6 +4029,75 @@ class Autopilot:
               f"{self._listing_total} open listing(s)")
         return data
 
+    def _remembered_call(self, before: Any, goal: str) -> Optional["ToolCall"]:
+        """The call that advanced this exact situation before, if replaying it is safe.
+
+        This is the difference between an agent that learns and one that keeps
+        re-deriving the same answer: a situation it already got past is answered from
+        the durable store instead of being handed back to the policy, which is where
+        the previous session burned its steps.
+
+        Bounded on purpose. One replay per context per run, because a memory that can
+        fire repeatedly is a loop with extra steps. The tool must still exist in the
+        registry and the arguments must still validate, because a row written by an
+        older build is not a solution to today's problem -- it is a stale claim, and
+        dispatching it would be worse than doing nothing.
+        """
+        lookup = getattr(self._memory, "solutions", None)
+        context = getattr(self, "_mem_ctx", None)
+        if not self.memory_replay or lookup is None or context is None \
+                or not isinstance(before, dict):
+            return None
+        # A half-loaded observation has no objective in it, so its context key is the
+        # empty one -- replaying there would be answering a question nobody asked.
+        if self._quest_data_pending(before):
+            return None
+        vetoed = getattr(self._memory, "known_failure", None)
+        for solution in lookup(context) or []:
+            if not isinstance(solution, dict) or not solution.get("tool"):
+                continue
+            tool = str(solution["tool"])
+            args = dict(solution.get("args") or {})
+            if tool.split(".")[0] in MEMORY_REPLAY_EXCLUDE:
+                # See MEMORY_REPLAY_EXCLUDE: a remembered move is not a remembered answer.
+                continue
+            key = "%s|%s" % (tool, solution.get("signature") or "")
+            if self._memory_replays.get(key, 0) >= 1:
+                continue
+            # The row may have been written by an older build: a tool that no longer
+            # exists, or arguments that no longer validate, is a stale claim and not a
+            # solution. Dispatching it would be worse than doing nothing.
+            ok, checked = validate_call(tool, args)
+            if not ok:
+                continue
+            if vetoed is not None and vetoed(context, tool, checked):
+                continue
+            self._memory_replays[key] = self._memory_replays.get(key, 0) + 1
+            wins = int(solution.get("wins", 0) or 0)
+            print("[autopilot] memory: %s worked here %d time(s) before; replaying it "
+                  "instead of asking the policy again" % (tool, wins))
+            self._append_log_line(_fast_dumps({
+                "kind": "memory_replay", "session": self.session, "goal": goal,
+                "tool": tool, "args": checked, "wins": wins,
+                # The step this becomes. Joining on it is how the report says whether a
+                # replay worked without guessing from timestamps.
+                "index": self._index,
+                "context": [None if part is None else str(part) for part in context],
+                "at": round(time.time(), 3)}) + b"\n")
+            return ToolCall(tool, checked, goal)
+        return None
+
+    def _save_memory(self) -> Optional[Path]:
+        """Write the durable store. Called on every exit path, not only on success."""
+        save = getattr(self._memory, "save", None)
+        if save is None:
+            return None
+        try:
+            return save()
+        except Exception as exc:  # noqa: BLE001 - losing a save must not fail a run
+            print("[autopilot] could not save learned memory: %s" % exc)
+            return None
+
     def _finish(self, reason: str) -> Dict[str, Any]:
         """End the run: report it, then put the reason on the log.
 
@@ -3923,6 +4113,18 @@ class Autopilot:
         do with what they test.
         """
         data = self.summary(reason)
+        # The run's experience is written down before the end row, so the row can
+        # report what was actually persisted. A memory that silently failed to save
+        # looks exactly like a memory that learned nothing, and the next run pays for
+        # the difference.
+        saved = self._save_memory()
+        memory_stats = {}
+        stats = getattr(self._memory, "stats", None)
+        if stats is not None:
+            try:
+                memory_stats = dict(stats())
+            except Exception:  # noqa: BLE001 - a report must not fail a shutdown
+                memory_stats = {}
         if not getattr(self, "_end_row_written", False):
             self._end_row_written = True
             self._append_log_line(_fast_dumps({
@@ -3942,6 +4144,10 @@ class Autopilot:
                 "crossings_waited_out": data["crossings_waited_out"],
                 "returns_granted": data["returns_granted"],
                 "elapsed_s": data["elapsed_s"],
+                "memory_saved": str(saved) if saved is not None else None,
+                "memory_arm": self.memory_arm,
+                "memory_replays": sum(getattr(self, "_memory_replays", {}).values()),
+                "memory": memory_stats,
             }) + b"\n")
         return data
 
@@ -4205,7 +4411,7 @@ def _base_policy(args: argparse.Namespace):
         # 1. Try the encoder: INT8 ONNX first (deployment path, loads on the
         #    embedded runtime without torch/jax), then the torch checkpoint
         #    (full precision, what was trained).
-        if args.policy in ("auto", "encoder"):
+        if args.policy == "encoder":
             try:
                 from ai.encoder_serve import EncoderToolPolicy
                 encoder_dir = REPO_ROOT / "models" / "encoder30_v15"
@@ -4235,6 +4441,11 @@ def _base_policy(args: argparse.Namespace):
             from agent.planner_nn import NNPlanner
             planner = NNPlanner(level_hint=int(args.level_hint), store=None,
                                 stack_mode=args.ensemble)
+            # Load before reporting. The lazy note reads "tool policy not loaded",
+            # which is true of the constructor and false of the run -- an operator
+            # reading the startup line concluded the model was missing and that the
+            # agent was running on rules. It is a 194 KB ONNX; say what it is.
+            planner._ensure_model()
             print(f"[autopilot] policy: {planner.note}; {planner.stack_note}")
             return planner
     return RulePolicy()
@@ -4256,7 +4467,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--think", type=float, default=0.25,
                         help="dwell after a world-changing action before the next decision")
     parser.add_argument("--steps-per-goal", type=int, default=8)
-    parser.add_argument("--policy", choices=("rule", "encoder", "planner"), default="rule")
+    parser.add_argument("--policy", choices=("rule", "encoder", "planner", "auto"),
+                        default="planner",
+                        help="rule = hand-written planner only, no model loaded. "
+                             "planner = learned tool-policy head, deferring to the rules "
+                             "where its top-2 margin is under the fitted gate (default; "
+                             "the daemon has always used this). "
+                             "encoder = command encoder. auto = best available.")
+
     parser.add_argument("--ensemble", choices=("off", "shadow", "act"), default="act",
                         help="planner only: stack the tool policy with foresight; "
                              "act requires the artifact's held-out gate")
@@ -4293,6 +4511,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--command-shadow-model", type=Path,
                         default=COMMAND_SHADOW_MODEL,
                         help="command encoder heads for the shadow")
+    parser.add_argument("--memory", type=Path, default=MEMORY_PATH,
+                        help="durable memory file: dead ends and solutions carried "
+                             "between runs (default: data/learned_memory.json)")
+    parser.add_argument("--no-memory", action="store_true",
+                        help="start with an empty memory and persist nothing, so a run "
+                             "can be measured without a previous run's experience in it")
+    parser.add_argument("--no-memory-replay", action="store_true",
+                        default=os.environ.get("AUTOPILOT_MEMORY_REPLAY", "").lower() == "off",
+                        help="keep recording dead ends and solutions but never dispatch a "
+                             "remembered call: the control arm of the replay A/B "
+                             "(also settable as AUTOPILOT_MEMORY_REPLAY=off for the app)")
     return parser
 
 
@@ -4333,6 +4562,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         brain=args.brain,
         command_shadow=args.command_shadow,
         command_shadow_model=args.command_shadow_model,
+        memory_path="" if args.no_memory else args.memory,
+        memory_replay=not args.no_memory_replay,
     )
     # Per-instance objective belief, so a rethink survives a restart. It is only consulted when the
     # policy has nothing to say, which is the state that used to become a 40-pass wait.

@@ -530,15 +530,26 @@ def _obs_door_cell(observation: Optional[Dict[str, Any]],
         doors = observation.get("doors")
     if not isinstance(doors, list):
         return None
+    best = None
     for door in doors:
         if not isinstance(door, dict) or door.get("cell") is None:
             continue
         try:
-            if int(door.get("to_map")) == want:
-                return int(door["cell"])
+            if int(door.get("to_map")) != want:
+                continue
+            cell = int(door["cell"])
         except (TypeError, ValueError):
             continue
-    return None
+        via = str(door.get("via") or "walk")
+        # A door you have *walked* (or that is statically known) actually performs
+        # the transition; an "arrival" cell is only where a transition lands you,
+        # and stepping on it does nothing. Prefer the former so the client's door
+        # walk fires instead of a no-op walk to the room you are already in.
+        if via in ("walk", "known"):
+            return cell
+        if best is None:
+            best = cell
+    return best
 
 
 class _KnowledgeIndex:
@@ -1106,6 +1117,30 @@ class ToolExecutor:
                      observation_age_ms, observation_source, meta)
         return result
 
+    def directive(self, tool: str, args: Optional[Dict[str, Any]] = None,
+                  instance: Optional[str] = None,
+                  source: str = "directive") -> ToolResult:
+        """Call a page directive that is deliberately not in the planner's vocabulary.
+
+        `TOOLS` is the planner's *action space*, not a list of everything the page can
+        do: its order is the encoder's label encoding and its width is baked into the
+        shipped command head, so a read added for a supervisor must not join it. The
+        page publishes such reads (`debug.groups`, `debug.map`, ...) and the bridge
+        accepts them by name, so the only thing missing is a caller that does not go
+        through `validate_call`.
+
+        Same transport, same timeout, same auth and the same stall circuit as
+        `execute`; the difference is only that the name is not validated against the
+        schema. Nothing here is recorded as a training step: an observation the planner
+        never chose must not appear in the corpus as a decision.
+        """
+        args = dict(args or {})
+        try:
+            return self._directive(tool, tool, args, source, instance)
+        except Exception as exc:  # noqa: BLE001 - a probe must never raise to its caller
+            return ToolResult(tool=tool, ok=False, source=source,
+                              error=f"{type(exc).__name__}: {exc}")
+
     def snapshot(self, instance: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Read the current game state without recording it as a step.
 
@@ -1287,6 +1322,20 @@ class ToolExecutor:
         from combat.battle_solver import BattleSolver, Board
         from combat.observation import live_view
 
+        def _threat_memory():
+            """The learned per-monster table, or None when it cannot be read.
+
+            Imported here, not at module scope: `agent.executor` is loaded by the
+            page bridge before the combat stack is guaranteed to be installed, and a
+            missing table has to mean "use the level prior", not "no planner".
+            """
+            try:
+                from combat import threat
+
+                return threat.default_memory
+            except Exception:  # noqa: BLE001
+                return None
+
         payload = self.fight_state()
         if not payload:
             return ToolResult(
@@ -1308,6 +1357,10 @@ class ToolExecutor:
             solver = BattleSolver(
                 beam_width=int(args.get("beam_width", 16) or 16),
                 max_actions=int(args.get("max_actions", 4) or 4),
+                # This is the live path, so it gets the learned table. The solver's
+                # own default is the level prior, which is what keeps benchmarks and
+                # tests from depending on a file a live fight filled in.
+                memory=_threat_memory(),
             )
             top_k = int(args.get("top_k", 1) or 1)
             checkpoint = None

@@ -6393,3 +6393,135 @@ well — this section is the evidence for that distinction.
 Evidence: `models/party_eval_wins_full_v1.json` (per-board winners, paired deltas),
 `models/party_head_swap_v1.json`, `party_eval_wins.py`, `party_head_swap.py` in the evidence
 directory.
+
+### XII.17 The duel harness ranks the seat, not the policy -- and the learned head is inert on real builds (2026-11-10)
+
+Every combat-policy comparison in `benchmarks/` was read off an instrument that cannot see a
+decision. On the real level-200 build pair, `normal_build_duel_v4_1.json` reports **0.00 / 1.00 in
+all five matchups** -- side 2 wins every game, random and solver alike. The file's own notes say the
+asymmetric block is decided by the build and policy skill should be read in `mirror`, but the mirror
+block is degenerate for a second reason: `make_normal_duel` orders by
+`a.initiative >= b.initiative`, which is **always true in a mirror** (both fighters are the same
+build), so side 1 moves first in every mirror game. `duel.make_duel` has an initiative-tie coin;
+`make_normal_duel` never had one. The seat is systematic, not random.
+
+`combat.side_swap` already exists for this and was simply not being run. Seats swapped, 80 boards
+(160 games) per pairing, `--mirror dana_ouro`:
+
+| pairing | a seat 1 | a seat 2 | seat 1 wins | result |
+|---|---:|---:|---:|---|
+| random vs random | 0.6625 | 0.3375 | 0.6625 | `no_measurable_difference`, p 1.0 |
+| solver vs random | 1.0000 | 0.4250 | 0.7875 | `seat_dependent_edge`, a 114 - b 46, p 0.0 |
+| two-ply vs solver (40 boards) | 1.0000 | 0.0000 | 1.0000 | `seat_dominated`, 40 - 40 |
+| value vs solver (40 boards) | 1.0000 | 0.0000 | 1.0000 | `seat_dominated`, 40 - 40 |
+
+The random-vs-random row is the control: 80 - 80 and p 1.0, so the harness is unbiased and the seat
+baseline is **33.75%** from seat 2. The solver reaches **42.5%** from that same disadvantaged seat,
+so its real edge is about **+8.75 points**, not the 71% the raw 114 - 46 suggests. `solver_vs_solver`
+returns `seat_dominated` at 1.0 (6 boards, p 1.0): one seat wins every decided game regardless of
+policy.
+
+That saturation is why win/loss cannot rank two *good* policies -- two-ply and the value arm both
+return 40 - 40. `side_swap.efficiency` now also reports **damage per turn**, paired by board, which
+survives the saturation because the losing seat still deals damage before it dies:
+
+| pairing | a dmg/turn | b dmg/turn | diff | boards a - b | p |
+|---|---:|---:|---:|---|---:|
+| solver vs random | 667.44 | 598.82 | **+68.62** | 19 - 0 | 0.0 |
+| two-ply vs solver | 686.64 | 686.64 | +0.00 | 0 - 0 | 1.0 |
+| value vs solver | 686.64 | 686.64 | +0.00 | 0 - 0 | 1.0 |
+
+Two-ply adds nothing because with deterministic damage the greedy best plan is also the lookahead
+best plan. The value arm is worse than that: **`models/duel_value_v4_0.pkl` returns the same
+probability for every candidate plan on every real board** -- prediction spread exactly **0.0 on 12
+of 12 boards** (median 0.0). `duel.plan_scores` adds the solver's score as a `1e-4` tiebreak, so a
+constant head reproduces `solver_policy` bit for bit; the two arms are identical to two decimals
+because they are the same policy. The head was trained on the v3 synthetic encounters and every real
+row lands in one leaf. Every `value_vs_solver` number ever recorded here measured the solver against
+itself.
+
+`side_swap` now probes any `value:`/`residual:` arm and prints `INERT (prediction spread ...)` when
+the head cannot separate two plans, so this cannot again read as a draw. Tests: 14 in
+`combat.test_side_swap`.
+
+Consequence for training: this harness cannot supply a value-head label either, because the outcome
+is a function of the seat. A head fit on these games learns "the side that moved first wins". Real
+combat learning needs **PvE fight outcomes for our own policy**; the 12 recorded outcomes in
+`fight_boards.jsonl` are the page bot's, not ours, and 12 is not a training set.
+
+### XII.18 The value ranker is dark on 90% of our turns, and the blocker is one monster (2026-11-10)
+
+`value_ready` is not what refuses a turn -- `LivePolicy.decide()` acts on 139 of 160 captured boards.
+It gates the *ranker*: `_value_choice` returns None when it is false, and the solver's top plan stands
+unrefined. Measured on the 333-board corpus, 139 actionable, **16 value_ready**.
+
+Of the 123 that are not, **all 123** carry `enemy_spells_missing`, and the cause is one monster:
+**Barbakle is 1,018 of 1,396 enemy fighter rows (73%) and its spellbook was exposed in 0 of 1,018
+captures**. The other warning counts are `enemy_max_hp_missing` 181, `enemy_stats_not_exposed` 123,
+`unmodeled_effects` 123, `self_initiative_missing` 70, `self_max_hp_missing` 64.
+
+The gate itself is correct and was left alone. `combat/plan_value._enemy_rows` builds the enemy's
+spell table for the encounter value head; with no spells the rows are zeros, which tells the head
+that standing still is free. Relaxing the gate would feed the ranker a fabricated "enemy deals no
+damage" prior, so it stays critical. The grid model's own fighter vector is unrelated -- `FIGHTER_FEATS`
+is 20 and contains no enemy-spell term (slot 18 is a hardcoded `0.0`) -- so the gate is not costing
+the *actor* anything; it is costing the *ranker* everything.
+
+Two repairs were priced and refused, because both would fabricate:
+
+* **Static monster data.** The `monsters` table joins 1,018 of 1,396 rows by name (72.9%), but the
+  grades do not match the fight: the board reports `Barbakle` at level 5 with 140 HP while the table's
+  grade for it is level 200 / 6,000 HP. A name match is not an identity.
+* **Observed maximum HP.** `(name, level)` does not determine HP -- `Barbakle` at level 5 appears with
+  max HP 78, 85, 132, 134, 136, 137, 138 and 140, because group scaling makes HP an encounter
+  property. Using the corpus maximum would over-state a 78-HP instance by 79%.
+* **Cross-board spell recovery.** Taking the union of `spell_ids` seen for the same `(name, level)`
+  covers 75 of 1,396 rows, and Barbakle has zero reports to recover from.
+
+So the fix is client-side: the page must expose the enemy spellbook, or `plan_value` needs a risk term
+that does not require it. Nothing in this section is a policy change; the solver still owns 101 of 152
+AP-positive turns and the ranker stays off where its inputs are missing.
+
+### XII.19 The monster-spell table was empty for two page-side reasons, and both are fixed (2026-11-10)
+
+XII.18 stopped at "the client never publishes Barbakle's spellbook". That was the wrong place to
+stop: the page was discarding two things the client does publish, and both are one line.
+
+**1. The monster id was read off the wrong object.** The page set
+`creature_generic_id: num(data.creatureGenericId)` where `data` is `fighter.data`. The bundle's own
+monster map does not do that -- `_addMonster` is
+`t.monster_id = e.creatureGenericId`, keyed by the negative `contextualId` a monster carries, and
+`e` is the fighter object, not its `data` bag. So all 1,396 recorded enemy rows carried a null id,
+and `combat/live_data.py` keys its whole monster table on that id, so the table was empty before
+any spell question was asked. Now read off the fighter, then the actor, with `data` as the last
+fallback for older builds.
+
+**2. `last_actions` read a stack the client clears.** `_battleLog` was fixed for exactly this and
+says so in its own comment: `fightMessagesStack` is empty by the time a fight ends, so the reader
+prefers the tap ring (`__agentBattleRing`). The `last_actions` block was never migrated and read
+`fm.fightMessagesStack` directly. Measured on the corpus: **`last_actions` was `[]` on all 333
+boards while `battle_log`, reading the same fight through the ring, held up to 52 rows.** Since
+`live_data` learns a monster's spell ids from `last_actions` and `battle_solver` needs them to
+recover MP, that single empty array was the whole gap. It now reads the ring first, falls back to
+the stack, and `_agentBattleRow` carries `destination_cell` so the remap is lossless.
+
+**What the fix makes possible.** `combat/live_data.py` now also emits `observed_damage`, keyed
+`name|level|spell_id`: the cast row joined to the life-points-lost row it produced, on the client's
+own `action_id`. That is the number the value ranker actually needs -- how much a monster's turn
+takes off us -- and it does not require the spellbook at all. Two guards, both from a test that
+failed first: only a `SpellCast` row owns the damage (the loss row carries `spell_id` too, so
+attributing from every row double-counts and credits casts we never saw), and a repolled action is
+still deduped.
+
+**What it does not do.** It does not make the existing corpus actionable: those 333 boards have no
+actions to learn from, so `observed_damage` is empty on them and `value_ready` stays 16 of 139.
+It does not fill in static spell facts -- no local database has the monster ids (the class-spell
+cache holds none of 6908/6910/6942/7129/6936) -- it supplies observed damage instead. And it is
+**unverified against a running client**: the page code cannot be exercised without the game, so what
+is proven here is that the extraction and the aggregation do the right thing on the shapes the
+bundle produces, not that a live fight now yields Barbakle's damage.
+
+Evidence: `tools/test_fight_state_fields.js` 61 checks (6 new behavioural ones: the ring reaches
+`last_actions`, the field names survive the remap, the damage numbers survive, the stack fallback,
+and the ring winning over a stale stack); `combat/test_live_data.py` 7 tests; two new gate checks in
+`agent/regression.py::test_battle_log_and_challenges` that name both defects.

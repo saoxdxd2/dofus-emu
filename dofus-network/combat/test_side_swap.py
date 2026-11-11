@@ -10,8 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from combat.side_swap import (binomial_two_sided, play_side_swapped,
-                              score_games)  # noqa: E402
+from combat.side_swap import (binomial_two_sided, damage_split, efficiency,
+                              play_side_swapped, score_games,
+                              value_head_spread)  # noqa: E402
 
 
 def synthetic(wins_as_seat1: int, wins_as_seat2: int, n: int = 10):
@@ -54,8 +55,103 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(binomial_two_sided(0, 0), 1.0)
 
 
-class SwapTests(unittest.TestCase):
+class _Fighter:
+    def __init__(self, ident, hp, max_hp):
+        self.id = ident
+        self.hp = hp
+        self.max_hp = max_hp
 
+
+class _Final:
+    def __init__(self, first, second):
+        self.fighters = (first, second)
+
+
+class DamageSplitTests(unittest.TestCase):
+
+    def test_damage_is_the_opponent_s_hp_loss(self):
+        # seat 2 lost 900 of 4825, so the policy in seat 1 dealt 900.
+        final = _Final(_Fighter(1, 4825, 4825), _Fighter(2, 3925, 4825))
+        self.assertEqual(damage_split(final, a_seat=1), (900.0, 0.0))
+        self.assertEqual(damage_split(final, a_seat=2), (0.0, 900.0))
+
+    def test_a_dead_fighter_caps_damage_at_its_maximum(self):
+        # Fighter 1 is dead and fighter 2 untouched, so the seat-2 policy did all
+        # of the damage and the seat-1 policy did none of it.
+        final = _Final(_Fighter(1, 0, 4825), _Fighter(2, 4825, 4825))
+        self.assertEqual(damage_split(final, a_seat=2), (4825.0, 0.0))
+        self.assertEqual(damage_split(final, a_seat=1), (0.0, 4825.0))
+
+
+class EfficiencyTests(unittest.TestCase):
+
+    def games(self, damage_a, damage_b, turns=10, boards=8):
+        out = []
+        for index in range(boards):
+            for half, seat in ((0, 1), (1, 2)):
+                out.append({"seed": index, "half": half, "a_seat": seat,
+                            "winner": "a", "winner_seat": seat, "turns": turns,
+                            "damage_a": damage_a, "damage_b": damage_b})
+        return out
+
+    def test_a_policy_dealing_more_damage_per_turn_wins_the_paired_test(self):
+        eff = efficiency(self.games(800, 500))
+        self.assertAlmostEqual(eff["a_damage_per_turn"], 80.0)
+        self.assertAlmostEqual(eff["b_damage_per_turn"], 50.0)
+        self.assertGreater(eff["diff"], 0)
+        self.assertEqual(eff["boards_favouring_a"], 8)
+        self.assertEqual(eff["boards_favouring_b"], 0)
+        self.assertLess(eff["p_value"], 0.05)
+
+    def test_identical_damage_is_not_a_difference(self):
+        eff = efficiency(self.games(700, 700))
+        self.assertEqual(eff["diff"], 0.0)
+        self.assertEqual(eff["p_value"], 1.0)
+
+    def test_no_games_reports_nothing_rather_than_zero(self):
+        eff = efficiency([])
+        self.assertEqual(eff["boards"], 0)
+        self.assertIsNone(eff["diff"])
+
+
+class _ConstantHead:
+    def predict_proba(self, rows):
+        return [[0.5, 0.5] for _ in rows]
+
+
+class _RampHead:
+    def predict_proba(self, rows):
+        return [[0.5, index / max(1, len(rows))]
+                for index in range(len(rows))]
+
+
+class ValueHeadSpreadTests(unittest.TestCase):
+
+    def test_a_constant_head_is_reported_as_inert(self):
+        # A constant head reproduces solver_policy exactly, because plan_scores
+        # adds the solver's score as a 1e-4 tiebreak. It must not read as a tie.
+        from combat.battle_solver import BattleSolver
+        from combat.duel import load_map
+        from combat.normal_build_duel import DEFAULT_MAP
+
+        spread = value_head_spread(_ConstantHead(),
+                                   BattleSolver(beam_width=16, max_actions=5),
+                                   load_map(DEFAULT_MAP), "dana_ouro", boards=2)
+        self.assertEqual(spread, 0.0)
+
+    def test_a_head_that_ranks_plans_is_not_inert(self):
+        from combat.battle_solver import BattleSolver
+        from combat.duel import load_map
+        from combat.normal_build_duel import DEFAULT_MAP
+
+        spread = value_head_spread(_RampHead(),
+                                   BattleSolver(beam_width=16, max_actions=5),
+                                   load_map(DEFAULT_MAP), "dana_ouro", boards=2)
+        self.assertIsNotNone(spread)
+        self.assertGreater(spread, 0.0)
+
+
+class SwapTests(unittest.TestCase):
     def test_every_board_is_played_twice_with_the_seats_swapped(self):
         report = play_side_swapped("solver", "solver", games=2, seed=7)
         self.assertEqual(len(report["games"]), 4)

@@ -204,11 +204,20 @@ class SurfaceLabelLearning(unittest.TestCase):
         self.assertIsNotNone(call)
         self.assertEqual(call.args.get("menu"), "Map")
 
-    def test_the_french_phrase_table_is_not_in_python(self):
-        source = (REPO / "dofus-network" / "agent" / "planner.py").read_text(
-            encoding="utf-8")
-        self.assertNotIn('("inventaire", {"menu": "Bag"})', source,
-                         "the French→key table came back")
+    def test_a_learned_label_wins_over_the_seed_it_duplicates(self):
+        """The seed is a first-run fallback; what the client teaches outranks it.
+
+        This used to assert that `("inventaire", {"menu": "Bag"})` was absent from
+        planner.py, which stopped being true as soon as the seed kept its French rows --
+        and a seed is the point: a first run has no `menu_icons` to learn from. Pinning
+        absence also pinned the seed's own content, so the check could only pass while
+        the seed was empty. Precedence is the property, so it is tested by behaviour.
+        """
+        fresh = QuestPlanner()
+        self.assertEqual(fresh._ui_surface("ouvrez votre inventaire"), {"menu": "Bag"})
+        self.assertTrue(fresh.learn_surface_label("inventaire", "Pouch"))
+        self.assertEqual(fresh._ui_surface("ouvrez votre inventaire"), {"menu": "Pouch"},
+                         "the seed answered over the label the client published")
 
 
 if __name__ == "__main__":

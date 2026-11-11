@@ -93,6 +93,9 @@ function run(opts, args) {
                 return cell;
             },
     };
+    // Which border cell this map tried last, per "<map>:<direction>". Page state,
+    // so the suite decides it; a null `__agentLastNav` means nothing was tried yet.
+    global._agentEdgeTry = {};
     global.__agentLastNav = null;
     return { out: nav(args || {}), calls: calls };
 }

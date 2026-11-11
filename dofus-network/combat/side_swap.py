@@ -33,7 +33,7 @@ import pickle
 import random
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from combat.battle_solver import BattleSolver
 from combat.duel import (DuelState, load_map, make_residual_policy,
@@ -50,6 +50,45 @@ Policy = Callable[..., Any]
 def _load_model(spec: str) -> Any:
     path = Path(spec.split(":", 1)[1])
     return pickle.loads(path.read_bytes())["model"]
+
+
+def value_head_spread(model: Any, solver: BattleSolver, cells: Any,
+                      mirror_key: str, boards: int = 6) -> Optional[float]:
+    """Median spread of the value head's predictions across candidate plans.
+
+    A learned ranker that returns the same probability for every candidate is not
+    a weak ranker, it is an inert one: `duel.plan_scores` adds the solver's score
+    as a 1e-4 tiebreak, so a constant head reproduces `solver_policy` bit for bit
+    and any "value vs solver" comparison then measures the solver against itself.
+    Measured on `models/duel_value_v4_0.pkl` over real level-200 builds: spread
+    exactly 0.0 on 12 of 12 boards, because that head was trained on the v3
+    synthetic encounters and every real row lands in the same leaf. None when the
+    head cannot be evaluated at all.
+    """
+    from combat.duel import apply_plan, lookahead_features, plans_for
+
+    spreads: List[float] = []
+    for index in range(boards):
+        state = make_normal_duel(cells, random.Random(index), mirror_key=mirror_key)
+        if state is None:
+            continue
+        actor = state.actor
+        rows = []
+        for plan in plans_for(state, solver, 6):
+            clone = state.clone()
+            apply_plan(clone, plan)
+            if not clone.done:
+                rows.append(lookahead_features(clone, actor))
+        if len(rows) < 2:
+            continue
+        try:
+            predicted = [float(row[1]) for row in model.predict_proba(rows)]
+        except Exception:  # noqa: BLE001 - an inert head is the finding, not a crash
+            return None
+        spreads.append(max(predicted) - min(predicted))
+    if not spreads:
+        return None
+    return round(float(sorted(spreads)[len(spreads) // 2]), 6)
 
 
 def resolve(spec: str, solver: BattleSolver) -> Policy:
@@ -77,6 +116,67 @@ def binomial_two_sided(wins: int, losses: int) -> float:
         return 1.0
     tail = sum(math.comb(n, k) for k in range(0, min(wins, losses) + 1)) / (2 ** n)
     return min(1.0, 2.0 * tail)
+
+
+def damage_split(final: Any, a_seat: int) -> Tuple[float, float]:
+    """(damage dealt by a, damage dealt by b) in a finished duel.
+
+    Damage dealt is the opponent's HP loss, read off the two fighters rather than
+    accumulated per action, so it stays correct when a plan overkills: HP is
+    clamped at zero and the excess is not counted, which is what "damage that
+    mattered" means for efficiency.
+    """
+    by_seat = {int(fighter.id): fighter for fighter in final.fighters}
+    b_seat = 3 - a_seat
+    a_target = by_seat.get(b_seat)
+    b_target = by_seat.get(a_seat)
+    if a_target is None or b_target is None:
+        return 0.0, 0.0
+    damage_a = max(0.0, float(a_target.max_hp) - float(a_target.hp))
+    damage_b = max(0.0, float(b_target.max_hp) - float(b_target.hp))
+    return damage_a, damage_b
+
+
+def efficiency(games: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Damage per turn per policy, paired by board.
+
+    Win/loss saturates on these level-200 builds: seat 1 wins essentially every
+    decided game regardless of policy (measured, `seat_dominated` at 1.0 for
+    solver-vs-solver and two-ply-vs-solver), so the win column cannot rank two
+    good policies. Damage per turn still separates them, because the seat that
+    loses the game still deals damage before it dies, and the pairing means each
+    policy is measured once from each seat on the same board.
+    """
+    rows = [game for game in games
+            if game.get("turns") and game.get("damage_a") is not None]
+    if not rows:
+        return {"boards": 0, "a_damage_per_turn": None,
+                "b_damage_per_turn": None, "diff": None, "p_value": None,
+                "boards_favouring_a": 0, "boards_favouring_b": 0}
+    per_board: Dict[int, Dict[str, float]] = {}
+    for game in rows:
+        entry = per_board.setdefault(game["seed"], {"a": 0.0, "b": 0.0, "n": 0})
+        turns = float(game["turns"])
+        entry["a"] += float(game["damage_a"]) / turns
+        entry["b"] += float(game["damage_b"]) / turns
+        entry["n"] += 1
+    diffs = []
+    for entry in per_board.values():
+        halves = max(1, entry["n"])
+        diffs.append(entry["a"] / halves - entry["b"] / halves)
+    favour_a = sum(1 for diff in diffs if diff > 0)
+    favour_b = sum(1 for diff in diffs if diff < 0)
+    mean_a = sum(entry["a"] / max(1, entry["n"]) for entry in per_board.values()) / len(per_board)
+    mean_b = sum(entry["b"] / max(1, entry["n"]) for entry in per_board.values()) / len(per_board)
+    return {
+        "boards": len(per_board),
+        "a_damage_per_turn": round(mean_a, 2),
+        "b_damage_per_turn": round(mean_b, 2),
+        "diff": round(mean_a - mean_b, 2),
+        "p_value": round(binomial_two_sided(favour_a, favour_b), 4),
+        "boards_favouring_a": favour_a,
+        "boards_favouring_b": favour_b,
+    }
 
 
 def score_games(games: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
@@ -125,6 +225,14 @@ def play_side_swapped(spec_a: str, spec_b: str, games: int = 20, seed: int = 0,
     solver = solver or BattleSolver(beam_width=16, max_actions=5)
     policy_a = resolve(spec_a, solver)
     policy_b = resolve(spec_b, solver)
+    # A `value:`/`residual:` arm is only a different policy if its head can tell
+    # two candidate plans apart. Probe it once, so a constant head is reported as
+    # inert instead of as a draw with the solver.
+    heads: Dict[str, Any] = {}
+    for label, spec in (("a", spec_a), ("b", spec_b)):
+        if spec.startswith(("value:", "residual:")):
+            heads[label] = value_head_spread(_load_model(spec), solver, cells,
+                                             mirror_key)
     played: List[Dict[str, Any]] = []
     for index in range(games):
         board_seed = seed + index
@@ -141,12 +249,17 @@ def play_side_swapped(spec_a: str, spec_b: str, games: int = 20, seed: int = 0,
             winner_seat = final.winner
             winner = ("a" if winner_seat == a_seat else "b"
                       if winner_seat in (1, 2) else "draw")
+            damage_a, damage_b = damage_split(final, a_seat)
             played.append({"seed": board_seed, "half": half, "a_seat": a_seat,
                            "winner": winner, "winner_seat": winner_seat,
-                           "turns": final.turns})
+                           "turns": final.turns,
+                           "damage_a": round(damage_a, 2),
+                           "damage_b": round(damage_b, 2)})
     score = score_games(played)
     return {"a": spec_a, "b": spec_b, "mirror": mirror_key, "seed": seed,
-            "rounds": rounds, "score": score, "games": played}
+            "rounds": rounds, "score": score,
+            "efficiency": efficiency(played), "value_head_spread": heads,
+            "games": played}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -194,6 +307,20 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             print("  this build pair cannot judge a decision: one seat wins "
                   "%.0f%% of the decided games regardless of policy"
                   % (100.0 * max(score["seat1_win"], 1.0 - score["seat1_win"])))
+        eff = report["efficiency"]
+        if eff["boards"]:
+            print("  damage/turn  a %s  b %s  diff %+.2f  "
+                  "(boards a %d - b %d, p %s)"
+                  % (eff["a_damage_per_turn"], eff["b_damage_per_turn"],
+                     eff["diff"], eff["boards_favouring_a"],
+                     eff["boards_favouring_b"], eff["p_value"]))
+        for label, spread in report["value_head_spread"].items():
+            if spread is None:
+                print("  value head %s: could not be evaluated; the arm is the "
+                      "solver" % label)
+            elif spread <= 0.0:
+                print("  value head %s: INERT (prediction spread %.6f) -- this "
+                      "arm is the solver, not a learned policy" % (label, spread))
     return 0
 
 

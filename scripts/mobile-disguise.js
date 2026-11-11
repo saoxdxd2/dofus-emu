@@ -28,7 +28,7 @@
     // injected page changes: a client that was not fully restarted keeps the previous
     // script, and a recorded observation is how that becomes visible instead of looking
     // like a fix that does not work.
-    var AGENT_BUILD = '2026-10-31a';
+    var AGENT_BUILD = '2026-11-10a';
 
     // The client's inactivity countdown lives in ONE object -- the tracker whose
     // `_checkActivity` warns at 5 min idle and then calls
@@ -1439,6 +1439,10 @@
                 var s = this.session;
                 s._pre = _agentSnapshot();
                 s._monsters = this.countMonsters();
+                // Stamped so closeFight can tell this fight's verdict from a stale one:
+                // `__agentLastFightEnd` is only overwritten when a fight ends, so an
+                // abandoned fight would otherwise inherit the previous fight's result.
+                s._openedAt = Date.now();
             },
 
             closeFight: function() {
@@ -1467,17 +1471,33 @@
                     }
                 }
 
-                // A fight that yields no xp was lost or abandoned. Recording the
-                // kills as kills in that case would teach a drop rate that never
-                // happened, so it is counted as a loss instead.
+                // The verdict is the server's own end-of-fight result for this character
+                // (`__agentLastFightEnd.won`, captured by the GameFightEndMessage handler
+                // above, which runs closeFight itself). It used to be inferred from the xp
+                // delta, on the assumption that a lost fight pays no xp. Measured false on
+                // 2026-11-10: a fight that ended with the character dead and two monsters
+                // alive still paid 518 xp, so a loss was counted as a win (session reported
+                // "fights 2, wins 2" with one real victory). Every win rate the farm loop
+                // reports was inflated by exactly those fights.
                 var monsters = s._monsters || 0;
-                if (xpGain != null && xpGain > 0) {
+                var verdict = null;
+                try {
+                    var end = window.__agentLastFightEnd;
+                    if (end && typeof end.won === 'boolean'
+                            && end.at != null && end.at >= (s._openedAt || 0)) {
+                        verdict = end.won;
+                    }
+                } catch (eV) {}
+                if (verdict === null) verdict = (xpGain != null && xpGain > 0);
+                if (verdict) {
                     s.wins += 1;
                     s.kills += monsters;
-                    s.xp += xpGain;
                 } else {
                     s.losses += 1;
                 }
+                // Xp is paid either way -- a loss still awards it for what died first --
+                // so it is recorded from the delta and never used as the outcome.
+                if (xpGain != null && xpGain > 0) s.xp += xpGain;
                 if (kamasGain != null && kamasGain > 0) s.kamas += kamasGain;
                 s._monsters = 0;
                 return this.sessionSummary();
@@ -1885,13 +1905,32 @@
                 // keep a session alive that a human is no longer driving.
                 if (!self._userInputInstalled && typeof document !== 'undefined') {
                     self._userInputInstalled = true;
-                    var ui = { trusted: 0, during_run: 0, by_type: {}, last_ts: 0 };
+                    // A takeover is a pointer landing on the client. `wheel` and `keydown`
+                    // stay in the observed set -- they are real human input and the
+                    // per-type breakdown is worth having -- but they are not takeovers:
+                    // scrolling a spell list and typing in chat are what a run looks like
+                    // when nobody is steering it. Measured 2026-11-10 on dofus-01: 1,078
+                    // "interventions" accumulated from 99 rows, while the same rows'
+                    // breakdown read mousedown 200 / keydown 1491 / wheel 152. A metric
+                    // the goal is stated in cannot count a scroll wheel.
+                    //
+                    // One click is one takeover: a browser that has PointerEvent fires
+                    // pointerdown *and* mousedown for the same press, so counting both
+                    // doubled every click. `during_run_all` keeps the old, wider count so
+                    // the difference stays auditable instead of silently disappearing.
+                    var takeoverEvent = (window.PointerEvent)
+                        ? { pointerdown: true }
+                        : { mousedown: true, touchstart: true };
+                    var ui = { trusted: 0, during_run: 0, during_run_all: 0,
+                               by_type: {}, last_ts: 0 };
                     window.__agentUserInput = function () {
                         var copy = {};
                         for (var k in ui.by_type) {
                             if (Object.prototype.hasOwnProperty.call(ui.by_type, k)) copy[k] = ui.by_type[k];
                         }
-                        return { trusted: ui.trusted, during_run: ui.during_run, by_type: copy, last_ts: ui.last_ts };
+                        return { trusted: ui.trusted, during_run: ui.during_run,
+                                 during_run_all: ui.during_run_all,
+                                 by_type: copy, last_ts: ui.last_ts };
                     };
                     var noteUserInput = function (ev) {
                         try {
@@ -1899,7 +1938,9 @@
                             ui.trusted++;
                             ui.by_type[String(ev.type)] = (ui.by_type[String(ev.type)] || 0) + 1;
                             ui.last_ts = Date.now();
-                            if (self.aiRunning) ui.during_run++;
+                            if (!self.aiRunning) return;
+                            ui.during_run_all++;
+                            if (takeoverEvent[String(ev.type)]) ui.during_run++;
                         } catch (e) { /* an instrument must never break a click */ }
                     };
                     ['pointerdown', 'mousedown', 'keydown', 'wheel', 'touchstart'].forEach(function (t) {
@@ -3961,6 +4002,8 @@
                 spell: msg.spellId != null ? Number(msg.spellId) : null,
                 spell_level: msg.spellLevel != null ? Number(msg.spellLevel) : null,
                 cell: msg.cellId != null ? Number(msg.cellId) : null,
+                destination_cell: msg.destinationCellId != null
+                    ? Number(msg.destinationCellId) : null,
                 effect: msg.effectId != null ? Number(msg.effectId) : null,
                 critical: msg.critical != null ? Number(msg.critical) : null,
                 delta: msg.delta != null ? Number(msg.delta) : null,
@@ -6375,6 +6418,11 @@
             }
             return null;
         };
+        // Which border cell was tried last, per "<map>:<direction>". An exit built
+        // from geometry lists every walkable cell on that edge, and only one of them
+        // is the crossing the server accepts; without advancing past a cell that was
+        // reached and did not transition, the caller repeated it forever.
+        var _agentEdgeTry = {};
         // The sampler sees the map change but not which of the last cells was the
         // door, so our own walks leave a hint: a nav to a cell that is followed by
         // a change within a few seconds is that cell. A human's walk lands on the
@@ -6434,6 +6482,44 @@
             } catch (e) {}
         };
         try { window.setInterval(_agentDoorTick, 400); } catch (e) {}
+
+        // A build that publishes no change-map flags still has borders, and the
+        // border is geometry. The client's own `getChangeMapFlags` tests the `c` flag
+        // only *after* a cell has passed a purely positional test (left: `i % 14 ==
+        // 0`, right: `i % 14 == 13`, top: `i <= 28`, bottom: `i >= 532`), so the set
+        // of cells that could carry an exit flag is known without the flags.
+        // Measured live 2026-11-10 on map 146540544: every cell was `{l: 66}` or
+        // `{l: 67}` -- walkability present, `c` absent -- so `getChangeMapFlags`
+        // answered false for all 560 cells, `exits` came back empty, and every
+        // crossing fell through to a ChangeMapMessage sent from an interior cell,
+        // which the server refuses. The session sent 958 of those for 128 map
+        // changes, most of them reconnects: "nowhere to go" was literal.
+        var _agentBorderCells = function (dir, cells, isWalkable) {
+            var out = [];
+            if (!cells || !cells.length) return out;
+            var width = 14;              // the client's MAP_WIDTH
+            var total = cells.length;    // 560 for every map in this build
+            for (var i = 0; i < total; i++) {
+                var on = false;
+                if (dir === 'left') on = (i % width) === 0;
+                else if (dir === 'right') on = (i % width) === width - 1;
+                else if (dir === 'top') on = i <= 2 * width;
+                else if (dir === 'bottom') on = i >= total - 2 * width;
+                if (!on) continue;
+                // A border cell nobody can stand on is not an exit. The renderer's
+                // own `isWalkable` reads bit 0 of `l` out of fight mode, which is
+                // the same test; prefer it so an obstacle update is respected.
+                var ok = false;
+                if (typeof isWalkable === 'function') {
+                    try { ok = !!isWalkable(i); } catch (eW) { ok = false; }
+                } else {
+                    var c = cells[i];
+                    ok = !!(c && (Number(c.l) & 1));
+                }
+                if (ok) out.push(i);
+            }
+            return out;
+        };
 
         var _agentMapDetails = function () {
             var iso = window.isoEngine || null;
@@ -6503,15 +6589,30 @@
             var gate = (tutorial && tutorial.can_change_map) || null;
             var neighbours = {};
             var exits = [];
+            var walkTest = (mr && typeof mr.isWalkable === 'function')
+                ? function (i) { return mr.isWalkable(i); } : null;
+            var borderCache = {};
             for (var di = 0; di < dirs.length; di++) {
                 var d = dirs[di];
                 var raw = map[keys[d]];
                 var nid = raw != null && Number(raw) > 0 ? Number(raw) : null;
                 if (nid != null) neighbours[d] = nid;
-                if (nid == null || !byDir[d] || !byDir[d].length) continue;
+                if (nid == null) continue;
+                var listed = (byDir[d] && byDir[d].length) ? byDir[d] : null;
+                var inferred = false;
+                if (!listed) {
+                    // No cell carried the flag: fall back to the border geometry.
+                    if (!borderCache[d]) {
+                        borderCache[d] = _agentBorderCells(d, map.cells, walkTest);
+                    }
+                    listed = borderCache[d];
+                    inferred = listed.length > 0;
+                }
+                if (!listed.length) continue;
                 exits.push({ direction: d, map_id: nid,
                              blocked: !!(gate && gate[d] === false),
-                             cells: nearest(byDir[d]).slice(0, 6) });
+                             inferred: inferred,
+                             cells: nearest(listed).slice(0, 6) });
             }
             var npcs = [];
             try {
@@ -8231,7 +8332,12 @@
                             level: num(fighter && fighter.level) !== null
                                 ? num(fighter.level) : num(data.level),
                             name: text(fighter && fighter.name) || text(data.name),
-                            creature_generic_id: num(data.creatureGenericId),
+                            creature_generic_id: num(
+                                fighter && fighter.creatureGenericId != null
+                                    ? fighter.creatureGenericId
+                                    : (actor && actor.creatureGenericId != null
+                                        ? actor.creatureGenericId
+                                        : data.creatureGenericId)),
                             summoner_id: num(stats.summoner),
                             is_monster: !!(fighter && fighter.isMonster && fighter.isMonster()),
                             is_summon: !!(fighter && fighter.isSummon && fighter.isSummon()),
@@ -8409,7 +8515,44 @@
                     state.spells.push(spellFacts);
                 }
                 var lastActions = [];
+                // The ring first, for the same reason `_battleLog` prefers it: the client
+                // clears `fightMessagesStack` when a fight ends, and this block read the
+                // stack directly, so `last_actions` was [] on all 333 recorded boards while
+                // `battle_log` -- which reads the ring -- held up to 52 rows from the very
+                // same fight. `combat/live_data.py` learns a monster's spell ids from these
+                // rows and `battle_solver` needs them to recover MP, so the empty list is
+                // why the monster-spell table never populated (ARCH_REASSESSMENT XII.18).
                 try {
+                    try { _agentHarvestStack(); } catch (eH) {}
+                    var actionRing = window.__agentBattleRing || [];
+                    if (actionRing.length) {
+                        var ringFrom = Math.max(0, actionRing.length - 48);
+                        for (var ri = ringFrom; ri < actionRing.length; ri++) {
+                            var rr = actionRing[ri];
+                            if (!rr) continue;
+                            lastActions.push({
+                                type: rr.type,
+                                action_id: rr.at_action,
+                                source_id: rr.source,
+                                target_id: rr.target,
+                                spell_id: rr.spell,
+                                spell_level: rr.spell_level,
+                                destination_cell: rr.destination_cell != null
+                                    ? rr.destination_cell : null,
+                                critical: rr.critical,
+                                value: rr.value,
+                                delta: rr.delta,
+                                effect_id: rr.effect,
+                                cell: rr.cell,
+                                loss: rr.loss,
+                                permanent_damages: rr.permanent_damages,
+                                shield_loss: rr.shield_loss,
+                                key_movements: null
+                            });
+                        }
+                    }
+                } catch (eRing) {}
+                if (!lastActions.length) try {
                     var stack = fm.fightMessagesStack || fm._fightMessagesStack || [];
                     var start = Math.max(0, stack.length - 48);
                     for (var ai = start; ai < stack.length; ai++) {
@@ -8719,8 +8862,32 @@
                               direction: changeDir });
                     }
                     var exitCell = wantCell;
-                    if (exitCell == null || (crossing.cells || []).indexOf(exitCell) < 0) {
-                        exitCell = (crossing.cells || [])[0];
+                    var pool = (crossing.cells || []).slice();
+                    if (exitCell == null || pool.indexOf(exitCell) < 0) {
+                        // Advance past a border cell the character actually reached
+                        // and the map still did not change: that cell is not the
+                        // crossing. `change_requested_at_edge` is a direct request
+                        // from the cell, `walk_then_change` is a completed walk that
+                        // ended on it. A walk still in flight matches neither, so a
+                        // caller polling faster than the walk cannot skip a good cell.
+                        var edgeKey = here + ':' + changeDir;
+                        var lastNav = window.__agentLastNav;
+                        var stalled = !!(lastNav && lastNav.from_map != null
+                            && Number(lastNav.from_map) === Number(here)
+                            && lastNav.direction === changeDir
+                            && (lastNav.stage === 'change_requested_at_edge'
+                                || (lastNav.stage === 'walk_then_change'
+                                    && lastNav.cell != null && details.cell != null
+                                    && Number(lastNav.cell) === Number(details.cell))));
+                        var idx = _agentEdgeTry[edgeKey] || 0;
+                        if (stalled && pool.length > 1) {
+                            idx = (idx + 1) % pool.length;
+                            _agentEdgeTry[edgeKey] = idx;
+                        }
+                        exitCell = pool[idx] != null ? pool[idx] : pool[0];
+                    } else {
+                        _agentEdgeTry[here + ':' + changeDir] = Math.max(0,
+                            pool.indexOf(exitCell));
                     }
                     if (exitCell == null) {
                         return _agentResult(false, { map_id: here, target_map: wantMap,

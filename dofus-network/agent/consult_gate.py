@@ -74,3 +74,23 @@ def should_defer(logits: Optional[Sequence[float]] = None,
     except (TypeError, ValueError, AttributeError):
         return False
     return f > 0 and gap < f
+
+
+def applies_to(model_sha256: Optional[str], arch: str = "mlp",
+               path: Optional[Path] = None) -> bool:
+    """Is this gate fitted for the model that is actually loaded?
+
+    A margin threshold is a property of one model's logit scale, not a constant of
+    the task. Carrying 0.75 from the 42-wide head onto a different architecture means
+    deferring on a quantity nobody measured -- either never (the gate quietly stops
+    existing) or always (the head quietly stops deciding). So an artifact that names
+    a model applies only to that model; an older artifact without the field keeps the
+    behaviour it was written for.
+    """
+    doc = load(path)
+    if not doc:
+        return False
+    pinned = doc.get("model_sha256")
+    if pinned:
+        return bool(model_sha256) and str(pinned) == str(model_sha256)
+    return arch == "mlp"

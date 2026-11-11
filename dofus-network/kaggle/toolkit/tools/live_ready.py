@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import socket
 import sys
 import urllib.request
@@ -272,13 +273,22 @@ def checks(log: Path = DEFAULT_LOG, stop: Path = DEFAULT_STOP,
 
     current = page_build(page)
     last = last_log_build(log)
+    # The client reports `AGENT_BUILD + '+' + buildVersion` (the page appends the game's
+    # own version, e.g. `2026-10-31a+1.74.9`), while this side only ever reads the bare
+    # `AGENT_BUILD` out of the repo. Comparing the two whole strings therefore failed on
+    # every client that reports its version -- the one check that guards every live run
+    # was permanently red for a reason that is not staleness. Compare the agent half only.
+    current_base = (current or "").split("+", 1)[0]
+    last_base = (last or "").split("+", 1)[0]
     if not current:
         out.append(_entry("FAIL", "page build", "no AGENT_BUILD in %s" % page))
     elif last is None:
         out.append(_entry("INFO", "page build",
                           "repo %s; no recorded client build yet" % current))
-    elif last == current:
-        out.append(_entry("PASS", "page build", "client and repo both %s" % current))
+    elif last_base == current_base:
+        out.append(_entry("PASS", "page build",
+                          "client and repo both %s (client reported %s)"
+                          % (current_base, last)))
     else:
         out.append(_entry("FAIL", "page build",
                           "last client recorded %s but the repo is %s; restart the app "

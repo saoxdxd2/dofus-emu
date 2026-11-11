@@ -31,6 +31,12 @@ DEFAULT_PLAY_LOG = REPO_ROOT / "trajectories" / "play_dofus-05.jsonl"
 DEFAULT_BOARDS = REPO_ROOT / "trajectories" / "fight_boards.jsonl"
 DEFAULT_OUT = REPO_ROOT / "trajectories" / "live"
 
+# How much damage the boards carried, and how much of it could be tied to the cast
+# that produced it. Kept module-level so a run can report it: an empty
+# `observed_damage` caused by a join that never matches reads exactly like a fight
+# with no damage in it, and that ambiguity hid a broken join for a whole session.
+ATTRIBUTION: Dict[str, int] = {"damage_rows": 0, "attributed": 0}
+
 CAST_RE = re.compile(
     r'"sourceId":(?P<source>-?\d+).*?'
     r'"targetId":(?P<target>-?\d+).*?'
@@ -114,12 +120,22 @@ def _spell_descriptor(raw: Any) -> Optional[Dict[str, Any]]:
 
 def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
                                            List[Dict[str, Any]],
-                                           List[Dict[str, Any]]]:
-    """Read the autopilot's board/outcome JSONL into three datasets."""
+                                           List[Dict[str, Any]],
+                                           Dict[str, Dict[str, Any]]]:
+    """Read the autopilot's board/outcome JSONL into four datasets.
+
+    The fourth is ``observed_damage``: what an enemy spell actually took off us,
+    keyed by ``name|level|spell_id``. It exists because the client never publishes
+    a monster's spellbook for some monsters -- `Barbakle` carried one in 0 of 1,018
+    recorded rows -- while it *does* publish the damage those spells dealt. The
+    value ranker needs the damage, not the spellbook, so a spell id plus its
+    observed hits is enough to price an enemy turn (ARCH_REASSESSMENT XII.18).
+    """
     boards: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
     outcomes: Dict[str, Dict[str, Any]] = {}
+    observed: Dict[str, Dict[str, Any]] = {}
     if not Path(path).exists():
-        return [], [], []
+        return [], [], [], {}
     with Path(path).open(encoding="utf-8", errors="ignore") as handle:
         for line in handle:
             line = line.strip()
@@ -183,6 +199,32 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
                     descriptor = _spell_descriptor(raw)
                     if descriptor:
                         entry["spells"].setdefault(str(descriptor["id"]), descriptor)
+            # What each cast actually took off us.
+            #
+            # This used to join the cast row to its life-points-lost row on `action_id`,
+            # on the reading that the client stamps one id on both. Measured live on
+            # 2026-11-10 against fight 875: all 12 cast rows carried action_id 300 while
+            # all 8 damage rows carried 97 or 98, and every damage row had spell_id null.
+            # The two are separate id spaces, so the join matched nothing and
+            # `observed_damage` came out empty for every board -- silently, because an
+            # empty join and a fight with no damage look the same in the output.
+            #
+            # The counters below are what tell them apart. Until a join key that exists
+            # in the payload is found, a run reports how much damage it saw and how much
+            # it could attribute, instead of returning nothing and saying nothing.
+            damage_by_action: Dict[Any, float] = {}
+            for row in board.get("last_actions") or []:
+                action_id = row.get("action_id")
+                loss = row.get("loss")
+                if loss is not None:
+                    ATTRIBUTION["damage_rows"] += 1
+                if action_id is None or loss is None:
+                    continue
+                try:
+                    damage_by_action[action_id] = (
+                        damage_by_action.get(action_id, 0.0) + abs(float(loss)))
+                except (TypeError, ValueError):
+                    continue
             for action in board.get("last_actions") or []:
                 spell_id = action.get("spell_id")
                 source_id = action.get("source_id")
@@ -197,6 +239,31 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
                 if key in seen_actions:
                     continue
                 seen_actions.add(key)
+                dealt = damage_by_action.get(action.get("action_id"))
+                # Only a cast row owns the damage. The life-points-lost row that
+                # carries the same action id also carries `spell_id`, so attributing
+                # from every row would file the same hit twice -- and would file a
+                # hit whose caster we never saw cast.
+                action_type = str(action.get("type") or "")
+                if dealt and (not action_type or "SpellCast" in action_type):
+                    ATTRIBUTION["attributed"] += 1
+                    # Keyed on name+level rather than the creature id: the id is what
+                    # we want, but every row in the current corpus predates the page
+                    # fix and carries null, and a damage sample is still a real
+                    # observation under the weaker key.
+                    slot_key = "%s|%s|%s" % (source.get("name") or "",
+                                             source.get("level"), spell_id)
+                    slot = observed.setdefault(slot_key, {
+                        "name": source.get("name"),
+                        "level": source.get("level"),
+                        "creature_generic_id": source.get("creature_generic_id"),
+                        "spell_id": int(spell_id),
+                        "hits": 0, "total": 0.0, "min": None, "max": None,
+                    })
+                    slot["hits"] += 1
+                    slot["total"] += dealt
+                    slot["min"] = dealt if slot["min"] is None else min(slot["min"], dealt)
+                    slot["max"] = dealt if slot["max"] is None else max(slot["max"], dealt)
                 creature_id = source.get("creature_generic_id")
                 actions.append({
                     "run": run,
@@ -237,7 +304,10 @@ def build_from_boards(path: Path) -> Tuple[List[Dict[str, Any]],
         entry["names"] = sorted(entry["names"])
         entry["levels"] = sorted(entry["levels"])
         entry["spell_ids"] = sorted(entry["spells"])
-    return list(monsters.values()), actions, fights
+    for slot in observed.values():
+        slot["mean"] = round(slot["total"] / max(1, slot["hits"]), 2)
+        slot["total"] = round(slot["total"], 2)
+    return list(monsters.values()), actions, fights, observed
 
 
 def run(args: argparse.Namespace) -> int:
@@ -249,10 +319,16 @@ def run(args: argparse.Namespace) -> int:
         with (out / "observed_casts.jsonl").open("w", encoding="utf-8") as handle:
             for row in casts:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    monsters, actions, fights = build_from_boards(Path(args.boards))
-    if monsters:
+    monsters, actions, fights, observed = build_from_boards(Path(args.boards))
+    if monsters or observed:
+        # Written when either half exists: on the current corpus every enemy row
+        # predates the `creature_generic_id` fix, so `monsters` is empty while
+        # `observed_damage` is not -- and the observed damage is the part the value
+        # ranker can use.
         (out / "monster_spells.json").write_text(
-            json.dumps({"source": "live_client", "monsters": monsters},
+            json.dumps({"source": "live_client", "monsters": monsters,
+                        "observed_damage": [observed[key]
+                                            for key in sorted(observed)]},
                        indent=1, ensure_ascii=False), encoding="utf-8")
     if actions:
         with (out / "monster_actions.jsonl").open("w", encoding="utf-8") as handle:
@@ -270,6 +346,12 @@ def run(args: argparse.Namespace) -> int:
         "unique_cast_spells": sorted({row["spell_id"] for row in casts}),
         "cast_sources": dict(Counter(row["source_id"] for row in casts)),
         "monsters": len(monsters),
+        "observed_damage_spells": len(observed),
+        # Damage seen vs damage that could be tied to a cast. If these disagree the
+        # join key is wrong, not the fight: report both so an empty observed_damage
+        # cannot be mistaken for "the enemies did no damage".
+        "damage_rows_seen": ATTRIBUTION["damage_rows"],
+        "damage_rows_attributed": ATTRIBUTION["attributed"],
         "monster_actions": len(actions),
         "fights": len(fights),
         "elapsed_s": round(time.time() - started, 1),

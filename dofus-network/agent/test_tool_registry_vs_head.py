@@ -30,9 +30,10 @@ FAILURES: list[str] = []
 WARNINGS: list[str] = []
 
 
-def fail(msg: str) -> None:
-    FAILURES.append(msg)
-    print(f"FAIL {msg}")
+def fail(msg: str, *extra: str) -> None:
+    line = " ".join((msg,) + extra) if extra else msg
+    FAILURES.append(line)
+    print(f"FAIL {line}")
 
 
 def warn(msg: str) -> None:
@@ -88,26 +89,39 @@ def main() -> None:
     else:
         ok(f"all {len(RULE_ONLY_TOOLS)} rule-only tools present in capabilities.json")
 
-    head_files = list((REPO / "models").rglob("*")) if (REPO / "models").exists() else []
-    head_found = False
-    for hf in head_files:
-        try:
-            text = hf.read_text(encoding="utf-8", errors="replace")
-        except (OSError, IsADirectoryError):
-            continue
-        for token in ("21", "28", "logit", "output", "head"):
-            if token in text.lower():
-                head_found = True
-                break
-        if head_found:
-            break
-
-    if head_found:
-        warn("a model/head artifact was scanned; confirm its output width matches the "
-             f"{len(schema_set)}-tool registry before trusting the learned policy on "
-             f"the {len(RULE_ONLY_TOOLS)} rule-only tools (rules.md)")
+    # The head lives under dofus-network/models, not <repo>/models. The previous
+    # version scanned the wrong directory, found nothing, and reported "cannot be
+    # verified offline" on a checkout that ships the head.
+    head_onnx = REPO / "dofus-network" / "models" / "tool_policy.onnx"
+    if not head_onnx.exists():
+        ok(f"no head artifact at {head_onnx} — head width cannot be verified offline")
     else:
-        ok("no head artifact found on this checkout — head width cannot be verified offline")
+        head_tools: list[str] = []
+        metrics: dict = {}
+        try:
+            # `score_artifact` runs whatever the artifact is -- the numpy path is
+            # exact for a dense stack and wrong for a recurrent one, so the arch in
+            # the sidecar decides. Using `evaluate` directly here reported a shape
+            # error for a correct graph and called it "could not be replayed".
+            from agent.weight_space import export_manifest, read_val_rows, score_artifact
+            manifest = export_manifest()
+            head_tools = list(manifest["base"]["tools"])
+            metrics = score_artifact(manifest, read_val_rows())
+        except Exception as exc:  # noqa: BLE001 - report, never crash the gate
+            warn(f"head present at {head_onnx} but could not be replayed: {exc}")
+
+        if head_tools:
+            ok(f"head output width {len(head_tools)} (replayed on "
+               f"{metrics.get('rows', 0)} val rows)")
+            unlearned = [t for t in registry_tools if t not in head_tools]
+            if unlearned:
+                warn(f"{len(unlearned)} of {len(registry_tools)} registered tools have no "
+                     f"logit and are unreachable by construction: {', '.join(unlearned)}")
+            unreachable = metrics.get("unreachable_tools") or []
+            if unreachable:
+                warn(f"{len(unreachable)} of {len(head_tools)} *trained* tools are never "
+                     f"ranked first on any val row: {', '.join(unreachable)} "
+                     f"— reachability is not accuracy; these cannot be selected at all")
 
     print()
     if FAILURES:

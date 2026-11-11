@@ -1,13 +1,18 @@
 """Rank solver plans with the 30M 560-cell grid model.
 
 This is an opt-in read-only ranker. It loads the synthetic solver-distillation
-artifact (`models/combat_grid/model.pkl`), builds the same cell/fighter/plan
+artifact (``models/combat_grid/model.pkl``), builds the same cell/fighter/plan
 tensors used in training, and returns the model's score for each legal plan.
 It never casts, moves or ends a turn.
 
     python -m combat.grid_infer --check
-"""
 
+The model loads on the installed embedded interpreter through the numpy backend
+(``combat.grid_backend``) -- no jax wheel required -- so an installed copy can
+serve the learned ranker instead of the solver-only path. ``rank_plans`` returns
+``None`` when the checkpoint or its data is absent, and the caller treats that
+as a refusal, never a crash.
+"""
 from __future__ import annotations
 
 import argparse
@@ -17,27 +22,20 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from combat.grid_backend import XP, tree_map, HAS_JAX, BACKEND
+
 DEFAULT_MODEL = Path(__file__).resolve().parent.parent / "models" / "combat_grid" / "model.pkl"
 _CACHE: Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]] = {}
-_LAZY: Dict[str, Any] = {}
 
 
 def _deps() -> Optional[Dict[str, Any]]:
-    """Load jax and the model modules on first use, not at import time.
+    """Load the model modules on first use, not at import time.
 
-    The interpreter that ships inside setup.exe is the embedded one and it has no jax
-    wheel, while the development interpreter does. A module-level ``import jax`` therefore
-    made ``from combat.grid_infer import rank_plans`` raise ImportError on an installed
-    copy, which took down the decision path instead of returning the ``None`` the executor
-    already treats as a refusal -- and it was invisible to every check run from the repo.
+    ``grid_model`` now works on the numpy backend, so importing it never raises
+    ImportError for a missing jax wheel. ``grid_dataset`` is numpy-only already.
     """
-    if _LAZY:
-        return _LAZY
-    try:
-        import jax
-        import jax.numpy as jnp
-    except ImportError:
-        return None
+    if _CACHE and False:  # placeholder; cache keyed by path in load_model
+        pass
     try:
         from combat import grid_dataset, grid_model
     except ImportError:  # Kaggle standalone
@@ -46,11 +44,17 @@ def _deps() -> Optional[Dict[str, Any]]:
             import grid_model
         except ImportError:
             return None
-    _LAZY.update(jax=jax, jnp=jnp, grid_dataset=grid_dataset, grid_model=grid_model)
-    return _LAZY
+    return {"grid_dataset": grid_dataset, "grid_model": grid_model}
 
 
-def load_model(path: Path = DEFAULT_MODEL) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+def load_model(path: Path = DEFAULT_MODEL
+               ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    """Load the checkpoint's params and config, backend-agnostic.
+
+    On jax the leaves become jax arrays; on numpy they stay numpy arrays. The
+    forward pass in ``grid_model.forward`` is written against ``XP`` so it runs
+    identically on either.
+    """
     key = str(path)
     if key in _CACHE:
         return _CACHE[key]
@@ -59,9 +63,10 @@ def load_model(path: Path = DEFAULT_MODEL) -> Optional[Tuple[Dict[str, Any], Dic
     deps = _deps()
     if deps is None:
         return None
+    grid_model = deps["grid_model"]
     with path.open("rb") as handle:
         payload = pickle.load(handle)
-    params = deps["jax"].tree_util.tree_map(deps["jnp"].asarray, payload["params"])
+    params = tree_map(XP.asarray, payload["params"])
     config = dict(payload.get("config") or {})
     _CACHE[key] = (params, config)
     return params, config
@@ -71,9 +76,8 @@ def _padded(board, plans: Sequence[Any]):
     deps = _deps()
     if deps is None:
         return None
-    jnp = deps["jnp"]
-    grid_dataset = deps["grid_dataset"]
     grid_model = deps["grid_model"]
+    grid_dataset = deps["grid_dataset"]
     me = board.me
     cells = grid_dataset._cells(board, me)
     fighters, fighter_mask = grid_dataset._fighters(board, me)
@@ -85,12 +89,12 @@ def _padded(board, plans: Sequence[Any]):
         rows = np.vstack([rows, np.zeros((pad, grid_model.PLAN_FEATS), np.float32)])
         mask = np.concatenate([mask, np.zeros((pad,), bool)])
     return {
-        "cells": jnp.asarray(cells[None, ...]),
-        "cell_mask": jnp.ones((1, cells.shape[0]), dtype=bool),
-        "fighters": jnp.asarray(fighters[None, ...]),
-        "fighter_mask": jnp.asarray(fighter_mask[None, ...]),
-        "plans": jnp.asarray(rows[None, ...]),
-        "plan_mask": jnp.asarray(mask[None, ...]),
+        "cells": XP.asarray(cells[None, ...]),
+        "cell_mask": XP.ones((1, cells.shape[0]), dtype=bool),
+        "fighters": XP.asarray(fighters[None, ...]),
+        "fighter_mask": XP.asarray(fighter_mask[None, ...]),
+        "plans": XP.asarray(rows[None, ...]),
+        "plan_mask": XP.asarray(mask[None, ...]),
     }
 
 
@@ -120,6 +124,7 @@ def rank_plans(board, plans: Sequence[Any],
         "kind": "solver_distillation",
         "live_calibrated": False,
         "config": config,
+        "backend": BACKEND,
     }
 
 
@@ -130,11 +135,11 @@ def _check() -> int:
         return 2
     loaded = load_model()
     if loaded is None:
-        print("grid model unavailable: needs jax in the runtime that loads this")
+        print("grid model unavailable: %s backend could not load the checkpoint" % BACKEND)
         return 2
     deps = _deps()
     print("model", DEFAULT_MODEL, "params", deps["grid_model"].param_count(loaded[0]),
-          "config", loaded[1])
+          "config", loaded[1], "backend", BACKEND)
     return 0
 
 
