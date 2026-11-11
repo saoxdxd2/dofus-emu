@@ -66,8 +66,13 @@ CORE_ROOTS = ROOTS
 # so an installed copy has nothing for those wheels to read. They come back with the tier that asks
 # for them -- and the weights are copied in by whoever runs `--policy encoder`, the command shadow
 # or DOFUS_LEARNED_COMMAND_MODEL, because the graphs live in the repo, not in the installer.
+# jax and scipy joined on 2026-11-11: combat/map_field.py, combat/grid_model.py and
+# tools/distill_beam.py import them at module scope, so the gate's suites cannot even
+# be collected without them. They are dev/test-tier only -- setup.exe still installs
+# just requirements.txt. Declaring them here is what makes `--write` keep them; a
+# hand-edited requirements-ai.txt would be silently rewritten without them.
 AI_TIER = {"torch", "transformers", "safetensors",
-           "onnxruntime", "tokenizers", "sklearn", "joblib"}
+           "onnxruntime", "tokenizers", "sklearn", "joblib", "jax", "scipy"}
 
 # Distributions that stay in the runtime tier even though the import graph only reaches them
 # lazily or under `except ImportError`: their weights ship inside the installer, and the feature is
@@ -84,6 +89,7 @@ def deferred_modules(files: Dict[str, Set[str]]) -> Set[str]:
     return set(files.get("_deferred") or ())
 DIST = {
     "numpy": "numpy",
+    "jax": "jax",
     "scipy": "scipy",
     "sklearn": "scikit-learn",
     "torch": "torch",
@@ -107,10 +113,10 @@ DIST = {
 
 STDLIB = set(sys.stdlib_module_names)
 
-# Imported by shipped code but deliberately absent from requirements.txt, with the reason.
-# jax is the live case: the interpreter inside setup.exe has no jax wheel and no plan to carry one
+# Imported by shipped code but deliberately absent from the runtime tier, with the reason.
+# jax used to be the live case; it is now mapped in DIST and declared in the AI tier
 # (see tools/embed_imports.py's JAX_ONLY list and docs/ARCH_REASSESSMENT.md §L.1).
-KNOWN_UNMAPPED = {"jax", "setup", "site"}
+KNOWN_UNMAPPED = {"setup", "site"}
 
 
 def local_module_names() -> Set[str]:

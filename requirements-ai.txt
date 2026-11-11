@@ -32,10 +32,19 @@
 # This tier is for training, export and the optional torch policy implementations.
 # The Sentinel itself imports without torch since 2026-11-07.
 
+# 2026-11-11: jax and scipy are imported at module scope by combat/map_field.py,
+# combat/grid_model.py and tools/distill_beam.py. They were in neither tier, so a
+# clean clone could not even collect the suites that read those modules. They
+# belong HERE (the opt-in dev/AI tier), not in requirements.txt: setup.exe does
+# not ship a jax wheel and the product does not need one. CI installs the CPU-only
+# build from requirements-gate.txt instead of dragging torch/transformers onto a
+# Linux runner. tools/shipped_deps.py owns both tiers -- keep it in sync.
+jax
 joblib
 onnxruntime
 safetensors
 scikit-learn
+scipy
 tokenizers
 torch
 transformers

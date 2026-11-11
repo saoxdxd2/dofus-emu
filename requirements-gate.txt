@@ -1,0 +1,28 @@
+# Dependencies for the gate on a clean clone / Linux CI only.
+#
+# This is deliberately NOT requirements-ai.txt. That tier is the opt-in training
+# stack (torch + transformers, ~600 MB) and pip would pull CUDA wheels on a Linux
+# runner just to run offline checks. Nothing in the gate needs torch.
+#
+# requirements.txt stays the shipped runtime tier (what setup.exe installs) and
+# requirements-ai.txt stays the dev/training tier. This third file exists so a
+# fresh clone can reproduce the gate with one command:
+#
+#   pip install -r requirements-gate.txt
+#   python dofus-network/tools/gate.py --strict
+#
+# tools/shipped_deps.py owns the other two files; this one is maintained by hand
+# because it describes the test runner, not the shipped import graph.
+
+-r requirements.txt
+
+jax[cpu]
+scipy
+onnx
+onnxruntime
+scikit-learn
+joblib
+psutil
+pyyaml
+tokenizers
+pytest

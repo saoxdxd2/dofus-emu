@@ -1,0 +1,37 @@
+{
+  "floor": 0.75,
+  "model": "tool_policy.807023112a4b.onnx",
+  "model_sha256": "807023112a4b5ab35384ebeaa00fc5425d1b3085307c440f2f36cd353efccf77",
+  "fitted_on": "train episodes (data/tool_sft_v3/train.jsonl)",
+  "fit_split_sha256": "b75722821c6ada9edcd9f3d3d597c3b5085111be1e62cde9c30dbde9c672c026",
+  "evidence": {
+    "val_split": "data/tool_sft_v3/val.jsonl",
+    "val_sha256": "f1f76b0d86e8f2624c7f94471d2ebe29729c02eed81fc85bfbc0969afc65065f",
+    "val_rows": 3719,
+    "head_accuracy": 0.9043,
+    "head_optimal": 0.9062,
+    "gated_accuracy": 0.9099,
+    "gated_optimal": 0.9102,
+    "gated_accuracy_nested": 0.9099,
+    "nested_folds": [
+      0.75,
+      0.75,
+      0.75,
+      0.75,
+      0.75
+    ],
+    "grid_step": 0.05
+  },
+  "train": {
+    "rows": 15967,
+    "accuracy": 0.8633
+  },
+  "val": {
+    "rows": 3719,
+    "accuracy": 0.9099,
+    "optimal": 0.9102,
+    "ungated_accuracy": 0.9043,
+    "ungated_optimal": 0.9062
+  },
+  "note": "Below this top-2 margin the rule planner answers instead. Bound to model_sha256: a different artifact disables the gate until refitted. This floor belongs to the 42-wide head; the 266-wide dedicated head was measured against it and rejected (models/consult_gate.dedicated.json), so the gate does not apply to the installed model."
+}

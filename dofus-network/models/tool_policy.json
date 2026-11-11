@@ -1,0 +1,37 @@
+{
+  "arch": "dedicated-v1",
+  "features": 266,
+  "tools": [
+    "knowledge.search",
+    "nav.goto",
+    "nav.follow",
+    "quest.list",
+    "quest.advance",
+    "farm.start",
+    "farm.stop",
+    "fight.join",
+    "fight.pass",
+    "inv.list",
+    "inv.sell",
+    "hdv.scan",
+    "hdv.list",
+    "chat.say",
+    "state.snapshot",
+    "safe.stop",
+    "knowledge.remember",
+    "knowledge.forget",
+    "fight.state",
+    "fight.plan",
+    "fight.estimate"
+  ],
+  "history": {
+    "steps": 8,
+    "token": 28,
+    "dim": 224
+  },
+  "best_epoch": 30,
+  "temperature": 0.25,
+  "targets": "soft",
+  "seed": 7,
+  "params": 81367
+}

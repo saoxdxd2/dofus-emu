@@ -36,8 +36,10 @@ if errorlevel 1 (
     popd
 )
 
-echo [2/3] Compiling Build.exe from builder\Build.cs...
-%CSC% /nologo /target:exe /r:System.IO.Compression.FileSystem.dll /out:Build.exe builder\Build.cs
+echo [2/3] Compiling Build.exe from builder\build.cs...
+REM The tracked file is lowercase `build.cs`; Windows resolves either spelling, a
+REM case-sensitive checkout does not. Keep the literal in sync with `git ls-files`.
+%CSC% /nologo /target:exe /r:System.IO.Compression.FileSystem.dll /out:Build.exe builder\build.cs
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Failed to compile Build.exe
     exit /b %ERRORLEVEL%

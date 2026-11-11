@@ -1,0 +1,159 @@
+name: gate
+
+# The gate is the only thing that says whether the tree works, and until this
+# file existed nothing ran it on a machine other than the author's. Two classes
+# of failure were invisible because of that:
+#
+#   * filenames. Windows resolves `desktop/Program.cs` to `desktop/program.cs`;
+#     a Linux checkout does not, so the gate could not open a file that is right
+#     there. tools/check_case.py is the permanent answer to that.
+#   * missing artifacts and undeclared imports. A clean clone has only what git
+#     tracks, so a gitignored model sidecar or an unlisted `import jax` fails on
+#     the first run instead of on the next release.
+#
+# The gate itself is the source of truth for what runs; this file only supplies
+# the interpreter, the dependency tier and the exit status.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  suites:
+    name: Suites (Linux, clean clone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the embedded runtime the shipped product uses (python311._pth).
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-gate.txt
+
+      - name: Install the gate tier
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-gate.txt
+
+      # Runs before the gate so a casing mistake is reported as a casing mistake
+      # instead of as a missing file three suites later.
+      - name: Casing audit (git index vs source literals)
+        run: python tools/check_case.py
+
+      - name: Gate (test suites only)
+        run: |
+          python dofus-network/tools/gate.py \
+            --strict \
+            --skip-regression \
+            --timeout 180 \
+            --json gate-suites.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-suites
+          path: gate-suites.json
+          if-no-files-found: ignore
+
+  regression:
+    name: Regression harness (Linux, clean clone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-gate.txt
+
+      - name: Install the gate tier
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-gate.txt
+
+      # agent.regression is its own budget in the gate because it drives a real
+      # client and runs minutes. --only regression runs just that step.
+      - name: Gate (agent.regression)
+        run: |
+          python dofus-network/tools/gate.py \
+            --strict \
+            --only regression \
+            --regression-timeout 1800 \
+            --json gate-regression.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-regression
+          path: gate-regression.json
+          if-no-files-found: ignore
+
+      - name: Upload last run counts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: last-gate-run
+          path: dofus-network/data/last_gate_run.json
+          if-no-files-found: ignore
+
+  upgrade-readiness:
+    name: Upgrade readiness (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # These two suites are red on main by design: they inventory client constants
+    # that must be re-derived before the next bundle. They are not statements
+    # about whether this tree works, so they must not block a fix to a quest --
+    # but they must stay visible, which is why this job exists at all.
+    # Flip this to false the day the inventory is empty.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Combat constant inventory
+        run: |
+          set +e
+          python dofus-network/combat/test_combat_integrity.py
+          echo "combat_integrity exit: $?"
+          python dofus-network/combat/test_effect_id_hardcodes.py
+          echo "effect_id_hardcodes exit: $?"
+          exit 0

@@ -1503,7 +1503,7 @@ def test_cli_launch_forwarding() -> None:
     # single-instance mutex. Starting another slot then needed closing the app.
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent.parent
-    program = (root / "desktop" / "Program.cs").read_text(encoding="utf-8-sig")
+    program = (root / "desktop" / "program.cs").read_text(encoding="utf-8-sig")
     form = (root / "desktop" / "mainform.cs").read_text(encoding="utf-8-sig")
     check("one parser owns the flag",
           "private static string LaunchNameFromArgs(string[] args)" in program
@@ -2602,7 +2602,7 @@ def test_go_relay_suites() -> None:
 
 
 def _find_csharp_compiler() -> Optional[List[str]]:
-    """The compiler builder/Build.cs would pick: Roslyn from any .NET SDK, else
+    """The compiler builder/build.cs would pick: Roslyn from any .NET SDK, else
     the .NET Framework csc.exe."""
     dotnet = shutil.which("dotnet")
     if dotnet:
@@ -2627,7 +2627,7 @@ def _find_csharp_compiler() -> Optional[List[str]]:
 
 
 def _builder_host_sources(build_cs: Path) -> List[str]:
-    """The host's .cs files, read out of builder/Build.cs.
+    """The host's .cs files, read out of builder/build.cs.
 
     The builder is the authority on what DofusFarm.exe is made of; this gate only
     borrows its answer. Parsing is deliberately narrow -- `Path.Combine(desktopDir,
@@ -2639,7 +2639,7 @@ def _builder_host_sources(build_cs: Path) -> List[str]:
         text = build_cs.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    # Only the host's list. Build.cs also compiles setup.exe and uninstall.exe
+    # Only the host's list. build.cs also compiles setup.exe and uninstall.exe
     # from their own `Path.Combine(desktopDir, ...)` blocks, and taking those too
     # produced `Duplicate 'AssemblyCompany' attribute` -- a gate failure that says
     # nothing about the host.
@@ -2667,7 +2667,7 @@ def test_csharp_compile() -> None:
     with the same references into a temp directory (never the shipped exe, which
     may be running and locked).
     """
-    section("C# host compiles (same compiler and sources as builder/Build.cs)")
+    section("C# host compiles (same compiler and sources as builder/build.cs)")
     compiler = _find_csharp_compiler()
     if compiler is None:
         print("   SKIP: no C# compiler found")
@@ -2675,12 +2675,12 @@ def test_csharp_compile() -> None:
         return
     desktop = ROOT / "desktop"
     # The list comes from the builder, not from a copy kept here. It used to be a
-    # copy, and it fell behind: `LocalSecret.cs` was added to builder/Build.cs and
+    # copy, and it fell behind: `LocalSecret.cs` was added to builder/build.cs and
     # this gate kept compiling without it, so the gate failed on a tree that
     # builds. Reading the builder's own list makes that drift impossible.
-    names = _builder_host_sources(ROOT / "builder" / "Build.cs")
+    names = _builder_host_sources(ROOT / "builder" / "build.cs")
     check("the builder's C# source list is readable", len(names) >= 20,
-          "%d source(s) parsed from builder/Build.cs" % len(names))
+          "%d source(s) parsed from builder/build.cs" % len(names))
     if len(names) < 20:
         return
     sources = [desktop / name for name in names]
@@ -3763,7 +3763,7 @@ def test_measured_sizes_say_their_unit() -> None:
               bool(default_mode) and default_mode.group(1) == "pristine",
               default_mode.group(1) if default_mode else "no defaultMode")
 
-    builder = (ROOT / "builder" / "Build.cs").read_text(encoding="utf-8", errors="replace")
+    builder = (ROOT / "builder" / "build.cs").read_text(encoding="utf-8", errors="replace")
     check("the builder's patched-size line reads the file, not the string",
           "new FileInfo(scriptPath).Length" in builder, builder.count("script.Length"))
 
@@ -3881,6 +3881,15 @@ def test_consult_gate_is_fitted_and_live() -> None:
     # which has been the 266-wide dedicated head since 2026-11-10; feeding it the
     # 42-wide validation rows raised a matmul mismatch instead of reproducing 0.9043.
     rows = read_val_rows()
+    # A fresh clone that predates the fitted artifacts must fail the provenance
+    # check above, not crash the section with
+    # `AttributeError: 'NoneType' object has no attribute 'with_suffix'`. The
+    # bound model and its sidecar are both inputs to export_manifest(); naming
+    # the missing one is the difference between one red check and a section
+    # abort that hides every check after it.
+    if pinned is None or not pinned.with_suffix(".json").is_file():
+        print("   SKIP: bound model or its sidecar is absent from this checkout")
+        return
     m = export_manifest(pinned, pinned.with_suffix(".json"))
     check("the bound artifact's input width is the width of the rows it is scored on",
           int(m["base"]["features"] or 0) == len(rows[0]["x"]),
@@ -7881,7 +7890,7 @@ def test_installed_payload_and_dependencies() -> None:
           [ln.strip()[:96] for ln in installer_src.splitlines()
            if "wireproxy.conf yet" in ln][:1])
 
-    source = (ROOT / "builder" / "Build.cs").read_text(encoding="utf-8", errors="replace")
+    source = (ROOT / "builder" / "build.cs").read_text(encoding="utf-8", errors="replace")
     check("the builder ships the repo's requirements.txt instead of a typed list",
           'Path.Combine(RepoRoot, "requirements.txt")' in source)
 
@@ -7967,7 +7976,7 @@ def test_installed_payload_and_dependencies() -> None:
     check("and the builder stages those launchers from the repo rather than retyping them",
           "File.WriteAllText(sentinelBat" not in source
           and 'foreach (string bat in new[] { "start-sentinel.bat", "install-python-ai.bat" })'
-          in source, "builder/Build.cs launcher staging")
+          in source, "builder/build.cs launcher staging")
     tiers = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "tools" / "shipped_deps.py")],
                            capture_output=True, text=True, timeout=600, cwd=str(ROOT))
     check("the derived tiers agree with the two requirements files",

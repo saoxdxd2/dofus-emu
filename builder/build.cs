@@ -46,9 +46,11 @@ namespace DofusBuild
             Console.ResetColor();
 
             RepoRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-            if (!File.Exists(Path.Combine(RepoRoot, "builder", "Build.cs")) &&
+            // Tracked as lowercase build.cs -- Windows is case-insensitive, a Linux
+            // checkout is not. Use the name git actually stores.
+            if (!File.Exists(Path.Combine(RepoRoot, "builder", "build.cs")) &&
                 Directory.GetParent(RepoRoot) != null &&
-                File.Exists(Path.Combine(Directory.GetParent(RepoRoot).FullName, "builder", "Build.cs")))
+                File.Exists(Path.Combine(Directory.GetParent(RepoRoot).FullName, "builder", "build.cs")))
             {
                 RepoRoot = Directory.GetParent(RepoRoot).FullName;
             }
@@ -77,31 +79,31 @@ namespace DofusBuild
             Console.ResetColor();
             var farmSources = new List<string>(12)
             {
-                Path.Combine(desktopDir, "Win32.cs"),
-                Path.Combine(desktopDir, "Hardware.cs"),
+                Path.Combine(desktopDir, "win32.cs"),
+                Path.Combine(desktopDir, "hardware.cs"),
                 Path.Combine(desktopDir, "DynamicVersionResolver.cs"),
                 Path.Combine(desktopDir, "IClientBackend.cs"),
-                Path.Combine(desktopDir, "LocalSecret.cs"),
+                Path.Combine(desktopDir, "localsecret.cs"),
                 Path.Combine(desktopDir, "EmulatorBackend.cs"),
                 Path.Combine(desktopDir, "WebView2ClientForm.cs"),
-                Path.Combine(desktopDir, "ClientBundle.cs"),
-                Path.Combine(desktopDir, "UiThread.cs"),
+                Path.Combine(desktopDir, "clientbundle.cs"),
+                Path.Combine(desktopDir, "uithread.cs"),
                 Path.Combine(desktopDir, "WebView2Backend.cs"),
-                Path.Combine(desktopDir, "AgentBridge.cs"),
-                Path.Combine(desktopDir, "FarmEngine.cs"),
-                Path.Combine(desktopDir, "ProxySupervisor.cs"),
-                Path.Combine(desktopDir, "Watchdog.cs"),
-                Path.Combine(desktopDir, "PriorityGovernor.cs"),
-                Path.Combine(desktopDir, "AiPanel.cs"),
-                Path.Combine(desktopDir, "NetSettings.cs"),
+                Path.Combine(desktopDir, "agentbridge.cs"),
+                Path.Combine(desktopDir, "farmengine.cs"),
+                Path.Combine(desktopDir, "proxysupervisor.cs"),
+                Path.Combine(desktopDir, "watchdog.cs"),
+                Path.Combine(desktopDir, "prioritygovernor.cs"),
+                Path.Combine(desktopDir, "aipanel.cs"),
+                Path.Combine(desktopDir, "netsettings.cs"),
                 Path.Combine(desktopDir, "NetPill.cs"),
                 Path.Combine(desktopDir, "BootState.cs"),
-                Path.Combine(desktopDir, "RuntimeSettings.cs"),
+                Path.Combine(desktopDir, "runtimesettings.cs"),
                 Path.Combine(desktopDir, "Ini.cs"),
                 Path.Combine(desktopDir, "PythonLocator.cs"),
-                Path.Combine(desktopDir, "Pages.cs"),
-                Path.Combine(desktopDir, "MainForm.cs"),
-                Path.Combine(desktopDir, "Program.cs")
+                Path.Combine(desktopDir, "pages.cs"),
+                Path.Combine(desktopDir, "mainform.cs"),
+                Path.Combine(desktopDir, "program.cs")
             };
             // NOTE: kept C#5-compatible (no string interpolation) because this builder is
             // compiled with the .NET Framework 4.x csc.exe, which supports at most C# 5.
@@ -125,7 +127,7 @@ namespace DofusBuild
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n[2/3] Compiling native C# uninstall.exe...");
             Console.ResetColor();
-            string uninstallerCs = Path.Combine(desktopDir, "Uninstaller.cs");
+            string uninstallerCs = Path.Combine(desktopDir, "uninstaller.cs");
             string progressCs = Path.Combine(desktopDir, "ProgressBar.cs");
             string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
             string uninstArgs = string.Format("/nologo /target:winexe /optimize+ {0}\"/out:{1}\" {2}\"{3}\" \"{4}\"",
@@ -957,24 +959,24 @@ namespace DofusBuild
 
                 string[] setupSources = new[]
                 {
-                    Path.Combine(desktopDir, "Win32.cs"),
-                    Path.Combine(desktopDir, "Hardware.cs"),
+                    Path.Combine(desktopDir, "win32.cs"),
+                    Path.Combine(desktopDir, "hardware.cs"),
                     Path.Combine(desktopDir, "DynamicVersionResolver.cs"),
                     Path.Combine(desktopDir, "IClientBackend.cs"),
                     // Shared with the farm set: the governor now reads its throttle
                     // preference from RuntimeSettings, and the engine has used
                     // LocalSecret since the loopback token was introduced. Omitting
                     // them here failed setup.exe with CS0103, not the app build.
-                    Path.Combine(desktopDir, "LocalSecret.cs"),
-                    Path.Combine(desktopDir, "RuntimeSettings.cs"),
-                    Path.Combine(desktopDir, "PriorityGovernor.cs"),
-                    Path.Combine(desktopDir, "FarmEngine.cs"),
-                    Path.Combine(desktopDir, "ProxySupervisor.cs"),
-                    Path.Combine(desktopDir, "NetSettings.cs"),
+                    Path.Combine(desktopDir, "localsecret.cs"),
+                    Path.Combine(desktopDir, "runtimesettings.cs"),
+                    Path.Combine(desktopDir, "prioritygovernor.cs"),
+                    Path.Combine(desktopDir, "farmengine.cs"),
+                    Path.Combine(desktopDir, "proxysupervisor.cs"),
+                    Path.Combine(desktopDir, "netsettings.cs"),
                     Path.Combine(desktopDir, "Ini.cs"),
                     Path.Combine(desktopDir, "PythonLocator.cs"),
                     Path.Combine(desktopDir, "ProgressBar.cs"),
-                    Path.Combine(desktopDir, "Installer.cs")
+                    Path.Combine(desktopDir, "installer.cs")
                 };
                 string setupIconArg = File.Exists(setupIco) ? string.Format("\"/win32icon:{0}\" ", setupIco) : "";
                 string setupArgs = string.Format(

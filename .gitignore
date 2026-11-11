@@ -157,3 +157,27 @@ proxies_raw.txt
 proxy_pool_state.json
 proxy_pool.log
 proxies.txt.pre-pool.bak
+
+# ---------------------------------------------------------------------------
+# 2026-11-11 clean-clone gate fixes
+# ---------------------------------------------------------------------------
+# Agent operating spec is local-only, not part of the shipped tree.
+# NOTE: AGENTS.MD is still tracked; `git rm --cached AGENTS.MD` is a separate,
+# explicit step (it removes the file from the repository on the next commit).
+AGENTS.MD
+
+# `*.log` does not match rotated `*.log.1`. This only stops NEW rotated logs
+# from being added -- DofusFarm.log.1 is still tracked and still in history.
+*.log.*
+*.log[0-9]
+
+# The gate reads these fitted artifacts on a clean clone. `dofus-network/models/**`
+# above keeps training outputs local; these five are small, deterministic and are
+# the inputs the gate actually re-derives its measurements from, so they ship.
+!dofus-network/models/
+!dofus-network/models/backups/
+!dofus-network/models/tool_policy.json
+!dofus-network/models/encounter_selfplay.pkl
+!dofus-network/models/consult_gate.json
+!dofus-network/models/backups/tool_policy.807023112a4b.onnx
+!dofus-network/models/backups/tool_policy.807023112a4b.json
