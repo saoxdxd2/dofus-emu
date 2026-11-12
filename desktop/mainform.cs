@@ -804,6 +804,8 @@ namespace DofusFarm.UI
 
                 CreateBtnCol("Action", "ACTION", "Launch", 78, false),
 
+                CreateBtnCol("Ai", "AI", "AI", 74, false),
+
                 CreateBtnCol("Edit", "EDIT", "Edit", 66),
 
                 CreateBtnCol("Clone", "CLONE", "Clone", 66),
@@ -819,6 +821,7 @@ namespace DofusFarm.UI
             _rowMenu = new ContextMenuStrip { BackColor = Color.FromArgb(26, 28, 37), ForeColor = Color.White };
 
             _rowMenu.Items.Add("Launch / Stop (Active Engine)", null, delegate { TriggerSelectedRowAction("Action"); });
+            _rowMenu.Items.Add("🤖 AI On / Off for this instance", null, delegate { TriggerSelectedRowAction("Ai"); });
 
             _rowMenu.Items.Add("⚡ Launch in Standalone WebView2", null, delegate { LaunchSelectedInWebView2(); });
 
@@ -1499,7 +1502,7 @@ namespace DofusFarm.UI
 
             string colName = _grid.Columns[e.ColumnIndex].Name;
 
-            if (colName == "Action" || colName == "Edit" || colName == "Clone" || colName == "Reset" || colName == "Delete")
+            if (colName == "Action" || colName == "Ai" || colName == "Edit" || colName == "Clone" || colName == "Reset" || colName == "Delete")
 
             {
 
@@ -1567,7 +1570,7 @@ namespace DofusFarm.UI
 
             string colName = _grid.Columns[e.ColumnIndex].Name;
 
-            if (colName != "Status" && colName != "Action" && colName != "Edit" && colName != "Clone" && colName != "Reset" && colName != "Delete") return;
+            if (colName != "Status" && colName != "Action" && colName != "Ai" && colName != "Edit" && colName != "Clone" && colName != "Reset" && colName != "Delete") return;
 
 
 
@@ -1629,6 +1632,19 @@ namespace DofusFarm.UI
 
                     btnText = isRunning ? "Stop" : "Launch";
 
+                    break;
+
+                case "Ai":
+
+                    // The pill is the LIVE state, not the stored intent: a loop that
+                    // ended on its own (goals exhausted, a stop file, a stall) must not
+                    // keep showing ON while nothing drives the client.
+                    bool aiOn = _aiPanel != null && inst != null
+                                && _aiPanel.IsRunningFor(inst.Name);
+                    bg = aiOn ? BrushPillRunBg : BrushBtnDefaultBg;
+                    pen = aiOn ? PenBtnLaunch : PenBtnDefault;
+                    fg = aiOn ? ColGreen : ColMuted;
+                    btnText = aiOn ? "AI ON" : "AI OFF";
                     break;
 
                 case "Edit":
@@ -2017,6 +2033,13 @@ namespace DofusFarm.UI
                 if (!RuntimeSettings.Current.AutoAi || _aiPanel == null) return;
                 if (string.IsNullOrEmpty(instanceName)) return;
                 if (_aiPanel.IsRunningFor(instanceName)) return;
+                // A slot the operator switched off in the row stays off across a relaunch:
+                // "the AI keeps coming back after I turn it off" is a control that lies.
+                if (!_aiPanel.AiEnabledFor(instanceName))
+                {
+                    Log("[AI] " + instanceName + ": AI is switched off for this instance; not starting");
+                    return;
+                }
                 // The client window registers a beat after LaunchInstance returns.
                 // Starting the loop before that is refused as "no client window",
                 // and the launch then looks like the AI never started at all:
@@ -3574,6 +3597,8 @@ namespace DofusFarm.UI
 
             FarmEngine.ReleaseAccount(inst.Name);
 
+            ResetInstanceAiState(inst.Name);
+
 
 
             string dir = WebView2ProfileDir(inst.Name);
@@ -3644,6 +3669,46 @@ namespace DofusFarm.UI
         }
 
 
+
+        /// <summary>Forget everything the AI knew about this slot.
+        ///
+        /// A reset is a NEW instance, so the file that stopped the old loop, the log it
+        /// wrote and the lock it held have to go with the profile. Measured 2026-11-12:
+        /// 17 of the 55 recorded loop ends were "stop file present", and a reset that
+        /// left that file behind produced a "fresh" instance whose loop exited on its
+        /// first check -- the reset looked like it worked and the AI never ran.
+        /// </summary>
+        private void ResetInstanceAiState(string slot)
+        {
+            if (string.IsNullOrEmpty(slot)) return;
+            // The new instance is meant to be driven, so the operator's "off" does not
+            // carry over a reset: the row comes back with the AI switched on.
+            if (_aiPanel != null) _aiPanel.SetAiEnabled(slot, true);
+            string own = Path.Combine(NetworkSettings.AppDataRoot, "autopilot." + slot + ".jsonl");
+            string[] paths = new string[]
+            {
+                AiPanel.StopFilePath(slot),
+                own,
+                own + ".lock",
+            };
+            foreach (string path in paths)
+            {
+                try
+                {
+                    if (!File.Exists(path)) continue;
+                    File.Delete(path);
+                    Log("[RESET] " + slot + ": cleared " + Path.GetFileName(path));
+                }
+                catch (Exception ex)
+                {
+                    // A held lock or a log another writer still has open is not fatal:
+                    // the new loop appends to a fresh file only when this one is gone,
+                    // and the operator sees why if it is not.
+                    Log(string.Format("[RESET] {0}: could not clear {1}: {2}",
+                                      slot, Path.GetFileName(path), ex.Message));
+                }
+            }
+        }
 
         private void PromptAndDeleteAllInstances()
 
@@ -3895,6 +3960,27 @@ namespace DofusFarm.UI
                     }
 
                     break;
+
+                case "Ai":
+
+                {
+
+                    // One cell, one instance: on starts this client's loop, off stops
+                    // only this one. The Launch cell next to it drives the client
+                    // process; this one drives the AI, and they are not the same thing.
+                    // It runs on the UI thread because the panel's start/stop paths touch
+                    // its own controls (SetRunningUi) -- the same reason AutoStartAi
+                    // marshals StartInstance instead of calling it from its worker.
+                    if (_aiPanel == null) return;
+                    string aiSlot = inst.Name;
+                    SafeInvoke(delegate
+                    {
+                        try { _aiPanel.ToggleAi(aiSlot); }
+                        catch (Exception ex) { Log(string.Format("[AI] {0}: toggle failed: {1}", aiSlot, ex.Message)); }
+                    });
+                    RefreshGrid(true);
+                    break;
+                }
 
                 case "Action":
 

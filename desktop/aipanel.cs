@@ -845,6 +845,9 @@ namespace DofusFarm.UI
                 return;
             }
             if (IsRunningFor(instanceId)) { Append("[ai] " + instanceId + " is already running"); return; }
+            // An explicit start is the operator changing their mind: the slot is on again
+            // for the next launch too, not just for this run.
+            SetAiEnabled(instanceId, true);
             if (!InstanceIsOpen(instanceId))
             {
                 Append("[ai] " + instanceId + ": no client window; not starting a loop");
@@ -1072,7 +1075,7 @@ namespace DofusFarm.UI
         /// instance gets its own -- otherwise "stop this one" would have to write
         /// the file every other loop is watching.
         /// </summary>
-        private static string StopFilePath(string instance)
+        public static string StopFilePath(string instance)
         {
             string dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -1102,6 +1105,113 @@ namespace DofusFarm.UI
         public bool IsRunningFor(string instanceId)
         {
             return RunningInstanceOf(instanceId) != null;
+        }
+
+        /// <summary>Whether a launch should start this instance's loop.
+        ///
+        /// The toggle in the instance row is an intent, not a state. A loop that ended on
+        /// its own -- goals exhausted, the world never arriving, a stall -- leaves the
+        /// intent on, so the next launch drives again. A slot the operator switched off
+        /// stays off across restarts, because the alternative is a launch that silently
+        /// undoes the decision the operator just made.
+        /// </summary>
+        public bool AiEnabledFor(string instanceId)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return true;
+            string off = RuntimeSettings.Current.AiOff ?? "";
+            foreach (string part in off.Split(','))
+            {
+                if (string.Equals(part.Trim(), instanceId, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>Record the operator's intent for one slot and persist it.</summary>
+        public void SetAiEnabled(string instanceId, bool on)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return;
+            var keep = new List<string>();
+            string off = RuntimeSettings.Current.AiOff ?? "";
+            foreach (string part in off.Split(','))
+            {
+                string name = part.Trim();
+                if (name.Length == 0) continue;
+                if (string.Equals(name, instanceId, StringComparison.OrdinalIgnoreCase)) continue;
+                keep.Add(name);
+            }
+            if (!on) keep.Add(instanceId);
+            RuntimeSettings.Current.AiOff = string.Join(",", keep.ToArray());
+            RuntimeSettings.Current.Save();
+        }
+
+        /// <summary>One click on a row's AI cell: drive this instance, or stop it.
+        ///
+        /// Measured 2026-11-12: the row could only Launch (which also starts the loop) or
+        /// Stop (which is the whole farm's Stop button), so "this client's AI off, the
+        /// others keep playing" had no control at all.
+        /// </summary>
+        public void ToggleAi(string instanceId)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return;
+            if (RunningInstanceOf(instanceId) != null)
+            {
+                SetAiEnabled(instanceId, false);
+                StopInstance(instanceId, "AI switched off in the row");
+                return;
+            }
+            SetAiEnabled(instanceId, true);
+            StartInstance(instanceId, true);
+        }
+
+        /// <summary>Why this instance's last loop ended, from the log's own last row.
+        ///
+        /// Measured 2026-11-12 over the seven live logs: 23 of the 55 recorded ends were
+        /// "goals exhausted" and 17 were "stop file present", and the host reported every
+        /// one of them as the same line, "loop finished (exit 0)". The loop already writes
+        /// its reason; reading it back is the difference between "it stopped again" and
+        /// knowing which of the two happened.
+        /// </summary>
+        public static string EndReasonFor(string instanceId)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return null;
+            try
+            {
+                // The instance's OWN file, never the shared fallback `StepLogFor` returns:
+                // attributing another client's reason to this one is the exact mistake
+                // this method exists to stop.
+                string path = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "DofusFarm", "autopilot." + instanceId + ".jsonl");
+                if (!File.Exists(path)) return null;
+                string tail = TailOf(path, 65536);
+                if (tail == null) return null;
+                Match m = Regex.Match(tail, "\"reason\"\\s*:\\s*\"([^\"]{1,200})\"",
+                                      RegexOptions.RightToLeft);
+                if (!m.Success) return null;
+                return m.Groups[1].Value;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>The last `bytes` of a file, decoded. A per-instance log can be 40 MB.</summary>
+        private static string TailOf(string path, int bytes)
+        {
+            try
+            {
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                                                   FileShare.ReadWrite))
+                {
+                    long size = stream.Length;
+                    long start = size > bytes ? size - bytes : 0;
+                    stream.Seek(start, SeekOrigin.Begin);
+                    int wanted = (int)(size - start);
+                    var buffer = new byte[wanted];
+                    int read = stream.Read(buffer, 0, wanted);
+                    return Encoding.UTF8.GetString(buffer, 0, read);
+                }
+            }
+            catch { return null; }
         }
 
         /// <summary>Every instance with a live loop, for the per-window badge.</summary>
@@ -1785,8 +1895,10 @@ namespace DofusFarm.UI
                     active.Add(item.Groups[1].Value);
             }
             bool wasRunning = _brainHadInstances;
+            var before = new List<string>();
             lock (_brainLock)
             {
+                before.AddRange(_brainRunning);
                 _brainRunning.Clear();
                 foreach (string id in active) _brainRunning.Add(id);
                 _brainHadInstances = active.Count > 0;
@@ -1794,7 +1906,15 @@ namespace DofusFarm.UI
             if (wasRunning && active.Count == 0)
             {
                 // The last instance finished on its own: same idle-training window
-                // the child path gets from OnChildExited.
+                // the child path gets from OnChildExited. The reason is in its own
+                // log, and saying it is the difference between "it stopped again"
+                // and knowing which end this was.
+                foreach (string id in before)
+                {
+                    string reason = EndReasonFor(id);
+                    if (!string.IsNullOrEmpty(reason))
+                        Append("[ai] " + id + " finished: " + reason);
+                }
                 TryIdleTraining();
                 try { BeginInvoke((MethodInvoker)delegate { SetRunningUi(false); }); } catch { }
             }
@@ -1869,8 +1989,12 @@ namespace DofusFarm.UI
         private void OnChildExited(Process p)
         {
             bool anyLeft;
+            string instance = null;
             lock (_procLock)
             {
+                // Read the attribution before dropping it: the reason lives in that
+                // instance's own log, and after the removal there is no name to ask for.
+                if (p != null) _instanceByProc.TryGetValue(p, out instance);
                 if (p != null) { _procs.Remove(p); _instanceByProc.Remove(p); }
                 anyLeft = _procs.Count > 0;
             }
@@ -1879,7 +2003,9 @@ namespace DofusFarm.UI
                 if (p != null)
                 {
                     int code = p.ExitCode;
-                    Append("[ai] loop finished (exit " + code.ToString() + ")");
+                    string reason = EndReasonFor(instance);
+                    Append("[ai] loop finished (exit " + code.ToString() + ")"
+                           + (string.IsNullOrEmpty(reason) ? "" : ": " + reason));
                 }
             }
             catch { }

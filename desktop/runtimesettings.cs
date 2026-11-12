@@ -23,6 +23,12 @@ namespace DofusFarm.Engine
         // Always-on AI: every client that launches is driven without pressing Start.
         // A manual Stop still wins until the next launch.
         public bool AutoAi = true;
+        // Slots whose AI the operator switched off in the instance grid, comma separated
+        // (`dofus-03,dofus-04`), empty when every slot is on. This is an intent, not a
+        // state: a loop that ended on its own leaves the slot on so the next launch
+        // drives again, while a slot the operator switched off stays off across restarts
+        // instead of being silently restarted by the next launch.
+        public string AiOff = "";
         // Off by default. When on, clients that are not in the foreground get
         // BelowNormal + EcoQoS execution throttling; that also applies to the
         // window the user is about to switch to, which is why it is no longer
@@ -75,6 +81,7 @@ namespace DofusFarm.Engine
                     else if (Same(key, "telemetry")) settings.Telemetry = ParseBool(value, settings.Telemetry);
                     else if (Same(key, "fight_boards")) settings.FightBoards = ParseBool(value, settings.FightBoards);
                     else if (Same(key, "auto_ai")) settings.AutoAi = ParseBool(value, settings.AutoAi);
+                    else if (Same(key, "ai_off")) settings.AiOff = (value ?? "").Trim();
                     else if (Same(key, "background_throttle")) settings.BackgroundThrottle = ParseBool(value, settings.BackgroundThrottle);
                 }
             }
@@ -95,6 +102,7 @@ namespace DofusFarm.Engine
                 text.AppendLine("telemetry=" + (Telemetry ? "1" : "0"));
                 text.AppendLine("fight_boards=" + (FightBoards ? "1" : "0"));
                 text.AppendLine("auto_ai=" + (AutoAi ? "1" : "0"));
+                text.AppendLine("ai_off=" + (AiOff ?? ""));
                 text.AppendLine("background_throttle=" + (BackgroundThrottle ? "1" : "0"));
                 File.WriteAllText(path, text.ToString(), Encoding.UTF8);
                 lock (_lock) { _current = this; }

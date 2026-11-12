@@ -227,6 +227,12 @@ SNIPPET = ("import agent.regression as r\n"
            "    r.test_bundle_updater,\n"
            "    r.test_multi_instance_targeting,\n"
            "    r.test_per_instance_ai,\n"
+           # The row's AI cell and the reset that has to forget the old run. Neither was
+           # in the snippet, so a mutation of `mainform.cs`'s reset or of `aipanel.cs`'s
+           # stop-file handling was only reachable through the two suites above, which do
+           # not read those paths (measured 2026-11-12 while adding the toggle).
+           "    r.test_instance_reset,\n"
+           "    r.test_the_row_can_turn_the_ai_on_and_off,\n"
            "    r.test_keep_alive_instrument,\n"
            "    r.test_tutorial_hold,\n"
            "    r.test_live_transitions,\n"
@@ -2948,6 +2954,25 @@ MUTATIONS = [
     ("witness: the executed-file channel never turns on", WITNESS,
      '    sys.monitoring.set_events(_TOOL_ID, sys.monitoring.events.PY_START)',
      '    sys.monitoring.set_events(_TOOL_ID, 0)  # mutated: the map has no exec entries'),
+    # ---- the instance row's AI cell, and a reset that has to forget the old run
+    # (2026-11-12). Each of these leaves a host that still compiles and still looks right:
+    # a pill that lies about the loop, a click that stops the whole farm, a launch that
+    # undoes the switch, and a "fresh" instance whose loop exits on the old stop file.
+    ("ai-row: the pill reports the stored intent, not the live loop", CMAINF,
+     '                                && _aiPanel.IsRunningFor(inst.Name);',
+     '                                && _aiPanel.AiEnabledFor(inst.Name);'),
+    ("ai-row: a click on one instance stops the whole farm", CSPANEL,
+     '                StopInstance(instanceId, "AI switched off in the row");',
+     '                StopAuto("AI switched off in the row");'),
+    ("ai-row: a launch ignores the operator's switch", CMAINF,
+     '                if (!_aiPanel.AiEnabledFor(instanceName))',
+     '                if (false)'),
+    ("reset: the stop file outlives the reset", CMAINF,
+     '                AiPanel.StopFilePath(slot),\n                own,',
+     '                own,'),
+    ("reset: a fresh instance comes back switched off", CMAINF,
+     '            if (_aiPanel != null) _aiPanel.SetAiEnabled(slot, true);',
+     '            if (_aiPanel != null) _aiPanel.SetAiEnabled(slot, false);'),
 ]
 
 

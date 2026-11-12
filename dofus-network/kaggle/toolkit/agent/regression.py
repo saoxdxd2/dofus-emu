@@ -6165,6 +6165,101 @@ def test_instance_reset() -> None:
           at >= 0 and "File.Copy" not in seg,
           "a template copied at install time would be the same transfer by another name")
 
+    # A reset is a NEW instance, so the AI's state for that slot goes with the profile.
+    # Measured 2026-11-12: 17 of the 55 recorded loop ends were "stop file present", and
+    # a reset that left the file behind produced a "fresh" slot whose loop exited on its
+    # first check -- the reset looked like it worked and the AI never ran.
+    wipe = form.find("private void ResetInstanceAiState(string slot)")
+    wipe_end = form.find("private void PromptAndDeleteAllInstances()", wipe)
+    wipe_body = form[wipe:wipe_end] if wipe >= 0 and wipe_end > wipe else ""
+    check("reset clears the stop file, the log and the lock for that slot",
+          "AiPanel.StopFilePath(slot)" in wipe_body
+          and '"autopilot." + slot + ".jsonl"' in wipe_body
+          and "own + \".lock\"" in wipe_body,
+          "a fresh instance inherited the old run's stop file and history")
+    check("the reset calls the wipe before it relaunches",
+          "ResetInstanceAiState(inst.Name);" in reset and wipe_body,
+          "clearing after the relaunch would stop the new loop, not the old one")
+    check("a reset puts the slot's AI back on",
+          "_aiPanel.SetAiEnabled(slot, true);" in wipe_body,
+          "the operator reset the slot to get it driven again, not to leave it idle")
+
+
+def test_the_row_can_turn_the_ai_on_and_off() -> None:
+    """The instance row could launch a client and stop the whole farm, and nothing between.
+
+    Measured 2026-11-12: "Launch" starts the client *and* the loop, "Stop" in the panel
+    stops every loop, and the in-world badge is the only per-instance control -- which is
+    inside the client, so a client whose AI died cannot be restarted from the manager
+    without relaunching it. The row now carries its own AI cell, and the pill shows the
+    LIVE loop state: a loop that ended on its own (23 of the 55 recorded ends were "goals
+    exhausted") must not keep reading ON while nothing drives the client.
+
+    The intent behind the cell is stored, not just the state: a slot switched off stays
+    off across a relaunch, because a launch that silently turns the AI back on is a
+    control that lies.
+    """
+    section("The instance row can turn one instance's AI on and off")
+    form = code_only((ROOT / "desktop" / "mainform.cs").read_text(encoding="utf-8", errors="replace"))
+    panel = code_only((ROOT / "desktop" / "aipanel.cs").read_text(encoding="utf-8", errors="replace"))
+    runtime = code_only((ROOT / "desktop" / "runtimesettings.cs").read_text(encoding="utf-8", errors="replace"))
+
+    check("the grid carries an AI cell next to Launch and Reset",
+          'CreateBtnCol("Ai", "AI", "AI", 74, false)' in form
+          and 'CreateBtnCol("Action", "ACTION", "Launch", 78, false)' in form
+          and 'CreateBtnCol("Reset", "RESET", "Reset", 66)' in form,
+          "the row had no per-instance AI control")
+    check("the cell is painted from the live loop, not from the stored intent",
+          '_aiPanel.IsRunningFor(inst.Name);' in form
+          and 'btnText = aiOn ? "AI ON" : "AI OFF";' in form
+          and "BrushPillRunBg" in form,
+          "a loop that ended on its own kept reading ON")
+    check("clicking it goes through the panel's toggle",
+          "case \"Ai\":" in form and "_aiPanel.ToggleAi(aiSlot);" in form,
+          "the cell painted but did nothing")
+    check("the row menu offers the same control",
+          'TriggerSelectedRowAction("Ai")' in form,
+          "right-click had no equivalent action")
+
+    toggle = panel.find("public void ToggleAi(string instanceId)")
+    toggle_end = panel.find("public static string EndReasonFor", toggle)
+    toggle_body = panel[toggle:toggle_end] if toggle >= 0 and toggle_end > toggle else ""
+    check("one click stops only that instance",
+          'StopInstance(instanceId, "AI switched off in the row");' in toggle_body
+          and "StopAuto" not in toggle_body,
+          "the cell reached the farm-wide Stop and killed the other clients")
+    check("and one click starts only that instance",
+          "StartInstance(instanceId, true);" in toggle_body,
+          "the cell could not bring one client's loop back")
+
+    start = panel.find("public void StartInstance(string instanceId, bool force)")
+    start_end = panel.find("public void SendOrder()", start)
+    start_body = panel[start:start_end] if start >= 0 and start_end > start else ""
+    check("an explicit start clears the operator's off",
+          "SetAiEnabled(instanceId, true);" in start_body,
+          "the slot stayed off for the next launch after the operator started it")
+    check("the intent is stored and read back",
+          "public string AiOff" in runtime
+          and 'text.AppendLine("ai_off=" + (AiOff ?? ""));' in runtime
+          and 'Same(key, "ai_off")' in runtime
+          and "public bool AiEnabledFor(string instanceId)" in panel
+          and "public void SetAiEnabled(string instanceId, bool on)" in panel,
+          "the toggle was forgotten at the next launch")
+    check("a launch honours a slot that is switched off",
+          "if (!_aiPanel.AiEnabledFor(instanceName))" in form
+          and "AI is switched off for this instance; not starting" in form,
+          "AutoStartAi restarted a loop the operator had switched off")
+
+    # The reason a loop ended was invisible: every end read "loop finished (exit 0)".
+    check("the end reason is read from that instance's own log",
+          '"autopilot." + instanceId + ".jsonl"' in panel
+          and '\\"reason\\"' in panel and "RegexOptions.RightToLeft" in panel,
+          "the host cannot say which end this was")
+    check("both the child path and the brain path report it",
+          "string reason = EndReasonFor(instance);" in panel
+          and "string reason = EndReasonFor(id);" in panel,
+          "the default (brain) path kept reporting a bare exit code")
+
 
 def test_no_loop_without_client() -> None:
     section("AI loops require an open client (one window never meant one loop per slot)")
@@ -18449,6 +18544,7 @@ def run() -> Tuple[int, List[str]]:
     _run_test(test_multi_instance_targeting)
     _run_test(test_per_instance_ai)
     _run_test(test_instance_reset)
+    _run_test(test_the_row_can_turn_the_ai_on_and_off)
     _run_test(test_fight_end_witness)
     _run_test(test_join_names_a_group)
     _run_test(test_battle_log_and_challenges)

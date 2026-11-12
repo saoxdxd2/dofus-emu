@@ -8731,3 +8731,79 @@ callback (`Path(...).resolve()` per function call) and turned the 62 s pass into
 minutes before it was killed. The hot path is now a single set insert of a raw `co_filename` string;
 normalisation happens once, at read time. An instrument that is paid per *call* may only do
 per-*file* work at the end.
+
+## G115. The AI stops by itself, and the row had no way to say which stop it was
+
+> Opened and measured 2026-11-12. Operator's report: "why the ai shutdown by itself", plus a
+> request for a per-instance on/off control and a reset that really produces a new instance.
+
+### What actually ended the loops
+
+Census over the seven live logs in `%LOCALAPPDATA%\DofusFarm\` (`autopilot*.jsonl`, 71,559 rows,
+55 `session_end` rows):
+
+| ends | reason | what it means |
+|---|---|---|
+| 23 | `goals exhausted` | the loop reached the end of its goal list or its step budget |
+| 17 | `stop file present (AUTOPILOT_STOP.<slot>)` | something wrote the slot's stop file and the loop honoured it on its next check |
+| 7 | `stopped while waiting for the world` | the client never reached the world, so the loop gave up |
+| 3 | `quest 4262/4280 stayed chosen after 3 retirements`, `3 stall windows without progress` | the planner refused to move |
+| 2 | `the policy could not express 'do all the quests'` | nothing plannable, nothing left to retire |
+| 1 | `time budget reached` | `--minutes` elapsed |
+
+Two of those are the loop doing what it was told, and the operator cannot be blamed for reading
+them as a crash: **the host reported every one of the 55 ends as the same line**,
+`[ai] loop finished (exit 0)`. The reason was written to the instance's own log and never read
+back.
+
+One of them was a real defect in the reset: `AUTOPILOT_STOP.<slot>` was written by every stop and
+only cleared by the *legacy child* path and by the brain daemon's `_make_pilot`. A reset that
+wiped the profile and relaunched left the file behind, so the "fresh" instance's loop exited on
+its first check -- the reset looked like it worked and the AI never ran. The two files on disk
+(`AUTOPILOT_STOP.dofus-03`, `.dofus-04`, both `reload client page agent at 22:32:08`) are from a
+host build whose string is no longer in this source; whatever wrote them, the slot could not be
+brought back without deleting the file by hand.
+
+**Not a defect, checked:** the run lock is an OS advisory lock (`msvcrt.locking`), so a stale
+`autopilot.<slot>.lock` with a dead pid does not wedge the slot, and "another driver holds the
+instance lock" does not appear once in the 55 ends.
+
+### Fixed
+
+1. **The reason is reported.** `AiPanel.EndReasonFor(slot)` reads the last `reason` from that
+   instance's *own* log (never the shared fallback -- attributing another client's reason is the
+   mistake the method exists to prevent), and both paths now print it: `OnChildExited` for the
+   child path, `FetchBrainStatus` for the brain path (the default one). The line reads
+   `[ai] loop finished (exit 0): goals exhausted` instead of a bare exit code.
+
+2. **The row has an AI cell** (`AI ON` / `AI OFF`) between `Launch` and `Edit`. It is painted from
+   the **live** loop (`IsRunningFor`), not from the stored intent, so a loop that ended on its own
+   stops reading ON. One click starts or stops *that* instance only -- before this the only
+   per-instance control was the in-world badge, which is inside the client, so a client whose AI
+   died could not be restarted from the manager without relaunching it.
+
+3. **The switch is an intent, not a state.** `RuntimeSettings.AiOff` stores the slots the operator
+   switched off (`ai_off=dofus-03,dofus-04`), and `AutoStartAi` refuses those slots. An explicit
+   start clears the slot, because the operator changing their mind must win. Without this, "turn
+   this one's AI off" survived until the next launch and then silently undid itself.
+
+4. **The reset forgets the old run.** `ResetInstanceAiState` deletes the slot's stop file, its
+   `autopilot.<slot>.jsonl` and its lock, and puts the slot's AI back on, before the relaunch.
+   A reset now produces an instance with no stop file, no history and no lock from the previous
+   character.
+
+**Verified** (`MUT_ONLY="ai-row:,reset: the stop file,reset: a fresh"`, 5 of 722 selected,
+`scratch/mut_airow.log`): **5 CAUGHT, 0 missed**, `restored: 0 failing checks, exit 0`. The
+mutations are the five ways this feature can look right and be wrong: a pill that reports the
+intent instead of the loop, a click that reaches `StopAuto` (the whole farm), a launch that ignores
+the switch, a reset that leaves the stop file, and a reset that leaves the slot switched off.
+
+**Compiled:** `test_csharp_compile` in the gate builds the builder's own source list with Roslyn
+(`dotnet` + `csc.dll`) into a temp directory and asserts a zero exit, so the three edited files
+(`aipanel.cs`, `mainform.cs`, `runtimesettings.cs`) are type-checked on every gate run — 3 checks,
+0 failed, delegation `ran: True`. Compilation is not behaviour: nothing here has clicked the cell.
+
+**Not fixed, named:** nothing restarts a loop that ended. The operator's rule is that the loop
+runs until the goals are done or they stop it, and a supervisor that restarts a "goals exhausted"
+loop would spin forever on a broken objective. What the operator needs instead -- and now has -- is
+to see which end it was and to bring one client back with one click.
